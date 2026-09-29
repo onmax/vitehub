@@ -97,6 +97,9 @@ function getOpenWorkflowConfig(config: ResolvedWorkflowOptions): OpenWorkflowSto
 
   const sqlite = config.sqlite || {}
   const postgres = config.postgres || {}
+  if (postgres.url !== undefined && sqlite.path !== undefined) {
+    throw workflowErrorDiagnostics.WORKFLOW_R0030({ message: "`workflow.postgres.url` and `workflow.sqlite.path` cannot both configure OpenWorkflow storage." })
+  }
   const explicitSqlitePath = resolveRuntimeConfigValue(sqlite.path)
   const explicitPostgresUrl = resolveRuntimeConfigValue(postgres.url)
   if (sqlite.path !== undefined && !explicitSqlitePath?.trim()) {

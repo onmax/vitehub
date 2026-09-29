@@ -1226,6 +1226,22 @@ describe("workflow runtime", () => {
     expect(openWorkflowMock.connect).not.toHaveBeenCalled()
   })
 
+  it.each(["runtime", "worker"] as const)("rejects conflicting explicit storage in the %s API before opening either backend", async (api) => {
+    const config = {
+      postgres: { url: "postgres://localhost/workflow" },
+      provider: "openworkflow" as const,
+      sqlite: { path: ":memory:" },
+    }
+    const operation = api === "runtime"
+      ? getOpenWorkflowRuntime(config)
+      : createOpenWorkflowWorker({ config })
+
+    await expect(operation).rejects.toThrow(/workflow\.postgres\.url.*workflow\.sqlite\.path.*cannot both/)
+    expect(openWorkflowMock.sqliteConnect).not.toHaveBeenCalled()
+    expect(openWorkflowMock.connect).not.toHaveBeenCalled()
+    expect(openWorkflowMock.newWorker).not.toHaveBeenCalled()
+  })
+
   it.each(["sqlite", "postgres"] as const)("rejects an unresolved explicit %s storage env declaration", async (backend) => {
     const value = {
       kind: "env-variable" as const,
