@@ -185,3 +185,5 @@ The Connection refreshes the access token when it expires within 60 seconds, and
 - One account per Connection.
 - The built-in provider is Google with the Gmail API.
 - The CLI uses the management API. It cannot reach a deployed app that requires host authentication, such as Cloudflare Access. Use Console connect for deployed apps.
+
+To choose between Connections and an external Executor, see [Executor or Connections](/docs/capabilities/executor#executor-or-connections).

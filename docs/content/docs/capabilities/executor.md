@@ -70,6 +70,26 @@ Use a credential accepted by the endpoint shown in Executor's Connect card. Exec
 
 ViteHub accepts a string or a sealed Server Env value for `apiKey`. It unseals the value only while resolving the Agent Invocation and redacts the authorization header from Capability and tool metadata.
 
+## Executor or Connections
+
+[Connections](/docs/server-primitives/connections) keep the OAuth grant, access rules, approvals, and activity in your ViteHub app. Executor keeps them in an external service.
+
+| Need | Use |
+| --- | --- |
+| Server code or a Schedule calls a provider API, and the app must not depend on another service. | Connections |
+| An Agent uses Gmail with per-call approval and activity in the ViteHub Console. | Connections with [`gmail()`](/docs/capabilities/gmail) |
+| An Agent uses many integrations that ViteHub has no Connection provider for. | Executor |
+| Several apps share one set of integration credentials and policies. | Executor |
+
+You can use both. For example, use a Google Connection for Gmail and Executor for other integrations.
+
+To move a Gmail integration from Executor to Connections:
+
+1. Define a Google Connection, set `VITEHUB_CONNECTIONS_KEY`, and connect the same Google account.
+2. Replace Executor tool calls in server code with `useConnection('google', { actor })`. Replace Agent Executor Gmail tools with `gmail({ connection: 'google' })`.
+3. Add `access` rules for each actor that writes, and run a write with `dryRun: true` first.
+4. Remove the Executor credential when no caller uses it.
+
 ## Options
 
 | Option | Type | Default | Description |
