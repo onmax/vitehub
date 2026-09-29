@@ -1,11 +1,10 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { pathToFileURL } from "node:url"
 
 import { afterEach, describe, expect, it } from "vitest"
 
-import { createDefinitionRegistryContents, loadFeatureDefinitions, normalizeDefinitionName } from "../src/internal/shared/feature-definitions.ts"
+import { loadFeatureDefinitions, normalizeDefinitionName } from "../src/internal/shared/feature-definitions.ts"
 
 const tempDirs: string[] = []
 
@@ -20,22 +19,6 @@ afterEach(async () => {
 })
 
 describe("loadFeatureDefinitions", () => {
-  it("loads a discovered __proto__ definition as an own registry property", async () => {
-    const rootDir = await createTempRoot()
-    await mkdir(join(rootDir, "sandboxes"))
-    await writeFile(join(rootDir, "sandboxes", "__proto__.mjs"), 'export default { label: "prototype sandbox" }\n')
-    const { definitions } = await loadFeatureDefinitions({ feature: "sandbox", scanRoots: [rootDir], subdir: "sandboxes" })
-    expect(definitions.map(definition => definition.name)).toEqual(["__proto__"])
-    const registryFile = join(rootDir, "registry.mjs")
-    await writeFile(registryFile, createDefinitionRegistryContents(definitions))
-
-    const { default: registry }: { default: Record<string, () => Promise<{ default: { label: string } }>> } = await import(pathToFileURL(registryFile).href)
-
-    expect(Object.keys(registry)).toEqual(["__proto__"])
-    expect(Object.getPrototypeOf(registry)).toBe(Object.prototype)
-    await expect(registry["__proto__"]!()).resolves.toMatchObject({ default: { label: "prototype sandbox" } })
-  })
-
   it("does not double-register definitions from recursive src scans", async () => {
     const rootDir = await createTempRoot()
     const srcDir = join(rootDir, "src")

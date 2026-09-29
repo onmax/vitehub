@@ -1823,11 +1823,15 @@ describe("sources, loaders, and publishers", () => {
     await expect(registry["asset-bundle"].exists("../escape.txt")).resolves.toBe(false)
   })
 
-  it.each(["docs", "__proto__"])("preserves the __proto__ asset path in the %s bundle", async (name) => {
+  it.each(["docs", "__proto__"])("preserves the __proto__ asset path and metadata in the %s bundle", async (name) => {
     const root = await createRoot()
     const registryFile = join(root, ".vitehub/assets/registry.mjs")
     const store = createMemoryWorkspaceStore()
-    await store.writeFile("__proto__", { content: "prototype asset", path: "__proto__" })
+    const metadata = {
+      ["__proto__"]: { label: "prototype metadata" },
+      nested: [{ ["__proto__"]: "nested metadata", constructor: "literal constructor", toString: "literal toString" }],
+    }
+    await store.writeFile("__proto__", { content: "prototype asset", metadata, path: "__proto__" })
     await writeWorkspaceAssetsRegistry(registryFile, [await collectWorkspaceStoreAssetBundle(name, store)])
 
     const { default: registry }: { default: Record<string, WorkspaceAssets> } = await import(pathToFileURL(registryFile).href)
@@ -1835,6 +1839,10 @@ describe("sources, loaders, and publishers", () => {
     expect(Object.keys(registry)).toEqual([name])
     expect(Object.getPrototypeOf(registry)).toBe(Object.prototype)
     await expect(registry[name]!.readFile("__proto__")).resolves.toBe("prototype asset")
+    const stat = await registry[name]!.stat("__proto__")
+    expect(stat.metadata).toStrictEqual(metadata)
+    expect(Object.hasOwn(stat.metadata!, "__proto__")).toBe(true)
+    expect(Object.getPrototypeOf(stat.metadata)).toBe(Object.prototype)
   })
 
   it("rejects unsafe workspace asset paths", async () => {
