@@ -122,6 +122,11 @@ function hasCanonicalFrozenProperties(value: unknown, keys: readonly string[]): 
 export type RuntimeWaitUntil = (task: Promise<unknown>) => void
 
 export interface RuntimeWaitUntilController {
+  /**
+   * Drain registered work, including tasks added during the flush.
+   * Call from the operation owner. A registered task must not await its own
+   * controller's flush, because the flush waits for that task to finish.
+   */
   flushWaitUntil(): Promise<void>
   waitUntil: RuntimeWaitUntil
 }
@@ -249,6 +254,7 @@ export interface RuntimeHostContext<TRuntimeConfig = Record<string, unknown>> {
   vercel?: {
     waitUntil?: RuntimeWaitUntil
   }
+  /** Drain from the operation owner, never from work registered with this context. */
   flushWaitUntil?: () => Promise<void>
   waitUntil: RuntimeWaitUntil
 }

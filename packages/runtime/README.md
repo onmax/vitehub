@@ -78,6 +78,12 @@ returning. A flush drains nested work and then reports the first observed failur
 Concurrent flush calls wait for the same work and report the same result.
 The constructor does not extend serverless lifetime or cancel background tasks.
 
+Call `flushWaitUntil()` from the code that owns the operation. A task registered
+with `waitUntil()` must not await that context's flush. The flush waits for the
+task, so both would wait indefinitely. Await child promises directly inside a
+task. If the task needs its own background-work controller, create a separate
+Runtime Context and flush that context instead.
+
 For H3 1, H3 2, and Nuxt routes, use `getRuntimeContext(event, options?)` from
 `vite-hub/runtime/h3`. This framework entry normalizes event bindings and lifetime
 methods. The Runtime owner package has no H3 dependency.
