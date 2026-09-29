@@ -20,6 +20,8 @@ const collectionTypesPackageEntry = ".vitehub/types/source/vitehub-source-regist
 const legacyCollectionTypesEntry = ".vitehub/source/collections.d.ts"
 const collectionRoutesDirectory = ".vitehub/source/routes"
 const contentRouteEntry = ".vitehub/content/route.mjs"
+// Auth owns this virtual module. Generated routes import it only when Auth is enabled.
+const authServerModuleId = "#vitehub/auth/server"
 const initialHostRefreshRetryDelay = 25
 const maximumHostRefreshRetryDelay = 1_000
 const hostRestartOwnerSettlementTimeout = 30_000
@@ -31,6 +33,8 @@ export interface GeneratedSourceHandler {
 }
 
 export interface SourceGenerationOptions {
+  /** Pass Auth's `authorizeRequest` to generated Collection routes. Requires the Auth Vite plugin. */
+  auth?: boolean
   contentImportBase?: string
   importBase?: string
   projectRoot: string
@@ -38,6 +42,8 @@ export interface SourceGenerationOptions {
 }
 
 export interface SourceVitePluginOptions {
+  /** Pass Auth's `authorizeRequest` to generated Collection routes. Requires the Auth Vite plugin. */
+  auth?: boolean
   contentImportBase?: string
   importBase?: string
 }
@@ -312,9 +318,12 @@ async function writeCollectionArtifacts(
     const handler = resolve(routesDirectory, `${name}.mjs`)
     await writeFileIfChanged(handler, [
       `import { defineCollectionHandler } from ${JSON.stringify(`${options.importBase ?? "@vite-hub/source"}/server`)}`,
+      ...(options.auth ? [`import { authorizeRequest } from ${JSON.stringify(authServerModuleId)}`] : []),
       `import { ${exportName} as collection } from ${JSON.stringify(toRuntimeModuleSpecifier(file))}`,
       "",
-      "export default defineCollectionHandler(collection)",
+      options.auth
+        ? "export default defineCollectionHandler(collection, { authorizeRequest })"
+        : "export default defineCollectionHandler(collection)",
       "",
     ].join("\n"))
     return {
@@ -429,7 +438,7 @@ export function hubSource(options: SourceVitePluginOptions = {}): Plugin & {
       listener: GeneratedSourceHandlersListener,
       options?: GeneratedSourceHandlersListenerOptions,
     ) => () => void
-    prepareSources: (options: Omit<SourceGenerationOptions, "contentImportBase" | "importBase">) => Promise<GeneratedSourceHandler[]>
+    prepareSources: (options: Omit<SourceGenerationOptions, "auth" | "contentImportBase" | "importBase">) => Promise<GeneratedSourceHandler[]>
   }
 } {
   let latestProjectRoot: string | undefined
@@ -451,18 +460,20 @@ export function hubSource(options: SourceVitePluginOptions = {}): Plugin & {
     listener: GeneratedSourceHandlersListener
     projectRoot?: string
   }>()
-  const prepareSources = (input: Omit<SourceGenerationOptions, "contentImportBase" | "importBase">) => {
+  const prepareSources = (input: Omit<SourceGenerationOptions, "auth" | "contentImportBase" | "importBase">) => {
     const root = resolve(input.projectRoot)
     const previousPreparation = sourcePreparationByRoot.get(root) ?? Promise.resolve()
     const preparation = previousPreparation.then(() =>
       prepareSourceGeneration({
         ...input,
+        auth: options.auth,
         importBase: options.importBase,
         contentImportBase: options.contentImportBase,
       }),
     () =>
       prepareSourceGeneration({
         ...input,
+        auth: options.auth,
         importBase: options.importBase,
         contentImportBase: options.contentImportBase,
       }),

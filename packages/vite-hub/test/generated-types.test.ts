@@ -574,6 +574,27 @@ describe("framework generated types", () => {
     )
   })
 
+  it("passes Auth's authorizer to generated Collection routes when Auth is enabled", async () => {
+    const { root, viteRoot } = await createNestedProject()
+    await mkdir(join(root, "server/collections"), { recursive: true })
+    await writeFile(join(root, "server/collections/meals.ts"), collectionModule("meals"))
+
+    const [source] = frameworkHubSource({ auth: true })
+    await configResolved(source!)({ root: viteRoot })
+    await (source as ReturnType<typeof sourcePlugin>).api.prepareSources({ projectRoot: root })
+
+    await expect(readFile(join(root, ".vitehub/source/routes/meals.mjs"), "utf8")).resolves.toBe(
+      [
+        `import { defineCollectionHandler } from "vite-hub/source/server"`,
+        `import { authorizeRequest } from "#vitehub/auth/server"`,
+        `import { meals as collection } from ${JSON.stringify(pathToFileURL(join(root, "server/collections/meals.ts")).href)}`,
+        ``,
+        `export default defineCollectionHandler(collection, { authorizeRequest })`,
+        ``,
+      ].join("\n"),
+    )
+  })
+
   it("serves server/content.ts through the Comark Content runtime", async () => {
     const { root } = await createNestedProject()
     await Promise.all([

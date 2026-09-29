@@ -871,6 +871,179 @@ describe("hubBlob", () => {
     }
   })
 
+  describe("serve authorization", () => {
+    const authPlugin = { name: "@vite-hub/auth/vite", api: { getConfig: () => ({ definition: {} }) } }
+
+    async function bundleServeRoute(root: string) {
+      const artifactFile = join(root, "serve-route.mjs")
+      await bundle({
+        bundle: true,
+        entryPoints: [join(root, ".vitehub", "blob", "serve-route.ts")],
+        format: "esm",
+        logLevel: "silent",
+        nodePaths: [join(workspaceRoot, "node_modules")],
+        outfile: artifactFile,
+        platform: "node",
+        plugins: [{
+          name: "blob-authorize-route-stub",
+          setup(build) {
+            build.onResolve({ filter: /^(?:virtual:blob-test|#vitehub\/auth\/server)$/ }, args => ({
+              namespace: "blob-authorize-route-stub",
+              path: args.path,
+            }))
+            build.onLoad({ filter: /^virtual:blob-test$/, namespace: "blob-authorize-route-stub" }, () => ({
+              contents: [
+                "export const blob = {",
+                "  store() {",
+                "    return {",
+                "      serve(_event, pathname) {",
+                "        globalThis.__vitehubBlobServeCalls.push(pathname)",
+                "        return [null, new Response(new Uint8Array([1, 2, 3]), { headers: { ETag: '\"photo-v1\"' } })]",
+                "      },",
+                "    }",
+                "  },",
+                "}",
+              ].join("\n"),
+              loader: "js",
+            }))
+            // Mirrors Auth's authorizeRequest contract. Auth tests cover the real session lookup.
+            build.onLoad({ filter: /^#vitehub\/auth\/server$/, namespace: "blob-authorize-route-stub" }, () => ({
+              contents: [
+                "export async function authorizeRequest(event, authorize) {",
+                "  const cookie = event.req.headers.get('cookie') || ''",
+                "  const user = cookie.startsWith('session=') ? { id: cookie.slice(8) } : undefined",
+                "  if (!user) return Response.json({ error: 'Unauthorized.' }, { status: 401 })",
+                "  if (authorize === true) return",
+                "  const result = await authorize({ request: event.req, session: {}, user })",
+                "  if (result instanceof Response) return result",
+                "  if (result !== true) return Response.json({ error: 'Forbidden.' }, { status: 403 })",
+                "}",
+              ].join("\n"),
+              loader: "js",
+            }))
+          },
+        }],
+        target: "node24",
+      })
+      const artifact = await import(pathToFileURL(artifactFile).href) as {
+        default: (event: H3Event) => Promise<Response>
+      }
+      return async (pathname: string, headers: Record<string, string> = {}) => {
+        const event = new H3Event(new Request(`http://localhost/photos/${pathname}`, { headers }))
+        event.context.params = { _: pathname }
+        return await toResponse(await artifact.default(event), event)
+      }
+    }
+
+    it("requires a session before the store read and before conditional handling", async () => {
+      const root = await mkdtemp(join(tmpdir(), "vitehub-blob-authorize-session-"))
+      const calls: string[] = []
+      Reflect.set(globalThis, "__vitehubBlobServeCalls", calls)
+      try {
+        const plugin = hubBlob({ driver: "fs", serve: { authorize: true, route: "/photos" } }, { importBase: "virtual:blob-test" })
+        await (plugin.configResolved as (config: unknown) => void | Promise<void>)({
+          build: { outDir: "dist" },
+          plugins: [authPlugin],
+          root,
+        } as never)
+        const handler = await readFile(join(root, ".vitehub", "blob", "serve-route.ts"), "utf8")
+        expect(handler).toContain("import { authorizeRequest } from \"#vitehub/auth/server\"")
+        expect(handler).toContain("authorizeRequest(event, true)")
+
+        const request = await bundleServeRoute(root)
+        const anonymous = await request("u1/meal.jpg")
+        expect(anonymous.status).toBe(401)
+        const conditionalAnonymous = await request("u1/meal.jpg", { "If-None-Match": '"photo-v1"' })
+        expect(conditionalAnonymous.status).toBe(401)
+        expect(calls).toEqual([])
+
+        const signedIn = await request("u1/meal.jpg", { cookie: "session=u1" })
+        expect(signedIn.status).toBe(200)
+        expect(signedIn.headers.get("Cache-Control")).toBe("private, no-cache")
+        expect(new Uint8Array(await signedIn.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]))
+        const conditional = await request("u1/meal.jpg", { "cookie": "session=u1", "If-None-Match": '"photo-v1"' })
+        expect(conditional.status).toBe(304)
+        expect(calls).toEqual(["u1/meal.jpg", "u1/meal.jpg"])
+      }
+      finally {
+        Reflect.deleteProperty(globalThis, "__vitehubBlobServeCalls")
+        await rm(root, { force: true, recursive: true })
+      }
+    })
+
+    it("runs the authorize export from server/blob.ts", async () => {
+      const root = await mkdtemp(join(tmpdir(), "vitehub-blob-authorize-module-"))
+      const calls: string[] = []
+      Reflect.set(globalThis, "__vitehubBlobServeCalls", calls)
+      try {
+        await mkdir(join(root, "server"), { recursive: true })
+        await writeFile(join(root, "server", "blob.ts"), [
+          "export const authorize = ({ request, user }: { request: Request, user: { id: string } }) =>",
+          "  new URL(request.url).pathname.startsWith(`/photos/${user.id}/`)",
+          "",
+        ].join("\n"))
+        const plugin = hubBlob({
+          driver: "fs",
+          serve: { authorize: true, headers: { "Cache-Control": "private, max-age=60" }, route: "/photos" },
+        }, { importBase: "virtual:blob-test" })
+        await (plugin.configResolved as (config: unknown) => void | Promise<void>)({
+          build: { outDir: "dist" },
+          plugins: [[authPlugin]],
+          root,
+        } as never)
+        const handler = await readFile(join(root, ".vitehub", "blob", "serve-route.ts"), "utf8")
+        expect(handler).toContain(`import { authorize } from ${JSON.stringify(join(root, "server", "blob.ts"))}`)
+        expect(handler).toContain("authorizeRequest(event, authorize)")
+
+        const request = await bundleServeRoute(root)
+        const own = await request("u1/meal.jpg", { cookie: "session=u1" })
+        expect(own.status).toBe(200)
+        expect(own.headers.get("Cache-Control")).toBe("private, max-age=60")
+        const other = await request("u2/meal.jpg", { cookie: "session=u1" })
+        expect(other.status).toBe(403)
+        expect(calls).toEqual(["u1/meal.jpg"])
+      }
+      finally {
+        Reflect.deleteProperty(globalThis, "__vitehubBlobServeCalls")
+        await rm(root, { force: true, recursive: true })
+      }
+    })
+
+    it("fails the build when serve authorization has no Auth Definition", async () => {
+      const root = await mkdtemp(join(tmpdir(), "vitehub-blob-authorize-no-auth-"))
+      try {
+        for (const plugins of [[], [{ name: "@vite-hub/auth/vite", api: { getConfig: () => undefined } }]]) {
+          const plugin = hubBlob({ driver: "fs", serve: { authorize: true } })
+          await expect((plugin.configResolved as (config: unknown) => void | Promise<void>)({
+            build: { outDir: "dist" },
+            plugins,
+            root,
+          } as never)).rejects.toThrow("`blob.serve.authorize` requires an Auth Definition.")
+        }
+      }
+      finally {
+        await rm(root, { force: true, recursive: true })
+      }
+    })
+
+    it("fails the build when server/blob.ts exports authorize without serve authorization", async () => {
+      const root = await mkdtemp(join(tmpdir(), "vitehub-blob-authorize-disabled-"))
+      try {
+        await mkdir(join(root, "server"), { recursive: true })
+        await writeFile(join(root, "server", "blob.ts"), "export const authorize = () => true\n")
+        const plugin = hubBlob({ driver: "fs", serve: { route: "/photos" } })
+        await expect((plugin.configResolved as (config: unknown) => void | Promise<void>)({
+          build: { outDir: "dist" },
+          plugins: [authPlugin],
+          root,
+        } as never)).rejects.toThrow("but `blob.serve.authorize` is not true")
+      }
+      finally {
+        await rm(root, { force: true, recursive: true })
+      }
+    })
+  })
+
   it("uses a configured package base in physical Nitro imports", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-blob-import-base-"))
     const plugin = hubBlob({
