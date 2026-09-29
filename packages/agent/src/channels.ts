@@ -36,6 +36,7 @@ import type {
   AgentChannelDeliveryFinishEffectContext,
   AgentChannelDeliveryReplyStream,
   AgentChannelDefinitionOf,
+  AgentChannelHistory,
   AgentChannelMessageDefinition,
   AgentChannelMessageMethods,
   AgentChannelWebhookRegistrationDefinition,
@@ -109,6 +110,9 @@ export type {
   AgentChannelFactory,
   AgentChannelInput,
   AgentChannelDefinitionOf,
+  AgentChannelHistory,
+  AgentChannelHistoryCollection,
+  AgentChannelHistoryQuery,
   AgentChannelInputs,
   AgentChannelMessage,
   AgentChannelMessageCalls,
@@ -144,7 +148,10 @@ type AgentChannelDefinitionOptions<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
-> = Omit<AgentChannelDefinition<TRuntimeConfig>, "kind" | "message"> & {
+  THistoryItem = unknown,
+> = Omit<AgentChannelDefinition<TRuntimeConfig>, "history" | "kind" | "message"> & {
+  /** Past messages that `replayChannel()` sends through a trigger. */
+  history?: AgentChannelHistory<THistoryItem>
   /** Message data and the methods that hooks call through `event.message`. */
   message?: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods>
 }
@@ -3096,6 +3103,25 @@ function validateChannelMessageDefinition(kind: string, message: unknown): void 
   }
 }
 
+function validateChannelHistoryDefinition(kind: string, history: unknown, triggers: unknown): void {
+  if (history === undefined) return
+  const invalid = (detail: string) => agentDiagnostics.AGENT_R0930({ message: `[vitehub] defineChannel("${kind}", { history }) ${detail}` })
+  if (!isRecord(history)) throw invalid("expects an object.")
+  const collection = history.collection
+  if (!isRecord(collection) || !hasRuntimeType(collection.page, "function") || !hasRuntimeType(collection.parseQuery, "function")) {
+    throw invalid("requires a Collection from defineCollection().")
+  }
+  if (!hasRuntimeType(history.key, "function")) throw invalid("requires key(item).")
+  const names = isRecord(triggers) ? Object.keys(triggers) : []
+  if (history.trigger === undefined) {
+    if (names.length !== 1) throw invalid(`requires trigger when the Channel has ${names.length} triggers.`)
+    return
+  }
+  if (!hasRuntimeType(history.trigger, "string") || !names.includes(history.trigger)) {
+    throw invalid(`trigger must name one of the Channel triggers: ${names.join(", ") || "none"}.`)
+  }
+}
+
 /**
  * Define a Channel. `message.methods` become calls on `event.message` in Agent hooks.
  * A method receives the Channel context first; `context.message` is the data that the trigger returned.
@@ -3104,16 +3130,18 @@ export function defineChannel<
   const TKind extends string,
   // No default: a default would replace the contextual type of method parameters.
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
+  THistoryItem,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
 >(
   kind: TKind,
-  options: AgentChannelDefinitionOptions<TRuntimeConfig, TData, TMethods> = {},
+  options: AgentChannelDefinitionOptions<TRuntimeConfig, TData, TMethods, THistoryItem> = {},
 ): AgentChannelDefinitionOf<TRuntimeConfig, TKind, TData, TMethods> {
   if (!hasRuntimeType(kind, "string") || !kind.trim()) {
     throw agentDiagnostics.AGENT_R0371({ message: "[vitehub] defineChannel() requires a non-empty Channel kind." })
   }
   validateChannelMessageDefinition(kind, options.message)
+  validateChannelHistoryDefinition(kind, options.history, options.triggers)
   const messages: false | AgentMessageChannelSettings<TRuntimeConfig> =
     // SAFETY: An omitted message configuration selects the default settings object.
     options.messages === undefined ? {} as AgentMessageChannelSettings<TRuntimeConfig> : options.messages

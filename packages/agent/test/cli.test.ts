@@ -56,7 +56,7 @@ describe("agent CLI", () => {
         name: "agent",
       }, {
         description: "External Channel registration workflows.",
-        features: [expect.objectContaining({ name: "history" }), expect.objectContaining({ name: "sync" })],
+        features: [expect.objectContaining({ name: "history" }), expect.objectContaining({ name: "replay" }), expect.objectContaining({ name: "sync" })],
         name: "channels",
       }],
     })
@@ -75,7 +75,7 @@ describe("agent CLI", () => {
         name: "agent",
       }, {
         description: "External Channel registration workflows.",
-        features: [expect.objectContaining({ name: "history" }), expect.objectContaining({ name: "sync" })],
+        features: [expect.objectContaining({ name: "history" }), expect.objectContaining({ name: "replay" }), expect.objectContaining({ name: "sync" })],
         name: "channels",
       }],
     })

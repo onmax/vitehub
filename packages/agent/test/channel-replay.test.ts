@@ -1,0 +1,200 @@
+import { describe, expect, it, vi } from "vitest"
+import * as v from "valibot"
+
+import { defineCollection } from "../../source/src/index.ts"
+import { defineChannel, defineChannelTrigger } from "../src/channels.ts"
+import { defineAgent } from "../src/index.ts"
+import { channelReplayRunId, createMemoryAgentInvocationStore, defineAgentInvocations, describeChannelHistory, replayChannel } from "../src/server.ts"
+
+interface Email {
+  folder: string
+  id: string
+  subject: string
+}
+
+const emails: Email[] = [
+  { folder: "inbox", id: "m1", subject: "Invoice" },
+  { folder: "inbox", id: "m2", subject: "Receipt" },
+  { folder: "archive", id: "m3", subject: "Old" },
+  { folder: "inbox", id: "m4", subject: "Ticket" },
+  { folder: "inbox", id: "m5", subject: "Offer" },
+]
+
+function mailbox(options: { maxLimit?: number } = {}) {
+  const load = vi.fn(async ({ cursor, limit, query }: { cursor?: string, limit: number, query: { folder?: string } }) => {
+    const matching = emails.filter(email => !query.folder || email.folder === query.folder)
+    const offset = cursor ? matching.findIndex(email => email.id === cursor) + 1 : 0
+    return matching.slice(offset, offset + limit)
+  })
+  const history = defineCollection(load, {
+    cursor: (email: Email) => email.id,
+    cursorSchema: v.string(),
+    defaultLimit: 2,
+    maxLimit: options.maxLimit ?? 2,
+    querySchema: v.object({ folder: v.optional(v.picklist(["archive", "inbox"])) }),
+  })
+  const label = vi.fn()
+  const channel = defineChannel("mailbox", {
+    history: { collection: history, key: email => email.id },
+    message: {
+      data: v.object({ id: v.string() }),
+      methods: {
+        label(context, name: string) {
+          label(context.message.id, name)
+        },
+      },
+    },
+    messages: false,
+    triggers: {
+      received: defineChannelTrigger({
+        input: v.object({ folder: v.string(), id: v.string(), subject: v.string() }),
+        invoke: (_context, email) => ({
+          input: { prompt: email.subject },
+          message: { id: email.id },
+        }),
+      }),
+    },
+  })
+  return { channel, label, load }
+}
+
+function labeller(options: { invocations?: ReturnType<typeof defineAgentInvocations>, maxLimit?: number } = {}) {
+  const { channel, label, load } = mailbox(options)
+  const run = vi.fn(({ input }: { input: { prompt?: unknown } }) => `label:${String(input.prompt)}`)
+  const agent = defineAgent({
+    channels: { mailbox: channel },
+    driver: { run },
+    hooks: {
+      async "agent:finish"(event) {
+        if (event.message?.channel === "mailbox" && event.text) await event.message.label(event.text)
+      },
+    },
+    ...(options.invocations ? { invocations: options.invocations } : {}),
+    runtime: false,
+  })
+  return { agent, label, load, run }
+}
+
+function memoryInvocations() {
+  return defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+}
+
+describe("replayChannel()", () => {
+  it("pages history through the Channel trigger and skips items it replayed before", async () => {
+    const invocations = memoryInvocations()
+    const { agent, label, load } = labeller({ invocations })
+
+    const first = await replayChannel(agent, "mailbox", { query: { folder: "inbox" } })
+    expect(first).toMatchObject({ failed: 0, nextCursor: null, processed: 4, skipped: 0 })
+    expect(first.items.map(item => [item.key, item.status])).toEqual([["m1", "completed"], ["m2", "completed"], ["m4", "completed"], ["m5", "completed"]])
+    expect(first.items[0]?.id).toBe(channelReplayRunId("mailbox", "m1"))
+    expect(label.mock.calls).toEqual([["m1", "label:Invoice"], ["m2", "label:Receipt"], ["m4", "label:Ticket"], ["m5", "label:Offer"]])
+    expect(load).toHaveBeenCalledTimes(2)
+    await expect(invocations.getByRunId(channelReplayRunId("mailbox", "m1"))).resolves.toMatchObject({ status: "completed" })
+
+    label.mockClear()
+    const second = await replayChannel(agent, "mailbox", { query: { folder: "inbox" } })
+    expect(second).toMatchObject({ processed: 0, skipped: 4 })
+    expect(second.items.every(item => item.reason === "existing")).toBe(true)
+    expect(label).not.toHaveBeenCalled()
+  })
+
+  it("replays existing items again with force", async () => {
+    const invocations = memoryInvocations()
+    const { agent, label } = labeller({ invocations })
+    await replayChannel(agent, "mailbox", { limit: 1 })
+    label.mockClear()
+
+    const forced = await replayChannel(agent, "mailbox", { force: true, limit: 1 })
+    expect(forced).toMatchObject({ processed: 1, skipped: 0 })
+    expect(forced.items[0]?.id).toMatch(new RegExp(`^${channelReplayRunId("mailbox", "m1")}:`))
+    expect(label).toHaveBeenCalledWith("m1", "label:Invoice")
+  })
+
+  it("records message writes in a dry run and keeps live replay available", async () => {
+    const invocations = memoryInvocations()
+    const { agent, label, run } = labeller({ invocations })
+
+    const dryRun = await replayChannel(agent, "mailbox", { dryRun: true, limit: 2 })
+    expect(dryRun).toMatchObject({ processed: 2 })
+    expect(dryRun.items[0]?.id).toBe(channelReplayRunId("mailbox", "m1", { dryRun: true }))
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(label).not.toHaveBeenCalled()
+
+    const live = await replayChannel(agent, "mailbox", { limit: 2 })
+    expect(live).toMatchObject({ processed: 2, skipped: 0 })
+    expect(label).toHaveBeenCalledTimes(2)
+  })
+
+  it("stops at the limit and resumes from the returned cursor", async () => {
+    const invocations = memoryInvocations()
+    const { agent } = labeller({ invocations, maxLimit: 10 })
+
+    const first = await replayChannel(agent, "mailbox", { limit: 3 })
+    expect(first.items.map(item => item.key)).toEqual(["m1", "m2", "m3"])
+    expect(first.nextCursor).toEqual(expect.any(String))
+
+    const rest = await replayChannel(agent, "mailbox", { cursor: first.nextCursor!, limit: 10 })
+    expect(rest.items.map(item => item.key)).toEqual(["m4", "m5"])
+    expect(rest).toMatchObject({ nextCursor: null, skipped: 0 })
+  })
+
+  it("rejects an invalid query, cursor, or Channel before it starts Invocations", async () => {
+    const invocations = memoryInvocations()
+    const { agent, run } = labeller({ invocations })
+
+    await expect(replayChannel(agent, "mailbox", { query: { folder: "spam" } })).rejects.toMatchObject({ code: "AGENT_R0935" })
+    await expect(replayChannel(agent, "mailbox", { cursor: "not-a-cursor" })).rejects.toMatchObject({ code: "AGENT_R0936" })
+    await expect(replayChannel(agent, "unknown")).rejects.toMatchObject({ code: "AGENT_R0931" })
+    await expect(replayChannel(agent, "mailbox", { limit: 0 })).rejects.toMatchObject({ code: "AGENT_R0934" })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it("requires Agent Invocations for a live replay without force", async () => {
+    const { agent } = labeller()
+    await expect(replayChannel(agent, "mailbox")).rejects.toMatchObject({ code: "AGENT_R0932" })
+    await expect(replayChannel(agent, "mailbox", { dryRun: true, limit: 1 })).resolves.toMatchObject({ processed: 1 })
+  })
+
+  it("reports trigger validation failures per item and continues", async () => {
+    const invocations = memoryInvocations()
+    const { agent } = labeller({ invocations })
+    const channel = agent.channels?.mailbox
+    if (!channel?.history) throw new Error("Expected mailbox history.")
+    const original = channel.history.collection
+    channel.history.collection = {
+      ...original,
+      page: async () => ({ items: [{ id: "bad" }, emails[0]], nextCursor: null }),
+      parseQuery: original.parseQuery,
+    }
+
+    const result = await replayChannel(agent, "mailbox")
+    expect(result).toMatchObject({ failed: 1, processed: 1 })
+    expect(result.items[0]).toMatchObject({ key: "bad", status: "failed" })
+  })
+
+  it("describes the history query as JSON Schema", () => {
+    const { agent } = labeller()
+    expect(describeChannelHistory(agent, "mailbox")).toMatchObject({
+      channel: "mailbox",
+      query: { properties: { folder: { enum: ["archive", "inbox"] } }, type: "object" },
+      trigger: "received",
+    })
+  })
+})
+
+describe("defineChannel({ history })", () => {
+  it("rejects history without a Collection, key, or unambiguous trigger", () => {
+    const collection = defineCollection(async () => [], { cursor: () => "", cursorSchema: v.string() })
+    const triggers = {
+      a: { invoke: () => ({ input: {} }) },
+      b: { invoke: () => ({ input: {} }) },
+    }
+    // SAFETY: These runtime checks cover JavaScript callers that bypass the typed options.
+    expect(() => defineChannel("x", { history: { key: () => "" } as never, triggers })).toThrow(/requires a Collection/)
+    expect(() => defineChannel("x", { history: { collection } as never, triggers })).toThrow(/requires key/)
+    expect(() => defineChannel("x", { history: { collection, key: () => "" }, triggers })).toThrow(/requires trigger when the Channel has 2 triggers/)
+    expect(() => defineChannel("x", { history: { collection, key: () => "", trigger: "c" }, triggers })).toThrow(/must name one of the Channel triggers: a, b/)
+    expect(defineChannel("x", { history: { collection, key: () => "", trigger: "b" }, triggers }).history?.trigger).toBe("b")
+  })
+})

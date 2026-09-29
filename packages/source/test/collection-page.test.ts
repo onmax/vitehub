@@ -47,6 +47,16 @@ function mealsCollection() {
 }
 
 describe("Collections", () => {
+  it("exposes the query schema that parseQuery() uses", async () => {
+    const querySchema = v.object({ day: v.optional(v.string()) })
+    const withSchema = defineCollection(async () => [], { cursor: () => 0, cursorSchema: v.number(), querySchema })
+    const withoutSchema = defineCollection(async () => [], { cursor: () => 0, cursorSchema: v.number() })
+
+    expect(withSchema.querySchema).toBe(querySchema)
+    expect(withoutSchema.querySchema).toBeUndefined()
+    await expect(withSchema.parseQuery({ day: ["a", "b"] })).rejects.toThrow()
+  })
+
   it("loads one bounded page, transforms rows, and continues from an opaque cursor", async () => {
     const { collection, load } = mealsCollection()
     const query = await collection.parseQuery({ day: "2026-08-21" })

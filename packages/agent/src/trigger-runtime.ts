@@ -83,7 +83,7 @@ function agentCapabilityOptions<TRuntimeConfig extends AgentRuntimeConfig>(
   return (Array.isArray(capabilities) ? capabilities : []) as AgentCapabilityDefinition<TRuntimeConfig>[]
 }
 
-function agentChannelOptions<TRuntimeConfig extends AgentRuntimeConfig>(
+export function agentChannelOptions<TRuntimeConfig extends AgentRuntimeConfig>(
   agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
 ): AgentChannels<TRuntimeConfig> {
   if (!hasAgentDefinition(agent)) return {}

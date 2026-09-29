@@ -280,6 +280,10 @@ const body = {
 
 History must contain valid ViteHub Messages with `user` or `assistant` roles and unique IDs. Parts must be `text`, `file`, `image`, or `audio`. The Console preserves message metadata and appends the new prompt as a user Message. It rejects malformed Messages, `system` or `tool` roles, and other parts before starting the Agent. This includes tool calls, tool results, and approval parts nested in user or assistant Messages. Omit `messages` for a prompt-only invocation. Each request creates a new invocation; history does not resume a previous runtime session.
 
+### Replay Channel history
+
+The same `invoke` setting enables `POST /_vitehub/channels/replay`. [`vitehub channels replay --url`](/docs/development/cli#replay-channel-history) uses it to send past Channel messages through an Agent. The route is under `/_vitehub/**`, so the Console access policy protects it. It accepts only `application/json` requests, rejects a cross-origin `Origin` header, and replays at most 100 messages per request. With `invoke: false`, the route returns `404`.
+
 
 Nuxt does not need an SEO module for the `X-Robots-Tag` default. If the app already uses `@nuxtjs/robots` or `@nuxtjs/seo`, add route metadata so its robots and sitemap modules also know that Console pages are not indexable:
 
