@@ -981,6 +981,20 @@ describe("workflow runtime", () => {
     expect(stop).toHaveBeenCalledOnce()
   })
 
+  it("shares one OpenWorkflow backend for padded and unpadded Postgres URLs", async () => {
+    const url = "postgres://localhost/shared%20workflow"
+    const [padded, unpadded] = await Promise.all([
+      getOpenWorkflowRuntime({ provider: "openworkflow", postgres: { url: ` \t${url}\n ` } }),
+      getOpenWorkflowRuntime({ provider: "openworkflow", postgres: { url } }),
+    ])
+
+    expect(padded).toBe(unpadded)
+    expect(openWorkflowMock.connect).toHaveBeenCalledExactlyOnceWith(url, {
+      namespaceId: "production",
+      schema: "openworkflow",
+    })
+  })
+
   it("evicts a rejected OpenWorkflow acquisition", async () => {
     const failure = new Error("database unavailable")
     const config = {
@@ -1171,9 +1185,13 @@ describe("workflow runtime", () => {
     const path = join(root, " workflow.sqlite ")
     try {
       const config = normalizeWorkflowOptions({ provider: "openworkflow", sqlite: { path } })!
-      await getOpenWorkflowRuntime(config)
+      const spaced = await getOpenWorkflowRuntime(config)
+      const unspaced = await getOpenWorkflowRuntime({ provider: "openworkflow", sqlite: { path: path.trim() } })
 
+      expect(spaced).not.toBe(unspaced)
+      expect(openWorkflowMock.sqliteConnect).toHaveBeenCalledTimes(2)
       expect(openWorkflowMock.sqliteConnect).toHaveBeenCalledWith(path, { namespaceId: "production" })
+      expect(openWorkflowMock.sqliteConnect).toHaveBeenCalledWith(path.trim(), { namespaceId: "production" })
     }
     finally {
       await rm(root, { recursive: true, force: true })

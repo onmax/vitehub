@@ -86,7 +86,7 @@ function normalizeOpenWorkflowPostgresOptions(value: unknown): OpenWorkflowPostg
     ...(namespaceId ? { namespaceId } : {}),
     ...(typeof runMigrations === "boolean" ? { runMigrations } : {}),
     ...(schema ? { schema } : {}),
-    ...(url ? { url } : {}),
+    ...(url ? { url: typeof url === "string" ? url.trim() : url } : {}),
   }
 }
 
