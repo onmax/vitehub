@@ -262,6 +262,7 @@ describe("Channel message handle", () => {
 
   it("rejects message methods that use reserved names or invalid shapes", () => {
     expect(() => defineChannel("bad", { message: { methods: { data: (() => undefined) as never } } })).toThrow(/reserved name/)
+    expect(() => defineChannel("bad", { message: { methods: { then: (() => undefined) as never } } })).toThrow(/reserved name/)
     expect(() => defineChannel("bad", { message: { methods: { tag: { handler: () => undefined } as never } } })).toThrow(/must be a function or \{ read: true, handler \}/)
   })
 })

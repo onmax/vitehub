@@ -3075,7 +3075,7 @@ function githubPullRequestWorkspaceCapability<TRuntimeConfig extends AgentRuntim
   return trustGitHubPullRequestWorkspaceCapability(Object.freeze(capability))
 }
 
-const reservedChannelMessageMethodNames = new Set(["channel", "data", "kind"])
+const reservedChannelMessageMethodNames = new Set(["channel", "data", "kind", "then"])
 
 function validateChannelMessageDefinition(kind: string, message: unknown): void {
   if (message === undefined) return
@@ -3088,7 +3088,7 @@ function validateChannelMessageDefinition(kind: string, message: unknown): void 
   }
   for (const [name, method] of Object.entries(message.methods)) {
     if (reservedChannelMessageMethodNames.has(name)) {
-      throw agentDiagnostics.AGENT_R0929({ message: `[vitehub] Channel "${kind}" message method "${name}" uses a reserved name. Reserved names: channel, data, kind.` })
+      throw agentDiagnostics.AGENT_R0929({ message: `[vitehub] Channel "${kind}" message method "${name}" uses a reserved name. Reserved names: channel, data, kind, then.` })
     }
     if (hasRuntimeType(method, "function")) continue
     if (isRecord(method) && method.read === true && hasRuntimeType(method.handler, "function")) continue
