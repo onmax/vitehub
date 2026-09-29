@@ -8,8 +8,10 @@ import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGener
 import { removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
 import { collectViteHubProviderImportAliases, createNoExternalMerger, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { normalizeHosting } from "@vite-hub/internal/hosting"
+import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
 import { normalizeWorkflowOptions } from "./config.ts"
+import { discoverWorkflowDevDefinitions, workflowDevGeneratedDir, writeWorkflowDevRegistryFiles } from "./internal/dev-registry.ts"
 import { createCloudflareWorkflowNitroConfig, createOptionalViteDevtoolsPlugin, createVercelWorkflowTransformPlugin, discoverWorkflowProviderSources, generateWorkflowProviderOutputs, hasVercelNativeWorkflowEntry, resolveVercelWorkflowWorld, workflowPackageName, writeProviderEntries } from "./internal/vite-build.ts"
 
 import type { WorkflowModuleOptions } from "./types.ts"
@@ -166,11 +168,61 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     }
   }
 
+  // Provider servers install the discovered Workflow registry in production.
+  // In `vite dev`, a generated Nitro plugin installs it in the Nitro dev runtime.
+  let devRootDir: string | undefined
+
+  function isWorkflowEnabled(): boolean {
+    try {
+      return Boolean(normalizeWorkflowOptions(workflow, { hosting: internalOptions.hosting ?? "vercel" }))
+    }
+    catch {
+      // The build reports configuration errors. Development keeps the app running without a registry.
+      return false
+    }
+  }
+
+  async function writeDevRegistry(rootDir: string) {
+    return await writeWorkflowDevRegistryFiles({
+      definitions: discoverWorkflowDevDefinitions(rootDir, serverDirs),
+      importBase: internalOptions.importBase,
+      projectRoot: resolveViteHubProjectRoot(rootDir),
+    })
+  }
+
   return {
     name: "@vite-hub/workflow/vite",
-    config(config) {
-      workflow = config.workflow ?? workflow
-      serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
+    config: {
+      // Nitro reads `config.nitro` in its own `config` hook, so the plugin must be added first.
+      order: "pre",
+      async handler(config, env) {
+        workflow = config.workflow ?? workflow
+        serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
+        if (env.command !== "serve" || !isWorkflowEnabled()) return
+        devRootDir = resolve(config.root || process.cwd())
+        const { plugin } = await writeDevRegistry(devRootDir)
+        const kit = createNitroServerKit((config as { nitro?: unknown }).nitro)
+        kit.addPlugin(plugin, "start")
+        ;(config as { nitro?: unknown }).nitro = kit.config
+      },
+    },
+    configureServer(server) {
+      const rootDir = devRootDir
+      if (!rootDir) return
+      // Vite does not call `handleHotUpdate` for new or deleted files, so watch them directly.
+      const refresh = async (path: string) => {
+        const file = path.replace(/\\/g, "/")
+        if (file.includes(`/${workflowDevGeneratedDir}/`)) return
+        if (!/\.(?:c|m)?[jt]s$/i.test(file) || !/(?:\/workflows\/|\.workflow\.)/i.test(file)) return
+        const { changed } = await writeDevRegistry(rootDir)
+        const nitro = server.environments.nitro
+        for (const changedFile of changed) {
+          for (const module of nitro?.moduleGraph.getModulesByFile(changedFile) ?? []) nitro?.moduleGraph.invalidateModule(module)
+        }
+      }
+      for (const event of ["add", "change", "unlink"] as const) {
+        server.watcher.on(event, path => void refresh(path).catch(error => server.config.logger.error(`[vitehub] Workflow dev registry update failed: ${error instanceof Error ? error.message : String(error)}`)))
+      }
     },
     configResolved(config) {
       resolved = config
