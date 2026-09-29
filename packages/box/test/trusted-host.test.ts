@@ -9,6 +9,11 @@ import { resolveBox } from "../src/index.ts";
 import { createTrustedHostRuntime } from "../src/internal/trusted-host.ts";
 import { boxProvider, type TestSession } from "./helpers.ts";
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...fs, rm: vi.fn(fs.rm) };
+});
+
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -435,6 +440,39 @@ describe("createTrustedHostRuntime", () => {
       kill.mockRestore();
       await session.destroy().catch(() => undefined);
       await handle.kill().catch(() => undefined);
+    }
+  });
+
+  it("retries state-lock removal after a failed release", async () => {
+    const root = await temporaryRoot();
+    const stateRoot = join(root, "state");
+    const key = "portable-box-test/retry-lock-release";
+    const lock = `${join(stateRoot, createHash("sha256").update(key).digest("hex"))}.lock`;
+    const box = await resolveBox({
+      home: { state: { ".acme": { key } } },
+      runtime: createTrustedHostRuntime({ stateRoot }),
+    }, {});
+    const session = await boxProvider(box).createSession();
+    const remove = vi.mocked(rm);
+    const originalRemove = remove.getMockImplementation()!;
+    let failRelease = true;
+    remove.mockImplementation(async (path, options) => {
+      if (path === lock && failRelease) {
+        failRelease = false;
+        throw new Error("lock removal failed");
+      }
+      return originalRemove(path, options);
+    });
+    try {
+      await expect(session.destroy()).rejects.toThrow("lock removal failed");
+      await expect(stat(lock)).resolves.toMatchObject({});
+      await session.destroy();
+      await expect(stat(lock)).rejects.toMatchObject({ code: "ENOENT" });
+      const next = await boxProvider(box).createSession();
+      await next.destroy();
+    } finally {
+      remove.mockImplementation(originalRemove);
+      await session.destroy().catch(() => undefined);
     }
   });
 

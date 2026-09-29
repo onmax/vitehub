@@ -770,8 +770,8 @@ async function acquireFileLock(
       let released = false;
       return async () => {
         if (released) return;
-        released = true;
         await rm(path, { force: true, recursive: true });
+        released = true;
       };
     }
     await abortable(new Promise((resolvePromise) => setTimeout(resolvePromise, 25)), abortSignal);
