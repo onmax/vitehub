@@ -7,6 +7,7 @@ import { loadAiSdk } from "./ai-sdk-runtime.ts"
 import type {
   AgentCapabilityDefinition,
   AgentCapabilityInspectionDefinition,
+  AgentCapabilityRequirement,
   AgentInspectionValue,
   AgentCapabilityRuntimeContext,
   AgentRuntimeConfig,
@@ -15,6 +16,7 @@ import type {
   MaybePromise,
 } from "../types.ts"
 import type { McpClient, McpClientConfig, McpToolFingerprints } from "../mcp/types.ts"
+import type { AgentConnection, AgentConnectionEffect } from "../capabilities/connection.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
@@ -24,8 +26,15 @@ interface McpToolDrift {
   removed: string[]
 }
 
+/** Connection that authorizes one MCP server. Each discovered tool gets a policy for its Operation. */
+export interface McpToolServerConnection {
+  connection: AgentConnection
+  operation: (toolName: string) => { effect: AgentConnectionEffect, id: string }
+}
+
 export interface ResolvedMcpToolServer {
   connection: McpClient | McpClientConfig
+  connectionBinding?: McpToolServerConnection
   integrity?: McpToolFingerprints
   owned?: boolean
 }
@@ -48,6 +57,7 @@ export interface McpToolCapabilityOptions<
   integrityLabel: string
   invalidServerMessage: string
   metadata?: Record<string, unknown>
+  requires?: AgentCapabilityRequirement[]
   servers: McpToolServerDefinition<TRuntimeConfig, Name>[]
   toolName: (serverName: string, toolName: string) => string
 }
@@ -213,6 +223,7 @@ export function defineMcpToolCapability<
     id: options.id,
     ...(options.inspection ? { inspection: options.inspection } : {}),
     metadata: options.metadata,
+    ...(options.requires ? { requires: options.requires } : {}),
     async resolve(context) {
       const tools: AgentToolSet = {}
       const clients: McpClient[] = []
@@ -264,7 +275,7 @@ export function defineMcpToolCapability<
           await assertMcpToolIntegrity(server.name, serverTools, serverDefinition.integrity, options.integrityLabel)
         }
         servers[index]!.connection = safeAgentTelemetryMetadata(metadata) ?? {}
-        return { metadata, server, serverTools }
+        return { binding: serverDefinition.connectionBinding, metadata, server, serverTools }
       }))
       for (const [index, result] of results.entries()) {
         if (result.status === "rejected") {
@@ -283,7 +294,7 @@ export function defineMcpToolCapability<
       if (hardFailure) throw hardFailure.reason
       for (const result of results) {
         if (result.status !== "fulfilled" || !result.value) continue
-        const { metadata, server, serverTools } = result.value
+        const { binding, metadata, server, serverTools } = result.value
         for (const [toolName, tool] of Object.entries(serverTools || {})) {
           // SAFETY: McpClient.tools() establishes that each discovered entry is an Agent tool definition.
           const definition = tool as AgentToolDefinition & { metadata?: Record<string, unknown> }
@@ -291,15 +302,18 @@ export function defineMcpToolCapability<
           if (tools[name]) {
             throw agentDiagnostics.AGENT_R0563({ message: `[vitehub] Duplicate MCP tool name "${name}" after normalization.` })
           }
+          const operation = binding?.operation(toolName)
           tools[name] = {
             ...definition,
             metadata: {
               ...definition.metadata,
+              ...(binding && operation ? { connection: { name: binding.connection.name, operation: operation.id } } : {}),
               mcp: metadata,
               mcpServer: server.name,
               originalName: toolName,
             },
             name,
+            ...(binding && operation ? { policy: binding.connection.policy(name, [operation]) } : {}),
           }
         }
       }

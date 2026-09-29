@@ -95,11 +95,11 @@ it("packages optional Agent runtimes into immutable Nuxt output", { timeout: 180
     await writeFile(join(root, "app.vue"), "<template><div>ViteHub runtime proof</div></template>\n", "utf8")
     await writeFile(join(root, "server", "api", "proof.get.ts"), `
 import { defineAgent, runAgentInline } from "@vite-hub/agent"
-import { executor, mcp } from "@vite-hub/agent/capabilities"
+import { gmail, mcp } from "@vite-hub/agent/capabilities"
 
 const agent = defineAgent({ driver: { env: { PATH: "" }, kind: "codex" }, runtime: false })
 const optionalServer = false as boolean
-const executorCapability = executor(false)
+const gmailCapability = gmail({ connection: "google" })
 const capability = mcp({
   servers: {
     optional: optionalServer ? { transport: { type: "http", url: "http://127.0.0.1:1/optional" } } : undefined,
@@ -108,7 +108,6 @@ const capability = mcp({
 })
 
 export default defineEventHandler(async () => {
-  await executorCapability.resolve?.({ tools: { add() {} } } as never)
   let mcp = "loaded"
   let provider = "loaded"
   try {
@@ -127,7 +126,7 @@ export default defineEventHandler(async () => {
     if (message.includes("Cannot find") && message.includes("@t3tools/provider-runtime")) throw error
     provider = "loaded-before-cli-error"
   }
-  return { executor: executorCapability.id, mcp, provider }
+  return { gmail: gmailCapability.id, mcp, provider }
 })
 `, "utf8")
 
@@ -161,7 +160,7 @@ export default defineEventHandler(async () => {
       const response = await requestWhenReady(`http://127.0.0.1:${port}/api/proof`)
       expect(response.status, `${await response.clone().text()}\n${stderr}`).toBe(200)
       await expect(response.json()).resolves.toEqual({
-        executor: "executor",
+        gmail: "gmail",
         mcp: "loaded-before-transport-error",
         provider: "loaded-before-cli-error",
       })

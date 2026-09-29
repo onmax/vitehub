@@ -126,11 +126,23 @@ ViteHub checks `deny` first, then `approve`, then `allow`. When no pattern match
 | `require-approval` | The call fails with `CONNECTIONS_APPROVAL_REQUIRED`. Agent tools report it to the model. |
 | `deny` | The call fails with `CONNECTIONS_DENIED`. |
 
+## Use from Agents
+
+Agent Capabilities call a Connection with the Agent name as the actor. The rule in `access.agents.<name>` applies. Tools check access before they run.
+
+| Capability | Option | Operation ids |
+| --- | --- | --- |
+| [`gmail()`](/docs/capabilities/gmail) | `connection`, default `'google'` | `gmail.messages.list`, `gmail.messages.get`, `gmail.drafts.create` |
+| [`openapi()`](/docs/capabilities/openapi#authenticate-through-a-connection) | `connection` | `openapi.<operationId>` |
+| [`mcp()`](/docs/capabilities/mcp#authenticate-through-a-connection) | `servers.<name>.connection` | `mcp.<server>.tools.<tool>`, `mcp.<server>.rpc.<method>` |
+
+`gmail.drafts.create`, OpenAPI operations other than `GET` and `HEAD`, and all MCP tool calls are writes. Without a matching rule they are denied, so allow or approve them in the Agent rule.
+
 ## Activity
 
 ViteHub stores activity in the `vitehub_connection_activity` table. Each entry has the actor, action (`call`, `connect`, `refresh`, `disconnect`), Operation id, effect, outcome, provider status, duration, target host and path, and trace ids. Activity never contains request bodies, response bodies, headers, or tokens.
 
-Agent tools record every call, reads included. The Console shows activity for each Connection.
+Agent tools record every call, reads included. MCP protocol messages are recorded only when they are denied or fail. The Console shows activity for each Connection.
 
 ## Storage and security
 

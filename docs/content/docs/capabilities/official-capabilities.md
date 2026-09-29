@@ -20,7 +20,6 @@ import {
   title,
   db,
   email,
-  executor,
   fetch,
   git,
   gmail,
@@ -84,13 +83,12 @@ import {
 
 | Ability | Capability | Use it when |
 | --- | --- | --- |
-| Executor catalog | [`executor()`](/docs/capabilities/executor) | Use integrations and policies configured behind one Executor MCP endpoint. |
-| MCP servers | [`mcp()`](/docs/capabilities/mcp) | Add tools from external MCP servers to the Agent. |
+| MCP servers | [`mcp()`](/docs/capabilities/mcp) | Add tools from external MCP servers, such as an Executor catalog, to the Agent. |
 | Web search | [`webSearch()`](/docs/capabilities/web-search) | The Agent needs model web search or normalized web search/read tools. |
 | Fetch tools | [`fetch()`](/docs/capabilities/fetch) | The Agent needs named HTTP tools for developer-approved endpoints. |
 | OpenAPI tools | [`openapi()`](/docs/capabilities/openapi) | The Agent needs a selected OpenAPI operation catalog exposed as bounded HTTP tools or a generated Capability CLI. |
 | Transcription | [`transcribe()`](/docs/capabilities/transcribe) | Turn audio input into text before model execution. |
-| Gmail | [`gmail()`](/docs/capabilities/gmail) | Search Gmail or create unsent drafts through structured tools. |
+| Gmail | [`gmail()`](/docs/capabilities/gmail) | Search and read Gmail or create unsent drafts through a Google Connection. |
 
 ### Decisions and output
 

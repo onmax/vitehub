@@ -438,6 +438,54 @@ describe("openapi capability", () => {
     expect((init.headers as Headers).get("x-cube-token")).toBe("cube-token")
   })
 
+  it("sends requests through a Connection after the request hook", async () => {
+    const global = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ unexpected: true }))
+    const connections = {
+      decide: vi.fn(async (_name: string, _actor: unknown, operation: { effect: string }) => operation.effect === "read" ? "allow" as const : "deny" as const),
+      fetch: vi.fn(async (_name: string, _url: string | URL, _init: RequestInit | undefined, _options: unknown) => jsonResponse({ customers: [] })),
+      record: vi.fn(async () => {}),
+    }
+    const hookHeaders: Array<string | null> = []
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const { openapi } = await import("../src/capabilities.ts")
+    const capability = openapi({
+      connection: "portal",
+      hooks: { request: { handler({ request }) {
+        hookHeaders.push(request.headers.get("authorization"))
+        request.headers.set("x-hook", "yes")
+      } } },
+      operations: ["listCustomers", "createOrder"],
+      spec: portalSpec(),
+    })
+    expect(capability.requires).toEqual([{ primitive: "connections" }])
+    const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, {
+      ...runtime(),
+      capabilities: { connections: { runtime: () => connections } },
+    }, { prompt: "list" })
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    const tools = resolved.tools as AgentToolSet
+
+    await expect(tools.listCustomers.execute?.({ query: { region: "eu" } })).resolves.toEqual({ customers: [] })
+    expect(global).not.toHaveBeenCalled()
+    expect(hookHeaders).toEqual([null])
+    const [name, url, init, options] = connections.fetch.mock.calls[0] ?? []
+    expect([name, url]).toEqual(["portal", "https://portal.example.com/runtime/customers?region=eu"])
+    expect(new Headers(init?.headers).get("x-hook")).toBe("yes")
+    expect(options).toMatchObject({ audit: "all", effect: "read", operation: "openapi.listCustomers", trace: { tool: "listCustomers" } })
+    expect(tools.listCustomers.metadata).toMatchObject({ connection: { name: "portal", operation: "openapi.listCustomers" } })
+
+    if (typeof tools.createOrder.policy !== "function") throw new Error("expected a Connection tool policy")
+    await expect(tools.createOrder.policy({ name: "createOrder" })).resolves.toBe("deny")
+    expect(connections.decide).toHaveBeenLastCalledWith("portal", { id: "agent", kind: "agent" }, { effect: "write", id: "openapi.createOrder" })
+    expect(connections.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "openapi.createOrder", outcome: "denied" }), undefined)
+    await resolved.close()
+  })
+
+  it("rejects an empty Connection name", async () => {
+    const { openapi } = await import("../src/capabilities.ts")
+    expect(() => openapi({ connection: " ", operations: ["listCustomers"], spec: portalSpec() })).toThrow("openapi({ connection })")
+  })
+
   it("lets request hooks lower the bounded OpenAPI response limit", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ ok: true }))
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")

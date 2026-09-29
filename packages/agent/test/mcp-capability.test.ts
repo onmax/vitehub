@@ -246,6 +246,73 @@ describe("mcp capability", () => {
     }
   })
 
+  it("authorizes a config server through a Connection and checks each tool call", async () => {
+    const createdClient = createClient({ search: { execute: vi.fn(async () => "ok") } })
+    const createMCPClient = vi.fn(async (_config: Record<string, unknown>) => createdClient)
+    vi.doMock("@ai-sdk/mcp", () => ({ createMCPClient }))
+    const connections = {
+      decide: vi.fn(async (_name: string, _actor: unknown, operation: { id: string }) => operation.id === "mcp.executor.tools.search" ? "allow" as const : "deny" as const),
+      fetch: vi.fn(async (_name: string, _url: string | URL, _init: RequestInit | undefined, _options: unknown) => new Response("{}")),
+      record: vi.fn(async () => {}),
+    }
+
+    try {
+      const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+      const { mcp } = await import("../src/capabilities.ts")
+      const capability = mcp({
+        servers: { executor: { connection: "executor", transport: { type: "http", url: "https://executor.test/mcp" } } },
+      })
+      expect(capability.requires).toEqual([{ primitive: "connections" }])
+      const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, {
+        ...runtime(),
+        capabilities: { connections: { runtime: () => connections } },
+      }, {})
+
+      const config = createMCPClient.mock.calls[0]?.[0]
+      expect(config).not.toHaveProperty("connection")
+      const transport = config?.transport as { fetch: typeof globalThis.fetch, type: string, url: string }
+      expect(transport).toMatchObject({ type: "http", url: "https://executor.test/mcp" })
+
+      await transport.fetch("https://executor.test/mcp", { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: {}, name: "search" } }), method: "POST" })
+      await transport.fetch("https://executor.test/mcp", { body: JSON.stringify({ id: 2, jsonrpc: "2.0", method: "tools/list" }), method: "POST" })
+      await transport.fetch(new URL("https://executor.test/mcp"), { method: "GET" })
+      expect(connections.fetch.mock.calls.map(([name, url, , options]) => [name, String(url), options])).toEqual([
+        ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "all", effect: "write", operation: "mcp.executor.tools.search", trace: expect.objectContaining({ tool: "mcp_executor_search" }) })],
+        ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "changes", effect: "read", operation: "mcp.executor.rpc.tools/list" })],
+        ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "changes", effect: "read", operation: "mcp.executor.rpc.stream" })],
+      ])
+
+      const tool = resolved.tools?.mcp_executor_search
+      expect(tool?.metadata).toMatchObject({ connection: { name: "executor", operation: "mcp.executor.tools.search" }, mcpServer: "executor" })
+      if (typeof tool?.policy !== "function") throw new Error("expected a Connection tool policy")
+      await expect(tool.policy({ name: "mcp_executor_search" })).resolves.toBe("allow")
+      connections.decide.mockResolvedValue("deny")
+      await expect(tool.policy({ name: "mcp_executor_search" })).resolves.toBe("deny")
+      expect(connections.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "mcp.executor.tools.search", outcome: "denied", tool: "mcp_executor_search" }), undefined)
+      await resolved.close()
+    }
+    finally {
+      vi.doUnmock("@ai-sdk/mcp")
+    }
+  })
+
+  it("rejects a Connection on a transport it cannot authorize", async () => {
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const { mcp } = await import("../src/capabilities.ts")
+    const primitive = { runtime: () => ({ decide: vi.fn(), fetch: vi.fn(), record: vi.fn() }) }
+    const transport: MCPTransport = { close: vi.fn(), send: vi.fn(), start: vi.fn() }
+    for (const server of [
+      { connection: "executor", transport },
+      { connection: "executor", transport: { authProvider: {} as never, type: "http" as const, url: "https://executor.test/mcp" } },
+      { connection: " ", transport: { type: "http" as const, url: "https://executor.test/mcp" } },
+    ]) {
+      await expect(resolveAgentCapabilities({ capabilities: [mcp({ servers: { executor: server } })] }, {
+        ...runtime(),
+        capabilities: { connections: primitive },
+      }, {})).rejects.toThrow(/uses a connection|non-empty connection name/)
+    }
+  })
+
   it("removes credentials from URL metadata while retaining the endpoint", async () => {
     const createdClient = createClient({ search: { execute: vi.fn() } })
     const createMCPClient = vi.fn(async () => createdClient)

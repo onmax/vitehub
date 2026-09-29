@@ -40,7 +40,11 @@ export interface ConnectionCallOptions {
   actor: ConnectionActor
   audit?: "all" | "changes"
   dryRun?: boolean
+  /** Effect for `fetch`. Default: GET and HEAD are reads, other methods are writes. */
+  effect?: ConnectionEffect
   event?: unknown
+  /** Operation id for `fetch`, matched by access patterns. Default: `fetch.<method>`. */
+  operation?: string
   trace?: ConnectionTrace
 }
 
@@ -374,8 +378,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const value = await definition(name)
       const url = new URL(input)
       const method = (init.method ?? "GET").toUpperCase()
-      const effect: ConnectionEffect = method === "GET" || method === "HEAD" ? "read" : "write"
-      const base = await guard(name, value, { effect, id: `fetch.${method.toLowerCase()}` }, callOptions, url)
+      const effect: ConnectionEffect = callOptions.effect ?? (method === "GET" || method === "HEAD" ? "read" : "write")
+      const base = await guard(name, value, { effect, id: callOptions.operation ?? `fetch.${method.toLowerCase()}` }, callOptions, url)
       if (callOptions.dryRun && effect === "write") {
         await recordQuietly({ ...base, outcome: "skipped" }, callOptions.event)
         return new Response(null, { headers: { "x-vitehub-connection-skipped": "dry-run" }, status: 204 })
