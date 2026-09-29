@@ -373,9 +373,17 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         : tokens[i] === "[" && tokens[i + 2] === "]"
           ? exportName(tokens[i + 1])
           : undefined
-      const open = tokens[i] === "." ? i + 2 : i + 3
+      let open = tokens[i] === "." ? i + 2 : i + 3
+      if (tokens[open] === "?" && tokens[open + 1] === ".") open += 2
       if (!method || !mutatorMethods.has(method) || tokens[open] !== "(") continue
-      const argument = tokens[open + 1]
+      let argumentIndex = open + 1
+      while (tokens[argumentIndex] === "(") argumentIndex++
+      const argument = tokens[argumentIndex]
+      if (argumentIndex > open + 1) {
+        let closeIndex = argumentIndex + 1
+        while (tokens[closeIndex] === ")") closeIndex++
+        if (closeIndex === argumentIndex + 1) continue
+      }
       if (argument && declarations.has(argument)) mutatedBindings.add(argument)
     }
   }

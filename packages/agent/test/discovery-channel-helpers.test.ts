@@ -222,6 +222,8 @@ it.each([
   'const { pullRequest: alias } = options; alias.workspace = true',
   'Object.assign(options, { pullRequest: true })',
   'Object["assign"](options, { pullRequest: true })',
+  'Object.assign?.(options, { pullRequest: true })',
+  'Object["assign"]((options), { pullRequest: true })',
   'Object.defineProperty(options, "pullRequest", { value: true })',
 ])("rejects mutated Channel option bindings: %s", async (mutation) => {
   const source = `${imports} const options = { pullRequest: { workspace: false } }; ${mutation}; export default defineAgent({ channels: { custom: github(options) } })`
