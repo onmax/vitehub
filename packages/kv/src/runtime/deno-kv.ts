@@ -41,7 +41,8 @@ function fromDenoKey(key: DenoKVKey): string | undefined {
 function toDenoExpireIn(ttl: unknown): { expireIn: number } | undefined {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Match unstorage's TTL normalization at the write-options boundary.
   if (typeof ttl !== "number" || !Number.isFinite(ttl) || ttl <= 0) return undefined
-  return { expireIn: Math.max(1, Math.ceil(ttl * 1_000)) }
+  const expireIn = Math.max(1, Math.ceil(ttl * 1_000))
+  return Number.isSafeInteger(expireIn) ? { expireIn } : undefined
 }
 
 export default function createDenoKVDriver(options: ResolvedDenoKVStoreConfig = { driver: "deno-kv" }): KVRuntimeDriver {
@@ -98,25 +99,13 @@ export default function createDenoKVDriver(options: ResolvedDenoKVStoreConfig = 
       return (await matchingKeys(base)).flatMap(key => fromDenoKey(key) ?? []).sort()
     },
     async listKeys({ cursor, limit, prefix = "" }: KVListOptions) {
-      const kv = await open()
+      const iterator = (await open()).list({ prefix: [] }, { cursor, limit })
       const keys: string[] = []
-      let nextCursor = cursor
-      let resultCursor: string | undefined
-      do {
-        const iterator = kv.list({ prefix: [] }, { cursor: nextCursor, limit: Math.max(1, limit - keys.length) })
-        for await (const entry of iterator) {
-          const key = fromDenoKey(entry.key)
-          if (key?.startsWith(prefix)) keys.push(key)
-          if (keys.length >= limit) break
-        }
-        resultCursor = iterator.cursor
-        nextCursor = resultCursor
-      } while (keys.length < limit && resultCursor)
-
-      if (resultCursor && keys.length >= limit) {
-        return { keys, cursor: resultCursor }
+      for await (const entry of iterator) {
+        const key = fromDenoKey(entry.key)
+        if (key?.startsWith(prefix)) keys.push(key)
       }
-      return { keys }
+      return iterator.cursor ? { keys, cursor: iterator.cursor } : { keys }
     },
     async hasItem(key) {
       return (await (await open()).get(toDenoKey(key))).versionstamp !== null

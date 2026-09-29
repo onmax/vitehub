@@ -483,10 +483,14 @@ describe("kv runtime", () => {
 
     await storage.setItem("short", "value", { ttl: 0.0001 })
     await storage.setItem("infinite", "value", { ttl: Number.POSITIVE_INFINITY })
+    await storage.setItem("overflow", "value", { ttl: Number.MAX_VALUE })
+    await storage.setItem("unsafe", "value", { ttl: Number.MAX_SAFE_INTEGER })
 
     const native = await openKv.mock.results[0]!.value
     expect(native.set).toHaveBeenNthCalledWith(1, ["short"], "value", { expireIn: 1 })
     expect(native.set).toHaveBeenNthCalledWith(2, ["infinite"], "value", undefined)
+    expect(native.set).toHaveBeenNthCalledWith(3, ["overflow"], "value", undefined)
+    expect(native.set).toHaveBeenNthCalledWith(4, ["unsafe"], "value", undefined)
   })
 
   it("retries a failed Deno connection and shares concurrent opens", async () => {
@@ -717,16 +721,16 @@ describe("kv runtime", () => {
     })
   })
 
-  it("fills selective Deno KV pages without exceeding the requested size", async () => {
+  it("bounds selective Deno KV pages and resumes from the provider cursor", async () => {
     const list = vi.fn((_selector: { prefix: [] }, options: { cursor?: string; limit?: number } = {}) => {
       const iterator = (async function* () {
         if (!options.cursor) {
           yield { key: ["other"], value: null }
         }
         else {
-          yield { key: ["match-1"], value: null }
-          yield { key: ["match-2"], value: null }
-          yield { key: ["match-3"], value: null }
+          for (const key of ["match-1", "match-2", "match-3"].slice(0, options.limit)) {
+            yield { key: [key], value: null }
+          }
         }
       })()
       return Object.assign(iterator, { cursor: options.cursor ? "deno-after" : "deno-next" })
@@ -743,12 +747,18 @@ describe("kv runtime", () => {
     const { default: createDenoKVDriver } = await import("../src/runtime/deno-kv.ts")
     const driver = createDenoKVDriver()
 
-    await expect(driver.listKeys({ limit: 2, prefix: "match" })).resolves.toEqual({
+    const first = await driver.listKeys({ limit: 2, prefix: "match" })
+    expect(first).toEqual({
+      keys: [],
+      cursor: "deno-next",
+    })
+    await expect(driver.listKeys({ cursor: first.cursor, limit: 2, prefix: "match" })).resolves.toEqual({
       keys: ["match-1", "match-2"],
       cursor: "deno-after",
     })
     expect(list).toHaveBeenNthCalledWith(1, { prefix: [] }, { cursor: undefined, limit: 2 })
     expect(list).toHaveBeenNthCalledWith(2, { prefix: [] }, { cursor: "deno-next", limit: 2 })
+    expect(list).toHaveBeenCalledTimes(2)
   })
 
 })
