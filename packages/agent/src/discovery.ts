@@ -168,6 +168,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // Static bindings from relative modules, keyed by local name.
   const moduleImports = new Map<string, { specifier: string, name: string }>()
   const namedExports = new Map<string, number>()
+  // Bindings re-exported from relative modules, keyed by exported name.
+  const reExports = new Map<string, { specifier: string, name: string }>()
+  // Specifiers of `export * from` declarations.
+  const starExports: string[] = []
   let exported: number | undefined
   let depth = 0
   for (let i = 0; i < tokens.length; i++) {
@@ -249,10 +253,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         }
       }
       if (["const", "let", "var"].includes(tokens[i])) {
-        const name = tokens[i + 1]
-        let equals = i + 2
-        while (equals < tokens.length && tokens[equals] !== "=" && tokens[equals] !== ";" && tokens[equals] !== ",") equals++
-        if (name && tokens[equals] === "=") declarations.set(name, equals + 1)
+        // Record every declarator, such as `a` and `b` in `const a = x, b = y`.
+        for (const [name, initializer] of declarators(i)) {
+          declarations.set(name, initializer)
+          if (tokens[i - 1] === "export") namedExports.set(name, initializer)
+        }
       }
       // Hoisted function declarations are valid callback bindings too. Keep
       // the reference at the `function` token so callback scanning can locate
@@ -272,9 +277,21 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
             if (e !== i + 2 && tokens[e - 1] !== ",") continue
             if (/^[A-Za-z_$][\w$]*$/.test(tokens[e] ?? "")) namedExports.set(tokens[e + 1] === "as" ? tokens[e + 2]! : tokens[e]!, e)
           }
+        } else {
+          // `export { name as alias } from "./channel"` exports the other
+          // module's binding. Package re-exports stay unresolved.
+          const specifier = tokens[close + 2]?.slice(1, -1) ?? ""
+          if (specifier.startsWith("./") || specifier.startsWith("../")) {
+            for (const [alias, name] of relativeImportBindings(tokens.slice(i + 1, close + 1))) {
+              reExports.set(alias, { specifier, name })
+            }
+          }
         }
       }
-      if (tokens[i] === "export" && ["const", "let", "var", "function"].includes(tokens[i + 1]) && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "")) {
+      if (tokens[i] === "export" && tokens[i + 1] === "*" && tokens[i + 2] === "from") {
+        starExports.push(tokens[i + 3]?.slice(1, -1) ?? "")
+      }
+      if (tokens[i] === "export" && tokens[i + 1] === "function" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "")) {
         namedExports.set(tokens[i + 2]!, i + 2)
       }
     }
@@ -701,7 +718,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       let token = tokens[i]
       if (depth === 0 && token === "}") break
       if (depth === 0 && atProperty) {
-        if (token === "." && tokens[i + 1] === "." && tokens[i + 2] === ".") {
+        if ((token === "get" || token === "set") && ![":", ",", "}", "("].includes(tokens[i + 1])) {
+          // An accessor computes its value when the Channel reads it.
+          if (inspectChannels) throw opaqueChannelError()
+          onOpaqueSettings?.()
+          atProperty = false
+        } else if (token === "." && tokens[i + 1] === "." && tokens[i + 2] === ".") {
           const spread = properties(i + 3, inspectChannels, inspectSettings, () => {
             // Opaque spreads can replace an earlier Workspace marker. A later
             // explicit field, including one inside this spread, restores it.
@@ -922,10 +944,58 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     throw pullRequestError()
   }
 
-  function importedChannelOwnsWorkspace(specifier: string, name: string): boolean {
+  function importedModule(specifier: string) {
     const module = resolveChannelModule(file, specifier)
     if (module === undefined || modules.has(module.file)) throw importedChannelError()
-    return inspectAgentModule(module.source, module.file, new Set([...modules, module.file])).exportedChannelOwnsWorkspace(name)
+    return inspectAgentModule(module.source, module.file, new Set([...modules, module.file]))
+  }
+
+  function importedChannelOwnsWorkspace(specifier: string, name: string): boolean {
+    return importedModule(specifier).exportedChannelOwnsWorkspace(name)
+  }
+
+  // Returns undefined when this module does not export the name.
+  function exportOwnsWorkspace(name: string): boolean | undefined {
+    const reExport = reExports.get(name)
+    if (reExport !== undefined) return importedChannelOwnsWorkspace(reExport.specifier, reExport.name)
+    const index = name === "default" ? exported : namedExports.get(name)
+    if (index !== undefined) return channelOwnsWorkspace(index)
+    // `export *` never re-exports the default binding.
+    if (name === "default") return
+    for (const specifier of starExports) {
+      const owns = importedModule(specifier).exportOwnsWorkspace(name)
+      if (owns !== undefined) return owns
+    }
+  }
+
+  // Returns [name, initializer] pairs for a top-level `const`, `let`, or
+  // `var` declaration. Declarators without an initializer are skipped.
+  function declarators(keyword: number): [string, number][] {
+    const result: [string, number][] = []
+    let name = keyword + 1
+    let initializer: number | undefined
+    let depth = 0
+    for (let k = keyword + 1; k < tokens.length; k++) {
+      const token = tokens[k]
+      if (depth === 0) {
+        if (token === ";" || (k > keyword + 1 && (startsStatement(k)
+          || (lineBreaks.has(k) && ["const", "let", "var", "export", "import", "function", "class"].includes(token))))) break
+        if (token === "=" && initializer === undefined && tokens[k + 1] !== ">") {
+          initializer = k + 1
+          if (/^[A-Za-z_$][\w$]*$/.test(tokens[name] ?? "")) result.push([tokens[name]!, initializer])
+        }
+        // A comma separates declarators only after an initializer or a bare
+        // name, and only before a binding. This skips type argument commas.
+        if (token === "," && (initializer !== undefined || k === name + 1)
+          && /^[A-Za-z_$][\w$]*$/.test(tokens[k + 1] ?? "") && ["=", ":", ",", ";"].includes(tokens[k + 2] ?? ";")) {
+          name = k + 1
+          initializer = undefined
+        }
+      }
+      if (["{", "(", "["].includes(token)) depth++
+      else if (["}", ")", "]"].includes(token) && --depth < 0) break
+    }
+    return result
   }
 
   function ownsWorkspace(index: number, seen = new Set<number>(), inspectParent = false): boolean {
@@ -1250,12 +1320,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (exported !== undefined) return ownsWorkspace(exported)
       return tokens.some((token, index) => token === "defineAgent" && ownsWorkspace(index))
     },
+    exportOwnsWorkspace,
     exportedChannelOwnsWorkspace(name: string): boolean {
-      let index = name === "default" ? exported : namedExports.get(name)
-      if (index === undefined) throw importedChannelError()
-      // `export const channel = ...` records the name; inspect its initializer.
-      if (tokens[index - 2] === "export" && ["const", "let", "var"].includes(tokens[index - 1])) index = declarations.get(tokens[index]) ?? index
-      return channelOwnsWorkspace(index)
+      const owns = exportOwnsWorkspace(name)
+      if (owns === undefined) throw importedChannelError()
+      return owns
     },
   }
 }
