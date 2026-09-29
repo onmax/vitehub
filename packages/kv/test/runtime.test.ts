@@ -106,9 +106,9 @@ function createDenoOpenKvMock() {
         yield { key: [key] as [string], value }
       }
     },
-    set: async ([key]: [string], value: unknown) => {
+    set: vi.fn(async ([key]: [string], value: unknown, _options?: { expireIn: number }) => {
       data.set(key, value)
-    },
+    }),
   }))
 
   return { close, data, openKv }
@@ -192,6 +192,10 @@ describe("kv runtime", () => {
       details: { operation: "get", store: "default" },
       name: "ViteHubError",
     })
+
+    fsLiteDriver = memoryDriver()
+    expectKVSuccess(await kv.set("settings", "recovered"))
+    expect(expectKVSuccess(await kv.get("settings"))).toBe("recovered")
   })
 
   it("falls back to hosted env config when the generated config import cannot load", async () => {
@@ -440,6 +444,50 @@ describe("kv runtime", () => {
     await driver.dispose?.()
     expect(openKv).toHaveBeenCalledWith(":memory:")
     expect(close).toHaveBeenCalledOnce()
+  })
+
+  it("passes write TTLs to Deno KV in milliseconds", async () => {
+    const { openKv } = createDenoOpenKvMock()
+    // SAFETY: This test provides the Deno API used by the runtime adapter.
+    ;(globalThis as typeof globalThis & { Deno?: unknown }).Deno = { openKv }
+    const { createHostedKVStorage } = await import("../src/runtime/hosted-storage.ts")
+    const storage = createHostedKVStorage({ store: { driver: "deno-kv" } })
+
+    await storage.setItem("temporary", "value", { ttl: 1.5 })
+    await storage.setItem("persistent", "value")
+
+    const native = await openKv.mock.results[0]!.value
+    expect(native.set).toHaveBeenNthCalledWith(1, ["temporary"], "value", { expireIn: 1500 })
+    expect(native.set).toHaveBeenNthCalledWith(2, ["persistent"], "value", undefined)
+  })
+
+  it.each([0, -1])("keeps Deno KV writes persistent for non-positive TTL %s", async (ttl) => {
+    const { openKv } = createDenoOpenKvMock()
+    // SAFETY: This test provides the Deno API used by the runtime adapter.
+    ;(globalThis as typeof globalThis & { Deno?: unknown }).Deno = { openKv }
+    const { createHostedKVStorage } = await import("../src/runtime/hosted-storage.ts")
+    const storage = createHostedKVStorage({ store: { driver: "deno-kv" } })
+
+    await storage.setItem("persistent", "value", { ttl })
+
+    const native = await openKv.mock.results[0]!.value
+    expect(native.set).toHaveBeenCalledWith(["persistent"], "value", undefined)
+  })
+
+  it("retries a failed Deno connection and shares concurrent opens", async () => {
+    const { openKv } = createDenoOpenKvMock()
+    openKv.mockRejectedValueOnce(new Error("temporarily unavailable"))
+    // SAFETY: This test provides the Deno API used by the runtime adapter.
+    ;(globalThis as typeof globalThis & { Deno?: unknown }).Deno = { openKv }
+    const { createHostedKVStorage } = await import("../src/runtime/hosted-storage.ts")
+    const storage = createHostedKVStorage({ store: { driver: "deno-kv" } })
+
+    const failed = await Promise.allSettled([storage.getItem("one"), storage.getItem("two")])
+    expect(failed.map(result => result.status)).toEqual(["rejected", "rejected"])
+    expect(openKv).toHaveBeenCalledOnce()
+
+    await expect(Promise.all([storage.getItem("one"), storage.getItem("two")])).resolves.toEqual([null, null])
+    expect(openKv).toHaveBeenCalledTimes(2)
   })
 
   it("bounds and resumes fs-lite listing across directories", async () => {
