@@ -292,6 +292,7 @@ async function installConsole(
     rule.headers = { ...rule.headers, "x-robots-tag": "noindex, nofollow" }
   }
   // doctor-disable-next-line typescript/evidence/no-chained-type-assertions -- @nuxt/icon declares this hook, while this structural seam keeps narrow nitro-only test hosts assignable.
+  // SAFETY: @nuxt/icon calls this hook with the mutable Set of client bundle icon names.
   const hookIcons = nuxt.hook as unknown as ((name: "icon:clientBundleIcons", callback: (icons: Set<string>) => void) => void) | undefined
   // @nuxt/icon does not scan dependencies, so add the Console icons to its client bundle.
   hookIcons?.("icon:clientBundleIcons", (icons) => {
