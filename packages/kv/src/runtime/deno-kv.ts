@@ -24,6 +24,8 @@ interface DenoRuntime {
   openKv?: (path?: string) => Promise<DenoKV>
 }
 
+const DENO_MAX_EXPIRY_TIMESTAMP = 8_000_000_000_000_000
+
 function getDenoRuntime(): DenoRuntime | undefined {
   // SAFETY: The optional global is checked for openKv before invocation.
   return (globalThis as typeof globalThis & { Deno?: DenoRuntime }).Deno
@@ -42,7 +44,8 @@ function toDenoExpireIn(ttl: unknown): { expireIn: number } | undefined {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Match unstorage's TTL normalization at the write-options boundary.
   if (typeof ttl !== "number" || !Number.isFinite(ttl) || ttl <= 0) return undefined
   const expireIn = Math.max(1, Math.ceil(ttl * 1_000))
-  return Number.isSafeInteger(expireIn) ? { expireIn } : undefined
+  const maxExpireIn = DENO_MAX_EXPIRY_TIMESTAMP - Date.now()
+  return Number.isSafeInteger(expireIn) && expireIn <= maxExpireIn ? { expireIn } : undefined
 }
 
 export default function createDenoKVDriver(options: ResolvedDenoKVStoreConfig = { driver: "deno-kv" }): KVRuntimeDriver {

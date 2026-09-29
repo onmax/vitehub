@@ -485,12 +485,14 @@ describe("kv runtime", () => {
     await storage.setItem("infinite", "value", { ttl: Number.POSITIVE_INFINITY })
     await storage.setItem("overflow", "value", { ttl: Number.MAX_VALUE })
     await storage.setItem("unsafe", "value", { ttl: Number.MAX_SAFE_INTEGER })
+    await storage.setItem("date-overflow", "value", { ttl: Number.MAX_SAFE_INTEGER / 1_000 })
 
     const native = await openKv.mock.results[0]!.value
     expect(native.set).toHaveBeenNthCalledWith(1, ["short"], "value", { expireIn: 1 })
     expect(native.set).toHaveBeenNthCalledWith(2, ["infinite"], "value", undefined)
     expect(native.set).toHaveBeenNthCalledWith(3, ["overflow"], "value", undefined)
     expect(native.set).toHaveBeenNthCalledWith(4, ["unsafe"], "value", undefined)
+    expect(native.set).toHaveBeenNthCalledWith(5, ["date-overflow"], "value", undefined)
   })
 
   it("retries a failed Deno connection and shares concurrent opens", async () => {
