@@ -17,6 +17,10 @@ The Agent Invocation records live in `console.fixture.json`. `mock-api.ts` adds
 the read-only Usage, KV, Workflow, Queue, and search responses needed by the
 Console. `rpc.ts` connects the Console's SSE RPC transport to those local fixture
 routes. Usage filters and pagination use the real usage aggregation code.
+Session details include rerun and delete actions. `Audit Console hierarchy`
+records its prompt, so rerun is enabled there. Delete removes a finished
+session until the server restarts. Rerun shows an error because the playground
+does not start Agents.
 This playground does not change the Console routes generated for Vite
 or Nuxt applications.
 

@@ -233,7 +233,7 @@ import type {
 import type { WorkflowHandle } from "@vite-hub/workflow"
 import type { OpenTelemetryLogRecordView, OpenTelemetrySpanView, TraceActivityContext, TraceEventLogEntry } from "@vite-hub/runtime"
 
-export { agentInvocationId } from "./invocations.ts"
+export { agentInvocationId, agentInvocationRerunInput } from "./invocations.ts"
 
 export type {
   AgentInvocationAnnotationValue,
@@ -245,6 +245,8 @@ export type {
   AgentInvocationPruneResult,
   AgentInvocationRecord,
   AgentInvocationRecordStatus,
+  AgentInvocationRerunInput,
+  AgentInvocationRerunUnavailableReason,
   AgentInvocationRetentionOptions,
   AgentInvocationSummary,
   AgentInvocations,

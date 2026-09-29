@@ -330,6 +330,8 @@ For GitHub Channels, `activity: { publicUrl: 'https://agent.example.com' }` link
 
 D1 batches and conditional writes preserve concurrent journal updates across Workers. Claims use the database clock. Terminal records use the same 30-day and 10,000-record retention defaults as the libSQL store. Pending and running records are retained. `maxAgeMs: false` and `maxRecords: false` disable each limit. `invocations.delete(id)` and `invocations.prune({ olderThanMs, dryRun })` remove terminal records on demand in both adapters; `vitehub agent invocations delete|prune` does the same for a SQLite or libSQL journal. An update rejects after 32 concurrent write conflicts. Keep application redaction outside the store.
 
+`agentInvocationRerunInput(record)` returns the recorded prompt and Invoker Profile ID of a record when the journal kept the complete prompt. Otherwise it returns `available: false` with the reason: `input-not-captured`, `input-has-messages`, or `input-truncated`. The Console uses it for its rerun action.
+
 D1 caps retained observations at 1,000,000 UTF-8 bytes to fit its 2 MB row limit. The adapter checks the complete row, preserves lifecycle fields and appended evidence when it removes excess ordinary observations, and rejects a row that still cannot fit. The resolved observation budget is stored with each record.
 
 See [Agent Invocations](../../docs/content/docs/agents/invocations.md) for binding setup, schema generation, and migration limits.

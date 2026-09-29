@@ -542,6 +542,18 @@
       "completedAt": "2026-08-30T14:11:24.000Z",
       "observations": [
         {
+          "name": "agent.invocation.start",
+          "type": "run",
+          "sequence": 0,
+          "timestamp": "2026-08-30T14:02:02.000Z",
+          "trace": { "id": "trace_console_hierarchy" },
+          "attributes": {
+            "input.hasMessages": false,
+            "input.hasPrompt": true,
+            "input.prompt": "The newer Console screens do more, but the whole thing is starting to feel generated. Review the hierarchy and density."
+          }
+        },
+        {
           "name": "vitehub.agent.configured",
           "type": "lifecycle",
           "sequence": 1,

@@ -243,6 +243,18 @@ await invocations.prune() // applies the store's maxAgeMs and maxRecords now
 
 `delete(id)` keeps a pending or running record and returns `'not-terminal'`. `prune()` deletes completed, failed, and cancelled records last updated before `olderThanMs`. Without `olderThanMs`, it applies the store's configured retention. Both return the affected IDs, and `dryRun: true` lists them without deleting. The SQLite and D1 adapters and the memory store implement both operations. A custom store must implement `store.delete()` and `store.prune()` to support them. Deletion removes the journal record and its claim. Artifacts that a Capability wrote to Blob storage are not keyed by the journal record, so the application owns their retention.
 
+Read the recorded prompt of a finished record to start it again:
+
+```ts
+import { agentInvocationRerunInput } from 'vite-hub/agent'
+
+const record = await invocations.get(invocationId)
+const input = record ? agentInvocationRerunInput(record) : undefined
+if (input?.available) await runAgent(agent, context, { prompt: input.prompt })
+```
+
+The result has `available: false` and a `reason` when the record cannot reproduce its input: `input-not-captured` for a missing prompt, `input-has-messages` for prior Messages, or `input-truncated` for a bounded start observation. The journal keeps `input.prompt` only when `metadataContent` or `content: 'content'` includes it. When the start observation recorded an Invoker Profile, `invokerId` holds its ID.
+
 Use `configuration: 'content'` to retain resolved instructions and tool descriptions/schemas independently of other trace content. The default is `configuration: 'metadata'`. Console journals enable configuration retention for inspection; existing records cannot recover contracts that were not saved. Recorded configuration still uses the journal's observation limits and marks truncated values.
 
 Invocation journals are metadata-only by default. Set `content: 'content'` only when the application must persist prompts, messages, reasoning, tool inputs and outputs, and result text. That opt-in stores sensitive model content in the configured durable store; apply the same access controls, retention policy, and encryption requirements as the source data.

@@ -46,7 +46,7 @@ import { encodeAgentRouteParam } from "../src/console/runtime/console-route.ts"
 import { installConsoleAgentDefinitions, installConsoleAgents } from "../src/console/runtime/server/agents.ts"
 import { createConsoleFixtureInvocations, createConsoleInvocations, getConsoleInvocationsDatabase, installConsoleFixtureInvocations, installConsoleInvocations, resolveConsoleDatabaseOptions } from "../src/console/runtime/server/invocations.ts"
 import { console as consoleRuntime } from "../src/console/server.ts"
-import invocationHandler from "../src/console/runtime/server/invocation.get.ts"
+import invocationHandler, { getConsoleInvocationDetail } from "../src/console/runtime/server/invocation.get.ts"
 import invocationCapabilitiesHandler from "../src/console/runtime/server/invocation-capabilities.get.ts"
 import invocationsHandler from "../src/console/runtime/server/invocations.get.ts"
 import consolePageHandler from "../src/console/runtime/server/page.get.ts"
@@ -2037,6 +2037,85 @@ describe("Agent invocation console", () => {
     }
   })
 
+  it("reruns and deletes journaled invocations only with Console invoke access", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-invocation-actions-"))
+    let release: (value: string) => void = () => {}
+    let blocked = false
+    const definition = defineAgent({
+      driver: { run: () => blocked ? new Promise<string>(resolve => { release = resolve }) : "done" },
+      invoker: { profiles: [{ id: "support", kind: "person", label: "Support agent" }] },
+      name: "support",
+    })
+    const start = (prompt: string) => agentInvocationsHandler({
+      context: { params: { agent: "support" } },
+      method: "POST",
+      req: {
+        json: async () => ({ invokerProfileId: "support", prompt }),
+        method: "POST",
+        url: "http://localhost/api/_vitehub/console/agents/support/invocations",
+      },
+    })
+    const detailEvent = (id: string, body?: unknown): ConsoleRequestEvent => {
+      const method = body === undefined ? "GET" : "POST"
+      const url = `http://localhost/api/_vitehub/console/invocations/${id}`
+      return {
+        headers: new Headers({ host: "localhost" }),
+        method,
+        node: { req: { method, socket: { remoteAddress: "127.0.0.1" }, url } },
+        req: { ...(body === undefined ? {} : { json: async () => body }), method, url },
+      }
+    }
+    const install = (invoke: boolean) => installConsoleAgentDefinitions([
+      { definition: { default: definition }, fallbackName: "help" },
+    ], { invoke, projectRoot: root })
+    try {
+      install(true)
+      const completed = await start("Summarize the release notes.")
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(completed.id)).resolves.toMatchObject({ status: "completed" })
+      })
+      await expect(invocationHandler(detailEvent(completed.id))).resolves.toMatchObject({
+        invocation: {
+          actions: {
+            delete: { available: true },
+            rerun: { available: true, invokerProfileId: "support", prompt: "Summarize the release notes." },
+          },
+        },
+      })
+
+      blocked = true
+      const running = await start("Keep running.")
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "running" })
+      })
+      await expect(invocationHandler(detailEvent(running.id))).resolves.toMatchObject({
+        invocation: { actions: { delete: { available: false } } },
+      })
+      await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 409 })
+      release("done")
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "completed" })
+      })
+
+      await expect(invocationHandler(detailEvent(completed.id, { action: "cancel" }))).rejects.toMatchObject({ statusCode: 400 })
+      await expect(invocationHandler(detailEvent("missing", { action: "delete" }))).rejects.toMatchObject({ statusCode: 404 })
+
+      install(false)
+      const inspected = await getConsoleInvocationDetail(detailEvent(completed.id))
+      expect(inspected.invocation).not.toHaveProperty("actions")
+      await expect(invocationHandler(detailEvent(completed.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 403 })
+
+      install(true)
+      await expect(invocationHandler(detailEvent(completed.id, { action: "delete" }))).resolves.toEqual({ id: completed.id, outcome: "deleted" })
+      await expect(invocationHandler(detailEvent(completed.id))).rejects.toMatchObject({ statusCode: 404 })
+      await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "completed" })
+    }
+    finally {
+      release("done")
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
   it("rejects disabled Agents, unknown profiles, and unsupported fields", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-invoke-validation-"))
     const definition = defineAgent({
@@ -2439,7 +2518,7 @@ describe("Agent invocation console", () => {
     const detailURL = "http://localhost/api/_vitehub/console/invocations/inv-delta"
     requestEvent.node!.req!.url = detailURL
     requestEvent.req!.url = detailURL
-    const initial = await invocationHandler(requestEvent)
+    const initial = await getConsoleInvocationDetail(requestEvent)
     await store.update("inv-delta", {
       observation: {
         name: "agent.invocation.running",
@@ -2453,7 +2532,7 @@ describe("Agent invocation console", () => {
     requestEvent.node!.req!.url = url
     requestEvent.req!.url = url
 
-    await expect(invocationHandler(requestEvent)).resolves.toMatchObject({
+    await expect(getConsoleInvocationDetail(requestEvent)).resolves.toMatchObject({
       appendObservations: true,
       invocation: { id: "inv-delta" },
       observations: [{ sequence: 3 }],
@@ -2468,7 +2547,7 @@ describe("Agent invocation console", () => {
       },
       timestamp: "2026-08-23T12:00:04.000Z",
     })
-    const replaced = await invocationHandler(requestEvent)
+    const replaced = await getConsoleInvocationDetail(requestEvent)
     expect(replaced.appendObservations).toBeUndefined()
     expect(replaced.observations.map(observation => observation.sequence)).toEqual([0, 1, 2, 3])
 
@@ -2479,7 +2558,7 @@ describe("Agent invocation console", () => {
     const truncatedURL = `${detailURL}?observationCount=4&observationCursor=${encodeURIComponent(replaced.observationCursor)}`
     requestEvent.node!.req!.url = truncatedURL
     requestEvent.req!.url = truncatedURL
-    await expect(invocationHandler(requestEvent)).resolves.not.toHaveProperty("appendObservations")
+    await expect(getConsoleInvocationDetail(requestEvent)).resolves.not.toHaveProperty("appendObservations")
   })
 
   it("bounds each console response to the requested page size", async () => {

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 
-import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
+import { agentInvocationRerunInput, createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
 import { parseConsoleFixture } from "../../packages/vite-hub/src/console/fixture.ts"
 import {
   createUsageSummary,
@@ -247,6 +247,13 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path.startsWith("/api/_vitehub/console/invocations/")) {
     const id = decodeURIComponent(path.slice("/api/_vitehub/console/invocations/".length))
+    if (request.method === "POST") {
+      const outcome = await invocations.delete(id)
+      if (outcome === "deleted") json(response, { id, outcome })
+      else if (outcome === "not-terminal") json(response, { error: "Only completed, failed, or cancelled invocations can be deleted." }, 409)
+      else json(response, { error: "Invocation not found" }, 404)
+      return true
+    }
     const record = await invocations.get(id)
     const invocation = summary(record)
     if (!record || !invocation) {
@@ -254,8 +261,14 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       return true
     }
     const usage = invocationUsage(record)
+    // Synthetic Agents have no Invoker Profiles, so rerun uses the default invoker.
+    const rerun = agentInvocationRerunInput(record)
+    const actions = {
+      delete: { available: ["cancelled", "completed", "failed"].includes(record.status) },
+      rerun: rerun.available ? { available: true, prompt: rerun.prompt } : rerun,
+    }
     json(response, {
-      invocation: { ...invocation, ...(usage ? { usage } : {}) },
+      invocation: { ...invocation, actions, ...(usage ? { usage } : {}) },
       observations: record.observations,
     })
     return true

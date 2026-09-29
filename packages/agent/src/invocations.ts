@@ -914,6 +914,40 @@ export async function agentInvocationId(runId: string, agentName?: string): Prom
   return await boundedIdentity(invocationIdentity(runId, agentName))
 }
 
+/** Why a journaled Invocation cannot be started again with the same input. */
+export type AgentInvocationRerunUnavailableReason =
+  /** The journal has no start observation with a text prompt. */
+  | "input-not-captured"
+  /** The journal bounded the start observation, so the prompt may be incomplete. */
+  | "input-truncated"
+  /** The Invocation received messages or attachments, which the journal does not keep for replay. */
+  | "input-has-messages"
+
+export type AgentInvocationRerunInput =
+  | {
+    available: true
+    /** Invoker id recorded at start. It equals the Invoker Profile id when a profile was selected. */
+    invokerId?: string
+    prompt: string
+  }
+  | { available: false, reason: AgentInvocationRerunUnavailableReason }
+
+/**
+ * Reads the complete prompt and invoker that the journal captured when the Invocation started.
+ * A caller can start a new Invocation with this input. The original record does not change.
+ */
+export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "observations">): AgentInvocationRerunInput {
+  const start = record.observations.find(observation => observation.name === "agent.invocation.start")
+  const attributes = start?.attributes
+  if (!attributes) return { available: false, reason: "input-not-captured" }
+  if (attributes[AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE] === true) return { available: false, reason: "input-truncated" }
+  if (attributes["input.hasMessages"] === true || attributes["input.messages"] !== undefined) return { available: false, reason: "input-has-messages" }
+  const prompt = attributes["input.prompt"]
+  if (!hasRuntimeType(prompt, "string") || !prompt.trim()) return { available: false, reason: "input-not-captured" }
+  const invokerId = attributes["agent.invoker.id"]
+  return { available: true, ...hasRuntimeType(invokerId, "string") && invokerId ? { invokerId } : {}, prompt }
+}
+
 function assertStore(store: AgentInvocationStore | undefined): asserts store is AgentInvocationStore {
   if (!store
     || !hasRuntimeType(store.claim, "function")

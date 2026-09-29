@@ -33,6 +33,8 @@ import ConsoleInvocationComposer from "./console-invocation-composer.vue";
 import ConsoleMark from "./console-mark.vue";
 import ConsoleSessionLoading from "./console-session-loading.vue";
 import ConsoleSessionNavbar from "./console-session-navbar.vue";
+import ConsoleSessionActions from "./console-session-actions.vue";
+import type { ConsoleSessionRerun } from "./console-session-actions.vue";
 import ConsoleSessionInspector from "./console-session-inspector.vue";
 import ConsoleSearch from "./console-search.vue";
 import ConsoleUsage from "./console-usage.vue";
@@ -249,6 +251,22 @@ const selectedDisplay = computed(() => invocationView.value ?? selectedSummary.v
 const selectedRefreshable = computed(() =>
   selectedDisplay.value?.status === "pending" || selectedDisplay.value?.status === "running",
 );
+const selectedActions = computed(() => {
+  const invocation = invocationView.value;
+  const actions = record(record(detail.invocation.value)?.actions);
+  if (!invocation?.agentName || !actions) return;
+  const rerun = record(actions.rerun);
+  const prompt = stringValue(rerun?.prompt);
+  const invokerProfileId = stringValue(rerun?.invokerProfileId);
+  return {
+    agent: invocation.agentName,
+    deletable: record(actions.delete)?.available === true,
+    id: invocation.id,
+    rerun: (rerun?.available === true && prompt
+      ? { available: true, prompt, ...(invokerProfileId ? { invokerProfileId } : {}) }
+      : { available: false, reason: stringValue(rerun?.reason) ?? "unavailable" }) satisfies ConsoleSessionRerun,
+  };
+});
 const selectedCost = computed(() => invocationCostDisplay(selectedDisplay.value));
 const selectedTokens = computed(() => invocationTokenDisplay(selectedDisplay.value));
 const selectedTitle = computed(() =>
@@ -429,6 +447,23 @@ async function selectInvocation(
 async function selectStartedInvocation(invocation: { agent: string; id: string }): Promise<void> {
   await selectInvocation(invocation);
   scheduleInvocationListRefresh();
+}
+
+async function removeDeletedInvocation(id: string): Promise<void> {
+  const agentName = selectedAgentName.value;
+  const selected = selectedInvocationId.value === id;
+  if (selected) {
+    selectedInvocationId.value = undefined;
+    closeDetails();
+  }
+  // Refresh first: the Agent route selects the first listed session.
+  await list.refresh();
+  if (selected && agentName) {
+    await router.push({
+      name: resolveConsoleRouteName(route.name, "vitehub-console-agent"),
+      params: { agent: encodeAgentRouteParam(agentName) },
+    });
+  }
 }
 
 async function startNewChat(): Promise<void> {
@@ -1221,7 +1256,17 @@ onBeforeUnmount(() => {
                   @open-sessions="sessionsOpen = true"
                   @refresh="refresh"
                   @toggle-details="detailsOpen = !detailsOpen"
-                />
+                >
+                  <template v-if="selectedActions" #actions>
+                    <ConsoleSessionActions
+                      v-bind="selectedActions"
+                      :agents-base="agentsBase"
+                      :api-base="apiBase"
+                      @deleted="removeDeletedInvocation"
+                      @started="selectStartedInvocation"
+                    />
+                  </template>
+                </ConsoleSessionNavbar>
                 <UAlert
                   v-if="!connectionUnavailable && invocationView && errorMessage(detail.error.value)"
                   class="m-3 shrink-0"
@@ -1313,7 +1358,17 @@ onBeforeUnmount(() => {
               @open-sessions="sessionsOpen = true"
               @refresh="refresh"
               @toggle-details="detailsOpen = !detailsOpen"
-            />
+            >
+              <template v-if="selectedActions" #actions>
+                <ConsoleSessionActions
+                  v-bind="selectedActions"
+                  :agents-base="agentsBase"
+                  :api-base="apiBase"
+                  @deleted="removeDeletedInvocation"
+                  @started="selectStartedInvocation"
+                />
+              </template>
+            </ConsoleSessionNavbar>
             <ConsoleSessionLoading v-if="initialSessionLoading" class="min-h-0 flex-1" />
             <div v-else-if="!selectedInvocationId" class="min-h-0 flex-1" />
             <UEmpty
