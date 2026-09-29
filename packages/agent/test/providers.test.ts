@@ -16830,6 +16830,7 @@ describe("server helpers", () => {
       await vi.advanceTimersByTimeAsync(50)
       await driverStarted.promise
       expect(runs).toBe(1)
+      const pollingTimer = vi.spyOn(globalThis, "setTimeout")
       const otherInvoker = handler(new Request("https://example.com/api/_vitehub/agents/support/webhooks/channel", {
         body: JSON.stringify({ update_id: 91_108, message: {
           chat: { id: 458, type: "private" },
@@ -16840,7 +16841,14 @@ describe("server helpers", () => {
         method: "POST",
       }), "telegram", { agentIdentity: { name: "calories" } })
       pending.push(otherInvoker)
-      void otherInvoker.catch(() => undefined)
+      let otherInvokerSettled = false
+      void otherInvoker.then(() => { otherInvokerSettled = true }, () => { otherInvokerSettled = true })
+      try {
+        await vi.waitFor(() => expect(pollingTimer.mock.calls.some(([, delay]) => delay === 50)).toBe(true), { interval: 1 })
+      } finally {
+        pollingTimer.mockRestore()
+      }
+      expect(otherInvokerSettled).toBe(false)
       expect(runs).toBe(1)
       expect(steeredPrompt).toBeUndefined()
       const followUpStartedAt = Date.now()
