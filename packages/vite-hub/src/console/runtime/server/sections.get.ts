@@ -1,17 +1,23 @@
 import { assertConsoleRequest } from "./request.ts"
+import { getConsoleContributedSections } from "./definitions.ts"
 import { getConsoleAuth, getConsoleProjectName, getConsoleSections } from "./sections.ts"
 
+import type { ConsoleContributedSection } from "../definitions.ts"
 import type { ConsoleRequestEvent } from "./request.ts"
 
 export default function consoleSectionsHandler(event: ConsoleRequestEvent): {
   auth?: true
+  contributions?: readonly ConsoleContributedSection[]
   projectName?: string
   sections: readonly string[]
 } {
   assertConsoleRequest(event)
   const projectName = getConsoleProjectName()
-  const result: { auth?: true, projectName?: string, sections: readonly string[] } = { sections: getConsoleSections() }
+  const sections = getConsoleSections()
+  const contributions = getConsoleContributedSections().filter(section => sections.includes(section.id))
+  const result: { auth?: true, contributions?: readonly ConsoleContributedSection[], projectName?: string, sections: readonly string[] } = { sections }
   if (getConsoleAuth()) result.auth = true
+  if (contributions.length) result.contributions = contributions
   if (projectName) result.projectName = projectName
   return result
 }

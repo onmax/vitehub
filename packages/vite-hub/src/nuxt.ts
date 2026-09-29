@@ -24,8 +24,8 @@ import { discoverConsoleBuildCatalog } from "./console/build.ts"
 import { writeConsoleNitroPlugin } from "./console/plugin.ts"
 import { installConsoleProjectName, installConsoleSections } from "./console/runtime/server/sections.ts"
 import { resolveConsoleProjectNameFromRoot } from "./console/project.ts"
-import { resolveConsoleSectionIds, type ConsoleSectionId } from "./console/runtime/sections.ts"
-import { consoleDefinitionSectionIds } from "./console/runtime/definitions.ts"
+import { consoleSectionRouteName, resolveConsoleSectionIds, type ConsoleSectionId } from "./console/runtime/sections.ts"
+import { describeConsoleContributedSections, isConsoleContributedSectionId } from "./console/contributions.ts"
 import { addConsoleDevframeHandler } from "./console/nitro.ts"
 import { resolveConsoleAuthConfig, writeConsoleAuthHandlers } from "./console/auth-build.ts"
 import { serializeConsoleRefresh } from "./console/refresh.ts"
@@ -42,7 +42,7 @@ import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
 
 const databaseRuntimeState = fileURLToPath(new URL("./_internal/database/runtime/state", import.meta.url))
 const consoleRuntimeRoot = fileURLToPath(new URL("./console/runtime", import.meta.url))
-type NuxtPage = { file: string, name: string, path: string }
+type NuxtPage = { file: string, meta?: Record<string, unknown>, name: string, path: string }
 type ViteHubNuxtOptions = Omit<Parameters<typeof vitehub>[0], "database" | "env"> & {
   database?: boolean | Exclude<DatabaseNuxtIntegrationOptions, false>
   env?: false | EnvIntegrationOptions & EnvViteConfigOptions
@@ -350,48 +350,12 @@ async function installConsole(
             },
           ]
         : []),
-      ...(sections.includes("workflows")
-        ? [{
-            file: join(consoleRuntimeRoot, "pages/workflows.vue"),
-            name: "vitehub-console-workflows",
-            path: "/_vitehub/workflows",
-          }]
-        : []),
-      ...(sections.includes("workspaces")
-        ? [{
-            file: join(consoleRuntimeRoot, "pages/workspaces.vue"),
-            name: "vitehub-console-workspaces",
-            path: "/_vitehub/workspaces",
-          }]
-        : []),
-      ...(sections.includes("sandboxes")
-        ? [{
-            file: join(consoleRuntimeRoot, "pages/sandboxes.vue"),
-            name: "vitehub-console-sandboxes",
-            path: "/_vitehub/sandboxes",
-          }]
-        : []),
-      ...(sections.includes("rate-limits")
-        ? [{
-            file: join(consoleRuntimeRoot, "pages/rate-limits.vue"),
-            name: "vitehub-console-rate-limits",
-            path: "/_vitehub/rate-limits",
-          }]
-        : []),
-      ...(sections.includes("queues")
-        ? [{
-            file: join(consoleRuntimeRoot, "pages/queues.vue"),
-            name: "vitehub-console-queues",
-            path: "/_vitehub/queues",
-          }]
-        : []),
-      ...(sections.includes("schedules")
-        ? [{
-            file: join(consoleRuntimeRoot, "pages/schedules.vue"),
-            name: "vitehub-console-schedules",
-            path: "/_vitehub/schedules",
-          }]
-        : []),
+      ...describeConsoleContributedSections(sections).map(details => ({
+        file: join(consoleRuntimeRoot, "pages/section.vue"),
+        meta: { consoleSection: details.id, consoleSectionDetails: details },
+        name: consoleSectionRouteName(details.id),
+        path: `/_vitehub/${details.id}`,
+      })),
     ]
     for (const page of additions) {
       if (!pages.some((candidate) => candidate.path === page.path)) pages.push(page)
@@ -412,7 +376,7 @@ async function installConsole(
   const refreshAgentDefinitions = serializeConsoleRefresh(async () => {
     const discoverySections = canDiscoverDefinitions()
       ? sections
-      : sections.filter(section => !consoleDefinitionSectionIds.some(definitionSection => definitionSection === section))
+      : sections.filter(section => section !== "databases" && !isConsoleContributedSectionId(section))
     const catalog = await discoverConsoleBuildCatalog({
       ...discoveryOptions,
       discoveryRoot,

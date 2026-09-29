@@ -71,7 +71,8 @@ describe("Console section preferences", () => {
     expect(readLastConsoleSection(storage)).toBeUndefined()
     rememberConsoleSection("schedules", storage)
     expect(readLastConsoleSection(storage)).toBe("schedules")
-    expect(readLastConsoleSection(memoryStorage("future-primitive"))).toBeUndefined()
+    expect(readLastConsoleSection(memoryStorage("future-primitive"))).toBe("future-primitive")
+    expect(readLastConsoleSection(memoryStorage("Future Primitive"))).toBeUndefined()
   })
 
   it("keeps navigation usable when browser storage is unavailable", () => {

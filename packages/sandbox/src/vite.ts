@@ -22,7 +22,7 @@ import type { AgentSandboxConfig } from './module-types'
 
 export { discoverSandboxDefinitions } from './discovery'
 export type { DiscoveredSandboxDefinition } from './discovery'
-export { inspectSandboxDefinitions, type SandboxInspectionOptions } from './inspect'
+export { inspectSandboxDefinitions, type SandboxInspectionOptions, sandboxConsoleSection } from './inspect'
 
 export type SandboxPublicOptions = AgentSandboxConfig | false
 export type SandboxVitePlugin = Plugin & {

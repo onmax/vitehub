@@ -10,7 +10,7 @@ import {
 import definitionsHandler from "../src/console/runtime/server/definitions.get.ts"
 import { installConsoleDefinitions } from "../src/console/runtime/server/definitions.ts"
 
-import type { ConsoleDefinitionCatalog } from "../src/console/runtime/definitions.ts"
+import type { ConsoleDefinitionSummary, ConsoleSectionCatalog } from "../src/console/runtime/definitions.ts"
 import type { ConsoleInvocationScope } from "../src/console/internal.ts"
 import type { ConsoleRequestEvent } from "../src/console/runtime/server/request.ts"
 
@@ -25,7 +25,13 @@ function event(query = "", method = "GET"): ConsoleRequestEvent {
   }
 }
 
-function catalog(name: string): ConsoleDefinitionCatalog {
+function catalog(name: string): ConsoleSectionCatalog["content"] {
+  return Object.fromEntries(
+    Object.entries(definitionSummaries(name)).map(([section, definitions]) => [section, { definitions, kind: "definition-catalog" as const }]),
+  )
+}
+
+function definitionSummaries(name: string): Record<string, ConsoleDefinitionSummary[]> {
   return {
     databases: [{
       fields: [
@@ -107,6 +113,7 @@ describe("Console definition inspection", () => {
         name: "release",
         source: "server-workflows",
       }],
+      kind: "definition-catalog",
       section: "workflows",
     })
     expect(definitionsHandler(event("?section=databases"))).toEqual({
@@ -119,6 +126,7 @@ describe("Console definition inspection", () => {
         name: "release",
         source: "server-database-default",
       }],
+      kind: "definition-catalog",
       section: "databases",
     })
     expect(definitionsHandler(event("?section=rate-limits"))).toEqual({
@@ -134,6 +142,7 @@ describe("Console definition inspection", () => {
         name: "release",
         source: "require-rate-limit",
       }],
+      kind: "definition-catalog",
       section: "rate-limits",
     })
     expect(definitionsHandler(event("?section=workspaces"))).toEqual({
@@ -146,6 +155,7 @@ describe("Console definition inspection", () => {
         name: "release",
         source: "server-workspaces-directory-config",
       }],
+      kind: "definition-catalog",
       section: "workspaces",
     })
     expect(definitionsHandler(event("?section=queues"))).toEqual({
@@ -155,6 +165,7 @@ describe("Console definition inspection", () => {
         name: "release",
         source: "server-queues",
       }],
+      kind: "definition-catalog",
       section: "queues",
     })
     expect(definitionsHandler(event("?section=schedules"))).toEqual({
@@ -168,6 +179,7 @@ describe("Console definition inspection", () => {
         name: "release",
         source: "server-schedules",
       }],
+      kind: "definition-catalog",
       section: "schedules",
     })
     expect(definitionsHandler(event("?section=sandboxes"))).toEqual({
@@ -177,24 +189,27 @@ describe("Console definition inspection", () => {
         name: "release",
         source: "vite-suffix",
       }],
+      kind: "definition-catalog",
       section: "sandboxes",
     })
   })
 
   it("validates methods and definition sections", () => {
-    installConsoleDefinitions("/project", { workflows: [] })
+    installConsoleDefinitions("/project", { workflows: { definitions: [], kind: "definition-catalog" } })
 
     expect(() => definitionsHandler(event("", "POST"))).toThrow(expect.objectContaining({ statusCode: 405 }))
     expect(() => definitionsHandler(event())).toThrow(expect.objectContaining({ statusCode: 400 }))
-    expect(() => definitionsHandler(event("?section=future"))).toThrow(expect.objectContaining({ statusCode: 400 }))
+    expect(() => definitionsHandler(event("?section=Future"))).toThrow(expect.objectContaining({ statusCode: 400 }))
+    expect(() => definitionsHandler(event("?section=future"))).toThrow(expect.objectContaining({ statusCode: 404 }))
+    expect(() => definitionsHandler(event("?section=constructor"))).toThrow(expect.objectContaining({ statusCode: 404 }))
   })
 
   it("isolates concurrent project catalogs across runtime realms", () => {
     const processRegistry = {}
     const firstScope: ConsoleInvocationScope = { process: processRegistry }
     const secondScope: ConsoleInvocationScope = { process: processRegistry }
-    const first = catalog("first")
-    const second = catalog("second")
+    const first: ConsoleSectionCatalog = { content: catalog("first"), sections: [] }
+    const second: ConsoleSectionCatalog = { content: catalog("second"), sections: [] }
 
     installConsoleDefinitionScope("/first", first, firstScope)
     installConsoleDefinitionScope("/second", second, secondScope)

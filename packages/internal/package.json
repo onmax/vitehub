@@ -9,6 +9,7 @@
   "sideEffects": false,
   "exports": {
     "./cli": "./dist/cli.js",
+    "./console": "./dist/console.js",
     "./env": "./dist/env.js",
     "./effect": "./dist/effect.js",
     "./arrays": "./dist/arrays.js",

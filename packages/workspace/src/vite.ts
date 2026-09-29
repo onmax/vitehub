@@ -7,4 +7,4 @@ export type {
   WorkspaceVitePluginAPI,
 } from "./hosts/vite/plugin.ts"
 export type { DiscoveredWorkspaceDefinition } from "./build/discovery.ts"
-export { inspectWorkspaceDefinitions, type WorkspaceInspectionOptions } from "./inspect.ts"
+export { inspectWorkspaceDefinitions, type WorkspaceInspectionOptions, workspaceConsoleSection } from "./inspect.ts"

@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import { discoverConsoleBuildCatalog } from "../src/console/build.ts"
 import { vitehub } from "../src/index.ts"
 
-import type { ConsoleDefinitionCatalog } from "../src/console/runtime/definitions.ts"
+import type { ConsoleSectionCatalog } from "../src/console/runtime/definitions.ts"
 
 const directories: string[] = []
 
@@ -30,7 +30,7 @@ const sectionByKind = {
   schedule: "schedules",
   workflow: "workflows",
   workspace: "workspaces",
-} as const satisfies Record<string, keyof ConsoleDefinitionCatalog>
+} as const satisfies Record<string, keyof ConsoleSectionCatalog["content"]>
 
 describe("Definition inspection parity", () => {
   it("lists the same Definitions in `vitehub inspect` and the Console", async () => {
@@ -62,7 +62,8 @@ describe("Definition inspection parity", () => {
       expect(inspector, `Expected a ${kind} inspector`).toBeDefined()
       const listed = await inspector!.list()
       expect(listed.length, `Expected ${kind} Definitions`).toBeGreaterThan(0)
-      expect(listed, kind).toEqual(catalog.definitions[section])
+      expect(catalog.content[section]?.kind, kind).toBe("definition-catalog")
+      expect({ definitions: listed, kind: "definition-catalog" }, kind).toEqual(catalog.content[section])
     }
   }, 60_000)
 })
