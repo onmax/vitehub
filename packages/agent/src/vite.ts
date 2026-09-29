@@ -3067,6 +3067,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       if (nitroContext || nitroHandlers.length || installCloudflareState || installProcessDiscordGateway) {
         // Replace the Nitro config in place. Vite concatenates arrays when it merges a returned config,
         // so returning the complete Nitro config would repeat every user entry, such as Wrangler secrets.
+        // SAFETY: Nitro's Vite plugin reads this open `nitro` key from the user config; mergedNitro starts from its value.
         ;(config as { nitro?: NitroConfig }).nitro = mergedNitro
       }
       return result
