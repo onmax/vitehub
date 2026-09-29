@@ -2,10 +2,12 @@ import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { searchableAgentInvocationText } from "./invocations/search.ts"
 import { createTraceEventLog, isTraceContentAttributeKey, normalizeRuntimeDiagnosticError } from "@vite-hub/runtime"
 import { registerAgentInvocationRecovery } from "./internal/invocation-recovery.ts"
+import { abortLocalAgentInvocation, createAgentInvocationCancellationError, registerAgentInvocationCancellation } from "./internal/invocation-cancellation.ts"
 import { consumeAuthorization, consumeCredentialAssignment, credentialTextLineContext, credentialTextMayContinue, pendingAuthorizationState, pendingCredentialAssignmentState, pendingCredentialQuote, pendingCredentialScheme, pendingCredentialTextSuffix, pendingCredentialUri, redactCredentialText } from "./internal/credential-redaction.ts"
 import { agentInvocationJournalContentTraceLogSymbol, agentInvocationJournalTraceLogSymbol } from "./trace.ts"
 
 import type { AuthorizationState, CredentialAssignmentState } from "./internal/credential-redaction.ts"
+import type { AgentInvocationCancellationDriver } from "./internal/invocation-cancellation.ts"
 import type { AgentInvocationStatus } from "./agent-invocation.ts"
 import type { AgentRunMetadata, AgentRuntimeConfig, AgentRuntimeContext, MaybePromise } from "./types.ts"
 import type { RuntimeDiagnosticError, TraceEvent, TraceEventContentPolicy, TraceEventLog, TraceEventLogEntry, TraceEventPayload } from "@vite-hub/runtime"
@@ -62,6 +64,10 @@ export interface AgentInvocationRecord {
   /** Capability IDs observed during this Invocation, including uses omitted from a truncated trace. */
   capabilityIds?: readonly string[]
   cancelledAt?: string
+  /** Driver that received this Invocation but cannot enforce a cancellation request. */
+  cancelNotEnforcedBy?: string
+  /** Time of the first cancellation request. The run that holds the Invocation reads it within the claim renewal interval. */
+  cancelRequestedAt?: string
   channelId?: string
   completedAt?: string
   createdAt: string
@@ -115,6 +121,9 @@ export interface AgentInvocationStoreUpdateInput {
   /** Append with a stable observation identity and a sequence assigned atomically by the store. */
   appendObservation?: Omit<TraceEventLogEntry, "sequence">
   annotations?: AgentInvocationRecord["annotations"]
+  cancelNotEnforcedBy?: string
+  /** Requests cancellation. Stores ignore it on terminal records. */
+  cancelRequestedAt?: string
   capabilityIds?: readonly string[]
   error?: AgentInvocationRecord["error"]
   observation?: TraceEventLogEntry
@@ -184,10 +193,36 @@ export interface AgentInvocationsOptions {
   store: AgentInvocationStore
 }
 
+export interface AgentInvocationCancelResult {
+  /**
+   * How the run learns about the request.
+   * `local`: a run in this process was aborted.
+   * `journal`: the run that holds the Invocation reads the request within 10 seconds.
+   */
+  delivery?: "journal" | "local"
+  id: string
+  /** Driver that received the request but cannot enforce it. The run continues until the Driver returns. */
+  notEnforcedBy?: string
+  /**
+   * `requested`: a live run received the request.
+   * `cancelled`: no live run held the Invocation, so the journal recorded `cancelled`.
+   * `terminal`: the Invocation already finished.
+   * `not-found`: the journal has no Invocation with this id.
+   * `unavailable`: the store did not keep the request and no run in this process holds the Invocation.
+   */
+  outcome: "cancelled" | "not-found" | "requested" | "terminal" | "unavailable"
+  status?: AgentInvocationRecordStatus
+}
+
 export interface AgentInvocations {
   /** Durably append evidence to a live or terminal invocation. Repeated IDs return the existing observation. */
   appendObservation(id: string, event: TraceEvent, options: { id: string }): Promise<AgentInvocationRecord | undefined>
   readonly [agentInvocationsBrand]: true
+  /**
+   * Requests cancellation of a pending or running Invocation. A run in this process aborts at once.
+   * A run in another process reads the journal flag at its next claim renewal.
+   */
+  cancel(id: string): Promise<AgentInvocationCancelResult>
   get(id: string, options?: { observationNames?: readonly string[] }): Promise<AgentInvocationRecord | undefined>
   getByRunId(runId: string, agentName?: string): Promise<AgentInvocationRecord | undefined>
   /** Reads invocation metadata without observation payloads. */
@@ -206,11 +241,15 @@ interface BoundAgentInvocations extends AgentInvocations {
 }
 
 export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
+  /** Aborts when a user requests cancellation of this Invocation. */
+  abortSignal: AbortSignal
   configuration?: TraceEventContentPolicy
   context: AgentRuntimeContext<TRuntimeConfig>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
   running(): Promise<void>
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
+  /** Lets cancellation requests reach this run. Call it from the run that consumes {@link abortSignal}. */
+  watchCancellation(driver: AgentInvocationCancellationDriver): void
 }
 
 function cloneObservation(observation: TraceEventLogEntry): TraceEventLogEntry {
@@ -1190,6 +1229,8 @@ export function applyAgentInvocationStoreUpdate(
       ? { annotations: mergeConfigurationAnnotations(record.annotations, configuredAnnotations) }
       : {}),
     ...(capabilityIds.length ? { capabilityIds } : {}),
+    ...(input.cancelRequestedAt && !record.cancelRequestedAt ? { cancelRequestedAt: input.cancelRequestedAt } : {}),
+    ...(input.cancelNotEnforcedBy && !record.cancelNotEnforcedBy ? { cancelNotEnforcedBy: boundedString(input.cancelNotEnforcedBy) } : {}),
     ...(input.error ? { error: input.error } : {}),
     ...(title ? { title } : {}),
     ...(titleUpdated ? { titleSequence: input.observation!.sequence } : {}),
@@ -1698,13 +1739,33 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const observedCapabilityIds = new Set<string>()
       const persistedObservations = new Set<string | number>()
       const retriedObservations = new WeakSet<TraceEventLogEntry>()
+      const cancellation = new AbortController()
+      let cancelNotEnforcedBy: string | undefined
+      let unregisterCancellation: (() => void) | undefined
+      const requestCancellation = (reason: unknown = createAgentInvocationCancellationError(recordId)) => {
+        if (!cancellation.signal.aborted) cancellation.abort(reason)
+      }
+      const readCancellationRequest = (record: Pick<AgentInvocationRecord, "cancelRequestedAt" | "status"> | undefined) => {
+        if (record?.cancelRequestedAt && (!terminalStatus(record.status) || record.status === "cancelled")) requestCancellation()
+      }
+      const stopWatchingCancellation = () => {
+        unregisterCancellation?.()
+        unregisterCancellation = undefined
+      }
+      const pollCancellationRequest = async () => {
+        if (!unregisterCancellation || finished || cancellation.signal.aborted) return
+        const summary = await boundedStoreOperation(() => store.getSummary(recordId))
+        if (summary && summary !== storeOperationTimedOut) readCancellationRequest(summary)
+      }
       const stopHeartbeat = () => {
         if (heartbeat !== undefined) clearInterval(heartbeat)
         heartbeat = undefined
       }
       const startHeartbeat = () => {
         if (finished || !ownsRecord || heartbeat !== undefined) return
-        heartbeat = setInterval(() => { void renew() }, CLAIM_RENEW_INTERVAL_MS)
+        heartbeat = setInterval(() => {
+          void renew().then(pollCancellationRequest).catch(() => undefined)
+        }, CLAIM_RENEW_INTERVAL_MS)
         unrefTimer(heartbeat)
       }
       const ensureCreated = async (): Promise<boolean> => {
@@ -1722,6 +1783,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               finished = terminalStatus(result.record.status)
               boundToTerminalRecord = finished
               created = true
+              readCancellationRequest(result.record)
             }
             else if (creationTask === task) {
               creationTask = undefined
@@ -1787,6 +1849,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           const operation = Promise.resolve().then(() => store.update(recordId, input, claimId))
           const result = await boundedStoreOperation(() => operation)
           updated = result !== undefined && result !== storeOperationTimedOut
+          if (result !== undefined && result !== storeOperationTimedOut) readCancellationRequest(result)
           if (result === storeOperationTimedOut && input.observation && recoverableOutcomeObservation(input.observation)) {
             const observation = input.observation
             const key = observationPersistenceKey(observation)
@@ -1840,6 +1903,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             if (updated && updated !== storeOperationTimedOut) {
               observationCount = updated.observations.length
               persisted = true
+              readCancellationRequest(updated)
             }
             else if (updated === undefined
               || (updated === storeOperationTimedOut && recoverableOutcomeObservation(observation))) failed = true
@@ -1946,6 +2010,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         writeNextObservation()
       }
       return {
+        abortSignal: cancellation.signal,
         configuration: options.configuration,
         context: {
           ...context,
@@ -1956,6 +2021,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         async finish(status, error) {
           if (finished || finishing) return
           finishing = true
+          stopWatchingCancellation()
           const finishingObservations = [activeObservation, ...pendingObservations]
           const observationDeadline = Date.now() + limits.flushTimeoutMs
           while (observationWrite && Date.now() < observationDeadline) {
@@ -2066,7 +2132,11 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           if (finished) return
           runningRequested = true
           const markRunning = async () => {
-            runningPersisted = await update({ status: "running", timestamp: new Date().toISOString() })
+            runningPersisted = await update({
+              ...(cancelNotEnforcedBy ? { cancelNotEnforcedBy } : {}),
+              status: "running",
+              timestamp: new Date().toISOString(),
+            })
             return runningPersisted
           }
           if (await markRunning() || runningRetry) return
@@ -2086,6 +2156,11 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         async setAnnotations(annotations) {
           if (finished || finishing) return
           await update({ annotations: normalizeAnnotations(annotations), timestamp: new Date().toISOString() })
+        },
+        watchCancellation(driver) {
+          if (finished || finishing || unregisterCancellation) return
+          if (!driver.enforced) cancelNotEnforcedBy = driver.name
+          unregisterCancellation = registerAgentInvocationCancellation(recordId, { abort: requestCancellation, driver })
         },
       }
     },
@@ -2112,6 +2187,60 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         throw agentDiagnostics.AGENT_R0902({ message: "[vitehub] Invocation store did not persist appended observation." })
       }
       return persisted
+    },
+    async cancel(id) {
+      assertInvocationId(id)
+      const summary = await store.getSummary(id)
+      if (!summary) return { id, outcome: "not-found" }
+      if (terminalStatus(summary.status)) return { id, outcome: "terminal", status: summary.status }
+      const timestamp = new Date().toISOString()
+      // Persist the request first, so a run in another process and a later bind of this record read it.
+      const flagged = await store.update(id, { cancelRequestedAt: timestamp, timestamp })
+      const local = abortLocalAgentInvocation(id, createAgentInvocationCancellationError(id))
+      const current = flagged ?? await store.getSummary(id)
+      if (!current) return { id, outcome: "not-found" }
+      if (terminalStatus(current.status)) return { id, outcome: "terminal", status: current.status }
+      if (local.aborted) {
+        return {
+          delivery: "local",
+          id,
+          ...(local.notEnforcedBy ? { notEnforcedBy: local.notEnforcedBy } : {}),
+          outcome: "requested",
+          status: current.status,
+        }
+      }
+      // No run in this process holds the Invocation. A free claim means that no live run holds it anywhere.
+      const claimId = `cancel_${createInvocationId()}`
+      if (await store.claim(id, claimId, CLAIM_LEASE_MS)) {
+        try {
+          const record = await store.get(id)
+          // Record the same `agent.invocation.cancelled` event that a cancelled run writes.
+          const observation: TraceEventLogEntry | undefined = record
+            ? {
+                name: "agent.invocation.cancelled",
+                sequence: record.observations.reduce((maximum, entry) => Math.max(maximum, entry.sequence), record.titleSequence ?? 0) + 1,
+                timestamp,
+                trace: { id: record.traceId },
+                type: "run",
+              }
+            : undefined
+          const cancelled = await store.update(id, { cancelRequestedAt: timestamp, ...(observation ? { observation } : {}), status: "cancelled", timestamp }, claimId)
+          if (cancelled && terminalStatus(cancelled.status)) {
+            return { id, outcome: cancelled.status === "cancelled" ? "cancelled" : "terminal", status: cancelled.status }
+          }
+        }
+        finally {
+          await store.release(id, claimId)
+        }
+      }
+      if (!current.cancelRequestedAt) return { id, outcome: "unavailable", status: current.status }
+      return {
+        delivery: "journal",
+        id,
+        ...(current.cancelNotEnforcedBy && current.status === "running" ? { notEnforcedBy: current.cancelNotEnforcedBy } : {}),
+        outcome: "requested",
+        status: current.status,
+      }
     },
     async get(id, options) {
       assertInvocationId(id)
@@ -2197,6 +2326,12 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
     },
   }
   return invocations
+}
+
+/** True for a journal created by {@link defineAgentInvocations}. */
+export function isAgentInvocations(value: unknown): value is AgentInvocations {
+  // SAFETY: Only the brand is read; the remaining members are validated by the brand owner.
+  return isRuntimeRecord(value) && (value as Partial<AgentInvocations>)[agentInvocationsBrand] === true
 }
 
 export async function bindAgentInvocations<TRuntimeConfig extends AgentRuntimeConfig>(

@@ -8991,6 +8991,63 @@ describe("server helpers", () => {
     }
   })
 
+  it("completes a cancelled queued webhook invocation without a retry", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { github } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createAgentInvocationCancellationError } = await import("../src/internal/invocation-cancellation.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-cancel-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    const retry = vi.spyOn(state, "retryWebhookDelivery")
+    // A custom run handler stops itself when it reads the cancel request from its abort signal.
+    const run = vi.fn(() => {
+      throw createAgentInvocationCancellationError("queued-webhook-invocation")
+    })
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          triggers: {
+            webhook: {
+              invoke: () => ({
+                input: { prompt: "Review the pull request." },
+                webhook: { concurrencyLimit: 1, deliveryId: "delivery-cancel" },
+              }),
+            },
+          },
+          webhooks: { secretToken: false },
+        }),
+      },
+      driver: { run },
+    })
+
+    try {
+      // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+      const response = await createChannelWebhookRouteHandler(agent as never)(
+        new Request("https://example.com/api/github/webhook", {
+          body: "{}",
+          headers: {
+            "content-type": "application/json",
+            "x-github-delivery": "delivery-cancel",
+            "x-github-event": "pull_request",
+          },
+          method: "POST",
+        }),
+        "github",
+        { agentName: "review", webhookState: state },
+      )
+
+      expect(response.status).toBe(200)
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce(), { timeout: 10_000 })
+      expect(run).toHaveBeenCalledOnce()
+      expect(retry).not.toHaveBeenCalled()
+    } finally {
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
   it.each([true, false])("steers an active queued webhook invocation once and quarantines ambiguous input (completion succeeds: %s)", async (completionSucceeds) => {
     const { defineAgent } = await import("../src/index.ts")
     const { github } = await import("../src/channels.ts")

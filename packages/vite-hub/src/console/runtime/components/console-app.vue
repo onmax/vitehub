@@ -33,6 +33,7 @@ import ConsoleInvocationComposer from "./console-invocation-composer.vue";
 import ConsoleMark from "./console-mark.vue";
 import ConsoleSessionLoading from "./console-session-loading.vue";
 import ConsoleSessionNavbar from "./console-session-navbar.vue";
+import ConsoleSessionCancel from "./console-session-cancel.vue";
 import ConsoleSessionInspector from "./console-session-inspector.vue";
 import ConsoleSearch from "./console-search.vue";
 import ConsoleUsage from "./console-usage.vue";
@@ -249,6 +250,18 @@ const selectedDisplay = computed(() => invocationView.value ?? selectedSummary.v
 const selectedRefreshable = computed(() =>
   selectedDisplay.value?.status === "pending" || selectedDisplay.value?.status === "running",
 );
+const selectedCancel = computed(() => {
+  const invocation = invocationView.value;
+  const actions = record(record(detail.invocation.value)?.actions);
+  if (!invocation || record(actions?.cancel)?.available !== true) return;
+  const summary = record(invocation);
+  const notEnforcedBy = stringValue(summary?.cancelNotEnforcedBy);
+  return {
+    cancelRequested: Boolean(stringValue(summary?.cancelRequestedAt)),
+    id: invocation.id,
+    ...(notEnforcedBy ? { notEnforcedBy } : {}),
+  };
+});
 const selectedCost = computed(() => invocationCostDisplay(selectedDisplay.value));
 const selectedTokens = computed(() => invocationTokenDisplay(selectedDisplay.value));
 const selectedTitle = computed(() =>
@@ -1221,7 +1234,11 @@ onBeforeUnmount(() => {
                   @open-sessions="sessionsOpen = true"
                   @refresh="refresh"
                   @toggle-details="detailsOpen = !detailsOpen"
-                />
+                >
+                  <template v-if="selectedCancel" #actions>
+                    <ConsoleSessionCancel v-bind="selectedCancel" :api-base="apiBase" @cancelled="refresh" />
+                  </template>
+                </ConsoleSessionNavbar>
                 <UAlert
                   v-if="!connectionUnavailable && invocationView && errorMessage(detail.error.value)"
                   class="m-3 shrink-0"
@@ -1313,7 +1330,11 @@ onBeforeUnmount(() => {
               @open-sessions="sessionsOpen = true"
               @refresh="refresh"
               @toggle-details="detailsOpen = !detailsOpen"
-            />
+            >
+              <template v-if="selectedCancel" #actions>
+                <ConsoleSessionCancel v-bind="selectedCancel" :api-base="apiBase" @cancelled="refresh" />
+              </template>
+            </ConsoleSessionNavbar>
             <ConsoleSessionLoading v-if="initialSessionLoading" class="min-h-0 flex-1" />
             <div v-else-if="!selectedInvocationId" class="min-h-0 flex-1" />
             <UEmpty

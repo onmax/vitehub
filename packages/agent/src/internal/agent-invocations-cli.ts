@@ -1,11 +1,18 @@
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
-import type { AgentInvocationListResult, AgentInvocationRecord } from "../invocations.ts"
+import { discoverViteHubDevServer, fetchViteHubDevEndpoint, readViteHubDevTargetOption, resolveViteHubDevServerUrl } from "@vite-hub/internal/cli"
+import { readWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
+import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute } from "../invocation-stream.ts"
+import { isCompatibleAgentDevServerRoot } from "./agent-info-cli.ts"
+import type { AgentInvocationCancelResult, AgentInvocationListResult, AgentInvocationRecord } from "../invocations.ts"
+import type { AgentDevLoopDiscoveryResponse } from "../invocation-stream.ts"
 import type { AgentInvocationDetailResult } from "../invocations-vue.ts"
 import type { RuntimeDiagnosticError } from "@vite-hub/runtime"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
 interface AgentInvocationsCliContext {
   env: NodeJS.ProcessEnv
+  /** Project root that the Compatible Vite Development Server must serve. Defaults to the current directory. */
+  rootDir?: string
   stderr: { write: (chunk: string | Uint8Array) => unknown }
   stdout: { write: (chunk: string | Uint8Array) => unknown }
 }
@@ -17,24 +24,41 @@ export interface AgentInvocationsCliOptions {
 }
 
 interface ParsedArgs {
-  action?: "list" | "show" | "tail"
+  action?: "cancel" | "list" | "show" | "tail"
   help: boolean
   id?: string
   interval: number
   json: boolean
   limit?: number
   status?: string
+  timeout?: number
   url: string
+  urlSet: boolean
+}
+
+const cancelEndpoint = {
+  header: agentInvocationStreamHeader,
+  headerValue: agentInvocationStreamHeaderValue,
+  route: agentInvocationStreamRoute,
+}
+
+const devTargetErrors = {
+  invalidInlineTimeout: (message: string) => agentDiagnostics.AGENT_R0503({ message }),
+  invalidTimeout: (message: string) => agentDiagnostics.AGENT_R0503({ message }),
+  missingValue: (message: string) => agentDiagnostics.AGENT_R0502({ message }),
 }
 
 function usage(context: AgentInvocationsCliContext): void {
   context.stdout.write([
-    "Usage: vitehub agent invocations <list|show|tail> [id] [options]",
+    "Usage: vitehub agent invocations <list|show|tail|cancel> [id] [options]",
     "",
     "Inspect an application's Agent Invocation journal over HTTP.",
+    "cancel asks a running Compatible Vite Development Server to cancel a pending or running Invocation.",
     "",
     "Options:",
     "  --url <url>       Invocation endpoint. Defaults to http://localhost:5173/api/invocations.",
+    "                    For cancel, the Vite Development Server URL. Defaults to VITEHUB_DEV_SERVER_URL or http://localhost:5173.",
+    "  --timeout <ms>    Request timeout. Defaults to 30000.",
     "  --status <status> Filter list results by status.",
     "  --limit <count>   Limit list results.",
     "  --interval <ms>   Tail polling interval. Defaults to 1000.",
@@ -62,16 +86,20 @@ function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
     interval: 1_000,
     json: false,
     url: env.VITEHUB_AGENT_INVOCATIONS_URL || "http://localhost:5173/api/invocations",
+    urlSet: false,
   }
+  const target: { timeout?: number, url: string } = { url: parsed.url }
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!
-    if (argument === "-h" || argument === "--help") parsed.help = true
-    else if (argument === "--json") parsed.json = true
-    else if (argument === "--url") {
-      parsed.url = optionValue(args, index, argument)
-      index += 1
+    const used = readViteHubDevTargetOption(args, index, target, devTargetErrors)
+    if (used !== undefined) {
+      index += used
+      if (argument === "--url" || argument === "--server" || argument.startsWith("--url=")) parsed.urlSet = true
+      parsed.url = target.url
+      if (target.timeout !== undefined) parsed.timeout = target.timeout
     }
-    else if (argument.startsWith("--url=")) parsed.url = argument.slice(6)
+    else if (argument === "-h" || argument === "--help") parsed.help = true
+    else if (argument === "--json") parsed.json = true
     else if (argument === "--status") {
       parsed.status = optionValue(args, index, argument)
       index += 1
@@ -88,12 +116,14 @@ function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
     }
     else if (argument.startsWith("--interval=")) parsed.interval = positiveInteger(argument.slice(11), "--interval")
     else if (argument.startsWith("-")) throw agentDiagnostics.AGENT_R0504({ message: `Unknown option: ${argument}.` })
-    else if (!parsed.action && (argument === "list" || argument === "show" || argument === "tail")) parsed.action = argument
+    else if (!parsed.action && (argument === "cancel" || argument === "list" || argument === "show" || argument === "tail")) parsed.action = argument
     else if (!parsed.id) parsed.id = argument
     else throw agentDiagnostics.AGENT_R0505({ message: `Unexpected argument: ${argument}.` })
   }
-  if (!parsed.help && !parsed.action) throw agentDiagnostics.AGENT_R0506({ message: "Choose list, show, or tail." })
+  if (!parsed.help && !parsed.action) throw agentDiagnostics.AGENT_R0506({ message: "Choose list, show, tail, or cancel." })
   if (!parsed.help && parsed.action !== "list" && !parsed.id) throw agentDiagnostics.AGENT_R0507({ message: `${parsed.action} requires an invocation id.` })
+  // cancel targets the Vite Development Server, not the application inspection route.
+  if (parsed.action === "cancel" && !parsed.urlSet) parsed.url = resolveViteHubDevServerUrl(env)
   return parsed
 }
 
@@ -146,6 +176,66 @@ async function request<T>(url: URL, fetchImpl: typeof fetch, timeout: number, pa
   return parseResponse(value)
 }
 
+const cancelOutcomes = new Set<unknown>(["cancelled", "not-found", "requested", "terminal", "unavailable"])
+
+function parseCancelResult(value: unknown): AgentInvocationCancelResult {
+  if (
+    !isRuntimeRecord(value)
+    || !hasRuntimeType(value.id, "string")
+    || !cancelOutcomes.has(value.outcome)
+    || (value.status !== undefined && !hasRuntimeType(value.status, "string"))
+    || (value.notEnforcedBy !== undefined && !hasRuntimeType(value.notEnforcedBy, "string"))
+    || (value.delivery !== undefined && value.delivery !== "journal" && value.delivery !== "local")
+  ) {
+    throw agentDiagnostics.AGENT_R0971({ message: "Invocation cancel returned an invalid response." })
+  }
+  // SAFETY: The parser validates every cancel result field consumed by the CLI.
+  return asUnknownBoundary(value) as AgentInvocationCancelResult
+}
+
+async function requestCancel(parsed: ParsedArgs, id: string, context: AgentInvocationsCliContext, fetchImpl: typeof fetch, timeout: number): Promise<AgentInvocationCancelResult | undefined> {
+  const rootDir = context.rootDir ?? process.cwd()
+  const server = await discoverViteHubDevServer<Partial<AgentDevLoopDiscoveryResponse>>({
+    endpoint: cancelEndpoint,
+    fetch: fetchImpl,
+    isCompatibleRoot: isCompatibleAgentDevServerRoot,
+    rootDir,
+    serverUrl: parsed.url,
+    stderr: context.stderr,
+  })
+  if (!server) return
+  const { discovery, url } = server
+  const root = hasRuntimeType(discovery.root, "string") ? discovery.root : rootDir
+  const token = await readWorkspaceDevToken(root, hasRuntimeType(discovery.workspaceDevTokenServerId, "string") ? { serverId: discovery.workspaceDevTokenServerId } : {})
+  if (!token) {
+    context.stderr.write("No private Agent Dev Loop command token found. Start the Compatible Vite Development Server first.\n")
+    return
+  }
+  const response = await fetchViteHubDevEndpoint(fetchImpl, url, cancelEndpoint, {
+    body: JSON.stringify({ invocationCancel: { id } }),
+    headers: { "accept": "application/json", "content-type": "application/json", [workspaceDevTokenHeader]: token },
+    method: "POST",
+    signal: AbortSignal.timeout(timeout),
+  })
+  if (!response.ok) throw agentDiagnostics.AGENT_R0972({ message: (await response.text()).trim() || `Invocation cancel failed with status ${response.status}.` })
+  return parseCancelResult(await response.json())
+}
+
+function cancelMessage(result: AgentInvocationCancelResult): string {
+  if (result.outcome === "not-found") return `${result.id} not found`
+  if (result.outcome === "terminal") return `${result.id} already ${result.status ?? "finished"}`
+  if (result.outcome === "cancelled") return `${result.id} cancelled`
+  if (result.outcome === "unavailable") return `${result.id} cancel request was not recorded`
+  if (result.notEnforcedBy) return `${result.id} cancel requested, not enforced by ${result.notEnforcedBy}`
+  if (result.delivery === "journal") return `${result.id} cancel requested; the owner instance reads it at its next claim renewal`
+  return `${result.id} cancel requested`
+}
+
+function cancelExitCode(result: AgentInvocationCancelResult): number {
+  if (result.outcome === "cancelled" || result.outcome === "requested") return 0
+  return result.outcome === "terminal" && result.status === "cancelled" ? 0 : 1
+}
+
 function formatError(error: RuntimeDiagnosticError, indent = ""): string {
   const lines = [`${indent}${error.name || "Error"}: ${error.message}`]
   if (error.cause) lines.push(formatError(error.cause, `${indent}  caused by `))
@@ -191,8 +281,14 @@ export async function runAgentInvocationsCli(
     return 0
   }
   const fetchImpl = options.fetch || globalThis.fetch
-  const timeout = options.timeout ?? 30_000
+  const timeout = parsed.timeout ?? options.timeout ?? 30_000
   try {
+    if (parsed.action === "cancel") {
+      const result = await requestCancel(parsed, parsed.id!, context, fetchImpl, timeout)
+      if (!result) return 1
+      context.stdout.write(parsed.json ? `${JSON.stringify(result, null, 2)}\n` : `${cancelMessage(result)}\n`)
+      return cancelExitCode(result)
+    }
     if (parsed.action === "list") {
       const result = await request(endpoint(parsed), fetchImpl, timeout, parseInvocationList)
       if (parsed.json) context.stdout.write(`${JSON.stringify(result, null, 2)}\n`)

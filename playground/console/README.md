@@ -13,6 +13,8 @@ The `Review image attachments` session covers persisted input and output images 
 
 The `Inspect MCP tools and title` session provides synthetic server groups, tool contracts, skipped and empty servers, and a completed Title view for the Capabilities tab.
 
+The `Compile the nightly digest` session is a running custom `run` Driver session. Select **Cancel session** to see the `Cancel requested, not enforced by run` report. `mock-api.ts` holds a live claim on it, so the record stays running.
+
 The Agent Invocation records live in `console.fixture.json`. `mock-api.ts` adds
 the read-only Usage, KV, Workflow, Queue, and search responses needed by the
 Console. `rpc.ts` connects the Console's SSE RPC transport to those local fixture

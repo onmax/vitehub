@@ -1424,6 +1424,64 @@ describe("agent CLI", () => {
     )
   })
 
+  it("cancels an Invocation through the guarded Agent dev endpoint", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-invocation-cancel-"))
+    const tokenServerId = "pid-1:5173"
+    const token = await refreshWorkspaceDevToken(rootDir, { serverId: tokenServerId })
+    try {
+      const results = [
+        { delivery: "local", id: "invocation-1", notEnforcedBy: "run", outcome: "requested", status: "running" },
+        { id: "invocation-1", outcome: "cancelled", status: "cancelled" },
+        { id: "invocation-1", outcome: "terminal", status: "completed" },
+      ]
+      const fetchCancel = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => init?.method === "POST"
+        ? Response.json(results.shift())
+        : Response.json({ agents: [{ name: "chat", triggers: [] }], root: rootDir, workspaceDevTokenServerId: tokenServerId }))
+      const run = async (args: string[]) => {
+        const stdout = stream()
+        const stderr = stream()
+        // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+        const exitCode = await runAgentInvocationsCli(args, { env: {}, rootDir, stderr, stdout }, { fetch: fetchCancel as never })
+        return { exitCode, stderr: stderr.output(), stdout: stdout.output() }
+      }
+
+      expect(await run(["cancel", "invocation-1"])).toEqual({ exitCode: 0, stderr: "", stdout: "invocation-1 cancel requested, not enforced by run\n" })
+      expect(fetchCancel.mock.calls[0]?.[0]).toBe("http://localhost:5173/__vitehub/agent/invocation-stream")
+      const post = fetchCancel.mock.calls[1]
+      expect(post?.[0]).toBe("http://localhost:5173/__vitehub/agent/invocation-stream")
+      expect(post?.[1]?.headers).toMatchObject({ "x-vitehub-agent-dev-loop": "1", [workspaceDevTokenHeader]: token })
+      expect(JSON.parse(String(post?.[1]?.body))).toEqual({ invocationCancel: { id: "invocation-1" } })
+
+      const json = await run(["cancel", "invocation-1", "--json", "--url", "http://127.0.0.1:5174"])
+      expect(json.exitCode).toBe(0)
+      expect(JSON.parse(json.stdout)).toEqual({ id: "invocation-1", outcome: "cancelled", status: "cancelled" })
+      expect(fetchCancel.mock.calls[3]?.[0]).toBe("http://127.0.0.1:5174/__vitehub/agent/invocation-stream")
+
+      expect(await run(["cancel", "invocation-1"])).toEqual({ exitCode: 1, stderr: "", stdout: "invocation-1 already completed\n" })
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
+  })
+
+  it("reports a rejected Invocation cancel request", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-invocation-cancel-"))
+    await refreshWorkspaceDevToken(rootDir, { serverId: "pid-1:5173" })
+    try {
+      const stderr = stream()
+      const fetchCancel = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => init?.method === "POST"
+        ? new Response("No Agent invocation journal is configured.", { status: 404 })
+        : Response.json({ agents: [], root: rootDir, workspaceDevTokenServerId: "pid-1:5173" }))
+      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+      const exitCode = await runAgentInvocationsCli(["cancel", "invocation-1"], { env: {}, rootDir, stderr, stdout: stream() }, { fetch: fetchCancel as never })
+      expect(exitCode).toBe(1)
+      expect(stderr.output()).toBe("No Agent invocation journal is configured.\n")
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
+  })
+
   it("shows a wrapped invocation detail record", async () => {
     const stdout = stream()
     const timestamp = "2026-08-22T10:00:00.000Z"

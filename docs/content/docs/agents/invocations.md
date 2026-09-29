@@ -287,7 +287,7 @@ vitehub agent invocations show INVOCATION_ID
 vitehub agent invocations tail INVOCATION_ID
 ```
 
-The CLI defaults to `http://localhost:5173/api/invocations`. Use `--url` or `VITEHUB_AGENT_INVOCATIONS_URL` for another local endpoint, and `--json` for automation-safe output.
+The CLI defaults to `http://localhost:5173/api/invocations`. Use `--url` or `VITEHUB_AGENT_INVOCATIONS_URL` for another local endpoint, and `--json` for automation-safe output. `vitehub agent invocations cancel INVOCATION_ID` sends a cancel request through the Vite Development Server. See [Cancel an Agent Invocation](/docs/development/cli#cancel-an-agent-invocation).
 
 Configured journals also retain failures and cancellation during Workflow preparation, before provider dispatch. Fresh manual starts get distinct invocation IDs. Durable Channel deliveries keep their delivery run ID across preparation attempts.
 
@@ -342,6 +342,33 @@ const record = await invocations.appendObservation(invocationId, {
 ```
 
 The observation ID is required, must be at most 512 characters, and makes retries idempotent within that Invocation. The store assigns the sequence atomically. This operation does not change Invocation status or its active lease, and it applies the configured content policy. The result is the stored record, or `undefined` when the Invocation does not exist. A failed write or full observation capacity throws, so a caller cannot mistake an omitted event for durable evidence. An append uses the observation limits saved with the record, including after restart. It rejects before changing the record if count, byte, or provider row capacity would remove evidence. Accepted appends remain intact under later trace pressure until the whole Invocation is removed by retention. Keep the same observation ID when retrying a write whose result is unknown. Custom stores must implement the `appendObservation` field on `AgentInvocationStoreUpdateInput`; a store that ignores it fails explicitly.
+
+## Cancel an invocation
+
+Call `invocations.cancel(id)` to cancel a pending or running Invocation. The journal records `cancelRequestedAt` first, so every process that shares the store can read the request.
+
+```ts
+const result = await invocations.cancel(id)
+if (result.notEnforcedBy) console.warn(`Cancel requested, not enforced by ${result.notEnforcedBy}`)
+```
+
+| `outcome` | Meaning |
+| --- | --- |
+| `requested` | A live run received the request. `delivery: 'local'` means a run in this process stopped. `delivery: 'journal'` means the process that holds the Invocation reads the request at its next claim renewal, within 10 seconds. |
+| `cancelled` | No live run held the Invocation, so the journal recorded `cancelled` and an `agent.invocation.cancelled` observation. A later run with the same run ID stops before its Driver starts. |
+| `terminal` | The Invocation already finished. `status` has its final state. |
+| `not-found` | The journal has no Invocation with this id. |
+| `unavailable` | The store did not keep the request and no run in this process holds the Invocation. |
+
+A cancel request aborts the Invocation abort signal. That signal stops the Driver capacity wait, the Driver run, tool calls, queued webhook executions, and scheduled turns. A cancelled queued webhook delivery completes without a retry. The record then moves to `cancelled` through the usual `agent.invocation.cancelled` event.
+
+| Driver | Cancel |
+| --- | --- |
+| `model` | Enforced. The AI SDK request receives the abort signal. |
+| `provider` (`claude-code`, `codex`) | Enforced. The provider session receives the abort signal. |
+| `run` | Not enforced. The handler receives `context.input.abortSignal` and can stop on its own. ViteHub cannot stop it. |
+
+When the Driver does not enforce cancel, the result has `notEnforcedBy`, and the record keeps `cancelNotEnforcedBy` and `cancelRequestedAt`. The record stays `running` until the Driver returns. ViteHub does not report the Invocation as cancelled.
 
 ## Inspect invocations in the console
 

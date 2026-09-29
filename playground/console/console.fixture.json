@@ -831,6 +831,36 @@
           }
         }
       ]
+    },
+    {
+      "id": "ainv_nightly_digest",
+      "traceId": "trace_nightly_digest",
+      "agentName": "release-engineer",
+      "title": "Compile the nightly digest",
+      "status": "running",
+      "origin": "schedule",
+      "threadId": "nightly-digest",
+      "cancelNotEnforcedBy": "run",
+      "configuration": {
+        "agent": { "name": "release-engineer" },
+        "driver": { "kind": "run" },
+        "runtime": { "name": "node" }
+      },
+      "createdAt": "2026-08-30T17:40:00.000Z",
+      "startedAt": "2026-08-30T17:40:01.000Z",
+      "updatedAt": "2026-08-30T17:41:12.000Z",
+      "observations": [
+        {
+          "name": "vitehub.agent.configured",
+          "type": "lifecycle",
+          "sequence": 1,
+          "timestamp": "2026-08-30T17:40:01.000Z",
+          "trace": { "id": "trace_nightly_digest" },
+          "attributes": {
+            "vitehub.activity.body": "Started the custom run handler for the nightly digest."
+          }
+        }
+      ]
     }
   ]
 }

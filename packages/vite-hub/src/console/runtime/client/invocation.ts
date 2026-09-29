@@ -45,3 +45,16 @@ export async function startConsoleAgentInvocation(
   if (!result.success) throw viteHubErrorDiagnostics.VITE_HUB_R0102({ message: "The Agent invocation response did not include an id." })
   return { agent, id: result.output.id }
 }
+
+const cancelResultSchema = v.object({
+  notEnforcedBy: v.optional(v.string()),
+  outcome: v.picklist(["cancelled", "requested"]),
+})
+
+/** Cancel one pending or running invocation. `notEnforcedBy` names a Driver that does not stop on abort. */
+export async function cancelConsoleInvocation(base: string, id: string): Promise<{ notEnforcedBy?: string, outcome: "cancelled" | "requested" }> {
+  const response = await requestConsole(`${base}/${encodeURIComponent(id)}`, { body: { action: "cancel" }, method: "POST" })
+  const result = v.safeParse(cancelResultSchema, response)
+  if (!result.success) throw viteHubErrorDiagnostics.VITE_HUB_R0102({ message: "The invocation cancel response was not valid." })
+  return result.output
+}

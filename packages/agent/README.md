@@ -316,6 +316,10 @@ Learn more at [vitehub.dev](https://vitehub.dev).
 
 `defineAgentInvocations()` returns `getSummary(id)` for metadata reads without observations. Every store must implement this method. Use `get(id)` for the full record or `get(id, { observationNames: ["agent.invocation.finish"] })` to read only observations with those exact names. An empty list returns no observations. The built-in SQL stores filter observation payloads inside the database. Custom stores can apply the same option to avoid loading unrelated payloads; the Invocations wrapper also filters their returned records. Both methods return `undefined` when the Invocation does not exist.
 
+## Invocation cancel
+
+`invocations.cancel(id)` records `cancelRequestedAt` on a pending or running Invocation and returns an `AgentInvocationCancelResult`. A run in the same process aborts its Invocation abort signal at once. A run in another process reads the flag at its next claim renewal, within 10 seconds. When no live run holds the Invocation, the journal records `cancelled` directly. Model-backed and provider-backed Drivers stop on cancel. A custom `run` Driver receives the aborted signal but ViteHub cannot stop it, so the result reports `notEnforcedBy: "run"` and the record stays `running`. Custom stores keep the new fields through `applyAgentInvocationStoreUpdate()`. `vitehub agent invocations cancel <id>` sends the same request through the Vite Development Server. See [Agent Invocations](../../docs/content/docs/agents/invocations.md#cancel-an-invocation).
+
 ## GitHub pull request Workspaces
 
 GitHub pull request Channels use `pullRequest.workspace.mount` for a custom repository mount. Omitting `workspace` mounts at `portal`. Both `workspace: true` and `workspace: {}` use the Workspace root. Set `workspace: false` to disable the contribution.

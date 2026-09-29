@@ -22,6 +22,8 @@ import {
   startLiveAgentInvocation,
 } from "./agent-invocation.ts"
 import { agentInvocationInputSupport, sendAgentInvocationInput } from "./internal/agent-invocation-control.ts"
+import { agentInvocationCancellationDriver } from "./internal/invocation-cancellation.ts"
+import type { AgentInvocationCancellationDriver } from "./internal/invocation-cancellation.ts"
 import { withAgentInvocationResponseOwner } from "./internal/agent-invocation-response-owner.ts"
 import {
   createReactionDeliveryEffectIntent,
@@ -237,6 +239,7 @@ export { agentInvocationId } from "./invocations.ts"
 
 export type {
   AgentInvocationAnnotationValue,
+  AgentInvocationCancelResult,
   AgentInvocationListOptions,
   AgentInvocationListResult,
   AgentInvocationObservationOptions,
@@ -7224,6 +7227,14 @@ async function executeAgentInvocationWithCapacityLease<
   })
 }
 
+function invocationCancellationDriver(definition: object | undefined): AgentInvocationCancellationDriver {
+  // SAFETY: Agent definition normalization stores the Driver kind and normalized Driver under these internal symbols.
+  const internal = definition as { [baseAgentDriver]?: unknown, [baseAgentDriverKind]?: AgentDriverKind } | undefined
+  const driver = internal?.[baseAgentDriver]
+  const provider = isRuntimeRecord(driver) && hasRuntimeType(driver.provider, "string") ? driver.provider : undefined
+  return agentInvocationCancellationDriver({ kind: internal?.[baseAgentDriverKind] ?? "model", ...(provider ? { provider } : {}) })
+}
+
 async function executeAgentInvocation<
   TRuntimeConfig extends AgentRuntimeConfig,
   CALL_OPTIONS,
@@ -7258,10 +7269,19 @@ async function executeAgentInvocation<
     await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
     throw error
   }
-  if (invocationJournal) context = invocationJournal.context
+  if (invocationJournal) {
+    context = invocationJournal.context
+    // A cancellation request aborts the capacity wait, the Driver run, and tool calls through the run abort signal.
+    input = {
+      ...input,
+      abortSignal: input.abortSignal ? AbortSignal.any([input.abortSignal, invocationJournal.abortSignal]) : invocationJournal.abortSignal,
+    }
+    invocationJournal.watchCancellation(invocationCancellationDriver(definition))
+  }
   let preparedInvocation: AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS> | undefined
   let release: (() => void) | undefined
   try {
+    input.abortSignal?.throwIfAborted()
     if (definition && inspectAgentCapacity(definition)) {
       preparedInvocation = await createAgentInvocationContextWithWorkflowFailureDelivery(
         // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.

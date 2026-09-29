@@ -1,15 +1,23 @@
+import * as v from "valibot"
+
+import { getConsoleAgentDefinition } from "./agents.ts"
 import { getConsoleInvocations } from "./invocations.ts"
-import { assertConsoleRequest, consoleRequestURL } from "./request.ts"
+import { assertConsoleRequest, consoleRequestJSON, consoleRequestURL } from "./request.ts"
 import { invocationUsage } from "./usage.ts"
 
 import type { ConsoleRequestEvent } from "./request.ts"
-import type { AgentInvocationSummary } from "@vite-hub/agent"
+import type { AgentInvocationCancelResult, AgentInvocationSummary } from "@vite-hub/agent"
 import type { TraceEventLogEntry } from "@vite-hub/runtime"
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
 
+/** Record actions that Console invoke access allows. */
+interface ConsoleInvocationActions {
+  cancel: { available: boolean }
+}
+
 interface ConsoleInvocationDetail {
   appendObservations?: boolean
-  invocation: AgentInvocationSummary & { usage?: ReturnType<typeof invocationUsage> }
+  invocation: AgentInvocationSummary & { actions?: ConsoleInvocationActions, usage?: ReturnType<typeof invocationUsage> }
   observationCursor: string
   observations: readonly TraceEventLogEntry[]
 }
@@ -28,19 +36,63 @@ function observationCursor(observations: readonly TraceEventLogEntry[], count = 
   return `${count.toString(36)}-${(fnv >>> 0).toString(36)}-${(djb >>> 0).toString(36)}`
 }
 
-const invocationHandler: (event: ConsoleRequestEvent) => Promise<ConsoleInvocationDetail> = async (event) => {
-  assertConsoleRequest(event)
+const cancelActionSchema = v.strictObject({ action: v.literal("cancel") })
+const activeStatuses: ReadonlySet<AgentInvocationSummary["status"]> = new Set(["pending", "running"])
+
+function notFound(): Error {
+  return Object.assign(viteHubErrorDiagnostics.VITE_HUB_R0054({ message: "Invocation not found" }), {
+    statusCode: 404,
+    statusMessage: "Invocation not found",
+  })
+}
+
+function actionError(statusCode: number, statusMessage: string): Error {
+  return Object.assign(viteHubErrorDiagnostics.VITE_HUB_R0046({ message: statusMessage }), { statusCode, statusMessage })
+}
+
+function requestedInvocationId(event: ConsoleRequestEvent): string {
   const pathId = consoleRequestURL(event).pathname.split("/").at(-1)
-  const id = event.context?.params?.id ?? (pathId ? decodeURIComponent(pathId) : "")
-  const invocation = await getConsoleInvocations().get(id)
-  if (!invocation) {
-    throw Object.assign(viteHubErrorDiagnostics.VITE_HUB_R0054({ message: "Invocation not found" }), {
-      statusCode: 404,
-      statusMessage: "Invocation not found",
-    })
+  return event.context?.params?.id ?? (pathId ? decodeURIComponent(pathId) : "")
+}
+
+// Console invoke access for the record's Agent allows these actions.
+function invocationActions(invocation: AgentInvocationSummary): ConsoleInvocationActions | undefined {
+  if (!invocation.agentName || !getConsoleAgentDefinition(invocation.agentName)) return
+  return { cancel: { available: activeStatuses.has(invocation.status) } }
+}
+
+/** Cancel one pending or running invocation after the Console checks invoke access for its Agent. */
+export async function cancelConsoleInvocation(event: ConsoleRequestEvent): Promise<AgentInvocationCancelResult> {
+  assertConsoleRequest(event, ["POST"])
+  const id = requestedInvocationId(event)
+  let body: unknown
+  try {
+    body = await consoleRequestJSON(event)
   }
+  catch (error) {
+    if (error instanceof Error && "statusCode" in error) throw error
+    throw actionError(400, "Malformed invocation action.")
+  }
+  if (!v.safeParse(cancelActionSchema, body).success) throw actionError(400, "Unsupported invocation action.")
+  const invocations = getConsoleInvocations()
+  const summary = await invocations.getSummary(id)
+  if (!summary) throw notFound()
+  if (!summary.agentName || !getConsoleAgentDefinition(summary.agentName)) throw actionError(403, "Cancelling this invocation requires Console invoke access for its Agent.")
+  const result = await invocations.cancel(id)
+  if (result.outcome === "not-found") throw notFound()
+  if (result.outcome === "terminal") throw actionError(409, "Only pending or running invocations can be cancelled.")
+  if (result.outcome === "unavailable") throw actionError(503, "The invocation journal did not record the cancel request.")
+  return result
+}
+
+/** Read one invocation with its observations and the actions that Console access allows. */
+export async function getConsoleInvocationDetail(event: ConsoleRequestEvent): Promise<ConsoleInvocationDetail> {
+  assertConsoleRequest(event, ["GET"])
+  const invocation = await getConsoleInvocations().get(requestedInvocationId(event))
+  if (!invocation) throw notFound()
   const { observations, ...summary } = invocation
   const usage = invocationUsage(invocation)
+  const actions = invocationActions(summary)
   const requestURL = consoleRequestURL(event)
   const countValue = requestURL.searchParams.get("observationCount")
   const requestedCursor = requestURL.searchParams.get("observationCursor")
@@ -53,7 +105,7 @@ const invocationHandler: (event: ConsoleRequestEvent) => Promise<ConsoleInvocati
     && observationCount <= observations.length
     && requestedCursor === observationCursor(observations, observationCount)
   const detail: ConsoleInvocationDetail = {
-    invocation: { ...summary, ...(usage ? { usage } : {}) },
+    invocation: { ...summary, ...(actions ? { actions } : {}), ...(usage ? { usage } : {}) },
     observationCursor: observationCursor(observations),
     observations: canAppend
       ? observations.slice(observationCount)
@@ -61,6 +113,14 @@ const invocationHandler: (event: ConsoleRequestEvent) => Promise<ConsoleInvocati
   }
   if (canAppend) detail.appendObservations = true
   return detail
+}
+
+// The devframe `invocation` operation reads one record with GET and changes it with POST.
+const invocationHandler = async (event: ConsoleRequestEvent): Promise<ConsoleInvocationDetail | AgentInvocationCancelResult> => {
+  assertConsoleRequest(event, ["GET", "POST"])
+  return (event.method ?? event.req?.method ?? event.node?.req?.method) === "POST"
+    ? await cancelConsoleInvocation(event)
+    : await getConsoleInvocationDetail(event)
 }
 
 export default invocationHandler

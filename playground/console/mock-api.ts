@@ -23,6 +23,8 @@ for (const record of fixture.invocations) {
   store.create(input)
 }
 const invocations = defineAgentInvocations({ content: "content", store })
+// Hold a live claim for the custom `run` Driver session, so cancel reports that the Driver does not enforce it.
+void store.claim("ainv_nightly_digest", "playground-owner", 24 * 60 * 60 * 1_000)
 const sections = ["env", "agents", "usage", "database", "kv", "workflows", "queues"] as const
 const definitions = {
   queues: [
@@ -248,6 +250,19 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path.startsWith("/api/_vitehub/console/invocations/")) {
     const id = decodeURIComponent(path.slice("/api/_vitehub/console/invocations/".length))
+    if (request.method === "POST") {
+      // SAFETY: The playground handler checks the action immediately after decoding this local JSON request.
+      const input = await body(request) as { action?: unknown }
+      if (input.action !== "cancel") {
+        json(response, { error: "Unsupported invocation action." }, 400)
+        return true
+      }
+      const result = await invocations.cancel(id)
+      if (result.outcome === "not-found") json(response, { error: "Invocation not found" }, 404)
+      else if (result.outcome === "terminal") json(response, { error: "Only pending or running invocations can be cancelled." }, 409)
+      else json(response, result)
+      return true
+    }
     const record = await invocations.get(id)
     const invocation = summary(record)
     if (!record || !invocation) {
@@ -255,8 +270,10 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       return true
     }
     const usage = invocationUsage(record)
+    // The playground acts as a Console with invoke access for every Agent.
+    const actions = { cancel: { available: record.status === "pending" || record.status === "running" } }
     json(response, {
-      invocation: { ...invocation, ...(usage ? { usage } : {}) },
+      invocation: { ...invocation, actions, ...(usage ? { usage } : {}) },
       observations: record.observations,
     })
     return true
