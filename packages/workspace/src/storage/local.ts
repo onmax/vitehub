@@ -813,9 +813,15 @@ class LocalWorkspaceStore implements WorkspaceStore {
 
   async removeEmptyDirectory(path: string): Promise<void> {
     await withWorkspacePathLock(this.root, path, async () => {
-      const { rmdir } = await import("node:fs/promises")
+      const { lstat, rmdir } = await import("node:fs/promises")
       await this.#assertPathComponents(path, false)
-      await rmdir(resolveInside(this.root, path)).catch((error: NodeJS.ErrnoException) => {
+      const absolute = resolveInside(this.root, path)
+      const info = await lstat(absolute).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error
+      })
+      // Windows rmdir can remove a directory junction instead of rejecting it.
+      if (!info || info.isSymbolicLink()) return
+      await rmdir(absolute).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error
       })
     })
