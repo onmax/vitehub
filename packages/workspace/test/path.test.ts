@@ -28,12 +28,36 @@ describe("reserved Workspace metadata namespace", () => {
     expect(() => normalizeSafeWorkspacePattern(`${root}/**`)).toThrow()
   })
 
+  it.each([
+    ".vitehub.",
+    ".VITEHUB ",
+    ".ViteHub. . ",
+    ".vitehub::$INDEX_ALLOCATION",
+    ".VITEHUB:$I30:$INDEX_ALLOCATION",
+    ".vitehub. :stream",
+    ".git.",
+    ".GIT ",
+    ".git::$INDEX_ALLOCATION",
+    "nested/.git. . ",
+    "nested/.GIT:$I30:$INDEX_ALLOCATION",
+  ])("rejects reserved component aliases in %j", (root) => {
+    for (const path of [root, `${root}/config`, `${root}\\config`]) {
+      expect(() => normalizeSafeWorkspacePath(path)).toThrow()
+      expect(() => normalizeSafeWorkspacePath(path, { allowReserved: true })).toThrow()
+      expect(() => normalizeSafeWorkspacePattern(path)).toThrow()
+    }
+    expect(() => normalizeSafeWorkspacePattern(`${root}/**`)).toThrow()
+  })
+
   it("preserves internal access and unrelated public paths", () => {
     expect(normalizeSafeWorkspacePath(".VITEHUB/file-metadata/foo/metadata.json", { allowReserved: true }))
       .toBe(".VITEHUB/file-metadata/foo/metadata.json")
-    for (const path of [".vitehub-notes/file", "nested/.VITEHUB/file", "ordinary/file"]) {
+    expect(normalizeSafeWorkspacePath("nested/.GIT/config", { allowReserved: true }))
+      .toBe("nested/.GIT/config")
+    for (const path of [".vitehub-notes/file", "nested/.VITEHUB/file", "ordinary/file", "..notes/file", "ordinary./file", "report:final.txt"]) {
       expect(normalizeSafeWorkspacePath(path)).toBe(path)
     }
+    expect(normalizeSafeWorkspacePattern("[[:alpha:]]/**/*.md")).toBe("[[:alpha:]]/**/*.md")
     expect(normalizeSafeWorkspacePath("", { allowEmpty: true })).toBe("")
   })
 })

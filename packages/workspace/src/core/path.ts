@@ -33,7 +33,13 @@ export function normalizeSafeWorkspacePath(path = "", options: SafeWorkspacePath
 
   if (!options.allowEmpty && !normalized) throw workspacePathError(path)
   if (raw.startsWith("/") || /^[a-z]:/i.test(raw) || raw.includes("\0") || parts.some(part => part === "." || part === "..")) throw workspacePathError(path)
-  if (!options.allowReserved && (parts.some(part => part.toLowerCase() === ".git") || parts[0]?.toLowerCase() === ".vitehub")) throw workspacePathError(path)
+  if (parts.some((part, index) => {
+    const name = part.toLowerCase()
+    const basename = name.split(":", 1)[0]!.replace(/[ .]+$/, "")
+    const reserved = basename === ".git" || (index === 0 && basename === ".vitehub")
+    // Internal access permits canonical reserved names, never alternate spellings.
+    return reserved && (!options.allowReserved || name !== basename)
+  })) throw workspacePathError(path)
 
   return normalized
 }
