@@ -16088,6 +16088,11 @@ describe("server helpers", () => {
     const stateDir = await mkdtemp(join(tmpdir(), "vitehub-chat-steer-ambiguous-start-"))
     const state = Object.assign(createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` }), { workflowCustody: true })
     const adapter = createTestChatAdapter()
+    const driverStarted = deferred<void>()
+    const replayBlocked = deferred<void>()
+    const recoveredRetryStarted = deferred<void>()
+    const overlappingHandoffBlocked = deferred<void>()
+    const pending: Promise<unknown>[] = []
     const workflowPayloads: Array<{ input?: AgentRunInput }> = []
     let acceptRecoveredRetry!: () => void
     const recoveredRetryBlocked = new Promise<void>((resolve) => {
@@ -16100,12 +16105,14 @@ describe("server helpers", () => {
     const driverSignals: AbortSignal[] = []
     const runs = vi.fn(async ({ input }: { input: AgentRunInput }) => {
       if (input.abortSignal) driverSignals.push(input.abortSignal)
+      driverStarted.resolve()
       await blocked
       return "internal output"
     })
     const createBatch = vi.fn(async ([{ params }]: Array<{ params: { input?: AgentRunInput } }>) => {
       workflowPayloads.push(params)
       if (createBatch.mock.calls.length === 3) {
+        recoveredRetryStarted.resolve()
         await recoveredRetryBlocked
         return [{ id: "recovered-retry", status: async () => ({ status: "queued" }) }]
       }
@@ -16128,6 +16135,7 @@ describe("server helpers", () => {
       [getCloudflareWorkflowBindingName("calories")]: { createBatch, get: vi.fn() },
     }
     setWorkflowRuntimeConfig({ provider: "cloudflare" })
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] })
 
     try {
       await state.connect()
@@ -16173,6 +16181,11 @@ describe("server helpers", () => {
       vi.spyOn(state, "acquireLock").mockImplementation((threadId, ttlMs) => {
         const acquisition = originalAcquireLock(threadId, ttlMs)
         if (threadId === handoffLock) handoffAcquisitions.push(acquisition)
+        void acquisition.then((lock) => {
+          if (lock) return
+          if (threadId.includes(":execution:")) replayBlocked.resolve()
+          if (threadId === handoffLock) overlappingHandoffBlocked.resolve()
+        }, () => undefined)
         return acquisition
       })
       // SAFETY: This synthetic test input exercises a hook that does not inspect the omitted host-only context.
@@ -16180,17 +16193,22 @@ describe("server helpers", () => {
         (value) => ({ value }),
         (error) => ({ error }),
       )
-      await vi.waitFor(() => expect(runs).toHaveBeenCalledOnce(), { timeout: 10_000 })
+      pending.push(firstExecution)
+      await driverStarted.promise
+      expect(runs).toHaveBeenCalledOnce()
       // SAFETY: This synthetic test input exercises a hook that does not inspect the omitted host-only context.
       const replay = runAgentWorkflowDefinition(agent as never, workflow, inline as never).then(
         (value) => ({ value }),
         (error) => ({ error }),
       )
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      pending.push(replay)
+      await replayBlocked.promise
       expect(runs).toHaveBeenCalledOnce()
       const originalScopeToken = binding!.steer!.lock.token
       let originalExecutionToken: string | undefined
       const originalExtendLock = state.extendLock.bind(state)
+      const renewalWrites: Array<ReturnType<typeof originalExtendLock>> = []
+      const handoffRenewals: Array<ReturnType<typeof originalExtendLock>> = []
       const extendLock = vi.spyOn(state, "extendLock").mockImplementation(async (lock, ttlMs) => {
         if (lock.threadId.includes(":execution:") && originalExecutionToken === undefined) {
           originalExecutionToken = lock.token
@@ -16199,34 +16217,47 @@ describe("server helpers", () => {
           await state.releaseLock(lock)
           return false
         }
-        return await originalExtendLock(lock, ttlMs)
+        const renewal = originalExtendLock(lock, ttlMs)
+        renewalWrites.push(renewal)
+        if (lock.threadId === handoffLock) handoffRenewals.push(renewal)
+        return await renewal
       })
-      await vi.waitFor(
-        () => expect(driverSignals[0]?.aborted).toBe(true),
-        { timeout: binding!.steer!.ttlMs * 5 },
-      )
+      const ownershipLost = new Promise<void>(resolve => driverSignals[0]!.addEventListener("abort", () => resolve(), { once: true }))
+      await vi.advanceTimersByTimeAsync(binding!.steer!.ttlMs / 2)
+      await ownershipLost
+      expect(driverSignals[0]?.aborted).toBe(true)
 
-      await vi.waitFor(() => expect(createBatch).toHaveBeenCalledTimes(3), { timeout: binding!.steer!.ttlMs * 5 })
-      await vi.waitFor(() => expect(handoffAcquisitions).toHaveLength(1))
+      await vi.advanceTimersByTimeAsync(10)
+      await recoveredRetryStarted.promise
+      expect(createBatch).toHaveBeenCalledTimes(3)
+      expect(handoffAcquisitions).toHaveLength(1)
       await expect(handoffAcquisitions[0]).resolves.not.toBeNull()
-      await new Promise((resolve) => setTimeout(resolve, binding!.steer!.ttlMs * 2))
+      const originalHandoffExpiresAt = (await handoffAcquisitions[0])!.expiresAt
+      for (let renewal = 0; renewal < 4; renewal++) {
+        const previousWrites = renewalWrites.length
+        const previousHandoffRenewals = handoffRenewals.length
+        await vi.advanceTimersByTimeAsync(binding!.steer!.ttlMs / 2)
+        await Promise.all(renewalWrites.slice(previousWrites))
+        expect(handoffRenewals).toHaveLength(previousHandoffRenewals + 1)
+        await expect(handoffRenewals.at(-1)).resolves.toBe(true)
+      }
+      expect(Date.now()).toBeGreaterThan(originalHandoffExpiresAt)
       const overlappingDelivery = handler(chatWebhookRequest(91_145), "telegram", {
         agentIdentity: { name: "calories" },
         cloudflare: { env },
       })
-      await vi.waitFor(
-        async () => {
-          const acquisitions = await Promise.all(handoffAcquisitions)
-          expect(acquisitions.slice(1)).toContain(null)
-        },
-        { timeout: binding!.steer!.ttlMs * 5 },
-      )
+      pending.push(overlappingDelivery)
+      void overlappingDelivery.catch(() => undefined)
+      await overlappingHandoffBlocked.promise
+      const acquisitions = await Promise.all(handoffAcquisitions)
+      expect(acquisitions.slice(1)).toContain(null)
       acceptRecoveredRetry()
+      const replayOutcome = await replay
+      await vi.advanceTimersByTimeAsync(10)
       await overlappingDelivery
       expect(createBatch).toHaveBeenCalledTimes(3)
       expect(await state.queueDepth(binding!.steer!.queue)).toBe(1)
 
-      const replayOutcome = await replay
       expect(replayOutcome).toEqual({ value: undefined })
       release()
       const firstOutcome = await firstExecution
@@ -16249,10 +16280,16 @@ describe("server helpers", () => {
     } finally {
       acceptRecoveredRetry()
       release()
-      setActiveCloudflareEnv(undefined)
-      resetWorkflowRuntime()
-      await state.disconnect()
-      await rm(stateDir, { force: true, recursive: true })
+      try {
+        await vi.runOnlyPendingTimersAsync()
+        await Promise.allSettled(pending)
+      } finally {
+        vi.useRealTimers()
+        setActiveCloudflareEnv(undefined)
+        resetWorkflowRuntime()
+        await state.disconnect()
+        await rm(stateDir, { force: true, recursive: true })
+      }
     }
   }, 15_000)
 
