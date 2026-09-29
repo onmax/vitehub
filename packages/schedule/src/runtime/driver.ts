@@ -9,6 +9,7 @@ import {
   setRuntimeScheduleStore,
   setScheduleRunStore,
   setScheduleRuntimeRegistry,
+  setScheduleWakeDriverActive,
 } from "./state.ts"
 import { createScheduleError } from "../errors.ts"
 
@@ -468,12 +469,14 @@ export async function installScheduleRuntime(options: InstallScheduleRuntimeOpti
     throw scheduleErrorDiagnostics.SCHEDULE_R0021({ message: "Runtime Schedule wake driver installation did not produce a driver." })
   }
   const installedDriver = reconciledDriver
+  setScheduleWakeDriverActive(true)
 
   let closePromise: Promise<void> | undefined
   return {
     close() {
       if (closePromise) return closePromise
       closing = true
+      setScheduleWakeDriverActive(false)
       return closePromise = (async () => {
         while (activeWakes.size > 0) {
           await Promise.allSettled(activeWakes)

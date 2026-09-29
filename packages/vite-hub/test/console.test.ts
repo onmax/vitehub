@@ -1020,8 +1020,10 @@ describe("Agent invocation console", () => {
       expect(generated).toContain(`from "vite-hub/console/definitions"`)
       expect(generated).not.toContain(`from "vite-hub/console/server"`)
       expect(generated).toContain(`installConsoleSections(${JSON.stringify(root)}, ["schedules"])`)
-      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"schedules":{"definitions":[{"fields":[{"label":"Kind","value":"Runtime target"},{"label":"Runtime schedules","value":"Allowed"}],"file":"server/schedules/adhoc.ts","name":"adhoc","source":"server-schedules"},{"fields":[{"label":"Kind","value":"Static schedule"},{"label":"Cron","value":"0 0 1 * 1"},{"label":"Time zone","value":"UTC"},{"label":"Runtime schedules","value":"Allowed"}],"file":"server/schedules/daily.ts","name":"daily","source":"server-schedules"},{"fields":[{"label":"Kind","value":"Static schedule"}],"file":"server/schedules/dynamic.ts","name":"dynamic","source":"server-schedules"}],"kind":"definition-catalog"}}, `)
-      expect(generated).toContain(`"file":"server/schedules/dynamic.ts","name":"dynamic","source":"server-schedules"`)
+      expect(generated).toContain(`import { readScheduleConsoleRecords as vitehubConsoleRuntimeReader0 } from "vite-hub/_internal/schedule/runtime/console"`)
+      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"schedules":{"kind":"record-table","records":[{"cells":{"enabled":"-","kind":"Target","lastRun":"-","nextRun":"-","schedule":"adhoc","target":"adhoc","timing":"-"},"fields":[{"label":"Kind","value":"Runtime target"},{"label":"Runtime schedules","value":"Allowed"},{"label":"File","value":"server/schedules/adhoc.ts"},{"label":"Source","value":"server-schedules"},{"label":"Runs","value":"A Runtime Schedule that uses this target shows its runs in its own row."}],"id":"definition:adhoc"},{"cells":{"enabled":"Provider","kind":"Definition","lastRun":"Not in this table","nextRun":"Set by the provider","schedule":"daily","target":"-","timing":"0 0 1 * 1"},"fields":[{"label":"Kind","value":"Static schedule"},{"label":"Cron","value":"0 0 1 * 1"},{"label":"Time zone","value":"UTC"},{"label":"Runtime schedules","value":"Allowed"},{"label":"File","value":"server/schedules/daily.ts"},{"label":"Source","value":"server-schedules"},`)
+      expect(generated).toContain(`{"label":"File","value":"server/schedules/dynamic.ts"},{"label":"Source","value":"server-schedules"}`)
+      expect(generated).toContain(`], { "schedules": vitehubConsoleRuntimeReader0 })`)
       expect(generated).not.toContain(`"Cron","value":"0 10 * * *"`)
       expect(generated).not.toContain("The Console must not evaluate")
       expect(generated).not.toContain("installConsoleInvocations")
@@ -1066,8 +1068,8 @@ describe("Agent invocation console", () => {
       expect(generated).toContain('"file":"packages/rate-limit/policies/api.ts","name":"api","source":"require-rate-limit"')
       expect(generated).toContain('"workspaces":{"definitions":[{"fields":[{"label":"Kind","value":"Workspace Definition"}')
       expect(generated).toContain('"file":"packages/workspace/server/workspaces/docs/config.ts","name":"docs"')
-      expect(generated).toContain('"schedules":{"definitions":[{"fields":[{"label":"Kind","value":"Runtime target"}')
-      expect(generated).toContain('"file":"packages/schedule/server/schedules/adhoc.ts","name":"adhoc"')
+      expect(generated).toContain('"schedules":{"kind":"record-table","records":[{"cells":{"enabled":"-","kind":"Target"')
+      expect(generated).toContain('{"label":"File","value":"packages/schedule/server/schedules/adhoc.ts"}')
     }
     finally {
       await rm(root, { force: true, recursive: true })
@@ -1235,8 +1237,9 @@ describe("Agent invocation console", () => {
       expect(generated).toContain(`"file":"src/api.ts","name":"api","source":"require-rate-limit"`)
       expect(generated).toContain(`"file":"app/src/preview.sandbox.ts","name":"preview","source":"vite-suffix"`)
       expect(generated).not.toContain(`"name":"unrelated"`)
-      expect(generated).toContain(`"file":"server/schedules/adhoc.ts","name":"adhoc","source":"server-schedules"`)
+      expect(generated).toContain(`{"label":"File","value":"server/schedules/adhoc.ts"},{"label":"Source","value":"server-schedules"}`)
       expect(generated).not.toContain(`"file":"../`)
+      expect(generated).not.toContain(`{"label":"File","value":"../`)
     }
     finally {
       await rm(projectRoot, { force: true, recursive: true })

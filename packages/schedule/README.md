@@ -200,6 +200,12 @@ With the Process Runtime, the default `providerOutput: "auto"` emits no host Pro
 
 When a custom host installs a wake driver, call and await `controller.close()` during shutdown. Closing stops new wakes, drains active wakes and `waitUntil()` work, and releases driver resources. It does not delete Schedule Definitions, Runtime Schedules, or run history. The generated Nitro Process Runtime connects the same close operation to Nitro shutdown and process termination signals.
 
+## Inspect Runtime Schedules
+
+`hubSchedule()` contributes the `vitehub schedule` CLI namespace: `list`, `get <id>`, `runs <id> [--limit <n>]`, `attempts <runId>`, `run <id>`, `enable <id>`, and `disable <id>`. Each command accepts `--json`. The commands call a guarded endpoint that exists only on the Vite Development Server. The endpoint forwards each operation into the Nitro dev environment, so it reads the same stores and registry as the running app. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 there.
+
+The Console Schedules section is a record table. Build-time records list Schedule Definitions. `readScheduleConsoleRecords()` from `@vite-hub/schedule/runtime/console` adds Runtime Schedules with enabled state, next run, last run, and run history on each request. The Console is read-only. A Runtime Schedule with `console: { enabled: false }` is hidden there. The CLI and the Console redact credentials in Schedule input and error messages.
+
 ## Import runtime helpers
 
 The main `@vite-hub/schedule` entry exports `defineSchedule`, `defineScheduleTarget`, `schedules`, `validateRuntimeScheduleCron`, and public types. Import execution, storage, and runtime state helpers from `@vite-hub/schedule/runtime`. Import `discoverScheduleDefinitions` from `@vite-hub/schedule/vite` when writing a build integration. Applications use `vite-hub/schedule` and `vite-hub/schedule/runtime`.

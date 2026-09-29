@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createAgentCliContributor } from "@vite-hub/agent/cli";
 import { runViteHubCli } from "@vite-hub/cli";
 import { createDbCliContributor } from "@vite-hub/database/cli";
+import { hubSchedule } from "@vite-hub/schedule/vite";
 import { hubWorkspace } from "@vite-hub/workspace/vite";
 import { describe, expect, it } from "vitest";
 
@@ -43,12 +44,14 @@ describe("CLI documentation contract", () => {
     const agent = createAgentCliContributor({ rootDir: evalFixtureRoot });
     const database = createDbCliContributor();
     if (!agent || !database) throw new TypeError("Expected the default CLI contributors.");
+    const schedulePlugin: unknown = hubSchedule();
     const workspacePlugin: unknown = hubWorkspace();
     const typesPlugin: unknown = viteHubTypesPlugin();
     const plugins: unknown[] = [
       { vitehub: { cli: agent } },
       { vitehub: { cli: database } },
       { vitehub: { cli: { namespaces: [createConsoleCliNamespace()] } } },
+      schedulePlugin,
       workspacePlugin,
       typesPlugin,
     ];

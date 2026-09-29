@@ -11,7 +11,7 @@ import type { ConsoleSectionId } from "./runtime/sections.ts"
 import { consoleFixtureRevision, readConsoleFixture } from "./fixture.ts"
 import { createConsoleInvocationsIdentity } from "./internal.ts"
 import { resolveConsoleProjectNameFromRoot } from "./project.ts"
-import { describeConsoleContributedSections } from "./contributions.ts"
+import { describeConsoleContributedSections, describeConsoleRuntimeReaders } from "./contributions.ts"
 import { installConsoleFixtureInvocations } from "./runtime/server/invocations.ts"
 
 function renderConsoleNitroPlugin(
@@ -42,6 +42,7 @@ function renderConsoleNitroPlugin(
   const databaseEnabled = sections.includes("databases")
   const kvEnabled = sections.includes("kv")
   const contributedSections = describeConsoleContributedSections(sections)
+  const runtimeReaders = describeConsoleRuntimeReaders(sections)
   const definitionsEnabled = databaseEnabled || contributedSections.length > 0
   const revision = fixtureSnapshot ? consoleFixtureRevision(fixtureSnapshot) : undefined
   const fixtureSource = fixtureSnapshot ? `JSON.parse(${JSON.stringify(JSON.stringify(fixtureSnapshot))})` : undefined
@@ -57,6 +58,9 @@ function renderConsoleNitroPlugin(
       ? [`import { installConsoleAgentDefinitions, installConsoleFixtureInvocations } from "vite-hub/console/server"`, `import { agentWithColocatedSkills } from "@vite-hub/agent/runtime/workflow"`]
       : []),
     ...(definitionsEnabled ? [`import { installConsoleDefinitions } from "vite-hub/console/definitions"`] : []),
+    ...(definitionsEnabled
+      ? runtimeReaders.map((reader, index) => `import { ${reader.export} as vitehubConsoleRuntimeReader${index} } from ${JSON.stringify(reader.module)}`)
+      : []),
     ...(databaseEnabled
       ? [
           `import { installConsoleDatabase } from "vite-hub/console/database"`,
@@ -77,7 +81,7 @@ function renderConsoleNitroPlugin(
       : []),
     ...(sections.includes("env") ? [`installConsoleEnv(${JSON.stringify(projectRoot)}, describeServerEnv(), async request => { try { return await (await import("#vitehub/env/server")).manageServerEnv(request) } catch { return Response.json({ message: "Env management is unavailable." }, { status: 503, headers: { "cache-control": "no-store" } }) } })`] : []),
     `installConsoleProjectName(${JSON.stringify(projectRoot)}, ${JSON.stringify(resolveConsoleProjectNameFromRoot(projectRoot))})`,
-    ...(definitionsEnabled ? [`installConsoleDefinitions(${JSON.stringify(projectRoot)}, ${JSON.stringify(catalog.content)}, ${JSON.stringify(contributedSections)})`] : []),
+    ...(definitionsEnabled ? [`installConsoleDefinitions(${JSON.stringify(projectRoot)}, ${JSON.stringify(catalog.content)}, ${JSON.stringify(contributedSections)}${runtimeReaders.length ? `, { ${runtimeReaders.map((reader, index) => `${JSON.stringify(reader.section)}: vitehubConsoleRuntimeReader${index}`).join(", ")} }` : ""})`] : []),
     ...(databaseEnabled
       ? [`installConsoleDatabase(${JSON.stringify(projectRoot)}, vitehubConsoleDatabases, ${JSON.stringify(catalog.content.databases?.kind === "definition-catalog" ? catalog.content.databases.definitions.map(definition => definition.name) : [])})`]
       : []),

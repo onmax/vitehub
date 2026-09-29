@@ -99,6 +99,21 @@ export const redactedInspectionValue = "[redacted]"
 const secretKeyPattern = /secret|token|passw(?:or)?d|credential|api[-_\s]?key|private[-_\s]?key|authorization|cookie|signature|dsn|connection[-_\s]?string/i
 const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@|bearer\s)/i
 
+const embeddedUrlCredentialPattern = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi
+const embeddedBearerPattern = /\bbearer\s+[^\s,;]+/gi
+const embeddedSecretAssignmentPattern = /\b((?:[\w-]*(?:secret|token|passw(?:or)?d|api[-_]?key|authorization))\s*[:=]\s*)[^\s,;&]+/gi
+
+/**
+ * Removes credentials inside free text, for example an error message. URL credentials, bearer tokens, and
+ * `name=value` pairs with a secret name are replaced with `[redacted]`.
+ */
+export function redactInspectionText(value: string): string {
+  return value
+    .replace(embeddedUrlCredentialPattern, `$1${redactedInspectionValue}@`)
+    .replace(embeddedBearerPattern, `Bearer ${redactedInspectionValue}`)
+    .replace(embeddedSecretAssignmentPattern, `$1${redactedInspectionValue}`)
+}
+
 /**
  * Removes values that can carry credentials before inspection output leaves the process.
  * Keys that name secrets, plaintext Worker `vars`, and URLs with embedded credentials are redacted.
