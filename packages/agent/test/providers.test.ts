@@ -1414,6 +1414,33 @@ describe("agent Vite plugin", () => {
     })
   })
 
+  it("adds the Agent Invocations dev handler to Nitro only for the Development Server", async () => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const root = await mkdtemp(join(tmpdir(), "vitehub-agent-invocations-dev-"))
+    try {
+      const configFor = async (command: "build" | "serve") => {
+        const plugin = hubAgent()
+        // SAFETY: This fixture supplies the private Nitro config context consumed by the plugin.
+        const config = { [VITEHUB_NITRO_CONFIG_CONTEXT]: true, root } as never
+        // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+        const result: unknown = isRuntimeFunction(plugin.config) ? await plugin.config.call({} as never, config, { command, mode: command === "serve" ? "development" : "production" }) : undefined
+        return JSON.stringify(result)
+      }
+      const handler = join(root, ".vitehub", "agent", "invocations-dev-handler.ts")
+      expect(await configFor("serve")).toContain(JSON.stringify({ handler, route: "/_vitehub/agent/invocations/dev" }))
+      expect(await configFor("build")).not.toContain("invocations-dev-handler")
+
+      const configResolvedHook: unknown = hubAgent().configResolved
+      // SAFETY: hubAgent installs configResolved as an async Vite hook.
+      const configResolved = configResolvedHook as (config: { command: "build" | "serve", plugins: Array<{ name: string }>, root: string }) => Promise<void>
+      await configResolved({ command: "serve", plugins: [], root })
+      expect(await readFile(handler, "utf8")).toContain("import { handleAgentInvocationsDevRequest as handleViteHubDevRequest } from \"@vite-hub/agent/runtime/invocations-dev\"")
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+   }, 30_000)
+
   it("replaces the Agent app root in Nitro server code without overriding user replacements", async () => {
     const { hubAgent } = await import("../src/vite.ts")
     const plugin = hubAgent()

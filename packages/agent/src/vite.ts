@@ -10,11 +10,19 @@ import { encodeProviderOutputAliases } from "@vite-hub/internal/build/esbuild"
 import { rebasePublishedProviderSourceLinks, removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources, rewriteRetainedProviderSourcePaths } from "@vite-hub/internal/build/provider-output-sources"
 import { copyNodeRuntimePackages, copyVercelFunctionRuntimePackages } from "@vite-hub/internal/build/vercel-runtime-packages"
 import { deploymentPresetFromNitro } from "@vite-hub/internal/deployment"
+import { registerViteHubNitroDevEndpoint, renderViteHubNitroDevHandler } from "@vite-hub/internal/dev-endpoint"
 import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubGeneratedRoot, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 
 import { registerAgentInvocationStreamEndpoint } from "./vite/invocation-stream-endpoint.ts"
+import {
+  agentInvocationsDevGuard,
+  agentInvocationsDevRoute,
+  agentInvocationsDevRuntimeRoute,
+  agentInvocationsDevRuntimeUnavailableCode,
+  agentInvocationsDevRuntimeUnavailableMessage,
+} from "./invocations-dev.ts"
 import {
   configureCloudflareAgentState,
   defaultCloudflareAgentStateBinding,
@@ -59,6 +67,8 @@ const generatedAgentWebhookRouteHandler = "agent/chat-webhook-route.ts"
 const generatedAgentPreparationPlugin = "agent/preparation-plugin.ts"
 const generatedAgentPreparationHandler = "agent/preparation-route.ts"
 const generatedAgentWebhookQueuePlugin = "agent/webhook-queue-plugin.ts"
+/** Development-only Nitro handler for `vitehub agent invocations cancel`. Build output never contains it. */
+const generatedAgentInvocationsDevHandler = "agent/invocations-dev-handler.ts"
 const generatedAgentNetlifyFunction = "agent/netlify-function.mjs"
 const generatedAgentEmailRuntime = "agent/email-runtime.js"
 const generatedAgentScheduleRegistry = "agent/schedule-registry.js"
@@ -2678,6 +2688,14 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       agentImportBase: getAgentImportBase(agent, frameworkOptions),
       workspaceImportBase: getWorkspaceImportBase(agent, frameworkOptions),
     })
+    if (normalized && config.command === "serve" && normalized.runtime !== "deno") {
+      const handler = join(generatedRoot, generatedAgentInvocationsDevHandler)
+      await mkdir(dirname(handler), { recursive: true })
+      await writeFile(handler, renderViteHubNitroDevHandler({
+        export: "handleAgentInvocationsDevRequest",
+        module: `${getAgentImportBase(agent, frameworkOptions)}/runtime/invocations-dev`,
+      }), "utf8")
+    }
     if (normalized && hasHostedAgents) {
       if (normalized.runtime === "deno") {
         await writeAgentDenoServer(generatedRoot, {
@@ -2804,6 +2822,18 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       server.watcher?.on("add", refreshDiscovery)
       server.watcher?.on("unlink", refreshDiscovery)
       if (agent !== false) {
+        // Cancel runs in the Nitro dev environment, which owns the application's journals and abort handles.
+        registerViteHubNitroDevEndpoint(server, {
+          ...agentInvocationsDevGuard,
+          nitroBaseURL: () => {
+            // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
+            const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
+            return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
+          },
+          route: agentInvocationsDevRoute,
+          runtimeRoute: agentInvocationsDevRuntimeRoute,
+          unavailable: { code: agentInvocationsDevRuntimeUnavailableCode, message: agentInvocationsDevRuntimeUnavailableMessage },
+        })
         await registerAgentInvocationStreamEndpoint(server, {
           runtimeCapabilities,
           schedule: hasScheduleVitePlugin(resolved ?? server.config),
@@ -3013,6 +3043,11 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
             }]
           : []),
       ]
+      // `vitehub agent invocations cancel` runs in the Nitro runtime, so it reaches the application's journals.
+      // The handler exists only for the Development Server.
+      const devNitroHandlers = resolved && !denoOutput && nitroContext && environment?.command === "serve"
+        ? [{ handler: join(generatedRoot, generatedAgentInvocationsDevHandler), route: agentInvocationsDevRuntimeRoute }]
+        : []
       const nitro = installCloudflareState
         ? mergeCloudflareAgentStateNitroConfig(
             (config as { nitro?: unknown }).nitro,
@@ -3040,7 +3075,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         ])
       }
       const mergedAgentNitro = (nitroContext ? mergeAgentNitroExternals : cloneNitroConfig)(mergeNitroPlugins(
-        mergeNitroHandlers(nitro, nitroHandlers),
+        mergeNitroHandlers(nitro, [...nitroHandlers, ...devNitroHandlers]),
         [
           ...(installPreparation ? [join(generatedRoot, generatedAgentPreparationPlugin)] : []),
           ...(installWebhookQueue ? [join(generatedRoot, generatedAgentWebhookQueuePlugin)] : []),

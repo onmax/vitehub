@@ -1,10 +1,9 @@
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 import { discoverViteHubDevServer, fetchViteHubDevEndpoint, readViteHubDevTargetOption, resolveViteHubDevServerUrl } from "@vite-hub/internal/cli"
-import { readWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
-import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute } from "../invocation-stream.ts"
+import { agentInvocationsDevGuard, agentInvocationsDevRoute, agentInvocationsDevRuntimeUnavailableMessage } from "../invocations-dev.ts"
 import { isCompatibleAgentDevServerRoot } from "./agent-info-cli.ts"
 import type { AgentInvocationCancelResult, AgentInvocationListResult, AgentInvocationRecord } from "../invocations.ts"
-import type { AgentDevLoopDiscoveryResponse } from "../invocation-stream.ts"
+import type { AgentInvocationsDevRequestBody } from "../invocations-dev.ts"
 import type { AgentInvocationDetailResult } from "../invocations-vue.ts"
 import type { RuntimeDiagnosticError } from "@vite-hub/runtime"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
@@ -36,10 +35,12 @@ interface ParsedArgs {
   urlSet: boolean
 }
 
-const cancelEndpoint = {
-  header: agentInvocationStreamHeader,
-  headerValue: agentInvocationStreamHeaderValue,
-  route: agentInvocationStreamRoute,
+const cancelEndpoint = { ...agentInvocationsDevGuard, route: agentInvocationsDevRoute }
+
+interface AgentInvocationsDevDiscovery {
+  message?: unknown
+  root?: unknown
+  runtime?: unknown
 }
 
 const devTargetErrors = {
@@ -53,7 +54,7 @@ function usage(context: AgentInvocationsCliContext): void {
     "Usage: vitehub agent invocations <list|show|tail|cancel> [id] [options]",
     "",
     "Inspect an application's Agent Invocation journal over HTTP.",
-    "cancel asks a running Compatible Vite Development Server to cancel a pending or running Invocation.",
+    "cancel asks a running Vite + Nitro Development Server to cancel a pending or running Invocation.",
     "",
     "Options:",
     "  --url <url>       Invocation endpoint. Defaults to http://localhost:5173/api/invocations.",
@@ -195,7 +196,7 @@ function parseCancelResult(value: unknown): AgentInvocationCancelResult {
 
 async function requestCancel(parsed: ParsedArgs, id: string, context: AgentInvocationsCliContext, fetchImpl: typeof fetch, timeout: number): Promise<AgentInvocationCancelResult | undefined> {
   const rootDir = context.rootDir ?? process.cwd()
-  const server = await discoverViteHubDevServer<Partial<AgentDevLoopDiscoveryResponse>>({
+  const server = await discoverViteHubDevServer<AgentInvocationsDevDiscovery>({
     endpoint: cancelEndpoint,
     fetch: fetchImpl,
     isCompatibleRoot: isCompatibleAgentDevServerRoot,
@@ -205,20 +206,33 @@ async function requestCancel(parsed: ParsedArgs, id: string, context: AgentInvoc
   })
   if (!server) return
   const { discovery, url } = server
-  const root = hasRuntimeType(discovery.root, "string") ? discovery.root : rootDir
-  const token = await readWorkspaceDevToken(root, hasRuntimeType(discovery.workspaceDevTokenServerId, "string") ? { serverId: discovery.workspaceDevTokenServerId } : {})
-  if (!token) {
-    context.stderr.write("No private Agent Dev Loop command token found. Start the Compatible Vite Development Server first.\n")
+  // Nuxt and plain Vite do not run Nitro in the Vite process, so the cancel cannot reach the application runtime.
+  if (discovery.runtime !== "nitro") {
+    context.stderr.write(`${hasRuntimeType(discovery.message, "string") ? discovery.message : agentInvocationsDevRuntimeUnavailableMessage}\n`)
     return
   }
+  const body: AgentInvocationsDevRequestBody = { id, operation: "cancel" }
   const response = await fetchViteHubDevEndpoint(fetchImpl, url, cancelEndpoint, {
-    body: JSON.stringify({ invocationCancel: { id } }),
-    headers: { "accept": "application/json", "content-type": "application/json", [workspaceDevTokenHeader]: token },
+    body: JSON.stringify(body),
+    headers: { "accept": "application/json", "content-type": "application/json" },
     method: "POST",
     signal: AbortSignal.timeout(timeout),
   })
-  if (!response.ok) throw agentDiagnostics.AGENT_R0972({ message: (await response.text()).trim() || `Invocation cancel failed with status ${response.status}.` })
+  if (!response.ok) throw agentDiagnostics.AGENT_R0972({ message: await cancelFailureMessage(response) })
   return parseCancelResult(await response.json())
+}
+
+async function cancelFailureMessage(response: Response): Promise<string> {
+  const text = (await response.text()).trim()
+  try {
+    const value: unknown = JSON.parse(text)
+    const message: unknown = isRuntimeRecord(value) && isRuntimeRecord(value.error) ? value.error.message : undefined
+    if (hasRuntimeType(message, "string") && message) return message
+  }
+  catch {
+    // Plain text responses carry the message as the body.
+  }
+  return text || `Invocation cancel failed with status ${response.status}.`
 }
 
 function cancelMessage(result: AgentInvocationCancelResult): string {

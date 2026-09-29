@@ -239,7 +239,7 @@ When multiple Agents are discovered, `--agent` is required.
 
 ## Cancel an Agent Invocation
 
-Start the app's Vite Development Server, then cancel one pending or running Agent Invocation by its journal id.
+Start the app's Vite + Nitro Development Server, then cancel one pending or running Agent Invocation by its journal id.
 
 ```bash [Terminal]
 pnpm vitehub agent invocations cancel ainv_0123
@@ -250,14 +250,14 @@ pnpm vitehub agent invocations cancel ainv_0123 --json
 ainv_0123 cancel requested, not enforced by run
 ```
 
-The command sends the request to the guarded Agent Dev Loop endpoint exposed by `hubAgent()`. It uses the private workspace command token that the server writes, so only a local user of the same project can cancel. Use `--url`, `--server`, or `VITEHUB_DEV_SERVER_URL` when Vite is not listening on `http://localhost:5173`, and `--timeout` to change the server discovery timeout.
+`hubAgent()` adds a guarded `/__vitehub/agent/invocations/dev` endpoint to the Vite Development Server. The endpoint forwards the request into the Nitro dev environment. There, the Agent Definitions and their `invocations` journals are the same objects that run the application's Invocations, so the cancel reaches the running Invocation with any store, including `createMemoryAgentInvocationStore()`. The endpoint accepts only local hosts and same-origin requests. Use `--url`, `--server`, or `VITEHUB_DEV_SERVER_URL` when Vite is not listening on `http://localhost:5173`, and `--timeout` to change the request timeout.
 
-The endpoint loads the Agent definitions in the Vite process and uses their `invocations` journal. A memory journal in that process contains only the Invocations that the Agent Dev Loop started. To cancel an Invocation that the Nitro runtime started, give the Agent a shared store, such as libSQL, so both processes read the same records. Otherwise the command reports `not found`.
+Nuxt runs Nitro outside the Vite process, and plain Vite has no Nitro. On these hosts the endpoint returns `501`, and the command prints the reason and exits with status 1.
 
 | Output | Meaning | Exit status |
 | --- | --- | --- |
 | `cancelled` | No run held the Invocation, so the journal recorded `cancelled`. | 0 |
-| `cancel requested` | A run in the development server process stopped. The journal records `cancelled` when the run returns. | 0 |
+| `cancel requested` | A run in the Nitro runtime stopped. The journal records `cancelled` when the run returns. | 0 |
 | `cancel requested; the owner instance reads it at its next claim renewal` | Another process holds the Invocation. It reads the request within 10 seconds. | 0 |
 | `cancel requested, not enforced by <driver>` | The Driver received the request but cannot stop the run. The run continues until the Driver returns. | 0 |
 | `already <status>` | The Invocation already finished. | 1 for `completed` or `failed` |

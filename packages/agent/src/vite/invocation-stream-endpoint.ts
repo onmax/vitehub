@@ -15,7 +15,6 @@ import { uiMessagesToAgentMessages } from "../chat-message-input.ts"
 import { discoverAgentDefinitions } from "../discovery.ts"
 import { isResolvedAgentTriggerHandledInvocation, resolveAgentInspectionMetadata, resolveAgentTriggerInvocation, resolveAgentTriggers, runAgentInline, streamAgent } from "../index.ts"
 import { inheritMessageChannelInstructions } from "../internal/channels.ts"
-import { isAgentInvocations } from "../invocations.ts"
 import { markDiscoveredWorkspaceAgentDefinitionRegistered, workspaceAgentOwnsWorkspaceDefinition, workspaceModeFromOptions, workspaceNameFromOptions } from "../workspace-agent.ts"
 import {
   createViteAgentDiscoveryContext,
@@ -29,7 +28,6 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import type { ViteDevServer } from "vite"
 import type { AgentChatMessageTriggerInput } from "../chat-trigger.ts"
 import type { AgentDevLoopDiscoveryResponse, AgentInvocationStreamEvent } from "../invocation-stream.ts"
-import type { AgentInvocationCancelResult, AgentInvocations } from "../invocations.ts"
 import type {
   AgentChannelDeliveryEffectContext,
   AgentCapabilityCliExecutionInput,
@@ -56,9 +54,6 @@ interface AgentInvocationStreamBody {
     input?: unknown
     json?: boolean
     name?: string
-  }
-  invocationCancel?: {
-    id?: unknown
   }
   invokerProfileId?: string
   messages?: AgentChatMessageTriggerInput["messages"]
@@ -621,16 +616,6 @@ async function handleAgentInvocationStreamRequest(server: ViteDevServer, req: In
   }
 
   const body = parseBody(await readRequestBody(req))
-  if (body.invocationCancel) {
-    if (!await validateWorkspaceDevToken(server.config.root, req.headers, tokenOptions)) {
-      return new Response("Forbidden Agent Invocation cancel token.", { status: 403 })
-    }
-    const id = body.invocationCancel.id
-    if (typeof id !== "string" || !id.trim()) return new Response("Missing Agent Invocation id.", { status: 400 })
-    const journals = discoveredInvocationJournals(entries)
-    if (!journals.length) return new Response("No Agent invocation journal is configured.", { status: 404 })
-    return Response.json(await cancelDiscoveredInvocation(journals, id.trim()))
-  }
   const entry = selectedEntry(entries, body.agent)
   const run = body.run || devRun(entry.name)
   const context = createViteAgentRuntimeContext(server, req, entry.identity, { capabilities, fallbackRoute: agentInvocationStreamRoute, run })
@@ -754,29 +739,6 @@ async function handleAgentInvocationStreamRequest(server: ViteDevServer, req: In
 }
 
 export { writeResponse }
-
-function discoveredInvocationJournals(entries: readonly AgentInvocationStreamEntry[]): AgentInvocations[] {
-  const journals = new Set<AgentInvocations>()
-  for (const entry of entries) {
-    try {
-      const journal: unknown = entry.agent.invocations
-      if (isAgentInvocations(journal)) journals.add(journal)
-    }
-    catch {
-      // A journal getter that cannot resolve has no Invocation to cancel.
-    }
-  }
-  return [...journals]
-}
-
-async function cancelDiscoveredInvocation(journals: readonly AgentInvocations[], id: string): Promise<AgentInvocationCancelResult> {
-  let result: AgentInvocationCancelResult = { id, outcome: "not-found" }
-  for (const journal of journals) {
-    result = await journal.cancel(id)
-    if (result.outcome !== "not-found") return result
-  }
-  return result
-}
 
 function errorResponse(error: unknown): Response {
   if (error instanceof Response) return error

@@ -99,6 +99,7 @@ const lowLevelOwnerExports = new Set([
 
 const generatedRuntimeOwnerExports = new Set([
   "@vite-hub/agent/runtime/empty-registry",
+  "@vite-hub/agent/runtime/invocations-dev",
   "@vite-hub/agent/runtime/workflow",
   "@vite-hub/blob/runtime/cloudflare-vite",
   "@vite-hub/blob/runtime/state",
