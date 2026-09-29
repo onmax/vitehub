@@ -356,9 +356,22 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function assignmentOperator(index: number): boolean {
-    let cursor = index
-    while (["+", "-", "*", "/", "%", "&", "|", "^", "?", "<", ">"].includes(tokens[cursor] ?? "")) cursor++
-    return tokens[cursor] === "=" && tokens[cursor + 1] !== "=" && tokens[cursor + 1] !== ">"
+    const operators = [
+      ["="],
+      ["+", "="], ["-", "="], ["*", "="], ["*", "*", "="], ["/", "="], ["%", "="],
+      ["&", "="], ["&", "&", "="], ["|", "="], ["|", "|", "="], ["^", "="],
+      ["?", "?", "="], ["<", "<", "="], [">", ">", "="], [">", ">", ">", "="],
+    ]
+    return operators.some(operator => operator.every((token, offset) => tokens[index + offset] === token))
+  }
+
+  const mutatorMethods = new Set(["assign", "defineProperty", "defineProperties", "set", "deleteProperty", "setPrototypeOf"])
+  function markMutatorArguments() {
+    for (let i = 0; i < tokens.length - 2; i++) {
+      if (tokens[i] !== "." || !mutatorMethods.has(tokens[i + 1] ?? "") || tokens[i + 2] !== "(") continue
+      const argument = tokens[i + 3]
+      if (argument && declarations.has(argument)) mutatedBindings.add(argument)
+    }
   }
 
   for (let i = 0; i < tokens.length; i++) {
@@ -391,15 +404,38 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
     const propertyAssignment = memberEnd > i + 1 && assignmentOperator(memberEnd)
     const directAssignment = assignmentOperator(i + 1) && !declarationBinding
-    if (propertyAssignment || directAssignment) mutatedBindings.add(name)
+    const prefixUpdate = ["+", "-"].includes(tokens[i - 2] ?? "") && tokens[i - 1] === tokens[i - 2]
+    const postfixUpdate = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
+    const deletion = tokens[i - 1] === "delete"
+    if (propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion) mutatedBindings.add(name)
 
-    if (next === "=" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "")
-      && [";", ",", undefined].includes(tokens[i + 3])) {
-      const targets = assignedAliases.get(name) ?? new Set<string>()
-      targets.add(tokens[i + 2]!)
-      assignedAliases.set(name, targets)
+    if (next === "=" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "")) {
+      let aliasEnd = i + 3
+      while (tokens[aliasEnd] === "." || tokens[aliasEnd] === "[") {
+        if (tokens[aliasEnd] === ".") {
+          if (!/^[A-Za-z_$][\w$]*$/.test(tokens[aliasEnd + 1] ?? "")) break
+          aliasEnd += 2
+        }
+        else {
+          let nesting = 1
+          aliasEnd++
+          while (aliasEnd < tokens.length && nesting > 0) {
+            if (tokens[aliasEnd] === "[") nesting++
+            if (tokens[aliasEnd] === "]") nesting--
+            aliasEnd++
+          }
+          if (nesting > 0) break
+        }
+      }
+      if ([";", ",", undefined].includes(tokens[aliasEnd])) {
+        const targets = assignedAliases.get(name) ?? new Set<string>()
+        targets.add(tokens[i + 2]!)
+        assignedAliases.set(name, targets)
+      }
     }
   }
+
+  markMutatorArguments()
 
   // A declaration is visible only in its containing scope and descendants.
   const tokenScopes: (number | undefined)[] = []

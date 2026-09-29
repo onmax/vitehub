@@ -212,14 +212,29 @@ it.each([
   'options.pullRequest.workspace ||= true',
   'options.pullRequest ??= { workspace: true }',
   'options.pullRequest &&= { workspace: true }',
+  'delete options.pullRequest.workspace',
+  '++options.pullRequest.workspace',
+  'options.pullRequest.workspace++',
   'let alias; alias = options; alias.pullRequest = true',
   'let alias; alias = options; alias.pullRequest.workspace = true',
+  'const pullRequest = options.pullRequest; pullRequest.workspace = true',
   'const { pullRequest: alias } = options; alias.workspace = true',
+  'Object.assign(options, { pullRequest: true })',
+  'Object.defineProperty(options, "pullRequest", { value: true })',
 ])("rejects mutated Channel option bindings: %s", async (mutation) => {
   const source = `${imports} const options = { pullRequest: { workspace: false } }; ${mutation}; export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
   const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
   expect(definition?.workspace).toBe("review")
+})
+
+it.each([
+  'options.pullRequest <= true',
+  'options.pullRequest >= true',
+])("does not treat comparisons as mutated Channel option bindings: %s", async (comparison) => {
+  const source = `${imports} const options = { pullRequest: false }; ${comparison}; export default defineAgent({ channels: { custom: github(options) } })`
+  const definition = await discover(source)
+  expect(definition?.workspace).toBeUndefined()
 })
 
 it.each<[string, string, Record<string, string>]>([
