@@ -999,7 +999,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
   }
   else plugins.push(hubEmailOptionalPeerResolver())
   if (options.kv) {
-    plugins.push(hubKv(presetKVOptions || undefined))
+    plugins.push(hubKv(presetKVOptions || undefined, { importBase: `${generatedImportBase}/kv` }))
   }
   else plugins.push(hubKvOptionalPeerResolver())
   if (options.queue && plan.services.queue.supported) {

@@ -27,8 +27,10 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
+    "./cli": "./dist/cli.js",
     "./errors": "./dist/errors.js",
     "./runtime/cloudflare-kv": "./dist/runtime/cloudflare-kv.js",
+    "./runtime/dev": "./dist/runtime/dev.js",
     "./runtime/upstash-driver": "./dist/runtime/upstash-driver.js",
     "./virtual": "./dist/virtual.js",
     "./vite": "./dist/vite.js",
