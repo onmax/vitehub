@@ -64,8 +64,11 @@ export interface RuntimeScheduleMetadata {
   updatedAt: Date
 }
 
+/** Console options for one Runtime Schedule. */
 export interface ScheduleConsoleOptions {
+  /** Shows the Runtime Schedule in the Console. Defaults to `true`. `vitehub schedule` still lists it. */
   enabled?: boolean
+  /** Stored for Console run actions. The Console is read-only, so it only shows this value. */
   dispatch?: boolean
 }
 

@@ -1455,7 +1455,8 @@ describe("ViteHub Nuxt integration", () => {
       expect(generated).toContain(`from "vite-hub/console/definitions"`)
       expect(generated).not.toContain(`from "vite-hub/console/server"`)
       expect(generated).toContain(`installConsoleSections("/tmp/vitehub-nuxt", ["env","schedules"])`)
-      expect(generated).toContain(`installConsoleDefinitions("/tmp/vitehub-nuxt", {"schedules":{"definitions":[{"fields":[{"label":"Kind","value":"Static schedule"},{"label":"Cron","value":"0 9 * * *"},{"label":"Time zone","value":"UTC"}],"file":"custom-server/schedules/daily.ts","name":"daily","source":"server-schedules"}],"kind":"definition-catalog"}}, `)
+      expect(generated).toContain(`installConsoleDefinitions("/tmp/vitehub-nuxt", {"schedules":{"kind":"record-table","records":[{"cells":{"enabled":"Provider","kind":"Definition","lastRun":"Not in this table","nextRun":"Set by the provider","schedule":"daily","target":"-","timing":"0 9 * * *"},"fields":[{"label":"Kind","value":"Static schedule"},{"label":"Cron","value":"0 9 * * *"},{"label":"Time zone","value":"UTC"},{"label":"File","value":"custom-server/schedules/daily.ts"},{"label":"Source","value":"server-schedules"},`)
+      expect(generated).toContain(`], { "schedules": vitehubConsoleRuntimeReader0 })`)
       expect(generated).not.toContain("The Console must not evaluate")
       expect(generated).not.toContain("installConsoleInvocations")
     }
@@ -1487,8 +1488,8 @@ describe("ViteHub Nuxt integration", () => {
       await development.runNitroConfigHook(nitroOptions(development.nuxt))
 
       const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
-      expect(generated).toContain(`"file":"custom-server/schedules/runtime.ts"`)
-      expect(generated).not.toContain(`"file":"replayed/schedules/inactive.ts"`)
+      expect(generated).toContain(`{"label":"File","value":"custom-server/schedules/runtime.ts"}`)
+      expect(generated).not.toContain(`{"label":"File","value":"replayed/schedules/inactive.ts"}`)
     }
     finally {
       await rm(resolve(runtimeDefinition, "../.."), { force: true, recursive: true })

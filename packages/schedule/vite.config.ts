@@ -21,10 +21,12 @@ export default defineConfig({
       },
     }],
     entry: [
+      "src/cli.ts",
       "src/definition.ts",
       "src/index.ts",
       "src/nuxt.ts",
       "src/runtime.ts",
+      "src/runtime/console.ts",
       "src/runtime/driver.ts",
       "src/runtime/kv.ts",
       "src/runtime/process.ts",

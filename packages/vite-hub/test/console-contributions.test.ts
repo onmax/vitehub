@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { describe, expect, it, vi } from "vitest"
 
-import { consoleContributedSections, describeConsoleContributedSections, isConsoleContributedSectionId } from "../src/console/contributions.ts"
+import { consoleContributedSections, consoleRuntimeReaderModule, describeConsoleContributedSections, describeConsoleRuntimeReaders, isConsoleContributedSectionId } from "../src/console/contributions.ts"
 import { parseConsoleContributedSection, parseConsoleSectionContent } from "../src/console/runtime/definitions.ts"
 import { consoleBuiltinSectionIds, consoleSectionRouteName, isConsoleBuiltinSectionId, isConsoleSectionId, resolveConsoleSectionIds } from "../src/console/runtime/sections.ts"
 
@@ -35,6 +35,18 @@ describe("Console section contributions", () => {
     ])
     expect(describeConsoleContributedSections(["agents", "kv", "databases"])).toEqual([])
     expect(consoleSectionRouteName("queues")).toBe("vitehub-console-queues")
+  })
+
+  it("maps request-time readers to vite-hub exports", async () => {
+    const manifest: { exports: Record<string, unknown> } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
+
+    expect(consoleRuntimeReaderModule("@vite-hub/schedule/runtime/console")).toBe("vite-hub/_internal/schedule/runtime/console")
+    expect(describeConsoleRuntimeReaders(["agents", "queues", "schedules"])).toEqual([
+      { export: "readScheduleConsoleRecords", module: "vite-hub/_internal/schedule/runtime/console", section: "schedules" },
+    ])
+    for (const reader of describeConsoleRuntimeReaders([...consoleContributedSections.keys()])) {
+      expect(Object.hasOwn(manifest.exports, reader.module.replace(/^vite-hub\//, "./")), reader.module).toBe(true)
+    }
   })
 
   it("serializes descriptors that the Console UI can parse", () => {

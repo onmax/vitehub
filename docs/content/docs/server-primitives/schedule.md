@@ -206,6 +206,7 @@ export default defineEventHandler(async () => {
 | `enabled` | `boolean` | No | Whether the Runtime Schedule executes. Defaults to `true` on create. |
 | `input` | `unknown` | No | Opaque input passed to the target handler as `context.input`. |
 | `timeZone` | `string` | No | Named IANA time zone used to evaluate the cron expression. Numeric offsets such as `+01:00` are rejected. Defaults to UTC. |
+| `console` | `ScheduleConsoleOptions` | No | `enabled: false` hides the Runtime Schedule in the Console. `dispatch` is stored and shown, but the Console is read-only and does not run Schedules. |
 
 `RuntimeScheduleUpdateInput` accepts `cron`, `target`, `enabled`, `input`, and `timeZone`. Create stores an input snapshot. Providing `input` on update replaces the complete snapshot; omitting it preserves the existing value. Schedule does not merge or interpret input, and the configured store must support the value's serialization requirements. Omitting `timeZone` on update preserves the stored zone; set it explicitly to `UTC` to reset UTC evaluation.
 
@@ -228,6 +229,31 @@ Local cron matching follows conventional daylight-saving behavior: a local time 
 | `schedules.listAttempts(runId)` | Lists attempts for one Schedule Run. |
 
 One-time delayed execution is not part of the first-version Scheduling vocabulary; use a recurring cron schedule, Queue delay, or Workflow design when that matches the actual behavior.
+
+## Inspect Runtime Schedules during development
+
+`hubSchedule()` contributes the `vitehub schedule` CLI namespace. Start the Vite Development Server, then list, read, run, enable, or disable Runtime Schedules from another terminal.
+
+```bash [Terminal]
+pnpm vitehub schedule list
+pnpm vitehub schedule runs weekday-report --limit 5 --json
+pnpm vitehub schedule run weekday-report
+```
+
+The commands use the same Schedule stores and registry as the running server. The list shows the enabled state, the next due time in the Schedule time zone, and the last run. When no wake driver is installed, the output says that due times do not start runs in this runtime. Read [CLI](/docs/development/cli#inspect-and-control-runtime-schedules) for every command and option.
+
+The Console Schedules page shows the same Runtime Schedules and their run history, next to the discovered Schedule Definitions. It reads the stores on each request and is read-only. Set `console: { enabled: false }` on a Runtime Schedule to hide it in the Console.
+
+Both surfaces redact values under secret-named keys in Schedule input, and credentials in URLs, bearer tokens, and secret assignments in error messages.
+
+| Host | `vitehub schedule` | Console Schedules page |
+| --- | --- | --- |
+| Vite + Nitro | Supported. The endpoint forwards each operation into the Nitro dev environment. | Definitions and Runtime Schedules. |
+| Nuxt | Not supported. Nitro does not run in the Vite process. | Definitions and Runtime Schedules. |
+| Plain Vite without Nitro | Not supported. The endpoint returns status 501. | Not available. |
+| Deployed runtime | Not exposed. The endpoint exists only on the Development Server. | Definitions and Runtime Schedules, when the Console is enabled. |
+
+Memory stores lose Runtime Schedules and runs when the runtime restarts. Configure KV stores to keep them.
 
 ## Connect a Runtime Schedule wake driver
 

@@ -5,6 +5,7 @@ import { resolveDeploymentPlan } from "../src/deployment.ts"
 import {
   collectViteHubDefinitionInspectors,
   collectViteHubProviderOutputEntries,
+  redactInspectionText,
   redactInspectionValue,
   summarizeDefinitions,
 } from "../src/inspect.ts"
@@ -66,6 +67,14 @@ describe("redactInspectionValue", () => {
     expect(redactInspectionValue(3)).toBe(3)
     expect(redactInspectionValue(null)).toBe(null)
     expect(redactInspectionValue("queue")).toBe("queue")
+  })
+})
+
+describe("redactInspectionText", () => {
+  it("redacts credentials inside free text", () => {
+    expect(redactInspectionText("GET https://user:hunter2@example.test/db failed, Authorization: Bearer abc.def; api_key=sk_live token: t1 done"))
+      .toBe("GET https://[redacted]@example.test/db failed, Authorization: [redacted] [redacted]; api_key=[redacted] token: [redacted] done")
+    expect(redactInspectionText("Target report failed after 3 attempts.")).toBe("Target report failed after 3 attempts.")
   })
 })
 

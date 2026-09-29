@@ -41,9 +41,16 @@ export type ConsoleSectionContent =
   | { definitions: readonly ConsoleDefinitionSummary[], kind: "definition-catalog" }
   | { kind: "record-table", records: readonly ConsoleRecord[] }
 
-/** Build-time section data for one project: descriptors of contributed sections and the content of each section. */
+/** Reads the records of one section on each Console request. It mirrors `ViteHubConsoleRuntimeRecordReader`. */
+export type ConsoleRuntimeRecordReader = () => readonly ConsoleRecord[] | Promise<readonly ConsoleRecord[]>
+
+/**
+ * Section data for one project: descriptors of contributed sections, the build-time content of each section, and the
+ * request-time readers of record-table sections.
+ */
 export interface ConsoleSectionCatalog {
   content: Readonly<Record<string, ConsoleSectionContent>>
+  readers?: Readonly<Record<string, ConsoleRuntimeRecordReader>>
   sections: readonly ConsoleContributedSection[]
 }
 
