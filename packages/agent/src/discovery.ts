@@ -148,6 +148,20 @@ function relativeImportBindings(clause: string[]): [string, string][] {
   return bindings
 }
 
+function exportName(token: string | undefined): string | undefined {
+  if (!token) return
+  if (/^[A-Za-z_$][\w$]*$/.test(token)) return token
+  if (!/^["']/.test(token)) return
+  try {
+    return token[0] === '"'
+      ? JSON.parse(token)
+      : JSON.parse(`"${token.slice(1, -1).replace(/\\"/g, '\\\\"')}"`)
+  }
+  catch {
+    return
+  }
+}
+
 // Returns [exported, imported] pairs for direct relative re-exports.
 function relativeExportBindings(clause: string[]): [string, string][] {
   const bindings: [string, string][] = []
@@ -157,10 +171,10 @@ function relativeExportBindings(clause: string[]): [string, string][] {
       while (index < clause.length && ![",", "}"].includes(clause[index + 1] ?? "")) index++
       continue
     }
-    const name = clause[index]
-    if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) continue
-    const exported = clause[index + 1] === "as" ? clause[index + 2] : name
-    if (exported && /^[A-Za-z_$][\w$]*$/.test(exported)) {
+    const name = exportName(clause[index])
+    if (!name) continue
+    const exported = clause[index + 1] === "as" ? exportName(clause[index + 2]) : name
+    if (exported) {
       bindings.push([exported, name])
       if (clause[index + 1] === "as") index += 2
     }
@@ -198,6 +212,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   const starExports: string[] = []
   // Local export clauses may appear before their declarations.
   const pendingExports = new Map<string, string>()
+  const mutatedBindings = new Set<string>()
   let exported: number | undefined
   let depth = 0
   for (let i = 0; i < tokens.length; i++) {
@@ -303,8 +318,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
             if (e !== i + 2 && tokens[e - 1] !== ",") continue
             const local = tokens[e]
             if (!local || !/^[A-Za-z_$][\w$]*$/.test(local)) continue
-            const name = tokens[e + 1] === "as" ? tokens[e + 2] : local
-            if (name && /^[A-Za-z_$][\w$]*$/.test(name)) pendingExports.set(name, local)
+            const name = tokens[e + 1] === "as" ? exportName(tokens[e + 2]) : local
+            if (name) pendingExports.set(name, local)
           }
         } else {
           // `export { name as alias } from "./channel"` exports the other
@@ -330,9 +345,29 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   for (const [name, local] of pendingExports) {
     const declaration = declarations.get(local)
-    if (declaration === undefined) continue
-    if (name === "default") exported = declaration
-    else namedExports.set(name, declaration)
+    if (declaration !== undefined) {
+      if (name === "default") exported = declaration
+      else namedExports.set(name, declaration)
+      continue
+    }
+    const moduleImport = moduleImports.get(local)
+    if (moduleImport !== undefined) reExports.set(name, moduleImport)
+  }
+
+  for (let i = 0; i < tokens.length; i++) {
+    const name = tokens[i]
+    if (!declarations.has(name)) continue
+    const next = tokens[i + 1]
+    let declarationBinding = false
+    for (let cursor = i - 1; cursor >= 0 && ![";", "{"].includes(tokens[cursor]!); cursor--) {
+      if (["const", "let", "var"].includes(tokens[cursor]!)) {
+        declarationBinding = true
+        break
+      }
+    }
+    const propertyAssignment = next === "." && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "") && tokens[i + 3] === "="
+    const directAssignment = next === "=" && !declarationBinding
+    if (propertyAssignment || directAssignment) mutatedBindings.add(name)
   }
 
   // A declaration is visible only in its containing scope and descendants.
@@ -686,6 +721,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const binding = visibleDeclaration(index)
     if (binding !== undefined) {
       if (destructuredBindings.has(binding)) return index
+      if (mutatedBindings.has(tokens[index]!)) return index
       if (binding > index) return index
       let initializer = binding + 2
       while (initializer < index && !["=", ";", ","].includes(tokens[initializer])) initializer++
