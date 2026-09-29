@@ -1,7 +1,7 @@
 export { ConnectionError, isConnectionError } from "./errors.ts"
 export { CONNECTIONS_ROUTE, createConnectionsHandler } from "./http.ts"
 export { createConnectionsRuntime } from "./runtime.ts"
-export { getConnectionsRuntime, setConnectionsRuntime, useConnection } from "./runtime/state.ts"
+export { connections, getConnectionsRuntime, setConnectionsRuntime, useConnection } from "./runtime/state.ts"
 export { createDatabaseConnectionStore } from "./store.ts"
 
 export type { ConnectionsHandlerOptions } from "./http.ts"

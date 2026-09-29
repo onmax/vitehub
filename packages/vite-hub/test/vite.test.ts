@@ -641,6 +641,7 @@ describe("vitehub", () => {
       },
       runtimeCapabilityImports: {
         blob: "vite-hub/_internal/blob",
+        connections: false,
         console: false,
         db: "vite-hub/database/drizzle",
         email: "vite-hub/email/server",
@@ -781,6 +782,11 @@ describe("vitehub", () => {
       database: "vite-hub/database/drizzle",
       importBase: "vite-hub/connections",
     })
+    // Agent Capabilities such as `gmail()` receive the `connections` primitive.
+    vitehub({ agent: true, connections: true, database: true, preset: "node" })
+    expect(integrationMocks.hubAgent).toHaveBeenLastCalledWith(expect.objectContaining({
+      runtimeCapabilityImports: expect.objectContaining({ connections: "vite-hub/connections/server" }),
+    }))
     expect(pluginNames(vitehub({ database: true, preset: "node" }))).not.toContain("@vite-hub/connections/vite")
     expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
   })

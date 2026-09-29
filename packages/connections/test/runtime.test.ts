@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import { isConnectionError } from "../src/errors.ts"
 import { createConnectionsRuntime } from "../src/runtime.ts"
+import { connections, setConnectionsRuntime } from "../src/runtime/state.ts"
 import { ACCESS_TOKEN, CLIENT_SECRET, connect, createStore, createTestRuntime, mailConnection, REFRESH_TOKEN } from "./helpers.ts"
 
 import type { ConnectionEffect } from "../src/types.ts"
@@ -265,5 +266,25 @@ describe("approvals", () => {
     await test.runtime.revoke({ name: "mail" })
     expect(await rejection(test.runtime.approve({ id }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
     expect(await test.runtime.approvals({})).toEqual([expect.objectContaining({ error: "CONNECTION_REAUTH_REQUIRED", id, status: "failed" })])
+  })
+})
+
+describe("Agent primitive", () => {
+  it("calls as the Agent actor and exposes the error fields that gmail() reads", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    setConnectionsRuntime({ definitions: { mail: mailConnection() }, fetch: test.provider.fetch, now: () => test.now.value, store: test.store })
+    try {
+      const client = connections.use("mail", { actor: "agent:inbox", invocationId: "inv_1" }) as unknown as {
+        mail: { labels: { list: (input: unknown) => Promise<unknown> }, messages: { modify: (input: unknown) => Promise<unknown> } }
+      }
+      await expect(client.mail.labels.list({ userId: "me" })).resolves.toEqual({ labels: [{ id: "INBOX" }] })
+      const error = await rejection(client.mail.messages.modify({ id: "m1", requestBody: {}, userId: "me" }))
+      expect(error).toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED", requestId: expect.any(String) })
+      expect(await test.runtime.activity({ name: "mail" })).toContainEqual(expect.objectContaining({ actor: { id: "inbox", kind: "agent" }, invocationId: "inv_1", operation: "mail.labels.list" }))
+    }
+    finally {
+      setConnectionsRuntime(undefined)
+    }
   })
 })

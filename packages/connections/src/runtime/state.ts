@@ -82,3 +82,8 @@ export function useConnection(name: string, options: UseConnectionOptions = {}):
     },
   })
 }
+
+/** The `connections` runtime primitive that Agent Capabilities receive, for example `gmail({ connection })`. */
+export const connections: { use: (name: string, options?: UseConnectionOptions) => ConnectionClient } = {
+  use: (name, options) => useConnection<string>(name, options),
+}
