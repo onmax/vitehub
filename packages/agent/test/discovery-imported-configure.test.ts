@@ -307,6 +307,17 @@ it.each([
   ['import { github as gh } from "@vite-hub/agent/channels"', 'gh({ pullRequest: true })'],
   ['import * as channels from "vite-hub/agent/channels"', 'channels.github({ pullRequest: true })'],
   ['import { github } from "vite-hub/agent/channels"; const factory = github', 'factory({ pullRequest: true })'],
+])("infers the pull request Workspace from first-party GitHub Channel calls: %s", async (imports, value) => {
+  for (const channel of [value, "custom"]) {
+    const source = `${imports}; const custom = ${value};`
+    const definitions = await discover(`${source} export default defineAgent({ options: {}, configure: () => defineAgent({ channels: { custom: ${channel} } }) })`)
+    expect(definitions[0]?.workspace).toBe("notes")
+    const stateless = await discover(`${source.replace("pullRequest: true", "pullRequest: false")} export default defineAgent({ options: {}, configure: () => defineAgent({ channels: { custom: ${channel.replace("pullRequest: true", "pullRequest: false")} } }) })`)
+    expect(stateless[0]?.workspace).toBeUndefined()
+  }
+})
+
+it.each([
   ['import { defineChannel } from "vite-hub/agent/channels"; const options = () => ({ capabilities: [defineCapability({ workspace: {} })] })', 'defineChannel("custom", options())'],
   ['const factory = () => ({ kind: "custom", capabilities: [defineCapability({ workspace: {} })] })', 'factory()'],
 ])("requires a Workspace marker for opaque Channel calls: %s", async (imports, value) => {

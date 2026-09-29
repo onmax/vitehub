@@ -113,6 +113,8 @@ Reconciled deliveries use `pullRequest.reconcile.concurrencyLimit` concurrent in
 
 Set `pullRequest.workspace.mount` to the repository path inside the Workspace. Omitting `workspace` mounts at `portal`. Both `workspace: true` and `workspace: {}` mount at the Workspace root. Set `workspace: false` to disable the pull request Workspace contribution.
 
+Folder Agent discovery reads these options to decide if the Agent owns a Workspace. `github({ pullRequest: false })` and `github({ pullRequest: { workspace: false } })` keep the Agent stateless, also when the Channel is exported from a relative module. Discovery rejects a `pullRequest` value that it cannot read, such as `options.pullRequest`. See [Agent Definitions](/docs/agents/agent-definitions) for the complete discovery rules.
+
 When a declared GitHub Source uses the same repository and the same non-root mount, the pull request checkout replaces it for that Invocation. Reads use the pull request head SHA; the declared Source remains unchanged for other Invocations. Different repositories, overlapping parent or child mounts, and Sources contributed by other Capabilities still produce a conflict.
 
 ## Connect a web chat

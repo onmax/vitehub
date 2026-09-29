@@ -88,7 +88,67 @@ function tokenizeAgentSource(source: string) {
   return { tokens, lineBreaks }
 }
 
-function isWorkspaceAgentDefinition(source: string): boolean {
+// First-party Channel helpers from the Agent Channel entry. Only `github()`
+// adds a Capability of its own: the pull request Workspace. The other helpers
+// contribute only the Capabilities passed in their `capabilities` option.
+const firstPartyChannelFactories = new Set(["discord", "github", "http", "slack", "teams", "telegram", "webChat"])
+const channelModuleExtensions = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"]
+
+function importedChannelError(): Error {
+  return new Error("[vitehub] Agent Workspace discovery cannot inspect an imported Channel. Import the Channel from a relative module that exports a local Channel object or a first-party Channel helper call, or add workspace: {} to the Agent definition when the Channel owns a Workspace.")
+}
+
+// Resolves a relative Channel module like TypeScript bundler resolution,
+// including `.js` specifiers that name a `.ts` source file.
+function resolveChannelModule(importer: string, specifier: string): { file: string, source: string } | undefined {
+  if (!specifier.startsWith("./") && !specifier.startsWith("../")) return
+  const base = resolve(dirname(importer), specifier)
+  const sourceBase = base.replace(/\.(c|m)?js$/, ".$1ts")
+  const candidates = [
+    base,
+    ...(sourceBase === base ? [] : [sourceBase]),
+    ...channelModuleExtensions.map(extension => `${base}${extension}`),
+    ...channelModuleExtensions.map(extension => resolve(base, `index${extension}`)),
+  ]
+  for (const file of candidates) {
+    try {
+      return { file, source: readFileSync(file, "utf8") }
+    }
+    catch {
+      continue
+    }
+  }
+}
+
+// Returns [local, exported] pairs for default and named value imports.
+function relativeImportBindings(clause: string[]): [string, string][] {
+  if (clause[0] === "type" && clause[1] !== ",") return []
+  const bindings: [string, string][] = []
+  let index = 0
+  if (/^[A-Za-z_$][\w$]*$/.test(clause[0] ?? "")) {
+    bindings.push([clause[0]!, "default"])
+    index = clause[1] === "," ? 2 : 1
+  }
+  if (clause[index] !== "{") return bindings
+  for (let i = index + 1; i < clause.length && clause[i] !== "}"; i++) {
+    if (clause[i] === ",") continue
+    if (clause[i] === "type" && ![",", "}", "as"].includes(clause[i + 1] ?? "")) {
+      while (i < clause.length && ![",", "}"].includes(clause[i + 1] ?? "")) i++
+      continue
+    }
+    const name = clause[i]!
+    const local = clause[i + 1] === "as" ? clause[i + 2] : name
+    if (clause[i + 1] === "as") i += 2
+    if (local && /^[A-Za-z_$][\w$]*$/.test(name) && /^[A-Za-z_$][\w$]*$/.test(local)) bindings.push([local, name])
+  }
+  return bindings
+}
+
+function isWorkspaceAgentDefinition(source: string, file: string): boolean {
+  return inspectAgentModule(source, file, new Set([file])).agentOwnsWorkspace()
+}
+
+function inspectAgentModule(source: string, file: string, modules: Set<string>) {
   const { tokens, lineBreaks } = tokenizeAgentSource(source)
   function startsStatement(index: number): boolean {
     if (!lineBreaks.has(index) || !/^(?:[A-Za-z_$][\w$]*$|["'0-9])/.test(tokens[index] ?? "")) return false
@@ -104,6 +164,10 @@ function isWorkspaceAgentDefinition(source: string): boolean {
   const importedCapabilityBindings = new Set<string>()
   const importedChannelBindings = new Set<string>()
   const importedChannelNamespaces = new Set<string>()
+  const importedChannelFactories = new Map<string, string>()
+  // Static bindings from relative modules, keyed by local name.
+  const moduleImports = new Map<string, { specifier: string, name: string }>()
+  const namedExports = new Map<string, number>()
   let exported: number | undefined
   let depth = 0
   for (let i = 0; i < tokens.length; i++) {
@@ -167,6 +231,14 @@ function isWorkspaceAgentDefinition(source: string): boolean {
                 const bindings = tokens.slice(i + 1, j)
                 for (let b = 0; b < bindings.length; b++) {
                   if (bindings[b] === "defineChannel") importedChannelBindings.add(bindings[b + 1] === "as" ? bindings[b + 2] : bindings[b])
+                  if (firstPartyChannelFactories.has(bindings[b]) && bindings[b - 1] !== "as") {
+                    importedChannelFactories.set(bindings[b + 1] === "as" ? bindings[b + 2] : bindings[b], bindings[b])
+                  }
+                }
+              }
+              if (moduleName.startsWith("./") || moduleName.startsWith("../")) {
+                for (const [local, name] of relativeImportBindings(tokens.slice(i + 1, j - 1))) {
+                  moduleImports.set(local, { specifier: moduleName, name })
                 }
               }
               i = j; break
@@ -192,6 +264,18 @@ function isWorkspaceAgentDefinition(source: string): boolean {
       if (tokens[i] === "export" && tokens[i + 1] === "{" ) {
         const local = tokens[i + 2]
         if (local && tokens[i + 3] === "as" && tokens[i + 4] === "default") exported = declarations.get(local) ?? i + 2
+        // Record local export names so an importing Agent can inspect them.
+        let close = i + 2
+        while (close < tokens.length && tokens[close] !== "}") close++
+        if (tokens[close + 1] !== "from") {
+          for (let e = i + 2; e < close; e++) {
+            if (e !== i + 2 && tokens[e - 1] !== ",") continue
+            if (/^[A-Za-z_$][\w$]*$/.test(tokens[e] ?? "")) namedExports.set(tokens[e + 1] === "as" ? tokens[e + 2]! : tokens[e]!, e)
+          }
+        }
+      }
+      if (tokens[i] === "export" && ["const", "let", "var", "function"].includes(tokens[i + 1]) && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "")) {
+        namedExports.set(tokens[i + 2]!, i + 2)
       }
     }
     if (["{", "(", "["].includes(tokens[i])) depth++
@@ -601,7 +685,7 @@ function isWorkspaceAgentDefinition(source: string): boolean {
       let referenceEnd = index + 1
       while (tokens[referenceEnd] === ".") referenceEnd += 2
       if (!["(", "<"].includes(tokens[referenceEnd])) {
-        throw new Error("[vitehub] Agent Workspace discovery cannot inspect an imported Channel. Add workspace: {} to the Agent definition when the Channel owns a Workspace, or define the Channel locally so discovery can inspect it.")
+        throw importedChannelError()
       }
     }
     if (tokens[index] !== "{") {
@@ -695,7 +779,17 @@ function isWorkspaceAgentDefinition(source: string): boolean {
     return result
   }
 
-  function factoryCall(index: number, name: "defineAgent" | "defineChannel" = "defineAgent"): number | undefined {
+  // Returns the first-party Channel helper name for a call such as
+  // `github(...)`, `channels.github(...)`, or an alias of either.
+  function channelHelper(index: number): { call: number, helper: string } | undefined {
+    const call = factoryCall(index, "channelHelper")
+    if (call === undefined) return
+    const reference = resolveReference(index)
+    const helper = importedChannelFactories.get(tokens[reference]) ?? tokens[reference + 2]
+    return helper === undefined ? undefined : { call, helper }
+  }
+
+  function factoryCall(index: number, name: "defineAgent" | "defineChannel" | "channelHelper" = "defineAgent"): number | undefined {
     const reference = resolveReference(index)
     if (visibleDeclaration(reference) !== undefined || callbackParameters.some(scope =>
       reference >= scope.start && reference < scope.end && scope.names.has(tokens[reference]))) return undefined
@@ -716,14 +810,122 @@ function isWorkspaceAgentDefinition(source: string): boolean {
       scope = scopeParents.get(scope)
     }
     const factory = tokens[reference]
-    const bindings = name === "defineAgent" ? importedAgentBindings : importedChannelBindings
-    const namespaces = name === "defineAgent" ? importedNamespaces : importedChannelNamespaces
-    if (!(factory === name && !imported.has(factory)) && !bindings.has(factory) &&
-        !(namespaces.has(factory) && tokens[reference + 1] === "." && tokens[reference + 2] === name)) return undefined
+    if (name === "channelHelper") {
+      // Channel helpers are trusted only when imported from the Channel entry.
+      if (!importedChannelFactories.has(factory) && !(importedChannelNamespaces.has(factory)
+        && tokens[reference + 1] === "." && firstPartyChannelFactories.has(tokens[reference + 2]))) return undefined
+    }
+    else {
+      const bindings = name === "defineAgent" ? importedAgentBindings : importedChannelBindings
+      const namespaces = name === "defineAgent" ? importedNamespaces : importedChannelNamespaces
+      if (!(factory === name && !imported.has(factory)) && !bindings.has(factory) &&
+          !(namespaces.has(factory) && tokens[reference + 1] === "." && tokens[reference + 2] === name)) return undefined
+    }
     let call = index + 1
     while (tokens[call] === ".") call += 2
     if (tokens[call] === "<") call = skipTypeArguments(call)
     return tokens[call] === "(" ? call : undefined
+  }
+
+  function opaqueChannelError(): Error {
+    return new Error("[vitehub] Agent Workspace discovery cannot inspect a local Channel factory or opaque Channel value or call. Use a local Channel object or a first-party Channel helper call with literal options, or add workspace: {} to the Agent definition when the Channel owns a Workspace.")
+  }
+
+  function pullRequestError(): Error {
+    return new Error("[vitehub] Agent Workspace discovery cannot inspect a dynamic GitHub pullRequest option. Use a literal pullRequest value and a literal pullRequest.workspace value, or add workspace: {} to the Agent definition when the pull request Workspace is enabled.")
+  }
+
+  function isModuleBinding(index: number): boolean {
+    return visibleDeclaration(index) === undefined
+      && !callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(tokens[index]))
+  }
+
+  function channelOwnsWorkspace(channel: number): boolean {
+    let channelOptions = resolveReference(channel, new Set(), true)
+    const moduleImport = moduleImports.get(tokens[channelOptions])
+    if (moduleImport && isModuleBinding(channelOptions) && !["(", "<", ".", "[", "?", "!"].includes(tokens[channelOptions + 1])) {
+      return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name)
+    }
+    const helper = channelHelper(channelOptions)
+    if (helper !== undefined) return channelHelperOwnsWorkspace(helper.call, helper.helper)
+    const channelCall = factoryCall(channelOptions, "defineChannel")
+    if (channelCall !== undefined) {
+      // defineChannel(kind, options) contributes the options of this invocation.
+      let depth = 0
+      let hasOptions = false
+      for (let i = channelCall + 1; i < tokens.length; i++) {
+        if (depth === 0 && tokens[i] === ")") break
+        if (depth === 0 && tokens[i] === ",") { channelOptions = i + 1; hasOptions = true; break }
+        if (["{", "(", "["].includes(tokens[i])) depth++
+        else if (["}", ")", "]"].includes(tokens[i])) depth--
+      }
+      if (!hasOptions || undefinedValue(channelOptions) || tokens[channelOptions] === ")") return false
+    }
+    channelOptions = resolveReference(channelOptions, new Set(), true)
+    const channelProperties = properties(channelOptions, true)
+    if (tokens[channelOptions] !== "{" || tokens[channelOptions - 1] === ")") throw opaqueChannelError()
+    const capabilities = channelProperties.get("capabilities")
+    return capabilities !== undefined && capabilityOwnsWorkspace(capabilities)
+  }
+
+  // Mirrors the Workspace ownership of the first-party Channel helpers:
+  // `capabilities` for every helper and the pull request Workspace for github().
+  function channelHelperOwnsWorkspace(call: number, helper: string): boolean {
+    const argument = call + 1
+    if (tokens[argument] === ")") return false
+    if (tokens[argument] === ".") throw opaqueChannelError()
+    if (undefinedValue(argument)) return false
+    const options = resolveReference(argument, new Set(), true)
+    if (tokens[options] !== "{" || tokens[options - 1] === ")") throw opaqueChannelError()
+    let opaque = false
+    const settings = properties(options, true, false, () => { opaque = true })
+    // An opaque spread can supply capabilities or pullRequest.
+    if (opaque) throw opaqueChannelError()
+    const capabilities = settings.get("capabilities")
+    if (capabilities !== undefined && capabilityOwnsWorkspace(capabilities)) return true
+    const pullRequest = settings.get("pullRequest")
+    return helper === "github" && pullRequest !== undefined && pullRequestOwnsWorkspace(pullRequest)
+  }
+
+  // github() adds the pull request Workspace unless pullRequest is disabled or
+  // pullRequest.workspace is false.
+  function pullRequestOwnsWorkspace(index: number, seen = new Set<number>()): boolean {
+    if (seen.has(index)) throw pullRequestError()
+    seen.add(index)
+    const branches = conditionalBranches(index)
+    if (branches) return branches.some(branch => pullRequestOwnsWorkspace(branch, new Set(seen)))
+    if (hasLogicalOperator(index)) throw pullRequestError()
+    const value = resolveReference(index, new Set(), true)
+    if (value !== index) return pullRequestOwnsWorkspace(value, seen)
+    if (tokens[value] === "false" || undefinedValue(value)) return false
+    if (tokens[value] === "true") return true
+    if (tokens[value] !== "{") throw pullRequestError()
+    let opaque = false
+    const workspace = properties(value, false, false, () => { opaque = true }).get("workspace")
+    if (workspace === undefined) {
+      if (opaque) throw pullRequestError()
+      return true
+    }
+    return pullRequestWorkspaceEnabled(workspace)
+  }
+
+  function pullRequestWorkspaceEnabled(index: number, seen = new Set<number>()): boolean {
+    if (seen.has(index)) throw pullRequestError()
+    seen.add(index)
+    const branches = conditionalBranches(index)
+    if (branches) return branches.some(branch => pullRequestWorkspaceEnabled(branch, new Set(seen)))
+    if (hasLogicalOperator(index)) throw pullRequestError()
+    const value = resolveReference(index, new Set(), true)
+    if (value !== index) return pullRequestWorkspaceEnabled(value, seen)
+    if (tokens[value] === "false") return false
+    if (tokens[value] === "true" || tokens[value] === "{" || undefinedValue(value)) return true
+    throw pullRequestError()
+  }
+
+  function importedChannelOwnsWorkspace(specifier: string, name: string): boolean {
+    const module = resolveChannelModule(file, specifier)
+    if (module === undefined || modules.has(module.file)) throw importedChannelError()
+    return inspectAgentModule(module.source, module.file, new Set([...modules, module.file])).exportedChannelOwnsWorkspace(name)
   }
 
   function ownsWorkspace(index: number, seen = new Set<number>(), inspectParent = false): boolean {
@@ -777,27 +979,7 @@ function isWorkspaceAgentDefinition(source: string): boolean {
     const channels = options.get("channels")
     if (channels !== undefined) {
       for (const channel of properties(channels, true).values()) {
-        let channelOptions = resolveReference(channel, new Set(), true)
-        const channelCall = factoryCall(channelOptions, "defineChannel")
-        if (channelCall !== undefined) {
-          // defineChannel(kind, options) contributes the options of this invocation.
-          let depth = 0
-          let hasOptions = false
-          for (let i = channelCall + 1; i < tokens.length; i++) {
-            if (depth === 0 && tokens[i] === ")") break
-            if (depth === 0 && tokens[i] === ",") { channelOptions = i + 1; hasOptions = true; break }
-            if (["{", "(", "["].includes(tokens[i])) depth++
-            else if (["}", ")", "]"].includes(tokens[i])) depth--
-          }
-          if (!hasOptions || undefinedValue(channelOptions) || tokens[channelOptions] === ")") continue
-        }
-        channelOptions = resolveReference(channelOptions, new Set(), true)
-        const channelProperties = properties(channelOptions, true)
-        if (tokens[channelOptions] !== "{" || tokens[channelOptions - 1] === ")") {
-          throw new Error("[vitehub] Agent Workspace discovery cannot inspect a local Channel factory or opaque Channel value or call. Use a local Channel object, or add workspace: {} to the Agent definition when the Channel owns a Workspace.")
-        }
-        const capabilities = channelProperties.get("capabilities")
-        if (capabilities !== undefined && capabilityOwnsWorkspace(capabilities)) return true
+        if (channelOwnsWorkspace(channel)) return true
       }
     }
     const inherited = options.get("extends")
@@ -1062,9 +1244,20 @@ function isWorkspaceAgentDefinition(source: string): boolean {
     return entry !== undefined && ownsWorkspace(entry, seen, true)
   }
 
-  // The default export owns the folder; helper definitions and unselected presets do not.
-  if (exported !== undefined) return ownsWorkspace(exported)
-  return tokens.some((token, index) => token === "defineAgent" && ownsWorkspace(index))
+  return {
+    agentOwnsWorkspace(): boolean {
+      // The default export owns the folder; helper definitions and unselected presets do not.
+      if (exported !== undefined) return ownsWorkspace(exported)
+      return tokens.some((token, index) => token === "defineAgent" && ownsWorkspace(index))
+    },
+    exportedChannelOwnsWorkspace(name: string): boolean {
+      let index = name === "default" ? exported : namedExports.get(name)
+      if (index === undefined) throw importedChannelError()
+      // `export const channel = ...` records the name; inspect its initializer.
+      if (tokens[index - 2] === "export" && ["const", "let", "var"].includes(tokens[index - 1])) index = declarations.get(tokens[index]) ?? index
+      return channelOwnsWorkspace(index)
+    },
+  }
 }
 function isAgentDefinitionSource(source: string): boolean {
   const stripped = stripComments(source)
@@ -1120,7 +1313,7 @@ function discoverFolderAgentDefinitions(scanDirs: string[]): DiscoveredAgentDefi
       const source = readFileSync(file, "utf8")
       const agent = normalizeDiscoveredAgentName(relative(agentsRoot, dirname(file)).replace(/\\/g, "/"))
       if (!agent || agent === ".") continue
-      const workspace = isWorkspaceAgentDefinition(source)
+      const workspace = isWorkspaceAgentDefinition(source, file)
       candidates.push({
         handler: file,
         name: agent,
