@@ -12,17 +12,21 @@ import {
   useProviderOutputCatalog,
 } from "@vite-hub/internal/build/deployment-output"
 import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
+import { renderViteHubNitroDevHandler } from "@vite-hub/internal/dev-endpoint"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 import { normalizePath } from "vite"
 
+import { rateLimitDevRuntimeRoute } from "./dev.ts"
 import { discoverRateLimitCatalog } from "./discovery.ts"
 import { inspectRateLimitDefinitions } from "./inspect.ts"
 import { writeRateLimitManifest } from "./internal/manifest.ts"
 import { createCloudflareRateLimitBindings, resolveRateLimitNamespace, writeRateLimitProviderOutput } from "./internal/provider-output.ts"
+import { registerRateLimitDevEndpoint } from "./vite-dev.ts"
 
 import type { ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import type { ViteHubCliPluginMetadata } from "@vite-hub/internal/cli"
 import type { ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import type { Plugin, ResolvedConfig, UserConfig } from "vite"
 import type { RateLimitDeclaration, RateLimitModuleOptions, RateLimitRuntimeConfig } from "./types.ts"
@@ -35,6 +39,7 @@ const packageName = "@vite-hub/rate-limit"
 const pluginName = "@vite-hub/rate-limit/vite"
 const generatedNitroPlugin = ".vitehub/nitro/rate-limit/plugin.ts"
 const generatedRuntimeModule = ".vitehub/rate-limit/cloudflare-runtime.mjs"
+const generatedNitroDevHandler = ".vitehub/nitro/rate-limit/dev-handler.ts"
 const mergeNoExternal = createNoExternalMerger(packageName)
 
 interface InternalRateLimitModuleOptions extends RateLimitModuleOptions {
@@ -42,7 +47,7 @@ interface InternalRateLimitModuleOptions extends RateLimitModuleOptions {
 }
 
 export type RateLimitVitePluginOptions = RateLimitModuleOptions
-export type RateLimitVitePlugin = Plugin & { vitehub: ViteHubInspectionPluginMetadata }
+export type RateLimitVitePlugin = Plugin & { vitehub: ViteHubCliPluginMetadata & ViteHubInspectionPluginMetadata }
 type RateLimitConfig = UserConfig | ResolvedConfig
 
 function cloneNitroConfig(value: unknown): Record<string, unknown> {
@@ -56,11 +61,14 @@ function mergeNitroConfig(
   namespace: string | undefined,
   provider: "cloudflare" | "memory" | undefined,
   nitroCloudflare: boolean,
+  devHandler: string | undefined,
 ): Record<string, unknown> {
   const providerOutput = useProviderOutputCatalog(config)
   const nitro = cloneNitroConfig(value)
   const kit = createNitroServerKit(nitro)
   kit.addPlugin(generatedNitroPlugin, "start")
+  // The dev handler runs `vitehub rate-limit` operations in the Nitro runtime. Build output never contains it.
+  if (devHandler) kit.addHandler({ handler: devHandler, route: rateLimitDevRuntimeRoute })
   const baseNitro = kit.config
   if (!nitroCloudflare || provider !== "cloudflare" || declarations.length === 0) {
     contributeCloudflareProviderOutput(providerOutput, { owner: "rate-limit" })
@@ -129,6 +137,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
   let provider: "cloudflare" | "memory" = "memory"
   let projectRoot: string | undefined
   let resolved: ResolvedConfig | undefined
+  let devHandler: string | undefined
 
   const collectDeclarations = (): void => {
     if (!projectRoot) return
@@ -151,6 +160,10 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
   return {
     name: pluginName,
     vitehub: {
+      cli: async () => {
+        const { createRateLimitCliContributor } = await import(/* @vite-ignore */ "./cli.js")
+        return createRateLimitCliContributor()
+      },
       inspect: () => ({
         definitions: [{
           kind: "rate-limit",
@@ -171,6 +184,8 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
       const configuredProvider = resolveProvider(rateLimit, env?.command ?? "serve", configuredNitro, true)
       if (configuredProvider) provider = configuredProvider
       collectDeclarations()
+      // `configResolved` writes this file before the Development Server starts Nitro.
+      if (env?.command === "serve") devHandler = resolve(config.root || process.cwd(), generatedNitroDevHandler)
       const nitro = mergeNitroConfig(
         config,
         configuredNitro,
@@ -178,6 +193,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
         resolveRateLimitNamespace(rateLimit.namespace),
         configuredProvider,
         resolveNitroHosting(configuredNitro) === "cloudflare",
+        devHandler,
       )
       ;(config as { nitro?: unknown }).nitro = nitro
     },
@@ -191,6 +207,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
       cloudflareOwnedByNitro = hasNitroConfigContext(config) && nitroCloudflare
       provider = resolveProvider(rateLimit, config.command, configuredNitro)!
       collectDeclarations()
+      if (config.command === "serve") devHandler ??= resolve(config.root, generatedNitroDevHandler)
       ;(config as { nitro?: unknown }).nitro = mergeNitroConfig(
         config,
         configuredNitro,
@@ -198,6 +215,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
         resolveRateLimitNamespace(rateLimit.namespace),
         provider,
         nitroCloudflare,
+        config.command === "serve" ? devHandler : undefined,
       )
       await writeRateLimitManifest(config.root, declarations, provider)
       const pluginFile = resolve(config.root, generatedNitroPlugin)
@@ -206,8 +224,20 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
       await Promise.all([
         writeFileIfChanged(pluginFile, renderRuntimeInstaller(runtimeConfig, importBase, true)),
         writeFileIfChanged(runtimeFile, renderRuntimeInstaller(runtimeConfig, importBase, false)),
+        ...(config.command === "serve" && devHandler
+          ? [writeFileIfChanged(devHandler, renderViteHubNitroDevHandler({ export: "handleRateLimitDevRequest", module: `${importBase}/runtime/console` }))]
+          : []),
       ])
       contributeProviderRuntime(composedOutput, { owner: "rate-limit", runtimeModules: { cloudflare: runtimeFile } })
+    },
+    configureServer(server) {
+      registerRateLimitDevEndpoint(server, {
+        nitroBaseURL: () => {
+          // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
+          const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
+          return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
+        },
+      })
     },
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) return

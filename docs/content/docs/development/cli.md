@@ -25,7 +25,7 @@ Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Rate Limit contributes `rate-limit` when `hubRateLimit()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
@@ -33,6 +33,7 @@ Available namespaces:
   agent       Agent development workflows.
   channels    External Channel registration workflows.
   db          Database development workflows.
+  rate-limit  Read and reset Rate Limit counters in a running Vite + Nitro Development Server.
   schedule    Inspect and control Runtime Schedules in a running Vite + Nitro Development Server.
   workspace   Workspace development workflows.
   types       Generate ViteHub TypeScript declarations.
@@ -53,6 +54,8 @@ Available namespaces:
 | `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
 | `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
+| `vitehub rate-limit peek` | Available | Rate Limit Package | Show the counter of one key without consuming a token. |
+| `vitehub rate-limit reset` | Available | Rate Limit Package | Delete the counter of one key where the provider supports it. |
 | `vitehub schedule list` | Available | Schedule Package | List Runtime Schedules with enabled state, next due time, and last run. |
 | `vitehub schedule get` | Available | Schedule Package | Show one Runtime Schedule. |
 | `vitehub schedule runs` | Available | Schedule Package | List the recorded runs of one Schedule, newest first. |
@@ -199,6 +202,37 @@ Every command accepts `--json`, `--url <url>` when Vite does not listen on `http
 The output redacts credentials: values under secret-named keys in Schedule input, URLs with embedded credentials, bearer tokens, and secret assignments in error messages.
 
 The commands use a guarded dev endpoint that `hubSchedule()` registers only on the Development Server. The endpoint forwards each operation into the Nitro dev environment, which owns the Schedule stores and registry. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 and the CLI prints that the host is not supported. Deployed runtimes do not expose the endpoint.
+
+## Read and reset Rate Limit counters
+
+Start the app's Vite Development Server, then run `vitehub rate-limit` from another terminal. `<id>` is the stable ID of `requireRateLimit()`, and `<key>` is the limited key, for example the client IP or the user ID that the app passes as `key`.
+
+```bash [Terminal]
+pnpm vitehub rate-limit peek login 203.0.113.7
+pnpm vitehub rate-limit peek login 203.0.113.7 --json
+pnpm vitehub rate-limit reset login 203.0.113.7
+```
+
+```txt [Output]
+Rate Limit login, key 203.0.113.7
+Provider: memory
+Scope: process. The counter exists only in this server process.
+LIMIT  WINDOW  USED  REMAINING  RESETS AT
+5      1m      3     2          2026-05-22T09:01:00.000Z
+```
+
+`peek` does not consume a token. `reset` deletes the counter, so the next request starts a new window. Every command accepts `--json`, `--url <url>`, and `--timeout <ms>`.
+
+The result depends on the provider:
+
+| Provider | `peek` | `reset` |
+| --- | --- | --- |
+| `memory`, the default in `vite dev` when no provider is set | Used count, remaining tokens, and reset time for each policy with this ID. `No counter` when no request used the ID in this process. | Deletes the counter in this process. |
+| `cloudflare` | Unsupported. The binding exposes only `limit()`, which consumes a token. | Unsupported. |
+
+An unsupported or failed operation exits with status 1 and prints the reason. The output redacts credentials in the key and in error messages.
+
+The commands use a guarded dev endpoint that `hubRateLimit()` registers only on the Development Server. The endpoint forwards each operation into the Nitro dev environment, which owns the counters. Nuxt and plain Vite return status 501. Deployed runtimes do not expose the endpoint.
 
 ## Run Agent Evals
 
@@ -362,6 +396,7 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 | Agent eval times out | The eval case, model call, or provider run exceeds `agent.eval.testTimeout`. | Increase `agent.eval.testTimeout` in `vite.config.ts` or narrow the eval case. |
 | Vite config fails while loading a ViteHub plugin import | A fresh npm project is loading `vite.config.ts` as CommonJS, but ViteHub packages are ESM-only. | Set `"type": "module"` in `package.json` or rename the config to `vite.config.mts`. |
 | `No Compatible Vite Development Server found` | The app dev server is not running or `--url` points at the wrong port. | Start Vite separately, then pass the dev server URL. |
+| `vitehub rate-limit peek` prints `No counter` | No request used this Rate Limit ID in the current dev server process, or the dev server restarted. | Send a request to the limited route, then peek again with the same key. |
 | `vitehub schedule` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
 | `vitehub schedule run` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
 | `Unknown Workspace Dev target` | The named Workspace is not discovered by the running Vite dev server. | Check the Workspace Definition name and make sure `hubWorkspace()` is active. |

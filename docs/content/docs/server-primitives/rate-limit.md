@@ -69,6 +69,7 @@ The ID, `limit`, `window`, `enforcement`, and `failure` must use static literals
 | --- | --- |
 | `requireRateLimit` from `vite-hub/rate-limit` or `@vite-hub/rate-limit` | Enforce a discovered managed Rate Limit inside an H3 handler. |
 | `createRateLimiter` from `vite-hub/rate-limit` or `@vite-hub/rate-limit` | Build a direct limiter around a custom driver. |
+| `peekRateLimit`, `resetRateLimit` from `vite-hub/rate-limit` or `@vite-hub/rate-limit` | Read or delete the counter of one key for a managed Rate Limit without consuming a token. |
 | `memoryRateLimitDriver` from `@vite-hub/rate-limit/drivers/memory` | Enforce fixed windows in one process. |
 | `cloudflareRateLimitDriver` from `@vite-hub/rate-limit/drivers/cloudflare` | Consume a Cloudflare Rate Limiting binding directly. |
 | `hubRateLimit` from `@vite-hub/rate-limit/vite` | Register source collection, runtime setup, and Provider Output without the framework preset. |
@@ -94,6 +95,29 @@ interface RateLimitDecision {
 ```
 
 Use `createRateLimiter()` when the application needs this decision for a custom response, explicit logging, or another transport. Provider unavailability follows the declared failure policy and carries its original `cause`; configuration and provider-contract defects use package-owned `RATE_LIMIT_B####` or `RATE_LIMIT_R####` Nostics codes. The managed guard maps rejection to H3 `HTTPError`: status `429` when limited and status `503` when fail-closed enforcement is unavailable. It adds `retry-after` only when the driver supplies `retryAfter`, so do not calculate billing or authorization from optional best-effort metadata.
+
+## Read and reset a counter
+
+`peekRateLimit(id, key)` reads the counter of one key without consuming a token. `resetRateLimit(id, key)` deletes the counter, so the next request starts a new window. Both use the counters of `requireRateLimit()` in the current runtime.
+
+```ts [server/api/admin/unblock.post.ts]
+import { peekRateLimit, resetRateLimit } from 'vite-hub/rate-limit'
+
+export default defineEventHandler(async () => {
+  const before = await peekRateLimit('login', 'user_123')
+  const reset = await resetRateLimit('login', 'user_123')
+  return { before, reset }
+})
+```
+
+Each result has a `status`. Read it before you use the other fields.
+
+| Provider | `peekRateLimit()` | `resetRateLimit()` |
+| --- | --- | --- |
+| `memory` | `known` with `used`, `remaining`, `resetAt`, `window`, and `scope: "process"` for each policy with this ID. `unused` when no request used the ID in this process. | `reset` for this process only. |
+| `cloudflare` | `unsupported`. The binding exposes only `limit()`, which consumes a token. | `unsupported`. |
+
+A custom driver for `createRateLimiter()` can implement optional `peek(input)` and `reset(input)` methods. `limiter.peek({ key })` and `limiter.reset({ key })` return `unsupported` when the driver does not implement them. In development, `vitehub rate-limit peek` and `vitehub rate-limit reset` run the same functions in the running server. Read [CLI](/docs/development/cli#read-and-reset-rate-limit-counters).
 
 ## Inspect generated guarantees
 
@@ -167,7 +191,7 @@ Inspect generated `wrangler.json` entries and exercise the deployed Worker. A re
 - A production build with unknown hosting must select a provider explicitly or use a direct Rate Limiter.
 - Request identity defaults to the H3 event's client address; explicit user or tenant identities remain application policy.
 - Managed policies must be static so ViteHub can provision provider infrastructure.
-- The package exposes atomic consumption, not a non-consuming check that providers cannot implement consistently.
+- Counter reads and resets need driver support. The memory driver supports them in one process. The Cloudflare Rate Limiting binding does not, so the result is `unsupported`.
 
 ## Related
 

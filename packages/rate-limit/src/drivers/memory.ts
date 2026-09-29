@@ -1,4 +1,4 @@
-import type { RateLimitDriver } from "../types.ts"
+import type { RateLimitDriver, RateLimitDriverInput, RateLimitDriverPeekOutcome, RateLimitDriverResetOutcome } from "../types.ts"
 import { rateLimitErrorDiagnostics } from "../error-diagnostics.ts"
 
 interface MemoryEntry {
@@ -13,7 +13,13 @@ export interface MemoryRateLimitDriverOptions {
 
 export interface MemoryRateLimitDriver extends RateLimitDriver {
   clear: () => void
+  peek: (input: RateLimitDriverInput) => RateLimitDriverPeekOutcome
+  reset: (input: RateLimitDriverInput) => RateLimitDriverResetOutcome
   size: () => number
+}
+
+function entryKey(input: RateLimitDriverInput): string {
+  return `${input.name ?? "default"}\0${input.key}`
 }
 
 const defaultMaxEntries = 100_000
@@ -49,7 +55,7 @@ export function memoryRateLimitDriver(options: MemoryRateLimitDriverOptions = {}
     consume(input) {
       const timestamp = now()
       prune(timestamp)
-      const key = `${input.name ?? "default"}\0${input.key}`
+      const key = entryKey(input)
       const resetAt = Math.floor(timestamp / input.windowMs) * input.windowMs + input.windowMs
       const current = entries.get(key)
       if (!current && entries.size >= maxEntries) {
@@ -76,6 +82,16 @@ export function memoryRateLimitDriver(options: MemoryRateLimitDriverOptions = {}
       }]
     },
     name: "memory",
+    peek(input) {
+      const timestamp = now()
+      prune(timestamp)
+      const entry = entries.get(entryKey(input))
+      return [null, entry && entry.resetAt > timestamp ? { resetAt: entry.resetAt, used: entry.count } : { used: 0 }]
+    },
+    reset(input) {
+      entries.delete(entryKey(input))
+      return [null]
+    },
     size() {
       return entries.size
     },

@@ -90,16 +90,57 @@ export interface RateLimitDriverCapabilities {
   readonly windows?: readonly number[]
 }
 
+/** Counter state that a driver reads without consuming a token. */
+export interface RateLimitDriverPeekResult {
+  /** End of the current window. Omit it when the key has no active counter. */
+  resetAt?: number
+  /** Tokens consumed in the current window. `0` when the key has no active counter. */
+  used: number
+}
+
+export type RateLimitDriverPeekOutcome =
+  | [error: null, value: RateLimitDriverPeekResult]
+  | [error: Error, value: undefined]
+
+export type RateLimitDriverResetOutcome = [error: Error | null]
+
 export interface RateLimitDriver {
   capabilities: RateLimitDriverCapabilities
   consume: (input: RateLimitDriverInput) => MaybePromise<RateLimitDriverOutcome>
   name: string
+  /**
+   * Reads the counter of a key without consuming a token. Omit it when the provider cannot read a counter. The
+   * Rate Limiter then reports `unsupported`.
+   */
+  peek?: (input: RateLimitDriverInput) => MaybePromise<RateLimitDriverPeekOutcome>
+  /** Deletes the counter of a key. Omit it when the provider cannot reset a counter. */
+  reset?: (input: RateLimitDriverInput) => MaybePromise<RateLimitDriverResetOutcome>
 }
+
+interface RateLimitPeekBase {
+  limit: number
+  windowMs: number
+}
+
+/** Counter state of one key. `peek()` does not consume a token. */
+export type RateLimitPeekResult =
+  | (RateLimitPeekBase & { remaining: number, resetAt?: number, status: "known", used: number })
+  | (RateLimitPeekBase & { reason: string, status: "unsupported" })
+  | (RateLimitPeekBase & { cause: unknown, status: "unavailable" })
+
+export type RateLimitResetResult =
+  | { status: "reset" }
+  | { reason: string, status: "unsupported" }
+  | { cause: unknown, status: "unavailable" }
 
 export interface RateLimiter {
   readonly capabilities: RateLimitDriverCapabilities
   consume: (input: RateLimitConsumeInput) => Promise<RateLimitDecision>
+  /** Reads the counter of a key without consuming a token. */
+  peek: (input: RateLimitConsumeInput) => Promise<RateLimitPeekResult>
   policy: ResolvedRateLimitPolicy
+  /** Deletes the counter of a key, so the next request starts a new window. */
+  reset: (input: RateLimitConsumeInput) => Promise<RateLimitResetResult>
 }
 
 export interface RateLimitDeclaration {

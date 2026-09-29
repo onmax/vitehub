@@ -315,6 +315,32 @@ describe("hubRateLimit", () => {
     await expect(access(join(root, ".vitehub", "nitro", "rate-limit", "middleware.ts"))).rejects.toMatchObject({ code: "ENOENT" })
   })
 
+  it("adds the Rate Limit dev handler to Nitro only for the Development Server", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-rate-limit-dev-handler-"))
+    roots.push(root)
+    const plugin = hubRateLimit({ importBase: "vite-hub/_internal/rate-limit" } as never)
+    const config = plugin.config as unknown as (config: Record<string, unknown>, env: { command: "build" | "serve" }) => unknown
+    const serveConfig: Record<string, unknown> = { nitro: { baseURL: "/app/" }, root }
+    expect(config(serveConfig, { command: "serve" })).toBeUndefined()
+    const devHandler = join(root, ".vitehub", "nitro", "rate-limit", "dev-handler.ts")
+    expect(serveConfig.nitro).toMatchObject({ baseURL: "/app/", handlers: [{ handler: devHandler, route: "/_vitehub/rate-limit/dev" }] })
+
+    await (plugin.configResolved as (config: unknown) => Promise<void>)({ build: { outDir: "dist" }, command: "serve", plugins: [], resolve: { alias: [] }, root } as never)
+    const source = await readFile(devHandler, "utf8")
+    expect(source).toContain("import { handleRateLimitDevRequest as handleViteHubDevRequest } from \"vite-hub/_internal/rate-limit/runtime/console\"")
+
+    const buildConfig: Record<string, unknown> = { root }
+    const buildPlugin = hubRateLimit({ provider: "memory" })
+    ;(buildPlugin.config as unknown as (config: Record<string, unknown>, env: { command: "build" }) => unknown)(buildConfig, { command: "build" })
+    expect(JSON.stringify(buildConfig.nitro ?? {})).not.toContain("dev-handler")
+  })
+
+  it("contributes the `vitehub rate-limit` CLI commands", async () => {
+    const cli = hubRateLimit().vitehub.cli
+    const contributor = typeof cli === "function" ? await cli() : cli
+    expect(contributor?.namespaces.map(namespace => [namespace.name, namespace.features.map(feature => feature.name)])).toEqual([["rate-limit", ["peek", "reset"]]])
+  })
+
   it("fails automatic hosted fallback where no native driver exists", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-rate-limit-vercel-"))
     roots.push(root)

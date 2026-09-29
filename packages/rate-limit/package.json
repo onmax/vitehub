@@ -27,9 +27,11 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
+    "./cli": "./dist/cli.js",
     "./drivers/cloudflare": "./dist/drivers/cloudflare.js",
     "./drivers/memory": "./dist/drivers/memory.js",
     "./runtime": "./dist/runtime.js",
+    "./runtime/console": "./dist/runtime/console.js",
     "./vite": "./dist/vite.js",
     "./package.json": "./package.json"
   },
