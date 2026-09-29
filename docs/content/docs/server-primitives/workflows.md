@@ -275,6 +275,30 @@ export default defineEventHandler((event) => {
 })
 ```
 
+## Run Workflows from the CLI
+
+During development, `vitehub workflow` starts a discovered Workflow and reads its run through a guarded endpoint on the Vite Development Server.
+The command reaches only a local Vite Development Server. It does not reach deployed stages.
+
+```bash [Terminal]
+pnpm vitehub workflow start onboard-user --input '{"email":"ada@example.com"}'
+pnpm vitehub workflow get wrun_abc123 --json
+```
+
+The dev server runs the Workflow runtime in its own process. Nitro development runs in a separate worker, so runs that the app starts are in a different runtime. Provider bindings, Workflow DevKit runs, and OpenWorkflow workers are not available in the dev server process. The CLI reports these limits instead of calling the provider.
+
+| Provider | `start` | `get` | `cancel` | `resume` |
+| --- | --- | --- | --- | --- |
+| `vercel` | Runs inline. Not durable, no retries. Not a Workflow DevKit run. | Reads inline runs that the CLI started. Finished runs expire after 5 minutes. | Not supported. Needs a native Vercel Workflow run. | Not supported. Inline runs create no signal tokens. |
+| `cloudflare` | Runs inline. Cloudflare Workflow bindings exist only in the Workers runtime. | Reads inline runs that the CLI started. Finished runs expire after 5 minutes. | Not supported by the provider. | Not supported by the provider. |
+| `openworkflow` | Enqueues the run in OpenWorkflow storage. The run stays queued until a worker processes the same storage. | Reads the run from OpenWorkflow storage, including runs that the app started. | Not supported by the provider. | Not supported by the provider. |
+
+When Workflow is disabled or its configuration is not valid, every command reports the reason.
+`vitehub workflow get <runId>` finds the Workflow name for runs that the same dev server started. For other runs, pass `--workflow <name>`.
+`vitehub workflow resume <token>` takes the opaque token that `resumeWorkflowSignal()` uses.
+
+The runtime has no API to list runs or replay a run. The CLI has no `list` or `replay` command, and the Console shows the Workflow Definition catalog but no run view. Keep run IDs from `start` output or from your own app records.
+
 ## Connect Workflows to Agents
 
 An Agent can start a workflow only when you expose that action through a Capability or server route. Workflows track durable work. Agents provide model-backed behavior.

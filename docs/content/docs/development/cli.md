@@ -25,7 +25,7 @@ Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, Workflow contributes `workflow` when `hubWorkflow()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
@@ -34,6 +34,7 @@ Available namespaces:
   channels    External Channel registration workflows.
   db          Database development workflows.
   workspace   Workspace development workflows.
+  workflow    Start and inspect Workflow runs on a local Vite Development Server.
   types       Generate ViteHub TypeScript declarations.
   inspect     Inspect discovered Definitions and generated Provider Output.
   provision   Idempotently create missing provider resources.
@@ -53,6 +54,10 @@ Available namespaces:
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
 | `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
 | `vitehub workspace dev` | Available | Workspace Package | Run commands through a Workspace Session exposed by a Compatible Vite Development Server. |
+| `vitehub workflow start` | Local development only | Workflow Package | Start a discovered Workflow on a Compatible Vite Development Server. |
+| `vitehub workflow get` | Local development only | Workflow Package | Show the status and result of one Workflow run. |
+| `vitehub workflow cancel` | Not supported by the local runtime | Workflow Package | Cancel a Workflow run. Every provider reports why it cannot cancel locally. |
+| `vitehub workflow resume` | Not supported by the local runtime | Workflow Package | Resume a Workflow signal with its token. Every provider reports why it cannot resume locally. |
 | `vitehub types prepare` | Available | ViteHub Framework | Prepare generated TypeScript declarations for editors and type checking. |
 | `vitehub inspect definitions` | Available | ViteHub CLI plus package inspection contributors | List the Definitions that each active package discovered. |
 | `vitehub inspect provider-output` | Available | ViteHub CLI plus package inspection contributors | List generated Provider Output files with secrets redacted. |
@@ -303,6 +308,30 @@ Connected to docs at http://localhost:5173
 > pnpm test
 ```
 
+## Run Workflows during development
+
+Use `vitehub workflow` to start a discovered Workflow and read its run from the terminal.
+Start the app's Vite dev server first, then run the command from another terminal.
+The command reaches only a local Vite Development Server. It does not reach deployed stages.
+
+```bash [Terminal]
+pnpm vitehub workflow start welcome --input '{"email":"ada@example.com"}'
+pnpm vitehub workflow start welcome --input @payload.json --json
+pnpm vitehub workflow get wrun_abc123
+pnpm vitehub workflow get wrun_abc123 --workflow welcome --json
+```
+
+```txt [Output]
+Started run wrun_abc123 of workflow welcome (vercel, queued).
+Check it with: vitehub workflow get wrun_abc123
+```
+
+`--input` and `--payload` take a JSON string, or `@path` to a JSON file relative to the current directory.
+`--json` prints the endpoint response, including errors, for scripts and Agents.
+`get` and `cancel` remember the Workflow name of runs that the same dev server started. For other runs, pass `--workflow <name>`.
+`resume <token>` takes the opaque signal token from `resumeWorkflowSignal()`. There is no run ID plus signal name API.
+The dev server runs these Workflows in its own process. Nitro development runs in a separate worker, so the command does not share runs with the app. Read [Workflows](/docs/server-primitives/workflows#run-workflows-from-the-cli) for the operations that each provider supports locally.
+
 ## Preview provisioning
 
 Use `--dry-run` before writing Provider resources.
@@ -328,6 +357,8 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 | Vite config fails while loading a ViteHub plugin import | A fresh npm project is loading `vite.config.ts` as CommonJS, but ViteHub packages are ESM-only. | Set `"type": "module"` in `package.json` or rename the config to `vite.config.mts`. |
 | `No Compatible Vite Development Server found` | The app dev server is not running or `--url` points at the wrong port. | Start Vite separately, then pass the dev server URL. |
 | `Unknown Workspace Dev target` | The named Workspace is not discovered by the running Vite dev server. | Check the Workspace Definition name and make sure `hubWorkspace()` is active. |
+| `workflow cancel is not supported by the local <provider> dev runtime` | The local dev runtime cannot do this operation for the active provider. The message gives the reason. | Test the operation on a deployed stage or through the provider tooling. |
+| `Run <id> was not started through this Vite Development Server` | `get` or `cancel` does not know the Workflow name of the run. | Pass `--workflow <name>`. |
 | `Agent Dev Loop command requires workspace.mode: "write"` | A `!` command targeted an Agent without writable Workspace access. | Configure the selected Agent with `workspace: { mode: 'write' }`, or send a normal Agent message instead. |
 | Agent Dev Loop request times out | A streamed invocation emitted no events before the inactivity timeout, or a Capability CLI/Workspace command exceeded its wall-clock deadline. | Pass `--timeout <ms>` for the dev-loop operation or inspect the stalled work. |
 | `Agent Dev Loop payload file must contain a JSON object` | The `--payload` file is not a JSON object. | Replace the file contents with one object shaped for the selected Agent Trigger. |

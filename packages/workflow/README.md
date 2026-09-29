@@ -147,6 +147,19 @@ The other runtime helpers are:
 
 Unsupported provider operations fail with `WORKFLOW_OPERATION_UNSUPPORTED`; ViteHub does not pretend that an inline run was cancelled or resumed.
 
+## Run Workflows from the CLI during development
+
+`hubWorkflow()` contributes the `vitehub workflow` namespace. It calls a guarded endpoint on the local Vite Development Server and never reaches a deployed stage.
+
+```sh
+pnpm vitehub workflow start onboard-user --input '{"email":"ada@example.com"}'
+pnpm vitehub workflow get <runId> [--workflow <name>] [--json]
+pnpm vitehub workflow cancel <runId> [--workflow <name>]
+pnpm vitehub workflow resume <token> [--payload <json|@file>]
+```
+
+The endpoint runs the Workflow runtime in the Vite process, because Nitro development runs in a separate worker. `start` runs Vercel and Cloudflare Workflows inline, and enqueues OpenWorkflow runs without starting a worker. `get` reads those runs. `cancel` and `resume` report why the local runtime cannot do them. There is no run list or replay, because the runtime has no API for them.
+
 ## Make a Vercel workflow durable
 
 A plain Vercel definition executes inline and does not survive a function restart. For durable execution, keep the same context-shaped handler and register a native Workflow DevKit entry:
