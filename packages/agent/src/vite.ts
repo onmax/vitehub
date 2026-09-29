@@ -3047,7 +3047,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         alias[agentRegistryId] = join(generatedRoot, generatedAgentRegistry)
         mergedNitro.alias = alias
       }
-      const result: UserConfig & { nitro?: NitroConfig } = {
+      const result: UserConfig = {
         define: {
           __VITEHUB_AGENT_APP_ROOT__: JSON.stringify(root),
           ...config.define,
@@ -3065,7 +3065,9 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         result.build = mergeBuildExternal(config as BuildWithRolldownOptions, optionalAgentRuntimeExternals)
       }
       if (nitroContext || nitroHandlers.length || installCloudflareState || installProcessDiscordGateway) {
-        result.nitro = mergedNitro
+        // Replace the Nitro config in place. Vite concatenates arrays when it merges a returned config,
+        // so returning the complete Nitro config would repeat every user entry, such as Wrangler secrets.
+        ;(config as { nitro?: NitroConfig }).nitro = mergedNitro
       }
       return result
     },
