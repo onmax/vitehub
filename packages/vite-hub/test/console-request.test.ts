@@ -314,6 +314,7 @@ describe("Console requests", () => {
       loadConsoleNavigation("/navigation-test/api/_vitehub/console/sections"),
     ).resolves.toEqual({
       auth: false,
+      contributions: {},
       projectName: "console-host",
       sections: ["kv"],
     })
@@ -325,7 +326,28 @@ describe("Console requests", () => {
 
     await expect(
       loadConsoleNavigation("/auth-navigation-test/api/_vitehub/console/sections"),
-    ).resolves.toEqual({ auth: true, sections: ["kv"] })
+    ).resolves.toEqual({ auth: true, contributions: {}, sections: ["kv"] })
+  })
+
+  it("keeps only valid contributed sections in the navigation response", async () => {
+    const view = { kind: "definition-catalog", notice: "Discovered at build time." }
+    const queues = { description: "Queue definitions.", icon: "i-ph-tray-light", id: "queues", label: "Queues", view }
+    mocks.call.mockResolvedValue({
+      ok: true,
+      value: {
+        contributions: [
+          queues,
+          { ...queues, id: "kv", label: "Shadowed KV" },
+          { ...queues, id: "Bad Id" },
+          { ...queues, id: "missing-view", view: undefined },
+        ],
+        sections: ["kv", "queues", "Bad Id", "missing-view", "not-contributed"],
+      },
+    })
+
+    await expect(
+      loadConsoleNavigation("/contributions-navigation-test/api/_vitehub/console/sections"),
+    ).resolves.toEqual({ auth: false, contributions: { queues }, sections: ["kv", "queues"] })
   })
 
   it("stops waiting for an RPC result when navigation is aborted", async () => {
