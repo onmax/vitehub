@@ -1,3 +1,4 @@
+import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { redactInspectionText, redactInspectionValue } from "@vite-hub/internal/inspect"
 import { ViteHubError } from "@vite-hub/runtime"
 
@@ -406,19 +407,8 @@ async function runOperation(body: ScheduleDevRequestBody): Promise<Response> {
  * The request must carry the Schedule dev header, must not come from another origin, and must use JSON.
  */
 export async function handleScheduleDevRequest(request: Request): Promise<Response> {
-  if (request.headers.get(scheduleDevHeader) !== scheduleDevHeaderValue) {
-    return new Response("Forbidden Schedule Dev request.", { status: 403 })
-  }
-  const origin = request.headers.get("origin")
-  if (origin && origin !== new URL(request.url).origin) {
-    return new Response("Forbidden Schedule Dev origin.", { status: 403 })
-  }
-  if (request.method !== "POST") {
-    return new Response("Method not allowed.", { headers: { allow: "POST" }, status: 405 })
-  }
-  if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
-    return new Response("Schedule Dev requests must use application/json.", { status: 415 })
-  }
+  const rejection = validateViteHubNitroDevRequest(request, { header: scheduleDevHeader, headerValue: scheduleDevHeaderValue, label: "Schedule Dev" })
+  if (rejection) return rejection
   const body = await readBody(request)
   if (!body) return failure("The Schedule Dev request body is invalid.", 400)
   try {

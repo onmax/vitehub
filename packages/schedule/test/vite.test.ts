@@ -628,7 +628,7 @@ describe("Vite schedule integration", () => {
       handlers: [{ handler: join(root, ".vitehub", "nitro", "schedule", "dev-handler.ts"), route: "/_vitehub/schedule/dev" }],
     })
     const source = await readFile(join(root, ".vitehub", "nitro", "schedule", "dev-handler.ts"), "utf8")
-    expect(source).toContain("import { handleScheduleDevRequest } from \"@vite-hub/schedule/runtime/console\"")
+    expect(source).toContain("import { handleScheduleDevRequest as handleViteHubDevRequest } from \"@vite-hub/schedule/runtime/console\"")
 
     const buildConfig: Record<string, unknown> = { root }
     await (hubSchedule({ projectRoot: root }).config as (config: Record<string, unknown>, env: { command: "build" | "serve", mode: string }) => unknown)(

@@ -9,6 +9,7 @@ import { removeProviderOutputArtifactDir, retainProviderOutputAliases, retainPro
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { createRuntimeRegistryContents } from "@vite-hub/internal/definition-catalog"
 import { collectViteHubProviderImportAliases, createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { renderViteHubNitroDevHandler } from "@vite-hub/internal/dev-endpoint"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
 import { discoverScheduleDefinitions } from "./discovery.ts"
@@ -216,16 +217,6 @@ function mergeNitroScheduleConfig(value: unknown, options: { crons: string[], mo
   return configured
 }
 
-function renderNitroScheduleDevHandler(importBase = schedulePackageName): string {
-  return [
-    "import { defineEventHandler } from 'h3'",
-    `import { handleScheduleDevRequest } from ${JSON.stringify(`${importBase}/runtime/console`)}`,
-    "",
-    "export default defineEventHandler(event => handleScheduleDevRequest(event.req))",
-    "",
-  ].join("\n")
-}
-
 /**
  * Adds the development-only Nitro handler that runs `vitehub schedule` operations in the Nitro runtime.
  * Build output never contains this handler.
@@ -233,7 +224,7 @@ function renderNitroScheduleDevHandler(importBase = schedulePackageName): string
 async function addNitroScheduleDevHandler(value: unknown, root: string, importBase?: string): Promise<NitroConfig> {
   const handler = resolve(root, generatedNitroDevHandler)
   await mkdir(dirname(handler), { recursive: true })
-  await writeFile(handler, renderNitroScheduleDevHandler(importBase), "utf8")
+  await writeFile(handler, renderViteHubNitroDevHandler({ export: "handleScheduleDevRequest", module: `${importBase ?? schedulePackageName}/runtime/console` }), "utf8")
   const kit = createNitroServerKit(cloneNitroConfig(value))
   kit.addHandler({ handler, route: scheduleDevRuntimeRoute })
   // SAFETY: The kit preserves the Nitro config object shape while adding only one Nitro handler.
