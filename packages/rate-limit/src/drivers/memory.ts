@@ -20,6 +20,7 @@ const defaultMaxEntries = 100_000
 
 export function memoryRateLimitDriver(options: MemoryRateLimitDriverOptions = {}): MemoryRateLimitDriver {
   const entries = new Map<string, MemoryEntry>()
+  let nextExpiry = Number.POSITIVE_INFINITY
   const maxEntries = options.maxEntries ?? defaultMaxEntries
   if (!Number.isInteger(maxEntries) || maxEntries <= 0) {
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0007({ message: "[vitehub] Memory Rate Limit driver maxEntries must be a positive integer." })
@@ -27,8 +28,11 @@ export function memoryRateLimitDriver(options: MemoryRateLimitDriverOptions = {}
   const now = options.now ?? Date.now
 
   function prune(timestamp: number): void {
+    if (timestamp < nextExpiry) return
+    nextExpiry = Number.POSITIVE_INFINITY
     for (const [key, entry] of entries) {
       if (entry.resetAt <= timestamp) entries.delete(key)
+      else nextExpiry = Math.min(nextExpiry, entry.resetAt)
     }
   }
 
@@ -40,6 +44,7 @@ export function memoryRateLimitDriver(options: MemoryRateLimitDriverOptions = {}
     },
     clear() {
       entries.clear()
+      nextExpiry = Number.POSITIVE_INFINITY
     },
     consume(input) {
       const timestamp = now()
@@ -62,6 +67,7 @@ export function memoryRateLimitDriver(options: MemoryRateLimitDriverOptions = {}
       }
       entry.count += 1
       entries.set(key, entry)
+      nextExpiry = Math.min(nextExpiry, entry.resetAt)
       return [null, {
         allowed: true,
         remaining: input.limit - entry.count,

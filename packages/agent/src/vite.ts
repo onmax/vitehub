@@ -1670,7 +1670,7 @@ async function writeAgentRuntimeRegistry(
       workspaceRegistry: false,
     })
     await writeFile(definitionCatalogPath, [...catalog.imports, "", ...catalog.setup, "", "export { agents }", ""].join("\n"), "utf8")
-    entries.push(`${JSON.stringify(definition.name)}: async () => (await import(${JSON.stringify(moduleImportSpecifier(registryPath, definitionCatalogPath))})).agents[${JSON.stringify(definition.name)}]`)
+    entries.push(`[${JSON.stringify(definition.name)}]: async () => (await import(${JSON.stringify(moduleImportSpecifier(registryPath, definitionCatalogPath))})).agents[${JSON.stringify(definition.name)}]`)
   }
   // Keep the aggregate catalog for development refreshes and existing consumers.
   const aggregateCatalog = await generateAgentDeploymentCatalog(definitions, catalogPath, {
@@ -1688,7 +1688,7 @@ async function writeAgentRuntimeRegistry(
 
 function generatedAgentIdentityEntries(definitions: DiscoveredAgentDefinition[]): string {
   return definitions
-    .map(definition => `${JSON.stringify(definition.name)}: ${JSON.stringify({ name: definition.name, ...(definition.workspace ? { workspace: definition.workspace } : {}) })}`)
+    .map(definition => `[${JSON.stringify(definition.name)}]: ${JSON.stringify({ name: definition.name, ...(definition.workspace ? { workspace: definition.workspace } : {}) })}`)
     .join(",\n  ")
 }
 
@@ -1733,7 +1733,7 @@ async function generateAgentDeploymentCatalog(
     const colocatedSkills = readColocatedAgentSkills(definition.handler)
     const agentExpression = `withWorkspaceSourceRoot(agentWithColocatedInstructions(resolveAgentModule(${moduleName}), ${JSON.stringify(colocatedInstructions)}), ${JSON.stringify(sourceRootDir)}, ${JSON.stringify(colocatedInstructions)}, ${JSON.stringify(colocatedSkills)})`
     return {
-      agentEntry: `${JSON.stringify(definition.name)}: ${agentExpression}`,
+      agentEntry: `[${JSON.stringify(definition.name)}]: ${agentExpression}`,
       import: `import * as ${moduleName} from ${JSON.stringify(moduleImportSpecifier(handlerPath, definition.handler))}`,
       workspaceEntry: options.workspaceRegistry !== false && definition.workspace
         ? `workspaceRegistryEntry(${JSON.stringify(definition.workspace)}, ${moduleName}, ${JSON.stringify(sourceRootDir)}, ${JSON.stringify(colocatedInstructions)}, ${JSON.stringify(colocatedSkills)})`
