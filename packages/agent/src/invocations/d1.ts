@@ -4,7 +4,7 @@ import { searchableAgentInvocationText } from "./search.ts"
 import { filteredObservationRecord } from "./observation-projection.ts"
 import { sqlTrimWhitespace } from "./sql-whitespace.ts"
 
-import type { AgentInvocationRecord, AgentInvocationStore, AgentInvocationStoreCreateInput, AgentInvocationSummary } from "../invocations.ts"
+import type { AgentInvocationRecord, AgentInvocationRetentionOptions, AgentInvocationStore, AgentInvocationStoreCreateInput, AgentInvocationSummary } from "../invocations.ts"
 
 /** The D1 operations used by the journal. A Cloudflare D1Database satisfies this contract. */
 export interface AgentInvocationD1Database {
@@ -24,7 +24,7 @@ export interface AgentInvocationD1Result<T> {
   meta: { changes: number }
 }
 
-export interface D1AgentInvocationStoreOptions {
+export interface D1AgentInvocationStoreOptions extends AgentInvocationRetentionOptions {
   /** Resolved once per operation. Return the binding for the current request. */
   database: AgentInvocationD1Database | (() => AgentInvocationD1Database | Promise<AgentInvocationD1Database>)
   /** Maximum age of terminal records. Defaults to 30 days; false disables this limit. */
@@ -144,20 +144,29 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
   const maxRecords = retention(options.maxRecords, 10_000)
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The public option accepts a D1 binding or a request-scoped factory; callability selects the factory member.
   const database = async () => typeof options.database === "function" ? await options.database() : options.database
-  const prune = (db: AgentInvocationD1Database) => {
+  // Selects terminal records by an explicit cutoff, or by configured retention when no cutoff is given.
+  const pruneSelection = (updatedBefore?: string) => {
     const filters: string[] = []
     const values: (string | number)[] = []
-    if (maxAgeMs !== false) {
+    if (updatedBefore !== undefined) {
       filters.push("updated_at < ?")
-      values.push(new Date(Date.now() - maxAgeMs).toISOString())
+      values.push(updatedBefore)
     }
-    if (maxRecords !== false) {
-      filters.push(`sequence NOT IN (SELECT sequence FROM ${table} WHERE status IN (${terminal}) ORDER BY sequence DESC LIMIT ?)`)
-      values.push(maxRecords)
+    else {
+      if (maxAgeMs !== false) {
+        filters.push("updated_at < ?")
+        values.push(new Date(Date.now() - maxAgeMs).toISOString())
+      }
+      if (maxRecords !== false) {
+        filters.push(`sequence NOT IN (SELECT sequence FROM ${table} WHERE status IN (${terminal}) ORDER BY sequence DESC LIMIT ?)`)
+        values.push(maxRecords)
+      }
     }
-    return filters.length
-      ? [db.prepare(`DELETE FROM ${table} WHERE status IN (${terminal}) AND (${filters.join(" OR ")})`).bind(...values)]
-      : []
+    return filters.length ? { values, where: `status IN (${terminal}) AND (${filters.join(" OR ")})` } : undefined
+  }
+  const prune = (db: AgentInvocationD1Database) => {
+    const selection = pruneSelection()
+    return selection ? [db.prepare(`DELETE FROM ${table} WHERE ${selection.where}`).bind(...selection.values)] : []
   }
   return {
     async create(input) {
@@ -173,6 +182,25 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
       const row = results.at(-1)?.results[0]
       if (!row) throw agentDiagnostics.AGENT_R0915({ message: `[vitehub] D1 Agent Invocation ${JSON.stringify(input.id)} was removed by retention.` })
       return { created: results[before.length]!.meta.changes > 0, record: record(row) }
+    },
+    async delete(id) {
+      const db = await database()
+      const results = await db.batch<{ id: string }>([
+        db.prepare(`DELETE FROM ${table} WHERE id = ? AND status IN (${terminal})`).bind(id),
+        db.prepare(`SELECT id FROM ${table} WHERE id = ?`).bind(id),
+      ])
+      if (results[0]!.meta.changes > 0) return "deleted"
+      return results[1]!.results.length ? "not-terminal" : "not-found"
+    },
+    async prune(pruneOptions) {
+      const dryRun = pruneOptions.dryRun === true
+      const selection = pruneSelection(pruneOptions.updatedBefore)
+      if (!selection) return { dryRun, ids: [] }
+      const db = await database()
+      const result = await db.prepare(dryRun
+        ? `SELECT id FROM ${table} WHERE ${selection.where} ORDER BY sequence`
+        : `DELETE FROM ${table} WHERE ${selection.where} RETURNING id`).bind(...selection.values).all<{ id: string }>()
+      return { dryRun, ids: result.results.map(row => row.id) }
     },
     async get(id, options) {
       const db = await database()
