@@ -202,8 +202,14 @@ it("records every local declarator", async () => {
   expect(definition?.workspace).toBe("review")
 })
 
-it("rejects mutated Channel option bindings", async () => {
-  const source = `${imports} const options = { pullRequest: false }; options.pullRequest = true; export default defineAgent({ channels: { custom: github(options) } })`
+it.each([
+  'options.pullRequest = true',
+  'options["pullRequest"] = true',
+  'options.pullRequest.workspace = true',
+  'options["pullRequest"]["workspace"] = true',
+  'const alias = options; alias["pullRequest"] = true',
+])("rejects mutated Channel option bindings: %s", async (mutation) => {
+  const source = `${imports} const options = { pullRequest: { workspace: false } }; ${mutation}; export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
   const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
   expect(definition?.workspace).toBe("review")

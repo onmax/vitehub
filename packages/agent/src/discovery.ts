@@ -365,9 +365,37 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         break
       }
     }
-    const propertyAssignment = next === "." && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "") && tokens[i + 3] === "="
+    let memberEnd = i + 1
+    while (tokens[memberEnd] === "." || tokens[memberEnd] === "[") {
+      if (tokens[memberEnd] === ".") {
+        if (!/^[A-Za-z_$][\w$]*$/.test(tokens[memberEnd + 1] ?? "")) break
+        memberEnd += 2
+      }
+      else {
+        let nesting = 1
+        memberEnd++
+        while (memberEnd < tokens.length && nesting > 0) {
+          if (tokens[memberEnd] === "[") nesting++
+          if (tokens[memberEnd] === "]") nesting--
+          memberEnd++
+        }
+        if (nesting > 0) break
+      }
+    }
+    const propertyAssignment = memberEnd > i + 1 && tokens[memberEnd] === "="
     const directAssignment = next === "=" && !declarationBinding
     if (propertyAssignment || directAssignment) mutatedBindings.add(name)
+  }
+
+  for (let changed = true; changed;) {
+    changed = false
+    for (const [alias, initializer] of declarations) {
+      const target = tokens[initializer]
+      if (!target || !declarations.has(target) || !mutatedBindings.has(alias) || mutatedBindings.has(target)) continue
+      if (![";", ",", undefined].includes(tokens[initializer + 1])) continue
+      mutatedBindings.add(target)
+      changed = true
+    }
   }
 
   // A declaration is visible only in its containing scope and descendants.
