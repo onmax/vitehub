@@ -8,7 +8,10 @@ import type { UIMessage } from "ai";
 import { AgentInvocationList } from "../src/components/agent-invocation-list.ts";
 import { AgentInvocation, AgentInvocationInspector, workspaceArtifactPath } from "../src/components/agent-invocation.ts";
 import { AgentMessageParts } from "../src/components/agent-message-parts.ts";
+import { AgentCapabilityInspector } from "../src/components/agent-capability-inspector.ts";
+import { AgentToolList } from "../src/components/agent-tool-list.ts";
 import { channelIcon } from "../src/internal/channel-icon.ts";
+import { invocationBrand, invocationModelMaker } from "../src/internal/invocation-brand.ts";
 import { invocationActivities, invocationActivityTitle } from "../src/internal/invocation-activity.ts";
 
 import type { AgentInvocationView } from "../src/types.ts";
@@ -501,13 +504,13 @@ describe("Agent Invocation UI", () => {
 
     const activities = invocationActivities(invocation);
     expect(activities.map(activity => [activity.kind, invocationActivityTitle(activity)])).toEqual([
-      ["system", "Agent configured"],
+      ["system", "Configured Agent with 2 capabilities"],
       ["delivery", "telegram.message.sent"],
     ]);
 
     const wrapper = mount(AgentInvocation, { props: { invocation } });
-    expect(wrapper.get(".vh-invocation-capabilities__summary").text()).toContain("Agent configured");
-    expect(wrapper.get('[data-kind="system"] .vh-invocation-event__suffix').text()).toBe("claude-sonnet-4-5 · 2 capabilities · 1 tool");
+    expect(wrapper.get(".vh-invocation-capabilities__summary").text()).toContain("Configured Agent with 2 capabilities");
+    expect(wrapper.get('[data-kind="system"] .vh-invocation-event__suffix').text()).toBe("claude-sonnet-4-5 · 1 tool");
     const system = wrapper.get('[data-kind="system"]');
     expect(system.get("summary").element.tagName).toBe("SUMMARY");
     await system.get("summary").trigger("click");
@@ -853,11 +856,17 @@ describe("Agent Invocation UI", () => {
       expect(wrapper.text().match(/Done\./g)).toHaveLength(1);
       expect(wrapper.get('[data-kind="delivery"]').text()).toContain("Reply sent");
     } else {
+      // The delivered reply is the answer the user saw, so it stays visible outside the collapsed work.
+      const answers = wrapper.findAll('.vh-invocation-message[data-role="assistant"]');
+      expect(answers.map(answer => answer.get(".vh-invocation-message__body").text())).toEqual([deliveredContent, "Done."]);
+      expect(answers[0]!.get(".vh-invocation-message__role").text()).toBe("Assistant");
       const work = wrapper.get(".vh-invocation-work__details");
       if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
       work.element.open = true;
       await work.trigger("toggle");
-      expect(wrapper.get('.vh-invocation-work__activities [data-kind="delivery"]').text()).toContain(deliveredContent);
+      const receipt = wrapper.get('.vh-invocation-work__activities [data-kind="delivery"]');
+      expect(receipt.text()).toContain("Reply sent");
+      expect(receipt.text()).not.toContain(deliveredContent);
     }
   });
 
@@ -930,9 +939,9 @@ describe("Agent Invocation UI", () => {
 
     const messages = wrapper.findAll(".vh-invocation-message");
     expect(wrapper.findAll(".vh-invocation-message__meta")).toHaveLength(3);
-    expect(wrapper.findAll(".vh-invocation-message__meta").filter(meta => meta.text().includes("Maxi"))).toHaveLength(1);
+    expect(wrapper.findAll(".vh-invocation-message__role").map(role => role.text())).toEqual(["You", "Assistant", "Maxi"]);
     const prompt = messages.at(-1)!;
-    expect(prompt.get(".vh-invocation-message__meta").text()).toContain("Maxi");
+    expect(prompt.get(".vh-invocation-message__role").text()).toBe("Maxi");
     expect(prompt.get(".vh-invocation-message__meta time").attributes("datetime")).toBe("2026-08-22T14:34:00.000Z");
     await prompt.get('button[aria-label="Copy message"]').trigger("click");
     await nextTick();
@@ -1131,14 +1140,14 @@ describe("Agent Invocation UI", () => {
       ["tool", "The check passed."],
     ]);
     const wrapper = mount(AgentInvocation, { props: { invocation } });
-    expect(wrapper.get('[data-role="system"] .vh-visually-hidden').text()).toBe("System message");
-    expect(wrapper.get('[data-role="user"] .vh-visually-hidden').text()).toBe("User message");
-    expect(wrapper.get('[data-role="assistant"] .vh-visually-hidden').text()).toBe("Assistant message");
+    expect(wrapper.get('[data-role="system"] .vh-invocation-message__role').text()).toBe("System");
+    expect(wrapper.get('[data-role="user"] .vh-invocation-message__role').text()).toBe("You");
+    expect(wrapper.get('[data-role="assistant"] .vh-invocation-message__role').text()).toBe("Assistant");
     const work = wrapper.get(".vh-invocation-work__details");
     if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
     work.element.open = true;
     await work.trigger("toggle");
-    expect(wrapper.get('[data-role="tool"] .vh-visually-hidden').text()).toBe("Tool message");
+    expect(wrapper.get('[data-role="tool"] .vh-invocation-message__role').text()).toBe("Tool");
   });
 
   it("keeps completed multi-turn conversations outside work summaries", () => {
@@ -3851,14 +3860,14 @@ describe("Agent Invocation UI", () => {
       ["tool", "The check passed."],
     ]);
     const wrapper = mount(AgentInvocation, { props: { invocation } });
-    expect(wrapper.get('[data-role="system"] .vh-visually-hidden').text()).toBe("System message");
-    expect(wrapper.get('[data-role="user"] .vh-visually-hidden').text()).toBe("User message");
-    expect(wrapper.get('[data-role="assistant"] .vh-visually-hidden').text()).toBe("Assistant message");
+    expect(wrapper.get('[data-role="system"] .vh-invocation-message__role').text()).toBe("System");
+    expect(wrapper.get('[data-role="user"] .vh-invocation-message__role').text()).toBe("You");
+    expect(wrapper.get('[data-role="assistant"] .vh-invocation-message__role').text()).toBe("Assistant");
     const work = wrapper.get(".vh-invocation-work__details");
     if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
     work.element.open = true;
     await work.trigger("toggle");
-    expect(wrapper.get('[data-role="tool"] .vh-visually-hidden').text()).toBe("Tool message");
+    expect(wrapper.get('[data-role="tool"] .vh-invocation-message__role').text()).toBe("Tool");
   });
 
   it("preserves input transcript order when the latest user has no response", () => {
@@ -3908,5 +3917,104 @@ describe("Agent Invocation UI", () => {
     ]);
   });
 
+  describe("conversation view", () => {
+    const timestamp = "2026-09-12T08:15:00.000Z";
+    const later = (seconds: number) => new Date(Date.parse(timestamp) + seconds * 1_000).toISOString();
+    function conversation(): AgentInvocationView {
+      return {
+        annotations: { triggeredBy: "Ada" },
+        completedAt: later(19),
+        configuration: {
+          agent: { name: "meal-logger" },
+          capabilities: [{ id: "db" }],
+          driver: { kind: "model", model: { id: "anthropic/claude-sonnet-4.5", provider: "openrouter" } },
+          runtime: { name: "node" },
+          tools: [
+            { capabilityId: "db", label: "Queried database", name: "db_query" },
+            { capabilityId: "db", name: "db_exec" },
+          ],
+        },
+        createdAt: timestamp,
+        id: "meal-log",
+        observations: [
+          { attributes: { "vitehub.agent.configuration": { agent: { name: "meal-logger" }, capabilities: [{ id: "db" }, { id: "transcribe" }], tools: [{ name: "db_query" }] } }, name: "vitehub.agent.configured", sequence: 1, timestamp, type: "lifecycle" },
+          { attributes: { "message.content": "Two eggs and toast.", "message.id": "prompt", "message.role": "user" }, name: "agent.message", sequence: 2, timestamp, type: "run" },
+          { attributes: { "tool.id": "lookup", "tool.name": "db_query" }, name: "agent.tool.finish", sequence: 3, timestamp: later(4), type: "run" },
+          { attributes: { "tool.id": "total", "tool.name": "db_query" }, name: "agent.tool.finish", sequence: 4, timestamp: later(8), type: "run" },
+          { attributes: { "channel.effect.content": "Working on it.", "channel.effect.kind": "status" }, name: "agent.channel.delivery", sequence: 5, timestamp: later(9), type: "run" },
+          { attributes: { "channel.effect.content": "Logged breakfast: **412 kcal**.", "channel.effect.kind": "reply" }, name: "agent.channel.delivery", sequence: 6, timestamp: later(18), type: "run" },
+        ],
+        startedAt: timestamp,
+        status: "completed",
+        traceId: "trace",
+        updatedAt: later(19),
+      };
+    }
 
+    it("shows a delivered reply as the assistant answer after the collapsed work", async () => {
+      const wrapper = mount(AgentInvocation, { props: { invocation: conversation() } });
+      const thread = wrapper.findAll(".vh-invocation-activities > li");
+      expect(thread.map(item => item.classes()[0])).toEqual(["vh-invocation-message", "vh-invocation-work", "vh-invocation-message"]);
+      const [prompt, , answer] = thread;
+      expect(prompt!.get(".vh-invocation-message__role").text()).toBe("Ada");
+      expect(answer!.attributes("data-role")).toBe("assistant");
+      expect(answer!.get(".vh-invocation-message__role").text()).toBe("Assistant");
+      expect(answer!.get(".vh-invocation-message__body").text()).toContain("412 kcal");
+      expect(wrapper.find(".vh-invocation-delivery__body").exists()).toBe(false);
+
+      const work = wrapper.get(".vh-invocation-work__details");
+      if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
+      work.element.open = true;
+      await work.trigger("toggle");
+      const deliveries = wrapper.findAll('.vh-invocation-work__activities [data-kind="delivery"]');
+      expect(deliveries.map(delivery => delivery.get(".vh-invocation-event__title").text())).toEqual(["Status updated", "Reply sent"]);
+      // A status update stays in the work log; the reply receipt keeps no second copy of the answer.
+      expect(deliveries[0]!.get(".vh-invocation-delivery__body").text()).toBe("Working on it.");
+      expect(deliveries[1]!.text()).not.toContain("412 kcal");
+      expect(wrapper.get('[data-kind="system"] .vh-invocation-event__title').text()).toBe("Configured meal-logger with 2 capabilities");
+    });
+
+    it("summarizes messages, steps, tool calls, and total time", () => {
+      const wrapper = mount(AgentInvocationInspector, { props: { invocation: conversation() } });
+      const metrics = wrapper.get(".vh-invocation-inspector__metrics").text();
+      expect(metrics).toContain("Messages2");
+      expect(metrics).toContain("Tool calls2");
+      expect(metrics).toContain("Total time19s");
+    });
+
+    it("jumps from a used tool to its first call", async () => {
+      const inspector = mount(AgentInvocationInspector, { props: { invocation: conversation(), showCapabilities: true } });
+      const used = inspector.get('.vh-agent-tool-list [data-used="true"]');
+      expect(used.get("small").text()).toBe("Queried database");
+      await used.get("button.vh-agent-tool-list__count").trigger("click");
+      expect(inspector.emitted("selectActivity")).toEqual([["lookup"]]);
+      expect(inspector.get('.vh-agent-tool-list [data-used="false"] .vh-agent-tool-list__count').element.tagName).toBe("SPAN");
+
+      const capabilities = mount(AgentCapabilityInspector, { props: { invocation: conversation() } });
+      await capabilities.get("button.vh-agent-tool-list__count").trigger("click");
+      expect(capabilities.emitted("selectActivity")).toEqual([["lookup"]]);
+
+      const readOnly = mount(AgentToolList, { props: { calls: { db_query: 2 }, tools: [{ name: "db_query" }] } });
+      expect(readOnly.find("button").exists()).toBe(false);
+      expect(readOnly.get(".vh-agent-tool-list__count").text()).toBe("2 calls");
+    });
+
+    it("recognizes model makers and providers", () => {
+      expect(invocationModelMaker("anthropic/claude-sonnet-4.5")).toMatchObject({ id: "anthropic", label: "Anthropic" });
+      expect(invocationModelMaker("gpt-5.6")).toMatchObject({ id: "openai" });
+      expect(invocationModelMaker("gemini-2.5-pro")).toMatchObject({ id: "google" });
+      expect(invocationModelMaker("x-ai/grok-4")).toMatchObject({ id: "xai", label: "xAI" });
+      expect(invocationModelMaker("my-model")).toBeUndefined();
+      expect(invocationBrand("openrouter")).toMatchObject({ id: "openrouter", label: "OpenRouter" });
+      expect(invocationBrand("anthropic.messages")).toMatchObject({ id: "anthropic" });
+      expect(invocationBrand("z-ai")).toMatchObject({ id: "zai", label: "Z.AI" });
+      expect(invocationBrand("codex")).toMatchObject({ id: "codex", label: "Codex" });
+      expect(invocationBrand("acme-ai")).toEqual({ id: "fallback", label: "Acme AI" });
+
+      const wrapper = mount(AgentInvocationInspector, { props: { invocation: conversation() } });
+      expect(wrapper.get(".vh-invocation-execution__model-icon").attributes("data-brand")).toBe("anthropic");
+      expect(wrapper.get(".vh-invocation-execution__provider").text()).toBe("OpenRouter");
+      expect(wrapper.get(".vh-invocation-execution__provider-icon").attributes("data-brand")).toBe("openrouter");
+    });
+  });
 });
