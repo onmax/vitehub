@@ -1,18 +1,21 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
 import { createServer } from "vite"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { runWorkflowCli } from "../src/cli.ts"
-import { createWorkflowDevRuntimeModule, workflowDevRegistryId } from "../src/internal/dev-runtime.ts"
+import { workflowDevRuntimeUnavailableCode } from "../src/dev-endpoint.ts"
+import { workflowDevRuntimeRoute } from "../src/dev-support.ts"
+import { createWorkflowDevRuntimeModule, discoverWorkflowDevDefinitions, workflowDevGeneratedDir, writeWorkflowDevFiles } from "../src/internal/dev-runtime.ts"
 import { hubWorkflow } from "../src/vite.ts"
 
 import type { ViteDevServer } from "vite"
 import type { WorkflowCliContext } from "../src/cli.ts"
 import type { WorkflowModuleOptions } from "../src/types.ts"
 
-const tempRoot = resolve(import.meta.dirname, "../.vitest-tmp")
 let root: string | undefined
 let server: ViteDevServer | undefined
 
@@ -23,9 +26,9 @@ afterEach(async () => {
   root = undefined
 })
 
-async function startDevServer(workflow: WorkflowModuleOptions): Promise<{ context: () => WorkflowCliContext & { output: () => { stderr: string, stdout: string } }, root: string, url: string }> {
-  await mkdir(tempRoot, { recursive: true })
-  root = await mkdtemp(join(tempRoot, "dev-server-"))
+async function createApp(): Promise<string> {
+  root = await mkdtemp(join(tmpdir(), "vitehub-workflow-dev-"))
+  await writeFile(join(root, "package.json"), "{\"type\":\"module\"}\n")
   await mkdir(join(root, "server/workflows"), { recursive: true })
   await writeFile(join(root, "server/workflows/welcome.ts"), [
     "import { defineWorkflow } from '@vite-hub/workflow'",
@@ -33,70 +36,142 @@ async function startDevServer(workflow: WorkflowModuleOptions): Promise<{ contex
     "export default defineWorkflow<{ name: string }>(async ({ payload }) => ({ greeting: `Hello ${payload.name}` }))",
     "",
   ].join("\n"))
-  server = await createServer({
-    configFile: false,
-    logLevel: "silent",
-    plugins: [hubWorkflow(workflow)],
-    root,
-    server: { host: "127.0.0.1", port: 0 },
-  })
-  await server.listen()
-  const address = server.httpServer?.address()
-  if (!address || typeof address === "string") throw new Error("Vite Development Server has no port.")
-  const url = `http://127.0.0.1:${address.port}`
-  const projectRoot = root
-  return {
-    context: () => {
-      const stdout: string[] = []
-      const stderr: string[] = []
-      return {
-        cwd: projectRoot,
-        env: { VITEHUB_DEV_SERVER_URL: url },
-        output: () => ({ stderr: stderr.join(""), stdout: stdout.join("") }),
-        rootDir: projectRoot,
-        stderr: { write: chunk => stderr.push(String(chunk)) },
-        stdout: { write: chunk => stdout.push(String(chunk)) },
-      }
-    },
-    root: projectRoot,
-    url,
-  }
+  return root
 }
 
-describe("Workflow dev runtime module", () => {
-  it("installs the registry into the same Workflow runtime that it calls", () => {
-    const code = createWorkflowDevRuntimeModule("vite-hub/_internal/workflow")
-    expect(code).toContain(`import { setWorkflowRuntimeConfig, setWorkflowRuntimeRegistry } from "vite-hub/_internal/workflow/runtime/state"`)
-    expect(code).toContain(`import registry from ${JSON.stringify(workflowDevRegistryId)}`)
-    expect(code).toContain(`export { cancelWorkflow, getWorkflowRun, resumeWorkflowSignal, runWorkflow } from "vite-hub/_internal/workflow"`)
+type ConfigHook = (config: Record<string, unknown>, env: { command: "build" | "serve", mode: string }) => Promise<unknown>
+
+function configHook(plugin: ReturnType<typeof hubWorkflow>): ConfigHook {
+  const hook = plugin.config
+  if (!hook || typeof hook === "function") throw new TypeError("Expected the hubWorkflow config hook to be an object hook.")
+  expect(hook.order).toBe("pre")
+  return hook.handler as unknown as ConfigHook
+}
+
+function cliContext(projectRoot: string, url: string) {
+  const stdout: string[] = []
+  const stderr: string[] = []
+  const context: WorkflowCliContext = {
+    cwd: projectRoot,
+    env: { VITEHUB_DEV_SERVER_URL: url },
+    rootDir: projectRoot,
+    stderr: { write: chunk => stderr.push(String(chunk)) },
+    stdout: { write: chunk => stdout.push(String(chunk)) },
+  }
+  return { context, stderr: () => stderr.join(""), stdout: () => stdout.join("") }
+}
+
+describe("Workflow dev runtime files", () => {
+  it("generates a runtime module that passes the Vite config state and the registry to the dev handler", () => {
+    const code = createWorkflowDevRuntimeModule({ configuredProvider: "cloudflare" }, "vite-hub/_internal/workflow")
+    expect(code).toContain(`import { createWorkflowDevRequestHandler } from "vite-hub/_internal/workflow/runtime/dev"`)
+    expect(code).toContain(`import registry from "./dev-registry.mjs"`)
+    expect(code).toContain(`export const handleWorkflowDevRequest = createWorkflowDevRequestHandler({ ...{"configuredProvider":"cloudflare"}, registry })`)
+    expect(createWorkflowDevRuntimeModule({ configError: "Bad config.", configuredProvider: null })).toContain(`{"configError":"Bad config.","configuredProvider":null}`)
+  })
+
+  it("writes the handler, runtime, and registry files, and skips files that did not change", async () => {
+    const projectRoot = await createApp()
+    const definitions = discoverWorkflowDevDefinitions(projectRoot)
+    expect(definitions.map(definition => definition.name)).toEqual(["welcome"])
+
+    const first = await writeWorkflowDevFiles({ configuredProvider: "vercel", definitions, projectRoot })
+    const directory = join(projectRoot, workflowDevGeneratedDir)
+    expect(first.handler).toBe(join(directory, "dev-handler.mjs"))
+    expect(first.changed).toHaveLength(3)
+    await expect(readFile(first.handler, "utf8")).resolves.toContain("import { handleWorkflowDevRequest as handleViteHubDevRequest } from \"./dev-runtime.mjs\"")
+    const registry = await readFile(join(directory, "dev-registry.mjs"), "utf8")
+    expect(registry).toContain("\"welcome\"")
+    expect(registry).toContain("server/workflows/welcome.ts")
+
+    expect((await writeWorkflowDevFiles({ configuredProvider: "vercel", definitions, projectRoot })).changed).toEqual([])
+    expect((await writeWorkflowDevFiles({ configuredProvider: "openworkflow", definitions, projectRoot })).changed).toEqual([join(directory, "dev-runtime.mjs")])
+  })
+})
+
+describe("Workflow Vite plugin in development", () => {
+  it("adds the dev-only Nitro handler before Nitro reads its config", async () => {
+    const projectRoot = await createApp()
+    const nitro = { handlers: [{ handler: "./server/app.ts", route: "/app" }] }
+    const config: Record<string, unknown> = { nitro, root: projectRoot }
+    await configHook(hubWorkflow({ provider: "vercel" }))(config, { command: "serve", mode: "development" })
+    expect(config.nitro).toMatchObject({
+      handlers: [
+        { handler: "./server/app.ts", route: "/app" },
+        { handler: join(projectRoot, workflowDevGeneratedDir, "dev-handler.mjs"), route: workflowDevRuntimeRoute },
+      ],
+    })
+    expect(nitro.handlers).toHaveLength(1)
+  })
+
+  it("does not add the dev handler to build output", async () => {
+    const projectRoot = await createApp()
+    const config: Record<string, unknown> = { root: projectRoot }
+    await configHook(hubWorkflow({ provider: "vercel" }))(config, { command: "build", mode: "production" })
+    expect(config.nitro).toBeUndefined()
+    expect(existsSync(join(projectRoot, workflowDevGeneratedDir))).toBe(false)
+  })
+
+  it("rewrites the registry and invalidates it in the Nitro environment when a Workflow file changes", async () => {
+    const projectRoot = await createApp()
+    const plugin = hubWorkflow({ provider: "vercel" })
+    await configHook(plugin)({ root: projectRoot }, { command: "serve", mode: "development" })
+    const registryFile = join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs")
+    const module = { file: registryFile }
+    const getModulesByFile = vi.fn((file: string) => file === registryFile ? new Set([module]) : undefined)
+    const invalidateModule = vi.fn()
+    const hotUpdate = plugin.handleHotUpdate as (context: { file: string, server: unknown }) => Promise<void>
+
+    const added = join(projectRoot, "server/workflows/report.ts")
+    await writeFile(added, "export default { handler: async () => 'report' }\n")
+    await hotUpdate({ file: added, server: { environments: { nitro: { moduleGraph: { getModulesByFile, invalidateModule } } } } })
+    await expect(readFile(registryFile, "utf8")).resolves.toContain("\"report\"")
+    expect(invalidateModule).toHaveBeenCalledWith(module)
+
+    invalidateModule.mockClear()
+    await hotUpdate({ file: join(projectRoot, "src/main.ts"), server: { environments: {} } })
+    expect(invalidateModule).not.toHaveBeenCalled()
   })
 })
 
 describe("workflow CLI on a Vite Development Server", () => {
-  it("starts a discovered Workflow inline and reads its result", { timeout: 30_000 }, async () => {
+  async function startDevServer(workflow: WorkflowModuleOptions) {
+    const projectRoot = await createApp()
+    server = await createServer({
+      configFile: false,
+      logLevel: "silent",
+      plugins: [hubWorkflow(workflow)],
+      root: projectRoot,
+      server: { host: "127.0.0.1", port: 0 },
+    })
+    await server.listen()
+    const address = server.httpServer?.address()
+    if (!address || typeof address === "string") throw new Error("Vite Development Server has no port.")
+    return { root: projectRoot, url: `http://127.0.0.1:${address.port}` }
+  }
+
+  it("reports that plain Vite cannot reach the Workflow runtime", { timeout: 30_000 }, async () => {
     const dev = await startDevServer({ provider: "vercel" })
-    const start = dev.context()
-    expect(await runWorkflowCli("start", ["welcome", "--input", "{\"name\":\"Ada\"}", "--json"], start)).toBe(0)
-    const started = JSON.parse(start.output().stdout) as { run: { id: string, status: string, workflow: string } }
-    expect(started.run).toMatchObject({ provider: "vercel", status: "queued", workflow: "welcome" })
+    const human = cliContext(dev.root, dev.url)
+    expect(await runWorkflowCli("start", ["welcome"], human.context)).toBe(1)
+    expect(human.stderr()).toContain("`vitehub workflow` commands need a Vite + Nitro host. Nuxt and plain Vite are not supported.")
 
-    await vi.waitFor(async () => {
-      const get = dev.context()
-      expect(await runWorkflowCli("get", [started.run.id, "--json"], get)).toBe(0)
-      expect(JSON.parse(get.output().stdout)).toEqual({
-        run: { id: started.run.id, provider: "vercel", result: { greeting: "Hello Ada" }, status: "completed", workflow: "welcome" },
-      })
-    }, { timeout: 10_000 })
+    const json = cliContext(dev.root, dev.url)
+    expect(await runWorkflowCli("get", ["run-1", "--json"], json.context)).toBe(1)
+    expect(JSON.parse(json.stdout())).toMatchObject({ error: { code: workflowDevRuntimeUnavailableCode } })
 
-    const cancel = dev.context()
-    expect(await runWorkflowCli("cancel", [started.run.id], cancel)).toBe(1)
-    expect(cancel.output().stderr).toContain("workflow cancel is not supported by the local vercel dev runtime.")
+    const response = await fetch(`${dev.url}/__vitehub/workflow/dev`, {
+      body: JSON.stringify({ operation: "start", workflow: "welcome" }),
+      headers: { "content-type": "application/json", "x-vitehub-workflow-dev": "1" },
+      method: "POST",
+    })
+    expect([response.status, await response.json()]).toEqual([501, { error: { code: workflowDevRuntimeUnavailableCode, message: expect.stringContaining("Nuxt and plain Vite are not supported.") } }])
   })
 
   it("refuses to reach a server for another project root", { timeout: 30_000 }, async () => {
     const dev = await startDevServer({ provider: "cloudflare" })
-    const context = { ...dev.context(), rootDir: resolve(dev.root, "other") }
-    expect(await runWorkflowCli("start", ["welcome"], context)).toBe(1)
-    expect(context.output().stderr).toContain("Compatible Vite Development Server root mismatch")
+    const output = cliContext(resolve(dev.root, "other"), dev.url)
+    expect(await runWorkflowCli("start", ["welcome"], output.context)).toBe(1)
+    expect(output.stderr()).toContain("Compatible Vite Development Server root mismatch")
   })
 })

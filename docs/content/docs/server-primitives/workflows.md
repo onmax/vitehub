@@ -282,19 +282,22 @@ The command reaches only a local Vite Development Server. It does not reach depl
 
 ```bash [Terminal]
 pnpm vitehub workflow start onboard-user --input '{"email":"ada@example.com"}'
-pnpm vitehub workflow get wrun_abc123 --json
+pnpm vitehub workflow get wrun_abc123 --workflow onboard-user --json
 ```
 
-The dev server runs the Workflow runtime in its own process. Nitro development runs in a separate worker, so runs that the app starts are in a different runtime. Provider bindings, Workflow DevKit runs, and OpenWorkflow workers are not available in the dev server process. The CLI reports these limits instead of calling the provider.
+The app must use Vite + Nitro. The Vite endpoint forwards each operation into the Nitro dev runtime, so the CLI and the app use the same Workflow state. Nuxt and plain Vite do not run Nitro in the Vite process, so every command exits with `WORKFLOW_DEV_RUNTIME_UNAVAILABLE`.
 
-| Provider | `start` | `get` | `cancel` | `resume` |
+The CLI does not change the Workflow configuration of the Nitro dev runtime. When the app installs no configuration, the runtime uses inline Vercel execution. The `[workflow]` note says so when the Vite config selects another provider.
+The CLI installs the discovered Workflow registry in the Nitro dev runtime when the app has not installed one. After the first command, the app can also start discovered Workflows by name until the dev server restarts. When the app has its own registry, the CLI keeps it.
+
+| Provider in the Nitro dev runtime | `start` | `get` | `cancel` | `resume` |
 | --- | --- | --- | --- | --- |
-| `vercel` | Runs inline. Not durable, no retries. Not a Workflow DevKit run. | Reads inline runs that the CLI started. Finished runs expire after 5 minutes. | Not supported. Needs a native Vercel Workflow run. | Not supported. Inline runs create no signal tokens. |
-| `cloudflare` | Runs inline. Cloudflare Workflow bindings exist only in the Workers runtime. | Reads inline runs that the CLI started. Finished runs expire after 5 minutes. | Not supported by the provider. | Not supported by the provider. |
+| `vercel`, or no configuration | Runs inline. Not durable, no retries. | Reads inline runs, including runs that the app started. Finished runs expire after 5 minutes. | Calls the runtime. Inline runs return `WORKFLOW_OPERATION_UNSUPPORTED`. | Calls the Workflow SDK. A token that no hook registered returns the provider error. |
+| `cloudflare` | Uses the Workflow binding when the runtime has one. Otherwise runs inline. | Reads from the binding, or reads inline runs. | Not supported by the provider. | Not supported by the provider. |
 | `openworkflow` | Enqueues the run in OpenWorkflow storage. The run stays queued until a worker processes the same storage. | Reads the run from OpenWorkflow storage, including runs that the app started. | Not supported by the provider. | Not supported by the provider. |
 
 When Workflow is disabled or its configuration is not valid, every command reports the reason.
-`vitehub workflow get <runId>` finds the Workflow name for runs that the same dev server started. For other runs, pass `--workflow <name>`.
+`vitehub workflow get <runId>` finds the Workflow name for runs that the CLI started in the current Nitro dev runtime. For other runs, pass `--workflow <name>`, because the runtime reads runs by Workflow name and run ID.
 `vitehub workflow resume <token>` takes the opaque token that `resumeWorkflowSignal()` uses.
 
 The runtime has no API to list runs or replay a run. The CLI has no `list` or `replay` command, and the Console shows the Workflow Definition catalog but no run view. Keep run IDs from `start` output or from your own app records.

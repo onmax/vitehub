@@ -14,6 +14,7 @@ export default defineConfig({
       "src/runtime/cloudflare-runner.ts",
       "src/runtime/cloudflare-vite.ts",
       "src/runtime/cloudflare-shared.ts",
+      "src/runtime/dev.ts",
       "src/runtime/execute.ts",
       "src/runtime/openworkflow.ts",
       "src/runtime/openworkflow-worker.ts",

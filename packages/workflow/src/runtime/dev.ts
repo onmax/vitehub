@@ -1,0 +1,295 @@
+import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
+import { redactInspectionText, redactInspectionValue } from "@vite-hub/internal/inspect"
+
+import { resolveWorkflowDevSupport, workflowDevHeader, workflowDevHeaderValue, workflowDevLabel } from "../dev-support.ts"
+import { cancelWorkflow, getWorkflowRun, resumeWorkflowSignal, runWorkflow } from "./client.ts"
+import { getInlineWorkflowDefinitions, getWorkflowRuntimeConfig, getWorkflowRuntimeRegistry, setWorkflowRuntimeRegistry } from "./state.ts"
+
+import type { WorkflowDevOperation, WorkflowDevRequest, WorkflowDevResponseBody, WorkflowDevRunView } from "../dev-support.ts"
+import type { WorkflowDefinitionRegistry, WorkflowProvider, WorkflowRun } from "../types.ts"
+
+/**
+ * Data that the Vite plugin generates for the development-only Nitro handler.
+ */
+export interface WorkflowDevRuntimeOptions {
+  /** Workflow configuration error in the Vite config. All operations fail with this message. */
+  configError?: string
+  /** Provider that the Vite config selects, or `null` when Workflow is disabled. */
+  configuredProvider: WorkflowProvider | null
+  /** Discovered Workflow Definitions that the CLI can start. Agent Workflows are not included. */
+  registry: WorkflowDefinitionRegistry
+}
+
+interface WorkflowDevResult {
+  body: WorkflowDevResponseBody
+  status: number
+}
+
+const maxRequestBytes = 1024 * 1024
+const maxRememberedRuns = 1024
+
+// Registry that a dev handler installed. A later handler instance, for example
+// after the generated registry changes, can replace it. A registry that the
+// app installed is never replaced.
+let installedRegistry: WorkflowDefinitionRegistry | undefined
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value)
+}
+
+function failure(status: number, code: string, message: string): WorkflowDevResult {
+  return { body: { error: { code, message } }, status }
+}
+
+function respond(result: WorkflowDevResult): Response {
+  return Response.json(result.body, { headers: { "cache-control": "no-store" }, status: result.status })
+}
+
+function parseRequest(body: unknown): WorkflowDevRequest | undefined {
+  if (!isRecord(body)) return
+  const operation = body.operation
+  if (operation === "start") {
+    if (typeof body.workflow !== "string" || !body.workflow) return
+    return { operation, workflow: body.workflow, ...("input" in body ? { input: body.input } : {}) }
+  }
+  if (operation === "get" || operation === "cancel") {
+    if (typeof body.runId !== "string" || !body.runId) return
+    if (body.workflow !== undefined && (typeof body.workflow !== "string" || !body.workflow)) return
+    return { operation, runId: body.runId, ...(typeof body.workflow === "string" ? { workflow: body.workflow } : {}) }
+  }
+  if (operation === "resume") {
+    if (typeof body.token !== "string" || !body.token) return
+    return { operation, token: body.token, ...("payload" in body ? { payload: body.payload } : {}) }
+  }
+}
+
+function jsonReplacer(_key: string, value: unknown): unknown {
+  if (typeof value === "bigint") return value.toString()
+  if (value instanceof Error) return serializeError(value)
+  if (value instanceof Response) return { response: { status: value.status, statusText: value.statusText } }
+  return value
+}
+
+function toJsonValue(value: unknown): unknown {
+  if (value === undefined) return undefined
+  try {
+    const text = JSON.stringify(value, jsonReplacer)
+    return text === undefined ? undefined : redactInspectionValue(JSON.parse(text))
+  }
+  catch {
+    return "[unserializable]"
+  }
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return
+  const code = Reflect.get(error, "code")
+  return typeof code === "string" ? code : undefined
+}
+
+function serializeError(error: Error): { code?: string, message: string, name?: string } {
+  const code = errorCode(error)
+  return {
+    ...(code ? { code } : {}),
+    message: redactInspectionText(error.message),
+    ...(error.name && error.name !== "Error" ? { name: error.name } : {}),
+  }
+}
+
+function toIsoDate(value: unknown): string | undefined {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value.toISOString()
+  return typeof value === "string" ? value : undefined
+}
+
+function isErrorLike(value: unknown): value is Error {
+  return value instanceof Error || (isRecord(value) && typeof value.message === "string")
+}
+
+// Inline runs store the handler result as a serialized `Response`. Read its body
+// so that the CLI shows the value that the Workflow returned.
+async function readResult(result: unknown): Promise<unknown> {
+  if (!(result instanceof Response)) return result
+  const text = await result.clone().text()
+  if (!text) return undefined
+  try {
+    return JSON.parse(text)
+  }
+  catch {
+    return text
+  }
+}
+
+/**
+ * Converts a runtime Workflow run to JSON data. The view omits the start
+ * payload and redacts credentials in the metadata, result, and error message.
+ */
+export async function toWorkflowDevRunView(run: WorkflowRun<unknown, unknown>, workflow: string): Promise<WorkflowDevRunView> {
+  const createdAt = toIsoDate(run.createdAt)
+  const startedAt = toIsoDate(run.startedAt)
+  const completedAt = toIsoDate(run.completedAt)
+  const error = run.status === "failed" && isErrorLike(run.metadata) ? serializeError(run.metadata) : undefined
+  const metadata = error ? undefined : toJsonValue(run.metadata)
+  const result = toJsonValue(await readResult(run.result))
+  return {
+    ...(completedAt ? { completedAt } : {}),
+    ...(createdAt ? { createdAt } : {}),
+    ...(error ? { error } : {}),
+    id: run.id,
+    ...(metadata === undefined ? {} : { metadata }),
+    provider: run.provider,
+    ...(result === undefined ? {} : { result }),
+    ...(startedAt ? { startedAt } : {}),
+    status: run.status,
+    workflow,
+  }
+}
+
+function runtimeFailure(operation: WorkflowDevOperation, provider: WorkflowProvider, error: unknown): WorkflowDevResult {
+  const code = errorCode(error)
+  if (code === "WORKFLOW_OPERATION_UNSUPPORTED") {
+    return failure(501, code, `workflow ${operation} is not supported by the ${provider} provider for this run.`)
+  }
+  if (code === "WORKFLOW_DISABLED") {
+    return failure(409, code, "Workflow is disabled in the Nitro dev runtime.")
+  }
+  if (code === "WORKFLOW_DEFINITION_NOT_FOUND") {
+    return failure(404, code, "Workflow definition was not found.")
+  }
+  if (code === "VERCEL_WORKFLOW_SDK_LOAD_FAILED" || code === "WORKFLOW_NATIVE_ENTRY_INVALID" || code === "WORKFLOW_NATIVE_ENTRY_REQUIRED") {
+    return failure(501, code, `workflow ${operation} needs the Vercel Workflow DevKit runtime, which the Nitro dev runtime could not load.`)
+  }
+  if (code === "WORKFLOW_PROVIDER_OPERATION_FAILED") {
+    // The error message is generic. The cause says what the provider reported.
+    const cause = error instanceof Error ? error.cause : undefined
+    const reason = cause instanceof Error && cause.message ? ` ${redactInspectionText(cause.message)}` : ""
+    return failure(502, code, `workflow ${operation} failed in the ${provider} provider.${reason}`)
+  }
+  const message = error instanceof Error ? error.message : String(error)
+  return failure(500, code || "WORKFLOW_DEV_FAILED", redactInspectionText(message || "Workflow dev request failed."))
+}
+
+async function readRequestBody(request: Request): Promise<{ body?: unknown, error?: WorkflowDevResult }> {
+  const text = await request.text()
+  if (new TextEncoder().encode(text).byteLength > maxRequestBytes) {
+    return { error: failure(413, "WORKFLOW_DEV_INVALID_REQUEST", "Workflow Dev request is too large.") }
+  }
+  try {
+    return { body: JSON.parse(text) }
+  }
+  catch {
+    return { error: failure(400, "WORKFLOW_DEV_INVALID_REQUEST", "Malformed Workflow Dev request.") }
+  }
+}
+
+// The app resolves inline Workflow Definitions when it imports their modules.
+// Hide registry entries that are already inline, so the runtime does not
+// report a duplicate definition.
+function createDevRegistryView(registry: WorkflowDefinitionRegistry): WorkflowDefinitionRegistry {
+  return new Proxy(registry, {
+    get(target, key, receiver) {
+      if (typeof key === "string" && getInlineWorkflowDefinitions().has(key)) return undefined
+      return Reflect.get(target, key, receiver)
+    },
+  })
+}
+
+function installDevRegistry(registry: WorkflowDefinitionRegistry): boolean {
+  const current = getWorkflowRuntimeRegistry()
+  if (current === registry) return true
+  if (current !== undefined && current !== installedRegistry) return false
+  setWorkflowRuntimeRegistry(registry)
+  installedRegistry = registry
+  return true
+}
+
+/**
+ * Creates the request handler of the development-only Nitro route behind
+ * `vitehub workflow`.
+ *
+ * The handler runs in the Nitro dev runtime, so it uses the same Workflow
+ * state as the app. It does not change the Workflow configuration of the
+ * runtime. It installs the discovered Workflow registry only when the app has
+ * not installed one. It remembers the Workflow name of each run that it
+ * starts, and it redacts credentials in run data and error messages.
+ */
+export function createWorkflowDevRequestHandler(options: WorkflowDevRuntimeOptions): (request: Request) => Promise<Response> {
+  const registry = createDevRegistryView(options.registry)
+  const workflows = Object.keys(options.registry).sort()
+  const startedRuns = new Map<string, string>()
+
+  function rememberRun(id: string, workflow: string): void {
+    startedRuns.delete(id)
+    startedRuns.set(id, workflow)
+    if (startedRuns.size > maxRememberedRuns) {
+      const oldest = startedRuns.keys().next().value
+      if (oldest !== undefined) startedRuns.delete(oldest)
+    }
+  }
+
+  async function execute(request: WorkflowDevRequest): Promise<WorkflowDevResult> {
+    if (options.configError || !options.configuredProvider) {
+      const support = resolveWorkflowDevSupport(null, options.configError)[request.operation]
+      return failure(409, "WORKFLOW_DEV_UNSUPPORTED", `workflow ${request.operation} is not available. ${support.note}`)
+    }
+    const runtimeConfig = getWorkflowRuntimeConfig()
+    if (runtimeConfig === false) {
+      return failure(409, "WORKFLOW_DISABLED", "Workflow is disabled in the Nitro dev runtime.")
+    }
+    // The runtime uses inline Vercel execution when the app installs no Workflow configuration.
+    const provider = runtimeConfig?.provider ?? "vercel"
+    const support = resolveWorkflowDevSupport(provider)[request.operation]
+    if (!support.supported) {
+      return failure(501, "WORKFLOW_DEV_UNSUPPORTED", `workflow ${request.operation} is not supported by the ${provider} provider. ${support.note}`)
+    }
+    const configNote = provider === options.configuredProvider
+      ? ""
+      : ` The Vite config selects ${options.configuredProvider}, but the Nitro dev runtime uses ${provider}${runtimeConfig ? "" : " because the app installs no Workflow configuration in development"}.`
+    const note = `${support.note}${configNote}`
+    const registryInstalled = installDevRegistry(registry)
+
+    try {
+      if (request.operation === "start") {
+        if (!workflows.includes(request.workflow)) {
+          const available = workflows.length ? ` Available Workflows: ${workflows.join(", ")}.` : " No Workflow Definitions were discovered."
+          return failure(404, "WORKFLOW_DEFINITION_NOT_FOUND", `Unknown Workflow: ${request.workflow}.${available}`)
+        }
+        if (!registryInstalled && !getWorkflowRuntimeRegistry()?.[request.workflow] && !getInlineWorkflowDefinitions().has(request.workflow)) {
+          return failure(409, "WORKFLOW_DEV_REGISTRY_CONFLICT", `The app installed its own Workflow registry, and it does not contain ${request.workflow}.`)
+        }
+        const run = await runWorkflow(request.workflow, request.input)
+        rememberRun(run.id, request.workflow)
+        return { body: { note, run: await toWorkflowDevRunView(run, request.workflow) }, status: 200 }
+      }
+      if (request.operation === "resume") {
+        const signal = await resumeWorkflowSignal(request.token, request.payload)
+        return { body: { note, signal: { id: signal.id, provider: signal.provider } }, status: 200 }
+      }
+      const workflow = request.workflow ?? startedRuns.get(request.runId)
+      if (!workflow) {
+        return failure(400, "WORKFLOW_DEV_RUN_UNKNOWN", `Run ${request.runId} was not started by \`vitehub workflow start\` in this Nitro dev runtime. Pass --workflow <name>.`)
+      }
+      const run = request.operation === "get"
+        ? await getWorkflowRun(workflow, request.runId)
+        : await cancelWorkflow(workflow, request.runId)
+      return { body: { note, run: await toWorkflowDevRunView(run, workflow) }, status: 200 }
+    }
+    catch (error) {
+      return runtimeFailure(request.operation, provider, error)
+    }
+  }
+
+  return async (request) => {
+    const rejection = validateViteHubNitroDevRequest(request, { header: workflowDevHeader, headerValue: workflowDevHeaderValue, label: workflowDevLabel })
+    if (rejection) return rejection
+    try {
+      const { body, error } = await readRequestBody(request)
+      if (error) return respond(error)
+      const parsed = parseRequest(body)
+      if (!parsed) return respond(failure(400, "WORKFLOW_DEV_INVALID_REQUEST", "Malformed Workflow Dev request."))
+      return respond(await execute(parsed))
+    }
+    catch (error) {
+      return respond(failure(500, "WORKFLOW_DEV_FAILED", redactInspectionText(error instanceof Error ? error.message : String(error))))
+    }
+  }
+}

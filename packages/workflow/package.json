@@ -32,6 +32,7 @@
     "./runtime/cloudflare-runner": "./dist/runtime/cloudflare-runner.js",
     "./runtime/cloudflare-shared": "./dist/runtime/cloudflare-shared.js",
     "./runtime/cloudflare-vite": "./dist/runtime/cloudflare-vite.js",
+    "./runtime/dev": "./dist/runtime/dev.js",
     "./runtime/execute": "./dist/runtime/execute.js",
     "./runtime/openworkflow": "./dist/runtime/openworkflow.js",
     "./runtime/openworkflow-worker": "./dist/runtime/openworkflow-worker.js",

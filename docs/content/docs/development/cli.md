@@ -35,7 +35,7 @@ Available namespaces:
   db          Database development workflows.
   schedule    Inspect and control Runtime Schedules in a running Vite + Nitro Development Server.
   workspace   Workspace development workflows.
-  workflow    Start and inspect Workflow runs on a local Vite Development Server.
+  workflow    Start and inspect Workflow runs in the Nitro dev runtime of a local Vite + Nitro Development Server.
   types       Generate ViteHub TypeScript declarations.
   inspect     Inspect discovered Definitions and generated Provider Output.
   provision   Idempotently create missing provider resources.
@@ -62,10 +62,10 @@ Available namespaces:
 | `vitehub schedule enable` | Available | Schedule Package | Enable one Runtime Schedule. |
 | `vitehub schedule disable` | Available | Schedule Package | Disable one Runtime Schedule. |
 | `vitehub workspace dev` | Available | Workspace Package | Run commands through a Workspace Session exposed by a Compatible Vite Development Server. |
-| `vitehub workflow start` | Local development only | Workflow Package | Start a discovered Workflow on a Compatible Vite Development Server. |
-| `vitehub workflow get` | Local development only | Workflow Package | Show the status and result of one Workflow run. |
-| `vitehub workflow cancel` | Not supported by the local runtime | Workflow Package | Cancel a Workflow run. Every provider reports why it cannot cancel locally. |
-| `vitehub workflow resume` | Not supported by the local runtime | Workflow Package | Resume a Workflow signal with its token. Every provider reports why it cannot resume locally. |
+| `vitehub workflow start` | Vite + Nitro development only | Workflow Package | Start a discovered Workflow in the Nitro dev runtime of the app. |
+| `vitehub workflow get` | Vite + Nitro development only | Workflow Package | Show the status and result of one Workflow run. |
+| `vitehub workflow cancel` | Native Vercel runs only | Workflow Package | Cancel a Workflow run. Other providers and inline runs return the reason. |
+| `vitehub workflow resume` | Native Vercel runs only | Workflow Package | Resume a Workflow signal with its token. Other providers return the reason. |
 | `vitehub types prepare` | Available | ViteHub Framework | Prepare generated TypeScript declarations for editors and type checking. |
 | `vitehub inspect definitions` | Available | ViteHub CLI plus package inspection contributors | List the Definitions that each active package discovered. |
 | `vitehub inspect provider-output` | Available | ViteHub CLI plus package inspection contributors | List generated Provider Output files with secrets redacted. |
@@ -348,6 +348,7 @@ Connected to docs at http://localhost:5173
 Use `vitehub workflow` to start a discovered Workflow and read its run from the terminal.
 Start the app's Vite dev server first, then run the command from another terminal.
 The command reaches only a local Vite Development Server. It does not reach deployed stages.
+The app must use Vite + Nitro. The Vite endpoint forwards each operation into the Nitro dev runtime, so the command uses the same Workflow state as the app. Nuxt and plain Vite do not run Nitro in the Vite process, so the command exits with `WORKFLOW_DEV_RUNTIME_UNAVAILABLE`.
 
 ```bash [Terminal]
 pnpm vitehub workflow start welcome --input '{"email":"ada@example.com"}'
@@ -363,9 +364,11 @@ Check it with: vitehub workflow get wrun_abc123
 
 `--input` and `--payload` take a JSON string, or `@path` to a JSON file relative to the current directory.
 `--json` prints the endpoint response, including errors, for scripts and Agents.
-`get` and `cancel` remember the Workflow name of runs that the same dev server started. For other runs, pass `--workflow <name>`.
+`get` and `cancel` need the Workflow name, because the runtime reads runs by Workflow name and run ID. They remember the name of runs that `vitehub workflow start` started in the current Nitro dev runtime. For runs that the app started, or after a restart, pass `--workflow <name>`.
 `resume <token>` takes the opaque signal token from `resumeWorkflowSignal()`. There is no run ID plus signal name API.
-The dev server runs these Workflows in its own process. Nitro development runs in a separate worker, so the command does not share runs with the app. Read [Workflows](/docs/server-primitives/workflows#run-workflows-from-the-cli) for the operations that each provider supports locally.
+The command does not change the Workflow configuration of the Nitro dev runtime. When the app installs no configuration, the runtime uses inline Vercel execution, and the note says so if the Vite config selects another provider.
+The command installs the discovered Workflow registry in the Nitro dev runtime when the app has not installed one. After the first command, the app can also start discovered Workflows by name until the dev server restarts. New Workflow files are picked up without a restart.
+The human output prints a `[workflow]` note on stderr that says what the provider does in development. Read [Workflows](/docs/server-primitives/workflows#run-workflows-from-the-cli) for the operations that each provider supports.
 
 ## Preview provisioning
 
@@ -394,8 +397,9 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 | `vitehub schedule` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
 | `vitehub schedule run` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
 | `Unknown Workspace Dev target` | The named Workspace is not discovered by the running Vite dev server. | Check the Workspace Definition name and make sure `hubWorkspace()` is active. |
-| `workflow cancel is not supported by the local <provider> dev runtime` | The local dev runtime cannot do this operation for the active provider. The message gives the reason. | Test the operation on a deployed stage or through the provider tooling. |
-| `Run <id> was not started through this Vite Development Server` | `get` or `cancel` does not know the Workflow name of the run. | Pass `--workflow <name>`. |
+| `vitehub workflow` reports `WORKFLOW_DEV_RUNTIME_UNAVAILABLE` | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
+| `workflow cancel is not supported by the <provider> provider` | The Workflow runtime cannot do this operation for the active provider or run. The message gives the reason. | Test the operation on a deployed stage or through the provider tooling. |
+| `Run <id> was not started by ... in this Nitro dev runtime` | `get` or `cancel` does not know the Workflow name of the run. | Pass `--workflow <name>`. |
 | `Agent Dev Loop command requires workspace.mode: "write"` | A `!` command targeted an Agent without writable Workspace access. | Configure the selected Agent with `workspace: { mode: 'write' }`, or send a normal Agent message instead. |
 | Agent Dev Loop request times out | A streamed invocation emitted no events before the inactivity timeout, or a Capability CLI/Workspace command exceeded its wall-clock deadline. | Pass `--timeout <ms>` for the dev-loop operation or inspect the stalled work. |
 | `Agent Dev Loop payload file must contain a JSON object` | The `--payload` file is not a JSON object. | Replace the file contents with one object shaped for the selected Agent Trigger. |

@@ -8,6 +8,7 @@ import {
   resolveViteHubDevServerUrl,
 } from "@vite-hub/internal/cli"
 
+import { workflowDevRuntimeUnavailableCode } from "./dev-endpoint.ts"
 import { workflowDevHeader, workflowDevHeaderValue, workflowDevOperations, workflowDevRoute } from "./dev-support.ts"
 import { workflowErrorDiagnostics } from "./error-diagnostics.ts"
 
@@ -36,20 +37,20 @@ const workflowDevEndpoint = {
 }
 
 const workflowDevTargetErrors = {
-  invalidInlineTimeout: (message: string) => workflowErrorDiagnostics.WORKFLOW_R0034({ message }),
-  invalidTimeout: (message: string) => workflowErrorDiagnostics.WORKFLOW_R0033({ message }),
-  missingValue: (message: string) => workflowErrorDiagnostics.WORKFLOW_R0032({ message }),
+  invalidInlineTimeout: (message: string) => workflowErrorDiagnostics.WORKFLOW_R0033({ message }),
+  invalidTimeout: (message: string) => workflowErrorDiagnostics.WORKFLOW_R0032({ message }),
+  missingValue: (message: string) => workflowErrorDiagnostics.WORKFLOW_R0031({ message }),
 }
 
 const workflowCliUsage: Record<WorkflowDevOperation, { description: string, options: string[], usage: string }> = {
   cancel: {
     description: "Cancel a Workflow run.",
-    options: ["  --workflow <name>  Workflow name. Required for runs that this CLI did not start."],
+    options: ["  --workflow <name>  Workflow name. Required for runs that `vitehub workflow start` did not start in the current Nitro dev runtime."],
     usage: "vitehub workflow cancel <runId> [--workflow <name>] [--json]",
   },
   get: {
     description: "Show the status and result of a Workflow run.",
-    options: ["  --workflow <name>  Workflow name. Required for runs that this CLI did not start."],
+    options: ["  --workflow <name>  Workflow name. Required for runs that `vitehub workflow start` did not start in the current Nitro dev runtime."],
     usage: "vitehub workflow get <runId> [--workflow <name>] [--json]",
   },
   resume: {
@@ -70,7 +71,7 @@ function writeWorkflowCliUsage(operation: WorkflowDevOperation, stream: ViteHubC
     `Usage: ${command.usage}`,
     "",
     command.description,
-    "The command runs on a local Vite Development Server. It does not reach deployed stages.",
+    "The command runs in the Nitro dev runtime of a local Vite + Nitro Development Server. It does not reach deployed stages.",
     "",
     "Options:",
     ...command.options,
@@ -90,7 +91,7 @@ interface PendingJsonValue {
 function readOptionValue(args: string[], index: number, flag: string): string {
   const value = args[index + 1]
   if (value === undefined || (value.startsWith("-") && value !== "-")) {
-    throw workflowErrorDiagnostics.WORKFLOW_R0032({ message: `Missing value for ${flag}.` })
+    throw workflowErrorDiagnostics.WORKFLOW_R0031({ message: `Missing value for ${flag}.` })
   }
   return value
 }
@@ -147,22 +148,22 @@ export function parseWorkflowCliArgs(operation: WorkflowDevOperation, args: stri
     }
     const inlineWorkflow = acceptsWorkflow ? readInlineOption(arg, "--workflow") : undefined
     if (inlineWorkflow !== undefined) {
-      if (!inlineWorkflow) throw workflowErrorDiagnostics.WORKFLOW_R0032({ message: "Missing value for --workflow." })
+      if (!inlineWorkflow) throw workflowErrorDiagnostics.WORKFLOW_R0031({ message: "Missing value for --workflow." })
       workflow = inlineWorkflow
       continue
     }
     if (operation === "resume" && (arg === "--signal" || arg.startsWith("--signal="))) {
-      throw workflowErrorDiagnostics.WORKFLOW_R0035({ message: "Workflow signals resume by token, not by run ID and signal name. Use: vitehub workflow resume <token>." })
+      throw workflowErrorDiagnostics.WORKFLOW_R0034({ message: "Workflow signals resume by token, not by run ID and signal name. Use: vitehub workflow resume <token>." })
     }
-    if (arg.startsWith("-")) throw workflowErrorDiagnostics.WORKFLOW_R0035({ message: `Unknown option: ${arg}.` })
-    if (target !== undefined) throw workflowErrorDiagnostics.WORKFLOW_R0035({ message: `Unexpected argument: ${arg}.` })
+    if (arg.startsWith("-")) throw workflowErrorDiagnostics.WORKFLOW_R0034({ message: `Unknown option: ${arg}.` })
+    if (target !== undefined) throw workflowErrorDiagnostics.WORKFLOW_R0034({ message: `Unexpected argument: ${arg}.` })
     target = arg
   }
 
   if (parsed.help) return parsed
   if (!target) {
     const name = operation === "start" ? "Workflow name" : operation === "resume" ? "signal token" : "run ID"
-    throw workflowErrorDiagnostics.WORKFLOW_R0035({ message: `Missing ${name}.` })
+    throw workflowErrorDiagnostics.WORKFLOW_R0034({ message: `Missing ${name}.` })
   }
   parsed.request = operation === "start"
     ? { operation, workflow: target }
@@ -180,14 +181,14 @@ async function readJsonOption(pending: PendingJsonValue, cwd: string): Promise<u
       text = await readFile(file, "utf8")
     }
     catch (error) {
-      throw workflowErrorDiagnostics.WORKFLOW_R0036({ message: `Cannot read ${pending.flag} file ${text.slice(1)}: ${error instanceof Error ? error.message : String(error)}` })
+      throw workflowErrorDiagnostics.WORKFLOW_R0035({ message: `Cannot read ${pending.flag} file ${text.slice(1)}: ${error instanceof Error ? error.message : String(error)}` })
     }
   }
   try {
     return JSON.parse(text)
   }
   catch (error) {
-    throw workflowErrorDiagnostics.WORKFLOW_R0036({ message: `Invalid JSON for ${pending.flag}: ${error instanceof Error ? error.message : String(error)}` })
+    throw workflowErrorDiagnostics.WORKFLOW_R0035({ message: `Invalid JSON for ${pending.flag}: ${error instanceof Error ? error.message : String(error)}` })
   }
 }
 
@@ -243,7 +244,7 @@ function writeRun(context: WorkflowCliContext, operation: WorkflowDevOperation, 
     `Run:       ${run.id}`,
     `Workflow:  ${run.workflow}`,
     `Provider:  ${run.provider}`,
-    `Status:    ${run.status}${run.status === "unknown" ? " (the local dev runtime has no record of this run)" : ""}`,
+    `Status:    ${run.status}${run.status === "unknown" ? " (the Nitro dev runtime has no record of this run)" : ""}`,
     ...(run.createdAt ? [`Created:   ${run.createdAt}`] : []),
     ...(run.startedAt ? [`Started:   ${run.startedAt}`] : []),
     ...(run.completedAt ? [`Completed: ${run.completedAt}`] : []),
@@ -275,18 +276,12 @@ async function discoverWorkflowDevServer(parsed: ParsedWorkflowCliArgs, context:
   return server
 }
 
-function checkLocalSupport(request: WorkflowDevRequest, discovery: Partial<WorkflowDevDiscovery>): void {
-  const support = discovery.operations?.[request.operation]
-  if (support && !support.supported) {
-    const message = discovery.provider
-      ? `workflow ${request.operation} is not supported by the local ${discovery.provider} dev runtime. ${support.note}`
-      : `workflow ${request.operation} is not available. ${support.note}`
-    throw new WorkflowCliFailure("WORKFLOW_DEV_UNSUPPORTED", message)
-  }
-  if (request.operation === "start" && Array.isArray(discovery.workflows) && !discovery.workflows.includes(request.workflow)) {
-    const available = discovery.workflows.length ? ` Available Workflows: ${discovery.workflows.join(", ")}.` : " No Workflow Definitions were discovered."
-    throw new WorkflowCliFailure("WORKFLOW_DEFINITION_NOT_FOUND", `Unknown Workflow: ${request.workflow}.${available}`)
-  }
+function checkNitroRuntime(discovery: Partial<WorkflowDevDiscovery>): void {
+  if (discovery.runtime === "nitro") return
+  throw new WorkflowCliFailure(
+    workflowDevRuntimeUnavailableCode,
+    typeof discovery.message === "string" ? discovery.message : "This Vite Development Server cannot reach the Workflow runtime.",
+  )
 }
 
 async function sendWorkflowDevRequest(url: string, request: WorkflowDevRequest, parsed: ParsedWorkflowCliArgs, fetchImpl: typeof fetch): Promise<unknown> {
@@ -324,7 +319,7 @@ async function sendWorkflowDevRequest(url: string, request: WorkflowDevRequest, 
 }
 
 /**
- * Runs one `vitehub workflow <operation>` command against a local Vite Development Server.
+ * Runs one `vitehub workflow <operation>` command in the Nitro dev runtime of a local Vite + Nitro Development Server.
  */
 export async function runWorkflowCli(
   operation: WorkflowDevOperation,
@@ -349,7 +344,7 @@ export async function runWorkflowCli(
   const fetchImpl = options.fetch || globalThis.fetch
   try {
     const { discovery, url } = await discoverWorkflowDevServer(parsed, context, fetchImpl)
-    checkLocalSupport(parsed.request, discovery)
+    checkNitroRuntime(discovery)
     const body = await sendWorkflowDevRequest(url, parsed.request, parsed, fetchImpl)
     const run = isRecord(body) && isRecord(body.run) ? body.run as unknown as WorkflowDevRunView : undefined
     const signal = isRecord(body) && isRecord(body.signal) ? body.signal as unknown as WorkflowDevSignalView : undefined
@@ -360,8 +355,8 @@ export async function runWorkflowCli(
     }
     if (run) writeRun(context, operation, run)
     if (signal) writeSignal(context, signal)
-    const note = discovery.operations?.[operation]?.note
-    if (note && (operation === "start" || operation === "get")) context.stderr.write(`[workflow] ${note}\n`)
+    const note = isRecord(body) && typeof body.note === "string" ? body.note : undefined
+    if (note) context.stderr.write(`[workflow] ${note}\n`)
     return 0
   }
   catch (error) {
@@ -372,7 +367,7 @@ export async function runWorkflowCli(
 
 export function createWorkflowCliNamespace(options: WorkflowCliOptions = {}): ViteHubCliCommandNamespace {
   return {
-    description: "Start and inspect Workflow runs on a local Vite Development Server.",
+    description: "Start and inspect Workflow runs in the Nitro dev runtime of a local Vite + Nitro Development Server.",
     features: workflowDevOperations.map(operation => ({
       description: workflowCliUsage[operation].description,
       name: operation,

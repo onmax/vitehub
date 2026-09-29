@@ -5,12 +5,12 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { createWorkflowCliContributor, parseWorkflowCliArgs, resolveWorkflowCliJsonValues, runWorkflowCli } from "../src/cli.ts"
-import { resolveWorkflowDevSupport, workflowDevHeader } from "../src/dev-support.ts"
+import { workflowDevRuntimeUnavailableCode, workflowDevRuntimeUnavailableMessage } from "../src/dev-endpoint.ts"
+import { workflowDevHeader } from "../src/dev-support.ts"
 import { hubWorkflow } from "../src/vite.ts"
 
 import type { WorkflowCliContext } from "../src/cli.ts"
 import type { WorkflowDevDiscovery, WorkflowDevOperation } from "../src/dev-support.ts"
-import type { WorkflowProvider } from "../src/types.ts"
 
 let cwd: string
 
@@ -35,16 +35,14 @@ function createContext(env: NodeJS.ProcessEnv = {}) {
   return { context, stderr: () => stderr.join(""), stdout: () => stdout.join("") }
 }
 
-function discovery(provider: WorkflowProvider | null, overrides: Partial<WorkflowDevDiscovery> = {}): WorkflowDevDiscovery {
-  return { operations: resolveWorkflowDevSupport(provider), provider, root: "/app", workflows: ["welcome"], ...overrides }
-}
+const nitroDiscovery: WorkflowDevDiscovery = { root: "/app", runtime: "nitro" }
 
-function devServer(provider: WorkflowProvider | null, respond: (body: Record<string, unknown>) => Response, overrides: Partial<WorkflowDevDiscovery> = {}) {
+function devServer(respond: (body: Record<string, unknown>) => Response, discovery: WorkflowDevDiscovery = nitroDiscovery) {
   const posts: Array<Record<string, unknown>> = []
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     expect(String(input)).toBe("http://localhost:5173/__vitehub/workflow/dev")
     expect(new Headers(init?.headers).get(workflowDevHeader)).toBe("1")
-    if (init?.method !== "POST") return Response.json(discovery(provider, overrides))
+    if (init?.method !== "POST") return Response.json(discovery)
     const body = JSON.parse(String(init.body)) as Record<string, unknown>
     posts.push(body)
     return respond(body)
@@ -79,14 +77,14 @@ describe("workflow CLI arguments", () => {
   })
 
   it("rejects missing values, unknown options, and extra arguments with Workflow diagnostics", () => {
-    expect(() => parse("start", [])).toThrow(expect.objectContaining({ code: "WORKFLOW_R0035", message: expect.stringContaining("Missing Workflow name.") }))
+    expect(() => parse("start", [])).toThrow(expect.objectContaining({ code: "WORKFLOW_R0034", message: expect.stringContaining("Missing Workflow name.") }))
     expect(() => parse("get", [])).toThrow(expect.objectContaining({ message: expect.stringContaining("Missing run ID.") }))
     expect(() => parse("resume", [])).toThrow(expect.objectContaining({ message: expect.stringContaining("Missing signal token.") }))
-    expect(() => parse("start", ["welcome", "--input"])).toThrow(expect.objectContaining({ code: "WORKFLOW_R0032", message: expect.stringContaining("Missing value for --input.") }))
+    expect(() => parse("start", ["welcome", "--input"])).toThrow(expect.objectContaining({ code: "WORKFLOW_R0031", message: expect.stringContaining("Missing value for --input.") }))
     expect(() => parse("start", ["welcome", "--workflow", "x"])).toThrow(expect.objectContaining({ message: expect.stringContaining("Unknown option: --workflow.") }))
     expect(() => parse("resume", ["tok", "--input", "{}"])).toThrow(expect.objectContaining({ message: expect.stringContaining("Unknown option: --input.") }))
     expect(() => parse("get", ["a", "b"])).toThrow(expect.objectContaining({ message: expect.stringContaining("Unexpected argument: b.") }))
-    expect(() => parse("get", ["a", "--timeout", "0"])).toThrow(expect.objectContaining({ code: "WORKFLOW_R0033" }))
+    expect(() => parse("get", ["a", "--timeout", "0"])).toThrow(expect.objectContaining({ code: "WORKFLOW_R0032" }))
     expect(() => parse("resume", ["run-1", "--signal", "approve"])).toThrow(expect.objectContaining({ message: expect.stringContaining("Workflow signals resume by token, not by run ID and signal name.") }))
   })
 
@@ -97,79 +95,69 @@ describe("workflow CLI arguments", () => {
     const file = await resolveWorkflowCliJsonValues(parseWorkflowCliArgs("resume", ["tok", "--payload", "@input.json"], {}), cwd)
     expect(file.request).toEqual({ operation: "resume", payload: { from: "file" }, token: "tok" })
     await expect(resolveWorkflowCliJsonValues(parseWorkflowCliArgs("start", ["welcome", "--input", "{bad"], {}), cwd))
-      .rejects.toMatchObject({ code: "WORKFLOW_R0036", message: expect.stringContaining("Invalid JSON for --input") })
+      .rejects.toMatchObject({ code: "WORKFLOW_R0035", message: expect.stringContaining("Invalid JSON for --input") })
     await expect(resolveWorkflowCliJsonValues(parseWorkflowCliArgs("start", ["welcome", "--input", "@missing.json"], {}), cwd))
-      .rejects.toMatchObject({ code: "WORKFLOW_R0036", message: expect.stringContaining("Cannot read --input file missing.json") })
+      .rejects.toMatchObject({ code: "WORKFLOW_R0035", message: expect.stringContaining("Cannot read --input file missing.json") })
   })
 })
 
 describe("workflow CLI commands", () => {
-  it("starts a run and prints concise output with the local runtime note", async () => {
-    const server = devServer("vercel", () => Response.json({ run: { id: "run-1", provider: "vercel", status: "queued", workflow: "welcome" } }))
+  it("starts a run and prints concise output with the runtime note", async () => {
+    const note = "Runs the Workflow inline in the Nitro dev runtime, as the app does in development."
+    const server = devServer(() => Response.json({ note, run: { id: "run-1", provider: "vercel", status: "queued", workflow: "welcome" } }))
     const output = createContext()
     await writeFile(join(cwd, "input.json"), "{\"name\":\"Ada\"}")
     expect(await runWorkflowCli("start", ["welcome", "--input", "@input.json"], output.context, { fetch: server.fetch })).toBe(0)
     expect(server.posts).toEqual([{ input: { name: "Ada" }, operation: "start", workflow: "welcome" }])
     expect(output.stdout()).toBe("Started run run-1 of workflow welcome (vercel, queued).\nCheck it with: vitehub workflow get run-1\n")
-    expect(output.stderr()).toContain("[workflow] Runs the Workflow inline in the Vite Development Server process.")
+    expect(output.stderr()).toBe(`[workflow] ${note}\n`)
   })
 
   it("prints the endpoint body as JSON with --json", async () => {
     const run = { id: "run-1", provider: "vercel", result: { ok: true }, status: "completed", workflow: "welcome" }
-    const server = devServer("vercel", () => Response.json({ run }))
+    const server = devServer(() => Response.json({ note: "Reads inline runs.", run }))
     const output = createContext()
     expect(await runWorkflowCli("get", ["run-1", "--json"], output.context, { fetch: server.fetch })).toBe(0)
     expect(server.posts).toEqual([{ operation: "get", runId: "run-1" }])
-    expect(JSON.parse(output.stdout())).toEqual({ run })
+    expect(JSON.parse(output.stdout())).toEqual({ note: "Reads inline runs.", run })
     expect(output.stderr()).toBe("")
   })
 
   it("prints run details in human output", async () => {
-    const server = devServer("openworkflow", () => Response.json({
+    const server = devServer(() => Response.json({
       run: { completedAt: "2026-09-29T10:00:00.000Z", id: "ow-1", provider: "openworkflow", result: { ok: true }, status: "completed", workflow: "welcome" },
     }))
     const output = createContext()
     expect(await runWorkflowCli("get", ["ow-1", "--workflow", "welcome"], output.context, { fetch: server.fetch })).toBe(0)
+    expect(server.posts).toEqual([{ operation: "get", runId: "ow-1", workflow: "welcome" }])
     expect(output.stdout()).toContain("Run:       ow-1\nWorkflow:  welcome\nProvider:  openworkflow\nStatus:    completed\nCompleted: 2026-09-29T10:00:00.000Z\nResult:    {\n  \"ok\": true\n}\n")
   })
 
-  it("says which operations the local provider runtime does not support", async () => {
-    const cases: Array<{ args: string[], operation: WorkflowDevOperation, provider: WorkflowProvider, message: string }> = [
-      { args: ["run-1"], message: "workflow cancel is not supported by the local vercel dev runtime. Inline Vercel runs cannot be cancelled.", operation: "cancel", provider: "vercel" },
-      { args: ["tok"], message: "workflow resume is not supported by the local vercel dev runtime. Signals need a native Vercel Workflow run.", operation: "resume", provider: "vercel" },
-      { args: ["run-1"], message: "workflow cancel is not supported by the local cloudflare dev runtime. Cloudflare Workflows do not support cancellation through ViteHub.", operation: "cancel", provider: "cloudflare" },
-      { args: ["tok"], message: "workflow resume is not supported by the local openworkflow dev runtime. OpenWorkflow does not support ViteHub signals.", operation: "resume", provider: "openworkflow" },
-    ]
-    for (const input of cases) {
-      const server = devServer(input.provider, () => new Response("unexpected", { status: 500 }))
-      const output = createContext()
-      expect(await runWorkflowCli(input.operation, input.args, output.context, { fetch: server.fetch })).toBe(1)
-      expect(output.stderr()).toContain(input.message)
-      expect(server.posts).toEqual([])
-    }
-
-    const server = devServer("vercel", () => new Response("unexpected", { status: 500 }))
+  it("prints unsupported operations that the Nitro dev runtime reports", async () => {
+    const error = { error: { code: "WORKFLOW_DEV_UNSUPPORTED", message: "workflow cancel is not supported by the cloudflare provider. Cloudflare Workflows do not support cancellation through ViteHub." } }
+    const server = devServer(() => Response.json(error, { status: 501 }))
+    const human = createContext()
+    expect(await runWorkflowCli("cancel", ["run-1", "--workflow", "welcome"], human.context, { fetch: server.fetch })).toBe(1)
+    expect(human.stderr()).toBe(`${error.error.message}\n`)
     const json = createContext()
-    expect(await runWorkflowCli("cancel", ["run-1", "--json"], json.context, { fetch: server.fetch })).toBe(1)
-    expect(JSON.parse(json.stdout())).toEqual({ error: { code: "WORKFLOW_DEV_UNSUPPORTED", message: expect.stringContaining("workflow cancel is not supported by the local vercel dev runtime.") } })
+    expect(await runWorkflowCli("cancel", ["run-1", "--workflow", "welcome", "--json"], json.context, { fetch: server.fetch })).toBe(1)
+    expect(JSON.parse(json.stdout())).toEqual(error)
   })
 
-  it("reports disabled Workflow and unknown Workflow names before it posts", async () => {
-    const disabled = devServer(null, () => new Response("unexpected", { status: 500 }))
-    const output = createContext()
-    expect(await runWorkflowCli("start", ["welcome"], output.context, { fetch: disabled.fetch })).toBe(1)
-    expect(output.stderr()).toBe("workflow start is not available. Workflow is disabled in this app.\n")
-
-    const unknown = devServer("vercel", () => new Response("unexpected", { status: 500 }), { workflows: ["a", "b"] })
-    const unknownOutput = createContext()
-    expect(await runWorkflowCli("start", ["welcome"], unknownOutput.context, { fetch: unknown.fetch })).toBe(1)
-    expect(unknownOutput.stderr()).toBe("Unknown Workflow: welcome. Available Workflows: a, b.\n")
-    expect([...disabled.posts, ...unknown.posts]).toEqual([])
+  it("explains hosts that cannot reach the Workflow runtime before it posts", async () => {
+    const server = devServer(() => new Response("unexpected", { status: 500 }), { message: workflowDevRuntimeUnavailableMessage, root: "/app", runtime: "unavailable" })
+    const human = createContext()
+    expect(await runWorkflowCli("start", ["welcome"], human.context, { fetch: server.fetch })).toBe(1)
+    expect(human.stderr()).toBe(`${workflowDevRuntimeUnavailableMessage}\n`)
+    const json = createContext()
+    expect(await runWorkflowCli("get", ["run-1", "--json"], json.context, { fetch: server.fetch })).toBe(1)
+    expect(JSON.parse(json.stdout())).toEqual({ error: { code: workflowDevRuntimeUnavailableCode, message: workflowDevRuntimeUnavailableMessage } })
+    expect(server.posts).toEqual([])
   })
 
   it("prints endpoint errors in human and JSON output", async () => {
-    const error = { error: { code: "WORKFLOW_DEV_RUN_UNKNOWN", message: "Run run-9 was not started through this Vite Development Server. Pass --workflow <name>." } }
-    const server = devServer("vercel", () => Response.json(error, { status: 400 }))
+    const error = { error: { code: "WORKFLOW_DEV_RUN_UNKNOWN", message: "Run run-9 was not started by `vitehub workflow start` in this Nitro dev runtime. Pass --workflow <name>." } }
+    const server = devServer(() => Response.json(error, { status: 400 }))
     const human = createContext()
     expect(await runWorkflowCli("get", ["run-9"], human.context, { fetch: server.fetch })).toBe(1)
     expect(human.stderr()).toBe(`${error.error.message}\n`)

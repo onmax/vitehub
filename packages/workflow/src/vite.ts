@@ -9,14 +9,17 @@ import { removeProviderOutputArtifactDir, retainProviderOutputAliases, retainPro
 import { collectViteHubProviderImportAliases, createNoExternalMerger, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { normalizeHosting } from "@vite-hub/internal/hosting"
 
+import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
+
 import { normalizeWorkflowOptions } from "./config.ts"
-import { createWorkflowDevHandler, registerWorkflowDevEndpoint } from "./dev-endpoint.ts"
+import { registerWorkflowDevEndpoint } from "./dev-endpoint.ts"
+import { workflowDevRuntimeRoute } from "./dev-support.ts"
 import { inspectWorkflowDefinitions } from "./inspect.ts"
-import { createWorkflowDevRegistryModule, createWorkflowDevRuntimeLoader, createWorkflowDevRuntimeModule, discoverWorkflowDevDefinitions, resolvedWorkflowDevRegistryId, resolvedWorkflowDevRuntimeId, workflowDevRegistryId, workflowDevRuntimeId } from "./internal/dev-runtime.ts"
+import { discoverWorkflowDevDefinitions, workflowDevGeneratedDir, writeWorkflowDevFiles } from "./internal/dev-runtime.ts"
 import { createCloudflareWorkflowNitroConfig, createOptionalViteDevtoolsPlugin, createVercelWorkflowTransformPlugin, discoverWorkflowProviderSources, generateWorkflowProviderOutputs, hasVercelNativeWorkflowEntry, resolveVercelWorkflowWorld, workflowPackageName, writeProviderEntries } from "./internal/vite-build.ts"
 
-import type { WorkflowDevState } from "./dev-endpoint.ts"
-import type { ResolvedWorkflowOptions, WorkflowModuleOptions } from "./types.ts"
+import type { WorkflowDevGeneratedState } from "./internal/dev-runtime.ts"
+import type { WorkflowModuleOptions } from "./types.ts"
 import type { ProviderDeploymentOutputGeneration, ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import type { Plugin as EsbuildPlugin } from "esbuild"
 import type { ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
@@ -173,62 +176,67 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     }
   }
 
-  // The Workflow CLI runs Workflows in the Vite Development Server process.
-  // Nitro development runs in a worker, so its Workflow state is not reachable.
-  const devImportBase = internalOptions.importBase ?? workflowPackageName
-  let servedDevRegistry: string | undefined
+  // `vitehub workflow` runs its operations in the Nitro dev runtime of the app.
+  // In `vite dev`, the plugin writes a development-only Nitro handler and the
+  // registry of discovered Workflow Definitions, and the Vite endpoint forwards
+  // requests to that handler.
+  let devRootDir: string | undefined
 
-  function devRegistryContents(): string {
-    const rootDir = resolved?.root ?? process.cwd()
-    return createWorkflowDevRegistryModule(rootDir, discoverWorkflowDevDefinitions(rootDir, serverDirs), devImportBase)
-  }
-
-  function devWorkflowConfig(): { config: false | ResolvedWorkflowOptions, error?: string } {
+  function devGeneratedState(): WorkflowDevGeneratedState {
     try {
-      return { config: normalizeWorkflowOptions(workflow, { hosting: internalOptions.hosting ?? "vercel" }) ?? false }
+      const config = normalizeWorkflowOptions(workflow, { hosting: internalOptions.hosting ?? "vercel" })
+      return { configuredProvider: config ? config.provider : null }
     }
     catch (error) {
-      return { config: false, error: error instanceof Error ? error.message : String(error) }
+      return { configError: error instanceof Error ? error.message : String(error), configuredProvider: null }
     }
   }
 
-  function devState(): WorkflowDevState {
-    const rootDir = resolved?.root ?? process.cwd()
-    const { config, error } = devWorkflowConfig()
-    return {
-      ...(error ? { error } : {}),
-      provider: config ? config.provider : null,
-      root: rootDir,
-      workflows: discoverWorkflowDevDefinitions(rootDir, serverDirs).map(definition => definition.name).sort(),
-    }
+  async function writeDevFiles(rootDir: string) {
+    return await writeWorkflowDevFiles({
+      ...devGeneratedState(),
+      definitions: discoverWorkflowDevDefinitions(rootDir, serverDirs),
+      importBase: internalOptions.importBase,
+      projectRoot: resolveViteHubProjectRoot(rootDir),
+    })
   }
 
   return {
     name: "@vite-hub/workflow/vite",
-    resolveId(id) {
-      if (id === workflowDevRuntimeId) return resolvedWorkflowDevRuntimeId
-      if (id === workflowDevRegistryId) return resolvedWorkflowDevRegistryId
-    },
-    load(id) {
-      if (id === resolvedWorkflowDevRuntimeId) return createWorkflowDevRuntimeModule(devImportBase)
-      if (id === resolvedWorkflowDevRegistryId) {
-        servedDevRegistry = devRegistryContents()
-        return servedDevRegistry
-      }
-    },
     configureServer(server) {
       if (resolved?.command !== "serve") return
-      registerWorkflowDevEndpoint(server, createWorkflowDevHandler({
-        loadRuntime: createWorkflowDevRuntimeLoader(server, {
-          config: () => devWorkflowConfig().config,
-          isRegistryStale: () => servedDevRegistry !== undefined && servedDevRegistry !== devRegistryContents(),
-        }),
-        state: devState,
-      }))
+      registerWorkflowDevEndpoint(server, {
+        nitroBaseURL: () => {
+          // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
+          const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
+          return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
+        },
+      })
     },
-    config(config) {
-      workflow = config.workflow ?? workflow
-      serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
+    config: {
+      // Nitro reads `config.nitro` in its own `config` hook, so the dev handler must be added first.
+      order: "pre",
+      async handler(config, env) {
+        workflow = config.workflow ?? workflow
+        serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
+        if (env.command !== "serve") return
+        devRootDir = resolve(config.root || process.cwd())
+        const { handler } = await writeDevFiles(devRootDir)
+        const kit = createNitroServerKit((config as { nitro?: unknown }).nitro)
+        kit.addHandler({ handler, route: workflowDevRuntimeRoute })
+        ;(config as { nitro?: unknown }).nitro = kit.config
+      },
+    },
+    async handleHotUpdate(context) {
+      if (!devRootDir) return
+      const file = context.file.replace(/\\/g, "/")
+      if (file.includes(`/${workflowDevGeneratedDir}/`)) return
+      if (!/\.(?:c|m)?[jt]s$/i.test(file) || !/(?:\/workflows\/|\.workflow\.)/i.test(file)) return
+      const { changed } = await writeDevFiles(devRootDir)
+      const nitro = context.server.environments.nitro
+      for (const changedFile of changed) {
+        for (const module of nitro?.moduleGraph.getModulesByFile(changedFile) ?? []) nitro?.moduleGraph.invalidateModule(module)
+      }
     },
     configResolved(config) {
       resolved = config

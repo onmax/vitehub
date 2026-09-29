@@ -158,7 +158,7 @@ pnpm vitehub workflow cancel <runId> [--workflow <name>]
 pnpm vitehub workflow resume <token> [--payload <json|@file>]
 ```
 
-The endpoint runs the Workflow runtime in the Vite process, because Nitro development runs in a separate worker. `start` runs Vercel and Cloudflare Workflows inline, and enqueues OpenWorkflow runs without starting a worker. `get` reads those runs. `cancel` and `resume` report why the local runtime cannot do them. There is no run list or replay, because the runtime has no API for them.
+The endpoint forwards each operation into the Nitro dev runtime of a Vite + Nitro app, so the CLI and the app share Workflow state. Nuxt and plain Vite return `WORKFLOW_DEV_RUNTIME_UNAVAILABLE`. The CLI does not change the Workflow configuration of the runtime. It installs the discovered registry only when the app has none, so after the first command the app can also start discovered Workflows by name. `get` and `cancel` need `--workflow <name>` for runs that the CLI did not start. Operations that the provider or the run does not support return the reason. There is no run list or replay, because the runtime has no API for them.
 
 ## Make a Vercel workflow durable
 
