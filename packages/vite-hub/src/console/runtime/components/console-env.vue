@@ -23,7 +23,17 @@ const descriptionSchema = v.object({
       hasDefault: v.boolean(),
     }),
   ),
+  status: v.optional(
+    v.array(
+      v.object({
+        blocking: v.boolean(),
+        path: v.optional(v.string()),
+        status: v.picklist(["available", "defaulted", "error", "invalid", "missing"]),
+      }),
+    ),
+  ),
 });
+type EnvStatus = NonNullable<v.InferOutput<typeof descriptionSchema>["status"]>[number];
 const props = defineProps<{
   agentsBase: string;
   definitionsBase: string;
@@ -40,6 +50,9 @@ const source = ref("all");
 const selected = ref<ServerEnvDescriptionEntry>();
 const loading = ref(true);
 const failed = ref(false);
+// Status is loaded on request because inspection can call providers.
+const statuses = ref<ReadonlyMap<string, EnvStatus>>();
+const statusFailed = ref(false);
 let request: AbortController | undefined;
 const detailOpen = computed({
   get: () => Boolean(selected.value),
@@ -68,40 +81,67 @@ const rows = computed(() =>
         .includes(search.value.trim().toLowerCase()),
   ),
 );
-const columns: TableColumn<ServerEnvDescriptionEntry>[] = [
+const columns = computed<TableColumn<ServerEnvDescriptionEntry>[]>(() => [
   { accessorKey: "path", header: "Variable" },
+  ...(statuses.value ? [{ id: "status", header: "Status" }] : []),
   { id: "source", header: "Source" },
   { id: "value", header: "Value" },
-];
+]);
+const statusLabels: Record<EnvStatus["status"], string> = {
+  available: "Available",
+  defaulted: "Default",
+  error: "Provider error",
+  invalid: "Invalid",
+  missing: "Missing",
+};
+function statusBadge(entry: ServerEnvDescriptionEntry) {
+  const status = entry.path ? statuses.value?.get(entry.path) : undefined;
+  if (!status) return undefined;
+  return {
+    color: status.blocking ? "error" : status.status === "available" ? "success" : "neutral",
+    label: statusLabels[status.status],
+  } as const;
+}
 function selectRow(_event: Event, row: TableRow<ServerEnvDescriptionEntry>) {
   selected.value = row.original;
 }
-async function refresh() {
+async function refresh(includeStatus = Boolean(statuses.value)) {
   request?.abort();
   const current = new AbortController();
   request = current;
   loading.value = true;
   failed.value = false;
+  statusFailed.value = false;
   try {
     const result = v.parse(
       descriptionSchema,
-      await requestConsole(props.envBase, { signal: current.signal }),
+      await requestConsole(props.envBase, {
+        query: includeStatus ? { status: 1 } : undefined,
+        signal: current.signal,
+      }),
     );
     if (current.signal.aborted) return;
     entries.value = result.entries;
+    statuses.value = result.status
+      ? new Map(
+          result.status.flatMap((status) => (status.path ? [[status.path, status] as const] : [])),
+        )
+      : undefined;
     if (!sourceItems.value.some((item) => item.value === source.value)) source.value = "all";
     selected.value = selected.value
       ? entries.value.find((entry) => entry.path === selected.value?.path)
       : undefined;
   } catch {
-    if (!current.signal.aborted) failed.value = true;
+    if (current.signal.aborted) return;
+    if (includeStatus && entries.value.length) statusFailed.value = true;
+    else failed.value = true;
   } finally {
     if (!current.signal.aborted) loading.value = false;
   }
 }
 onMounted(() => {
   rememberConsoleSection("env");
-  void refresh();
+  void refresh(false);
 });
 onBeforeUnmount(() => request?.abort());
 </script>
@@ -152,6 +192,15 @@ onBeforeUnmount(() => request?.abort());
       <template #header>
         <UDashboardNavbar title="Env" :toggle="{ 'aria-label': 'Open sidebar' }">
           <template #right>
+            <UButton
+              color="neutral"
+              icon="i-ph-heartbeat-light"
+              label="Check status"
+              size="xs"
+              variant="ghost"
+              :disabled="loading"
+              @click="refresh(true)"
+            />
             <UTooltip text="Refresh declarations"
               ><UButton
                 aria-label="Refresh declarations"
@@ -160,7 +209,7 @@ onBeforeUnmount(() => request?.abort());
                 size="xs"
                 variant="ghost"
                 :disabled="loading"
-                @click="refresh"
+                @click="refresh()"
             /></UTooltip>
           </template>
         </UDashboardNavbar>
@@ -173,6 +222,9 @@ onBeforeUnmount(() => request?.abort());
             variant="none"
             class="min-w-40 flex-1"
           />
+          <span v-if="statusFailed" role="alert" class="text-xs text-error"
+            >Could not check status.</span
+          >
           <USelect
             v-if="sourceItems.length > 2"
             v-model="source"
@@ -187,7 +239,7 @@ onBeforeUnmount(() => request?.abort());
         <main class="min-h-0 flex-1 overflow-auto">
           <div v-if="failed" role="alert" class="flex items-center gap-3 p-4 text-sm">
             <span>Could not load environment declarations.</span
-            ><UButton label="Try again" color="neutral" variant="ghost" @click="refresh" />
+            ><UButton label="Try again" color="neutral" variant="ghost" @click="refresh()" />
           </div>
           <p v-else-if="loading" role="status" class="p-4 text-sm text-muted">
             Loading environment…
@@ -206,6 +258,13 @@ onBeforeUnmount(() => request?.abort());
               ><span class="font-mono text-xs text-highlighted">{{
                 row.original.path?.replace(/^env\.server\./, "") || "Undisclosed name"
               }}</span></template
+            >
+            <template #status-cell="{ row }"
+              ><UBadge
+                v-if="statusBadge(row.original)"
+                v-bind="statusBadge(row.original)"
+                size="sm"
+                variant="subtle" /><span v-else class="text-xs text-muted">Unknown</span></template
             >
             <template #source-cell="{ row }"
               ><span class="text-xs text-muted">{{ sourceLabel(row.original) }}</span></template

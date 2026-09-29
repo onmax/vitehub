@@ -82,7 +82,9 @@ If `console` is omitted or set to `false`, ViteHub does not register a Console p
 
 Open Env to search declared Server Env variables and filter by source. Select a variable to inspect its provider, secret flag, requirement, and whether a default is configured. Host environment includes process environment variables and host runtime bindings.
 
-This view does not read secret values, call external providers, or check credential validity. It does not enumerate undeclared host variables. Values and defaults remain hidden. Update host values through the deployment configuration and provider values in their connected store. Set `env: false` in ViteHub options to disable Env and its Console section.
+Select **Check status** to add a Status column from `inspectServerEnv()`. It shows whether each value is available, defaulted, missing, invalid, or failed in its provider. Red badges mark values that make `loadServerEnv()` fail. The check reads the Console server's environment and calls configured providers, so it runs only when you select it. It never returns values. Use `vitehub env check` for the same check in CI.
+
+The inventory does not read secret values, call external providers, or check credential validity. It does not enumerate undeclared host variables. Values and defaults remain hidden. Update host values through the deployment configuration and provider values in their connected store. Set `env: false` in ViteHub options to disable Env and its Console section.
 
 ## Develop against a fixture
 

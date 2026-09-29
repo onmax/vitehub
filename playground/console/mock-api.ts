@@ -184,7 +184,15 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       { path: "env.server.codex.auth", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false },
       { path: "env.server.webhookSecret", source: "env", secret: true, required: true, hasDefault: false },
       { path: "env.server.logLevel", source: "env", secret: false, required: false, hasDefault: true },
-    ] })
+    ], ...(url.searchParams.get("status") === "1"
+      ? { status: [
+          { path: "env.server.github.token", status: "available", blocking: false },
+          { path: "env.server.openai.apiKey", status: "available", blocking: false },
+          { path: "env.server.codex.auth", status: "error", blocking: true },
+          { path: "env.server.webhookSecret", status: "missing", blocking: true },
+          { path: "env.server.logLevel", status: "defaulted", blocking: false },
+        ] }
+      : {}) })
     return true
   }
   if (path === "/api/_vitehub/console/sections") {
