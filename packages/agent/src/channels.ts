@@ -59,7 +59,7 @@ import type { TelegramAdapterConfig } from "@chat-adapter/telegram"
 import { encodeRouteSegment, resolveRuntimeValue } from "@vite-hub/runtime"
 import type { Adapter, FileUpload } from "chat"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
-import { channelEnvValue } from "./channel-env.ts"
+import { channelEnv, channelEnvValue } from "./channel-env.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 
 export const messageChannelTitleSupportContextKey = "channel.delivery.supportsTitle"
@@ -1289,36 +1289,8 @@ function cleanSecret(value: unknown): string | undefined {
   return hasRuntimeType(secret, "string") && secret.trim() ? secret.trim() : undefined
 }
 
-const serverEnvModuleId = "#vitehub/env/server"
-
-async function githubEnv(event?: unknown): Promise<Record<string, unknown>> {
-  const processEnv = globalThis.process?.env
-  const fallback = processEnv
-    ? {
-        appId: processEnv.GITHUB_APP_ID,
-        appInstallationId: processEnv.GITHUB_APP_INSTALLATION_ID,
-        appPrivateKey: processEnv.GITHUB_APP_PRIVATE_KEY,
-        appPrivateKeyPath: processEnv.GITHUB_APP_PRIVATE_KEY_PATH,
-        token: processEnv.VITEHUB_GITHUB_TOKEN || processEnv.GH_TOKEN || processEnv.GITHUB_TOKEN,
-        webhookSecret: processEnv.GITHUB_WEBHOOK_SECRET,
-      }
-    : {}
-  try {
-    // hubEnv() rewrites the tagged import so Vite can resolve its generated module.
-    // SAFETY: The generated server env module exposes the optional useServerEnv entrypoint.
-    const module = await import(/* @vite-ignore */ /* @vitehub-env */ serverEnvModuleId) as { useServerEnv?: (event?: unknown) => unknown }
-    const env = module.useServerEnv?.(event)
-    const github = isRecord(env) && isRecord(env.github)
-      ? Object.fromEntries(Object.entries(env.github).filter(([, value]) => value !== undefined))
-      : {}
-    return {
-      ...fallback,
-      ...github,
-    }
-  }
-  catch {
-    return fallback
-  }
+async function githubEnv<TRuntimeConfig extends AgentRuntimeConfig>(context: GitHubAppContext<TRuntimeConfig>): Promise<Record<string, unknown>> {
+  return Object.fromEntries(Object.entries(await channelEnv("github", context)).filter(([, value]) => value !== undefined))
 }
 
 function githubAppOptions<TRuntimeConfig extends AgentRuntimeConfig>(

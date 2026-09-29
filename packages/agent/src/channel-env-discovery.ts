@@ -88,6 +88,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
       else if (!channelModule && clause[b] === "defineAgent") agentFactories.add(local)
     }
   }
+  const declarations = moduleObjectDeclarations(tokens)
   const agentBindings = new Map([...agentFactories].map(name => [name, "defineAgent"]))
   const agentNames = new Set(["defineAgent"])
   const uses: Array<DiscoveredChannelUse & { index: number }> = []
@@ -98,14 +99,17 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
     // Shorthands count only in the top-level `channels` option of defineAgent(), not in types or other objects.
     const agent = factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames)
     if (!agent || tokens[agent.open + 1] !== "{") continue
-    visitObjectProperties(tokens, agent.open + 1, (option, channels) => {
-      if (option !== "channels" || channels === undefined || tokens[channels] !== "{") return
+    visitObjectProperties(tokens, agent.open + 1, (option, channelsValue) => {
+      const channels = channelsValue === undefined ? undefined : localObject(tokens, channelsValue, declarations)
+      if (option !== "channels" || channels === undefined) return
       visitObjectProperties(tokens, channels, (key, value) => {
-        if (!known.has(key) || value === undefined) return
+        if (value === undefined) return
         const reference = channelFactoryReference(tokens, value, bindings, namespaces, known)
-        // A factory call is found by the call scan; a bare factory is called without options.
-        if (reference === "call") return
-        uses.push({ index: value, kind: key, optionKeys: reference === "bare" ? new Set() : staticOptionKeys(tokens, value, "}") })
+        // A factory call is found by the call scan. Runtime calls a bare factory without options
+        // and uses the kind it returns, whatever the key is.
+        if (reference?.call) return
+        if (reference) uses.push({ index: value, kind: reference.kind, optionKeys: new Set() })
+        else if (known.has(key)) uses.push({ index: value, kind: key, optionKeys: staticOptionKeys(tokens, localObject(tokens, value, declarations) ?? value, "}") })
       })
     })
   }
@@ -118,11 +122,37 @@ function channelFactoryReference(
   bindings: ReadonlyMap<string, string>,
   namespaces: ReadonlySet<string>,
   known: ReadonlySet<string>,
-): "bare" | "call" | undefined {
+): { call: boolean, kind: string } | undefined {
+  let kind = bindings.get(tokens[index]!)
   let next = index + 1
-  if (namespaces.has(tokens[index]!) && tokens[index + 1] === "." && known.has(tokens[index + 2]!)) next = index + 3
-  else if (!bindings.has(tokens[index]!)) return undefined
-  return tokens[next] === "(" || tokens[next] === "<" ? "call" : "bare"
+  if (!kind && namespaces.has(tokens[index]!) && tokens[index + 1] === "." && known.has(tokens[index + 2]!)) {
+    kind = tokens[index + 2]!
+    next = index + 3
+  }
+  return kind ? { call: tokens[next] === "(" || tokens[next] === "<", kind } : undefined
+}
+
+// Resolve an object literal, or a module-level `const name = { ... }` reference to one.
+function localObject(tokens: string[], index: number, declarations: ReadonlyMap<string, number>): number | undefined {
+  if (tokens[index] === "{") return index
+  const declaration = declarations.get(tokens[index]!)
+  const end = tokens[index + 1]
+  return declaration !== undefined && tokens[declaration] === "{" && [",", "}", ")"].includes(end!) ? declaration : undefined
+}
+
+// Map module-level `const name = {` declarations to the index of their opening brace.
+function moduleObjectDeclarations(tokens: string[]): Map<string, number> {
+  const declarations = new Map<string, number>()
+  let depth = 0
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!
+    if (depth === 0 && token === "const" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 1] ?? "") && tokens[i + 2] === "=" && tokens[i + 3] === "{") {
+      declarations.set(tokens[i + 1]!, i + 3)
+    }
+    if (["{", "(", "["].includes(token)) depth++
+    else if (["}", ")", "]"].includes(token)) depth--
+  }
+  return declarations
 }
 
 // Match `name(`, `name<T>(`, `namespace.name(`, or `namespace.name<T>(` and return the opening parenthesis.

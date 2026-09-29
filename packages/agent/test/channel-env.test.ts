@@ -90,6 +90,20 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it("classifies bare factories by their kind and follows local objects", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { discord, telegram } from "vite-hub/agent/channels"
+      const telegramOptions = { botToken: token }
+      const channels = { support: telegram, discord: telegram, telegram: telegramOptions }
+      export default defineAgent({ channels })
+    `)).toEqual([
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: ["botToken"] },
+    ])
+  })
+
   it("treats options set to undefined as omitted", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"

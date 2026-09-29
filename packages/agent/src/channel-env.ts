@@ -75,29 +75,57 @@ function channelGroup(env: unknown, channel: string): Record<PropertyKey, unknow
   return isRecord(group) ? group : undefined
 }
 
-// Returns undefined when Server Env does not declare the field.
-async function serverEnvField(channel: string, field: string, cloudflareEnv: Record<string, unknown> | undefined): Promise<{ value: unknown } | undefined> {
-  const module = await importServerEnvModule()
-  if (!module?.useServerEnv) return undefined
+async function readChannelEnv<TRuntimeConfig extends AgentRuntimeConfig>(
+  channel: string,
+  fields: readonly string[],
+  context: AgentCallbackContext<TRuntimeConfig>,
+): Promise<Partial<Record<string, unknown>>> {
+  const cloudflareEnv = context.cloudflare?.env
   const event = cloudflareEnv ? { env: cloudflareEnv } : undefined
+  const module = await importServerEnvModule()
   // Resolution errors, such as a missing required value, are configuration errors and stay visible.
-  const group = channelGroup(module.useServerEnv(event), channel)
-  if (!group || !Object.hasOwn(group, field)) return undefined
-  try {
-    return { value: group[field] }
+  const group = module?.useServerEnv ? channelGroup(module.useServerEnv(event), channel) : undefined
+  let loaded: Promise<Record<PropertyKey, unknown> | undefined> | undefined
+  const values: Partial<Record<string, unknown>> = {}
+  for (const field of fields) {
+    if (group && Object.hasOwn(group, field)) {
+      try {
+        values[field] = group[field]
+      }
+      catch (error) {
+        // Provider-backed values need the asynchronous snapshot.
+        if (getViteHubErrorShape(error)?.code !== "ENV_ASYNC_REQUIRED" || !module?.loadServerEnv) throw error
+        const loadServerEnv = module.loadServerEnv
+        loaded ??= loadServerEnv(event).then(env => channelGroup(env, channel))
+        values[field] = (await loaded)?.[field]
+      }
+      continue
+    }
+    // An empty host variable counts as unset, so the next name can supply the value.
+    values[field] = (channelEnvFields[channel]?.[field]?.names ?? [])
+      .map(name => cloudflareEnv?.[name] ?? globalThis.process?.env?.[name])
+      .find(value => value !== undefined && value !== "")
   }
-  catch (error) {
-    // Provider-backed values need the asynchronous snapshot.
-    if (getViteHubErrorShape(error)?.code !== "ENV_ASYNC_REQUIRED" || !module.loadServerEnv) throw error
-    return { value: channelGroup(await module.loadServerEnv(event), channel)?.[field] }
-  }
+  return values
 }
 
 /**
- * Read `env.server.<channel>.<field>`. When Server Env does not declare the field, or the
- * application does not use hubEnv(), read the host variable names of the field instead.
+ * Read every field of `env.server.<channel>`. A field that Server Env declares is read only
+ * from Server Env, including provider-backed values. A field that it does not declare, for
+ * example without hubEnv(), is read from its host variable names.
  * Explicit Channel options take precedence; callers read Env only when an option is omitted.
  */
+export async function channelEnv<
+  TChannel extends keyof BuiltInChannelEnv,
+  TRuntimeConfig extends AgentRuntimeConfig,
+>(
+  channel: TChannel,
+  context: AgentCallbackContext<TRuntimeConfig>,
+): Promise<Partial<Record<keyof BuiltInChannelEnv[TChannel] & string, unknown>>> {
+  return await readChannelEnv(channel, Object.keys(builtInChannelEnv[channel]), context)
+}
+
+/** Read one field of `env.server.<channel>` with the rules of `channelEnv()`. */
 export async function channelEnvValue<
   TChannel extends keyof BuiltInChannelEnv,
   TRuntimeConfig extends AgentRuntimeConfig,
@@ -106,11 +134,5 @@ export async function channelEnvValue<
   field: keyof BuiltInChannelEnv[TChannel] & string,
   context: AgentCallbackContext<TRuntimeConfig>,
 ): Promise<unknown> {
-  const cloudflareEnv = context.cloudflare?.env
-  const declared = await serverEnvField(channel, field, cloudflareEnv)
-  if (declared) return declared.value
-  for (const name of channelEnvFields[channel]?.[field]?.names ?? []) {
-    const hostValue = cloudflareEnv?.[name] ?? globalThis.process?.env?.[name]
-    if (hostValue !== undefined) return hostValue
-  }
+  return (await readChannelEnv(channel, [field], context))[field]
 }

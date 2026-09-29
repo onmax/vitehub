@@ -255,9 +255,9 @@ export default defineConfig({
 })
 ```
 
-Discovery reads the Agent definition files. It finds factory calls imported from `vite-hub/agent/channels` or `@vite-hub/agent/channels`, such as `telegram()` or `channels.telegram()`, and shorthands in the `channels` option of `defineAgent()`, such as `channels: { telegram: { ... } }`. It does not follow a Channel created in another module. In that case, declare the fields yourself. When the Channel options are not an object literal, the fields are declared as optional.
+Discovery reads the Agent definition files. It finds factory calls imported from `vite-hub/agent/channels` or `@vite-hub/agent/channels`, such as `telegram()` or `channels.telegram()`, and shorthands in the `channels` option of `defineAgent()`, such as `channels: { telegram: { ... } }`. The option and each Channel value can be an object literal or a module-level `const` object. A bare factory such as `channels: { support: telegram }` counts as that factory without options. Discovery does not follow a Channel created in another module. In that case, declare the fields yourself. When the Channel options are not an object literal, the fields are declared as optional.
 
-When Server Env declares a field, the Channel reads only Server Env, including provider-backed values. A missing required value fails with `ENV_REQUIRED_MISSING` instead of using the default host variable. A Channel reads the host variable names directly only for a field that Server Env does not declare, for example without `vitehub()`.
+When Server Env declares a field, the Channel reads only Server Env, including provider-backed values. A missing required value fails with `ENV_REQUIRED_MISSING` instead of using the default host variable. A Channel reads the host variable names directly only for a field that Server Env does not declare, for example without `vitehub()`. GitHub follows the same rules.
 
 For Telegram, ViteHub can own the verified webhook route and synchronize it after deployment:
 
