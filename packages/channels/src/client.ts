@@ -30,9 +30,9 @@ function channelSendErrorMessage(error: Error): string {
   return uninspectableSendErrorMessage
 }
 
-function logDelivery(event: string, deliveryId: string, channel: string, connector: string, extra: Record<string, unknown> = {}): void {
+function logDelivery(event: string, deliveryId: string, channel: string, connector: string, extra?: () => Record<string, unknown>): void {
   try {
-    console.info(JSON.stringify({ scope: "vitehub.channel.send", event, deliveryId, channel, connector, ...extra }))
+    console.info(JSON.stringify({ scope: "vitehub.channel.send", event, deliveryId, channel, connector, ...extra?.() }))
   }
   catch {
     // Logging must not change delivery results or encourage retrying a delivered message.
@@ -89,7 +89,7 @@ export function createChannel<
         if (!result || typeof result !== "object") {
           throw channelError(`Channel connector "${connectorName}" returned an invalid result.`)
         }
-        logDelivery("outbound.completed", deliveryId, name, connectorName, { messageId: result.id })
+        logDelivery("outbound.completed", deliveryId, name, connectorName, () => ({ messageId: result.id }))
         return [null, {
           ...result,
           channel: name,
@@ -99,7 +99,7 @@ export function createChannel<
       }
       catch (cause) {
         const error = toChannelSendError(cause)
-        if (deliveryId && connectorName) logDelivery("outbound.failed", deliveryId, name, connectorName, { error: channelSendErrorMessage(error) })
+        if (deliveryId && connectorName) logDelivery("outbound.failed", deliveryId, name, connectorName, () => ({ error: channelSendErrorMessage(error) }))
         return [error, null]
       }
     },

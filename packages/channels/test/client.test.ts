@@ -75,6 +75,27 @@ describe("createChannel", () => {
     }
   })
 
+  it("preserves successful delivery when logging reads an inaccessible message id", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {})
+    const readId = vi.fn(() => { throw new Error("message id is unavailable") })
+    const result = Object.defineProperty({ raw: { accepted: true } }, "id", { get: readId })
+    const send = vi.fn(() => result)
+    try {
+      const channel = createChannel("alerts", { connectors: { configured: { send } } })
+      const [error, receipt] = await channel.send("Build finished.", { connector: "configured" })
+
+      expect(error).toBeNull()
+      expect(receipt).toMatchObject({ channel: "alerts", connector: "configured", raw: { accepted: true } })
+      expect(receipt).not.toHaveProperty("id")
+      expect(send).toHaveBeenCalledOnce()
+      expect(readId).toHaveBeenCalledOnce()
+      expect(info.mock.calls.flat().join("\n")).not.toContain("outbound.failed")
+    }
+    finally {
+      info.mockRestore()
+    }
+  })
+
   it.each([
     ["", "non-empty"],
     ["Build finished.", "requires a connector"],
