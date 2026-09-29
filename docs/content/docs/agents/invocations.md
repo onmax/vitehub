@@ -345,7 +345,7 @@ The observation ID is required, must be at most 512 characters, and makes retrie
 
 ## Inspect invocations in the console
 
-Enable the [ViteHub Console](/docs/development/console) to browse retained sessions and inspect invocation events at `/_vitehub`. The Console is opt-in. Its page, Devframe transport, plugin, and assets do not exist when `console` is omitted or set to `false`.
+Enable the [ViteHub Console](/docs/development/console) to browse retained sessions and inspect invocation events at `/_vitehub`. The Console is opt-in. Its page, RPC endpoint, plugin, and assets do not exist when `console` is omitted or set to `false`.
 
 The Console guide covers Vite and Nuxt setup, fallback storage, production limits, usage records, and route authorization. An explicit `defineAgent({ invocations })` store remains authoritative when the Console is enabled.
 

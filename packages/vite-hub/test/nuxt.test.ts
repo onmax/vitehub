@@ -643,7 +643,7 @@ describe("ViteHub Nuxt integration", () => {
     ]))
   })
 
-  it("keeps an application Blob route beside the Console Devframe", async () => {
+  it("keeps an application Blob route beside the Console RPC route", async () => {
     const development = createNuxt(true)
     development.nuxt.options.nitro = {
       handlers: [{ handler: "~/server/api/blob.ts", route: "/api/_vitehub/console/blob" }],
