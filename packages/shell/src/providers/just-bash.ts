@@ -63,6 +63,7 @@ export function createJustBashProvider(options: JustBashProviderOptions): ShellE
     async exec(command: string, execOptions: ShellRuntimeExecOptions = {}) {
       const result = await withProviderTimeout(command, execOptions, async () => {
         const curlResult = await runControlledCurlCommand(command, {
+          commands: options.commands,
           cwd: execOptions.cwd || options.cwd,
           networkGrants: options.networkGrants,
         })
@@ -108,9 +109,12 @@ export function createJustBashProvider(options: JustBashProviderOptions): ShellE
 
 async function runControlledCurlCommand(
   command: string,
-  options: { cwd?: string, networkGrants?: ShellNetworkGrantExecutor },
+  options: { commands?: string[], cwd?: string, networkGrants?: ShellNetworkGrantExecutor },
 ): Promise<ShellObservation | undefined> {
   if (!mentionsCurlCommand(command)) return undefined
+  if (options.commands && !options.commands.includes("curl")) {
+    return policyDeniedCurl(command, options.cwd, "curl is not in the permitted commands for this shell.")
+  }
 
   const [parseError, parsed] = parseControlledCurlCommand(command)
   if (parseError) return policyDeniedCurl(command, options.cwd, parseError.message)

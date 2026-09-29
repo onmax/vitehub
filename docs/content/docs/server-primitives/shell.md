@@ -197,6 +197,8 @@ Don't expose a raw Shell runtime to a model. Use [Official capabilities](/docs/c
 
 Configure command, filesystem, network, process, streaming, and timeout access before running commands. A Shell Network Grant permits only the network access it names.
 
+The Just Bash `commands` allowlist also applies to controlled `curl` requests. A network grant does not enable `curl` when the command is excluded. An empty command list disables it.
+
 Use Sandbox when the app needs provider-managed isolation. Use Shell when the app needs controlled command semantics over a declared Shell Workspace.
 
 ## Next steps

@@ -142,6 +142,24 @@ describe("@vite-hub/shell just-bash runtime", () => {
     })
   })
 
+  it.each([{ commands: [] }, { commands: ["cat"] }])("rejects controlled curl when commands $commands do not permit it", async ({ commands }) => {
+    const executeSourceRequest = vi.fn(async () => ({ content: "private" }))
+    const runtime = createShellRuntime({
+      provider: createJustBashProvider({
+        commands,
+        fs: createReadonlyWorkspaceFs(new MemoryWorkspace({})),
+        networkGrants: { executeSourceRequest },
+      }),
+    })
+
+    await expect(runtime.exec("curl -X POST https://portal.example.com/action")).resolves.toMatchObject({
+      event: "policy_denied",
+      exitCode: 126,
+      stderr: expect.stringContaining("not in the permitted commands"),
+    })
+    expect(executeSourceRequest).not.toHaveBeenCalled()
+  })
+
   it("unregisters stopped long-running processes from session state", async () => {
     const stops = new Map<string, ReturnType<typeof vi.fn>>()
     const provider = createBackgroundProvider(async (command: string): Promise<ShellProcess> => {
