@@ -25,6 +25,18 @@ describe("env declarations", () => {
     })
   })
 
+  it("validates JavaScript options before reading them", () => {
+    expect(() => env(null as never)).toThrow("env() only accepts a single options object.")
+    expect(() => env.boolean(null as never)).toThrow("env() only accepts a single options object.")
+  })
+
+  it("rejects revoked Proxy schemas as invalid declarations", () => {
+    const { proxy, revoke } = Proxy.revocable(() => undefined, {})
+    revoke()
+    expect(() => createRuntimeRegistry({ appName: { ...env(), schema: proxy } })).toThrow("[vitehub] Env declaration is invalid.")
+    expect(() => createRuntimeRegistry({ appName: env({ schema: proxy }) })).toThrow("[vitehub] Env declaration is invalid.")
+  })
+
   it("rejects conflicting optional and required options", () => {
     expect(() => env({
       optional: true,

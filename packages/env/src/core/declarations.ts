@@ -152,10 +152,12 @@ function provider(provider: string, key: string): EnvSource {
 }
 
 function variable(options: EnvVariableOptions = {}): EnvVariableDeclaration {
+  assertDeclarationOptions(options)
   return createDeclaration(options, options.schema ?? defaultStringSchema, options.type)
 }
 
 function typedVariable(schema: RuntimeValueSchema, options: EnvVariableOptions): EnvVariableDeclaration {
+  assertDeclarationOptions(options)
   const valueSchema = runtimeSchemaParsers.get(schema.safeParse)
   return createDeclaration(options, schema, valueSchema && envValueTypeName(valueSchema))
 }
@@ -178,14 +180,17 @@ function enumVariable<const TValues extends readonly [string, ...string[]]>(
   return typedVariable(createRuntimeValueSchema(Object.freeze({ kind: "enum", values: Object.freeze([...values]) })), options)
 }
 
-function createDeclaration(options: EnvVariableOptions, schema: unknown, type: string | undefined): EnvVariableDeclaration {
-  if (typeof options !== "object" || options === null || Array.isArray(options)) {
+// Validate JavaScript callers before reading any option.
+function assertDeclarationOptions(options: EnvVariableOptions): void {
+  if (!isRuntimeRecord(options)) {
     throw envErrorDiagnostics.ENV_R0005({ message: "env() only accepts a single options object." })
   }
-  if (options.optional && typeof options.required !== "undefined") {
+  if (options.optional && options.required !== undefined) {
     throw envErrorDiagnostics.ENV_R0006({ message: "env() cannot use both optional and required." })
   }
+}
 
+function createDeclaration(options: EnvVariableOptions, schema: unknown, type: string | undefined): EnvVariableDeclaration {
   const required = options.optional ? false : options.required ?? true
 
   const source = typeof options.source === "function"
@@ -237,16 +242,27 @@ export function runtimeValueSchema(declaration: EnvVariableDeclaration): EnvValu
   if (runtimeSchemas.get(declaration) === schema && isRuntimeValueSchema(schema)) {
     return runtimeSchemaParsers.get(schema.safeParse)
   }
-  const declarationToken = Object.getOwnPropertyDescriptor(declaration, runtimeSchemaProperty)?.value
-  if (declarationToken !== runtimeSchemaToken || !isRuntimeRecord(schema)) return undefined
-  const schemaToken = Object.getOwnPropertyDescriptor(schema, runtimeSchemaProperty)?.value
-  if (schemaToken !== runtimeSchemaToken || !hasOnlyRuntimeSchemaKeys(schema)) return undefined
-  const safeParse = Object.getOwnPropertyDescriptor(schema, "safeParse")?.value
-  return hasRuntimeType(safeParse, "function") ? runtimeSchemaParsers.get(safeParse) : undefined
+  // Cloned config reaches this path. Fail closed when reflection throws, for example on a revoked Proxy.
+  try {
+    const declarationToken = Object.getOwnPropertyDescriptor(declaration, runtimeSchemaProperty)?.value
+    if (declarationToken !== runtimeSchemaToken || !isRuntimeRecord(schema)) return undefined
+    const schemaToken = Object.getOwnPropertyDescriptor(schema, runtimeSchemaProperty)?.value
+    if (schemaToken !== runtimeSchemaToken || !hasOnlyRuntimeSchemaKeys(schema)) return undefined
+    const safeParse = Object.getOwnPropertyDescriptor(schema, "safeParse")?.value
+    return hasRuntimeType(safeParse, "function") ? runtimeSchemaParsers.get(safeParse) : undefined
+  }
+  catch {
+    return undefined
+  }
 }
 
 function isRuntimeValueSchema(schema: unknown): schema is RuntimeValueSchema {
-  return isRuntimeRecord(schema) && hasRuntimeType(schema.safeParse, "function") && runtimeSchemaParsers.has(schema.safeParse)
+  try {
+    return isRuntimeRecord(schema) && hasRuntimeType(schema.safeParse, "function") && runtimeSchemaParsers.has(schema.safeParse)
+  }
+  catch {
+    return false
+  }
 }
 
 function getRuntimeSchemaToken(): string {
