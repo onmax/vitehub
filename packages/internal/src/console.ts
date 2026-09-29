@@ -35,7 +35,10 @@ export interface ViteHubConsoleRecord {
 /** Serializable description of a Console section. The Console UI in `vite-hub` renders the view. */
 export interface ViteHubConsoleSectionDescriptor<TView extends ViteHubConsoleSectionView = ViteHubConsoleSectionView> {
   description: string
-  /** Iconify class name, for example `i-ph-tray-light`. */
+  /**
+   * Iconify class name, for example `i-ph-tray-light`. Use a collection that `vite-hub` installs (`lucide` or `ph`). The
+   * Console build bundles the icon of every section in the `vite-hub` Console registry and fails if it cannot resolve one.
+   */
   icon: string
   /** Lowercase route segment, for example `queues`. The Console serves the section at `/_vitehub/<id>`. */
   id: string
