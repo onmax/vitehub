@@ -67,6 +67,15 @@ describe("workflow config", () => {
     })
   })
 
+  it("preserves explicit storage strings while rejecting blank values", () => {
+    const sqlite = { path: " workflow.sqlite " }
+    const postgres = { url: " postgres://localhost/workflow " }
+    expect(normalizeWorkflowOptions({ provider: "openworkflow", sqlite })).toMatchObject({ sqlite })
+    expect(normalizeWorkflowOptions({ provider: "openworkflow", postgres })).toMatchObject({ postgres })
+    expect(() => normalizeWorkflowOptions({ provider: "openworkflow", sqlite: { path: "   " } })).toThrow(/non-empty string/)
+    expect(() => normalizeWorkflowOptions({ provider: "openworkflow", postgres: { url: "   " } })).toThrow(/non-empty string/)
+  })
+
   it("accepts runtime env declarations for OpenWorkflow SQLite storage", () => {
     const path = {
       default: "file:.data/workflow.sqlite",

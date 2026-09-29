@@ -27,7 +27,8 @@ function readRuntimeConfigValue(value: unknown, label: string): WorkflowRuntimeC
     return undefined
   }
   if (typeof value === "string") {
-    return readString(value, label)
+    readString(value, label)
+    return value
   }
   if (!isRuntimeEnvDeclaration(value)) {
     throw workflowErrorDiagnostics.WORKFLOW_C0002({ message: `\`${label}\` must be a string or runtime env declaration.` })

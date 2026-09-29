@@ -97,12 +97,12 @@ function getOpenWorkflowConfig(config: ResolvedWorkflowOptions): OpenWorkflowSto
 
   const sqlite = config.sqlite || {}
   const postgres = config.postgres || {}
-  const explicitSqlitePath = resolveRuntimeConfigValue(sqlite.path)?.trim()
-  const explicitPostgresUrl = resolveRuntimeConfigValue(postgres.url)?.trim()
-  if (sqlite.path !== undefined && !explicitSqlitePath) {
+  const explicitSqlitePath = resolveRuntimeConfigValue(sqlite.path)
+  const explicitPostgresUrl = resolveRuntimeConfigValue(postgres.url)
+  if (sqlite.path !== undefined && !explicitSqlitePath?.trim()) {
     throw workflowErrorDiagnostics.WORKFLOW_R0028({ message: "`workflow.sqlite.path` must resolve to a non-empty local SQLite path. Check its runtime environment declaration." })
   }
-  if (postgres.url !== undefined && !explicitPostgresUrl) {
+  if (postgres.url !== undefined && !explicitPostgresUrl?.trim()) {
     throw workflowErrorDiagnostics.WORKFLOW_R0029({ message: "`workflow.postgres.url` must resolve to a non-empty Postgres URL. Check its runtime environment declaration." })
   }
   const sqlitePath = explicitSqlitePath || (!explicitPostgresUrl ? readEnv("OPENWORKFLOW_SQLITE_PATH") : undefined)

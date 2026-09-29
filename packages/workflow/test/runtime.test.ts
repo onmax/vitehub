@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
-import { mkdtemp } from "node:fs/promises"
+import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { runInNewContext } from "node:vm"
@@ -10,6 +10,7 @@ import { isSerializedResponse, serializeResponse, toResponse, ViteHubError } fro
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest"
 
 import type { WorkflowProviderStep } from "../src/types.ts"
+import { normalizeWorkflowOptions } from "../src/config.ts"
 import { getCloudflareWorkflowBindingName } from "../src/integrations/cloudflare.ts"
 import { getOpenWorkflowRuntime, resetOpenWorkflowRuntime, setOpenWorkflowImporter } from "../src/runtime/openworkflow.ts"
 import { createOpenWorkflowWorker, startOpenWorkflowWorker } from "../src/runtime/openworkflow-worker.ts"
@@ -1163,6 +1164,20 @@ describe("workflow runtime", () => {
     expect(openWorkflowMock.sqliteConnect).toHaveBeenCalledWith(".data/env-workflow.sqlite", {
       namespaceId: "local",
     })
+  })
+
+  it("preserves a configured SQLite filename that ends with a space", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workflow-spaced-path-"))
+    const path = join(root, " workflow.sqlite ")
+    try {
+      const config = normalizeWorkflowOptions({ provider: "openworkflow", sqlite: { path } })!
+      await getOpenWorkflowRuntime(config)
+
+      expect(openWorkflowMock.sqliteConnect).toHaveBeenCalledWith(path, { namespaceId: "production" })
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it("resolves OpenWorkflow SQLite connection options from runtime config env declarations", async () => {
