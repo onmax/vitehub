@@ -166,7 +166,7 @@ if (!labeller.dryRun && labeller.mode === 'send') {
 | `env.number()` | A string that converts to a finite number | `number` |
 | `env.enum(['a', 'b'])` | One of the listed strings | `"a" \| "b"` |
 
-The typed helpers accept every `env()` option except `schema` and `type`. A `default` uses the parsed type, for example `env.boolean({ default: false })`. With `secret: true`, the value is `SecretEnv<boolean>`, `SecretEnv<number>`, or `SecretEnv<"a" | "b">`. Cloudflare `vars` that are already booleans or numbers are accepted as they are.
+The typed helpers accept every `env()` option except `schema` and `type`. A `default` uses the parsed type, for example `env.boolean({ default: false })`. With `secret: true`, the value is `SecretEnv<boolean>` or `SecretEnv<number>`. `env.enum()` cannot be secret: its allowed values appear in the generated types, the Console, and error causes. Cloudflare `vars` that are already booleans or numbers are accepted as they are.
 
 The error details contain the declaration path and source kind. The rejected value is never included. `inspectServerEnv()` reports a value that does not parse as `invalid`.
 

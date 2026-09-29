@@ -109,7 +109,9 @@ function resolvedRuntimeValue(entry: RuntimeEnvEntry | RuntimeProviderEntry, val
   }
   const parsed = parseEnvValue(entry.schema ?? stringValueSchema, resolved)
   if (!parsed.success) {
-    throw invalidRuntimeEnvValue(entry.source.kind, `Invalid ${path} from ${entry.source.kind}. ${parsed.message}`, path)
+    // A secret must not list its allowed values, even though the registry rejects secret enums.
+    const message = entry.secret ? "The value does not match its declared type." : parsed.message
+    throw invalidRuntimeEnvValue(entry.source.kind, `Invalid ${path} from ${entry.source.kind}. ${message}`, path)
   }
   return entry.secret ? new SecretEnv(parsed.data) : parsed.data
 }
@@ -438,7 +440,7 @@ export function describeServerEnv(registry: EnvRuntimeRegistry): ServerEnvDescri
         secret: value.secret,
         required: value.required,
         hasDefault: value.default !== undefined,
-        type: envValueTypeName(value.schema ?? stringValueSchema),
+        type: value.secret && value.schema?.kind === "enum" ? "enum" : envValueTypeName(value.schema ?? stringValueSchema),
       })
       return
     }

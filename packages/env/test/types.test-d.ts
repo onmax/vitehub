@@ -38,6 +38,8 @@ describe("types", () => {
     env.enum(["draft", "send"], { default: "archive" })
     // @ts-expect-error typed helpers own their parser
     env.boolean({ schema: {} })
+    // @ts-expect-error enum values are public metadata, so an enum cannot be secret
+    env.enum(["draft", "send"], { secret: true })
 
     const provider = defineEnvProvider({
       async read({ env: localEnv, keys, signal }) {

@@ -287,6 +287,9 @@ function buildRegistry(declarations: EnvRuntimeConfigOptions | undefined, path: 
     if (!schema) {
       throw invalidEnvDeclaration(valuePath, `Runtime declaration ${valuePath} uses a custom schema. Server Env accepts env(), env.boolean(), env.number(), and env.enum() because runtime parsers must be serializable.`)
     }
+    if (schema.kind === "enum" && value.secret) {
+      throw invalidEnvDeclaration(valuePath, `Runtime declaration ${valuePath} cannot be a secret enum: generated types, the Console, and errors show its allowed values. Use env({ secret: true }) and check the value in server code.`)
+    }
     const type = envValueTypeName(schema)
     if (value.type && value.type !== type) {
       throw invalidEnvDeclaration(valuePath, `Runtime declaration ${valuePath} uses type ${JSON.stringify(value.type)}, but its parser produces ${type}. Use env.boolean(), env.number(), or env.enum() to parse other types.`)

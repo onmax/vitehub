@@ -1,5 +1,6 @@
 import type { EnvSource, EnvSourceResolver, EnvTypedVariableOptions, EnvValueSchema, EnvVariableDeclaration, EnvVariableOptions } from "../types.ts"
 import { envErrorDiagnostics } from "../error-diagnostics.ts"
+import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
 import { envValueTypeName, parseEnvValue, stringValueSchema } from "./values.ts"
 
 type SafeParse = (input: unknown) => { data: unknown, success: true } | { error: Error, success: false }
@@ -12,7 +13,7 @@ interface RuntimeValueSchema {
 const runtimeSchemaProperty = "__vitehubRuntimeSchema"
 const runtimeSchemaToken = getRuntimeSchemaToken()
 // Vite and Nuxt clone config objects but keep function references, so parsers identify built-in schemas.
-const runtimeSchemaParsers = new WeakMap<SafeParse, EnvValueSchema>()
+const runtimeSchemaParsers = new WeakMap<CallableFunction, EnvValueSchema>()
 const runtimeSchemas = new WeakMap<EnvVariableDeclaration, RuntimeValueSchema>()
 
 function createRuntimeValueSchema(valueSchema: EnvValueSchema): RuntimeValueSchema {
@@ -36,8 +37,8 @@ interface EnvNamespace {
   boolean: (options?: EnvTypedVariableOptions<boolean>) => EnvVariableDeclaration
   buildTimestamp: () => EnvSource
   custom: (label: string, resolver: EnvSourceResolver) => EnvSource
-  /** Accept only the listed strings. */
-  enum: <const TValues extends readonly [string, ...string[]]>(values: TValues, options?: EnvTypedVariableOptions<TValues[number]>) => EnvVariableDeclaration
+  /** Accept only the listed strings. The values are public metadata, so an enum cannot be secret. */
+  enum: <const TValues extends readonly [string, ...string[]]>(values: TValues, options?: Omit<EnvTypedVariableOptions<TValues[number]>, "secret">) => EnvVariableDeclaration
   gitBranch: () => EnvSource
   gitCommit: (options?: { short?: boolean }) => EnvSource
   gitRef: () => EnvSource
@@ -169,9 +170,9 @@ function numberVariable(options: EnvTypedVariableOptions<number> = {}): EnvVaria
 
 function enumVariable<const TValues extends readonly [string, ...string[]]>(
   values: TValues,
-  options: EnvTypedVariableOptions<TValues[number]> = {},
+  options: Omit<EnvTypedVariableOptions<TValues[number]>, "secret"> = {},
 ): EnvVariableDeclaration {
-  if (!Array.isArray(values) || !values.length || values.some(value => typeof value !== "string" || !value) || new Set(values).size !== values.length) {
+  if (!Array.isArray(values) || !values.length || values.some(value => !hasRuntimeType(value, "string") || !value) || new Set(values).size !== values.length) {
     throw envErrorDiagnostics.ENV_R0022({ message: "env.enum() requires one or more unique non-empty strings." })
   }
   return typedVariable(createRuntimeValueSchema(Object.freeze({ kind: "enum", values: Object.freeze([...values]) })), options)
@@ -237,16 +238,15 @@ export function runtimeValueSchema(declaration: EnvVariableDeclaration): EnvValu
     return runtimeSchemaParsers.get(schema.safeParse)
   }
   const declarationToken = Object.getOwnPropertyDescriptor(declaration, runtimeSchemaProperty)?.value
-  if (declarationToken !== runtimeSchemaToken || typeof schema !== "object" || schema === null) return undefined
+  if (declarationToken !== runtimeSchemaToken || !isRuntimeRecord(schema)) return undefined
   const schemaToken = Object.getOwnPropertyDescriptor(schema, runtimeSchemaProperty)?.value
   if (schemaToken !== runtimeSchemaToken || !hasOnlyRuntimeSchemaKeys(schema)) return undefined
   const safeParse = Object.getOwnPropertyDescriptor(schema, "safeParse")?.value
-  return typeof safeParse === "function" ? runtimeSchemaParsers.get(safeParse) : undefined
+  return hasRuntimeType(safeParse, "function") ? runtimeSchemaParsers.get(safeParse) : undefined
 }
 
 function isRuntimeValueSchema(schema: unknown): schema is RuntimeValueSchema {
-  return typeof schema === "object" && schema !== null && "safeParse" in schema
-    && typeof schema.safeParse === "function" && runtimeSchemaParsers.has(schema.safeParse as SafeParse)
+  return isRuntimeRecord(schema) && hasRuntimeType(schema.safeParse, "function") && runtimeSchemaParsers.has(schema.safeParse)
 }
 
 function getRuntimeSchemaToken(): string {
@@ -256,7 +256,7 @@ function getRuntimeSchemaToken(): string {
   return globalScope[tokenKey]
 }
 
-function hasOnlyRuntimeSchemaKeys(schema: object): boolean {
+function hasOnlyRuntimeSchemaKeys(schema: Record<PropertyKey, unknown>): boolean {
   if ("~standard" in schema || "parse" in schema) {
     return false
   }
@@ -265,5 +265,5 @@ function hasOnlyRuntimeSchemaKeys(schema: object): boolean {
   return keys.length === 2
     && keys.includes(runtimeSchemaProperty)
     && keys.includes("safeParse")
-    && typeof safeParse?.value === "function"
+    && hasRuntimeType(safeParse?.value, "function")
 }

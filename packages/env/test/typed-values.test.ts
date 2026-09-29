@@ -92,6 +92,19 @@ describe("typed Server Env values", () => {
     ])
   })
 
+  it("rejects secret enums and keeps secret values out of errors", () => {
+    const secretEnum = { ...env.enum(["alpha-credential", "beta-credential"]), secret: true }
+    const error = capture(() => createRuntimeRegistry({ credential: secretEnum }))
+    expect(error).toMatchObject({ code: "ENV_DECLARATION_INVALID", details: { path: "env.credential" } })
+    expect(String((error as Error).cause)).toContain("cannot be a secret enum")
+
+    const registry = { credential: { required: true, schema: { kind: "enum" as const, values: ["alpha-credential"] }, secret: true, source: { kind: "env" as const, label: "env:CREDENTIAL", name: "CREDENTIAL", serializable: true as const } } }
+    const invalid = capture(() => resolveServerEnv(registry, { env: { CREDENTIAL: "other" } }))
+    expect(invalid).toMatchObject({ code: "ENV_RUNTIME_VALUE_INVALID", details: { path: "env.server.credential" } })
+    expect(String((invalid as Error).cause)).not.toContain("alpha-credential")
+    expect(describeServerEnv(registry).entries).toEqual([{ path: "env.server.credential", source: "env", secret: true, required: true, hasDefault: false, type: "enum" }])
+  })
+
   it("describes the parsed type without exposing defaults", () => {
     expect(describeServerEnv(labellerRegistry()).entries).toEqual([
       { path: "env.server.labeller.dryRun", source: "env", secret: false, required: true, hasDefault: true, type: "boolean" },
