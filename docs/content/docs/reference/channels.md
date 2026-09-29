@@ -96,7 +96,11 @@ The handler returns a result like this:
 }
 ```
 
-Each send emits metadata-only JSON events with the `vitehub.channel.send` scope for `started`, `completed`, and `failed`. The events include `deliveryId`, Channel, connector, provider message id, and error message, but never include message text or connector options. This outbound-only package has no State Adapter, so durability comes from the application's configured log drain; use Agent Channels when inbound custody and recovery are required.
+For each connector delivery, Channels attempts to write `outbound.started` and either `outbound.completed` or `outbound.failed` JSON events under the `vitehub.channel.send` scope. Input validation and definition-loading failures return before delivery logging starts. Logging is best effort. A logging failure does not change the send result.
+
+The events include `deliveryId`, Channel, connector, and, when available, a provider message id or error message. ViteHub omits message text and connector options. Failed events include up to 2,000 characters of the thrown error message, so connectors must redact credentials and message content before throwing provider errors.
+
+Configure the application's log drain to retain received events. This outbound-only package has no State Adapter. Use Agent Channels when inbound custody and recovery are required.
 
 ## Add another connector
 
