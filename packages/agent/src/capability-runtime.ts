@@ -166,6 +166,7 @@ export interface AgentCapabilityInvocationOptions<
   context?: AgentInvocationContextStore
   driverKind?: AgentDriverKind
   driver?: unknown
+  deferPreparation?: boolean
   invocationKind?: "run" | "stream"
   invoker?: AgentInvoker
   model?: AgentModelResolver<TRuntimeConfig, Name>
@@ -182,6 +183,7 @@ export interface ResolvedAgentCapabilities {
   input: AgentRunInput
   inputDataChanged: boolean
   messages: Message[]
+  prepare?: () => Promise<Response | undefined>
   response?: Response
   registries: AgentCapabilityRegistries
   start?: () => Promise<AgentChannelDeliveryEffectIntent[]>
@@ -1191,6 +1193,7 @@ export async function resolveAgentCapabilities<
   const driverContributions: AgentDriverContribution[] = []
   let capabilityScope: Awaited<ReturnType<typeof openAgentCapabilityScope>> | undefined
   const toolTransforms: AgentToolTransform[] = []
+  const deferredPreparation: Array<() => Promise<Response | undefined>> = []
   const initialDeliveryEffectIntents = invocationContext.get(channelDeliveryEffectsContextKey) || []
   const initialFinishDeliveryEffectProviders = invocationContext.get(channelDeliveryFinishEffectsContextKey) || []
   const registries: AgentCapabilityRegistries = {
@@ -1526,6 +1529,18 @@ export async function resolveAgentCapabilities<
       }
 
       for (const phase of phases) {
+        if (phase === "prepare" && invocationOptions.deferPreparation) {
+          deferredPreparation.push(async () => {
+            await callHooks(`capability:${phase}`, capabilityContext, options?.hooks)
+            const callback = capability[phase]
+            const result: unknown = callback
+              ? await runCapabilityCallback(capability.id, phase, () => callback.call(capability, capabilityContext))
+              : undefined
+            await callHooks(`capability:${phase}:after`, capabilityContext, options?.hooks)
+            return result instanceof Response ? result : undefined
+          })
+          continue
+        }
         await callHooks(`capability:${phase}`, capabilityContext, options?.hooks)
         const callback = capability[phase]
         const result = callback
@@ -1595,6 +1610,15 @@ export async function resolveAgentCapabilities<
     input: currentInput,
     inputDataChanged: inputDataChanged(),
     messages,
+    prepare: deferredPreparation.length
+      ? async () => {
+          for (const prepare of deferredPreparation) {
+            const response = await prepare()
+            if (response) return response
+          }
+          return undefined
+        }
+      : undefined,
     registries,
     start,
     toolTransforms,

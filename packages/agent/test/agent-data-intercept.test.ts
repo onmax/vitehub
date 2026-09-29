@@ -186,6 +186,27 @@ describe("Agent data and intercept", () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  it("skips Capability preparation for intercepted Invocations", async () => {
+    const prepare = vi.fn(() => {
+      throw new Error("prepare should not run")
+    })
+    const intercept = vi.fn(() => ({ rule: "github" }))
+    const agent = defineAgent({
+      capabilities: [{ id: "prepare", prepare }],
+      data: v.object({ from: v.string() }),
+      driver: { run: () => "driver" },
+      intercept,
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { from: "a@github.com" } })
+
+    expect(error).toBeNull()
+    expect(output).toEqual({ rule: "github" })
+    expect(prepare).not.toHaveBeenCalled()
+    expect(intercept).toHaveBeenCalledOnce()
+  })
+
   it("does not report unchanged transformed data as changed", async () => {
     const transform = vi.fn((value: string) => Number(value))
     const capability = defineCapability({

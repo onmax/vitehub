@@ -2209,11 +2209,11 @@ type LayerData<TDefinition, TSchema> = TSchema extends StandardSchemaV1<unknown,
   ? TOutput
   : TDefinition extends AgentDataOutputCarrier<infer TOutput> ? TOutput : unknown
 
-type LayerOutput<TDefinition, TIntercept, TReplace extends boolean> = TDefinition extends AgentDefinition<any, any, any, any, infer TOutput, any, infer TDriverOutput>
+type LayerOutput<TDefinition, TIntercept, TReplace extends boolean> = TDefinition extends AgentDefinition<infer _TRuntimeConfig, infer _TCallOptions, infer _TInvoker, infer _TContext, infer TOutput, infer _TDataInput, infer TDriverOutput>
   ? (TReplace extends true ? TDriverOutput : TOutput) | TIntercept
   : never
 
-type LayerDefinition<TDefinition, TDataInput, TData, TIntercept, TReplace extends boolean> = TDefinition extends AgentDefinition<infer TRuntimeConfig, infer TCallOptions, infer TInvoker, infer TContext, any, any, infer TDriverOutput>
+type LayerDefinition<TDefinition, TDataInput, TData, TIntercept, TReplace extends boolean> = TDefinition extends AgentDefinition<infer TRuntimeConfig, infer TCallOptions, infer TInvoker, infer TContext, infer _TOutput, infer _TDataInput, infer TDriverOutput>
   ? Omit<TDefinition, keyof AgentDefinition> & AgentDefinition<TRuntimeConfig, TCallOptions, TInvoker, TContext, LayerOutput<TDefinition, TIntercept, TReplace>, TDataInput, TDriverOutput, TData>
   : never
 
@@ -4158,6 +4158,7 @@ async function createAgentInvocationContext<
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     const preparingCapabilities = resolveAgentCapabilities(capabilityOptions, runtimeContext, input, workspace as never, workspaceMode, {
       context: invocationContext,
+      deferPreparation: Boolean(internalDefinition?.[baseAgentIntercept]),
       driverKind,
       driver: agentDriver,
       invocationKind,
@@ -4248,7 +4249,11 @@ async function createAgentInvocationContext<
         throw error
       }
     }
-    if (intercept && !capabilities.response && !intercepted) await knownUnavailable(capabilities)
+    if (intercept && !capabilities.response && !intercepted) {
+      const preparationResponse = await capabilities.prepare?.()
+      if (preparationResponse) capabilities.response = preparationResponse
+      else await knownUnavailable(capabilities)
+    }
     let transformed: { tools: typeof capabilities.tools, originalNames: Map<string, string> }
     try {
       const collisions = Object.keys(invocationTools || {}).filter(name => Object.hasOwn(capabilities.tools || {}, name))
