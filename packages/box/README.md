@@ -188,7 +188,9 @@ Crabbox materializes the same declaration on the target before requirement check
 
 Crabbox requires either `cwd` or `checkout` and targets Linux/POSIX Static SSH hosts. `stateRoot` is an absolute path on the target. File reads and writes use Crabbox's resolved SSH copy transport. Port URLs wait for and reuse one loopback-only Crabbox tunnel per port by default, and session teardown stops those tunnels. Use `network: "direct"` only when the target shares the ViteHub process loopback namespace.
 
-Commands must remain owned by their Box session. Daemonizing or escaping the session's process supervision is outside the v1 concurrency guarantee.
+Commands must remain owned by their Box session. ViteHub adds the reserved `VITEHUB_BOX_SESSION` environment marker to commands and reclaims marked processes on the SSH target when the session closes, including children adopted by supervisors. Commands cannot override this marker through the `env` option. Supervisors that launch replacement processes must preserve it.
+
+Processes that discard the marker, such as children started with `env -i`, can escape cleanup and remain outside the v1 concurrency guarantee. A process that only references the Box directory is not owned by that Box. This cleanup does not add process isolation.
 
 ## Security boundary
 
