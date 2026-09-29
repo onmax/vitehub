@@ -121,11 +121,14 @@ const stateless = 'import { github } from "vite-hub/agent/channels"; export defa
 
 it.each<[string, string, Record<string, string>]>([
   ["extensionless specifier", 'import portal from "../../portal"', { "portal.ts": stateless }],
+  ["extensionless TSX specifier", 'import portal from "../../portal"', { "portal.tsx": stateless }],
   ["JavaScript specifier for a TypeScript file", 'import portal from "../../portal.js"', { "portal.ts": stateless }],
+  ["JavaScript specifier for a TSX file", 'import portal from "../../portal.js"', { "portal.tsx": stateless }],
   ["directory index", 'import portal from "../../portal"', { "portal/index.ts": stateless }],
   ["exported declaration", 'import { portal } from "../../channels.ts"', { "channels.ts": 'import { github } from "vite-hub/agent/channels"; export const portal: Channel = github({ pullRequest: false })' }],
   ["export clause", 'import { channel as portal } from "../../channels.ts"', { "channels.ts": 'import { github } from "vite-hub/agent/channels"; const local = github({ pullRequest: false }); export { local as channel }' }],
   ["re-exported import", 'import portal from "../../portal.ts"', { "portal.ts": 'import inner from "./inner.ts"; export default inner', "inner.ts": stateless }],
+  ["forward export clause", 'import portal from "../../portal.ts"', { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export { channel as default }; const channel = github({ pullRequest: false })' }],
   ["local alias", 'import imported from "../../portal.ts"; const portal = imported', { "portal.ts": stateless }],
 ])("resolves a relative Channel module: %s", async (_name, declaration, files) => {
   const definition = await discover(`import { defineAgent } from "vite-hub/agent"; ${declaration}; export default defineAgent({ channels: { github: portal } })`, files)
@@ -181,6 +184,7 @@ it.each<[string, string, Record<string, string>, string | undefined]>([
   ["stateless default re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "./inner.ts"', "inner.ts": stateless }, undefined],
   ["default re-exported as a name", 'import { portal } from "../../portal.ts"', { "portal.ts": 'export { default as portal } from "./inner.ts"', "inner.ts": owning }, "review"],
   ["name re-exported as default", 'import portal from "../../portal.ts"', { "portal.ts": 'export { channel as default } from "./inner.ts"', "inner.ts": 'import { github } from "vite-hub/agent/channels"; export const channel = github({ pullRequest: true })' }, "review"],
+  ["forward local export", 'import portal from "../../portal.ts"', { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export { channel as default }; const channel = github({ pullRequest: true })' }, "review"],
   ["star re-export", 'import { portal } from "../../portal.ts"', { "portal.ts": 'export * from "./other.ts"\nexport * from "./inner.ts"', "other.ts": "export const other = 1", "inner.ts": 'import { github } from "vite-hub/agent/channels"; export const portal = github({ pullRequest: true })' }, "review"],
   ["later declarator", 'import { portal } from "../../portal.ts"', { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export const first = github(), portal = github({ pullRequest: true })' }, "review"],
   ["later declarator after a generic call", 'import { portal } from "../../portal.ts"', { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export const map = new Map<string, number>(), portal = github({ pullRequest: true })' }, "review"],

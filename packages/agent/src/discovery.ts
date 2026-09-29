@@ -92,7 +92,7 @@ function tokenizeAgentSource(source: string) {
 // adds a Capability of its own: the pull request Workspace. The other helpers
 // contribute only the Capabilities passed in their `capabilities` option.
 const firstPartyChannelFactories = new Set(["discord", "github", "http", "slack", "teams", "telegram", "webChat"])
-const channelModuleExtensions = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"]
+const channelModuleExtensions = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]
 
 function importedChannelError(): Error {
   return new Error("[vitehub] Agent Workspace discovery cannot inspect an imported Channel. Import the Channel from a relative module that exports a local Channel object or a first-party Channel helper call, or add workspace: {} to the Agent definition when the Channel owns a Workspace.")
@@ -103,10 +103,14 @@ function importedChannelError(): Error {
 function resolveChannelModule(importer: string, specifier: string): { file: string, source: string } | undefined {
   if (!specifier.startsWith("./") && !specifier.startsWith("../")) return
   const base = resolve(dirname(importer), specifier)
-  const sourceBase = base.replace(/\.(c|m)?js$/, ".$1ts")
+  const sourceBases = [
+    base.replace(/\.(c|m)?js$/, ".$1ts"),
+    base.replace(/\.(c|m)?js$/, ".$1tsx"),
+    base.replace(/\.jsx$/, ".tsx"),
+  ].filter(candidate => candidate !== base)
   const candidates = [
     base,
-    ...(sourceBase === base ? [] : [sourceBase]),
+    ...sourceBases,
     ...channelModuleExtensions.map(extension => `${base}${extension}`),
     ...channelModuleExtensions.map(extension => resolve(base, `index${extension}`)),
   ]
@@ -144,6 +148,26 @@ function relativeImportBindings(clause: string[]): [string, string][] {
   return bindings
 }
 
+// Returns [exported, imported] pairs for direct relative re-exports.
+function relativeExportBindings(clause: string[]): [string, string][] {
+  const bindings: [string, string][] = []
+  for (let index = 0; index < clause.length; index++) {
+    if (clause[index] === ",") continue
+    if (clause[index] === "type" && ![",", "}", "as"].includes(clause[index + 1] ?? "")) {
+      while (index < clause.length && ![",", "}"].includes(clause[index + 1] ?? "")) index++
+      continue
+    }
+    const name = clause[index]
+    if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) continue
+    const exported = clause[index + 1] === "as" ? clause[index + 2] : name
+    if (exported && /^[A-Za-z_$][\w$]*$/.test(exported)) {
+      bindings.push([exported, name])
+      if (clause[index + 1] === "as") index += 2
+    }
+  }
+  return bindings
+}
+
 function isWorkspaceAgentDefinition(source: string, file: string): boolean {
   return inspectAgentModule(source, file, new Set([file])).agentOwnsWorkspace()
 }
@@ -172,6 +196,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   const reExports = new Map<string, { specifier: string, name: string }>()
   // Specifiers of `export * from` declarations.
   const starExports: string[] = []
+  // Local export clauses may appear before their declarations.
+  const pendingExports = new Map<string, string>()
   let exported: number | undefined
   let depth = 0
   for (let i = 0; i < tokens.length; i++) {
@@ -275,14 +301,17 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         if (tokens[close + 1] !== "from") {
           for (let e = i + 2; e < close; e++) {
             if (e !== i + 2 && tokens[e - 1] !== ",") continue
-            if (/^[A-Za-z_$][\w$]*$/.test(tokens[e] ?? "")) namedExports.set(tokens[e + 1] === "as" ? tokens[e + 2]! : tokens[e]!, e)
+            const local = tokens[e]
+            if (!local || !/^[A-Za-z_$][\w$]*$/.test(local)) continue
+            const name = tokens[e + 1] === "as" ? tokens[e + 2] : local
+            if (name && /^[A-Za-z_$][\w$]*$/.test(name)) pendingExports.set(name, local)
           }
         } else {
           // `export { name as alias } from "./channel"` exports the other
           // module's binding. Package re-exports stay unresolved.
           const specifier = tokens[close + 2]?.slice(1, -1) ?? ""
           if (specifier.startsWith("./") || specifier.startsWith("../")) {
-            for (const [alias, name] of relativeImportBindings(tokens.slice(i + 1, close + 1))) {
+            for (const [alias, name] of relativeExportBindings(tokens.slice(i + 2, close))) {
               reExports.set(alias, { specifier, name })
             }
           }
@@ -297,6 +326,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
     if (["{", "(", "["].includes(tokens[i])) depth++
     if (["}", ")", "]"].includes(tokens[i])) depth--
+  }
+
+  for (const [name, local] of pendingExports) {
+    const declaration = declarations.get(local)
+    if (declaration === undefined) continue
+    if (name === "default") exported = declaration
+    else namedExports.set(name, declaration)
   }
 
   // A declaration is visible only in its containing scope and descendants.
