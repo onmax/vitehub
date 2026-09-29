@@ -22,13 +22,13 @@ function readString(value: unknown, label: string): string | undefined {
   return value.trim()
 }
 
-function readRuntimeConfigValue(value: unknown, label: string): WorkflowRuntimeConfigValue | undefined {
+function readRuntimeConfigValue(value: unknown, label: string, preserveWhitespace = false): WorkflowRuntimeConfigValue | undefined {
   if (typeof value === "undefined") {
     return undefined
   }
   if (typeof value === "string") {
-    readString(value, label)
-    return value
+    const normalized = readString(value, label)
+    return preserveWhitespace ? value : normalized
   }
   if (!isRuntimeEnvDeclaration(value)) {
     throw workflowErrorDiagnostics.WORKFLOW_C0002({ message: `\`${label}\` must be a string or runtime env declaration.` })
@@ -86,7 +86,7 @@ function normalizeOpenWorkflowPostgresOptions(value: unknown): OpenWorkflowPostg
     ...(namespaceId ? { namespaceId } : {}),
     ...(typeof runMigrations === "boolean" ? { runMigrations } : {}),
     ...(schema ? { schema } : {}),
-    ...(url ? { url: typeof url === "string" ? url.trim() : url } : {}),
+    ...(url ? { url } : {}),
   }
 }
 
@@ -99,7 +99,7 @@ function normalizeOpenWorkflowSqliteOptions(value: unknown): OpenWorkflowSqliteO
   }
 
   const namespaceId = readString(value.namespaceId, "workflow.sqlite.namespaceId")
-  const path = readRuntimeConfigValue(value.path, "workflow.sqlite.path")
+  const path = readRuntimeConfigValue(value.path, "workflow.sqlite.path", true)
   const runMigrations = readBoolean(value.runMigrations, "workflow.sqlite.runMigrations")
 
   return {
