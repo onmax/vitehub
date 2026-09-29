@@ -185,6 +185,7 @@ export function createBlobCloudflareProvisionStep(resolveOptions: () => BlobModu
       const config = resolveCloudflareProvisionConfig(context.env)
       if (!config) {
         context.logger.warn("blob: skipping Cloudflare R2, missing CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN.")
+        context.markPlanUnchecked?.()
         return []
       }
 
@@ -218,6 +219,7 @@ export function createBlobVercelProvisionStep(resolveOptions: () => BlobModuleOp
       const projectId = readEnv(context.env, "VERCEL_PROJECT_ID")
       if (!config || !projectId) {
         context.logger.warn("blob: skipping Vercel Blob, missing VERCEL_TOKEN/VERCEL_PROJECT_ID.")
+        context.markPlanUnchecked?.()
         return []
       }
 

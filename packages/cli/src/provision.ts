@@ -32,6 +32,7 @@ interface PlannedProvisionAction {
 
 interface ProvisionPlan {
   actions: PlannedProvisionAction[]
+  checked: boolean
   warnings: string[]
 }
 
@@ -105,22 +106,22 @@ function writeUsage(command: ProvisionCommand, stream: ProvisionFeatureContext["
 }
 
 // Resolves the arguments shared by every provision command. Returns an exit code on failure or help.
-function resolveProvider(command: ProvisionCommand, parsed: ParsedProvisionArgs, context: ProvisionFeatureContext): ProvisionProvider | number {
+function resolveProvider(command: ProvisionCommand, parsed: ParsedProvisionArgs, context: ProvisionFeatureContext): { exitCode: number } | { provider: ProvisionProvider } {
   if (parsed.help) {
     writeUsage(command, context.stdout)
-    return 0
+    return { exitCode: 0 }
   }
   if (parsed.error) {
     context.stderr.write(`${parsed.error}\n`)
     writeUsage(command, context.stderr)
-    return 1
+    return { exitCode: 1 }
   }
   if (!isProvisionProvider(parsed.provider)) {
     context.stderr.write("Provision requires --provider cloudflare|vercel.\n")
     writeUsage(command, context.stderr)
-    return 1
+    return { exitCode: 1 }
   }
-  return parsed.provider
+  return { provider: parsed.provider }
 }
 
 function hasProviderCredentials(provider: ProvisionProvider, env: ProvisionFeatureContext["env"]): boolean {
@@ -130,6 +131,7 @@ function hasProviderCredentials(provider: ProvisionProvider, env: ProvisionFeatu
 // Runs only the plan phase. Step messages go to stderr so stdout stays one JSON document in --json mode.
 async function planProvision(provider: ProvisionProvider, context: ProvisionFeatureContext, options: ProvisionFeatureOptions, json: boolean): Promise<ProvisionPlan> {
   const warnings: string[] = []
+  let checked = true
   const provisionContext: ProvisionContext = {
     env: context.env,
     fetch: globalThis.fetch,
@@ -140,6 +142,7 @@ async function planProvision(provider: ProvisionProvider, context: ProvisionFeat
         if (!json) context.stderr.write(`${message}\n`)
       },
     },
+    markPlanUnchecked: () => { checked = false },
   }
 
   const actions: PlannedProvisionAction[] = []
@@ -149,7 +152,7 @@ async function planProvision(provider: ProvisionProvider, context: ProvisionFeat
       actions.push({ action, step: step.id })
     }
   }
-  return { actions, warnings }
+  return { actions, checked, warnings }
 }
 
 function serializeAction({ action, step }: PlannedProvisionAction) {
@@ -164,8 +167,9 @@ function writeActions(actions: PlannedProvisionAction[], stdout: ProvisionFeatur
 
 export async function runProvision(args: string[], context: ProvisionFeatureContext, options: ProvisionFeatureOptions): Promise<number> {
   const parsed = parseArgs("run", args)
-  const provider = resolveProvider("run", parsed, context)
-  if (typeof provider === "number") return provider
+  const resolved = resolveProvider("run", parsed, context)
+  if ("exitCode" in resolved) return resolved.exitCode
+  const { provider } = resolved
 
   // Fail closed outside --dry-run: a credential-less run silently creating
   // nothing would mask missing CI secrets behind a green step.
@@ -213,15 +217,15 @@ export async function runProvision(args: string[], context: ProvisionFeatureCont
 
 export async function runProvisionStatus(args: string[], context: ProvisionFeatureContext, options: ProvisionFeatureOptions): Promise<number> {
   const parsed = parseArgs("status", args)
-  const provider = resolveProvider("status", parsed, context)
-  if (typeof provider === "number") return provider
+  const resolved = resolveProvider("status", parsed, context)
+  if ("exitCode" in resolved) return resolved.exitCode
+  const { provider } = resolved
 
   const recorded = (await readProvisionState(context.rootDir))[provider] ?? {}
-  // Without read credentials, steps skip their lookups. Report the plan as unchecked instead of up to date.
-  const checked = hasProviderCredentials(provider, context.env)
-  const { actions, warnings } = checked
+  const hasCredentials = hasProviderCredentials(provider, context.env)
+  const { actions, checked, warnings } = hasCredentials
     ? await planProvision(provider, context, options, parsed.json)
-    : { actions: [], warnings: [`provision: plan not checked, missing ${PROVIDER_CREDENTIALS[provider]}.`] }
+    : { actions: [], checked: false, warnings: [`provision: plan not checked, missing ${PROVIDER_CREDENTIALS[provider]}.`] }
   const pending = actions.filter(({ action }) => !action.exists).length
 
   if (parsed.json) {
@@ -251,7 +255,7 @@ export async function runProvisionStatus(args: string[], context: ProvisionFeatu
   }
 
   if (!checked) {
-    context.stderr.write(`${warnings[0]}\n`)
+    if (!hasCredentials) context.stderr.write(`${warnings[0]}\n`)
     context.stdout.write("plan: not checked\n")
     return 0
   }

@@ -211,6 +211,47 @@ describe("blob vercel provision step", () => {
     return { environments, projectId }
   }
 
+  it("marks the plan unchecked without fetching when the project id is missing", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+    const markPlanUnchecked = vi.fn()
+    const warn = vi.fn()
+
+    const actions = await createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan({
+      env: { VERCEL_TOKEN: "vtoken" },
+      fetch: fetchImpl,
+      logger: { log: () => {}, warn },
+      markPlanUnchecked,
+    })
+
+    expect(actions).toEqual([])
+    expect(markPlanUnchecked).toHaveBeenCalledExactlyOnceWith()
+    expect(warn).toHaveBeenCalledExactlyOnceWith("blob: skipping Vercel Blob, missing VERCEL_TOKEN/VERCEL_PROJECT_ID.")
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it("does not mark nonapplicable Blob steps unchecked", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+    const markPlanUnchecked = vi.fn()
+    const warn = vi.fn()
+    const provisionContext: ProvisionContext = {
+      env: {},
+      fetch: fetchImpl,
+      logger: { log: () => {}, warn },
+      markPlanUnchecked,
+    }
+
+    for (const step of [
+      createBlobCloudflareProvisionStep(() => ({ driver: "fs" })),
+      createBlobVercelProvisionStep(() => ({ driver: "fs" })),
+    ]) {
+      expect(await step.plan(provisionContext)).toEqual([])
+    }
+
+    expect(markPlanUnchecked).not.toHaveBeenCalled()
+    expect(warn).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it("re-reads list entries without connection metadata before connecting", async () => {
     const requests: Array<{ method: string, url: string, body: unknown }> = []
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {

@@ -10,6 +10,8 @@ import cliPackageManifest from "../package.json" with { type: "json" }
 
 import { runViteHubCli, runViteHubCliEntrypoint } from "../src/index.ts"
 
+import type { ProvisionContext } from "@vite-hub/internal/provision"
+
 const directories: string[] = []
 const execFileAsync = promisify(execFile)
 
@@ -712,6 +714,46 @@ export default function (_options, nuxt) {
       stateFile: ".vitehub/provision.json",
       warnings: [],
     })
+    expect(apply).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])("uses structured skipped-plan state rather than warnings with unchecked=%s", async (unchecked) => {
+    const rootDir = await createTempDir()
+    const apply = vi.fn(async () => ({}))
+    const env = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token" }
+    const loadConfig = async () => ({
+      plugins: [provisionPlugin(apply), {
+        vitehub: {
+          cli: {
+            namespaces: [],
+            provision: [{
+              id: "test:optional",
+              provider: "cloudflare",
+              plan: async (context: ProvisionContext) => {
+                if (unchecked) context.markPlanUnchecked?.()
+                context.logger.warn("test: lookup warning")
+                return []
+              },
+            }],
+          },
+        },
+      }],
+      root: rootDir,
+    })
+    const stdout = stream()
+    const stderr = stream()
+
+    await expect(runViteHubCli({ args: ["provision", "status", "--provider", "cloudflare", "--json"], cwd: rootDir, env, loadConfig, stderr, stdout }))
+      .resolves.toBe(0)
+    expect(JSON.parse(stdout.output())).toMatchObject({
+      plan: {
+        actions: [{ exists: false, kind: "test-resource", name: "demo", step: "test:cloudflare" }],
+        checked: !unchecked,
+        pending: 1,
+      },
+      warnings: ["test: lookup warning"],
+    })
+    expect(stderr.output()).toBe("")
     expect(apply).not.toHaveBeenCalled()
   })
 
