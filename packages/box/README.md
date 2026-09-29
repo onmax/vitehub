@@ -119,6 +119,8 @@ const ascii = await resolveBox(
 
 The Cloudflare runtime uses `@cloudflare/sandbox`, preserves Durable Object idle reuse, and bounds transient transport operations with retries and deadlines. The preview `cloudflare-computer` runtime uses `@cloudflare/computer`: its Durable Object owns the authoritative filesystem while the selected Computer shell backend executes against it. Closing a Box clears ViteHub's managed roots and disposes Computer RPC handles without deleting the Durable Object or unrelated files. The Vercel runtime exposes only the ports declared when the microVM is created. All three reject host `cwd`; materialize a Workspace into their working tree instead.
 
+If Cloudflare Sandbox or Vercel cleanup fails, retry `session.close()`. The session rejects new operations after the first close attempt. Concurrent close calls wait for the same cleanup.
+
 `box.open({ initialize })` runs initialization inside runtime preparation. If initialization fails, a runtime must tear down the session and roll back state created for that failed boot.
 
 `checkout` gives each invocation a disposable real Git repository at the exact requested commit. The runtime fetches `ref` from `remote`, verifies the resulting commit against the full `sha`, and starts the process in a detached checkout. Normal Git commits work, and callers can push explicitly with `git push origin HEAD:<branch>`. Use the source repository as `remote` for fork pull requests, and keep credentials in Box `env` or Home rather than embedding them in the remote URL.

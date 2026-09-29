@@ -424,7 +424,7 @@ async function createTrustedHostSession(options: {
   const workspace = join(options.root, "workspace");
   if (options.workspace) await symlink(options.workspace, workspace, "dir");
   else await mkdir(workspace, { recursive: true });
-  let destroyed = false;
+  let destroyPromise: Promise<void> | undefined;
   const processes = new Set<ChildProcessWithoutNullStreams>();
   const processGroups = new Set<number>();
   const session = {
@@ -437,14 +437,15 @@ async function createTrustedHostSession(options: {
     processes,
     root: options.root,
     async destroy() {
-      if (destroyed) return;
-      destroyed = true;
-      try {
-        await this.stop();
-        await rm(options.root, { force: true, recursive: true });
-      } finally {
-        await options.release();
-      }
+      destroyPromise ??= (async () => {
+        try {
+          await this.stop();
+          await rm(options.root, { force: true, recursive: true });
+        } finally {
+          await options.release();
+        }
+      })();
+      await destroyPromise;
     },
     async getPortUrl({
       port,
