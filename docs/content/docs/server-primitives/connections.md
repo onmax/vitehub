@@ -74,7 +74,7 @@ vitehub connections connect google --port 8976
 
 The command prints the provider URL. Open it, grant access, and the loopback callback stores the token. A Connection has one account. To change the account, revoke the Connection first.
 
-In production, mount the management API behind Console authentication with `connections: { management: true }`. Then open `https://<your-app>/_vitehub/connections/connect/google` while you are signed in to the Console. `vitehub connections connect google --url https://<your-app>` prints that URL.
+The development server mounts the management API at `/_vitehub/connections`. Production builds mount it only with `connections: { management: true }`. This option requires Console production access, `console: { access: 'auth' }` or `console: { exposure: 'host-managed' }`, because that access protects every `/_vitehub/**` route. Then open `https://<your-app>/_vitehub/connections/connect/google` while you are signed in to the Console. `vitehub connections connect google --url https://<your-app>` prints that URL.
 
 ## Call the API
 

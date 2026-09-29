@@ -38,6 +38,9 @@ composition and explicit feature subpaths for application APIs.
 | `vite-hub/agent/invocations/sqlite` | LibSQL-compatible durable Agent Invocation Journal. |
 | `vite-hub/agent/mcp` | MCP Server configuration helpers. |
 | `vite-hub/agent/runtime/process` | Adaptive process-local Agent capacity for self-hosted Node applications. |
+| `vite-hub/connections` | `defineConnection()` and Connection types. |
+| `vite-hub/connections/google` | Google OAuth provider with typed Gmail API catalog. |
+| `vite-hub/connections/server` | `useConnection()` for typed, governed, audited provider API calls. |
 | `vite-hub/console` | Route metadata for the local read-only invocation console. |
 | `vite-hub/console/auth` | Define a Console-owned Auth Definition and its access policy. |
 | `vite-hub/console/auth/client` | Configure Console Auth client plugins and setup. |

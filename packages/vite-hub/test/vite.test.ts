@@ -27,6 +27,7 @@ const integrationMocks = vi.hoisted(() => ({
   })),
   hubBrowser: vi.fn(() => ({ name: "@vite-hub/browser/vite" })),
   hubChannels: vi.fn(() => ({ name: "@vite-hub/channels/vite" })),
+  hubConnections: vi.fn(() => ({ name: "@vite-hub/connections/vite" })),
   hubDb: vi.fn(() => ({ name: "@vite-hub/database/vite" })),
   hubEmail: vi.fn(() => ({ name: "@vite-hub/email/vite" })),
   hubEmailOptionalPeerResolver: vi.fn(() => ({ name: "@vite-hub/email/optional-peer-resolver" })),
@@ -75,6 +76,7 @@ vi.mock("@vite-hub/blob/vite", () => ({
 }))
 vi.mock("@vite-hub/browser/vite", () => ({ hubBrowser: integrationMocks.hubBrowser }))
 vi.mock("@vite-hub/channels/vite", () => ({ hubChannels: integrationMocks.hubChannels }))
+vi.mock("@vite-hub/connections/vite", () => ({ hubConnections: integrationMocks.hubConnections }))
 vi.mock("@vite-hub/database/vite", () => ({ hubDb: integrationMocks.hubDb }))
 vi.mock("@vite-hub/email/vite", () => ({
   hubEmail: integrationMocks.hubEmail,
@@ -770,6 +772,27 @@ describe("vitehub", () => {
       projectRoot: "packages/policies",
       provider: "cloudflare",
       scanDirs: ["rules"],
+    })
+  })
+
+  it("wires Connections to the ViteHub Database", () => {
+    expect(pluginNames(vitehub({ connections: true, database: true, preset: "node" }))).toContain("@vite-hub/connections/vite")
+    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
+    })
+    expect(pluginNames(vitehub({ database: true, preset: "node" }))).not.toContain("@vite-hub/connections/vite")
+    expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
+  })
+
+  it("mounts the Connections management API only behind Console access", () => {
+    expect(() => vitehub({ connections: { management: true }, database: true, preset: "node" }))
+      .toThrow("connections.management requires Console production access")
+    vitehub({ connections: { management: true }, console: { exposure: "host-managed" }, database: true, preset: "node" })
+    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
+      management: true,
     })
   })
 

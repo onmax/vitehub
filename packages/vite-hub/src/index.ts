@@ -12,6 +12,7 @@ import { hubAuth, resolveAuthViteConfig } from "@vite-hub/auth/vite"
 import { hubBlob, resolveBlobViteConfig } from "@vite-hub/blob/vite"
 import { hubBrowser } from "@vite-hub/browser/vite"
 import { hubChannels } from "@vite-hub/channels/vite"
+import { hubConnections } from "@vite-hub/connections/vite"
 import { hubDb } from "@vite-hub/database/vite"
 import { hubEmail, hubEmailOptionalPeerResolver } from "@vite-hub/email/vite"
 import { hubEnv } from "@vite-hub/env/vite"
@@ -40,6 +41,7 @@ import type { AuthModuleOptions } from "@vite-hub/auth"
 import type { BlobModuleOptions } from "@vite-hub/blob"
 import type { BrowserModuleOptions } from "@vite-hub/browser/vite"
 import type { ChannelsVitePluginOptions } from "@vite-hub/channels/vite"
+import type { ConnectionsModuleOptions } from "@vite-hub/connections/vite"
 import type { DBModulePublicOptions } from "@vite-hub/database"
 import type { EmailVitePluginOptions } from "@vite-hub/email/vite"
 import type { EnvIntegrationOptions, EnvRuntimeRegistry } from "@vite-hub/env"
@@ -85,6 +87,7 @@ const generatedOwnerPackageAccess = {
   "@vite-hub/box": true,
   "@vite-hub/channels": true,
   "@vite-hub/cli": false,
+  "@vite-hub/connections": true,
   "@vite-hub/content": true,
   "@vite-hub/database": true,
   "@vite-hub/email": true,
@@ -255,6 +258,7 @@ export interface ViteHubOptions {
   blob?: boolean | BlobModuleOptions
   browser?: boolean | BrowserModuleOptions
   channels?: boolean | ChannelsVitePluginOptions
+  connections?: boolean | ConnectionsModuleOptions
   console?: boolean | ConsoleOptions
   database?: boolean | DBModulePublicOptions
   email?: true | EmailVitePluginOptions
@@ -850,6 +854,18 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
   if (options.browser) plugins.push(hubBrowser(options.browser === true ? undefined : options.browser))
   if (options.channels) plugins.push(hubChannels(options.channels === true ? undefined : options.channels))
   if (options.database) plugins.push(hubDb(options.database === true ? undefined : options.database))
+  if (options.connections) {
+    if (!options.database) throw viteHubErrorDiagnostics.VITE_HUB_R0122({ message: "[vitehub] connections requires database. Set database: true." })
+    // Console access protects /_vitehub/** in production, including the management API.
+    if (options.connections !== true && options.connections.management && !options.console) {
+      throw viteHubErrorDiagnostics.VITE_HUB_R0123({ message: '[vitehub] connections.management requires Console production access. Set console: { access: "auth" } or console: { exposure: "host-managed" }.' })
+    }
+    plugins.push(hubConnections({
+      ...(options.connections === true ? {} : options.connections),
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
+    }))
+  }
   if (blobEnabled) {
     plugins.push(hubBlob(
       configuredBlob,

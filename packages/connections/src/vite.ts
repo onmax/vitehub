@@ -29,6 +29,9 @@ export interface ConnectionsVitePluginOptions {
   projectRoot?: string
 }
 
+/** Options for `vitehub({ connections })`. */
+export type ConnectionsModuleOptions = Pick<ConnectionsVitePluginOptions, "management" | "projectRoot">
+
 export interface ConnectionsVitePluginAPI {
   getDefinitions: () => DiscoveredConnectionDefinition[]
   refresh: () => DiscoveredConnectionDefinition[]
