@@ -215,11 +215,13 @@ it.each([
   'delete options.pullRequest.workspace',
   '++options.pullRequest.workspace',
   'options.pullRequest.workspace++',
+  'delete (options.pullRequest.workspace)',
   'let alias; alias = options; alias.pullRequest = true',
   'let alias; alias = options; alias.pullRequest.workspace = true',
   'const pullRequest = options.pullRequest; pullRequest.workspace = true',
   'const { pullRequest: alias } = options; alias.workspace = true',
   'Object.assign(options, { pullRequest: true })',
+  'Object["assign"](options, { pullRequest: true })',
   'Object.defineProperty(options, "pullRequest", { value: true })',
 ])("rejects mutated Channel option bindings: %s", async (mutation) => {
   const source = `${imports} const options = { pullRequest: { workspace: false } }; ${mutation}; export default defineAgent({ channels: { custom: github(options) } })`

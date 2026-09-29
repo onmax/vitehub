@@ -368,8 +368,14 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   const mutatorMethods = new Set(["assign", "defineProperty", "defineProperties", "set", "deleteProperty", "setPrototypeOf"])
   function markMutatorArguments() {
     for (let i = 0; i < tokens.length - 2; i++) {
-      if (tokens[i] !== "." || !mutatorMethods.has(tokens[i + 1] ?? "") || tokens[i + 2] !== "(") continue
-      const argument = tokens[i + 3]
+      const method = tokens[i] === "."
+        ? tokens[i + 1]
+        : tokens[i] === "[" && tokens[i + 2] === "]"
+          ? exportName(tokens[i + 1])
+          : undefined
+      const open = tokens[i] === "." ? i + 2 : i + 3
+      if (!method || !mutatorMethods.has(method) || tokens[open] !== "(") continue
+      const argument = tokens[open + 1]
       if (argument && declarations.has(argument)) mutatedBindings.add(argument)
     }
   }
@@ -406,7 +412,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const directAssignment = assignmentOperator(i + 1) && !declarationBinding
     const prefixUpdate = ["+", "-"].includes(tokens[i - 2] ?? "") && tokens[i - 1] === tokens[i - 2]
     const postfixUpdate = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
-    const deletion = tokens[i - 1] === "delete"
+    let deletion = tokens[i - 1] === "delete"
+    for (let cursor = i - 1; !deletion && tokens[cursor] === "("; cursor--) {
+      deletion = tokens[cursor - 1] === "delete"
+    }
     if (propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion) mutatedBindings.add(name)
 
     if (next === "=" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "")) {
