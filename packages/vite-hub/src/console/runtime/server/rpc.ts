@@ -65,7 +65,7 @@ function requestEvent(operation: string, input: ConsoleRpcInput, context: Consol
   const params: Record<string, string> = {}
   if (input.agent) params.agent = input.agent
   if (input.id) params.id = input.id
-  return {
+  const event: ConsoleRequestEvent = {
     context: Object.keys(params).length ? { params } : undefined,
     method: input.method ?? "GET",
     req: {
@@ -74,8 +74,9 @@ function requestEvent(operation: string, input: ConsoleRpcInput, context: Consol
       url,
     },
     res: context.response,
-    ...(context.waitUntil ? { waitUntil: context.waitUntil } : {}),
   }
+  if (context.waitUntil) event.waitUntil = context.waitUntil
+  return event
 }
 
 function errorResult(error: unknown): ConsoleRpcResult {
