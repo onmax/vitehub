@@ -25,17 +25,19 @@ Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `provision` namespace.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, and the Console integration contributes `console` when `console` is enabled. The framework contributes `types`, and the CLI includes the built-in `provision` namespace. This output comes from an app that enables `agent`, `console`, `database`, and `workspace`:
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
+
 Available namespaces:
-  agent       Agent development workflows.
-  channels    External Channel registration workflows.
-  db          Database development workflows.
-  workspace   Workspace development workflows.
-  types       Generate ViteHub TypeScript declarations.
-  provision   Idempotently create missing provider resources.
+  workspace    Workspace development workflows.
+  console      Console development workflows.
+  agent        Agent development workflows.
+  channels     External Channel registration workflows.
+  db           Database development workflows.
+  types        Generate ViteHub TypeScript declarations.
+  provision    Idempotently create missing provider resources.
 ```
 
 ## Commands
