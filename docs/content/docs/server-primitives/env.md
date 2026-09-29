@@ -289,6 +289,8 @@ Add the generated type directory to `tsconfig.json` when the app wants field-lev
 
 Read application secrets through Server Env inside Agent and Capability callbacks. Don't pass secrets through Agent Invocation metadata or model-facing instructions.
 
+Built-in Agent Channels such as `telegram()` declare their credentials under `env.server.<channel>` when an Agent uses them. See [Channel Env](/docs/agents/channels#channel-env) for the names and how to rename one.
+
 Env is usually not an agent-facing Capability. Other Capabilities consume Server Env when they need credentials, provider tokens, or app-owned configuration.
 
 ## Production checks

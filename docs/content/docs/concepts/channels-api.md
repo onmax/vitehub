@@ -34,4 +34,6 @@ A message can start an Invocation. A host command can affect a session or a runn
 
 Use verified Channel metadata to identify the Agent Invoker, choose a Capability, or select a Workspace Scope. Inspect the Channel and Invocation together when a message reaches the wrong Agent, carries the wrong identity, or loses delivery data.
 
+Built-in Channels read provider credentials from Server Env. ViteHub declares those values when an Agent uses the Channel, so they are visible in the generated types, the Console, and Cloudflare required secrets. See [Channel Env](/docs/agents/channels#channel-env).
+
 Read [Channels](/docs/agents/channels), [Chat history and sessions](/docs/agents/chat-history-sessions), and [Agent Invocations](/docs/concepts/agent-invocations) for the operational APIs.

@@ -178,6 +178,42 @@ describe("built-in deployment preset integration", () => {
     }
   })
 
+  it("declares Server Env for built-in Channels used by Agents", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-channel-env-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      await writeFile(join(root, "server", "agents", "support.ts"), [
+        `import { defineAgent } from "vite-hub/agent"`,
+        `import { github, telegram } from "vite-hub/agent/channels"`,
+        `export default defineAgent({ channels: { repo: github(), telegram: telegram({ mode: "webhook" }) } })`,
+      ].join("\n"))
+      const resolve = (server?: Record<string, unknown>) => resolveConfig({
+        ...(server ? { env: { server } } : {}),
+        root,
+        plugins: [vitehub({ agent: true, preset: "cloudflare" })],
+      } as Parameters<typeof resolveConfig>[0] & EnvViteUserConfig, "build")
+      const requiredSecrets = (config: Awaited<ReturnType<typeof resolve>>) => (config as typeof config & {
+        nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
+      }).nitro?.cloudflare?.wrangler?.secrets?.required
+
+      const config = await resolve()
+      expect(requiredSecrets(config)).toEqual(["TELEGRAM_BOT_TOKEN"])
+      const types = await readFile(join(root, ".vitehub", "types", "env.d.ts"), "utf8")
+      expect(types).toContain("\"telegram\": {")
+      expect(types).toContain("\"botToken\": import(\"vite-hub/env/secret\").SecretEnv<string>")
+      expect(types).toContain("\"webhookSecret\"?: import(\"vite-hub/env/secret\").SecretEnv<string>")
+      expect(types).toContain("\"appPrivateKey\"?: import(\"vite-hub/env/secret\").SecretEnv<string>")
+      const description = await readFile(join(root, ".vitehub", "env", "description.mjs"), "utf8")
+      expect(description).toContain("env.server.telegram.botToken")
+
+      const renamed = await resolve({ telegram: { botToken: env({ secret: true, source: env.source("TELEGRAM_TOKEN") }) } })
+      expect(requiredSecrets(renamed)).toEqual(["TELEGRAM_TOKEN"])
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
   it("emits required Server Env secrets through the Nitro Vite plugin", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-required-secrets-build-"))
     try {

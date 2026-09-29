@@ -211,10 +211,7 @@ import { discord } from 'vite-hub/agent/channels'
 export default defineAgent({
   channels: {
     discord: discord({
-      adapter: {
-        botToken: process.env.DISCORD_BOT_TOKEN,
-        publicKey: process.env.DISCORD_PUBLIC_KEY,
-      },
+      adapter: true,
       messages: { lockScope: 'thread' },
     }),
   },
@@ -222,7 +219,43 @@ export default defineAgent({
 })
 ```
 
-Install the matching `@chat-adapter/*` package when a built-in Channel uses provider adapter options. Keep provider credentials in Server Env.
+Install the matching `@chat-adapter/*` package when a built-in Channel uses provider adapter options. With `adapter: true`, the Discord adapter reads its credentials from the Channel Env below.
+
+### Channel Env
+
+Built-in Channels read their credentials from Server Env. When `vitehub({ agent })` finds a built-in Channel factory in an Agent file, it declares these values under `env.server.<channel>`. You do not need an Env block for the default names. The values appear in `#vitehub/env/server` types, `describeServerEnv()`, and the Console Env page.
+
+| Channel | Server Env path | Host variable | Required |
+| --- | --- | --- | --- |
+| `telegram()` | `telegram.botToken` | `TELEGRAM_BOT_TOKEN` | Yes, unless the Channel sets `botToken` or `adapter` |
+| `telegram()` | `telegram.webhookSecret` | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | No |
+| `telegram()` | `telegram.apiBaseUrl` | `TELEGRAM_API_BASE_URL` | No |
+| `discord()` | `discord.botToken`, `discord.publicKey`, `discord.applicationId` | `DISCORD_BOT_TOKEN`, `DISCORD_PUBLIC_KEY`, `DISCORD_APPLICATION_ID` | No |
+| `github()` | `github.token` | `VITEHUB_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` | No |
+| `github()` | `github.webhookSecret`, `github.appId`, `github.appInstallationId`, `github.appPrivateKey`, `github.appPrivateKeyPath` | `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_PRIVATE_KEY_PATH` | No |
+
+Tokens, keys, and webhook secrets are Secret Env. On Cloudflare, a required secret is added to `wrangler.secrets.required`. A required value makes `useServerEnv()` fail when it is missing, so supply `TELEGRAM_BOT_TOKEN` in every environment that runs an Agent with `telegram()`.
+
+An explicit Channel option always wins over Env. To use another host variable, declare the field yourself. Your declaration replaces the default for that field only:
+
+```ts [vite.config.ts]
+import { defineConfig } from 'vite'
+import { vitehub } from 'vite-hub'
+import { env } from 'vite-hub/env'
+
+export default defineConfig({
+  plugins: [vitehub({ agent: true })],
+  env: {
+    server: {
+      telegram: {
+        botToken: env({ secret: true, source: env.source('TELEGRAM_TOKEN') }),
+      },
+    },
+  },
+})
+```
+
+Discovery reads the Agent definition files. It finds factory calls imported from `vite-hub/agent/channels` or `@vite-hub/agent/channels`, such as `telegram()` or `channels.telegram()`, and Channel shorthands such as `channels: { telegram: { ... } }`. It does not follow a Channel created in another module. In that case, declare the fields yourself. When the Channel options are not an object literal, the fields are declared as optional. Without `vitehub()`, or when Server Env cannot resolve, a Channel reads the host variable names directly.
 
 For Telegram, ViteHub can own the verified webhook route and synchronize it after deployment:
 

@@ -59,6 +59,7 @@ import type { TelegramAdapterConfig } from "@chat-adapter/telegram"
 import { encodeRouteSegment, resolveRuntimeValue } from "@vite-hub/runtime"
 import type { Adapter, FileUpload } from "chat"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
+import { channelEnvValue } from "./channel-env.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 
 export const messageChannelTitleSupportContextKey = "channel.delivery.supportsTitle"
@@ -1286,14 +1287,6 @@ function unseal(value: unknown): unknown {
 function cleanSecret(value: unknown): string | undefined {
   const secret = unseal(value)
   return hasRuntimeType(secret, "string") && secret.trim() ? secret.trim() : undefined
-}
-
-function runtimeEnv<TRuntimeConfig extends AgentRuntimeConfig>(
-  name: string,
-  context: AgentCallbackContext<TRuntimeConfig>,
-): unknown {
-  return context.cloudflare?.env?.[name]
-    ?? globalThis.process?.env?.[name]
 }
 
 const serverEnvModuleId = "#vitehub/env/server"
@@ -2579,8 +2572,8 @@ function telegramWebhookDefaults<TRuntimeConfig extends AgentRuntimeConfig>(
 ): AgentChannelDefinition<TRuntimeConfig>["webhooks"] {
   const defaults = {
     secretHeader: "x-telegram-bot-api-secret-token",
-    secretToken: (context: AgentCallbackContext<TRuntimeConfig>) =>
-      cleanSecret(runtimeEnv("TELEGRAM_WEBHOOK_SECRET_TOKEN", context)),
+    secretToken: async (context: AgentCallbackContext<TRuntimeConfig>) =>
+      cleanSecret(await channelEnvValue("telegram", "webhookSecret", context)),
   }
   if (webhooks === undefined || webhooks === true) return defaults
   if (webhooks === false) return false
@@ -2605,10 +2598,10 @@ function telegramAdapterResolver<TRuntimeConfig extends AgentRuntimeConfig>(
       options.allowedUserIds === undefined ? undefined : resolveRuntimeValue(options.allowedUserIds, context),
       options.apiBaseUrl === undefined ? undefined : resolveRuntimeValue(options.apiBaseUrl, context),
       options.apiUrl === undefined ? undefined : resolveRuntimeValue(options.apiUrl, context),
-      options.botToken === undefined ? runtimeEnv("TELEGRAM_BOT_TOKEN", context) : resolveRuntimeValue(options.botToken, context),
+      options.botToken === undefined ? channelEnvValue("telegram", "botToken", context) : resolveRuntimeValue(options.botToken, context),
       options.longPolling === undefined ? undefined : resolveRuntimeValue(options.longPolling, context),
       options.userName === undefined ? undefined : resolveRuntimeValue(options.userName, context),
-      options.webhookSecret === undefined ? runtimeEnv("TELEGRAM_WEBHOOK_SECRET_TOKEN", context) : resolveRuntimeValue(options.webhookSecret, context),
+      options.webhookSecret === undefined ? channelEnvValue("telegram", "webhookSecret", context) : resolveRuntimeValue(options.webhookSecret, context),
     ])
     const { createTelegramAdapter } = await import("@chat-adapter/telegram")
     return createTelegramAdapter({
@@ -2644,7 +2637,7 @@ function discordAdapterResolver<TRuntimeConfig extends AgentRuntimeConfig>(
   }
   const options: DiscordAdapterOptions = input === true ? {} : input
   const { longContent, ...adapterOptions } = options
-  return async () => {
+  return async (context) => {
     let createDiscordAdapter: (options?: Record<string, unknown>) => Adapter
     try {
       ({ createDiscordAdapter } = await import("@chat-adapter/discord"))
@@ -2652,11 +2645,14 @@ function discordAdapterResolver<TRuntimeConfig extends AgentRuntimeConfig>(
     catch (error) {
       throw agentDiagnostics.AGENT_R0365({ message: "[vitehub] discord({ adapter: true }) requires @chat-adapter/discord to be installed.", cause: error })
     }
-    const botToken = cleanSecret(adapterOptions.botToken)
+    const applicationId = cleanSecret(adapterOptions.applicationId ?? await channelEnvValue("discord", "applicationId", context))
+    const botToken = cleanSecret(adapterOptions.botToken ?? await channelEnvValue("discord", "botToken", context))
+    const publicKey = cleanSecret(adapterOptions.publicKey ?? await channelEnvValue("discord", "publicKey", context))
     const adapter = createDiscordAdapter({
       ...adapterOptions,
+      ...(applicationId ? { applicationId } : {}),
       ...(botToken ? { botToken } : {}),
-      ...(adapterOptions.publicKey ? { publicKey: cleanSecret(adapterOptions.publicKey) } : {}),
+      ...(publicKey ? { publicKey } : {}),
     })
     addDiscordThreadTitleSupport(adapter, adapterOptions, botToken)
     if (longContent?.mode === "split") {
@@ -3231,15 +3227,15 @@ export function telegram<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntim
         options.botToken === undefined ? undefined : resolveRuntimeValue(options.botToken, context),
         secret === undefined ? undefined : resolveRuntimeValue(secret, context),
       ])
-      const resolvedBotToken = cleanSecret(botToken) || cleanSecret(runtimeEnv("TELEGRAM_BOT_TOKEN", context))
+      const resolvedBotToken = cleanSecret(botToken) || cleanSecret(await channelEnvValue("telegram", "botToken", context))
       if (!resolvedBotToken) {
         throw agentDiagnostics.AGENT_R0374({ message: "[vitehub] Telegram Channel synchronization requires telegram({ botToken }) or TELEGRAM_BOT_TOKEN." })
       }
       const resolvedSecretToken = secretToken === false
         ? undefined
-        : cleanSecret(secretToken) || cleanSecret(runtimeEnv("TELEGRAM_WEBHOOK_SECRET_TOKEN", context))
+        : cleanSecret(secretToken) || cleanSecret(await channelEnvValue("telegram", "webhookSecret", context))
       return createTelegramChannelSyncProvider({
-        apiBaseUrl: cleanSecret(apiUrl) || cleanSecret(apiBaseUrl) || cleanSecret(runtimeEnv("TELEGRAM_API_BASE_URL", context)),
+        apiBaseUrl: cleanSecret(apiUrl) || cleanSecret(apiBaseUrl) || cleanSecret(await channelEnvValue("telegram", "apiBaseUrl", context)),
         botToken: resolvedBotToken,
         mode: resolvedChannel.listener?.kind === "telegram-polling" || resolvedWebhooks === false
           ? "disabled"
