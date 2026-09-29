@@ -123,7 +123,7 @@ export function toTemplateSafeName(name: string) {
 export function createDefinitionRegistryContents(definitions: Pick<ScannedDefinition, 'name' | 'handler'>[]) {
   return [
     'const registry = {',
-    ...definitions.map(definition => `  ${JSON.stringify(definition.name)}: () => import(${JSON.stringify(definition.handler)}),`),
+    ...definitions.map(definition => `  [${JSON.stringify(definition.name)}]: () => import(${JSON.stringify(definition.handler)}),`),
     '}',
     'export default registry',
     '',
