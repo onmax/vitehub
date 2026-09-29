@@ -1685,7 +1685,7 @@ describe("agent message protocol", () => {
 
   it("exports product actions from AI SDK telemetry integrations", async () => {
     const { aiSdkTelemetryIntegration } = await import("../src/trace.ts")
-    const traceLog = createTraceEventLog()
+    const traceLog = createTraceEventLog({ content: "content" })
     const invocationContext = new Map<string, unknown>()
     const telemetry = aiSdkTelemetryIntegration({
       context: {
@@ -1699,7 +1699,7 @@ describe("agent message protocol", () => {
       input: {},
       invoker: { id: "test", kind: "user" },
       runtime: { capabilities: {}, memo: vi.fn(), runtime: "unknown", runtimeConfig: {}, traceLog, waitUntil: vi.fn() },
-    }, new Map([["repository_host_write", { kind: "action", name: "repository-host.write" }]]))
+    }, new Map([["repository_host_write", { activity: { kind: "action", name: "repository-host.write" }, title: "Wrote repository" }]]))
 
     // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
     await telemetry.onToolExecutionStart?.({ toolCallId: "action-1", toolName: "repository_host_write" } as never)
@@ -1714,6 +1714,7 @@ describe("agent message protocol", () => {
       expect(entry.attributes).toMatchObject({
         "capability.id": "repository-host",
         "tool.name": "repository_host_write",
+        "tool.title": "Wrote repository",
         "vitehub.action.name": "repository-host.write",
         "vitehub.activity.kind": "action",
       })

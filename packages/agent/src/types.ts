@@ -368,9 +368,13 @@ export interface AgentToolInspection {
   /** Capability that registered this tool, when known. */
   capabilityId?: string;
   description?: string
+  /** The tool's declared `icon`. Kept when content capture is off. */
+  icon?: string
   inputSchema?: AgentInspectionValue
   name: string
   mcp?: { server: string, name: string }
+  /** The tool's declared `title`. Kept when content capture is off, like Capability inspection labels. */
+  label?: string
   outputSchema?: AgentInspectionValue
 }
 
@@ -2058,11 +2062,15 @@ export interface AgentToolDefinition<TInput = unknown, TOutput = unknown> {
   activity?: AgentActivity
   description?: string
   execute?: (input: TInput, context?: AgentToolExecutionContext) => MaybePromise<TOutput>
+  /** Iconify icon name for inspection interfaces, for example `i-lucide-database`. The Console includes the Lucide set. */
+  icon?: string
   inputSchema?: AgentToolSchema<TInput>
   metadata?: Record<string, unknown>
   name: string
   outputSchema?: AgentToolSchema<TOutput>
   policy?: AgentToolPolicyDecision | ((context: AgentToolPolicyContext) => MaybePromise<AgentToolPolicyDecision>)
+  /** Short past-tense label for each call in traces, for example `Searched meals`. */
+  title?: string
 }
 
 export type AgentToolSet = Record<string, AgentToolDefinition>

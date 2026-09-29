@@ -4,6 +4,7 @@ import { applyStreamEvent } from "../src/messages.ts"
 import { finalChannelOutputSelectedSymbol } from "../src/internal/final-channel-output.ts"
 import { synthesizedAgentOutputSymbol } from "../src/internal/synthesized-agent-output.ts"
 import {
+  agentToolStreamDefaults,
   finalTextFromAgentOutput,
   streamAgentOutputToEvents,
   toAgentRunResult,
@@ -354,17 +355,29 @@ describe("agent output helpers", () => {
 
   it("restores configured activities on normalized tool events", () => {
     const toolNames = new Map<string, string>()
-    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-    const activities = new Map([["repository_host_write", { kind: "action" as const, name: "repository-host.write" }]])
+    const defaults = agentToolStreamDefaults({ repository_host_write: { activity: { kind: "action", name: "repository-host.write" } } })
 
-    expect(toAgentStreamEvent({ toolCallId: "call-1", toolName: "repository_host_write", type: "tool-call" }, toolNames, undefined, activities)).toMatchObject({
+    expect(toAgentStreamEvent({ toolCallId: "call-1", toolName: "repository_host_write", type: "tool-call" }, toolNames, undefined, defaults)).toMatchObject({
       activity: { kind: "action", name: "repository-host.write" },
       type: "tool-call",
     })
-    expect(toAgentStreamEvent({ output: "ok", toolCallId: "call-1", type: "tool-result" }, toolNames, undefined, activities)).toMatchObject({
+    expect(toAgentStreamEvent({ output: "ok", toolCallId: "call-1", type: "tool-result" }, toolNames, undefined, defaults)).toMatchObject({
       activity: { kind: "action", name: "repository-host.write" },
       type: "tool-result",
     })
+  })
+
+  it("uses the declared tool title when the driver event has none", () => {
+    const toolNames = new Map<string, string>()
+    const defaults = agentToolStreamDefaults({ search_meals: { title: "Searched meals" }, untitled: {} })
+
+    expect(defaults.has("untitled")).toBe(false)
+    expect(toAgentStreamEvent({ toolCallId: "call-1", toolName: "search_meals", type: "tool-input-start" }, toolNames, undefined, defaults)).toMatchObject({ title: "Searched meals" })
+    expect(toAgentStreamEvent({ toolCallId: "call-1", toolName: "search_meals", type: "tool-call" }, toolNames, undefined, defaults)).toMatchObject({ title: "Searched meals" })
+    expect(toAgentStreamEvent({ output: "ok", toolCallId: "call-1", type: "tool-result" }, toolNames, undefined, defaults)).toMatchObject({ title: "Searched meals" })
+    expect(toAgentStreamEvent({ error: "failed", toolCallId: "call-1", type: "tool-error" }, toolNames, undefined, defaults)).toMatchObject({ title: "Searched meals" })
+    expect(toAgentStreamEvent({ title: "MCP search", toolCallId: "call-2", toolName: "search_meals", type: "tool-call" }, toolNames, undefined, defaults)).toMatchObject({ title: "MCP search" })
+    expect(toAgentStreamEvent({ title: " ", toolCallId: "call-3", toolName: "search_meals", type: "tool-call" }, toolNames, undefined, defaults)).toMatchObject({ title: "Searched meals" })
   })
 
   it("normalizes AI SDK stream aliases", () => {
