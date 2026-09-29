@@ -220,10 +220,11 @@ const [error, output] = await runAgent(labeller, {
   prompt: `${email.from}: ${email.subject}`,
 })
 if (error) throw error
-// output: { source: 'rule', rule: 'github' | 'billing', label: 'GitHub' | 'Billing' } | { source: 'model', label: string } | ...
+if (output instanceof Response || !('source' in output)) throw new Error('Expected inline labeller output')
+// output: { source: 'rule', rule: 'github' | 'billing', label: 'GitHub' | 'Billing' } | { source: 'model', label: string }
 ```
 
-The `runAgent()` output type is the union of the `intercept` return type and the `driver.output` schema output, so the caller does not need a type guard. The union also includes `Response` and, for Workflow-backed Agents, `AgentWorkflowRun`, as for any Agent.
+The `runAgent()` output type is the union of the `intercept` return type and the `driver.output` schema output. The caller narrows it with the fields of each result and does not parse the output again. As for any Agent, the type also includes `Response` and `AgentWorkflowRun`, so exclude those first.
 
 An intercepted Invocation skips the Driver, tools, and start Capabilities. `agent:finish` hooks receive the intercepted value as `result`. The `agent.invocation.finish` trace event sets `agent.intercepted: true` and records the value as `result.output`. Traces record `input.data` and `result.output` only when the trace content policy is `content`; the `metadata` policy keeps only `input.hasData`.
 

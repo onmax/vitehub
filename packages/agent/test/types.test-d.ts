@@ -444,6 +444,9 @@ describe("agent public types", () => {
     expectTypeOf(inline).toEqualTypeOf<Promise<Response | JevDecision | RuleDecision>>()
     const standalone = runAgent(agent, { data: { from: "a@example.com", subject: "Hi" }, prompt: "a@example.com: Hi" })
     expectTypeOf<Extract<Awaited<typeof standalone>, [null, unknown]>[1]>().toExtend<Response | JevDecision | RuleDecision | { id: string }>()
+    // Callers narrow by result fields after excluding host-level results.
+    const narrow = (output: Extract<Awaited<typeof standalone>, [null, unknown]>[1]) => output instanceof Response || !("rule" in output || "probability" in output) ? undefined : output
+    expectTypeOf(narrow).returns.toEqualTypeOf<JevDecision | RuleDecision | undefined>()
     // @ts-expect-error Invocation data follows the Agent data schema.
     void runAgent(agent, { data: { from: "a@example.com" } })
     // SAFETY: This compile-time fixture intentionally supplies the exact asserted public contract.
