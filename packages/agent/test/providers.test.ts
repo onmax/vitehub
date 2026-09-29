@@ -13,7 +13,12 @@ import { VITEHUB_GENERATED_ROOT, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DI
 import { mergeConfig, build as viteBuild } from "vite"
 import { describe, expect, it, vi } from "vitest"
 
+import { title } from "../src/capabilities.ts"
+import { http, telegram } from "../src/channels.ts"
+import { defineAgent } from "../src/index.ts"
 import { isRuntimeFunction, isRuntimeNumber, isRuntimeObject, isRuntimeString } from "../src/internal/runtime-value.ts"
+import { createChannelWebhookRouteHandler } from "../src/server/internal.ts"
+import { createLibsqlAgentState } from "../src/state/sqlite.ts"
 
 import type { AgentMessageDeliveryKind, AgentRunContext, AgentRunInput } from "../src/index.ts"
 import type { AgentChannelChatRouteStandardSchemaV1 } from "../src/server.ts"
@@ -5785,10 +5790,6 @@ describe("server helpers", () => {
   })
 
   it("settles ignored serial messages without rejecting the active request", async () => {
-    const { defineAgent } = await import("../src/index.ts")
-    const { telegram } = await import("../src/channels.ts")
-    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
-    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
     const stateDir = await mkdtemp(join(tmpdir(), "vitehub-ignored-serial-"))
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
     const adapter = createTestChatAdapter({ isDM: false })
@@ -5825,9 +5826,11 @@ describe("server helpers", () => {
       method: "POST",
     })
     const options = { agentName: "support" }
+    let first: ReturnType<typeof handler> | undefined
     try {
       await state.connect()
-      const first = handler(request(2030, true), "telegram", options)
+      first = handler(request(2030, true), "telegram", options)
+      void first.catch(() => undefined)
       await started.promise
       await expect(handler(request(2031, false), "telegram", options)).resolves.toMatchObject({ status: 200 })
       await expect(handler(request(2032, true), "telegram", options)).resolves.toMatchObject({ status: 200 })
@@ -5848,6 +5851,7 @@ describe("server helpers", () => {
       }
     } finally {
       release.resolve()
+      if (first) await Promise.allSettled([first])
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
     }
@@ -11061,13 +11065,7 @@ describe("server helpers", () => {
   })
 
   it("delivers state-backed Chat SDK titles once per thread across handler recreation", async () => {
-    const { defineAgent } = await import("../src/index.ts")
-    const { title } = await import("../src/capabilities.ts")
-    const { http } = await import("../src/channels.ts")
-    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
-    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
-    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-title-once-"))
-    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const state = createLibsqlAgentState({ url: "file::memory:" })
     const setThreadTitle = vi.fn(async () => undefined)
     const execute = vi.fn(({ text }: { text: string }) => `Title: ${text}`)
     const run = vi.fn(() => "ok")
@@ -11109,7 +11107,6 @@ describe("server helpers", () => {
       await expect(state.get("chat:mini:channel:channel-title:telegram:789:delivered")).resolves.toBe(true)
     } finally {
       await state.disconnect()
-      await rm(stateDir, { force: true, recursive: true })
     }
   })
 
@@ -12763,13 +12760,8 @@ describe("server helpers", () => {
   })
 
   it.each([false, true])("settles every coalesced direct-message receipt with failure=%s", async (failInvocation) => {
-    const { defineAgent } = await import("../src/index.ts")
     const { readAgentChannelDeliveries, resumeAgentChannelDeliveryMessage } = await import("../src/internal/channel-delivery.ts")
-    const { telegram } = await import("../src/channels.ts")
-    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
-    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
-    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-chat-queue-receipts-"))
-    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const state = createLibsqlAgentState({ url: "file::memory:" })
     const adapter = createTestChatAdapter()
     const run = vi.fn(({ messages }) => {
       if (failInvocation && messages.at(-1)?.parts.some((part: { type?: string; text?: string }) => part.type === "text" && part.text === "B")) throw new Error("coalesced invocation failed")
@@ -12813,7 +12805,6 @@ describe("server helpers", () => {
       }
     } finally {
       await state.disconnect()
-      await rm(stateDir, { force: true, recursive: true })
     }
   })
 
@@ -16716,6 +16707,18 @@ describe("server helpers", () => {
     const adapter = createTestChatAdapter()
     let runs = 0
     const acceptance = deferred<void>()
+    const ownerBlocked = deferred<void>()
+    const driverStarted = deferred<void>()
+    const steeringStarted = deferred<void>()
+    const pending: Promise<unknown>[] = []
+    const reconciliationTasks: Promise<unknown>[] = []
+    const acquireLock = state.acquireLock.bind(state)
+    vi.spyOn(state, "acquireLock").mockImplementation(async (key, ttlMs) => {
+      const lock = await acquireLock(key, ttlMs)
+      if (key.endsWith(":owner") && !lock) ownerBlocked.resolve()
+      return lock
+    })
+    let remoteOwner: Awaited<ReturnType<typeof state.acquireLock>> = null
     let steeredPrompt: string | undefined
     let releaseFirst!: () => void
     const firstReleased = new Promise<void>(resolve => { releaseFirst = resolve })
@@ -16730,6 +16733,7 @@ describe("server helpers", () => {
       driver: {
         async run(context) {
           runs += 1
+          driverStarted.resolve()
           const runId = ownedAgentInvocationControlId(context)
           if (!runId) throw new Error("Expected a Channel-owned invocation control ID")
           expect(runId).toBe(context.run?.runId)
@@ -16737,6 +16741,7 @@ describe("server helpers", () => {
             async sendInput(input, options) {
               if (options.mode !== "steer") return "unsupported"
               steeredPrompt = input.messages?.map(message => message.parts.find(part => typeof part === "string" || part.type === "text") && message.parts.map(part => typeof part === "string" ? part : "text" in part ? part.text : "").join("")).join("\n")
+              steeringStarted.resolve()
               if (failInvocation || lateAcceptance) releaseFirst()
               if (lateAcceptance) await acceptance.promise
               return lateResult ?? "accepted"
@@ -16770,16 +16775,24 @@ describe("server helpers", () => {
 
     try {
       await state.connect()
-      const remoteOwner = await state.acquireLock("chat:calories:telegram:inline-steer:agent:owner", 60_000)
+      vi.useFakeTimers()
+      remoteOwner = await state.acquireLock("chat:calories:telegram:inline-steer:agent:owner", 60_000)
       if (!remoteOwner) throw new Error("Expected a simulated remote inline owner lock")
       const first = handler(request(91_106), "telegram", { agentIdentity: { name: "calories" } })
+      pending.push(first)
       const firstResult = failInvocation
         ? expect(first).rejects.toThrow("steered invocation failed")
         : expect(first).resolves.toMatchObject({ status: 200 })
-      await new Promise(resolve => setTimeout(resolve, 75))
+      pending.push(firstResult)
+      void firstResult.catch(() => undefined)
+      await ownerBlocked.promise
+      await vi.advanceTimersByTimeAsync(0)
       expect(runs).toBe(0)
       await state.releaseLock(remoteOwner)
-      await vi.waitFor(() => expect(runs).toBe(1))
+      remoteOwner = null
+      await vi.advanceTimersByTimeAsync(50)
+      await driverStarted.promise
+      expect(runs).toBe(1)
       const otherInvoker = handler(new Request("https://example.com/api/_vitehub/agents/support/webhooks/channel", {
         body: JSON.stringify({ update_id: 91_108, message: {
           chat: { id: 458, type: "private" },
@@ -16789,48 +16802,53 @@ describe("server helpers", () => {
         } }),
         method: "POST",
       }), "telegram", { agentIdentity: { name: "calories" } })
-      await new Promise(resolve => setTimeout(resolve, 75))
+      pending.push(otherInvoker)
+      void otherInvoker.catch(() => undefined)
       expect(runs).toBe(1)
       expect(steeredPrompt).toBeUndefined()
-      const reconciliationTasks: Promise<unknown>[] = []
       const followUpStartedAt = Date.now()
       const followUp = handler(request(91_107, 457), "telegram", {
         agentIdentity: { name: "calories" },
         ...(cloudflareDeadline ? { runtime: "cloudflare-agents" as const, cloudflare: { env: {} } } : {}),
         ...(noHost ? {} : { waitUntil: (task: Promise<unknown>) => { reconciliationTasks.push(task) } }),
       })
+      pending.push(followUp)
+      void followUp.catch(() => undefined)
+      await steeringStarted.promise
       if (lateAcceptance) {
         // Completion and owner release must not wait for the in-flight handler.
         await firstResult
         await expect(otherInvoker).resolves.toMatchObject({ status: 200 })
         expect(steeredPrompt).toBe("hello")
         if (timeoutAcceptance) {
+          // Only the confirmation deadline advances; SQLite work uses real I/O.
+          await vi.advanceTimersByTimeAsync(cloudflareDeadline ? 15_000 : 500)
           // The response finishes while the host retains reconciliation custody.
           await expect(followUp).resolves.toMatchObject({ status: 200 })
           const timedOut = await handler.deliveries(request(91_107, 457), "telegram", { agentIdentity: { name: "calories" } })
           expect(timedOut.find(delivery => delivery.sourceId === "91107")?.status).toBe("failed")
           if (noHost) {
             // A local non-streaming flush must not include the second 500 ms wait.
-            expect(Date.now() - followUpStartedAt).toBeLessThan(900)
+            expect(Date.now() - followUpStartedAt).toBe(500)
             expect(reconciliationTasks).toHaveLength(0)
           } else {
             expect(reconciliationTasks.length).toBeGreaterThan(0)
             let custodySettled = false
             void Promise.all(reconciliationTasks).then(() => { custodySettled = true })
-            await new Promise(resolve => setTimeout(resolve, 0))
+            await vi.advanceTimersByTimeAsync(0)
             expect(custodySettled).toBe(false)
           }
         }
         if (cloudflareDeadline) {
           // Custody expires 30 seconds after request start, not registration.
           expect(Date.now() - followUpStartedAt).toBeLessThan(20_000)
-          await new Promise(resolve => setTimeout(resolve, Math.max(0, followUpStartedAt + (delayedEvidence ? 27_500 : 26_000) - Date.now())))
+          await vi.advanceTimersByTimeAsync(Math.max(0, followUpStartedAt + (delayedEvidence ? 27_500 : 26_000) - Date.now()))
         }
         if (afterReconciliationDeadline) {
-          await new Promise(resolve => setTimeout(resolve, Math.max(0, followUpStartedAt + 1_200 - Date.now())))
+          await vi.advanceTimersByTimeAsync(Math.max(0, followUpStartedAt + 1_200 - Date.now()))
           let custodySettled = false
           void Promise.all(reconciliationTasks).then(() => { custodySettled = true })
-          await new Promise(resolve => setTimeout(resolve, 0))
+          await vi.advanceTimersByTimeAsync(0)
           expect(custodySettled).toBe(false)
         }
         delayEvidenceWrites = delayedEvidence === true
@@ -16839,7 +16857,7 @@ describe("server helpers", () => {
           await evidenceStarted.promise
           let custodySettled = false
           void Promise.all(reconciliationTasks).then(() => { custodySettled = true })
-          await new Promise(resolve => setTimeout(resolve, Math.max(0, followUpStartedAt + (cloudflareDeadline ? 29_000 : 1_250) - Date.now())))
+          await vi.advanceTimersByTimeAsync(Math.max(0, followUpStartedAt + (cloudflareDeadline ? 29_000 : 1_250) - Date.now()))
           expect(custodySettled).toBe(false)
           evidenceReleased.resolve()
         }
@@ -16859,7 +16877,7 @@ describe("server helpers", () => {
       if (neverAccepts) {
         let custodySettled = false
         void Promise.all(reconciliationTasks).then(() => { custodySettled = true })
-        await new Promise(resolve => setTimeout(resolve, cloudflareDeadline ? 0 : 600))
+        await vi.advanceTimersByTimeAsync(cloudflareDeadline ? 0 : 600)
         expect(custodySettled).toBe(false)
         // Simulate the Driver terminating without acceptance to release test custody.
         acceptance.reject(new Error("Driver stopped before confirmation"))
@@ -16873,7 +16891,7 @@ describe("server helpers", () => {
       if (lateAcceptance) await vi.waitFor(async () => {
         const settled = await handler.deliveries(request(91_107, 457), "telegram", { agentIdentity: { name: "calories" } })
         expect(settled.find(delivery => delivery.sourceId === "91107")?.events.filter(event => event.type === "completed" || event.type === "failed").map(event => event.type)).toEqual(timeoutAcceptance ? ["failed", failInvocation ? "failed" : "completed"] : [failInvocation ? "failed" : "completed"])
-      })
+      }, { interval: 0 })
       const deliveries = await handler.deliveries(request(91_107, 457), "telegram", { agentIdentity: { name: "calories" } })
       const followUpDelivery = deliveries.find(delivery => delivery.sourceId === "91107")
       const outcome = failInvocation ? "failed" : "completed"
@@ -16885,8 +16903,13 @@ describe("server helpers", () => {
       expect(steeredPrompt).toBe("hello")
     } finally {
       evidenceReleased.resolve()
-      if (!neverAccepts) acceptance.resolve()
+      acceptance.resolve()
       releaseFirst()
+      if (remoteOwner) await state.releaseLock(remoteOwner)
+      await vi.advanceTimersByTimeAsync(50)
+      await Promise.allSettled(pending)
+      await Promise.allSettled(reconciliationTasks)
+      vi.useRealTimers()
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
     }
