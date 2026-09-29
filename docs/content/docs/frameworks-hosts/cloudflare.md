@@ -165,6 +165,8 @@ Cloudflare Provider Output can require real Worker bindings such as D1, R2, KV, 
 
 Agent Definitions run on Cloudflare through generated host output where the Agent integration owns the route. Keep model keys, Durable Object state bindings, and other Runtime Env in Worker bindings.
 
+Protect a production Console with `console: { access: 'auth', auth: { provider: 'cloudflare-access' } }` and a Cloudflare Access application. The Worker verifies the Access token on each Console request with `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD`. Inline GitHub Console Auth needs `node:sqlite` and is not available on Workers. See [Cloudflare Access](/docs/development/console#cloudflare-access).
+
 ## Next steps
 
 - Use [Runtime and host support](/docs/frameworks-hosts/support-matrix) for exact package and proof coverage.

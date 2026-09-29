@@ -6,6 +6,7 @@ import { readColocatedAgentSkills } from "@vite-hub/agent/vite"
 
 import type { AgentInvocationsOptions } from "@vite-hub/agent/server"
 import type { ConsoleAgentEntry, ConsoleBuildCatalog } from "./build.ts"
+import type { ConsoleAuthMode } from "./internal.ts"
 import type { ConsoleSectionId } from "./runtime/sections.ts"
 
 import { consoleFixtureRevision, readConsoleFixture } from "./fixture.ts"
@@ -27,7 +28,7 @@ function renderConsoleNitroPlugin(
   invoke = false,
   observations?: AgentInvocationsOptions["observations"],
   databaseUrl?: string,
-  independentAuth = false,
+  independentAuth: ConsoleAuthMode | false = false,
 ): string {
   const definitions = agents.map((agent, index) => {
     const skills = readColocatedAgentSkills(agent.handler)
@@ -70,7 +71,7 @@ function renderConsoleNitroPlugin(
       : []),
     ...(sections.includes("env") ? [`import { describeServerEnv } from "#vitehub/env/description"`, `import { installConsoleEnv } from "vite-hub/console/env"`] : []),
     ...agents.map((agent, index) => `import * as vitehubConsoleAgent${index} from ${JSON.stringify(pathToFileURL(agent.handler).href)}`),
-    `installConsoleSections(${JSON.stringify(projectRoot)}, ${JSON.stringify(sections)}${independentAuth ? ", true" : ""})`,
+    `installConsoleSections(${JSON.stringify(projectRoot)}, ${JSON.stringify(sections)}${independentAuth ? `, ${JSON.stringify(independentAuth)}` : ""})`,
     ...(blobEnabled
       ? [`installConsoleBlob(${JSON.stringify(projectRoot)}, vitehubConsoleBlob, ${JSON.stringify(blobStores)})`]
       : []),
@@ -110,7 +111,7 @@ export async function writeConsoleNitroPlugin(
   observations: AgentInvocationsOptions["observations"] = undefined,
   active: () => boolean = () => true,
   databaseUrl?: string,
-  independentAuth = false,
+  independentAuth: ConsoleAuthMode | false = false,
 ): Promise<string> {
   const snapshot = fixture ? readConsoleFixture(fixture) : undefined
   const identity = createConsoleInvocationsIdentity(
