@@ -1,3 +1,4 @@
+import { channelDeliveryHandlers } from "../src/internal/channel-delivery-handlers.ts"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "../src/internal/runtime-type.ts"
 import { generateKeyPairSync } from "node:crypto"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -84,7 +85,7 @@ async function failedTitleInvocation(options: {
     channels: {
       portal: defineChannel("portal", {
         // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-        effects: { title: titleEffect as never },
+        [channelDeliveryHandlers]: { title: titleEffect as never },
         messages: false,
         triggers: {
           message: {
@@ -464,7 +465,7 @@ describe("agent message protocol", () => {
       })],
       channels: {
         github: defineChannel("github", {
-          effects: {
+          [channelDeliveryHandlers]: {
             reply(context) {
               effects.push(context.effect)
             },
@@ -795,7 +796,7 @@ describe("agent message protocol", () => {
     const agent = defineAgent({
       channels: {
         portal: defineChannel("portal", {
-          effects: { reply },
+          [channelDeliveryHandlers]: { reply },
           messages: false,
         }),
       },
@@ -3324,7 +3325,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         portal: defineChannel("portal", {
-          effects: { reaction: effect },
+          [channelDeliveryHandlers]: { reaction: effect },
           messages: false,
           triggers: {
             message: {
@@ -3351,7 +3352,8 @@ describe("agent message protocol", () => {
 
   it("lets Channel triggers expose finish delivery effects", async () => {
     const { defineAgent, defineCapability, runAgentTrigger } = await import("../src/index.ts")
-    const { defineChannel, defineFinishEffect } = await import("../src/channels.ts")
+    const { defineChannel } = await import("../src/channels.ts")
+    const { defineFinishEffect } = await import("../src/delivery-effects.ts")
     const order: string[] = []
     const effect = vi.fn((context) => {
       order.push(`effect:${context.effect.payload}`)
@@ -3370,7 +3372,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         portal: defineChannel("portal", {
-          effects: { reply: effect },
+          [channelDeliveryHandlers]: { reply: effect },
           messages: false,
           triggers: {
             message: {
@@ -3420,7 +3422,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         portal: defineChannel("portal", {
-          effects: {
+          [channelDeliveryHandlers]: {
             reaction({ effect }) {
               order.push(`reaction:${effect.payload}`)
             },
@@ -3476,7 +3478,7 @@ describe("agent message protocol", () => {
     const agent = defineAgent({
       channels: {
         portal: defineChannel("portal", {
-          effects: { reply: effect },
+          [channelDeliveryHandlers]: { reply: effect },
           messages: false,
           triggers: {
             message: {
@@ -3520,7 +3522,7 @@ describe("agent message protocol", () => {
     const agent = defineAgent({
       channels: {
         portal: defineChannel("portal", {
-          effects: { reply: effect },
+          [channelDeliveryHandlers]: { reply: effect },
           messages: false,
           triggers: {
             message: {
@@ -3582,7 +3584,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         portal: defineChannel("portal", {
-          effects: { reply: effect },
+          [channelDeliveryHandlers]: { reply: effect },
           messages: false,
           triggers: {
             message: {
@@ -3620,7 +3622,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         portal: defineChannel("portal", {
-          effects: {
+          [channelDeliveryHandlers]: {
             reply({ effect }) {
               delivered(effect.payload)
             },
@@ -3712,7 +3714,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         portal: defineChannel("portal", {
-          effects: {
+          [channelDeliveryHandlers]: {
             title: titleEffect,
           },
           messages: false,
@@ -3843,7 +3845,7 @@ describe("agent message protocol", () => {
       capabilities: [title({ execute })],
       channels: {
         portal: defineChannel("portal", {
-          effects: {
+          [channelDeliveryHandlers]: {
             title: [titleEffect, retryingTitleEffect],
           },
           messages: false,
@@ -4155,7 +4157,7 @@ describe("agent message protocol", () => {
             channelIdFromThreadId: (threadId: string) => threadId,
             postMessage: vi.fn(),
           } as never,
-          effects: {
+          [channelDeliveryHandlers]: {
             title: titleEffect,
           },
           triggers: {
@@ -4187,7 +4189,7 @@ describe("agent message protocol", () => {
       capabilities: [title({ execute })],
       channels: {
         portal: {
-          effects: {
+          [channelDeliveryHandlers]: {
             title: titleEffect,
           },
           kind: "portal",
@@ -4233,7 +4235,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         portal: defineChannel("portal", {
-          effects: {
+          [channelDeliveryHandlers]: {
             reply: ({ effect }) => delivered(effect.payload),
           },
           triggers: {
@@ -4392,7 +4394,7 @@ describe("agent message protocol", () => {
     const agent = defineAgent({
       channels: {
         portal: defineChannel("portal", {
-          effects: { reply: async ({ effect }) => {
+          [channelDeliveryHandlers]: { reply: async ({ effect }) => {
             if (!isAsyncIterable(effect.payload)) return
             for await (const _chunk of effect.payload) {}
           } },
@@ -4449,7 +4451,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         [channelId]: defineChannel("portal", {
-          effects: {
+          [channelDeliveryHandlers]: {
             [effect]: () => {
               throw new Error("reaction failed")
             },
@@ -4512,7 +4514,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         portal: defineChannel("portal", {
-          effects: { reaction: delivered },
+          [channelDeliveryHandlers]: { reaction: delivered },
           messages: false,
           triggers: {
             message: {
@@ -4565,7 +4567,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         portal: defineChannel("portal", {
-          effects: { title: delivered },
+          [channelDeliveryHandlers]: { title: delivered },
           messages: false,
           triggers: {
             message: {
@@ -4610,7 +4612,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         portal: defineChannel("portal", {
-          effects: { reaction: delivered },
+          [channelDeliveryHandlers]: { reaction: delivered },
           messages: false,
           triggers: {
             message: {
@@ -6879,7 +6881,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         review: defineChannel("review", {
-          effects: {
+          [channelDeliveryHandlers]: {
             reply({ effect }) {
               delivered(effect.payload)
             },
@@ -6958,7 +6960,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         review: defineChannel("review", {
-          effects: {
+          [channelDeliveryHandlers]: {
             reply({ effect }) {
               delivered(effect.payload)
             },
@@ -7023,7 +7025,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         review: defineChannel("review", {
-          effects: {
+          [channelDeliveryHandlers]: {
             reply({ effect }) {
               delivered(effect.payload)
             },
@@ -7537,7 +7539,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         review: defineChannel("review", {
-          effects: {
+          [channelDeliveryHandlers]: {
             reply({ effect }) {
               delivered(effect.payload)
             },
@@ -7662,7 +7664,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         review: defineChannel("review", {
-          effects: {
+          [channelDeliveryHandlers]: {
             reply({ effect }) {
               delivered(effect.payload)
             },
@@ -7734,7 +7736,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         review: defineChannel("review", {
-          effects: {
+          [channelDeliveryHandlers]: {
             reply({ effect }) {
               delivered(effect.payload)
             },
@@ -7818,7 +7820,7 @@ describe("agent message protocol", () => {
       ],
       channels: {
         review: defineChannel("review", {
-          effects: {
+          [channelDeliveryHandlers]: {
             reply({ effect }) {
               delivered(effect.payload)
             },
@@ -13592,7 +13594,8 @@ describe("agent message protocol", () => {
       vi.useFakeTimers()
       try {
         const { defineAgent, defineCapability, runAgentInline } = await import("../src/index.ts")
-        const { defineFinishEffect, telegram } = await import("../src/channels.ts")
+        const { telegram } = await import("../src/channels.ts")
+        const { defineFinishEffect } = await import("../src/delivery-effects.ts")
         const { runAgentWorkflowDefinition } = await import("../src/runtime/workflow.ts")
         const failure = new Error("provider failed")
         const postMessage = vi.fn(async () => undefined)
@@ -13653,7 +13656,8 @@ describe("agent message protocol", () => {
       vi.useFakeTimers()
       try {
         const { defineAgent, defineCapability, runAgentInline } = await import("../src/index.ts")
-        const { defineFinishEffect, telegram } = await import("../src/channels.ts")
+        const { telegram } = await import("../src/channels.ts")
+        const { defineFinishEffect } = await import("../src/delivery-effects.ts")
         const { runAgentWorkflowDefinition } = await import("../src/runtime/workflow.ts")
         const failure = new Error("provider failed")
         // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.

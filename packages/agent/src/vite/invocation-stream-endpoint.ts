@@ -14,6 +14,7 @@ import { uiMessagesToAgentMessages } from "../chat-message-input.ts"
 import { discoverAgentDefinitions } from "../discovery.ts"
 import { isResolvedAgentTriggerHandledInvocation, resolveAgentInspectionMetadata, resolveAgentTriggerInvocation, resolveAgentTriggers, runAgentInline, streamAgent } from "../index.ts"
 import { inheritMessageChannelInstructions } from "../internal/channels.ts"
+import { channelDeliveryHandlers } from "../internal/channel-delivery-handlers.ts"
 import { markDiscoveredWorkspaceAgentDefinitionRegistered, workspaceAgentOwnsWorkspaceDefinition, workspaceModeFromOptions, workspaceNameFromOptions } from "../workspace-agent.ts"
 import {
   createViteAgentDiscoveryContext,
@@ -29,6 +30,7 @@ import type { AgentChatMessageTriggerInput } from "../chat-trigger.ts"
 import type { AgentDevLoopDiscoveryResponse, AgentInvocationStreamEvent } from "../invocation-stream.ts"
 import type {
   AgentChannelDeliveryEffectContext,
+  AgentChannelMessageContext,
   AgentCapabilityCliExecutionInput,
   AgentCapabilityCliExecutionResult,
   AgentHostIdentity,
@@ -157,16 +159,39 @@ function withDeliveryPreviewChannels(
 ): AgentInput<ViteAgentRuntimeContext> {
   if (!isRecord(agent) || !isRecord(agent.channels)) return agent
   const channels = Object.fromEntries(Object.entries(agent.channels).map(([channelId, channel]) => {
-    if (!isRecord(channel) || !isRecord(channel.effects)) return [channelId, channel]
-    const effects = Object.fromEntries(Object.keys(channel.effects).map(kind => [kind, (context: AgentChannelDeliveryEffectContext<AgentRuntimeConfig>) => {
-      preview({
-        channelId: context.trigger?.channelId || context.run?.channelId || channelId,
-        effect: context.effect,
-        ...(context.run ? { run: context.run } : {}),
-        type: "delivery-preview",
-      })
-    }]))
-    return [channelId, inheritMessageChannelInstructions({ ...channel, effects }, channel)]
+    if (!isRecord(channel)) return [channelId, channel]
+    const handlers = channel[channelDeliveryHandlers]
+    const message = isRecord(channel.message) ? channel.message : undefined
+    const methods = message && isRecord(message.methods) ? message.methods : undefined
+    if (!isRecord(handlers) && !methods) return [channelId, channel]
+    const previewHandlers = isRecord(handlers)
+      ? Object.fromEntries(Object.keys(handlers).map(kind => [kind, (context: AgentChannelDeliveryEffectContext<AgentRuntimeConfig>) => {
+          preview({
+            channelId: context.trigger?.channelId || context.run?.channelId || channelId,
+            effect: context.effect,
+            ...(context.run ? { run: context.run } : {}),
+            type: "delivery-preview",
+          })
+        }]))
+      : undefined
+    // Read methods still run; write methods show the call they would make.
+    const previewMethods = methods
+      ? Object.fromEntries(Object.entries(methods).map(([name, method]) => [name, isRecord(method) && method.read === true
+          ? method
+          : (context: AgentChannelMessageContext<AgentRuntimeConfig>, ...args: unknown[]) => {
+              preview({
+                channelId: context.trigger?.channelId || context.run?.channelId || channelId,
+                effect: { kind: name, ...(args.length ? { payload: args.length === 1 ? args[0] : args } : {}) },
+                ...(context.run ? { run: context.run } : {}),
+                type: "delivery-preview",
+              })
+            }]))
+      : undefined
+    return [channelId, inheritMessageChannelInstructions({
+      ...channel,
+      ...(previewHandlers ? { [channelDeliveryHandlers]: previewHandlers } : {}),
+      ...(previewMethods ? { message: { ...message, methods: previewMethods } } : {}),
+    }, channel)]
   }))
   const clone = Object.create(Object.getPrototypeOf(agent)) as AgentInput<ViteAgentRuntimeContext>
   Object.defineProperties(clone, Object.getOwnPropertyDescriptors(agent))

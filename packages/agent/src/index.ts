@@ -17,6 +17,8 @@ import { loadAgentWorkflowModule, loadAgentWorkflowRuntimeStateModule } from "./
 import { cloneWorkflowJsonValue, portableWorkflowCapabilityMask, workflowBytesToBase64 } from "./internal/workflow-portability.ts"
 import { agentErrorDetails, agentErrorMessage, isError, toAgentPublicError } from "./agent-error.ts"
 import { agentChannelDeliveryOwnershipVerifier, agentChannelDeliveryTracker, agentChannelDeliveryWorkflowContextKey, isAgentChannelDeliveryWorkflowBinding } from "./internal/channel-delivery.ts"
+import { channelDeliveryHandlers, channelMessageContextKey } from "./internal/channel-delivery-handlers.ts"
+import { parseStandardSchema } from "@vite-hub/internal/http-request"
 import {
   createBackedAgentInvocationController,
   startLiveAgentInvocation,
@@ -151,11 +153,16 @@ import type {
   AgentCapabilitiesResolver,
   AgentChannelDefinition,
   AgentChannelInputs,
+  AgentChannelMessage,
+  AgentChannelMessageContext,
+  AgentChannelMessageOf,
   AgentChannels,
   AgentCapabilityDefinition,
   AgentCapabilityMode,
   AgentCapabilityTypeContract,
   AgentChannelDeliveryEffectHandler,
+  AgentChannelMessageMethod,
+  AgentDefinitionHooks,
   AgentChannelDeliveryEffectIntent,
   AgentChannelDeliveryFinishEffect,
   AgentChannelDeliveryFinishEffectResult,
@@ -319,13 +326,11 @@ export type {
   AgentCapabilityPhase,
   AgentCapabilityRuntimeContext,
   AgentChannelDeliveryEffectContext,
-  AgentChannelDeliveryEffectHandler,
   AgentChannelDeliveryFinishEffect,
   AgentChannelDeliveryEffectIntent,
   AgentChannelDeliveryEffectIntentOptions,
   AgentChannelDeliveryEffectPayload,
   AgentChannelDeliveryEffectKind,
-  AgentChannelDeliveryEffects,
   AgentChannelDeliveryFinishEffectCallback,
   AgentChannelDeliveryFinishEffectResult,
   AgentChannelDeliveryFinishEffectContext,
@@ -355,7 +360,18 @@ export type {
   AgentChannelFactory,
   AgentChannelInput,
   AgentChannelInputs,
+  AgentChannelMessage,
+  AgentChannelMessageCalls,
+  AgentChannelMessageContext,
+  AgentChannelMessageDefinition,
+  AgentChannelMessageMethod,
+  AgentChannelMessageMethodHandler,
+  AgentChannelMessageMethods,
+  AgentChannelMessageOf,
+  AgentChannelReplyCalls,
   AgentChannelTriggerContext,
+  AgentDefinitionHooks,
+  AgentGitHubMessageCalls,
   AgentChannels,
   AgentDeliveryArtifact,
   AgentDeliveryArtifactPlacement,
@@ -1268,11 +1284,59 @@ function createAgentCallbackContext<TRuntimeConfig extends AgentRuntimeConfig>(
 
 function channelDeliveryEffectHandlers<TRuntimeConfig extends AgentRuntimeConfig>(
   channel: AgentChannelDefinition<TRuntimeConfig>,
-  intent: AgentChannelDeliveryEffectIntent,
+  intent: Pick<AgentChannelDeliveryEffectIntent, "kind">,
 ): readonly AgentChannelDeliveryEffectHandler<TRuntimeConfig>[] {
-  const handlers = channel.effects?.[intent.kind]
+  // A Channel message method also handles delivery intents of the same name, such as `event.reply()`.
+  const method = channel.message?.methods?.[intent.kind]
+  if (method) {
+    return [async ({ effect, finish: _finish, ...context }) => {
+      const message = await channelMessageData(channel, context.trigger?.channelId || channel.kind, context.context)
+      await channelMessageMethodHandler(method)({ ...context, message }, channelMessageIntentInput(effect))
+    }]
+  }
+  const handlers = channel[channelDeliveryHandlers]?.[intent.kind]
   if (!handlers) return []
   return hasRuntimeType(handlers, "function") ? [handlers] : [...handlers]
+}
+
+/** Read the trigger's message data and validate it with the Channel's `message.data` schema. */
+async function channelMessageData<TRuntimeConfig extends AgentRuntimeConfig>(
+  channel: AgentChannelDefinition<TRuntimeConfig>,
+  channelId: string,
+  context: AgentInvocationContextStore,
+): Promise<unknown> {
+  const stored = context.get(channelMessageContextKey)
+  const schema = channel.message?.data
+  return schema && stored !== undefined
+    ? await parseStandardSchema(schema, stored, `Channel "${channelId}" message data`)
+    : stored
+}
+
+function channelMessageMethodHandler<TRuntimeConfig extends AgentRuntimeConfig>(
+  method: AgentChannelMessageMethod<TRuntimeConfig>,
+): (context: AgentChannelMessageContext<TRuntimeConfig>, ...args: unknown[]) => unknown {
+  // SAFETY: Message method arguments come from the typed handle or from a delivery intent for the same method name.
+  return (hasRuntimeType(method, "function") ? method : method.handler) as (context: AgentChannelMessageContext<TRuntimeConfig>, ...args: unknown[]) => unknown
+}
+
+/** Restore reply artifacts that intent creation moved out of the reply input. */
+function channelMessageIntentInput(intent: AgentChannelDeliveryEffectIntent): unknown {
+  if (intent.kind !== "reply" || !intent.artifacts?.length || isAsyncIterable(intent.payload)) return intent.payload
+  if (hasRuntimeType(intent.payload, "string")) return { artifacts: intent.artifacts, markdown: intent.payload }
+  return { ...(isRuntimeRecord(intent.payload) ? intent.payload : {}), artifacts: intent.artifacts }
+}
+
+/** Readable call text for the trace, such as `label({"add":["Receipts"]})`. */
+function channelMessageCallContent(name: string, args: readonly unknown[]): string {
+  const text = args.map((arg) => {
+    try {
+      return JSON.stringify(arg) ?? String(arg)
+    }
+    catch {
+      return String(arg)
+    }
+  }).join(", ")
+  return `${name}(${text})`
 }
 
 function activeAgentChannel<TRuntimeConfig extends AgentRuntimeConfig>(
@@ -1472,6 +1536,17 @@ async function applyChannelDeliveryEffectIntents<
       continue
     }
 
+    if (context.input.dryRun) {
+      const recorded = await dryRunDeliveryIntent(intent)
+      await traceAgentChannelDeliveryEffect(toTraceContext(context), recorded, {
+        ...metadata,
+        // Reply text is the recorded content. Other intents record their call.
+        ...(recorded.kind === "reply" ? {} : { "channel.effect.content": channelMessageCallContent(recorded.kind, recorded.payload === undefined ? [] : [recorded.payload]) }),
+        "channel.effect.skipped": "dry-run",
+      })
+      continue
+    }
+
     const titleDelivery = isMessageChannelTitleEffectIntent(intent)
       ? await prepareMessageChannelTitleDelivery(context.context, context.run, intent).catch(async (error) => {
           await traceAgentChannelDeliveryEffect(toTraceContext(context), intent, {
@@ -1641,10 +1716,116 @@ async function applyChannelDeliveryEffectIntents<
   }
 }
 
+/** A dry run reads a streamed reply so the trace can show the text that was not sent. */
+async function dryRunDeliveryIntent(intent: AgentChannelDeliveryEffectIntent): Promise<AgentChannelDeliveryEffectIntent> {
+  if (!isAsyncIterable(intent.payload)) return intent
+  let text = ""
+  for await (const chunk of intent.payload) {
+    if (hasRuntimeType(chunk, "string") && text.length < 16 * 1024) text += chunk.slice(0, 16 * 1024 - text.length)
+  }
+  return { ...intent, payload: text }
+}
+
+async function createChannelMessageHandle<
+  TRuntimeConfig extends AgentRuntimeConfig,
+  CALL_OPTIONS,
+>(
+  context: InvocationRunContext<TRuntimeConfig, CALL_OPTIONS>,
+  finish: AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS>,
+): Promise<AgentChannelMessage | undefined> {
+  const active = activeAgentChannel(context.channels, context.context, context.run)
+  if (!active) return
+  const data = await channelMessageData(active.channel, active.channelId, context.context)
+  const delivery = createFinishDeliveryEffectContext(finish, context)
+  const builtIn: Record<string, (input: never) => AgentChannelDeliveryEffectIntent> = {
+    reaction: delivery.reaction,
+    reply: delivery.reply,
+    status: delivery.status,
+  }
+  const calls: Record<string, (...args: unknown[]) => Promise<unknown>> = {}
+  for (const [name, create] of Object.entries(builtIn)) {
+    if (!active.channel[channelDeliveryHandlers]?.[name]) continue
+    calls[name] = async (input) => {
+      // SAFETY: The typed handle passes the built-in method input for this intent kind.
+      await applyChannelDeliveryEffectIntents(context, [create(input as never)], finish)
+    }
+  }
+  for (const [name, method] of Object.entries(active.channel.message?.methods || {})) {
+    calls[name] = async (...args) => await callChannelMessageMethod(context, active, name, method, data, args)
+  }
+  return Object.freeze({
+    ...calls,
+    channel: active.channelId,
+    data,
+    kind: active.channel.kind,
+  })
+}
+
+async function callChannelMessageMethod<
+  TRuntimeConfig extends AgentRuntimeConfig,
+  CALL_OPTIONS,
+>(
+  context: InvocationRunContext<TRuntimeConfig, CALL_OPTIONS>,
+  active: { channel: AgentChannelDefinition<TRuntimeConfig>, channelId: string, trigger?: { id?: string, name?: string } },
+  name: string,
+  method: AgentChannelMessageMethod<TRuntimeConfig>,
+  data: unknown,
+  args: unknown[],
+): Promise<unknown> {
+  const read = !hasRuntimeType(method, "function")
+  const traceIntent: AgentChannelDeliveryEffectIntent = { kind: name }
+  const metadata = {
+    "channel.effect.content": channelMessageCallContent(name, args),
+    "channel.effect.kind": name,
+    "channel.effect.supported": true,
+    "channel.effect.read": read,
+  }
+  if (!read && context.input.dryRun) {
+    await traceAgentChannelDeliveryEffect(toTraceContext(context), traceIntent, {
+      ...metadata,
+      "channel.effect.skipped": "dry-run",
+    })
+    return undefined
+  }
+  const { runtimeConfig: _runtimeConfig, ...callbackContext } = context.runtimeContext
+  const messageContext: AgentChannelMessageContext<TRuntimeConfig> = {
+    ...callbackContext,
+    channel: active.channel,
+    context: context.context,
+    input: context.input,
+    message: data,
+    request: context.runtimeContext.request,
+    run: context.run,
+    trigger: {
+      channelId: active.channelId,
+      ...(active.trigger?.id ? { id: active.trigger.id } : {}),
+      ...(active.trigger?.name ? { name: active.trigger.name } : {}),
+    },
+    workspace: context.workspace,
+  }
+  try {
+    const result = await runObservedAgentHook(context.hooks, {
+      ids: { channelId: active.channelId, runId: context.run?.runId },
+      metadata: { "channel.effect.kind": name, "channel.effect.read": read },
+      name: "channel:message",
+      owner: "channel",
+      phase: "message",
+    }, async () => await channelMessageMethodHandler(method)(messageContext, ...args))
+    await traceAgentChannelDeliveryEffect(toTraceContext(context), traceIntent, metadata)
+    return result
+  }
+  catch (error) {
+    await traceAgentChannelDeliveryEffect(toTraceContext(context), traceIntent, {
+      ...metadata,
+      "error.message": agentErrorMessage(error),
+    })
+    throw error
+  }
+}
+
 export { applyAgentToolPolicies, withAgentToolStepReporting } from "./tool-runtime.ts"
 export { inspectAgentTools } from "./tool-inspection.ts"
 export { defineCapability } from "./capability-runtime.ts"
-export { defineFinishEffect } from "./delivery-effects.ts"
 export { isResolvedAgentTriggerHandledInvocation, verifyAgentWebhookRequest } from "./trigger-runtime.ts"
 export type { AgentWebhookVerificationResult, ResolvedAgentTriggerHandledInvocation, ResolvedAgentTriggerInvocation, ResolvedAgentTriggerInvocationResult } from "./trigger-runtime.ts"
 export * from "./messages.ts"
@@ -2508,7 +2689,7 @@ export interface DefineAgent {
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
   >(
-    options: AgentSettings<
+    options: Omit<AgentSettings<
       TRuntimeConfig,
       CALL_OPTIONS,
       TInvokerProfile,
@@ -2516,7 +2697,12 @@ export interface DefineAgent {
       AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>,
       TOutput,
       CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>
-    > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never, channels?: TChannels },
+    >, "hooks"> & {
+      capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>
+      channels?: TChannels
+      hooks?: AgentDefinitionHooks<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput, AgentChannelMessageOf<TChannels>>
+      workspace?: never
+    },
   ): ConfiguredAgentWorkspace<AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>, undefined, TCapabilities, TChannels>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -2526,14 +2712,19 @@ export interface DefineAgent {
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
   >(
-    options: AgentSettings<
+    options: Omit<AgentSettings<
       TRuntimeConfig,
       CALL_OPTIONS,
       TInvokerProfile,
       AgentCapabilitiesInvocationContextValues<TCapabilities>,
       AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>,
       TOutput
-    > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never, channels?: TChannels },
+    >, "hooks"> & {
+      capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>
+      channels?: TChannels
+      hooks?: AgentDefinitionHooks<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput, AgentChannelMessageOf<TChannels>>
+      workspace?: never
+    },
   ): ConfiguredAgentWorkspace<AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>, undefined, TCapabilities, TChannels>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -5538,36 +5729,38 @@ function createFinishDeliveryEffectContext<
   }
 }
 
-function createAgentFinishHookEvent<
+async function createAgentFinishHookEvent<
   TRuntimeConfig extends AgentRuntimeConfig,
   CALL_OPTIONS,
 >(
   event: AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS>,
   context: InvocationRunContext<TRuntimeConfig, CALL_OPTIONS>,
-): AgentFinishHookEvent<TRuntimeConfig, CALL_OPTIONS> {
+): Promise<AgentFinishHookEvent<TRuntimeConfig, CALL_OPTIONS>> {
   const delivery = createFinishDeliveryEffectContext(event, context)
   const { error: _error, errorMessage: _errorMessage, ...finishEvent } = event
   return {
     ...finishEvent,
+    message: await createChannelMessageHandle(context, event),
     reaction: delivery.reaction,
     reply: delivery.reply,
     status: delivery.status,
   }
 }
 
-function createAgentErrorHookEvent<
+async function createAgentErrorHookEvent<
   TRuntimeConfig extends AgentRuntimeConfig,
   CALL_OPTIONS,
 >(
   event: AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS>,
   context: InvocationRunContext<TRuntimeConfig, CALL_OPTIONS>,
-): AgentErrorHookEvent<TRuntimeConfig, CALL_OPTIONS> {
+): Promise<AgentErrorHookEvent<TRuntimeConfig, CALL_OPTIONS>> {
   const delivery = createFinishDeliveryEffectContext(event, context)
   const { result: _result, text: _text, ...errorEvent } = event
   return {
     ...errorEvent,
     error: errorEvent.error,
     errorMessage: errorEvent.errorMessage ?? agentErrorDetails(errorEvent.error).message,
+    message: await createChannelMessageHandle(context, event),
     publicError: toAgentPublicError(errorEvent.error, "http"),
     reaction: delivery.reaction,
     reply: delivery.reply,
@@ -5834,9 +6027,9 @@ async function finishAgentInvocation<
           }, async () => {
             outcomeHookResult = failed
               // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-              ? await outcomeHook?.(createAgentErrorHookEvent(hookFinishEvent, hookContext) as never)
+              ? await outcomeHook?.(await createAgentErrorHookEvent(hookFinishEvent, hookContext) as never)
               // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-              : await outcomeHook?.(createAgentFinishHookEvent(hookFinishEvent, hookContext) as never)
+              : await outcomeHook?.(await createAgentFinishHookEvent(hookFinishEvent, hookContext) as never)
           })
           if (outcomeHookResult && !hookContext.input.abortSignal?.aborted) {
             const outcomeHookIntents: AgentChannelDeliveryEffectIntent[] = []

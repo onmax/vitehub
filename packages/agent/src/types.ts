@@ -29,6 +29,7 @@ import type {
   WorkspaceSourceInput,
 } from "@vite-hub/workspace"
 import type { BoxDefinition } from "@vite-hub/box"
+import type { channelDeliveryHandlers } from "./internal/channel-delivery-handlers.ts"
 import type {
   AgentChannelOptions,
   AgentWebChatChannelOptions,
@@ -170,6 +171,7 @@ export interface AgentInvocationContextValues extends ViteHubAgentInvocationCont
   "channel.delivery.effects": AgentChannelDeliveryEffectIntent[]
   "channel.delivery.finishEffects": AgentChannelDeliveryFinishEffect[]
   "channel.delivery.supportsTitle": boolean
+  "channel.message": unknown
   invoker: AgentInvoker
 }
 
@@ -233,6 +235,11 @@ export interface AgentRunInput<
   context?: TContext
   message?: string | Message
   messages?: Message[]
+  /**
+   * Record Channel message writes in the trace instead of calling the provider.
+   * Read methods still run.
+   */
+  dryRun?: boolean
   options?: CALL_OPTIONS
   prompt?: string | Message[]
   timeout?: number
@@ -591,6 +598,11 @@ export interface AgentTriggerRunInvokeResult<CALL_OPTIONS = unknown> {
     finishEffects?: AgentChannelDeliveryFinishEffect | readonly AgentChannelDeliveryFinishEffect[]
   }
   input: AgentRunInput<CALL_OPTIONS>
+  /**
+   * JSON data that identifies the triggering Channel message.
+   * Message methods receive it as `context.message`; hooks read it as `event.message.data`.
+   */
+  message?: unknown
   metadata?: Record<string, unknown>
   run?: AgentRunMetadata
   webhook?: AgentWebhookInvocationOwnership<CALL_OPTIONS>
@@ -774,7 +786,10 @@ export type AgentFinishHookEvent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TMessage = AgentChannelMessage | undefined,
 > = Omit<AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS, TOutput>, "error" | "errorMessage"> & {
+  /** The Channel message that started this Invocation, or `undefined` without a Channel. */
+  message: TMessage
   reaction: (input: AgentChannelDeliveryReactionInput, options?: AgentChannelDeliveryEffectIntentOptions) => AgentChannelDeliveryEffectIntent<"reaction">
   reply: (input: AgentChannelDeliveryReplyInput, options?: AgentChannelDeliveryEffectIntentOptions) => AgentChannelDeliveryEffectIntent<"reply">
   status: (input: AgentChannelDeliveryStatusInput, options?: AgentChannelDeliveryEffectIntentOptions) => AgentChannelDeliveryEffectIntent<"status">
@@ -783,9 +798,12 @@ export type AgentFinishHookEvent<
 export type AgentErrorHookEvent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
+  TMessage = AgentChannelMessage | undefined,
 > = Omit<AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS>, "error" | "errorMessage" | "result" | "text"> & {
   error: unknown
   errorMessage: string
+  /** The Channel message that started this Invocation, or `undefined` without a Channel. */
+  message: TMessage
   publicError: AgentPublicError
   reaction: (input: AgentChannelDeliveryReactionInput, options?: AgentChannelDeliveryEffectIntentOptions) => AgentChannelDeliveryEffectIntent<"reaction">
   reply: (input: AgentChannelDeliveryReplyInput, options?: AgentChannelDeliveryEffectIntentOptions) => AgentChannelDeliveryEffectIntent<"reply">
@@ -795,14 +813,18 @@ export type AgentErrorHookEvent<
 export type AgentErrorHook<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
-> = (event: AgentErrorHookEvent<TRuntimeConfig, CALL_OPTIONS>) => MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
+  TMessage = AgentChannelMessage | undefined,
+> = {
+  bivarianceHack(event: AgentErrorHookEvent<TRuntimeConfig, CALL_OPTIONS, TMessage>): MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
+}["bivarianceHack"]
 
 export type AgentFinishHook<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TMessage = AgentChannelMessage | undefined,
 > = {
-  bivarianceHack(event: AgentFinishHookEvent<TRuntimeConfig, CALL_OPTIONS, TOutput>): MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
+  bivarianceHack(event: AgentFinishHookEvent<TRuntimeConfig, CALL_OPTIONS, TOutput, TMessage>): MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
 }["bivarianceHack"]
 
 export type AgentInputHook<
@@ -816,9 +838,10 @@ export interface AgentInvocationHooks<
   CALL_OPTIONS = unknown,
   TContextValues extends object = AgentInvocationContextValues,
   TOutput = unknown,
+  TMessage = AgentChannelMessage | undefined,
 > {
-  "agent:error"?: AgentErrorHook<TRuntimeConfig, CALL_OPTIONS>
-  "agent:finish"?: AgentFinishHook<TRuntimeConfig, CALL_OPTIONS, TOutput>
+  "agent:error"?: AgentErrorHook<TRuntimeConfig, CALL_OPTIONS, TMessage>
+  "agent:finish"?: AgentFinishHook<TRuntimeConfig, CALL_OPTIONS, TOutput, TMessage>
   "agent:input"?: AgentInputHook<TRuntimeConfig, CALL_OPTIONS, TContextValues>
 }
 
@@ -1562,6 +1585,15 @@ export type AgentUIMessageStreamProjectionResolver<
   | AgentUIMessageStreamProjection
   | ((context: AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues>) => MaybePromise<AgentUIMessageStreamProjection>)
 
+/** Hooks accepted by an Agent Definition. `TMessage` types `event.message` in outcome hooks. */
+export type AgentDefinitionHooks<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+  TOutput = unknown,
+  TMessage = AgentChannelMessage | undefined,
+> = AgentCapabilityHooks<TRuntimeConfig> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput, TMessage>
+
 type AgentSharedSettings<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
@@ -1970,14 +2002,166 @@ export interface AgentChannelActivityDefinition<TRuntimeConfig extends AgentRunt
   update(context: AgentChannelActivityContext<TRuntimeConfig>): MaybePromise<void>
 }
 
+export interface AgentChannelMessageContext<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+> extends AgentCallbackContext<TRuntimeConfig> {
+  channel: AgentChannelDefinition<TRuntimeConfig>
+  context: AgentInvocationContextStore
+  input: AgentRunInput
+  /** Message data returned by the Channel trigger. */
+  message: TData
+  request?: Request
+  run?: AgentRunMetadata
+  trigger?: {
+    channelId: string
+    id?: string
+    name?: string
+  }
+  workspace?: ReadonlyWorkspaceFacade | WritableWorkspaceFacade
+}
+
+export type AgentChannelMessageMethodHandler<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+> = {
+  bivarianceHack(context: AgentChannelMessageContext<TRuntimeConfig, TData>, ...args: never[]): unknown
+}["bivarianceHack"]
+
+/**
+ * A function is a write method. A dry run records its call instead of running it.
+ * Use `{ read: true, handler }` for a method that only reads provider state.
+ */
+export type AgentChannelMessageMethod<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+> =
+  | AgentChannelMessageMethodHandler<TRuntimeConfig, TData>
+  | { read: true, handler: AgentChannelMessageMethodHandler<TRuntimeConfig, TData> }
+
+/** `channel`, `data`, and `kind` are reserved for the handle's own properties. */
+export type AgentChannelMessageMethods<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+> = Record<string, AgentChannelMessageMethod<TRuntimeConfig, TData>> & { [TName in "channel" | "data" | "kind"]?: never }
+
+export interface AgentChannelMessageDefinition<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
+> {
+  /** Standard Schema for the message data that Channel triggers return. */
+  data?: StandardSchemaV1<unknown, TData>
+  methods?: TMethods
+}
+
+type AgentChannelMessageMethodArgs<TMethod> =
+  TMethod extends { handler: (context: never, ...args: infer TArgs) => unknown } ? TArgs
+    : TMethod extends (context: never, ...args: infer TArgs) => unknown ? TArgs
+      : never
+
+type AgentChannelMessageMethodResult<TMethod> =
+  TMethod extends { handler: (...args: never[]) => infer TResult } ? TResult
+    : TMethod extends (...args: never[]) => infer TResult ? TResult
+      : never
+
+/** Callable form of Channel message methods, without the Channel context argument. */
+export type AgentChannelMessageCalls<TMethods> = {
+  readonly [TName in keyof TMethods]: (...args: AgentChannelMessageMethodArgs<TMethods[TName]>) => Promise<Awaited<AgentChannelMessageMethodResult<TMethods[TName]>>>
+}
+
+/** Message methods that the Discord, Slack, Teams, and Telegram Channels provide. */
+export interface AgentChannelReplyCalls {
+  readonly reply: (input: AgentChannelDeliveryReplyInput) => Promise<void>
+}
+
+/** Message methods that the GitHub Channel provides. They exist only when the Channel has a GitHub App. */
+export interface AgentGitHubMessageCalls {
+  readonly reaction?: (input: AgentChannelDeliveryReactionInput) => Promise<void>
+  readonly reply?: (input: AgentChannelDeliveryReplyInput) => Promise<void>
+  readonly status?: (input: AgentChannelDeliveryStatusInput) => Promise<void>
+}
+
+type AgentMessageChannelKind = "discord" | "slack" | "teams" | "telegram"
+
+type AgentBuiltInChannelMessageCalls<TKind extends string> =
+  string extends TKind ? Record<never, never>
+    : TKind extends "github" ? AgentGitHubMessageCalls
+      : TKind extends AgentMessageChannelKind ? AgentChannelReplyCalls
+        : Record<never, never>
+
+/**
+ * Handle for the Channel message that started an Invocation.
+ * `channel` is the name in the Agent's `channels` map; it discriminates Agents with several Channels.
+ */
+export type AgentChannelMessage<
+  TChannel extends string = string,
+  TKind extends string = string,
+  TData = unknown,
+  TCalls = Record<never, never>,
+> = {
+  readonly channel: TChannel
+  /** Message data returned by the Channel trigger. */
+  readonly data: TData
+  readonly kind: TKind
+} & TCalls
+
+/** A Channel Definition that keeps its kind, message data, and message methods in its type. */
+export type AgentChannelDefinitionOf<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TKind extends string = string,
+  TData = unknown,
+  TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+> = Omit<AgentChannelDefinition<TRuntimeConfig>, "kind" | "message"> & {
+  readonly kind: TKind
+  readonly message?: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods>
+}
+
+type AgentChannelInputKind<TName extends string> =
+  TName extends "webChat" ? "web-chat" : TName extends "discord" | "github" | "http" | "slack" | "teams" | "telegram" ? TName : string
+
+type AgentChannelMessageDefinitionOf<TInput> = TInput extends { message?: infer TMessage } ? NonNullable<TMessage> : never
+
+type AgentChannelMessageData<TInput> =
+  AgentChannelMessageDefinitionOf<TInput> extends { data?: infer TSchema }
+    ? NonNullable<TSchema> extends StandardSchemaV1<unknown, infer TData> ? TData : unknown
+    : unknown
+
+/** Declared methods only. The index signature of the base Channel type declares none. */
+type AgentChannelDeclaredMethods<TInput> =
+  AgentChannelMessageDefinitionOf<TInput> extends { methods?: infer TMethods }
+    ? string extends keyof NonNullable<TMethods> ? Record<never, never> : NonNullable<TMethods>
+    : Record<never, never>
+
+type AgentChannelMessageFromInput<TName extends string, TInput> =
+  TInput extends (...args: never[]) => infer TDefinition
+    ? AgentChannelMessageFromInput<TName, TDefinition>
+    : TInput extends { kind: infer TKind extends string }
+      ? AgentChannelMessage<
+        TName,
+        TKind,
+        AgentChannelMessageData<TInput>,
+        Omit<AgentBuiltInChannelMessageCalls<TKind>, keyof AgentChannelDeclaredMethods<TInput>> & AgentChannelMessageCalls<AgentChannelDeclaredMethods<TInput>>
+      >
+      : AgentChannelMessage<TName, AgentChannelInputKind<TName>, unknown, AgentBuiltInChannelMessageCalls<AgentChannelInputKind<TName>>>
+
+/** Hook `event.message` type for an Agent's `channels` option. */
+export type AgentChannelMessageOf<TChannels> =
+  [TChannels] extends [undefined]
+    ? undefined
+    : { [TName in keyof TChannels & string]: AgentChannelMessageFromInput<TName, NonNullable<TChannels[TName]>> }[keyof TChannels & string] | undefined
+
 export interface AgentChannelDefinition<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
+  /** Internal delivery handlers for built-in Channels. */
+  [channelDeliveryHandlers]?: AgentChannelDeliveryEffects<TRuntimeConfig>
   activity?: AgentChannelActivityDefinition<TRuntimeConfig>
   adapter?: AgentChatPlatformResolver<TRuntimeConfig>
   capabilities?: readonly AgentCapabilityDefinition<TRuntimeConfig>[]
-  effects?: AgentChannelDeliveryEffects<TRuntimeConfig>
   identity?: IdentityResolver
   kind: string
   listener?: { kind: "telegram-polling" }
+  /** Methods that hooks call through `event.message`. */
+  message?: AgentChannelMessageDefinition<TRuntimeConfig>
   messages?: false | AgentMessageChannelSettings<TRuntimeConfig>
   route?: unknown
   triggers?: Record<string, AgentTriggerDefinition<TRuntimeConfig, WorkspaceName, any, any, AgentChannelTriggerContext<TRuntimeConfig>>>
