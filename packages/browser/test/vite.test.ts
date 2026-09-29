@@ -117,7 +117,7 @@ describe("hubBrowser", () => {
     const runtime = await runHook(plugin.load, runtimeId)
     const types = await readFile(join(root, ".vitehub", "types", "browser.d.ts"), "utf8")
 
-    expect(registry).toContain('"code-image": async () => import(')
+    expect(registry).toContain('["code-image"]: async () => import(')
     expect(registry).toContain("server/browsers/code-image.ts")
     expect(runtime).toContain('"binding": "CODE_BROWSER"')
     expect(runtime).toContain('"engine": "kitesurf"')
