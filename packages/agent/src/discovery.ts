@@ -213,6 +213,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // Local export clauses may appear before their declarations.
   const pendingExports = new Map<string, string>()
   const mutatedBindings = new Set<string>()
+  const assignedAliases = new Map<string, Set<string>>()
   let exported: number | undefined
   let depth = 0
   for (let i = 0; i < tokens.length; i++) {
@@ -354,9 +355,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (moduleImport !== undefined) reExports.set(name, moduleImport)
   }
 
+  function assignmentOperator(index: number): boolean {
+    let cursor = index
+    while (["+", "-", "*", "/", "%", "&", "|", "^", "?", "<", ">"].includes(tokens[cursor] ?? "")) cursor++
+    return tokens[cursor] === "=" && tokens[cursor + 1] !== "=" && tokens[cursor + 1] !== ">"
+  }
+
   for (let i = 0; i < tokens.length; i++) {
     const name = tokens[i]
-    if (!declarations.has(name)) continue
+    if (!declarations.has(name) && !/^[A-Za-z_$][\w$]*$/.test(name ?? "")) continue
     const next = tokens[i + 1]
     let declarationBinding = false
     for (let cursor = i - 1; cursor >= 0 && ![";", "{"].includes(tokens[cursor]!); cursor--) {
@@ -382,19 +389,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         if (nesting > 0) break
       }
     }
-    const propertyAssignment = memberEnd > i + 1 && tokens[memberEnd] === "="
-    const directAssignment = next === "=" && !declarationBinding
+    const propertyAssignment = memberEnd > i + 1 && assignmentOperator(memberEnd)
+    const directAssignment = assignmentOperator(i + 1) && !declarationBinding
     if (propertyAssignment || directAssignment) mutatedBindings.add(name)
-  }
 
-  for (let changed = true; changed;) {
-    changed = false
-    for (const [alias, initializer] of declarations) {
-      const target = tokens[initializer]
-      if (!target || !declarations.has(target) || !mutatedBindings.has(alias) || mutatedBindings.has(target)) continue
-      if (![";", ",", undefined].includes(tokens[initializer + 1])) continue
-      mutatedBindings.add(target)
-      changed = true
+    if (next === "=" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "")
+      && [";", ",", undefined].includes(tokens[i + 3])) {
+      const targets = assignedAliases.get(name) ?? new Set<string>()
+      targets.add(tokens[i + 2]!)
+      assignedAliases.set(name, targets)
     }
   }
 
@@ -509,7 +512,34 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
   for (const binding of variableDeclarations.keys()) {
     if (["[", "{"].includes(tokens[binding + 1])) {
-      destructuredBindings.set(binding, callbackBindingNames(binding + 1, tokens.length))
+      const names = callbackBindingNames(binding + 1, tokens.length)
+      destructuredBindings.set(binding, names)
+      let cursor = binding + 1
+      let nesting = 0
+      do {
+        if (["[", "{"].includes(tokens[cursor])) nesting++
+        else if (["]", "}"].includes(tokens[cursor])) nesting--
+        cursor++
+      } while (cursor < tokens.length && nesting > 0)
+      const target = tokens[cursor + 1]
+      if (tokens[cursor] === "=" && target && /^[A-Za-z_$][\w$]*$/.test(target)) {
+        for (const name of names) {
+          const targets = assignedAliases.get(name) ?? new Set<string>()
+          targets.add(target)
+          assignedAliases.set(name, targets)
+        }
+      }
+    }
+  }
+  for (let changed = true; changed;) {
+    changed = false
+    for (const [alias, targets] of assignedAliases) {
+      if (!mutatedBindings.has(alias)) continue
+      for (const target of targets) {
+        if (mutatedBindings.has(target)) continue
+        mutatedBindings.add(target)
+        changed = true
+      }
     }
   }
 

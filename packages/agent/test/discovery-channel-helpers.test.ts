@@ -208,6 +208,13 @@ it.each([
   'options.pullRequest.workspace = true',
   'options["pullRequest"]["workspace"] = true',
   'const alias = options; alias["pullRequest"] = true',
+  'options.pullRequest ||= true',
+  'options.pullRequest.workspace ||= true',
+  'options.pullRequest ??= { workspace: true }',
+  'options.pullRequest &&= { workspace: true }',
+  'let alias; alias = options; alias.pullRequest = true',
+  'let alias; alias = options; alias.pullRequest.workspace = true',
+  'const { pullRequest: alias } = options; alias.workspace = true',
 ])("rejects mutated Channel option bindings: %s", async (mutation) => {
   const source = `${imports} const options = { pullRequest: { workspace: false } }; ${mutation}; export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
