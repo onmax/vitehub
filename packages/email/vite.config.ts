@@ -17,10 +17,13 @@ export default defineConfig({
     },
     entry: [
       "src/index.ts",
+      "src/cli.ts",
       "src/drivers/cloudflare-email.ts",
       "src/drivers/resend.ts",
       "src/markdown.ts",
+      "src/runtime/console.ts",
       "src/runtime/empty-definition.ts",
+      "src/runtime/outbox.ts",
       "src/server.ts",
       "src/test.ts",
       "src/vite.ts",
@@ -28,7 +31,7 @@ export default defineConfig({
     exports: {
       customExports(exports) {
         return Object.fromEntries(
-          Object.entries(exports).filter(([key]) => key !== "./runtime/empty-definition"),
+          Object.entries(exports).filter(([key]) => key !== "./cli" && key !== "./runtime/empty-definition" && key !== "./runtime/outbox"),
         )
       },
       inlinedDependencies: false,

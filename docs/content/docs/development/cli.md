@@ -25,7 +25,7 @@ Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Email contributes `email` when `hubEmail()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
@@ -33,6 +33,7 @@ Available namespaces:
   agent       Agent development workflows.
   channels    External Channel registration workflows.
   db          Database development workflows.
+  email       Inspect the development outbox and preview Email templates.
   schedule    Inspect and control Runtime Schedules in a running Vite + Nitro Development Server.
   workspace   Workspace development workflows.
   types       Generate ViteHub TypeScript declarations.
@@ -53,6 +54,8 @@ Available namespaces:
 | `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
 | `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
+| `vitehub email outbox` | Available | Email Package | List, show, or clear the messages that the development outbox captured in a running Vite + Nitro Development Server. |
+| `vitehub email preview` | Available | Email Package | Render an Email template from `server/emails` without sending it. |
 | `vitehub schedule list` | Available | Schedule Package | List Runtime Schedules with enabled state, next due time, and last run. |
 | `vitehub schedule get` | Available | Schedule Package | Show one Runtime Schedule. |
 | `vitehub schedule runs` | Available | Schedule Package | List the recorded runs of one Schedule, newest first. |
@@ -172,6 +175,44 @@ pnpm vitehub db migrate
 ```
 
 `db generate` forwards Drizzle Kit arguments, supports `--name <name>` for a migration name, and uses `--custom` to create an empty custom migration. `db migrate` accepts forwarded Drizzle Kit migration arguments.
+
+## Inspect the Email development outbox
+
+In `vite dev`, the Email Package records each `email.send()` message in an in-memory development outbox. Start the app's Vite Development Server, then run `vitehub email outbox` from another terminal. The commands read the outbox of that server runtime.
+
+```bash [Terminal]
+pnpm vitehub email outbox list
+pnpm vitehub email outbox list --json
+pnpm vitehub email outbox show outbox-2
+pnpm vitehub email outbox show outbox-2 --html > message.html
+pnpm vitehub email outbox show outbox-2 --text
+pnpm vitehub email outbox clear
+```
+
+```txt [Output]
+ID        CAPTURED                  PROVIDER  DELIVERY   TO                 SUBJECT
+outbox-2  2026-09-29T10:00:00.000Z  resend    captured   ada@example.com    Invoice
+outbox-1  2026-09-29T09:00:00.000Z  resend    sent re_1  grace@example.com  Welcome
+2 messages (limit 50).
+```
+
+`show` prints the headers, recipients, attachment names and sizes, delivery state, and text body. `--html` prints only the HTML source and `--text` prints only the text body. Every command accepts `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>`. Errors go to stderr, or into the JSON body with `--json`.
+
+The outbox redacts header and metadata values with secret names, and credentials in delivery errors. It keeps message bodies as the application rendered them, so do not put credentials in message bodies.
+
+The commands use a guarded dev endpoint that `hubEmail()` registers only on the Development Server. The endpoint forwards each operation into the Nitro dev environment, which owns the outbox. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 and the CLI prints that the host is not supported. Deployed runtimes do not expose the endpoint. See [Email](/docs/server-primitives/email#development-outbox) for the outbox options.
+
+## Preview Email templates
+
+`vitehub email preview` renders one Markdown template from `server/emails` with `renderEmailMarkdown()`. It does not send the message and does not need a running server. The template name is the path under `server/emails` without `.md`, the same name as the `#vitehub/emails/<name>` import.
+
+```bash [Terminal]
+pnpm vitehub email preview welcome --data '{"name":"Ada"}'
+pnpm vitehub email preview billing/receipt --data @fixtures/receipt.json --html > receipt.html
+pnpm vitehub email preview welcome --data '{"name":"Ada"}' --json
+```
+
+`--data` takes a JSON object, or `@` and the path of a JSON file relative to the current directory. Pass every value that the template reads. The default output prints the text body and the HTML. `--html`, `--text`, and `--json` print one format.
 
 ## Inspect and control Runtime Schedules
 
@@ -362,6 +403,10 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 | Agent eval times out | The eval case, model call, or provider run exceeds `agent.eval.testTimeout`. | Increase `agent.eval.testTimeout` in `vite.config.ts` or narrow the eval case. |
 | Vite config fails while loading a ViteHub plugin import | A fresh npm project is loading `vite.config.ts` as CommonJS, but ViteHub packages are ESM-only. | Set `"type": "module"` in `package.json` or rename the config to `vite.config.mts`. |
 | `No Compatible Vite Development Server found` | The app dev server is not running or `--url` points at the wrong port. | Start Vite separately, then pass the dev server URL. |
+| `vitehub email outbox` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
+| `vitehub email outbox` prints `EMAIL_OUTBOX_DISABLED` | The app sets `email.outbox: false`. | Remove `outbox: false` to capture messages in `vite dev`. |
+| `vitehub email outbox list` prints `No captured messages.` | The app did not call `email.send()` since the last start, or the Development Server restarted. | Send a message, then list the outbox again. The outbox is in memory. |
+| `vitehub email preview` prints `EMAIL_TEMPLATE_NOT_FOUND` | The name does not match a file under `server/emails`. | Use a name from the printed template list, without `.md`. |
 | `vitehub schedule` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
 | `vitehub schedule run` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
 | `Unknown Workspace Dev target` | The named Workspace is not discovered by the running Vite dev server. | Check the Workspace Definition name and make sure `hubWorkspace()` is active. |

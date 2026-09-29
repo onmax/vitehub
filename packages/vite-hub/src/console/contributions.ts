@@ -1,3 +1,4 @@
+import { emailConsoleSection } from "@vite-hub/email/vite"
 import { describeViteHubConsoleRuntimeReader, describeViteHubConsoleSection, readViteHubConsoleSection } from "@vite-hub/internal/console"
 import { queueConsoleSection } from "@vite-hub/queue/vite"
 import { rateLimitConsoleSection } from "@vite-hub/rate-limit/vite"
@@ -99,6 +100,8 @@ const registeredSections: readonly ConsoleRegisteredSection[] = [
     serverDirs: context.serverDirs,
     serverRootDir: context.scheduleDiscoveryRoot ?? context.projectRoot,
   })),
+  // The Email section has only request-time records, so its build-time reader takes no options.
+  registerConsoleSection(emailConsoleSection, () => undefined),
 ]
 
 export const consoleContributedSections: ReadonlyMap<ConsoleSectionId, ConsoleRegisteredSection> = new Map(

@@ -35,6 +35,7 @@
     "./drivers/cloudflare-email": "./dist/drivers/cloudflare-email.js",
     "./drivers/resend": "./dist/drivers/resend.js",
     "./markdown": "./dist/markdown.js",
+    "./runtime/console": "./dist/runtime/console.js",
     "./server": "./dist/server.js",
     "./test": "./dist/test.js",
     "./vite": "./dist/vite.js",

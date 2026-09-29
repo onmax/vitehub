@@ -1,0 +1,137 @@
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
+
+import { build } from "esbuild"
+import { afterEach, describe, expect, it } from "vitest"
+
+import { createEmail } from "../src/client.ts"
+import { getEmailOutbox } from "../src/runtime/outbox.ts"
+import { hubEmail } from "../src/vite.ts"
+
+import type { EmailDefinition } from "../src/types.ts"
+
+type ConfigHook = (config: Record<string, unknown>, env?: { command: "build" | "serve", mode: string }) => Promise<unknown>
+type ConfigResolvedHook = (config: { root: string }) => Promise<void>
+
+const tempDirs: string[] = []
+const outboxState = Symbol.for("vitehub.email.outbox")
+
+afterEach(async () => {
+  Reflect.deleteProperty(globalThis, outboxState)
+  await Promise.all(tempDirs.splice(0).map(dir => rm(dir, { force: true, recursive: true })))
+})
+
+async function createTempProject(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "vitehub-email-outbox-"))
+  tempDirs.push(root)
+  await writeFile(join(root, "package.json"), JSON.stringify({ private: true }))
+  return root
+}
+
+async function configure(plugin: ReturnType<typeof hubEmail>, root: string, command?: "build" | "serve"): Promise<{ config: Record<string, unknown>, definition: string }> {
+  const config: Record<string, unknown> = { nitro: { baseURL: "/app/" }, root }
+  // SAFETY: the hooks are functions in hubEmail. The tests call them the way Vite does.
+  await (plugin.config as ConfigHook)(config, command ? { command, mode: command === "serve" ? "development" : "production" } : undefined)
+  await (plugin.configResolved as ConfigResolvedHook)({ root })
+  const handler = plugin.api.getDefinition()?.handler
+  if (!handler) throw new Error("Expected a configured Email definition")
+  return { config, definition: handler }
+}
+
+const devHandler = (root: string) => join(root, ".vitehub", "nitro", "email", "dev-handler.ts")
+
+describe("Email development outbox output", () => {
+  it("never adds the outbox or its handler to build output", async () => {
+    for (const command of ["build", undefined] as const) {
+      const root = await createTempProject()
+      const { config, definition } = await configure(hubEmail({ driver: "resend", outbox: { deliver: false } }), root, command)
+
+      const source = await readFile(definition, "utf8")
+      expect(source).toContain("https://api.resend.com")
+      expect(source).not.toContain("createEmailDevOutboxDriver")
+      expect(source).not.toContain("vitehub.email.outbox")
+      expect(JSON.stringify(config.nitro)).not.toContain("dev-handler")
+      await expect(stat(devHandler(root))).rejects.toMatchObject({ code: "ENOENT" })
+    }
+  })
+
+  it("wraps the provider driver and adds the guarded handler in vite dev", async () => {
+    const root = await createTempProject()
+    const { config, definition } = await configure(hubEmail({ driver: "resend", outbox: { deliver: false, limit: 3 } }), root, "serve")
+
+    const source = await readFile(definition, "utf8")
+    expect(source).toContain("vitehub.email.outbox")
+    expect(config.nitro).toMatchObject({
+      baseURL: "/app/",
+      handlers: [{ handler: devHandler(root), route: "/_vitehub/email/dev" }],
+    })
+    expect(await readFile(devHandler(root), "utf8"))
+      .toContain("import { handleEmailDevRequest as handleViteHubDevRequest } from \"@vite-hub/email/runtime/console\"")
+
+    // The generated definition is a separate bundle. It must write to the outbox that the Console reader reads.
+    const module: { definition: EmailDefinition } = await import(pathToFileURL(definition).href)
+    const email = createEmail(module.definition)
+    for (const subject of ["One", "Two", "Three", "Four"]) {
+      await expect(email.send({ from: "hello@example.com", html: "<p>Hi</p>", subject, to: "ada@example.com" }))
+        .resolves.toMatchObject({ driver: "outbox" })
+    }
+    const outbox = getEmailOutbox()
+    expect(outbox?.limit).toBe(3)
+    expect(outbox?.list().map(message => [message.subject, message.provider, message.delivery.status])).toEqual([
+      ["Four", "resend", "captured"],
+      ["Three", "resend", "captured"],
+      ["Two", "resend", "captured"],
+    ])
+  })
+
+  it("delivers through the provider by default in vite dev", async () => {
+    const root = await createTempProject()
+    const { definition } = await configure(hubEmail({ driver: "resend" }), root, "serve")
+
+    expect(await readFile(definition, "utf8")).toContain("vitehub.email.outbox")
+    const module: { definition: EmailDefinition } = await import(pathToFileURL(definition).href)
+    // No API key is configured, so the provider driver fails. The outbox keeps the message and the failure.
+    await expect(createEmail(module.definition).send({ from: "hello@example.com", subject: "Hi", text: "Hi", to: "ada@example.com" }))
+      .rejects.toThrow()
+    expect(getEmailOutbox()?.list()[0]).toMatchObject({ delivery: { status: "failed" }, provider: "resend", subject: "Hi" })
+  })
+
+  it("keeps the handler but reports a disabled outbox with outbox: false", async () => {
+    const root = await createTempProject()
+    const { definition } = await configure(hubEmail({ driver: "resend", outbox: false }), root, "serve")
+
+    expect(await readFile(definition, "utf8")).not.toContain("vitehub.email.outbox")
+    expect(await readFile(devHandler(root), "utf8")).toContain("handleDisabledEmailDevRequest")
+  })
+
+  it("rejects invalid outbox options", () => {
+    // SAFETY: the casts pass invalid runtime values that JavaScript callers can send.
+    expect(() => hubEmail({ driver: "resend", outbox: true as unknown as false })).toThrow("email.outbox must be false or an object")
+    expect(() => hubEmail({ driver: "resend", outbox: { deliver: "yes" as unknown as boolean } })).toThrow("email.outbox.deliver must be a boolean")
+    expect(() => hubEmail({ driver: "resend", outbox: { limit: 0 } })).toThrow("email.outbox.limit must be an integer from 1 to 1000")
+    expect(() => hubEmail({ driver: "resend", outbox: { limit: 1001 } })).toThrow("email.outbox.limit")
+    expect(() => hubEmail({ driver: "resend", outbox: { limit: 2.5 } })).toThrow("email.outbox.limit")
+  })
+})
+
+describe("Email runtime Console entry", () => {
+  it("keeps build dependencies out of the published runtime Console entry", async () => {
+    const result = await build({
+      bundle: true,
+      entryPoints: [resolve(import.meta.dirname, "../dist/runtime/console.js")],
+      format: "esm",
+      metafile: true,
+      packages: "external",
+      platform: "node",
+      write: false,
+    })
+    const imports = Object.values(result.metafile.outputs).flatMap(output => output.imports.map(entry => entry.path))
+
+    expect(imports).not.toContain("esbuild")
+    expect(imports).not.toContain("vite")
+    expect(imports).not.toContain("node:fs")
+    expect(imports).not.toContain("node:fs/promises")
+  })
+})
