@@ -412,6 +412,32 @@ describe("createTrustedHostRuntime", () => {
     await session.destroy?.();
   });
 
+  it("retries trusted-host teardown after a failed stop", async () => {
+    if (process.platform === "win32") return;
+    const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
+    const session = await boxProvider(box).createSession();
+    const handle = await session.spawn({ command: "sleep 30" });
+    const originalKill = process.kill.bind(process);
+    let failStop = true;
+    const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid === -handle.pid! && signal === "SIGTERM" && failStop) {
+        failStop = false;
+        throw new Error("stop failed");
+      }
+      return originalKill(pid, signal);
+    });
+    try {
+      await expect(session.destroy()).rejects.toThrow("stop failed");
+      await expect(stat(session.root)).resolves.toMatchObject({});
+      await session.destroy();
+      await expect(stat(session.root)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      kill.mockRestore();
+      await session.destroy().catch(() => undefined);
+      await handle.kill().catch(() => undefined);
+    }
+  });
+
   it("does not start commands with an already-aborted signal", async () => {
     const root = await temporaryRoot();
     const marker = join(root, "started");

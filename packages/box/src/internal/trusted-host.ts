@@ -445,7 +445,12 @@ async function createTrustedHostSession(options: {
           await options.release();
         }
       })();
-      await destroyPromise;
+      try {
+        await destroyPromise;
+      } catch (error) {
+        destroyPromise = undefined;
+        throw error;
+      }
     },
     async getPortUrl({
       port,
