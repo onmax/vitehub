@@ -13,7 +13,7 @@ import type {
   AgentCapabilityMode,
   AgentRuntimeConfig,
 } from "../types.ts"
-import type { WorkspaceName } from "@vite-hub/workspace"
+import type { WritableWorkspaceFacade, WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
 export interface WorkspaceShellOptions {
@@ -47,7 +47,7 @@ export function workspaceShell(options: WorkspaceShellOptions = {}): AgentCapabi
         ...(driver?.kind === "provider"
           ? {}
           : mode === "write" && "write" in workspace.tools
-            ? workspace.tools.write({ sourceRequests: true })
+            ? (workspace as WritableWorkspaceFacade).tools.write({ sourceRequests: true })
             : workspace.tools.inspect({ sourceRequests: true })),
         ...(commands ? workspaceCommandTools(commands, mode, timeout, workspace, { context }) : {}),
       }
