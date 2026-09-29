@@ -42,7 +42,7 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 // These maps contain definitions and callbacks, not configuration to merge recursively.
-const opaqueOptions = new Set(["messages.meta", "messages.state", "invocations", "runtime", "driver.output", "driver.model", "driver.launch"])
+const opaqueOptions = new Set(["data", "messages.meta", "messages.state", "invocations", "runtime", "driver.output", "driver.model", "driver.launch"])
 const definitionMaps = new Set(["channels", "workspace.sources", "workspace.skills", "hooks"])
 
 function merge(parent: unknown, child: unknown, path: string): unknown {
@@ -174,7 +174,8 @@ export function copyDefinitionDecorations(source: DefinitionDecorationCarrier, t
     Symbol.for("vitehub.baseAgentResolve"), Symbol.for("vitehub.baseAgentDefinitionResolve"),
     Symbol.for("vitehub.baseAgentCapabilitiesResolver"), Symbol.for("vitehub.baseAgentModel"),
     Symbol.for("vitehub.baseAgentDriverKind"), Symbol.for("vitehub.baseAgentDriver"),
-    Symbol.for("vitehub.baseAgentOutput"), Symbol.for("vitehub.syntheticWorkspaceRun"),
+    Symbol.for("vitehub.baseAgentOutput"), Symbol.for("vitehub.baseAgentData"), Symbol.for("vitehub.baseAgentIntercept"),
+    Symbol.for("vitehub.syntheticWorkspaceRun"),
   ])
   for (const key of Reflect.ownKeys(source)) {
     // Rebuild framework fields from layer settings instead of copying derived runtime state.

@@ -400,6 +400,92 @@ describe("agent public types", () => {
     expectTypeOf<Extract<Awaited<ReturnType<Awaited<typeof controlled>["inspect"]>>, { outcome: "available" }>["invocation"]["output"]>().toEqualTypeOf<AgentRunResult | Response | { summary: string, title: string } | undefined>()
   })
 
+  it("types Agent data and unions intercepted output with Driver output", () => {
+    interface Email { from: string, subject: string }
+    interface JevDecision { label: string, probability: number }
+    interface RuleDecision { rule: string, add: string[] }
+    function schemaFor<TOutput, TInput = TOutput>(): StandardSchemaV1<TInput, TOutput> {
+      return {
+        "~standard": {
+          // SAFETY: This compile-time fixture intentionally supplies the exact asserted public contract.
+          validate: (input: unknown) => ({ value: input as TOutput }),
+          vendor: "test",
+          version: 1,
+        },
+      }
+    }
+    const agent = defineAgent({
+      data: schemaFor<Email>(),
+      driver: {
+        output: { schema: schemaFor<JevDecision>() },
+        run: ({ input }) => {
+          expectTypeOf(input).toHaveProperty("data")
+          return "{}"
+        },
+      },
+      intercept: ({ data }) => {
+        expectTypeOf(data).toEqualTypeOf<Email>()
+        return data.from.endsWith("@github.com") ? { add: ["GitHub"], rule: "github" } satisfies RuleDecision : undefined
+      },
+      hooks: {
+        "agent:finish"(event) {
+          expectTypeOf(event.input.data).toEqualTypeOf<Email | undefined>()
+          expectTypeOf(event.result).toEqualTypeOf<JevDecision | RuleDecision | undefined>()
+        },
+        "agent:input"({ input }) {
+          expectTypeOf(input.data).toEqualTypeOf<Email | undefined>()
+        },
+      },
+      runtime: false,
+    })
+
+    // SAFETY: This compile-time fixture intentionally supplies the exact asserted public contract.
+    const inline = runAgentInline(agent, {} as AgentRuntimeContext, { data: { from: "a@example.com", subject: "Hi" } })
+    expectTypeOf(inline).toEqualTypeOf<Promise<Response | JevDecision | RuleDecision>>()
+    const standalone = runAgent(agent, { data: { from: "a@example.com", subject: "Hi" }, prompt: "a@example.com: Hi" })
+    expectTypeOf<Extract<Awaited<typeof standalone>, [null, unknown]>[1]>().toExtend<Response | JevDecision | RuleDecision | { id: string }>()
+    // @ts-expect-error Invocation data follows the Agent data schema.
+    void runAgent(agent, { data: { from: "a@example.com" } })
+    // SAFETY: This compile-time fixture intentionally supplies the exact asserted public contract.
+    void startAgentInvocation(agent, {} as AgentRuntimeContext, { data: { from: "a@example.com", subject: "Hi" } })
+    // @ts-expect-error Controlled invocations use the same data type.
+    void startAgentInvocation(agent, {} as AgentRuntimeContext, { data: { subject: "Hi" } })
+
+    const withoutIntercept = defineAgent({
+      data: schemaFor<Email>(),
+      driver: { output: { schema: schemaFor<JevDecision>() }, run: () => "{}" },
+      runtime: false,
+    })
+    // SAFETY: This compile-time fixture intentionally supplies the exact asserted public contract.
+    expectTypeOf(runAgentInline(withoutIntercept, {} as AgentRuntimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision>>()
+    const untyped = defineAgent({ driver: { run: () => "ok" }, runtime: false })
+    void runAgent(untyped, { data: { anything: true } })
+
+    const transformed = defineAgent({
+      data: schemaFor<{ count: number }, { count: string }>(),
+      driver: { run: () => "ok" },
+      intercept: ({ data }) => {
+        expectTypeOf(data).toEqualTypeOf<{ count: number }>()
+        return undefined
+      },
+      runtime: false,
+    })
+    // Call sites pass the schema input type.
+    void runAgent(transformed, { data: { count: "2" } })
+    // @ts-expect-error Call sites do not pass the schema output type.
+    void runAgent(transformed, { data: { count: 2 } })
+
+    const workspaceAgent = defineAgent({
+      data: schemaFor<Email>(),
+      driver: { output: { schema: schemaFor<JevDecision>() }, run: () => "{}" },
+      intercept: ({ data }) => data.from.endsWith("@github.com") ? { add: ["GitHub"], rule: "github" } satisfies RuleDecision : undefined,
+      runtime: false,
+      workspace: {},
+    })
+    // SAFETY: This compile-time fixture intentionally supplies the exact asserted public contract.
+    expectTypeOf(runAgentInline(workspaceAgent, {} as AgentRuntimeContext, { data: { from: "a@example.com", subject: "Hi" } })).toEqualTypeOf<Promise<Response | JevDecision | RuleDecision>>()
+  })
+
   it("scopes output correction attempts to Model Drivers", () => {
     const schema = {
       "~standard": {

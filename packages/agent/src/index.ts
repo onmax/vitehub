@@ -33,6 +33,7 @@ import { agentTelemetryTask } from "./internal/telemetry-task.ts"
 import { agentTelemetryWorkspaceSources, getAgentTelemetryConfiguration, safeAgentTelemetryMetadata, setAgentTelemetryConfiguration } from "./internal/agent-telemetry.ts"
 import { getCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { getAgentInvocationRecoveryWorkflowName } from "@vite-hub/internal/agent-workflow"
+import { parseStandardSchema } from "@vite-hub/internal/http-request"
 import { agentResultKind, agentStreamErrorSymbol, appendLatestFinalText, finalTextFromAgentOutput, hasTraceableStreamResult, isAsyncIterable, resolveAgentUsageRecord, streamAgentOutputToEvents, toAgentRunResult, toAgentStreamEvent, usageRecordFromStreamChunk } from "./agent-output.ts"
 import { defineChatCapability, durableChatErrorFallbackTimeout, getAgentChatContext, getChatCapabilityOptions, isDurableChatErrorFallbackEffect, resolveChatMessageContextInstructions, resolveChatMessageRunMetadata, resolveDurableChatErrorFallbackIntents } from "./chat-trigger.ts"
 import { agentWorkflowExecutionContextKey } from "./internal/workflow-execution.ts"
@@ -160,6 +161,9 @@ import type {
   AgentChannelDeliveryFinishEffect,
   AgentChannelDeliveryFinishEffectResult,
   AgentChannelDeliveryFinishEffectContext,
+  AgentDataCarrier,
+  AgentRunInputContextValues,
+  AgentInterceptHandler,
   AgentDefinition,
   AgentDriver,
   BuiltInAgentDriver,
@@ -359,6 +363,7 @@ export type {
   AgentChannels,
   AgentDeliveryArtifact,
   AgentDeliveryArtifactPlacement,
+  AgentDataCarrier,
   AgentDefinition,
   AgentDefinitionCliOptions,
   AgentInspectionCapabilityMetadata,
@@ -394,6 +399,8 @@ export type {
   AgentProviderPermissions,
   AgentInput,
   AgentInputHook,
+  AgentInterceptContext,
+  AgentInterceptHandler,
   AgentIntegrationOption,
   AgentHookObserver,
   AgentHookObserverEvent,
@@ -571,6 +578,8 @@ const baseAgentDefinitionResolve = Symbol.for("vitehub.baseAgentDefinitionResolv
 const baseAgentDefinitionHealth = Symbol.for("vitehub.baseAgentDefinitionHealth")
 const baseAgentDefinitionStatus = Symbol.for("vitehub.baseAgentDefinitionStatus")
 const baseAgentOutput = Symbol.for("vitehub.baseAgentOutput")
+const baseAgentData = Symbol.for("vitehub.baseAgentData")
+const baseAgentIntercept = Symbol.for("vitehub.baseAgentIntercept")
 const baseAgentCapabilitiesResolver = Symbol.for("vitehub.baseAgentCapabilitiesResolver")
 type WorkspaceSourceNames<TWorkspace> =
   TWorkspace extends { sources: infer TSources }
@@ -714,6 +723,8 @@ type AgentDefinitionWithBaseResolve<
   [baseAgentDriverKind]?: AgentDriverKind
   [baseAgentDriver]?: unknown
   [baseAgentOutput]?: AgentOutputDefinition<TOutput>
+  [baseAgentData]?: StandardSchemaV1
+  [baseAgentIntercept]?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS>
   [baseAgentResolve]?: BaseAgentResolver<TRuntimeConfig, CALL_OPTIONS>
   [baseAgentModel]?: AgentModelResolver<TRuntimeConfig>
   [colocatedAgentSkillsSymbol]?: ColocatedAgentSkills
@@ -1086,6 +1097,9 @@ async function runAgentAsWorkflow<
     parsedInput = hasAgentDefinition(agent)
       ? await withParsedAgentMessageMeta<TRuntimeConfig, CALL_OPTIONS>(agent, input, context.run)
       : input
+    // Reject invalid data before the durable handoff. The Workflow run parses the original value again.
+    // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
+    if (hasAgentDefinition(agent)) await parseAgentInputData(agent as AgentDefinitionWithBaseResolve<TRuntimeConfig, CALL_OPTIONS>, parsedInput)
     workflowInput = await portableAgentWorkflowInput(parsedInput)
   }
   catch (error) {
@@ -1841,6 +1855,8 @@ function defineBaseAgent<
     ...(driver.kind === "model" ? { [baseAgentModel]: driver.model } : {}),
     [baseAgentDriverKind]: driver.kind,
     ...(driver.output ? { [baseAgentOutput]: driver.output } : {}),
+    ...(options.data ? { [baseAgentData]: options.data } : {}),
+    ...(options.intercept ? { [baseAgentIntercept]: options.intercept } : {}),
     ...(capabilitiesResolver ? { [baseAgentCapabilitiesResolver]: capabilitiesResolver } : {}),
     [baseAgentResolve]: resolveBaseAgent,
     health: options.health || { handler: (request: Request, healthOptions?: Record<string, unknown>) => createAgentHealthHandler(definition)(request, healthOptions) },
@@ -2453,6 +2469,9 @@ export interface DefineAgent {
     const TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig, Name> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig, Name>[] | undefined,
     TOutput = unknown,
+    TData = unknown,
+    TIntercept = never,
+    TDataInput = TData,
     const TOptions extends WorkspaceAgentOptions<
       TRuntimeConfig,
       Name,
@@ -2461,7 +2480,10 @@ export interface DefineAgent {
       AgentCapabilitiesInvocationContextValues<TCapabilities>,
       AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>,
       TOutput,
-      CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>
+      CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>,
+      TData,
+      TIntercept,
+      TDataInput
     > = WorkspaceAgentOptions<
       TRuntimeConfig,
       Name,
@@ -2470,11 +2492,14 @@ export interface DefineAgent {
       AgentCapabilitiesInvocationContextValues<TCapabilities>,
       AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>,
       TOutput,
-      CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>
+      CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>,
+      TData,
+      TIntercept,
+      TDataInput
     >,
   >(
-    options: TOptions & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, driver: CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput> } & ValidateWorkspaceAgentOptions<TOptions>,
-  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput>
+    options: TOptions & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, driver: CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>, data?: StandardSchemaV1<TDataInput, TData>, intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TData, TIntercept> } & ValidateWorkspaceAgentOptions<TOptions>,
+  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput | TIntercept, TDataInput>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
     Name extends WorkspaceName = WorkspaceName,
@@ -2482,24 +2507,37 @@ export interface DefineAgent {
     const TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig, Name> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig, Name>[] | undefined,
     TOutput = unknown,
+    TData = unknown,
+    TIntercept = never,
+    TDataInput = TData,
     const TOptions extends WorkspaceAgentOptions<
       TRuntimeConfig,
       Name,
       CALL_OPTIONS,
       TInvokerProfile,
       AgentCapabilitiesInvocationContextValues<TCapabilities>,
-      AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>
+      AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>,
+      TOutput,
+      AgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>,
+      TData,
+      TIntercept,
+      TDataInput
     > = WorkspaceAgentOptions<
       TRuntimeConfig,
       Name,
       CALL_OPTIONS,
       TInvokerProfile,
       AgentCapabilitiesInvocationContextValues<TCapabilities>,
-      AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>
+      AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>,
+      TOutput,
+      AgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>,
+      TData,
+      TIntercept,
+      TDataInput
     >,
   >(
-    options: TOptions & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, driver: AgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput> } & ValidateWorkspaceAgentOptions<TOptions>,
-  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput>
+    options: TOptions & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, driver: AgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>, data?: StandardSchemaV1<TDataInput, TData>, intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TData, TIntercept> } & ValidateWorkspaceAgentOptions<TOptions>,
+  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput | TIntercept, TDataInput>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
     CALL_OPTIONS = unknown,
@@ -2507,6 +2545,9 @@ export interface DefineAgent {
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig>[] | undefined,
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
+    TData = unknown,
+    TIntercept = never,
+    TDataInput = TData,
   >(
     options: AgentSettings<
       TRuntimeConfig,
@@ -2515,9 +2556,12 @@ export interface DefineAgent {
       AgentCapabilitiesInvocationContextValues<TCapabilities>,
       AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>,
       TOutput,
-      CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>
+      CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>,
+      TData,
+      TIntercept,
+      TDataInput
     > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never, channels?: TChannels },
-  ): ConfiguredAgentWorkspace<AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>, undefined, TCapabilities, TChannels>
+  ): ConfiguredAgentWorkspace<AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput>, undefined, TCapabilities, TChannels>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
     CALL_OPTIONS = unknown,
@@ -2525,22 +2569,9 @@ export interface DefineAgent {
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig>[] | undefined,
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
-  >(
-    options: AgentSettings<
-      TRuntimeConfig,
-      CALL_OPTIONS,
-      TInvokerProfile,
-      AgentCapabilitiesInvocationContextValues<TCapabilities>,
-      AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>,
-      TOutput
-    > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never, channels?: TChannels },
-  ): ConfiguredAgentWorkspace<AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>, undefined, TCapabilities, TChannels>
-  <
-    TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
-    CALL_OPTIONS = unknown,
-    const TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
-    const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig>[] | undefined,
-    TOutput = unknown,
+    TData = unknown,
+    TIntercept = never,
+    TDataInput = TData,
   >(
     options: AgentSettings<
       TRuntimeConfig,
@@ -2549,15 +2580,21 @@ export interface DefineAgent {
       AgentCapabilitiesInvocationContextValues<TCapabilities>,
       AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>,
       TOutput,
-      CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>
-    > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never },
-  ): AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>
+      AgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>,
+      TData,
+      TIntercept,
+      TDataInput
+    > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never, channels?: TChannels },
+  ): ConfiguredAgentWorkspace<AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput>, undefined, TCapabilities, TChannels>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
     CALL_OPTIONS = unknown,
     const TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig>[] | undefined,
     TOutput = unknown,
+    TData = unknown,
+    TIntercept = never,
+    TDataInput = TData,
   >(
     options: AgentSettings<
       TRuntimeConfig,
@@ -2565,9 +2602,36 @@ export interface DefineAgent {
       TInvokerProfile,
       AgentCapabilitiesInvocationContextValues<TCapabilities>,
       AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>,
-      TOutput
+      TOutput,
+      CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>,
+      TData,
+      TIntercept,
+      TDataInput
     > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never },
-  ): AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>
+  ): AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput>
+  <
+    TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+    CALL_OPTIONS = unknown,
+    const TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
+    const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig>[] | undefined,
+    TOutput = unknown,
+    TData = unknown,
+    TIntercept = never,
+    TDataInput = TData,
+  >(
+    options: AgentSettings<
+      TRuntimeConfig,
+      CALL_OPTIONS,
+      TInvokerProfile,
+      AgentCapabilitiesInvocationContextValues<TCapabilities>,
+      AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>,
+      TOutput,
+      AgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>,
+      TData,
+      TIntercept,
+      TDataInput
+    > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never },
+  ): AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput>
 
 }
 
@@ -2858,6 +2922,8 @@ type AgentInvocationContext<
   actor: AgentInvoker
   invoker: AgentInvoker
   handledResponse?: Response
+  /** Output returned by `defineAgent({ intercept })`. The Driver does not run. */
+  intercepted?: { value: unknown }
   workspace?: ReadonlyWorkspaceFacade<WorkspaceName> | WritableWorkspaceFacade<WorkspaceName>
   workspaceAutoCommit?: boolean | string
   workspaceDefinition?: WorkspaceDefinition
@@ -3748,6 +3814,16 @@ function createAgentTelemetryScheduler<TRuntimeConfig extends AgentRuntimeConfig
 }
 
 
+/** Validates Invocation `data` with the Agent's `data` schema. The parsed value replaces the input value. */
+async function parseAgentInputData<TInput extends AgentRunInput<unknown>>(
+  definition: { [baseAgentData]?: StandardSchemaV1 } | undefined,
+  input: TInput,
+): Promise<TInput> {
+  const schema = definition?.[baseAgentData]
+  if (!schema) return input
+  return { ...input, data: await parseStandardSchema(schema, input.data, "Agent input data") }
+}
+
 async function createAgentInvocationContext<
   TRuntimeConfig extends AgentRuntimeConfig,
   CALL_OPTIONS,
@@ -3815,6 +3891,7 @@ async function createAgentInvocationContext<
   let failureTraced = false
   const telemetryContentTraceLogWrapped = initialTelemetryUsesContent || mayResolveContentTelemetry
   try {
+    input = await parseAgentInputData(internalDefinition, input)
     const boundRunEvents = bindAgentRunEvents(definition?.runEvents, tracedRuntimeContext)
     runtimeContext = boundRunEvents
       ? { ...tracedRuntimeContext, runEvents: boundRunEvents }
@@ -4040,24 +4117,39 @@ async function createAgentInvocationContext<
       }
     })
     const capabilities = await preparingCapabilities
-    if (!capabilities.response) await knownUnavailable(capabilities)
+    const intercept = internalDefinition?.[baseAgentIntercept]
+    // Interception can finish without the Driver, so provider readiness waits for its result.
+    if (!capabilities.response && !intercept) await knownUnavailable(capabilities)
     const inputHook = definition?.hooks?.["agent:input"]
-    if (inputHook && !capabilities.response) {
-      try {
+    let intercepted: { value: unknown } | undefined
+    if ((inputHook || intercept) && !capabilities.response) {
+      // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
+      const observedHooks = definition?.hooks as AgentHookObserverHooks | undefined
+      const hookContext = () => ({
+        ...callbackContext,
+        actor: invoker,
+        context: invocationContext,
         // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-        await runObservedAgentHook(definition?.hooks as AgentHookObserverHooks | undefined, {
-          name: "agent:input",
-          owner: "agent",
-          phase: "input",
-        }, () => inputHook({
-          ...callbackContext,
-          actor: invoker,
-          context: invocationContext,
-          // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-          input: capabilities.input as AgentRunInput<CALL_OPTIONS>,
-          invoker,
-          run: context.run,
-        }))
+        input: capabilities.input as AgentRunInput<CALL_OPTIONS>,
+        invoker,
+        run: context.run,
+      })
+      try {
+        if (inputHook) {
+          await runObservedAgentHook(observedHooks, {
+            name: "agent:input",
+            owner: "agent",
+            phase: "input",
+          }, () => inputHook(hookContext()))
+        }
+        if (intercept) {
+          const value = await runObservedAgentHook(observedHooks, {
+            name: "agent:intercept",
+            owner: "agent",
+            phase: "input",
+          }, () => intercept({ ...hookContext(), data: capabilities.input.data }))
+          if (value !== undefined) intercepted = { value }
+        }
       }
       catch (error) {
         failureActivity = { owner: "agent", phase: "execution" }
@@ -4075,11 +4167,12 @@ async function createAgentInvocationContext<
           await traceAgentInvocationError(traceContext, error, failureActivity)
           await traceAgentInvocationError(traceContext, closeError, { owner: "vitehub", phase: "teardown" })
           failureTraced = true
-          throw new AggregateError([error, closeError], "[vitehub] Agent input hook failed and cleanup also failed.")
+          throw new AggregateError([error, closeError], "[vitehub] Agent input handling failed and cleanup also failed.")
         }
         throw error
       }
     }
+    if (intercept && !capabilities.response && !intercepted) await knownUnavailable(capabilities)
     let transformed: { tools: typeof capabilities.tools, originalNames: Map<string, string> }
     try {
       const collisions = Object.keys(invocationTools || {}).filter(name => Object.hasOwn(capabilities.tools || {}, name))
@@ -4215,6 +4308,7 @@ async function createAgentInvocationContext<
       handledResponse: capabilities.response,
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
       hooks: definition?.hooks as AgentHookObserverHooks | undefined,
+      intercepted,
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
       input: capabilities.input as AgentRunInput<CALL_OPTIONS>,
       instructions,
@@ -4258,7 +4352,7 @@ async function createAgentInvocationContext<
       throw error
     }
     const startCapabilities = capabilities.start
-    if (!invocation.handledResponse && startCapabilities) {
+    if (!invocation.handledResponse && !invocation.intercepted && startCapabilities) {
       try {
         if (invocation.messages.some(message => message.role === "user") && hasTitleDeliveryEffectProvider(invocation.finishDeliveryEffectProviders)) {
           await setChannelDeliverySupportContext(invocation.channels, invocation.context, invocation.runtimeContext, invocation.input, invocation.run)
@@ -4336,6 +4430,7 @@ type InvocationRunContext<
   finishHook?: (event: AgentFinishHookEvent<TRuntimeConfig, CALL_OPTIONS>) => MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
   hooks?: AgentHookObserverHooks
   input: AgentRunInput<CALL_OPTIONS>
+  intercepted?: { value: unknown }
   invocationJournal?: AgentInvocationJournal<TRuntimeConfig>
   output?: AgentOutputDefinition
   outputExtensionProviders: ResolvedAgentOutputExtensionProvider[]
@@ -5867,6 +5962,7 @@ async function finishAgentInvocation<
     else if (!failed) {
       await traceAgentInvocationFinish(toTraceContext(context), {
         "invocation.durationMs": durationMs,
+        ...(context.intercepted ? { "agent.intercepted": true, "result.output": context.intercepted.value } : {}),
         "result.hasValue": result !== undefined,
         "result.text": text,
         ...(resultKind !== undefined ? { "result.kind": resultKind } : {}),
@@ -6226,9 +6322,10 @@ async function executeAgentInvocationWithCapacityLease<
   const runFailureMessage = "[vitehub] Agent run failed and finish lifecycle also failed."
   const streamFailureMessage = "[vitehub] Agent stream failed and finish lifecycle also failed."
   const handledFailureMessage = options.kind === "run" ? runFailureMessage : streamFailureMessage
-  if (invocation.handledResponse) {
+  if (invocation.handledResponse || invocation.intercepted) {
     options.onCapacityBypass?.()
-    return await finalizeAgentInvocationResult(invocation, lifecycle, invocation.handledResponse, async result => ({ finishResult: result, value: result }), handledFailureMessage, {
+    const handled = invocation.intercepted ? invocation.intercepted.value : invocation.handledResponse
+    return await finalizeAgentInvocationResult(invocation, lifecycle, handled, async result => ({ finishResult: result, value: result }), handledFailureMessage, {
       holdOutput: false,
     })
   }
@@ -7273,7 +7370,7 @@ async function executeAgentInvocation<
         options.tools,
       )
     }
-    if (preparedInvocation?.handledResponse) {
+    if (preparedInvocation?.handledResponse || preparedInvocation?.intercepted) {
       await invocationJournal?.running()
       await activity?.update("running")
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
@@ -7340,30 +7437,33 @@ export function runAgentInline<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: { output: "raw" },
 ): Promise<unknown>
 export function runAgentInline<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options?: RunAgentInlineOptions,
 ): Promise<TOutput | Response>
 export async function runAgentInline<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: RunAgentInlineOptions = {},
 ): Promise<TOutput | Response> {
   context = withAgentIdentityOwner(agent, context)
@@ -7475,10 +7575,11 @@ export async function startAgentInvocation<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: {
     runId?: string
     /** Called before a runtime can retain input. A later rejection does not prove the input is unowned. */
@@ -7512,102 +7613,112 @@ export function runAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
 ): Promise<[Error, null] | [null, TOutput | Response | AgentWorkflowRun<AgentWorkflowOutput<TOutput>>]>
 export function runAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
   const TSchemas extends Record<string, AgentToolSchema> = Record<string, AgentToolSchema>,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: RunAgentOptions<SchemaOwnedInvocationTools<TSchemas>> & { output: "drained", tools: SchemaOwnedInvocationTools<TSchemas> },
 ): Promise<[Error, null] | [null, string]>
 export function runAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
   const TTools extends Record<string, AgentToolDefinition<any, any>> = Record<string, AgentToolDefinition<any, any>>,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: RunAgentOptions<TTools> & { output: "drained", tools?: TTools & CheckedInvocationTools<TTools> },
 ): Promise<[Error, null] | [null, string]>
 export function runAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
   const TSchemas extends Record<string, AgentToolSchema> = Record<string, AgentToolSchema>,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: RunAgentOptions<SchemaOwnedInvocationTools<TSchemas>> & { output: "drained", tools: SchemaOwnedInvocationTools<TSchemas> },
 ): Promise<AgentDrainedOutput<TOutput> | AgentWorkflowRun<AgentWorkflowOutput<TOutput>>>
 export function runAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
   const TTools extends Record<string, AgentToolDefinition<any, any>> = Record<string, AgentToolDefinition<any, any>>,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: RunAgentOptions<TTools> & { output: "drained", tools?: TTools & CheckedInvocationTools<TTools> },
 ): Promise<AgentDrainedOutput<TOutput> | AgentWorkflowRun<AgentWorkflowOutput<TOutput>>>
 export function runAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
   const TSchemas extends Record<string, AgentToolSchema> = Record<string, AgentToolSchema>,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: RunAgentOptions<SchemaOwnedInvocationTools<TSchemas>> & { tools: SchemaOwnedInvocationTools<TSchemas> },
 ): Promise<TOutput | Response | AgentWorkflowRun<AgentWorkflowOutput<TOutput>>>
 export function runAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
   const TTools extends Record<string, AgentToolDefinition<any, any>> = Record<string, AgentToolDefinition<any, any>>,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: RunAgentOptions<TTools> & { tools?: TTools & CheckedInvocationTools<TTools> },
 ): Promise<TOutput | Response | AgentWorkflowRun<AgentWorkflowOutput<TOutput>>>
 export function runAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: Omit<RunAgentOptions, "tools"> & { output: "drained", tools?: Record<string, never> },
 ): Promise<AgentDrainedOutput<TOutput> | AgentWorkflowRun<AgentWorkflowOutput<TOutput>>>
 export function runAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options?: Omit<RunAgentOptions, "tools"> & { tools?: Record<string, never> },
 ): Promise<TOutput | Response | AgentWorkflowRun<AgentWorkflowOutput<TOutput>>>
 export async function runAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput>,
-  contextOrInput: AgentRuntimeContext<TRuntimeConfig> | AgentRunInput<CALL_OPTIONS>,
-  inputOrOptions?: AgentRunInput<CALL_OPTIONS> | RunAgentOptions,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>, TOutput> & AgentDataCarrier<TData>,
+  contextOrInput: AgentRuntimeContext<TRuntimeConfig> | AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
+  inputOrOptions?: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>> | RunAgentOptions,
   options: RunAgentOptions = {},
 ): Promise<TOutput | Response | AgentWorkflowRun<AgentWorkflowOutput<TOutput>> | [Error, null] | [null, string | TOutput | Response | AgentWorkflowRun<AgentWorkflowOutput<TOutput>>]> {
   const standaloneDrainedOptions = inputOrOptions !== undefined
@@ -7756,10 +7867,11 @@ async function drainAgentRunOutput(result: unknown): Promise<unknown> {
 export async function streamAgentInline<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
+  TData = unknown,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: { output?: "events" | "ui-message-stream" } = {},
 ): Promise<Response | AsyncIterable<StreamEvent> | unknown> {
   return await executeAgentInvocation(agent, context, input, {
@@ -7771,10 +7883,11 @@ export async function streamAgentInline<
 export async function streamAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
+  TData = unknown,
 >(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>> & AgentDataCarrier<TData>,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  input: AgentRunInput<CALL_OPTIONS>,
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, NoInfer<TData>>,
   options: { output?: "events" | "ui-message-stream" } = {},
 ): Promise<Response | AsyncIterable<StreamEvent> | unknown> {
   return await streamAgentInline(agent, context, input, options)
