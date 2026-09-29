@@ -492,11 +492,36 @@ describe("agent public types", () => {
     void runAgent(selected, { data: { count: "2" } })
     // @ts-expect-error Selected presets retain the schema input.
     void runAgent(selected, { data: { count: 2 } })
-    const intercepted = defineAgent({ extends: agent, intercept: () => ({ rule: "new", add: ["new"] } satisfies RuleDecision) })
+    const intercepted = defineAgent({
+      extends: agent,
+      intercept: () => ({ rule: "new", add: ["new"] } satisfies RuleDecision),
+      hooks: {
+        "agent:input"({ input }) {
+          expectTypeOf(input.data).toEqualTypeOf<Email | undefined>()
+        },
+        "agent:finish"({ input, result }) {
+          expectTypeOf(input.data).toEqualTypeOf<Email | undefined>()
+          expectTypeOf(result).toEqualTypeOf<JevDecision | RuleDecision | undefined>()
+        },
+      },
+    })
     expectTypeOf(runAgentInline(intercepted, {} as AgentRuntimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision | RuleDecision>>()
     void runAgent(intercepted, { data: { from: "a@example.com", subject: "Hi" } })
     // @ts-expect-error Replacing only the interceptor preserves the parent schema input.
     void runAgent(intercepted, { data: { from: "a@example.com" } })
+    const inheritedHooks = defineAgent({
+      extends: agent,
+      hooks: {
+        "agent:input"({ input }) {
+          expectTypeOf(input.data).toEqualTypeOf<Email | undefined>()
+        },
+        "agent:finish"({ input, result }) {
+          expectTypeOf(input.data).toEqualTypeOf<Email | undefined>()
+          expectTypeOf(result).toEqualTypeOf<JevDecision | RuleDecision | undefined>()
+        },
+      },
+    })
+    void runAgent(inheritedHooks, { data: { from: "a@example.com", subject: "Hi" } })
     const replaced = defineAgent({ extends: selected, data: schemaFor<Email>(), intercept: ({ data }) => {
       expectTypeOf(data).toEqualTypeOf<Email>()
       return { rule: "email", add: [data.from] } satisfies RuleDecision

@@ -183,6 +183,7 @@ export interface ResolvedAgentCapabilities {
   input: AgentRunInput
   inputDataChanged: boolean
   messages: Message[]
+  setInputDataBaseline: (input: AgentRunInput) => void
   prepare?: (input: AgentRunInput) => Promise<ResolvedAgentCapabilities>
   response?: Response
   registries: AgentCapabilityRegistries
@@ -546,7 +547,12 @@ function capabilityDataEqual(left: unknown, right: unknown, seen = new WeakMap<o
     const rightEntries = [...right.values()]
     return [...left.values()].every((value, index) => capabilityDataEqual(value, rightEntries[index], seen))
   }
-  if (Array.isArray(left) !== Array.isArray(right) || Object.getPrototypeOf(left) !== Object.getPrototypeOf(right)) return false
+  const leftPrototype = Object.getPrototypeOf(left)
+  const rightPrototype = Object.getPrototypeOf(right)
+  const isSupportedRecord = (prototype: object | null): boolean => prototype === Object.prototype || prototype === null
+  if (Array.isArray(left) !== Array.isArray(right)
+    || leftPrototype !== rightPrototype
+    || (!Array.isArray(left) && !isSupportedRecord(leftPrototype))) return false
   const leftKeys = Reflect.ownKeys(left)
   const rightKeys = Reflect.ownKeys(right)
   if (leftKeys.length !== rightKeys.length || leftKeys.some((key, index) => key !== rightKeys[index])) return false
@@ -1598,6 +1604,11 @@ export async function resolveAgentCapabilities<
       input: currentInput,
       inputDataChanged: inputDataChanged(),
       messages,
+      setInputDataBaseline(input) {
+        currentInput = input
+        initialInputDataReference = currentInput.data
+        initialInputData = snapshotCapabilityData(currentInput.data)
+      },
       response,
       registries,
       start,
@@ -1615,8 +1626,6 @@ export async function resolveAgentCapabilities<
   if (!first.done) {
     capabilitiesResult.prepare = async (input) => {
       currentInput = input
-      initialInputDataReference = currentInput.data
-      initialInputData = snapshotCapabilityData(currentInput.data)
       const continued = await resolution.next()
       return continued.value
     }

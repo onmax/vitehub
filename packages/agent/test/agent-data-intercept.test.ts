@@ -156,6 +156,44 @@ describe("Agent data and intercept", () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  it("validates data mutated in place by intercept before the Driver runs", async () => {
+    const run = vi.fn(() => "ok")
+    const agent = defineAgent({
+      data: emailSchema,
+      driver: { run },
+      intercept: ({ data }) => {
+        delete (data as { subject?: string }).subject
+        return undefined
+      },
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { from: "friend@example.com", subject: "Dinner" } })
+
+    expect(error?.message).toContain("Invalid Agent input data")
+    expect(output).toBeNull()
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it("treats internal-slot data mutations as changed", async () => {
+    const run = vi.fn(() => "ok")
+    const agent = defineAgent({
+      data: v.object({ url: v.pipe(v.string(), v.transform(value => new URL(value))) }),
+      driver: { run },
+      intercept: ({ data }) => {
+        data.url.pathname = "/changed"
+        return undefined
+      },
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { url: "https://example.com/original" } })
+
+    expect(error?.message).toContain("Invalid Agent input data")
+    expect(output).toBeNull()
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it("validates data when a Capability replaces the input wrapper in place", async () => {
     const inputHook = vi.fn()
     const intercept = vi.fn(() => undefined)
