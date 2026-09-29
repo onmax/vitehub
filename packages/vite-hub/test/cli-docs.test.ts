@@ -6,6 +6,7 @@ import { createAgentCliContributor } from "@vite-hub/agent/cli";
 import { runViteHubCli } from "@vite-hub/cli";
 import { createDbCliContributor } from "@vite-hub/database/cli";
 import { hubSchedule } from "@vite-hub/schedule/vite";
+import { hubWorkflow } from "@vite-hub/workflow/vite";
 import { hubWorkspace } from "@vite-hub/workspace/vite";
 import { describe, expect, it } from "vitest";
 
@@ -45,6 +46,7 @@ describe("CLI documentation contract", () => {
     const database = createDbCliContributor();
     if (!agent || !database) throw new TypeError("Expected the default CLI contributors.");
     const schedulePlugin: unknown = hubSchedule();
+    const workflowPlugin: unknown = hubWorkflow();
     const workspacePlugin: unknown = hubWorkspace();
     const typesPlugin: unknown = viteHubTypesPlugin();
     const plugins: unknown[] = [
@@ -52,6 +54,7 @@ describe("CLI documentation contract", () => {
       { vitehub: { cli: database } },
       { vitehub: { cli: { namespaces: [createConsoleCliNamespace()] } } },
       schedulePlugin,
+      workflowPlugin,
       workspacePlugin,
       typesPlugin,
     ];
