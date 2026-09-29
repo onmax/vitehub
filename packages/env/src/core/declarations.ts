@@ -1,35 +1,50 @@
-import type { EnvSource, EnvSourceResolver, EnvVariableDeclaration, EnvVariableOptions } from "../types.ts"
+import type { EnvSource, EnvSourceResolver, EnvTypedVariableOptions, EnvValueSchema, EnvVariableDeclaration, EnvVariableOptions } from "../types.ts"
 import { envErrorDiagnostics } from "../error-diagnostics.ts"
+import { envValueTypeName, parseEnvValue, stringValueSchema } from "./values.ts"
 
-interface DefaultStringSchema {
-  __vitehubDefaultRuntimeSchema: string
-  safeParse: (input: unknown) => { data: string, success: true } | { error: Error, success: false }
+type SafeParse = (input: unknown) => { data: unknown, success: true } | { error: Error, success: false }
+
+interface RuntimeValueSchema {
+  __vitehubRuntimeSchema: string
+  safeParse: SafeParse
 }
 
-export const defaultStringSchema: DefaultStringSchema = {
-  __vitehubDefaultRuntimeSchema: getDefaultStringSchemaToken(),
-  safeParse(input: unknown): { data: string, success: true } | { error: Error, success: false } {
-    return typeof input === "string"
-      ? { data: input, success: true as const }
-      : { error: envErrorDiagnostics.ENV_R0001({ message: "Expected string" }), success: false as const }
-  },
+const runtimeSchemaProperty = "__vitehubRuntimeSchema"
+const runtimeSchemaToken = getRuntimeSchemaToken()
+// Vite and Nuxt clone config objects but keep function references, so parsers identify built-in schemas.
+const runtimeSchemaParsers = new WeakMap<SafeParse, EnvValueSchema>()
+const runtimeSchemas = new WeakMap<EnvVariableDeclaration, RuntimeValueSchema>()
+
+function createRuntimeValueSchema(valueSchema: EnvValueSchema): RuntimeValueSchema {
+  const safeParse: SafeParse = (input) => {
+    const result = parseEnvValue(valueSchema, input)
+    return result.success
+      ? result
+      : { error: envErrorDiagnostics.ENV_R0001({ message: result.message }), success: false }
+  }
+  runtimeSchemaParsers.set(safeParse, valueSchema)
+  return { [runtimeSchemaProperty]: runtimeSchemaToken, safeParse }
 }
 
-const defaultStringSchemaProperty = "__vitehubDefaultRuntimeSchema"
-const defaultStringSchemaToken = defaultStringSchema.__vitehubDefaultRuntimeSchema
-const defaultStringSchemas = new WeakMap<EnvVariableDeclaration, DefaultStringSchema>()
-const defaultStringSchemaParsers = new WeakSet<DefaultStringSchema["safeParse"]>()
-defaultStringSchemaParsers.add(defaultStringSchema.safeParse)
+export const defaultStringSchema: RuntimeValueSchema = createRuntimeValueSchema(stringValueSchema)
+const booleanSchema = createRuntimeValueSchema(Object.freeze({ kind: "boolean" }))
+const numberSchema = createRuntimeValueSchema(Object.freeze({ kind: "number" }))
 
 interface EnvNamespace {
   (options?: EnvVariableOptions): EnvVariableDeclaration
+  /** Parse `true`, `false`, `1`, or `0` into a boolean. */
+  boolean: (options?: EnvTypedVariableOptions<boolean>) => EnvVariableDeclaration
   buildTimestamp: () => EnvSource
   custom: (label: string, resolver: EnvSourceResolver) => EnvSource
+  /** Accept only the listed strings. */
+  enum: <const TValues extends readonly [string, ...string[]]>(values: TValues, options?: EnvTypedVariableOptions<TValues[number]>) => EnvVariableDeclaration
   gitBranch: () => EnvSource
   gitCommit: (options?: { short?: boolean }) => EnvSource
   gitRef: () => EnvSource
   gitSha: (options?: { short?: boolean }) => EnvSource
   gitTag: () => EnvSource
+  /** Parse a finite number. */
+  number: (options?: EnvTypedVariableOptions<number>) => EnvVariableDeclaration
   packageJson: (path: string) => EnvSource
   provider: (provider: string, key: string) => EnvSource
   source: (name: string | string[]) => EnvSource
@@ -136,6 +151,33 @@ function provider(provider: string, key: string): EnvSource {
 }
 
 function variable(options: EnvVariableOptions = {}): EnvVariableDeclaration {
+  return createDeclaration(options, options.schema ?? defaultStringSchema, options.type)
+}
+
+function typedVariable(schema: RuntimeValueSchema, options: EnvVariableOptions): EnvVariableDeclaration {
+  const valueSchema = runtimeSchemaParsers.get(schema.safeParse)
+  return createDeclaration(options, schema, valueSchema && envValueTypeName(valueSchema))
+}
+
+function booleanVariable(options: EnvTypedVariableOptions<boolean> = {}): EnvVariableDeclaration {
+  return typedVariable(booleanSchema, options)
+}
+
+function numberVariable(options: EnvTypedVariableOptions<number> = {}): EnvVariableDeclaration {
+  return typedVariable(numberSchema, options)
+}
+
+function enumVariable<const TValues extends readonly [string, ...string[]]>(
+  values: TValues,
+  options: EnvTypedVariableOptions<TValues[number]> = {},
+): EnvVariableDeclaration {
+  if (!Array.isArray(values) || !values.length || values.some(value => typeof value !== "string" || !value) || new Set(values).size !== values.length) {
+    throw envErrorDiagnostics.ENV_R0022({ message: "env.enum() requires one or more unique non-empty strings." })
+  }
+  return typedVariable(createRuntimeValueSchema(Object.freeze({ kind: "enum", values: Object.freeze([...values]) })), options)
+}
+
+function createDeclaration(options: EnvVariableOptions, schema: unknown, type: string | undefined): EnvVariableDeclaration {
   if (typeof options !== "object" || options === null || Array.isArray(options)) {
     throw envErrorDiagnostics.ENV_R0005({ message: "env() only accepts a single options object." })
   }
@@ -149,7 +191,6 @@ function variable(options: EnvVariableOptions = {}): EnvVariableDeclaration {
     ? custom("custom", options.source)
     : options.source
 
-  const schema = options.schema ?? defaultStringSchema
   const declaration: EnvVariableDeclaration = {
     default: options.default,
     kind: "env-variable",
@@ -158,14 +199,14 @@ function variable(options: EnvVariableOptions = {}): EnvVariableDeclaration {
     schema,
     secret: options.secret ?? false,
     source,
-    type: options.type,
+    type,
   }
 
-  if (typeof options.schema === "undefined") {
-    defaultStringSchemas.set(declaration, defaultStringSchema)
-    Object.defineProperty(declaration, defaultStringSchemaProperty, {
+  if (isRuntimeValueSchema(schema)) {
+    runtimeSchemas.set(declaration, schema)
+    Object.defineProperty(declaration, runtimeSchemaProperty, {
       enumerable: true,
-      value: defaultStringSchemaToken,
+      value: runtimeSchemaToken,
     })
   }
 
@@ -173,52 +214,56 @@ function variable(options: EnvVariableOptions = {}): EnvVariableDeclaration {
 }
 
 export const env: EnvNamespace = Object.assign(variable, {
+  boolean: booleanVariable,
   buildTimestamp: buildTimestamp,
   custom: custom,
+  enum: enumVariable,
   gitBranch: gitBranch,
   gitCommit: gitCommit,
   gitRef: gitRef,
   gitSha: gitSha,
   gitTag: gitTag,
+  number: numberVariable,
   packageJson: packageJson,
   provider: provider,
   source: source,
   variable: variable,
 })
 
-export function isDefaultStringEnvVariable(declaration: EnvVariableDeclaration): boolean {
-  const declarationToken = Object.getOwnPropertyDescriptor(declaration, defaultStringSchemaProperty)?.value
-  const schemaObject = typeof declaration.schema === "object" && declaration.schema !== null
-    ? declaration.schema
-    : undefined
-  const schemaToken = schemaObject
-    ? Object.getOwnPropertyDescriptor(schemaObject, defaultStringSchemaProperty)?.value
-    : undefined
-  return defaultStringSchemas.get(declaration) === declaration.schema
-    || (
-      declarationToken === defaultStringSchemaToken
-      && schemaToken === defaultStringSchemaToken
-      && schemaObject !== undefined
-      && hasOnlyDefaultStringSchemaKeys(schemaObject)
-    )
+/** Return the serializable value schema of a declaration created by `env()`, `env.boolean()`, `env.number()`, or `env.enum()`. */
+export function runtimeValueSchema(declaration: EnvVariableDeclaration): EnvValueSchema | undefined {
+  const schema = declaration.schema
+  if (runtimeSchemas.get(declaration) === schema && isRuntimeValueSchema(schema)) {
+    return runtimeSchemaParsers.get(schema.safeParse)
+  }
+  const declarationToken = Object.getOwnPropertyDescriptor(declaration, runtimeSchemaProperty)?.value
+  if (declarationToken !== runtimeSchemaToken || typeof schema !== "object" || schema === null) return undefined
+  const schemaToken = Object.getOwnPropertyDescriptor(schema, runtimeSchemaProperty)?.value
+  if (schemaToken !== runtimeSchemaToken || !hasOnlyRuntimeSchemaKeys(schema)) return undefined
+  const safeParse = Object.getOwnPropertyDescriptor(schema, "safeParse")?.value
+  return typeof safeParse === "function" ? runtimeSchemaParsers.get(safeParse) : undefined
 }
 
-function getDefaultStringSchemaToken(): string {
-  const tokenKey = Symbol.for("vitehub.env.defaultRuntimeSchemaToken")
+function isRuntimeValueSchema(schema: unknown): schema is RuntimeValueSchema {
+  return typeof schema === "object" && schema !== null && "safeParse" in schema
+    && typeof schema.safeParse === "function" && runtimeSchemaParsers.has(schema.safeParse as SafeParse)
+}
+
+function getRuntimeSchemaToken(): string {
+  const tokenKey = Symbol.for("vitehub.env.runtimeSchemaToken")
   const globalScope = globalThis as typeof globalThis & Record<symbol, string | undefined>
-  globalScope[tokenKey] ??= `string:${Math.random().toString(36).slice(2)}`
+  globalScope[tokenKey] ??= `schema:${Math.random().toString(36).slice(2)}`
   return globalScope[tokenKey]
 }
 
-function hasOnlyDefaultStringSchemaKeys(schema: object): boolean {
+function hasOnlyRuntimeSchemaKeys(schema: object): boolean {
   if ("~standard" in schema || "parse" in schema) {
     return false
   }
   const keys = Reflect.ownKeys(schema)
   const safeParse = Object.getOwnPropertyDescriptor(schema, "safeParse")
   return keys.length === 2
-    && keys.includes(defaultStringSchemaProperty)
+    && keys.includes(runtimeSchemaProperty)
     && keys.includes("safeParse")
     && typeof safeParse?.value === "function"
-    && defaultStringSchemaParsers.has(safeParse.value as DefaultStringSchema["safeParse"])
 }

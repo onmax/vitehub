@@ -205,13 +205,13 @@ describe("env declarations", () => {
   })
 
   it("rejects forged default string schema markers", () => {
-    const marker = defaultStringSchema.__vitehubDefaultRuntimeSchema
+    const marker = defaultStringSchema.__vitehubRuntimeSchema
 
     expect(() => createRuntimeRegistry({
       appName: {
         ...env({ default: "Docs App" }),
         schema: {
-          __vitehubDefaultRuntimeSchema: marker,
+          __vitehubRuntimeSchema: marker,
         },
       },
     })).toThrow("[vitehub] Env declaration is invalid.")
@@ -220,7 +220,7 @@ describe("env declarations", () => {
       appName: {
         ...env({ default: "Docs App" }),
         schema: {
-          __vitehubDefaultRuntimeSchema: marker,
+          __vitehubRuntimeSchema: marker,
           safeParse: () => ({ data: 123, success: true }),
         },
       },
@@ -230,7 +230,7 @@ describe("env declarations", () => {
       appName: {
         ...env({ default: "Docs App" }),
         schema: {
-          __vitehubDefaultRuntimeSchema: marker,
+          __vitehubRuntimeSchema: marker,
           "~standard": {
             validate: () => ({ value: 123 }),
           },
@@ -247,14 +247,14 @@ describe("env declarations", () => {
             validate: () => ({ value: 123 }),
           },
         }), {
-          __vitehubDefaultRuntimeSchema: marker,
+          __vitehubRuntimeSchema: marker,
           safeParse: defaultStringSchema.safeParse,
         }),
       },
     })).toThrow("[vitehub] Env declaration is invalid.")
 
     const accessorSchema = {
-      __vitehubDefaultRuntimeSchema: marker,
+      __vitehubRuntimeSchema: marker,
       get safeParse() {
         return defaultStringSchema.safeParse
       },
@@ -268,7 +268,7 @@ describe("env declarations", () => {
 
     let hasChecks = 0
     const proxySchema = new Proxy({
-      __vitehubDefaultRuntimeSchema: marker,
+      __vitehubRuntimeSchema: marker,
       safeParse: defaultStringSchema.safeParse,
     }, {
       get(target, property, receiver) {
@@ -298,13 +298,63 @@ describe("env declarations", () => {
         ...env({ default: 123 as never }),
         schema: proxySchema,
       },
-    })).toThrow("Expected string")
+    })).toThrow("Expected a string")
   })
 
-  it("rejects non-string runtime registry types", () => {
+  it("rejects type labels that differ from the runtime parser", () => {
     expect(() => createRuntimeRegistry({
       sentryDebug: env({ type: "boolean" }),
     })).toThrow("[vitehub] Env declaration is invalid.")
+    expect(createRuntimeRegistry({ label: env({ type: "string" }) })).toMatchObject({ label: { schema: { kind: "string" } } })
+  })
+
+  it("declares typed runtime values with serializable parsers and typed defaults", () => {
+    expect(env.boolean({ default: false })).toMatchObject({ default: false, kind: "env-variable", mode: "runtime", required: true, type: "boolean" })
+    expect(env.number({ optional: true })).toMatchObject({ required: false, type: "number" })
+    expect(env.enum(["draft", "send"], { default: "draft" })).toMatchObject({ default: "draft", type: "\"draft\" | \"send\"" })
+
+    const registry = createRuntimeRegistry({
+      labeller: {
+        dryRun: env.boolean({ default: false }),
+        minConfidence: env.number({ default: 0.6 }),
+        mode: env.enum(["draft", "send"], { default: "send" }),
+        retries: env.number({ secret: true, source: env.source("LABELLER_RETRIES") }),
+      },
+    })
+    expect(registry).toMatchObject({
+      labeller: {
+        dryRun: { default: false, schema: { kind: "boolean" } },
+        minConfidence: { default: 0.6, schema: { kind: "number" } },
+        mode: { default: "send", schema: { kind: "enum", values: ["draft", "send"] } },
+        retries: { schema: { kind: "number" }, secret: true },
+      },
+    })
+    expect(JSON.parse(JSON.stringify(registry))).toEqual(registry)
+  })
+
+  it("keeps typed parsers after config cloning", () => {
+    const declaration = env.enum(["draft", "send"])
+    expect(createRuntimeRegistry({
+      mode: { ...declaration, schema: { ...(declaration.schema as Record<string, unknown>) } },
+    })).toMatchObject({ mode: { schema: { kind: "enum", values: ["draft", "send"] } } })
+    expect(() => createRuntimeRegistry({
+      mode: { ...declaration, schema: { ...(declaration.schema as Record<string, unknown>), safeParse: () => ({ data: "x", success: true }) } },
+    })).toThrow("[vitehub] Env declaration is invalid.")
+  })
+
+  it("rejects invalid typed defaults and enum values", () => {
+    expect(() => createRuntimeRegistry({ dryRun: env.boolean({ default: "yes" as never }) })).toThrow("Invalid default for env.dryRun: Expected a boolean: true, false, 1, or 0.")
+    expect(() => createRuntimeRegistry({ limit: env.number({ default: Number.NaN }) })).toThrow("Expected a finite number.")
+    expect(() => createRuntimeRegistry({ mode: env.enum(["draft"], { default: "send" as never }) })).toThrow("Expected one of \"draft\".")
+    expect(() => env.enum([] as never)).toThrow("unique non-empty strings")
+    expect(() => env.enum(["draft", "draft"])).toThrow("unique non-empty strings")
+    expect(() => env.enum([""])).toThrow("unique non-empty strings")
+  })
+
+  it("parses typed values for build and public declarations", () => {
+    expect(parseSchema(env.boolean({ mode: "build" }).schema, " TRUE ", "env.public.debug")).toBe(true)
+    expect(parseSchema(env.number({ mode: "build" }).schema, "3000", "env.public.port")).toBe(3000)
+    expect(() => parseSchema(env.number({ mode: "build" }).schema, "", "env.public.port")).toThrow("Invalid env.public.port: Expected a finite number.")
   })
 
   it("rejects build-mode runtime registry declarations", () => {

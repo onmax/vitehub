@@ -4,7 +4,8 @@ import { resolve } from "node:path"
 import { promisify } from "node:util"
 
 import { parseSchema } from "../schema.ts"
-import { defaultStringSchema, isDefaultStringEnvVariable } from "./declarations.ts"
+import { runtimeValueSchema } from "./declarations.ts"
+import { envValueTypeName, parseEnvValue } from "./values.ts"
 import { isViteHubError } from "@vite-hub/runtime"
 import { envSourceFailed, invalidEnvDeclaration, isAbortError, missingRequiredEnv } from "./errors.ts"
 
@@ -18,6 +19,7 @@ import type {
   EnvRuntimeRegistry,
   EnvSource,
   EnvSourceContext,
+  EnvValueSchema,
   EnvVariableDeclaration,
   EnvViteConfigOptions,
   ResolvedEnvEntry,
@@ -281,23 +283,32 @@ function buildRegistry(declarations: EnvRuntimeConfigOptions | undefined, path: 
     if (source.kind !== "env" && source.kind !== "provider") {
       throw invalidEnvDeclaration(valuePath, `Runtime declaration ${valuePath} must use env.source() or env.provider().`)
     }
-    if (!isDefaultStringEnvVariable(value)) {
-      throw invalidEnvDeclaration(valuePath, `Runtime declaration ${valuePath} uses a custom schema, but runtime schemas cannot be serialized in v1.`)
+    const schema = runtimeValueSchema(value)
+    if (!schema) {
+      throw invalidEnvDeclaration(valuePath, `Runtime declaration ${valuePath} uses a custom schema. Server Env accepts env(), env.boolean(), env.number(), and env.enum() because runtime parsers must be serializable.`)
     }
-    if (value.type && value.type !== "string") {
-      throw invalidEnvDeclaration(valuePath, `Runtime declaration ${valuePath} uses type ${JSON.stringify(value.type)}, but runtime values are strings in v1.`)
+    const type = envValueTypeName(schema)
+    if (value.type && value.type !== type) {
+      throw invalidEnvDeclaration(valuePath, `Runtime declaration ${valuePath} uses type ${JSON.stringify(value.type)}, but its parser produces ${type}. Use env.boolean(), env.number(), or env.enum() to parse other types.`)
     }
     return [key, {
       default: typeof value.default === "undefined"
         ? undefined
-        : parseSchema(defaultStringSchema, value.default, valuePath),
+        : parseRuntimeDefault(schema, value.default, valuePath),
       required: value.required,
-      schema: { kind: "string" },
+      schema,
       secret: value.secret,
       source,
-      type: value.type,
     }]
   }))
+}
+
+function parseRuntimeDefault(schema: EnvValueSchema, value: unknown, path: string): unknown {
+  const result = parseEnvValue(schema, value)
+  if (!result.success) {
+    throw envErrorDiagnostics.ENV_R0023({ message: `[vitehub] Invalid default for ${path}: ${result.message}` })
+  }
+  return result.data
 }
 
 export function resolveEnvSource(declaration: EnvVariableDeclaration, path: string, prefix = ""): EnvSource {

@@ -49,6 +49,12 @@ describe("Vite plugin", () => {
       },
       server: {
         githubToken: env({ secret: true }),
+        labeller: {
+          dryRun: env.boolean({ default: false }),
+          mode: env.enum(["draft", "send"]),
+          pin: env.number({ secret: true }),
+          retries: env.number({ optional: true }),
+        },
       },
     }, root)
 
@@ -58,6 +64,11 @@ describe("Vite plugin", () => {
     expect(types).toContain("\"port\": number")
     expect(types).toContain("\"optionalLabel\": string | undefined")
     expect(types).toContain("\"githubToken\": import(\"@vite-hub/env/secret\").SecretEnv<string>")
+    expect(types).toContain("\"dryRun\": boolean")
+    expect(types).toContain("\"mode\": \"draft\" | \"send\"")
+    expect(types).toContain("\"pin\": import(\"@vite-hub/env/secret\").SecretEnv<number>")
+    expect(types).toContain("\"retries\"?: number")
+    await expect(readFile(join(root, ".vitehub", "env", "server.d.ts"), "utf8")).resolves.toContain("\"pin\": SecretEnv<number>")
     await expect(readFile(join(root, ".vitehub", "env", "public.d.ts"), "utf8")).resolves.toContain("export interface PublicEnv")
     await expect(readFile(join(root, ".vitehub", "env", "server.d.ts"), "utf8")).resolves.toContain("export interface ServerEnv")
   })
@@ -540,7 +551,7 @@ describe("Vite plugin", () => {
       const { describeServerEnv } = await import(${JSON.stringify(url)});
       process.stdout.write(JSON.stringify(describeServerEnv()));
     `], { encoding: "utf8" })
-    expect(JSON.parse(stdout).entries).toEqual([{ path: "env.server.token", source: "provider", provider: "vault", secret: true, required: true, hasDefault: false }])
+    expect(JSON.parse(stdout).entries).toEqual([{ path: "env.server.token", source: "provider", provider: "vault", secret: true, required: true, hasDefault: false, type: "string" }])
     expect(await readFile(join(root, "dist", "entry.mjs"), "utf8")).not.toContain("provider must not initialize")
   })
 
