@@ -4,12 +4,13 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
 import { createServer } from "vite"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 
 import { runWorkflowCli } from "../src/cli.ts"
 import { workflowDevRuntimeUnavailableCode } from "../src/dev-endpoint.ts"
 import { workflowDevRuntimeRoute } from "../src/dev-support.ts"
-import { createWorkflowDevRuntimeModule, discoverWorkflowDevDefinitions, workflowDevGeneratedDir, writeWorkflowDevFiles } from "../src/internal/dev-runtime.ts"
+import { workflowDevGeneratedDir } from "../src/internal/dev-registry.ts"
+import { createWorkflowDevRuntimeModule, writeWorkflowDevFiles } from "../src/internal/dev-runtime.ts"
 import { hubWorkflow } from "../src/vite.ts"
 
 import type { ViteDevServer } from "vite"
@@ -62,35 +63,30 @@ function cliContext(projectRoot: string, url: string) {
 }
 
 describe("Workflow dev runtime files", () => {
-  it("generates a runtime module that passes the Vite config state and the registry to the dev handler", () => {
+  it("generates a runtime module that passes the Vite config state to the dev handler", () => {
     const code = createWorkflowDevRuntimeModule({ configuredProvider: "cloudflare" }, "vite-hub/_internal/workflow")
     expect(code).toContain(`import { createWorkflowDevRequestHandler } from "vite-hub/_internal/workflow/runtime/dev"`)
-    expect(code).toContain(`import registry from "./dev-registry.mjs"`)
-    expect(code).toContain(`export const handleWorkflowDevRequest = createWorkflowDevRequestHandler({ ...{"configuredProvider":"cloudflare"}, registry })`)
+    expect(code).not.toContain("dev-registry.mjs")
+    expect(code).toContain(`export const handleWorkflowDevRequest = createWorkflowDevRequestHandler({"configuredProvider":"cloudflare"})`)
     expect(createWorkflowDevRuntimeModule({ configError: "Bad config.", configuredProvider: null })).toContain(`{"configError":"Bad config.","configuredProvider":null}`)
   })
 
-  it("writes the handler, runtime, and registry files, and skips files that did not change", async () => {
+  it("writes the handler and runtime files, and skips files that did not change", async () => {
     const projectRoot = await createApp()
-    const definitions = discoverWorkflowDevDefinitions(projectRoot)
-    expect(definitions.map(definition => definition.name)).toEqual(["welcome"])
-
-    const first = await writeWorkflowDevFiles({ configuredProvider: "vercel", definitions, projectRoot })
+    const first = await writeWorkflowDevFiles({ configuredProvider: "vercel", projectRoot })
     const directory = join(projectRoot, workflowDevGeneratedDir)
     expect(first.handler).toBe(join(directory, "dev-handler.mjs"))
-    expect(first.changed).toHaveLength(3)
+    expect(first.changed).toEqual([join(directory, "dev-runtime.mjs"), first.handler])
     await expect(readFile(first.handler, "utf8")).resolves.toContain("import { handleWorkflowDevRequest as handleViteHubDevRequest } from \"./dev-runtime.mjs\"")
-    const registry = await readFile(join(directory, "dev-registry.mjs"), "utf8")
-    expect(registry).toContain("\"welcome\"")
-    expect(registry).toContain("server/workflows/welcome.ts")
+    expect(existsSync(join(directory, "dev-registry.mjs"))).toBe(false)
 
-    expect((await writeWorkflowDevFiles({ configuredProvider: "vercel", definitions, projectRoot })).changed).toEqual([])
-    expect((await writeWorkflowDevFiles({ configuredProvider: "openworkflow", definitions, projectRoot })).changed).toEqual([join(directory, "dev-runtime.mjs")])
+    expect((await writeWorkflowDevFiles({ configuredProvider: "vercel", projectRoot })).changed).toEqual([])
+    expect((await writeWorkflowDevFiles({ configuredProvider: "openworkflow", projectRoot })).changed).toEqual([join(directory, "dev-runtime.mjs")])
   })
 })
 
 describe("Workflow Vite plugin in development", () => {
-  it("adds the dev-only Nitro handler before Nitro reads its config", async () => {
+  it("adds the dev-only Nitro handler and the registry plugin before Nitro reads its config", async () => {
     const projectRoot = await createApp()
     const nitro = { handlers: [{ handler: "./server/app.ts", route: "/app" }] }
     const config: Record<string, unknown> = { nitro, root: projectRoot }
@@ -100,8 +96,19 @@ describe("Workflow Vite plugin in development", () => {
         { handler: "./server/app.ts", route: "/app" },
         { handler: join(projectRoot, workflowDevGeneratedDir, "dev-handler.mjs"), route: workflowDevRuntimeRoute },
       ],
+      plugins: [join(projectRoot, workflowDevGeneratedDir, "dev-plugin.mjs")],
     })
     expect(nitro.handlers).toHaveLength(1)
+  })
+
+  it("adds only the dev handler when Workflow is disabled, so the CLI can report why", async () => {
+    const projectRoot = await createApp()
+    const config: Record<string, unknown> = { root: projectRoot, workflow: false }
+    await configHook(hubWorkflow())(config, { command: "serve", mode: "development" })
+    expect(config.nitro).toMatchObject({ handlers: [{ route: workflowDevRuntimeRoute }] })
+    expect((config.nitro as { plugins?: unknown[] }).plugins ?? []).toEqual([])
+    await expect(readFile(join(projectRoot, workflowDevGeneratedDir, "dev-runtime.mjs"), "utf8")).resolves.toContain(`{"configuredProvider":null}`)
+    expect(existsSync(join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs"))).toBe(false)
   })
 
   it("does not add the dev handler to build output", async () => {
@@ -110,27 +117,6 @@ describe("Workflow Vite plugin in development", () => {
     await configHook(hubWorkflow({ provider: "vercel" }))(config, { command: "build", mode: "production" })
     expect(config.nitro).toBeUndefined()
     expect(existsSync(join(projectRoot, workflowDevGeneratedDir))).toBe(false)
-  })
-
-  it("rewrites the registry and invalidates it in the Nitro environment when a Workflow file changes", async () => {
-    const projectRoot = await createApp()
-    const plugin = hubWorkflow({ provider: "vercel" })
-    await configHook(plugin)({ root: projectRoot }, { command: "serve", mode: "development" })
-    const registryFile = join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs")
-    const module = { file: registryFile }
-    const getModulesByFile = vi.fn((file: string) => file === registryFile ? new Set([module]) : undefined)
-    const invalidateModule = vi.fn()
-    const hotUpdate = plugin.handleHotUpdate as (context: { file: string, server: unknown }) => Promise<void>
-
-    const added = join(projectRoot, "server/workflows/report.ts")
-    await writeFile(added, "export default { handler: async () => 'report' }\n")
-    await hotUpdate({ file: added, server: { environments: { nitro: { moduleGraph: { getModulesByFile, invalidateModule } } } } })
-    await expect(readFile(registryFile, "utf8")).resolves.toContain("\"report\"")
-    expect(invalidateModule).toHaveBeenCalledWith(module)
-
-    invalidateModule.mockClear()
-    await hotUpdate({ file: join(projectRoot, "src/main.ts"), server: { environments: {} } })
-    expect(invalidateModule).not.toHaveBeenCalled()
   })
 })
 

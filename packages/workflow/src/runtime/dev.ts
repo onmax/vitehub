@@ -3,10 +3,10 @@ import { redactInspectionText, redactInspectionValue } from "@vite-hub/internal/
 
 import { resolveWorkflowDevSupport, workflowDevHeader, workflowDevHeaderValue, workflowDevLabel } from "../dev-support.ts"
 import { cancelWorkflow, getWorkflowRun, resumeWorkflowSignal, runWorkflow } from "./client.ts"
-import { getInlineWorkflowDefinitions, getWorkflowRuntimeConfig, getWorkflowRuntimeRegistry, setWorkflowRuntimeRegistry } from "./state.ts"
+import { getInlineWorkflowDefinitions, getWorkflowRuntimeConfig, getWorkflowRuntimeRegistry } from "./state.ts"
 
 import type { WorkflowDevOperation, WorkflowDevRequest, WorkflowDevResponseBody, WorkflowDevRunView } from "../dev-support.ts"
-import type { WorkflowDefinitionRegistry, WorkflowProvider, WorkflowRun } from "../types.ts"
+import type { WorkflowProvider, WorkflowRun } from "../types.ts"
 
 /**
  * Data that the Vite plugin generates for the development-only Nitro handler.
@@ -16,8 +16,6 @@ export interface WorkflowDevRuntimeOptions {
   configError?: string
   /** Provider that the Vite config selects, or `null` when Workflow is disabled. */
   configuredProvider: WorkflowProvider | null
-  /** Discovered Workflow Definitions that the CLI can start. Agent Workflows are not included. */
-  registry: WorkflowDefinitionRegistry
 }
 
 interface WorkflowDevResult {
@@ -27,11 +25,6 @@ interface WorkflowDevResult {
 
 const maxRequestBytes = 1024 * 1024
 const maxRememberedRuns = 1024
-
-// Registry that a dev handler installed. A later handler instance, for example
-// after the generated registry changes, can replace it. A registry that the
-// app installed is never replaced.
-let installedRegistry: WorkflowDefinitionRegistry | undefined
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
@@ -181,25 +174,10 @@ async function readRequestBody(request: Request): Promise<{ body?: unknown, erro
   }
 }
 
-// The app resolves inline Workflow Definitions when it imports their modules.
-// Hide registry entries that are already inline, so the runtime does not
-// report a duplicate definition.
-function createDevRegistryView(registry: WorkflowDefinitionRegistry): WorkflowDefinitionRegistry {
-  return new Proxy(registry, {
-    get(target, key, receiver) {
-      if (typeof key === "string" && getInlineWorkflowDefinitions().has(key)) return undefined
-      return Reflect.get(target, key, receiver)
-    },
-  })
-}
-
-function installDevRegistry(registry: WorkflowDefinitionRegistry): boolean {
-  const current = getWorkflowRuntimeRegistry()
-  if (current === registry) return true
-  if (current !== undefined && current !== installedRegistry) return false
-  setWorkflowRuntimeRegistry(registry)
-  installedRegistry = registry
-  return true
+// Workflows that the app can start by name: the registry that the runtime
+// installed, and inline Workflow Definitions that the app registered.
+function startableWorkflows(): string[] {
+  return [...new Set([...Object.keys(getWorkflowRuntimeRegistry() ?? {}), ...getInlineWorkflowDefinitions().keys()])].sort()
 }
 
 /**
@@ -207,14 +185,12 @@ function installDevRegistry(registry: WorkflowDefinitionRegistry): boolean {
  * `vitehub workflow`.
  *
  * The handler runs in the Nitro dev runtime, so it uses the same Workflow
- * state as the app. It does not change the Workflow configuration of the
- * runtime. It installs the discovered Workflow registry only when the app has
- * not installed one. It remembers the Workflow name of each run that it
- * starts, and it redacts credentials in run data and error messages.
+ * state and registry as the app. It does not change the Workflow
+ * configuration or the registry of the runtime. It remembers the Workflow
+ * name of each run that it starts, and it redacts credentials in run data and
+ * error messages.
  */
 export function createWorkflowDevRequestHandler(options: WorkflowDevRuntimeOptions): (request: Request) => Promise<Response> {
-  const registry = createDevRegistryView(options.registry)
-  const workflows = Object.keys(options.registry).sort()
   const startedRuns = new Map<string, string>()
 
   function rememberRun(id: string, workflow: string): void {
@@ -245,16 +221,16 @@ export function createWorkflowDevRequestHandler(options: WorkflowDevRuntimeOptio
       ? ""
       : ` The Vite config selects ${options.configuredProvider}, but the Nitro dev runtime uses ${provider}${runtimeConfig ? "" : " because the app installs no Workflow configuration in development"}.`
     const note = `${support.note}${configNote}`
-    const registryInstalled = installDevRegistry(registry)
 
     try {
       if (request.operation === "start") {
+        const workflows = startableWorkflows()
         if (!workflows.includes(request.workflow)) {
-          const available = workflows.length ? ` Available Workflows: ${workflows.join(", ")}.` : " No Workflow Definitions were discovered."
+          if (!getWorkflowRuntimeRegistry()) {
+            return failure(409, "WORKFLOW_DEV_REGISTRY_MISSING", `Unknown Workflow: ${request.workflow}. The Nitro dev runtime has no Workflow registry. The Workflow Vite plugin installs the discovered registry with the Nitro plugin .vitehub/nitro/workflow/dev-plugin.mjs when the dev server starts. Make sure that Nitro loads this plugin, then restart the dev server.`)
+          }
+          const available = workflows.length ? ` Available Workflows: ${workflows.join(", ")}.` : " The Workflow registry of the Nitro dev runtime is empty."
           return failure(404, "WORKFLOW_DEFINITION_NOT_FOUND", `Unknown Workflow: ${request.workflow}.${available}`)
-        }
-        if (!registryInstalled && !getWorkflowRuntimeRegistry()?.[request.workflow] && !getInlineWorkflowDefinitions().has(request.workflow)) {
-          return failure(409, "WORKFLOW_DEV_REGISTRY_CONFLICT", `The app installed its own Workflow registry, and it does not contain ${request.workflow}.`)
         }
         const run = await runWorkflow(request.workflow, request.input)
         rememberRun(run.id, request.workflow)

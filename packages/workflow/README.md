@@ -23,9 +23,13 @@ Then install the dependency required by the selected provider:
 | -------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------ |
 | Cloudflare Workflows | None in application code                                           | Cloudflare owns run state.                                               |
 | Vercel Workflow      | `workflow` and `@workflow/builders` for native durable definitions | Native definitions survive function restarts; plain handlers run inline. |
-| OpenWorkflow         | `openworkflow`; add `postgres` when using Postgres                 | Requires explicit SQLite or Postgres storage.                            |
+| OpenWorkflow         | `openworkflow`; add `postgres` when using Postgres                 | Uses local SQLite by default. Configure durable storage for deployment. |
 
 Importing the provider-neutral package root does not load OpenWorkflow types. Worker lifecycle helpers live at `@vite-hub/workflow/runtime/openworkflow-worker`.
+
+Set `workflow.sqlite.path` or `workflow.postgres.url` to select OpenWorkflow storage. An explicit value takes precedence over ambient storage environment variables. A configured environment declaration must resolve to a value; missing configuration rejects before opening a backend. With no storage configuration or storage environment variables, OpenWorkflow uses `.vitehub/data/openworkflow.sqlite.db`.
+
+The former `workflow.database` option was never connected to Named Databases. It now rejects instead of silently selecting fallback storage. Replace it with `workflow.sqlite.path` or `workflow.postgres.url`.
 
 ## Define a workflow
 
@@ -158,7 +162,7 @@ pnpm vitehub workflow cancel <runId> [--workflow <name>]
 pnpm vitehub workflow resume <token> [--payload <json|@file>]
 ```
 
-The endpoint forwards each operation into the Nitro dev runtime of a Vite + Nitro app, so the CLI and the app share Workflow state. Nuxt and plain Vite return `WORKFLOW_DEV_RUNTIME_UNAVAILABLE`. The CLI does not change the Workflow configuration of the runtime. It installs the discovered registry only when the app has none, so after the first command the app can also start discovered Workflows by name. `get` and `cancel` need `--workflow <name>` for runs that the CLI did not start. Operations that the provider or the run does not support return the reason. There is no run list or replay, because the runtime has no API for them.
+The endpoint forwards each operation into the Nitro dev runtime of a Vite + Nitro app, so the CLI and the app share Workflow state. Nuxt and plain Vite return `WORKFLOW_DEV_RUNTIME_UNAVAILABLE`. The CLI does not change the Workflow configuration or the registry of the runtime. In Vite dev, the Workflow Vite plugin installs the discovered registry when the dev server starts. When the runtime has no registry, `start` returns `WORKFLOW_DEV_REGISTRY_MISSING`. `get` and `cancel` need `--workflow <name>` for runs that the CLI did not start. Operations that the provider or the run does not support return the reason. There is no run list or replay, because the runtime has no API for them.
 
 ## Make a Vercel workflow durable
 

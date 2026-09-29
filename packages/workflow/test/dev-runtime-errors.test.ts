@@ -26,7 +26,7 @@ afterEach(() => {
 describe("Workflow dev provider failures", () => {
   it("reports the redacted provider reason with a 502 status", async () => {
     setWorkflowRuntimeConfig({ provider: "vercel" })
-    const handle = createWorkflowDevRequestHandler({ configuredProvider: "vercel", registry: {} })
+    const handle = createWorkflowDevRequestHandler({ configuredProvider: "vercel" })
     const response = await handle(new Request(`http://localhost:5173${workflowDevRuntimeRoute}`, {
       body: JSON.stringify({ operation: "resume", token: "tok_unknown" }),
       headers: { [workflowDevHeader]: workflowDevHeaderValue, "content-type": "application/json" },

@@ -367,7 +367,7 @@ Check it with: vitehub workflow get wrun_abc123
 `get` and `cancel` need the Workflow name, because the runtime reads runs by Workflow name and run ID. They remember the name of runs that `vitehub workflow start` started in the current Nitro dev runtime. For runs that the app started, or after a restart, pass `--workflow <name>`.
 `resume <token>` takes the opaque signal token from `resumeWorkflowSignal()`. There is no run ID plus signal name API.
 The command does not change the Workflow configuration of the Nitro dev runtime. When the app installs no configuration, the runtime uses inline Vercel execution, and the note says so if the Vite config selects another provider.
-The command installs the discovered Workflow registry in the Nitro dev runtime when the app has not installed one. After the first command, the app can also start discovered Workflows by name until the dev server restarts. New Workflow files are picked up without a restart.
+The command reads the Workflow registry of the Nitro dev runtime and does not change it. In Vite + Nitro development, the Workflow Vite plugin installs the discovered registry when the dev server starts, and it picks up new Workflow files without a restart. When the runtime has no registry, `start` exits with `WORKFLOW_DEV_REGISTRY_MISSING` and says why.
 The human output prints a `[workflow]` note on stderr that says what the provider does in development. Read [Workflows](/docs/server-primitives/workflows#run-workflows-from-the-cli) for the operations that each provider supports.
 
 ## Preview provisioning
@@ -398,6 +398,7 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 | `vitehub schedule run` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
 | `Unknown Workspace Dev target` | The named Workspace is not discovered by the running Vite dev server. | Check the Workspace Definition name and make sure `hubWorkspace()` is active. |
 | `vitehub workflow` reports `WORKFLOW_DEV_RUNTIME_UNAVAILABLE` | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
+| `vitehub workflow start` reports `WORKFLOW_DEV_REGISTRY_MISSING` | The Nitro dev runtime has no Workflow registry, because Nitro did not load the plugin `.vitehub/nitro/workflow/dev-plugin.mjs`. | Make sure that the Nitro config keeps the generated plugin, then restart the dev server. |
 | `workflow cancel is not supported by the <provider> provider` | The Workflow runtime cannot do this operation for the active provider or run. The message gives the reason. | Test the operation on a deployed stage or through the provider tooling. |
 | `Run <id> was not started by ... in this Nitro dev runtime` | `get` or `cancel` does not know the Workflow name of the run. | Pass `--workflow <name>`. |
 | `Agent Dev Loop command requires workspace.mode: "write"` | A `!` command targeted an Agent without writable Workspace access. | Configure the selected Agent with `workspace: { mode: 'write' }`, or send a normal Agent message instead. |

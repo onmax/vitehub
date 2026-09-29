@@ -26,8 +26,11 @@ const welcomeRegistry: WorkflowDefinitionRegistry = {
   welcome: definitionModule(({ payload }) => ({ greeting: "hello", payload })),
 }
 
-function handler(options: Partial<WorkflowDevRuntimeOptions> = {}) {
-  const handle = createWorkflowDevRequestHandler({ configuredProvider: "vercel", registry: welcomeRegistry, ...options })
+// The Nitro dev plugin installs the registry at startup. `registry: null` is a runtime without a registry.
+function handler(options: Partial<WorkflowDevRuntimeOptions> & { registry?: WorkflowDefinitionRegistry | null } = {}) {
+  const { registry = welcomeRegistry, ...runtimeOptions } = options
+  if (registry) setWorkflowRuntimeRegistry(registry)
+  const handle = createWorkflowDevRequestHandler({ configuredProvider: "vercel", ...runtimeOptions })
   return async (body: unknown, init: { headers?: Record<string, string>, method?: string, raw?: string } = {}) => {
     const response = await handle(new Request(`http://localhost:5173${workflowDevRuntimeRoute}`, {
       body: init.method === "GET" ? undefined : init.raw ?? JSON.stringify(body),
@@ -159,7 +162,6 @@ describe("Workflow dev request handler", () => {
     expect(await call(body, { headers: { ...jsonHeaders, origin: "http://evil.test" } })).toEqual(expect.objectContaining({ body: "Forbidden Workflow Dev origin.", status: 403 }))
     expect(await call(body, { headers: { ...guard, "content-type": "text/plain" } })).toEqual(expect.objectContaining({ body: "Workflow Dev requests must use application/json.", status: 415 }))
     expect((await call(undefined, { headers: guard, method: "GET" })).status).toBe(405)
-    expect(getWorkflowRuntimeRegistry()).toBeUndefined()
   })
 
   it("rejects operations that the provider does not support", async () => {
@@ -206,42 +208,48 @@ describe("Workflow dev request handler", () => {
     })
   })
 
-  it("does not replace a Workflow registry that the app installed", async () => {
+  it("reads the Workflow registry of the runtime and does not change it", async () => {
     setWorkflowRuntimeConfig({ provider: "vercel" })
     const appRegistry: WorkflowDefinitionRegistry = { other: definitionModule(() => "other") }
-    setWorkflowRuntimeRegistry(appRegistry)
-    const call = handler()
+    const call = handler({ registry: appRegistry })
     expect(await call({ operation: "start", workflow: "welcome" })).toMatchObject({
-      body: { error: { code: "WORKFLOW_DEV_REGISTRY_CONFLICT", message: "The app installed its own Workflow registry, and it does not contain welcome." } },
-      status: 409,
+      body: { error: { code: "WORKFLOW_DEFINITION_NOT_FOUND", message: "Unknown Workflow: welcome. Available Workflows: other." } },
+      status: 404,
+    })
+    const id = runId((await call({ operation: "start", workflow: "other" })).body)
+    await vi.waitFor(async () => {
+      expect(await call({ operation: "get", runId: id })).toMatchObject({ body: { run: { result: "other", status: "completed" } } })
     })
     expect(getWorkflowRuntimeRegistry()).toBe(appRegistry)
+  })
 
-    const shared = handler({ registry: { other: definitionModule(() => "dev copy") } })
-    const id = runId((await shared({ operation: "start", workflow: "other" })).body)
+  it("explains why a runtime without a Workflow registry cannot start a Workflow by name", async () => {
+    setWorkflowRuntimeConfig({ provider: "vercel" })
+    const call = handler({ registry: null })
+    expect(await call({ operation: "start", workflow: "welcome" })).toMatchObject({
+      body: {
+        error: {
+          code: "WORKFLOW_DEV_REGISTRY_MISSING",
+          message: "Unknown Workflow: welcome. The Nitro dev runtime has no Workflow registry. The Workflow Vite plugin installs the discovered registry with the Nitro plugin .vitehub/nitro/workflow/dev-plugin.mjs when the dev server starts. Make sure that Nitro loads this plugin, then restart the dev server.",
+        },
+      },
+      status: 409,
+    })
+    expect(getWorkflowRuntimeRegistry()).toBeUndefined()
+
+    registerInlineWorkflowDefinition("inline", { handler: async () => "inline" })
+    const id = runId((await call({ operation: "start", workflow: "inline" })).body)
     await vi.waitFor(async () => {
-      expect(await shared({ operation: "get", runId: id })).toMatchObject({ body: { run: { result: "other", status: "completed" } } })
+      expect(await call({ operation: "get", runId: id })).toMatchObject({ body: { run: { result: "inline", status: "completed" } } })
     })
   })
 
-  it("replaces a registry that an earlier dev handler installed", async () => {
-    setWorkflowRuntimeConfig({ provider: "vercel" })
-    await handler()({ operation: "get", runId: "r", workflow: "welcome" })
-    const first = getWorkflowRuntimeRegistry()
-    expect(first?.welcome).toBeTypeOf("function")
-
-    await handler({ registry: { next: definitionModule(() => "next") } })({ operation: "get", runId: "r", workflow: "next" })
-    expect(getWorkflowRuntimeRegistry()).not.toBe(first)
-    expect(getWorkflowRuntimeRegistry()?.next).toBeTypeOf("function")
-  })
-
-  it("uses an inline definition of the app instead of the discovered module", async () => {
+  it("reports the runtime error for an inline definition that has the name of a registry entry", async () => {
     setWorkflowRuntimeConfig({ provider: "vercel" })
     registerInlineWorkflowDefinition("welcome", { handler: async () => "inline" })
-    const call = handler()
-    const id = runId((await call({ operation: "start", workflow: "welcome" })).body)
-    await vi.waitFor(async () => {
-      expect(await call({ operation: "get", runId: id })).toMatchObject({ body: { run: { result: "inline", status: "completed" } } })
+    expect(await handler()({ operation: "start", workflow: "welcome" })).toMatchObject({
+      body: { error: { message: expect.stringContaining("Duplicate workflow name \"welcome\" from inline and discovered definitions.") } },
+      status: 500,
     })
   })
 })
