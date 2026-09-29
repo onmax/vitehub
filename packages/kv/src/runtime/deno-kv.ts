@@ -38,6 +38,12 @@ function fromDenoKey(key: DenoKVKey): string | undefined {
   return key.length === 1 && typeof key[0] === "string" ? key[0] : undefined
 }
 
+function toDenoExpireIn(ttl: unknown): { expireIn: number } | undefined {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Match unstorage's TTL normalization at the write-options boundary.
+  if (typeof ttl !== "number" || !Number.isFinite(ttl) || ttl <= 0) return undefined
+  return { expireIn: Math.max(1, Math.ceil(ttl * 1_000)) }
+}
+
 export default function createDenoKVDriver(options: ResolvedDenoKVStoreConfig = { driver: "deno-kv" }): KVRuntimeDriver {
   let kvPromise: Promise<DenoKV> | undefined
 
@@ -92,13 +98,25 @@ export default function createDenoKVDriver(options: ResolvedDenoKVStoreConfig = 
       return (await matchingKeys(base)).flatMap(key => fromDenoKey(key) ?? []).sort()
     },
     async listKeys({ cursor, limit, prefix = "" }: KVListOptions) {
-      const iterator = (await open()).list({ prefix: [] }, { cursor, limit })
+      const kv = await open()
       const keys: string[] = []
-      for await (const entry of iterator) {
-        const key = fromDenoKey(entry.key)
-        if (key?.startsWith(prefix)) keys.push(key)
+      let nextCursor = cursor
+      let resultCursor: string | undefined
+      do {
+        const iterator = kv.list({ prefix: [] }, { cursor: nextCursor, limit: Math.max(1, limit - keys.length) })
+        for await (const entry of iterator) {
+          const key = fromDenoKey(entry.key)
+          if (key?.startsWith(prefix)) keys.push(key)
+          if (keys.length >= limit) break
+        }
+        resultCursor = iterator.cursor
+        nextCursor = resultCursor
+      } while (keys.length < limit && resultCursor)
+
+      if (resultCursor && keys.length >= limit) {
+        return { keys, cursor: resultCursor }
       }
-      return iterator.cursor ? { keys, cursor: iterator.cursor } : { keys }
+      return { keys }
     },
     async hasItem(key) {
       return (await (await open()).get(toDenoKey(key))).versionstamp !== null
@@ -107,10 +125,7 @@ export default function createDenoKVDriver(options: ResolvedDenoKVStoreConfig = 
       await (await open()).delete(toDenoKey(key))
     },
     async setItem(key, value, writeOptions) {
-      const ttl = writeOptions?.ttl
-      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Match unstorage's Deno TTL normalization at the write-options boundary.
-      const expireIn = typeof ttl === "number" && ttl > 0 ? { expireIn: ttl * 1_000 } : undefined
-      await (await open()).set(toDenoKey(key), value, expireIn)
+      await (await open()).set(toDenoKey(key), value, toDenoExpireIn(writeOptions?.ttl))
     },
   }
 }

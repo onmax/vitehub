@@ -474,6 +474,21 @@ describe("kv runtime", () => {
     expect(native.set).toHaveBeenCalledWith(["persistent"], "value", undefined)
   })
 
+  it("normalizes fractional and non-finite Deno TTLs", async () => {
+    const { openKv } = createDenoOpenKvMock()
+    // SAFETY: This test provides the Deno API used by the runtime adapter.
+    ;(globalThis as typeof globalThis & { Deno?: unknown }).Deno = { openKv }
+    const { createHostedKVStorage } = await import("../src/runtime/hosted-storage.ts")
+    const storage = createHostedKVStorage({ store: { driver: "deno-kv" } })
+
+    await storage.setItem("short", "value", { ttl: 0.0001 })
+    await storage.setItem("infinite", "value", { ttl: Number.POSITIVE_INFINITY })
+
+    const native = await openKv.mock.results[0]!.value
+    expect(native.set).toHaveBeenNthCalledWith(1, ["short"], "value", { expireIn: 1 })
+    expect(native.set).toHaveBeenNthCalledWith(2, ["infinite"], "value", undefined)
+  })
+
   it("retries a failed Deno connection and shares concurrent opens", async () => {
     const { openKv } = createDenoOpenKvMock()
     openKv.mockRejectedValueOnce(new Error("temporarily unavailable"))
@@ -702,12 +717,19 @@ describe("kv runtime", () => {
     })
   })
 
-  it("passes a bounded page size to Deno KV for selective prefixes", async () => {
-    const list = vi.fn((_selector: { prefix: [] }, _options: { cursor?: string; limit?: number } = {}) => {
+  it("fills selective Deno KV pages without exceeding the requested size", async () => {
+    const list = vi.fn((_selector: { prefix: [] }, options: { cursor?: string; limit?: number } = {}) => {
       const iterator = (async function* () {
-        yield { key: ["other"], value: null }
+        if (!options.cursor) {
+          yield { key: ["other"], value: null }
+        }
+        else {
+          yield { key: ["match-1"], value: null }
+          yield { key: ["match-2"], value: null }
+          yield { key: ["match-3"], value: null }
+        }
       })()
-      return Object.assign(iterator, { cursor: "deno-next" })
+      return Object.assign(iterator, { cursor: options.cursor ? "deno-after" : "deno-next" })
     })
     // SAFETY: This test provides the only Deno API used by the runtime adapter.
     ;(globalThis as typeof globalThis & { Deno?: unknown }).Deno = {
@@ -721,11 +743,12 @@ describe("kv runtime", () => {
     const { default: createDenoKVDriver } = await import("../src/runtime/deno-kv.ts")
     const driver = createDenoKVDriver()
 
-    await expect(driver.listKeys({ cursor: "deno-before", limit: 3, prefix: "missing" })).resolves.toEqual({
-      keys: [],
-      cursor: "deno-next",
+    await expect(driver.listKeys({ limit: 2, prefix: "match" })).resolves.toEqual({
+      keys: ["match-1", "match-2"],
+      cursor: "deno-after",
     })
-    expect(list).toHaveBeenCalledWith({ prefix: [] }, { cursor: "deno-before", limit: 3 })
+    expect(list).toHaveBeenNthCalledWith(1, { prefix: [] }, { cursor: undefined, limit: 2 })
+    expect(list).toHaveBeenNthCalledWith(2, { prefix: [] }, { cursor: "deno-next", limit: 2 })
   })
 
 })
