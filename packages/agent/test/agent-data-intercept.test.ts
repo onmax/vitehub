@@ -127,6 +127,55 @@ describe("Agent data and intercept", () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  it("validates data mutated in place by a Capability before hooks and intercept", async () => {
+    const inputHook = vi.fn()
+    const intercept = vi.fn(() => undefined)
+    const run = vi.fn(() => "ok")
+    const mutateData = defineCapability({
+      id: "mutate-data",
+      input(context) {
+        const data = context.input.get().data as { subject?: string }
+        delete data.subject
+      },
+    })
+    const agent = defineAgent({
+      capabilities: [mutateData],
+      data: emailSchema,
+      driver: { run },
+      hooks: { "agent:input": inputHook },
+      intercept,
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { from: "friend@example.com", subject: "Dinner" } })
+
+    expect(error?.message).toContain("Invalid Agent input data")
+    expect(output).toBeNull()
+    expect(inputHook).not.toHaveBeenCalled()
+    expect(intercept).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it("does not report unchanged transformed data as changed", async () => {
+    const transform = vi.fn((value: string) => Number(value))
+    const capability = defineCapability({
+      id: "read-data",
+      input(context) {
+        expect(context.input.get().data).toEqual({ count: 2 })
+      },
+    })
+    const agent = defineAgent({
+      capabilities: [capability],
+      data: v.object({ count: v.pipe(v.string(), v.transform(transform)) }),
+      driver: { run: () => "ok" },
+      runtime: false,
+    })
+
+    await runAgentInline(agent, runtime(), { data: { count: "2" } })
+
+    expect(transform).toHaveBeenCalledOnce()
+  })
+
   it("lets a child Agent replace the parent data schema", async () => {
     const child = defineAgent({
       extends: labeller(),

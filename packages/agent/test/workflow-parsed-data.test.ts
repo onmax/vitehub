@@ -74,6 +74,44 @@ describe("durable Agent data handoff", () => {
     expect(run).toHaveBeenCalledOnce()
   })
 
+  it("hands off raw data when the transformed value is not portable", async () => {
+    const data = v.object({ date: v.pipe(v.string(), v.transform(value => new Date(value))) })
+    const run = vi.fn(({ input }: { input: { data?: unknown } }) => ({ isDate: input.data && typeof input.data === "object" && "date" in input.data && input.data.date instanceof Date }))
+    const agent = defineAgent({ data, driver: { run }, runtime: workflow("nonportable-data") })
+    let payload: unknown
+    setAgentWorkflowRuntimeLoaders({
+      state: async () => ({
+        ...await import("@vite-hub/workflow/runtime/state"),
+        getWorkflowRuntimeConfig: () => ({ provider: "openworkflow" as const }),
+      }),
+      workflow: async () => ({
+        ...await import("@vite-hub/workflow"),
+        createWorkflow: () => ({
+          run: async (input: unknown) => {
+            payload = input
+            return { id: "nonportable-data", provider: "openworkflow", status: "queued" }
+          },
+        }) as never,
+      }),
+    })
+
+    await startAgentInvocation(agent, {
+      memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn(),
+    }, { data: { date: "2026-01-01T00:00:00.000Z" } })
+
+    expect(payload).toMatchObject({ input: { data: { date: "2026-01-01T00:00:00.000Z" } } })
+    expect(payload).not.toHaveProperty("parsedInputData")
+    const result = await runAgentWorkflowDefinition(agent, {
+      id: "nonportable-data",
+      name: "nonportable-data",
+      payload: payload as never,
+      provider: "openworkflow",
+    }, runAgentInline)
+
+    expect(result).toEqual({ isDate: true })
+    expect(run).toHaveBeenCalledOnce()
+  })
+
   it("validates older payloads and ignores caller-supplied input context", async () => {
     const validate = vi.fn((value: string) => Number(value))
     const data = v.object({ count: v.pipe(v.string(), v.transform(validate)) })

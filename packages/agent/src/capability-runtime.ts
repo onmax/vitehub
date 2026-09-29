@@ -180,6 +180,7 @@ export interface ResolvedAgentCapabilities {
   driverContributions: AgentDriverContribution[]
   hasCloseCallbacks: boolean
   input: AgentRunInput
+  inputDataChanged: boolean
   messages: Message[]
   response?: Response
   registries: AgentCapabilityRegistries
@@ -493,6 +494,69 @@ function pathsConflict(left: string, right: string): boolean {
 
 function isPlainRecord(input: unknown): input is Record<string, unknown> {
   return !!input && hasRuntimeType(input, "object") && !Array.isArray(input)
+}
+
+function snapshotCapabilityData(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
+  if (!value || typeof value !== "object") return value
+  const existing = seen.get(value)
+  if (existing) return existing
+  if (value instanceof Date) return new Date(value.getTime())
+  if (value instanceof RegExp) return new RegExp(value.source, value.flags)
+  if (value instanceof Map) {
+    const snapshot = new Map<unknown, unknown>()
+    seen.set(value, snapshot)
+    for (const [key, entry] of value) snapshot.set(snapshotCapabilityData(key, seen), snapshotCapabilityData(entry, seen))
+    return snapshot
+  }
+  if (value instanceof Set) {
+    const snapshot = new Set<unknown>()
+    seen.set(value, snapshot)
+    for (const entry of value) snapshot.add(snapshotCapabilityData(entry, seen))
+    return snapshot
+  }
+  const snapshot = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value))
+  seen.set(value, snapshot)
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor) continue
+    if ("value" in descriptor) descriptor.value = snapshotCapabilityData(descriptor.value, seen)
+    Object.defineProperty(snapshot, key, descriptor)
+  }
+  return snapshot
+}
+
+function capabilityDataEqual(left: unknown, right: unknown, seen = new WeakMap<object, object>()): boolean {
+  if (Object.is(left, right)) return true
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false
+  const matched = seen.get(left)
+  if (matched === right) return true
+  seen.set(left, right)
+  if (left instanceof Date || right instanceof Date) return left instanceof Date && right instanceof Date && left.getTime() === right.getTime()
+  if (left instanceof RegExp || right instanceof RegExp) return left instanceof RegExp && right instanceof RegExp && left.source === right.source && left.flags === right.flags
+  if (left instanceof Map || right instanceof Map) {
+    if (!(left instanceof Map) || !(right instanceof Map) || left.size !== right.size) return false
+    const leftEntries = [...left.entries()]
+    const rightEntries = [...right.entries()]
+    return leftEntries.every(([key, value], index) => capabilityDataEqual(key, rightEntries[index]?.[0], seen) && capabilityDataEqual(value, rightEntries[index]?.[1], seen))
+  }
+  if (left instanceof Set || right instanceof Set) {
+    if (!(left instanceof Set) || !(right instanceof Set) || left.size !== right.size) return false
+    const rightEntries = [...right.values()]
+    return [...left.values()].every((value, index) => capabilityDataEqual(value, rightEntries[index], seen))
+  }
+  if (Array.isArray(left) !== Array.isArray(right) || Object.getPrototypeOf(left) !== Object.getPrototypeOf(right)) return false
+  const leftKeys = Reflect.ownKeys(left)
+  const rightKeys = Reflect.ownKeys(right)
+  if (leftKeys.length !== rightKeys.length || leftKeys.some((key, index) => key !== rightKeys[index])) return false
+  return leftKeys.every(key => {
+    const leftDescriptor = Object.getOwnPropertyDescriptor(left, key)
+    const rightDescriptor = Object.getOwnPropertyDescriptor(right, key)
+    if (!leftDescriptor || !rightDescriptor) return false
+    if ("value" in leftDescriptor || "value" in rightDescriptor) {
+      return "value" in leftDescriptor && "value" in rightDescriptor && capabilityDataEqual(leftDescriptor.value, rightDescriptor.value, seen)
+    }
+    return leftDescriptor.get === rightDescriptor.get && leftDescriptor.set === rightDescriptor.set
+  })
 }
 
 function ruleConflictBase(pattern: string): string {
@@ -1120,6 +1184,8 @@ export async function resolveAgentCapabilities<
   const inputMessages = getRunMessages(currentInput)
   let messages = memoizeMessageAttachmentData(inputMessages)
   if (messages !== inputMessages) currentInput = withMessages(currentInput, messages)
+  const initialInputData = snapshotCapabilityData(currentInput.data)
+  const inputDataChanged = () => !capabilityDataEqual(currentInput.data, initialInputData)
   let tools: AgentToolSet | undefined
   const driverContributions: AgentDriverContribution[] = []
   let capabilityScope: Awaited<ReturnType<typeof openAgentCapabilityScope>> | undefined
@@ -1471,6 +1537,7 @@ export async function resolveAgentCapabilities<
             driverContributions,
             hasCloseCallbacks: Boolean(capabilityScope),
             input: currentInput,
+            inputDataChanged: inputDataChanged(),
             messages,
             response: result,
             registries,
@@ -1525,6 +1592,7 @@ export async function resolveAgentCapabilities<
     driverContributions,
     hasCloseCallbacks: Boolean(capabilityScope),
     input: currentInput,
+    inputDataChanged: inputDataChanged(),
     messages,
     registries,
     start,

@@ -1655,6 +1655,12 @@ export interface AgentDataCarrier<TDataInput = unknown> {
   [agentDataType]?: TDataInput
 }
 
+declare const agentDataOutputType: unique symbol
+
+export interface AgentDataOutputCarrier<TData = unknown> {
+  [agentDataOutputType]?: TData
+}
+
 export interface AgentDriverOutputCarrier<TOutput = unknown> {
   [agentDriverOutputType]?: TOutput
 }
@@ -1667,7 +1673,8 @@ export interface AgentDefinition<
   TOutput = unknown,
   TDataInput = unknown,
   TDriverOutput = TOutput,
-> extends AgentDataCarrier<TDataInput>, AgentDriverOutputCarrier<TDriverOutput> {
+  TData = unknown,
+> extends AgentDataCarrier<TDataInput>, AgentDataOutputCarrier<TData>, AgentDriverOutputCarrier<TDriverOutput> {
   [agentOutputType]?: TOutput
   box?: AgentBoxInput<TRuntimeConfig>
   health?: AgentHealthDescriptor
