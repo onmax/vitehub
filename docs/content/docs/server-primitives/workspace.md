@@ -96,6 +96,25 @@ Without a `store`, development uses Local. Production uses Memory on Cloudflare,
 
 Custom Stores can implement `removeEmptyDirectory(path)` for build Source cleanup. It must remove only an empty directory, preserve files and missing paths, and reject nonempty directories within the Store mutation boundary. Without this optional method, cleanup retains generated directories. Local, Memory, and Cloudflare Artifacts implement it.
 
+### Recover a Local Store after a crash
+
+Local Store lock markers do not expire by age. A crashed process can leave a marker that makes later operations report `Timed out waiting to write Workspace`.
+
+Stop every process using the Workspace before recovery. Prevent changes to the Store and its ancestor directories throughout the call. Then run `recoverLocalWorkspaceLocks()` with the exact directory configured as the Local Store's `root`:
+
+```ts
+import { recoverLocalWorkspaceLocks } from '@vite-hub/workspace/runtime'
+
+await recoverLocalWorkspaceLocks({
+  root: '/srv/app/.vitehub/workspaces/docs',
+  offline: true,
+})
+```
+
+The `offline: true` flag confirms exclusive offline access; it does not stop other processes. Restart the Workspace processes after recovery succeeds.
+
+Interrupted file removals require a separate retry. If reads report `Interrupted Workspace removal`, retry removal of the reported path with `force: true` and, for directories, `recursive: true` before restoring files. This prevents restored files from reusing deleted Source ownership.
+
 ### Cloudflare Artifacts
 
 Select Cloudflare Artifacts when a deployed Worker needs durable Workspace state:
