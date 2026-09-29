@@ -212,6 +212,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   const starExports: string[] = []
   // Local export clauses may appear before their declarations.
   const pendingExports = new Map<string, string>()
+  const opaqueExports = new Set<string>()
+  const mutableDeclarations = new Set<string>()
   const mutatedBindings = new Set<string>()
   const assignedAliases = new Map<string, Set<string>>()
   let exported: number | undefined
@@ -298,6 +300,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         // Record every declarator, such as `a` and `b` in `const a = x, b = y`.
         for (const [name, initializer] of declarators(i)) {
           declarations.set(name, initializer)
+          if (tokens[i] === "let" || tokens[i] === "var") mutableDeclarations.add(name)
           if (tokens[i - 1] === "export") namedExports.set(name, initializer)
         }
       }
@@ -421,12 +424,19 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           if (nesting > 0) break
         }
       }
+      while (tokens[aliasEnd] === "!" || tokens[aliasEnd] === "as" || tokens[aliasEnd] === "satisfies") {
+        aliasEnd = tokens[aliasEnd] === "!" ? aliasEnd + 1 : skipAssertion(aliasEnd)
+      }
       if ([";", ",", undefined].includes(tokens[aliasEnd])) {
         const targets = assignedAliases.get(name) ?? new Set<string>()
         targets.add(tokens[i + 2]!)
         assignedAliases.set(name, targets)
       }
     }
+  }
+  for (const name of namedExports.keys()) {
+    const local = pendingExports.get(name) ?? name
+    if (mutableDeclarations.has(local) && mutatedBindings.has(local)) opaqueExports.add(name)
   }
 
   // A declaration is visible only in its containing scope and descendants.
@@ -870,7 +880,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
 
-  function properties(index: number, inspectChannels = false, inspectSettings = false, onOpaqueSettings?: () => void): Map<string, number> {
+  function properties(index: number, inspectChannels = false, inspectSettings = false, onOpaqueSettings?: () => void, onPrototypeSettings?: () => void): Map<string, number> {
     const result = new Map<string, number>()
     index = resolveReference(index)
     // Preserve object literals wrapped in value-preserving helpers such as
@@ -967,7 +977,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
             token = tokens[i]
             atProperty = false
           }
-        } else if (tokens[i + 1] === ":") result.set(propertyName(token), i + 2)
+        } else if (tokens[i + 1] === ":") {
+          const name = propertyName(token)
+          if (name === "__proto__") {
+            if (inspectChannels) throw opaqueChannelError()
+            result.delete("workspace")
+            onOpaqueSettings?.()
+            onPrototypeSettings?.()
+          } else result.set(name, i + 2)
+        }
         else if ([",", "}"].includes(tokens[i + 1])) result.set(propertyName(token), i)
         // Object method shorthand (e.g. `configure() { ... }`) has no colon;
         // retain the method's opening parenthesis so callback discovery can
@@ -1104,7 +1122,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (tokens[value] === "true") return true
     if (tokens[value] !== "{") throw pullRequestError()
     let opaque = false
-    const workspace = properties(value, false, false, () => { opaque = true }).get("workspace")
+    let prototype = false
+    const workspace = properties(value, false, false, () => { opaque = true }, () => { prototype = true }).get("workspace")
+    if (prototype) throw pullRequestError()
     if (workspace === undefined) {
       if (opaque) throw pullRequestError()
       return true
@@ -1139,6 +1159,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   function exportOwnsWorkspace(name: string): boolean | undefined {
     const reExport = reExports.get(name)
     if (reExport !== undefined) return importedChannelOwnsWorkspace(reExport.specifier, reExport.name)
+    if (opaqueExports.has(name)) throw opaqueChannelError()
     const index = name === "default" ? exported : namedExports.get(name)
     if (index !== undefined) return channelOwnsWorkspace(index)
     // `export *` never re-exports the default binding.

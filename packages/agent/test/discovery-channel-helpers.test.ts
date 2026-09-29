@@ -70,6 +70,16 @@ it.each([
 })
 
 it.each([
+  "github({ __proto__: { pullRequest: true } })",
+  "github({ pullRequest: { __proto__: { workspace: false } } })",
+])("rejects prototype-backed Channel options: %s", async channel => {
+  const source = `${imports} export default defineAgent({ channels: { custom: ${channel} } })`
+  await expect(discover(source)).rejects.toThrow(/opaque Channel|dynamic GitHub pullRequest option/)
+  const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
+  expect(definition?.workspace).toBe("review")
+})
+
+it.each([
   ["github({ pullRequest: options.pullRequest })", "dynamic GitHub pullRequest option"],
   ["github({ pullRequest: { workspace: options.workspace } })", "dynamic GitHub pullRequest option"],
   ["github({ pullRequest: flag || true })", "dynamic GitHub pullRequest option"],
@@ -234,6 +244,7 @@ it.each([
   'const enable = (flag, value) => { value.pullRequest = flag }; enable(true, options)',
   'const enable = value => { value.pullRequest = true }; enable((options as Options))',
   'const enable = value => { value.pullRequest = true }; const alias = options; enable(alias)',
+  'const enable = value => { value.pullRequest = true }; const alias = options as Options; enable(alias)',
   'const enable = value => { value.workspace = true }; enable(options.pullRequest)',
   'const enable = value => { value.workspace = true }; const alias = options.pullRequest; enable(alias)',
   'const enable = value => { value.options.pullRequest = true }; enable({ options })',
@@ -244,6 +255,14 @@ it.each([
   const source = `${imports} const options = { pullRequest: { workspace: false } }; ${mutation}; export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
   const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
+  expect(definition?.workspace).toBe("review")
+})
+
+it("rejects a reassigned relative Channel export", async () => {
+  const source = 'import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })'
+  const files = { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export let portal = github({ pullRequest: false }); portal = github({ pullRequest: true })' }
+  await expect(discover(source, files)).rejects.toThrow("cannot inspect an imported Channel")
+  const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
   expect(definition?.workspace).toBe("review")
 })
 
