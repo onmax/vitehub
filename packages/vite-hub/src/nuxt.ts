@@ -1,4 +1,4 @@
-import { consoleDatabaseUrl, withDataDir } from "./storage-config.ts"
+import { consoleD1Binding, consoleDatabaseUrl, resolveConsoleJournal, withDataDir, type ConsoleJournal } from "./storage-config.ts"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -270,7 +270,7 @@ async function installConsole(
   invocationRootState?: ConsoleInvocationRootState,
   canDiscoverDefinitions: () => boolean = () => true,
   discoveryOptions: Pick<Parameters<typeof discoverConsoleBuildCatalog>[0], "databaseDiscoveryRoot" | "rateLimitDiscoveryRoot" | "rateLimitScanDirs" | "scheduleDiscoveryRoot" | "workspaceDiscoveryRoot"> = {},
-  databaseUrl?: string,
+  journal?: ConsoleJournal,
   independentAuth = false,
 ): Promise<string> {
   const uiModule = (await import("@vite-hub/ui/nuxt")).default
@@ -284,7 +284,7 @@ async function installConsole(
   const plugin = resolveGeneratedConsolePlugin(projectRoot, fixture, invocationRootState)
   installConsoleSections(projectRoot, sections, independentAuth)
   installConsoleProjectName(projectRoot, resolveConsoleProjectNameFromRoot(projectRoot))
-  if (installInvocations && nuxt.options.dev && sections.includes("agents") && !fixture) installConsoleInvocations(projectRoot, undefined, observations, databaseUrl)
+  if (installInvocations && nuxt.options.dev && sections.includes("agents") && !fixture) installConsoleInvocations(projectRoot, undefined, observations, journal && "databaseUrl" in journal ? journal.databaseUrl : undefined)
   const routeRules = (nuxt.options.routeRules ??= {})
   for (const route of ["/_vitehub", "/_vitehub/**"]) {
     const rule = (routeRules[route] ??= {})
@@ -435,7 +435,7 @@ async function installConsole(
       invoke,
       observations,
       () => !invocationRootState?.closed,
-      databaseUrl,
+      journal,
       independentAuth,
     )
     if (invocationRootState) {
@@ -756,6 +756,12 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     env: envOptions,
   } as Parameters<typeof vitehub>[0])
   const plan = resolveDeploymentPlan(options.preset)
+  // Nuxt defaults the Database driver to D1 on Cloudflare, so the Console journal follows the same binding.
+  const consoleJournal = resolveConsoleJournal(
+    consoleDatabaseUrl(options),
+    consoleD1Binding(plan.preset, options.database && { ...(options.preset === "cloudflare" ? { driver: "d1" as const } : {}), ...(options.database === true ? {} : options.database) }),
+    !nuxt.options.dev,
+  )
   const nitro = (nuxt.options.nitro ??= {})
   const nitroPreset = plan.preset === "cloudflare" && options.realtime
     ? "cloudflare-durable"
@@ -1188,7 +1194,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         consoleInvokeEnabled && !resolvedConsoleFixture,
         options.console === true ? undefined : options.console.observations,
         () => !consoleInvocationRootState.closed,
-        consoleDatabaseUrl(options),
+        consoleJournal,
         Boolean(options.console !== true && options.console?.access === "auth" && options.console.auth),
       )
     }
@@ -1262,7 +1268,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         scheduleDiscoveryRoot: configuredProjectRoot(viteRoot, options.schedule),
         workspaceDiscoveryRoot: configuredProjectRoot(viteRoot, nuxt.options.vite.workspace ?? options.workspace),
       },
-      consoleDatabaseUrl(options),
+      consoleJournal,
       Boolean(options.console !== true && options.console.access === "auth" && options.console.auth),
     )
   }

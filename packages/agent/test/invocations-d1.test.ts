@@ -30,7 +30,8 @@ describe("D1 Agent Invocation store", () => {
   let database: AgentInvocationD1Database
   let tablePrefix: string
   let sequence = 0
-  const store = (options: Partial<D1AgentInvocationStoreOptions> = {}) => createD1AgentInvocationStore({ database, tablePrefix, ...options })
+  // beforeEach applies the schema, so most tests count only the store's own batches.
+  const store = (options: Partial<D1AgentInvocationStoreOptions> = {}) => createD1AgentInvocationStore({ database, migrate: false, tablePrefix, ...options })
 
   beforeAll(async () => {
     miniflare = new Miniflare({
@@ -47,9 +48,9 @@ describe("D1 Agent Invocation store", () => {
   })
   afterAll(async () => { await miniflare?.dispose() })
 
-  it("requires an explicit migration and resolves the request binding once per operation", async () => {
+  it("requires an explicit migration when migrate is false and resolves the request binding once per operation", async () => {
     const resolve = vi.fn(() => database)
-    const journal = store({ database: resolve, tablePrefix: "unmigrated_" })
+    const journal = store({ database: resolve, migrate: false, tablePrefix: "unmigrated_" })
     expect(resolve).not.toHaveBeenCalled()
     await expect(journal.get("missing")).rejects.toThrow(/no such table/)
     await database.batch(d1AgentInvocationSchema({ tablePrefix: "unmigrated_" }).map(sql => database.prepare(sql)))
@@ -57,6 +58,28 @@ describe("D1 Agent Invocation store", () => {
     await journal.update("one", { status: "running", timestamp })
     expect(resolve).toHaveBeenCalledTimes(3)
     expect((await journal.get("one"))?.status).toBe("running")
+  })
+
+  it("creates its table once on first use and retries after a failed creation", async () => {
+    let batches = 0
+    let failures = 1
+    const counted: AgentInvocationD1Database = {
+      prepare: query => database.prepare(query),
+      async batch(statements) {
+        if (failures-- > 0) throw new Error("D1 unavailable")
+        batches++
+        return database.batch(statements)
+      },
+    }
+    const journal = createD1AgentInvocationStore({ database: () => counted, tablePrefix: "first_use_" })
+    await expect(journal.get("missing")).rejects.toThrow("D1 unavailable")
+    expect(await journal.get("missing")).toBeUndefined()
+    expect(batches).toBe(1)
+    await journal.create(invocation("one"))
+    expect(batches).toBe(2)
+    const tables = await database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'first_use_invocations'").all()
+    expect(tables.results).toHaveLength(1)
+    await expect(createD1AgentInvocationStore({ database, tablePrefix: "first_use_" }).get("one")).resolves.toMatchObject({ id: "one" })
   })
 
   it("runs the Agent journal lifecycle through a request-resolved D1 store", async () => {

@@ -1025,6 +1025,93 @@ describe("Agent Invocations", () => {
     })
   })
 
+  it("redacts streamed, terminal, late, and appended observations and the stored error", async () => {
+    vi.useFakeTimers()
+    try {
+      const redact = vi.fn((observation: invocationModule.AgentInvocationRecord["observations"][number]) => {
+        if (observation.name === "agent.tool.call") return undefined
+        if (observation.attributes?.["channel.effect.content"] === "throw") throw new Error("redaction failed")
+        return { ...observation, attributes: { ...observation.attributes, "channel.effect.content": "[redacted]" } }
+      })
+      const memory = createMemoryAgentInvocationStore()
+      let observationWrites = 0
+      const invocations = defineAgentInvocations({
+        content: "content",
+        redact,
+        redactError: error => ({ message: `Agent failed: ${error.message.length} characters hidden` }),
+        store: {
+          ...memory,
+          update(id, input, claimId) {
+            // Fail the first late write so persistLateObservation retries the redacted observation.
+            if (input.observation?.attributes?.["late"] === true && observationWrites++ === 0) return undefined
+            return memory.update(id, input, claimId)
+          },
+        },
+      })
+      const journal = await bindAgentInvocations(invocations, runtime("redacted-journal"))
+      if (!journal) throw new Error("Expected the invocation journal to be configured.")
+      await journal.running()
+      await journal.context.traceLog?.append({ attributes: { "tool.input": "secret tool input" }, name: "agent.tool.call", type: "run" })
+      await journal.context.traceLog?.append({ attributes: { "channel.effect.content": "secret streamed" }, name: "agent.channel.delivery.effect", type: "run" })
+      await journal.context.traceLog?.append({ attributes: { "channel.effect.content": "throw" }, name: "agent.channel.delivery.effect", type: "run" })
+      await journal.finish("failed", new Error("secret failure"))
+      await journal.context.traceLog?.append({ attributes: { "channel.effect.content": "secret late", late: true }, name: "agent.channel.delivery.effect", type: "run" })
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      const record = await invocations.getByRunId("redacted-journal")
+      if (!record) throw new Error("Expected the invocation record.")
+      expect(observationWrites).toBe(2)
+      const appended = await invocations.appendObservation(record.id, {
+        attributes: { "channel.effect.content": "secret appended" },
+        name: "agent.channel.delivery.effect",
+        type: "run",
+      }, { id: "appended" })
+      expect(await invocations.appendObservation(record.id, { name: "agent.tool.call", type: "run" }, { id: "dropped" })).toEqual(appended)
+
+      const stored = await invocations.get(record.id)
+      expect(JSON.stringify(stored)).not.toContain("secret")
+      expect(stored?.error).toEqual({ message: "Agent failed: 14 characters hidden" })
+      expect(stored?.observations.map(observation => observation.name)).toEqual([
+        "agent.channel.delivery.effect",
+        "agent.channel.delivery.effect",
+        "agent.channel.delivery.effect",
+      ])
+      expect(stored?.observations.map(observation => observation.attributes?.["channel.effect.content"])).toEqual(["[redacted]", "[redacted]", "[redacted]"])
+      expect(stored?.observations.at(-1)?.attributes?.["vitehub.observation.id"]).toBe("appended")
+      expect(redact.mock.calls.filter(([observation]) => observation.attributes?.late === true)).toHaveLength(1)
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("reports the stored trace id on finish and error hook events", async () => {
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const finish = vi.fn()
+    const error = vi.fn()
+    const agent = (fail: boolean) => defineAgent({
+      driver: { run: () => { if (fail) throw new Error("failed"); return "done" } },
+      hooks: { "agent:error": error, "agent:finish": finish },
+      invocations,
+      runtime: false,
+    })
+
+    await runAgent(agent(false), runtime("hook-trace-finish"), {})
+    await expect(runAgent(agent(true), runtime("hook-trace-error"), {})).rejects.toThrow("failed")
+
+    const finished = await invocations.getByRunId("hook-trace-finish")
+    const failed = await invocations.getByRunId("hook-trace-error")
+    expect(finish.mock.calls[0]?.[0].invocation.traceId).toBe(finished?.traceId)
+    expect(error.mock.calls[0]?.[0].invocation.traceId).toBe(failed?.traceId)
+    expect(finished?.traceId).toMatch(/^sha256_/)
+  })
+
+  it("rejects redaction hooks that are not functions", () => {
+    const store = createMemoryAgentInvocationStore()
+    expect(() => defineAgentInvocations({ redact: "all" as never, store })).toThrow("redact must be a function")
+    expect(() => defineAgentInvocations({ redactError: true as never, store })).toThrow("redactError must be a function")
+  })
+
   it("retries late delivery observations after a transient store failure", async () => {
     vi.useFakeTimers()
     try {

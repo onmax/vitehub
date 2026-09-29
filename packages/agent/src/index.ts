@@ -5711,6 +5711,7 @@ async function finishAgentInvocation<
           durationMs,
           ...(resultKind !== undefined ? { resultKind } : {}),
           ...(context.run ? { run: context.run } : {}),
+          ...(context.invocationJournal ? { traceId: context.invocationJournal.traceId } : {}),
           ...(usage ? { usage } : {}),
         },
         ...(result !== undefined ? { result } : {}),

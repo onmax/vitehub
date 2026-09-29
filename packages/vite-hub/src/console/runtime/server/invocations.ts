@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { createClient } from "@libsql/client"
+import { createD1AgentInvocationStore } from "@vite-hub/agent/invocations/d1"
 import { createLibsqlAgentInvocationStore } from "@vite-hub/agent/invocations/sqlite"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "@vite-hub/agent/server"
 import { drizzle } from "drizzle-orm/libsql"
@@ -21,6 +22,7 @@ import {
 import { consoleFixtureRevision, readConsoleFixture } from "../../fixture.ts"
 
 import type { AgentInvocationRecord, AgentInvocationSummary, AgentInvocations } from "@vite-hub/agent"
+import type { AgentInvocationD1Database } from "@vite-hub/agent/invocations/d1"
 import type { AgentInvocationsOptions } from "@vite-hub/agent/server"
 import type { ConsoleFixture } from "../../fixture.ts"
 import type { LibSQLDatabase } from "drizzle-orm/libsql"
@@ -148,6 +150,38 @@ export function resolveConsoleDatabaseOptions(projectRoot: string, databaseUrl?:
   return { url: `${pathToFileURL(filePath).href}${query}` }
 }
 
+/** The Worker env binding that stores the Console journal on Cloudflare. */
+export interface ConsoleD1Journal {
+  binding: string
+  env: () => Promise<Record<string, unknown>> | Record<string, unknown>
+}
+
+function isD1Database(value: unknown): value is AgentInvocationD1Database {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The Worker env is untyped, so check the D1 methods that the journal calls.
+  return typeof value === "object" && value !== null && "prepare" in value && typeof value.prepare === "function" && "batch" in value && typeof value.batch === "function"
+}
+
+/** Console journal in the app's D1 database. The store creates its table on first use and keeps its default retention. */
+export function createConsoleD1Invocations(d1: ConsoleD1Journal, observations?: AgentInvocationsOptions["observations"]): AgentInvocations {
+  const invocations = defineAgentInvocations({
+    configuration: "content",
+    metadataContent: consoleMetadataContent,
+    observations,
+    store: createD1AgentInvocationStore({
+      async database() {
+        const database = (await d1.env())[d1.binding]
+        if (!isD1Database(database)) {
+          throw viteHubErrorDiagnostics.VITE_HUB_R0122({ message: `[vitehub] The Console journal requires the D1 binding ${JSON.stringify(d1.binding)} in the Worker env. Configure the Database D1 binding or set console.databaseUrl.` })
+        }
+        return database
+      },
+    }),
+  })
+  consoleDatabaseConfigurations.set(invocations, `d1:${d1.binding}`)
+  consoleObservationConfigurations.set(invocations, observationConfiguration(observations))
+  return invocations
+}
+
 export function createConsoleInvocations(projectRoot: string, observations?: AgentInvocationsOptions["observations"], databaseUrl?: string): AgentInvocations {
   const database = resolveConsoleDatabaseOptions(projectRoot, databaseUrl)
   const client = createClient(database)
@@ -196,6 +230,7 @@ export function installConsoleInvocations(
   configuredInvocations?: AgentInvocations,
   observations?: AgentInvocationsOptions["observations"],
   databaseUrl?: string,
+  d1?: ConsoleD1Journal,
 ): AgentInvocations {
   const resolvedRoot = resolve(projectRoot)
   const identity = createConsoleInvocationsIdentity(resolvedRoot)
@@ -204,8 +239,11 @@ export function installConsoleInvocations(
   const sameConfiguration = installedConfiguration === undefined
     ? observations === undefined
     : installedConfiguration === observationConfiguration(observations)
-  if (installed && resolveConsoleInvocationsIdentity() === identity && (configuredInvocations ? installed === configuredInvocations : sameConfiguration && consoleDatabaseConfigurations.get(installed) === resolveConsoleDatabaseOptions(resolvedRoot, databaseUrl).url)) return installed
-  const invocations = configuredInvocations ?? createConsoleInvocations(resolvedRoot, observations, databaseUrl)
+  // VITEHUB_CONSOLE_DATABASE_URL still selects libSQL at runtime.
+  const useD1 = d1 !== undefined && !process.env.VITEHUB_CONSOLE_DATABASE_URL?.trim()
+  const databaseConfiguration = () => useD1 ? `d1:${d1.binding}` : resolveConsoleDatabaseOptions(resolvedRoot, databaseUrl).url
+  if (installed && resolveConsoleInvocationsIdentity() === identity && (configuredInvocations ? installed === configuredInvocations : sameConfiguration && consoleDatabaseConfigurations.get(installed) === databaseConfiguration())) return installed
+  const invocations = configuredInvocations ?? (useD1 ? createConsoleD1Invocations(d1, observations) : createConsoleInvocations(resolvedRoot, observations, databaseUrl))
   installConsoleInvocationFallback(invocations, resolvedRoot, globalThis, identity)
   return invocations
 }

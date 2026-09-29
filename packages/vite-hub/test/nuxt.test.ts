@@ -555,6 +555,21 @@ describe("ViteHub Nuxt integration", () => {
     await application.runCloseHook()
   })
 
+  it.each([true, false])("stores the Cloudflare Console journal in the default D1 Database binding (dev: %s)", async (dev) => {
+    const application = createNuxt(dev)
+    await viteHubNuxtModule({
+      preset: "cloudflare",
+      agent: true,
+      console: { exposure: "host-managed" },
+      database: true,
+    }, application.nuxt)
+
+    const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
+    if (dev) expect(generated).not.toContain("cloudflare:workers")
+    else expect(generated).toContain(`d1: { binding: "DB", env: async () => (await import("cloudflare:workers")).env }`)
+    await application.runCloseHook()
+  })
+
   it("preserves Console shorthand invocation with a Node data directory", async () => {
     const application = createNuxt(true)
     await viteHubNuxtModule({

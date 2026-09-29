@@ -298,7 +298,7 @@ Read [Auth](/docs/server-primitives/auth#authorize-access-routes) for sign-in re
 
 ## Know what the Console stores
 
-When Agents are configured, the Console installs a fallback Agent Invocation journal at `.vitehub/data/console.sqlite`. It retains invocation records and selected searchable text, including prompts, messages, final text, progress updates, and generated session titles. A KV-only Console does not install the Agent journal or Agent read endpoints.
+When Agents are configured, the Console installs a fallback Agent Invocation journal. Development and Node builds store it at `.vitehub/data/console.sqlite`. [Cloudflare builds](#cloudflare-journal) store it in the D1 Database binding. It retains invocation records and selected searchable text, including prompts, messages, final text, progress updates, and generated session titles. A KV-only Console does not install the Agent journal or Agent read endpoints.
 
 Console image uploads use the configured Blob store. Before each fresh upload, the Console retries at most 100 pending rollback records. Malformed batch records move to `vitehub-console-attachment-quarantine/batch/<id>` with their original contents preserved. Fresh uploads continue, but stored attachment references remain unavailable while any quarantine record exists because its deletion ownership is unknown. Existing retained image bytes are not deleted by quarantine.
 
@@ -341,7 +341,24 @@ The automatic fallback also requires `defineAgent` from `vite-hub/agent`. Defini
 
 The Agent Console uses an invocation journal configured on the discovered Agent Definition. Configure the same journal on every discovered Agent when the Console includes more than one. Distinct journals fail during runtime setup because the Console exposes one combined query interface.
 
-When no Agent Definition configures a journal, the Console falls back to local SQLite at `.vitehub/data/console.sqlite`. This fallback is suitable for development and Node deployments with durable local storage. It is local to one replica and does not survive replacement unless the host persists that path. Cloudflare, Netlify, Vercel, and Deno production deployments should configure a durable hosted invocation journal instead.
+When no Agent Definition configures a journal, the Console falls back to local SQLite at `.vitehub/data/console.sqlite`. This fallback is suitable for development and Node deployments with durable local storage. It is local to one replica and does not survive replacement unless the host persists that path. Netlify, Vercel, and Deno production deployments should configure a durable hosted invocation journal instead.
+
+### Cloudflare journal
+
+A Cloudflare build that uses the Database primitive stores the fallback journal in its D1 binding. ViteHub uses the `binding` of `database: { driver: 'd1' }`, which defaults to `DB`. Nuxt uses this driver on Cloudflare by default. Otherwise it uses the `cloudflare.binding` of the default Database Definition, or of the only Definition:
+
+```ts [vite.config.ts]
+vitehub({
+  preset: 'cloudflare',
+  agent: true,
+  console: { exposure: 'host-managed' },
+  database: { driver: 'd1', binding: 'DB', databaseName: 'my-app', databaseId: '<id>' },
+})
+```
+
+The build prints `Console journal: D1 binding DB, table vitehub_agent_invocations`, and the generated `.vitehub/nitro/console/plugin.mjs` passes the binding to `installConsoleAgentDefinitions()`. The journal uses the [D1 store](/docs/agents/invocations#store-invocations-in-cloudflare-d1). It creates its table on first use, so no migration step is necessary. It keeps the D1 store retention defaults: 10,000 terminal records from the last 30 days.
+
+`vite dev` keeps the local SQLite journal. `console.databaseUrl` at build time, or `VITEHUB_CONSOLE_DATABASE_URL` at runtime, selects libSQL instead. An Agent Definition with its own `invocations` still wins. If the binding is missing from the Worker env, journal reads and writes fail with a diagnostic. Agent results do not change.
 
 The Console sends every read through one Devframe SSE instance at `/_vitehub/rpc/**`. Its internal request contract uses `GET` semantics for bounded listings and metadata, and JSON-body `POST` semantics to read a selected KV value without putting an opaque key in the request URL. The POST operation remains read-only. Responses set `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.
 
