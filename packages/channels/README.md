@@ -123,7 +123,7 @@ Channels is an outbound delivery interface. It does not include Slack, Telegram,
 
 Only connectors declared as own properties of the definition can receive messages. An omitted `connector` uses `defaultConnector`; an empty or invalid selector returns an error. A failed definition load can be retried by a later `send()` call.
 
-Every send writes `outbound.started`, `outbound.completed`, or `outbound.failed` JSON metadata under the `vitehub.channel.send` scope. ViteHub omits message text and connector options from those events. Failed events include up to 2,000 characters of the thrown error message, so connectors must not put credentials or message content in errors. Connector code can still read, transmit, or log every value it receives; keep credentials in server-only configuration and redact provider failures before throwing them.
+For each connector delivery, Channels attempts to write `outbound.started` and either `outbound.completed` or `outbound.failed` JSON metadata under the `vitehub.channel.send` scope. Input validation and definition-loading failures return before delivery logging starts. ViteHub omits message text and connector options from those events. Failed events include up to 2,000 characters of the thrown error message, so connectors must not put credentials or message content in errors. Connector code can still read, transmit, or log every value it receives; keep credentials in server-only configuration and redact provider failures before throwing them.
 
 Delivery logging is best effort. A logging failure does not change the result of a send. An inaccessible optional message `id` is omitted from the receipt and log without changing delivery success.
 
