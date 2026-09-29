@@ -155,3 +155,56 @@ it.each<[string, string, Record<string, string>]>([
   const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
   expect(definition?.workspace).toBe("review")
 })
+
+it.each([
+  "github({ get pullRequest() { return true } })",
+  "github({ pullRequest: { get workspace() { return true } } })",
+  "webChat({ get capabilities() { return [storage] } })",
+  "github({ ...accessors })",
+  "{ kind: \"custom\", get capabilities() { return [storage] } }",
+])("rejects accessor-backed Channel options: %s", async (channel) => {
+  const source = `${imports} const storage = defineCapability({ workspace: {} }); const accessors = { get pullRequest() { return true } }; export default defineAgent({ channels: { custom: ${channel} } })`
+  await expect(discover(source)).rejects.toThrow(/opaque Channel|dynamic GitHub pullRequest option/)
+  const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
+  expect(definition?.workspace).toBe("review")
+})
+
+it("keeps options named get or set as plain properties", async () => {
+  const definition = await discover(`${imports} const get = false; export default defineAgent({ channels: { custom: github({ get, set: false, pullRequest: false }) } })`)
+  expect(definition?.workspace).toBeUndefined()
+})
+
+const owning = 'import { github } from "vite-hub/agent/channels"; export default github({ pullRequest: true })'
+
+it.each<[string, string, Record<string, string>, string | undefined]>([
+  ["default re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "./inner.ts"', "inner.ts": owning }, "review"],
+  ["stateless default re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "./inner.ts"', "inner.ts": stateless }, undefined],
+  ["default re-exported as a name", 'import { portal } from "../../portal.ts"', { "portal.ts": 'export { default as portal } from "./inner.ts"', "inner.ts": owning }, "review"],
+  ["name re-exported as default", 'import portal from "../../portal.ts"', { "portal.ts": 'export { channel as default } from "./inner.ts"', "inner.ts": 'import { github } from "vite-hub/agent/channels"; export const channel = github({ pullRequest: true })' }, "review"],
+  ["star re-export", 'import { portal } from "../../portal.ts"', { "portal.ts": 'export * from "./other.ts"\nexport * from "./inner.ts"', "other.ts": "export const other = 1", "inner.ts": 'import { github } from "vite-hub/agent/channels"; export const portal = github({ pullRequest: true })' }, "review"],
+  ["later declarator", 'import { portal } from "../../portal.ts"', { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export const first = github(), portal = github({ pullRequest: true })' }, "review"],
+  ["later declarator after a generic call", 'import { portal } from "../../portal.ts"', { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export const map = new Map<string, number>(), portal = github({ pullRequest: true })' }, "review"],
+  ["stateless later declarator", 'import { portal } from "../../portal.ts"', { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export const first = github({ pullRequest: true }), portal = github()' }, undefined],
+])("follows relative Channel exports: %s", async (_name, declaration, files, workspace) => {
+  const definition = await discover(`import { defineAgent } from "vite-hub/agent"; ${declaration}; export default defineAgent({ channels: { github: portal } })`, files)
+  expect(definition?.workspace).toBe(workspace)
+})
+
+it("records every local declarator", async () => {
+  const definition = await discover(`${imports} const first = github(), portal = github({ pullRequest: true }); export default defineAgent({ channels: { github: portal } })`)
+  expect(definition?.workspace).toBe("review")
+})
+
+it.each<[string, string, Record<string, string>]>([
+  ["package re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "@acme/channels"' }],
+  ["package star re-export", 'import { portal } from "../../portal.ts"', { "portal.ts": 'export * from "@acme/channels"' }],
+  ["missing re-exported module", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "./missing.ts"' }],
+  ["default through a star re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export * from "./inner.ts"', "inner.ts": owning }],
+  ["re-export cycle", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "./inner.ts"', "inner.ts": 'export { default } from "./portal.ts"' }],
+  ["star re-export cycle", 'import { portal } from "../../portal.ts"', { "portal.ts": 'export * from "./inner.ts"', "inner.ts": 'export * from "./portal.ts"' }],
+])("rejects a re-exported Channel that discovery cannot inspect: %s", async (_name, declaration, files) => {
+  const source = `import { defineAgent } from "vite-hub/agent"; ${declaration}; export default defineAgent({ channels: { github: portal } })`
+  await expect(discover(source, files)).rejects.toThrow("cannot inspect an imported Channel")
+  const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
+  expect(definition?.workspace).toBe("review")
+})
