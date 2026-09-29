@@ -77,6 +77,17 @@ try {
 
 Binary file reads and writes, directory operations, recursive listing, removal, and command execution are required across runtimes. Long-running processes and exposed ports are explicit optional capabilities through `session.spawn` and `session.ports`. `close()` is idempotent, and every operation rejects after closure.
 
+A spawned `BoxProcess` can also expose `stdin` as a `WritableStream<Uint8Array>`. The `trusted-host` and `crabbox` runtimes forward it to the process. Close the writer to end the process input. Runtimes that cannot forward input leave `stdin` undefined:
+
+```ts
+const child = await session.spawn!("node", ["workspace/filter.mjs"]);
+const writer = child.stdin?.getWriter();
+if (!writer) throw new Error("This Box runtime does not forward process input.");
+await writer.write(new TextEncoder().encode("input\n"));
+await writer.close();
+console.log(await new Response(child.stdout).text(), await child.wait());
+```
+
 Hosted runtimes use tagged values from the same root API:
 
 ```ts

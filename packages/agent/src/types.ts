@@ -62,26 +62,12 @@ export type AgentCapabilities = RuntimeCapabilities
 
 export interface AgentRuntimeConfig {}
 
-/** Named Box integrations owned by an agent definition.
- * Values are intentionally opaque to the agent package: integrations can
- * expose their own typed contracts while remaining lazily resolved.
- */
-export type AgentBoxValue<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
-  | BoxDefinition<any>
-  | Record<string, unknown>
-  | (string & {})
-
-export type AgentBoxDefinitions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
-  Readonly<Record<string, AgentBoxValue<TRuntimeConfig>>>
-export type AgentBoxInput<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
-  | AgentBoxDefinitions<TRuntimeConfig>
-  | (() => AgentBoxDefinitions<TRuntimeConfig>)
-
-export interface AgentBoxContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
-  readonly definitions: AgentBoxDefinitions
-  readonly [name: string]: unknown
-  get(name: string): unknown
-}
+/** Box used by a built-in provider Driver. Callbacks resolve once per invocation. */
+export type AgentBoxDefinition<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+> = BoxDefinition<AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues>>
 
 export interface AgentHostIdentity {
   readonly name: string
@@ -91,8 +77,6 @@ export interface AgentHostIdentity {
 export interface AgentRuntimeContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
   extends Omit<RuntimeHostContext<TRuntimeConfig>, "cloudflare" | "platform" | "runtime"> {
   agentIdentity?: AgentHostIdentity
-  /** Agent-owned Box integrations. Secrets are resolved by integrations on demand. */
-  box?: AgentBoxContext<TRuntimeConfig>
   channelDelivery?: AgentChannelDelivery
   cloudflare?: RuntimeHostContext<TRuntimeConfig>["cloudflare"]
   toolStepReporter?: (step: AgentToolStep) => MaybePromise<void>
@@ -1570,7 +1554,8 @@ type AgentSharedSettings<
   TCapabilities extends AgentCapabilitiesInput<TRuntimeConfig, WorkspaceName, CALL_OPTIONS> | undefined = AgentCapabilitiesInput<TRuntimeConfig, WorkspaceName, CALL_OPTIONS> | undefined,
   TOutput = unknown,
 > = {
-  box?: AgentBoxInput<TRuntimeConfig>
+  /** Run the built-in provider Driver inside this Box. Each invocation opens a new Box session. */
+  box?: AgentBoxDefinition<TRuntimeConfig, CALL_OPTIONS, TContextValues>
   health?: AgentHealthDescriptor
   capabilities?: TCapabilities
   channels?: AgentChannelInputs<TRuntimeConfig>
@@ -1610,7 +1595,7 @@ export interface AgentDefinition<
   TOutput = unknown,
 > {
   [agentOutputType]?: TOutput
-  box?: AgentBoxInput<TRuntimeConfig>
+  box?: AgentBoxDefinition<TRuntimeConfig, CALL_OPTIONS, TContextValues>
   health?: AgentHealthDescriptor
   capabilities?: AgentCapabilityDefinition<TRuntimeConfig>[]
   channels?: AgentChannels<TRuntimeConfig>
@@ -1631,10 +1616,6 @@ export interface AgentDefinition<
   uiMessageStream?: AgentUIMessageStreamProjectionResolver<TRuntimeConfig, CALL_OPTIONS, TContextValues>
   version?: string
   workspace?: WorkspaceAgentWorkspaceConfig
-}
-
-export interface AgentBox {
-  [key: string]: unknown
 }
 
 export type AgentInput<
