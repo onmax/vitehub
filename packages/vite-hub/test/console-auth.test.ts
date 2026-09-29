@@ -280,31 +280,33 @@ describe("independent Console Auth", () => {
       Reflect.apply("handler" in configureServer ? configureServer.handler : configureServer, {}, [{ config: { logger: { error: vi.fn() } }, watcher: { add, on: (event: string, listener: (path: string) => Promise<void>) => listeners.set(event, listener) } }])
       expect(add).toHaveBeenCalledWith(expect.arrayContaining([client, helper]))
       await writeFile(helper, 'export const marker = "vite_auth_helper_updated"')
-      await listeners.get("change")?.(helper)
-      expect(await readFile(resolve(root, ".vitehub/nitro/console/auth-client.mjs"), "utf8")).toContain("vite_auth_helper_updated")
 
-      const refreshStarted = Promise.withResolvers<void>()
-      const releaseRefresh = Promise.withResolvers<void>()
+      let markRefreshBuilt: (() => void) | undefined
+      const refreshBuilt = new Promise<void>((resolve) => { markRefreshBuilt = resolve })
+      let releaseRefresh: (() => void) | undefined
+      const refreshPending = new Promise<void>((resolve) => { releaseRefresh = resolve })
       const writeHandlers = writeConsoleAuthHandlers
       const refresh = vi.spyOn(await import("../src/console/auth-build.ts"), "writeConsoleAuthHandlers").mockImplementationOnce(async (...args) => {
-        refreshStarted.resolve()
-        await releaseRefresh.promise
-        return writeHandlers(...args)
+        const handlers = await writeHandlers(...args)
+        markRefreshBuilt?.()
+        await refreshPending
+        return handlers
       })
       const first = listeners.get("change")?.(helper)
       let second: Promise<void> | undefined
       try {
-        await refreshStarted.promise
+        await refreshBuilt
+        expect(await readFile(resolve(root, ".vitehub/nitro/console/auth-client.mjs"), "utf8")).toContain("vite_auth_helper_updated")
         await writeFile(helper, 'export const marker = "vite_auth_helper_concurrent"')
         second = listeners.get("add")?.(helper)
         expect(refresh).toHaveBeenCalledTimes(1)
-        releaseRefresh.resolve()
+        releaseRefresh?.()
         await Promise.all([first, second])
         expect(refresh).toHaveBeenCalledTimes(2)
         expect(await readFile(resolve(root, ".vitehub/nitro/console/auth-client.mjs"), "utf8")).toContain("vite_auth_helper_concurrent")
       }
       finally {
-        releaseRefresh.resolve()
+        releaseRefresh?.()
         await Promise.allSettled([first, second])
         refresh.mockRestore()
       }
