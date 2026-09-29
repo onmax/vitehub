@@ -528,60 +528,65 @@ export function hubSource(options: SourceVitePluginOptions = {}): Plugin & {
     name: "@vite-hub/source/vite",
     enforce: "post",
     api: { onGeneratedHandlersChanged, prepareSources },
-    async config(config) {
-      // SAFETY: Vite passes its user config with ViteHub's shared symbols attached.
-      const viteConfig = config as SourcePluginConfig
-      if (viteConfig[VITEHUB_NITRO_CONFIG_CONTEXT]) return
-      const projectRoot = viteConfig[VITEHUB_PROJECT_ROOT]
-        ? resolve(viteConfig[VITEHUB_PROJECT_ROOT])
-        : resolveViteHubProjectRoot(viteConfig.root || process.cwd())
-      latestProjectRoot = projectRoot
-      bindUnresolvedListenerRoots(projectRoot)
-      const serverDirs = viteConfig[VITEHUB_SERVER_DIRS]
-      const previousTransition = configurationTransitionByRoot.get(projectRoot) ?? Promise.resolve()
-      const runTransition = async () => {
-        const previousLifecycle = hostRefreshLifecycleByRoot.get(projectRoot)
-        const previousConfiguredState = configuredStateByRoot.get(projectRoot)
-        previousLifecycle?.pause()
-        try {
-          const handlers = await prepareSources({ projectRoot, serverDirs })
-          const handlerKey = await generatedHandlerKey(handlers)
-          const nitro = generatedSourceNitroContribution(viteConfig.nitro, handlers)
-          configuredStateByRoot.set(projectRoot, {
-            handlerKey,
-            nitroContribution: nitro,
-            serverDirs: serverDirs?.slice(),
-          })
-          const contribution: SourcePluginConfig = {
-            define: { __VITEHUB_APP_BASE_URL__: JSON.stringify(applicationBaseURL(viteConfig.base)) },
-            ...(nitro ? { nitro } : {}),
-          }
-          previousLifecycle?.close()
-          return contribution
-        }
-        catch (error) {
+    // Nitro reads `config.nitro` once in its normal-order config hook. The pre order adds the
+    // generated Collection handlers before that read, whatever the plugin order is.
+    config: {
+      order: "pre",
+      async handler(config) {
+        // SAFETY: Vite passes its user config with ViteHub's shared symbols attached.
+        const viteConfig = config as SourcePluginConfig
+        if (viteConfig[VITEHUB_NITRO_CONFIG_CONTEXT]) return
+        const projectRoot = viteConfig[VITEHUB_PROJECT_ROOT]
+          ? resolve(viteConfig[VITEHUB_PROJECT_ROOT])
+          : resolveViteHubProjectRoot(viteConfig.root || process.cwd())
+        latestProjectRoot = projectRoot
+        bindUnresolvedListenerRoots(projectRoot)
+        const serverDirs = viteConfig[VITEHUB_SERVER_DIRS]
+        const previousTransition = configurationTransitionByRoot.get(projectRoot) ?? Promise.resolve()
+        const runTransition = async () => {
+          const previousLifecycle = hostRefreshLifecycleByRoot.get(projectRoot)
+          const previousConfiguredState = configuredStateByRoot.get(projectRoot)
+          previousLifecycle?.pause()
           try {
-            if (previousConfiguredState) {
-              await prepareSources({
-                projectRoot,
-                serverDirs: previousConfiguredState.serverDirs,
-              })
+            const handlers = await prepareSources({ projectRoot, serverDirs })
+            const handlerKey = await generatedHandlerKey(handlers)
+            const nitro = generatedSourceNitroContribution(viteConfig.nitro, handlers)
+            configuredStateByRoot.set(projectRoot, {
+              handlerKey,
+              nitroContribution: nitro,
+              serverDirs: serverDirs?.slice(),
+            })
+            const contribution: SourcePluginConfig = {
+              define: { __VITEHUB_APP_BASE_URL__: JSON.stringify(applicationBaseURL(viteConfig.base)) },
+              ...(nitro ? { nitro } : {}),
             }
+            previousLifecycle?.close()
+            return contribution
           }
-          finally {
-            previousLifecycle?.resume()
+          catch (error) {
+            try {
+              if (previousConfiguredState) {
+                await prepareSources({
+                  projectRoot,
+                  serverDirs: previousConfiguredState.serverDirs,
+                })
+              }
+            }
+            finally {
+              previousLifecycle?.resume()
+            }
+            throw error
           }
-          throw error
         }
-      }
-      const transition = previousTransition.then(runTransition, runTransition)
-      configurationTransitionByRoot.set(projectRoot, transition)
-      void transition.finally(() => {
-        if (configurationTransitionByRoot.get(projectRoot) === transition) {
-          configurationTransitionByRoot.delete(projectRoot)
-        }
-      }).catch(() => {})
-      return transition
+        const transition = previousTransition.then(runTransition, runTransition)
+        configurationTransitionByRoot.set(projectRoot, transition)
+        void transition.finally(() => {
+          if (configurationTransitionByRoot.get(projectRoot) === transition) {
+            configurationTransitionByRoot.delete(projectRoot)
+          }
+        }).catch(() => {})
+        return transition
+      },
     },
     async configResolved(config) {
       // SAFETY: Vite's resolved config retains the ViteHub symbols added during the config hook.
