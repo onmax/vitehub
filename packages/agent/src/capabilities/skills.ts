@@ -86,7 +86,7 @@ function workspaceShellTools(
   if (!workspace) throw agentDiagnostics.AGENT_R0199({ message: "[vitehub] skills({ shellExecution }) requires an explicit workspace." })
   return (mode === "write" && workspace.tools.write
     ? workspace.tools.write({ sourceRequests: true })
-    : workspace.tools.inspect({ sourceRequests: true })) as AgentToolSet
+    : workspace.tools.inspect({ sourceRequests: true }))
 }
 
 export function skills(options: SkillsCapabilityOptions = {}): AgentCapabilityDefinition {
