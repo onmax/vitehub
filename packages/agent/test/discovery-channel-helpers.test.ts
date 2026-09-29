@@ -224,7 +224,22 @@ it.each([
   'Object["assign"](options, { pullRequest: true })',
   'Object.assign?.(options, { pullRequest: true })',
   'Object["assign"]((options), { pullRequest: true })',
+  'Object.assign((options as Options), { pullRequest: true })',
+  'Object.assign((options satisfies Options), { pullRequest: true })',
+  'Object.assign((<Options>options), { pullRequest: true })',
+  'Object.assign(options!, { pullRequest: true })',
   'Object.defineProperty(options, "pullRequest", { value: true })',
+  'const enable = value => { value.pullRequest = true }; enable(options)',
+  'function enable(value) { value.pullRequest = true }; enable(options)',
+  'const enable = (flag, value) => { value.pullRequest = flag }; enable(true, options)',
+  'const enable = value => { value.pullRequest = true }; enable((options as Options))',
+  'const enable = value => { value.pullRequest = true }; const alias = options; enable(alias)',
+  'const enable = value => { value.workspace = true }; enable(options.pullRequest)',
+  'const enable = value => { value.workspace = true }; const alias = options.pullRequest; enable(alias)',
+  'const enable = value => { value.options.pullRequest = true }; enable({ options })',
+  'import { enable } from "./mutator"; enable(options)',
+  '(value => { value.pullRequest = true })(options)',
+  '({ enable(value) { value.pullRequest = true } }).enable(options)',
 ])("rejects mutated Channel option bindings: %s", async (mutation) => {
   const source = `${imports} const options = { pullRequest: { workspace: false } }; ${mutation}; export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
@@ -235,7 +250,8 @@ it.each([
 it.each([
   'options.pullRequest <= true',
   'options.pullRequest >= true',
-])("does not treat comparisons as mutated Channel option bindings: %s", async (comparison) => {
+  'const unused = { read(options) { return options.pullRequest } }',
+])("does not treat read-only expressions as mutated Channel option bindings: %s", async (comparison) => {
   const source = `${imports} const options = { pullRequest: false }; ${comparison}; export default defineAgent({ channels: { custom: github(options) } })`
   const definition = await discover(source)
   expect(definition?.workspace).toBeUndefined()

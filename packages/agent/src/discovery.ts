@@ -365,29 +365,6 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return operators.some(operator => operator.every((token, offset) => tokens[index + offset] === token))
   }
 
-  const mutatorMethods = new Set(["assign", "defineProperty", "defineProperties", "set", "deleteProperty", "setPrototypeOf"])
-  function markMutatorArguments() {
-    for (let i = 0; i < tokens.length - 2; i++) {
-      const method = tokens[i] === "."
-        ? tokens[i + 1]
-        : tokens[i] === "[" && tokens[i + 2] === "]"
-          ? exportName(tokens[i + 1])
-          : undefined
-      let open = tokens[i] === "." ? i + 2 : i + 3
-      if (tokens[open] === "?" && tokens[open + 1] === ".") open += 2
-      if (!method || !mutatorMethods.has(method) || tokens[open] !== "(") continue
-      let argumentIndex = open + 1
-      while (tokens[argumentIndex] === "(") argumentIndex++
-      const argument = tokens[argumentIndex]
-      if (argumentIndex > open + 1) {
-        let closeIndex = argumentIndex + 1
-        while (tokens[closeIndex] === ")") closeIndex++
-        if (closeIndex === argumentIndex + 1) continue
-      }
-      if (argument && declarations.has(argument)) mutatedBindings.add(argument)
-    }
-  }
-
   for (let i = 0; i < tokens.length; i++) {
     const name = tokens[i]
     if (!declarations.has(name) && !/^[A-Za-z_$][\w$]*$/.test(name ?? "")) continue
@@ -451,8 +428,6 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
     }
   }
-
-  markMutatorArguments()
 
   // A declaration is visible only in its containing scope and descendants.
   const tokenScopes: (number | undefined)[] = []
@@ -582,6 +557,29 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           assignedAliases.set(name, targets)
         }
       }
+    }
+  }
+  const opaqueCalls = new Set<number>()
+  const trustedCalls = new Set<number>()
+  const parameterLists = new Set([...functionScopes].map(scope => openingDelimiters.get(scope - 1)))
+  const factories = ["defineAgent", "defineChannel", "defineCapability", "channelHelper"] as const
+  for (let index = 0; index < tokens.length; index++) {
+    if (tokens[index] === "(" && [")", "]"].includes(tokens[index - 1])) opaqueCalls.add(index)
+    if (!/^[A-Za-z_$][\w$]*$/.test(tokens[index]) || tokens[index - 1] === "function") continue
+    const call = memberCallEnd(index)
+    if (tokens[call] !== "(" || ["if", "for", "while", "switch", "catch", "with", "default", "return", "throw", "yield", "await", "new", "typeof", "void", "delete", "function"].includes(tokens[index])) continue
+    opaqueCalls.add(call)
+    if (tokens[index] === "Object" && tokens[index + 1] === "." && tokens[index + 2] === "freeze"
+      && visibleDeclaration(index) === undefined) trustedCalls.add(call)
+    if (tokens[index - 1] !== "." && factories.some(name => factoryCall(index, name) === call)) trustedCalls.add(call)
+  }
+  for (const call of opaqueCalls) {
+    if (trustedCalls.has(call) || parameterLists.has(call)) continue
+    let nesting = 1
+    for (let argument = call + 1; argument < tokens.length && nesting > 0; argument++) {
+      if (["(", "[", "{"].includes(tokens[argument])) nesting++
+      else if ([")", "]", "}"].includes(tokens[argument])) nesting--
+      if (nesting > 0 && visibleDeclaration(argument) !== undefined) mutatedBindings.add(tokens[argument])
     }
   }
   for (let changed = true; changed;) {
@@ -994,7 +992,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return helper === undefined ? undefined : { call, helper }
   }
 
-  function factoryCall(index: number, name: "defineAgent" | "defineChannel" | "channelHelper" = "defineAgent"): number | undefined {
+  function factoryCall(index: number, name: "defineAgent" | "defineChannel" | "defineCapability" | "channelHelper" = "defineAgent"): number | undefined {
     const reference = resolveReference(index)
     if (visibleDeclaration(reference) !== undefined || callbackParameters.some(scope =>
       reference >= scope.start && reference < scope.end && scope.names.has(tokens[reference]))) return undefined
@@ -1021,8 +1019,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         && tokens[reference + 1] === "." && firstPartyChannelFactories.has(tokens[reference + 2]))) return undefined
     }
     else {
-      const bindings = name === "defineAgent" ? importedAgentBindings : importedChannelBindings
-      const namespaces = name === "defineAgent" ? importedNamespaces : importedChannelNamespaces
+      const bindings = name === "defineAgent" ? importedAgentBindings : name === "defineCapability" ? importedCapabilityBindings : importedChannelBindings
+      const namespaces = name === "defineChannel" ? importedChannelNamespaces : importedNamespaces
       if (!(factory === name && !imported.has(factory)) && !bindings.has(factory) &&
           !(namespaces.has(factory) && tokens[reference + 1] === "." && tokens[reference + 2] === name)) return undefined
     }
