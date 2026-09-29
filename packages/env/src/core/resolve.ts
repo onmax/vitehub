@@ -6,6 +6,7 @@ import { promisify } from "node:util"
 import { parseSchema } from "../schema.ts"
 import { runtimeValueSchema } from "./declarations.ts"
 import { envValueTypeName, parseEnvValue } from "./values.ts"
+import { hasRuntimeType } from "../internal/runtime-type.ts"
 import { isViteHubError } from "@vite-hub/runtime"
 import { envSourceFailed, invalidEnvDeclaration, isAbortError, missingRequiredEnv } from "./errors.ts"
 
@@ -306,8 +307,10 @@ function buildRegistry(declarations: EnvRuntimeConfigOptions | undefined, path: 
   }))
 }
 
+// Defaults use the parsed type. Only host and provider values are parsed from strings.
 function parseRuntimeDefault(schema: EnvValueSchema, value: unknown, path: string): unknown {
-  const result = parseEnvValue(schema, value)
+  const typed = schema.kind === "boolean" || schema.kind === "number" ? hasRuntimeType(value, schema.kind) : true
+  const result = typed ? parseEnvValue(schema, value) : { message: `Expected a ${schema.kind} default.`, success: false as const }
   if (!result.success) {
     throw envErrorDiagnostics.ENV_R0023({ message: `[vitehub] Invalid default for ${path}: ${result.message}` })
   }

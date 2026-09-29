@@ -28,6 +28,10 @@ describe("env declarations", () => {
   it("validates JavaScript options before reading them", () => {
     expect(() => env(null as never)).toThrow("env() only accepts a single options object.")
     expect(() => env.boolean(null as never)).toThrow("env() only accepts a single options object.")
+    const { proxy, revoke } = Proxy.revocable(() => undefined, {})
+    revoke()
+    expect(() => env(proxy as never)).toThrow("env() only accepts a single options object.")
+    expect(() => env.number(proxy as never)).toThrow("env() only accepts a single options object.")
   })
 
   it("rejects revoked Proxy schemas as invalid declarations", () => {
@@ -355,7 +359,9 @@ describe("env declarations", () => {
   })
 
   it("rejects invalid typed defaults and enum values", () => {
-    expect(() => createRuntimeRegistry({ dryRun: env.boolean({ default: "yes" as never }) })).toThrow("Invalid default for env.dryRun: Expected a boolean: true, false, 1, or 0.")
+    expect(() => createRuntimeRegistry({ dryRun: env.boolean({ default: "yes" as never }) })).toThrow("Invalid default for env.dryRun: Expected a boolean default.")
+    expect(() => createRuntimeRegistry({ dryRun: env.boolean({ default: "false" as never }) })).toThrow("Expected a boolean default.")
+    expect(() => createRuntimeRegistry({ limit: env.number({ default: "0.6" as never }) })).toThrow("Expected a number default.")
     expect(() => createRuntimeRegistry({ limit: env.number({ default: Number.NaN }) })).toThrow("Expected a finite number.")
     expect(() => createRuntimeRegistry({ mode: env.enum(["draft"], { default: "send" as never }) })).toThrow("Expected one of \"draft\".")
     expect(() => env.enum([] as never)).toThrow("unique non-empty strings")

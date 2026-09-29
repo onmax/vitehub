@@ -181,8 +181,20 @@ function enumVariable<const TValues extends readonly [string, ...string[]]>(
 }
 
 // Validate JavaScript callers before reading any option.
+function isInspectableRecord(value: unknown): boolean {
+  try {
+    if (!isRuntimeRecord(value)) return false
+    // A revoked Proxy passes the record check but throws on reflection.
+    Reflect.ownKeys(value)
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
 function assertDeclarationOptions(options: EnvVariableOptions): void {
-  if (!isRuntimeRecord(options)) {
+  if (!isInspectableRecord(options)) {
     throw envErrorDiagnostics.ENV_R0005({ message: "env() only accepts a single options object." })
   }
   if (options.optional && options.required !== undefined) {
