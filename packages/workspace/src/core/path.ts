@@ -26,19 +26,31 @@ export interface SafeWorkspacePathOptions {
   pattern?: boolean
 }
 
+function classifyWindowsComponent(part: string): { normalized: string; isTraversal: boolean } {
+  const name = part.toLowerCase()
+  const basename = name.split(":", 1)[0]!.replace(/[ .]+$/, "")
+  const withoutSpaces = name.replace(/ +$/, "")
+  return { normalized: basename, isTraversal: withoutSpaces === "." || withoutSpaces === ".." }
+}
+
 export function normalizeSafeWorkspacePath(path = "", options: SafeWorkspacePathOptions = {}): string {
   const raw = path.replace(/\\/g, "/")
   const normalized = normalizeWorkspacePath(path)
   const parts = normalized.split("/").filter(Boolean)
 
   if (!options.allowEmpty && !normalized) throw workspacePathError(path)
-  if (raw.startsWith("/") || /^[a-z]:/i.test(raw) || raw.includes("\0") || parts.some(part => part === "." || part === "..")) throw workspacePathError(path)
+  if (raw.startsWith("/") || /^[a-z]:/i.test(raw) || raw.includes("\0")) throw workspacePathError(path)
   if (parts.some((part, index) => {
     const name = part.toLowerCase()
-    const basename = name.split(":", 1)[0]!.replace(/[ .]+$/, "")
-    const reserved = basename === ".git" || (index === 0 && basename === ".vitehub")
-    // Internal access permits canonical reserved names, never alternate spellings.
-    return reserved && (!options.allowReserved || name !== basename)
+    const classification = classifyWindowsComponent(part)
+    const reserved = classification.normalized === ".git"
+      || /^git~\d+$/.test(classification.normalized)
+      || (index === 0 && classification.normalized === ".vitehub")
+      || (index === 0 && /^vitehu~\d+$/.test(classification.normalized))
+    const canonical = (classification.normalized === ".git" || (index === 0 && classification.normalized === ".vitehub"))
+      && name === classification.normalized
+    return classification.isTraversal
+      || (reserved && (!options.allowReserved || !canonical))
   })) throw workspacePathError(path)
 
   return normalized
@@ -50,7 +62,8 @@ export function normalizeSafeWorkspacePattern(pattern: string): string {
 
 export function resolveInside(root: string, path = ""): string {
   const resolvedRoot = resolve(root)
-  const resolved = resolve(resolvedRoot, normalizeWorkspacePath(path))
+  const normalized = normalizeSafeWorkspacePath(path, { allowEmpty: true, allowReserved: true })
+  const resolved = resolve(resolvedRoot, normalized)
   const rel = relative(resolvedRoot, resolved)
 
   if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {

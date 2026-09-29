@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern, resolveInside } from "../src/core/path.ts"
 
 describe("Workspace path containment", () => {
-  it.each(["C:/outside/file", "C:\\outside\\file", "C:outside", "a\0b"])("rejects non-portable path %j", path => {
+  it.each(["C:/outside/file", "C:\\outside\\file", "C:outside", "a\0b", ".. /outside", "docs/.. /outside"])("rejects non-portable path %j", path => {
     expect(() => normalizeSafeWorkspacePath(path)).toThrow()
     expect(() => normalizeSafeWorkspacePattern(path)).toThrow()
   })
@@ -16,6 +16,7 @@ describe("Workspace path containment", () => {
     }
     expect(() => resolveInside(root, "../outside")).toThrow()
     expect(() => resolveInside(root, "docs/../../outside")).toThrow()
+    expect(() => resolveInside(root, ".. /outside")).toThrow()
   })
 })
 
@@ -35,11 +36,14 @@ describe("reserved Workspace metadata namespace", () => {
     ".vitehub::$INDEX_ALLOCATION",
     ".VITEHUB:$I30:$INDEX_ALLOCATION",
     ".vitehub. :stream",
+    "vitehu~1",
     ".git.",
     ".GIT ",
     ".git::$INDEX_ALLOCATION",
+    "git~1",
     "nested/.git. . ",
     "nested/.GIT:$I30:$INDEX_ALLOCATION",
+    "nested/git~1",
   ])("rejects reserved component aliases in %j", (root) => {
     for (const path of [root, `${root}/config`, `${root}\\config`]) {
       expect(() => normalizeSafeWorkspacePath(path)).toThrow()
@@ -54,7 +58,7 @@ describe("reserved Workspace metadata namespace", () => {
       .toBe(".VITEHUB/file-metadata/foo/metadata.json")
     expect(normalizeSafeWorkspacePath("nested/.GIT/config", { allowReserved: true }))
       .toBe("nested/.GIT/config")
-    for (const path of [".vitehub-notes/file", "nested/.VITEHUB/file", "ordinary/file", "..notes/file", "ordinary./file", "report:final.txt"]) {
+    for (const path of [".vitehub-notes/file", "nested/.VITEHUB/file", "ordinary/file", "..notes/file", "ordinary./file", "report:final.txt", "git~1-notes/file", "vitehu~1-notes/file", "vitehub~1/file"]) {
       expect(normalizeSafeWorkspacePath(path)).toBe(path)
     }
     expect(normalizeSafeWorkspacePattern("[[:alpha:]]/**/*.md")).toBe("[[:alpha:]]/**/*.md")

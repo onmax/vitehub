@@ -96,7 +96,7 @@ Without a `store`, development uses Local. Production uses Memory on Cloudflare,
 
 Custom Stores can implement `removeEmptyDirectory(path)` for build Source cleanup. It must remove only an empty directory, preserve files and missing paths, and reject nonempty directories within the Store mutation boundary. Without this optional method, cleanup retains generated directories. Local, Memory, and Cloudflare Artifacts implement it.
 
-Public Workspace paths reserve `.git` at any depth and `.vitehub` at the root, regardless of case. This includes NTFS stream suffixes such as `.vitehub::$INDEX_ALLOCATION` and spellings with trailing ASCII periods or spaces such as `.vitehub.`. ViteHub rejects these spellings on every host.
+Public Workspace paths reserve `.git` at any depth and `.vitehub` at the root, regardless of case. This includes NTFS stream suffixes such as `.vitehub::$INDEX_ALLOCATION`, spellings with trailing ASCII periods or spaces such as `.vitehub.`, and NTFS short-name aliases such as `git~1`. ViteHub rejects these spellings on every host.
 
 ### Local filesystem access
 
