@@ -39,8 +39,19 @@ function createDevframeH3Handler(definition: DevframeDefinition, options: Devfra
   let instance: DevframeInstance | undefined
   // SAFETY: H3 returns an EventHandler; this adapter adds the close method assigned below.
   const handler = fromWebHandler(async (request) => {
-    instance ??= initDevframe(definition, initOptions)
     const url = new URL(request.url)
+    const origin = request.headers.get("origin")
+    const site = request.headers.get("sec-fetch-site")
+    // Browsers control Fetch Metadata, which survives trusted TLS termination.
+    // Fall back to the request origin when that metadata is unavailable.
+    if (origin === "null" || site === "cross-site" || site === "same-site"
+      || (site !== "same-origin" && origin !== null && origin !== url.origin)) {
+      return new Response("Forbidden", {
+        headers: responseHeaders,
+        status: 403,
+      })
+    }
+    instance ??= initDevframe(definition, initOptions)
     const marker = url.pathname.indexOf(instance.base)
     if (marker > 0) {
       url.pathname = url.pathname.slice(marker)
@@ -151,6 +162,7 @@ export const consoleDevframe: DevframeDefinition = defineDevframe({
 
 export function createConsoleDevframeHandler(): DevframeH3Handler {
   return createDevframeH3Handler(consoleDevframe, {
+    // The adapter checks each request's origin before Devframe can open a session.
     allowedOrigins: false,
     auth: false,
     base: consoleDevframeBase,
