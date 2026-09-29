@@ -62,6 +62,9 @@ function ownProcess(child: ChildProcess, context: FixtureTestContext) {
   const stop = () => stopping ||= (async () => {
     try {
       if (process.platform === "win32") {
+        // Windows taskkill only owns a live parent tree. Unlike a POSIX process
+        // group, it cannot reliably reclaim descendants after that parent exits.
+        // The bounded close wait below reports any inherited pipes left open.
         if (child.pid && child.exitCode === null && child.signalCode === null) {
           await new Promise<void>((resolve, reject) => {
             execFile("taskkill", ["/pid", String(child.pid), "/t", "/f"], { timeout: 5_000, windowsHide: true }, (error) => {
@@ -111,7 +114,7 @@ async function run(command: string, args: string[], context: FixtureTestContext,
   try {
     const result = await new Promise<{ code: number | null, signal: NodeJS.Signals | null }>((resolve, reject) => {
       child.once("error", reject)
-      // A descendant can retain stdout after its parent exits. Cleanup owns it too.
+      // POSIX process-group cleanup also owns descendants retaining stdout.
       child.once("exit", (code, signal) => resolve({ code, signal }))
     })
     context.signal.throwIfAborted()
@@ -187,7 +190,8 @@ async function expectDenoLauncherToStart(appRoot: string, context: FixtureTestCo
 }
 
 describe("host documentation fixtures", () => {
-  it("stops command descendants when the test signal aborts", async (context) => {
+  it.for(["test signal aborts", "parent exits"] as const)("stops command descendants when the %s", async (finish, context) => {
+    if (finish === "parent exits" && process.platform === "win32") context.skip()
     const root = await mkdtemp(join(tmpdir(), "vitehub-doc-host-abort-"))
     const heartbeat = join(root, "heartbeat")
     const controller = new AbortController()
@@ -196,12 +200,13 @@ describe("host documentation fixtures", () => {
       'const { writeFileSync } = require("node:fs")',
       'process.on("SIGTERM", () => {})',
       'let count = 0; const beat = () => writeFileSync(process.argv[1], String(++count))',
-      "beat(); setInterval(beat, 10)",
+      'beat(); process.send("ready", () => {}); setInterval(beat, 10)',
       "setTimeout(() => process.exit(0), 10_000)",
     ].join("; ")
     const parent = [
       'const { spawn } = require("node:child_process")',
-      `spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}, process.argv[1]], { stdio: "ignore" })`,
+      `const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}, process.argv[1]], { stdio: ["ignore", "inherit", "inherit", "ipc"] })`,
+      ...(finish === "parent exits" ? ['child.once("message", () => process.exit(0))'] : []),
       "setTimeout(() => process.exit(0), 10_000)",
     ].join("; ")
     const result = run(process.execPath, ["-e", parent, heartbeat], {
@@ -210,9 +215,11 @@ describe("host documentation fixtures", () => {
     }).then(() => undefined, error => error)
 
     try {
-      await expect.poll(() => readFile(heartbeat, "utf8").catch(() => "")).toMatch(/^\d+$/)
-      controller.abort(reason)
-      expect(await result).toBe(reason)
+      while (!/^\d+$/.test(await readFile(heartbeat, "utf8").catch(() => ""))) {
+        await delay(10, undefined, { signal: context.signal })
+      }
+      if (finish === "test signal aborts") controller.abort(reason)
+      expect(await result).toBe(finish === "test signal aborts" ? reason : undefined)
       const stopped = await readFile(heartbeat, "utf8")
       await new Promise(resolve => setTimeout(resolve, 100))
       expect(await readFile(heartbeat, "utf8")).toBe(stopped)
