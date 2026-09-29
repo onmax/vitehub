@@ -18,9 +18,34 @@ const createSqliteProviderRuntimeSessionStore = vi.hoisted(() => vi.fn(async (pa
 
 vi.mock("@t3tools/provider-runtime", () => ({ createProviderRuntime, createSqliteProviderRuntimeSessionStore }))
 
+/** Error that Box session close reports after the real close. It simulates a failed cwd synchronization. */
+const boxCloseFailure = vi.hoisted(() => ({ error: undefined as Error | undefined }))
+vi.mock("@vite-hub/box", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@vite-hub/box")>()
+  const resolveBox: typeof actual.resolveBox = async (definition, context, options) => {
+    const box = await actual.resolveBox(definition, context, options)
+    return {
+      plan: box.plan,
+      async open(openOptions) {
+        const session = await box.open(openOptions)
+        const error = boxCloseFailure.error
+        if (!error) return session
+        return {
+          ...session,
+          async close() {
+            await session.close()
+            throw error
+          },
+        }
+      },
+    }
+  }
+  return { ...actual, resolveBox }
+})
+
 import { defineAgent, type AgentBoxDefinition, type AgentRuntimeConfig } from "../src/index.ts"
 import { resolveAgentHealth } from "../src/health.ts"
-import { boxSharesHostNetwork, providerBoxEnvironment } from "../src/internal/provider-box.ts"
+import { boxSharesHostNetwork, providerBoxEnvironment, startProviderBoxRelay, type ProviderBoxSession } from "../src/internal/provider-box.ts"
 import { createProviderAgentAdapter } from "../src/provider-agent.ts"
 
 const execFileAsync = promisify(execFile)
@@ -30,6 +55,7 @@ afterEach(async () => {
   providerRuntimes.splice(0)
   createProviderRuntime.mockClear()
   vi.unstubAllEnvs()
+  boxCloseFailure.error = undefined
   await Promise.all(roots.splice(0).map(root => rm(root, { force: true, recursive: true })))
 })
 
@@ -130,17 +156,19 @@ function invocationContext(threadId: string, input: BoxTestInput) {
 }
 
 /** Start the launcher that the provider runtime receives as its provider binary. */
-async function runLauncher(path: string, args: string[], options: { cwd: string, env: Record<string, string>, stdin: string }) {
+async function runLauncher(path: string, args: string[], options: { cwd: string, env: Record<string, string>, keepStdinOpen?: boolean, stdin: string }) {
   const child = spawn(path, args, { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"] })
   let stdout = ""
   let stderr = ""
   child.stdout.setEncoding("utf8").on("data", (chunk: string) => stdout += chunk)
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => stderr += chunk)
-  child.stdin.end(options.stdin)
+  if (options.keepStdinOpen) child.stdin.write(options.stdin)
+  else child.stdin.end(options.stdin)
   const code = await new Promise<number | null>((resolve, reject) => {
     child.once("error", reject)
     child.once("close", resolve)
   })
+  child.stdin.destroy()
   return { code, stderr, stdout } satisfies LauncherResult
 }
 
@@ -246,6 +274,51 @@ describe("Agent Box environment", () => {
   })
 })
 
+describe("Agent Box relay", () => {
+  it("stops a Box process that starts after its relay connection closed", async () => {
+    const root = await temporaryRoot()
+    let started: (() => void) | undefined
+    const spawnCalled = new Promise<void>(resolve => started = resolve)
+    let finishSpawn: (() => void) | undefined
+    const spawnReleased = new Promise<void>(resolve => finishSpawn = resolve)
+    const kill = vi.fn(async () => undefined)
+    const child = {
+      kill,
+      stderr: new ReadableStream<Uint8Array>(),
+      stdin: new WritableStream<Uint8Array>(),
+      stdout: new ReadableStream<Uint8Array>(),
+      wait: () => new Promise<{ code: number }>(() => undefined),
+    }
+    const box = {
+      home: "/box/home",
+      session: { cwd: "/box/work" },
+      spawn: async () => {
+        started?.()
+        await spawnReleased
+        return child
+      },
+    }
+    const relay = await startProviderBoxRelay({
+      // SAFETY: The relay reads only the Box cwd and spawn in this fixture.
+      box: box as unknown as ProviderBoxSession,
+      command: "provider",
+      diagnosticPath: join(root, "diagnostic.json"),
+      environment: () => ({}),
+      launchRoot: root,
+      localRoot: join(root, "local"),
+    })
+    const launcher = spawn(relay.launcher, [], { stdio: ["pipe", "ignore", "ignore"] })
+    const launcherClosed = new Promise(resolve => launcher.once("close", resolve))
+    await spawnCalled
+    // Closing the relay closes the connection before the Box process exists.
+    await relay.close()
+    finishSpawn?.()
+    await vi.waitFor(() => expect(kill).toHaveBeenCalled())
+    launcher.kill("SIGKILL")
+    await launcherClosed
+  })
+})
+
 describe("Agent Box provider execution", () => {
   it("runs the provider in a Box resolved for each invocation", async () => {
     const root = await temporaryRoot()
@@ -345,6 +418,71 @@ describe("Agent Box provider execution", () => {
       providerSettings: { binaryPath: process.execPath },
       // SAFETY: The fixture provides the provider invocation fields read by the adapter.
     }).generate(invocationContext("box-requires", { prompt: "review", options: { ref: "refs/heads/first", sha: first, token: "token" } }) as never)).rejects.toThrow("vitehub-missing-box-command")
+    expect(runtime.startSession).not.toHaveBeenCalled()
+  })
+
+  it("ends the relay when the Box provider exits while its input stays open", async () => {
+    const root = await temporaryRoot()
+    const { first, repository } = await gitRepository(root)
+    const threadId = "box-open-input"
+    let launched: LauncherResult | undefined
+    providerRuntime(threadId, async ({ cwd }) => {
+      const options = createProviderRuntime.mock.lastCall?.[0]
+      launched = await runLauncher(String(options?.settings?.binaryPath), ["-e", "process.stdout.write('done\\n'); process.exit(0)"], {
+        cwd,
+        env: { ...options?.environment },
+        keepStdinOpen: true,
+        stdin: "{\"id\":1}\n",
+      })
+    })
+
+    await createProviderAgentAdapter<PullRequestOptions>({
+      box: testBox(repository),
+      provider: "codex",
+      providerSettings: { binaryPath: process.execPath },
+      // SAFETY: The fixture provides the provider invocation fields read by the adapter.
+    }).generate(invocationContext(threadId, { prompt: "review", options: { ref: "refs/heads/first", sha: first, token: "token" } }) as never)
+    expect(launched).toMatchObject({ code: 0, stdout: "done\n" })
+  })
+
+  it("fails the invocation when the Box session cannot close", async () => {
+    const root = await temporaryRoot()
+    const { first, repository } = await gitRepository(root)
+    const threadId = "box-close-failure"
+    boxCloseFailure.error = new Error("Box cwd synchronization failed")
+    const runtime = providerRuntime(threadId, async () => undefined)
+
+    const invocation = createProviderAgentAdapter<PullRequestOptions>({
+      box: testBox(repository),
+      provider: "codex",
+      providerSettings: { binaryPath: process.execPath },
+      // SAFETY: The fixture provides the provider invocation fields read by the adapter.
+    }).generate(invocationContext(threadId, { prompt: "review", options: { ref: "refs/heads/first", sha: first, token: "token" } }) as never)
+    await expect(invocation).rejects.toBeInstanceOf(AggregateError)
+    await expect(invocation).rejects.toMatchObject({ errors: expect.arrayContaining([boxCloseFailure.error]) })
+    expect(runtime.startSession).toHaveBeenCalled()
+  })
+
+  it("rejects Box execution on Windows hosts before the Box opens", async () => {
+    const root = await temporaryRoot()
+    const { first, repository } = await gitRepository(root)
+    const runtime = providerRuntime("box-windows", async () => undefined)
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" })
+    try {
+      await expect(createProviderAgentAdapter<PullRequestOptions>({
+        box: testBox(repository),
+        provider: "codex",
+        providerSettings: { binaryPath: process.execPath },
+        // SAFETY: The fixture provides the provider invocation fields read by the adapter.
+      }).generate(invocationContext("box-windows", { prompt: "review", options: { ref: "refs/heads/first", sha: first, token: "token" } }) as never)).rejects.toMatchObject({
+        code: "AGENT_R0963",
+        message: expect.stringContaining("POSIX Node host"),
+      })
+    }
+    finally {
+      Object.defineProperty(process, "platform", platform)
+    }
     expect(runtime.startSession).not.toHaveBeenCalled()
   })
 })

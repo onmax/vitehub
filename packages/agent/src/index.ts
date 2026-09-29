@@ -1764,8 +1764,9 @@ function validateAgentBox(
   if (options.hasWorkspace) {
     throw agentDiagnostics.AGENT_R0958({ message: "[vitehub] defineAgent({ box }) cannot be combined with an Agent Workspace. Use box.checkout or box.cwd for the provider working tree." })
   }
-  const host = globalThis as { Deno?: unknown, navigator?: { userAgent?: unknown } }
-  if (host.Deno !== undefined || host.navigator?.userAgent === "Cloudflare-Workers") {
+  const navigator: unknown = Reflect.get(globalThis, "navigator")
+  const userAgent = isRuntimeObject(navigator) ? Reflect.get(navigator, "userAgent") : undefined
+  if (Reflect.get(globalThis, "Deno") !== undefined || userAgent === "Cloudflare-Workers") {
     throw agentDiagnostics.AGENT_R0959({ message: "[vitehub] defineAgent({ box }) requires a Node.js host. Workers and Deno hosts cannot start provider Drivers." })
   }
 }

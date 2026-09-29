@@ -191,9 +191,12 @@ ViteHub rejects these combinations when you define the Agent:
 
 ViteHub rejects these inputs when an invocation starts:
 
+- A Windows host, because the provider relay requires a POSIX Node host.
 - Image attachments, because the provider cannot read host attachment files.
 - Managed `browser()`, because the browser runs outside the Box. Install the browser in the Box and use `browser({ runtime: 'external' })`.
 - Capability tools on a runtime that does not share the ViteHub network.
+
+The invocation fails when the Box session cannot close. For example, a Crabbox Box with an authoritative `cwd` copies provider changes back when it closes, so a failed copy is reported.
 
 ## Keep execution boundaries separate
 

@@ -2340,6 +2340,9 @@ function assertProviderBoxInvocation<CALL_OPTIONS, TRuntimeConfig extends AgentR
   context: AgentAdapterRunContext<CALL_OPTIONS, TRuntimeConfig>,
   managedBrowser: boolean,
 ) {
+  if (process.platform === "win32") {
+    throw agentDiagnostics.AGENT_R0963({ message: "[vitehub] defineAgent({ box }) is not supported on Windows because the provider Box relay requires a POSIX Node host." })
+  }
   if (managedBrowser) {
     throw agentDiagnostics.AGENT_R0960({ message: "[vitehub] Managed browser() cannot be used with defineAgent({ box }) because the browser runs outside the Box. Install the browser in the Box and use browser({ runtime: \"external\" })." })
   }
@@ -2479,14 +2482,19 @@ async function* runProvider<
   let rootCleanup: Promise<void> | undefined
   const closeProviderBox = async () => {
     await providerBoxRelay?.close().catch(() => undefined)
-    await providerBox?.session.close().catch(() => undefined)
+    // Closing a Box can synchronize an authoritative cwd back, so a close failure fails the invocation.
+    await providerBox?.session.close()
   }
-  const cleanupRoot = () => rootCleanup ??= closeProviderBox().then(() => launchRoot
+  const removeRoots = () => launchRoot
     ? Promise.all([
         removeProviderRoot(root),
         rm(launchRoot, { force: true, recursive: true }),
       ]).then(() => undefined)
-    : removeProviderRoot(root))
+    : removeProviderRoot(root)
+  const cleanupRoot = () => rootCleanup ??= closeProviderBox().then(removeRoots, async (error: unknown) => {
+    await removeRoots().catch(() => undefined)
+    throw error
+  })
   let workspaceCleanupDeferred = false
   let deferredWorkspaceCleanup: Promise<void> | undefined
   const activeWorkspaceCommands = new Set<Promise<unknown>>()

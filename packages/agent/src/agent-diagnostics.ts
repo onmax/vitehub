@@ -1435,6 +1435,7 @@ export const agentDiagnostics = defineDiagnostics({
     AGENT_R0960: dynamicError,
     AGENT_R0961: dynamicError,
     AGENT_R0962: dynamicError,
+    AGENT_R0963: dynamicError,
     AGENT_R0001: {
       why: ({ name, available }: { name: string, available: string[] }) => formatUnknownAgentMessage(name, available, { prefix: true }),
       fix: "Use a discovered Agent name. Check the Agent Definition and the ViteHub Agent plugin configuration.",

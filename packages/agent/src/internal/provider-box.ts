@@ -7,6 +7,7 @@ import type { Server, Socket } from "node:net"
 import type { BoxDefinition, BoxFile, BoxProcess, BoxRuntimeDefinition, BoxSession } from "@vite-hub/box"
 
 import { agentDiagnostics } from "../agent-diagnostics.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 
 /** Environment names that a Box runtime owns. The relay never forwards them. */
 const boxRuntimeEnvironmentKeys = new Set([
@@ -35,7 +36,7 @@ export interface ProviderBoxSession {
 /** True when the Box runtime can reach loopback services of the ViteHub process. */
 export function boxSharesHostNetwork(runtime: BoxRuntimeDefinition): boolean {
   if (runtime === "trusted-host") return true
-  if (!runtime || typeof runtime !== "object" || !("kind" in runtime)) return false
+  if (!isRuntimeRecord(runtime) || !("kind" in runtime)) return false
   if (runtime.kind === "trusted-host") return true
   return runtime.kind === "crabbox" && runtime.network === "direct"
 }
@@ -51,6 +52,7 @@ export async function openProviderBox<Context>(options: {
   files: Readonly<Record<string, string | Uint8Array>>
   signal?: AbortSignal
 }): Promise<ProviderBoxSession> {
+  // SAFETY: The split specifier keeps @vite-hub/box optional for bundlers. It resolves to the @vite-hub/box module.
   const { resolveBox } = await import("@vite-hub/" + "box") as typeof import("@vite-hub/box")
   const declared = options.definition.home?.files || {}
   const generated: Record<string, BoxFile<Context>> = {}
@@ -118,6 +120,8 @@ export async function startProviderBoxRelay(options: ProviderBoxRelayOptions): P
   const server: Server = createServer({ allowHalfOpen: true }, (socket) => {
     sockets.add(socket)
     socket.once("close", () => sockets.delete(socket))
+    // A launcher can disconnect at any time. Socket errors close the connection and do not reach the host process.
+    socket.on("error", () => socket.destroy())
     void handleRelayConnection(socket, token, options, processes).catch(() => socket.destroy())
   })
   server.listen(socketPath)
@@ -153,6 +157,10 @@ async function handleRelayConnection(
       : undefined
   const mapText = (value: string) => value.replaceAll(options.localRoot, boxCwd)
   const selectedArgs = options.filterArgs ? options.filterArgs(args, mapPath) : [...args]
+  let disconnected = socket.destroyed
+  socket.once("close", () => {
+    disconnected = true
+  })
   let child: BoxProcess
   try {
     const environment = Object.fromEntries(Object.entries(options.environment(env)).map(([name, value]) => [name, mapText(value)]))
@@ -163,6 +171,11 @@ async function handleRelayConnection(
     await writeDiagnostic(options.diagnosticPath, { exitCode: 127, spawnError: message })
     socket.write(frame(frameStderr, Buffer.from(`${message}\n`)))
     socket.end(exitFrame(127))
+    return
+  }
+  // The launcher can disconnect while a remote Box starts the process. Stop the process that nobody reads.
+  if (disconnected) {
+    await child.kill().catch(() => undefined)
     return
   }
   processes.add(child)
@@ -180,7 +193,9 @@ async function handleRelayConnection(
     socket.end(exitFrame(127))
     return
   }
-  const forwardInput = pipeRelayInput(socket, input, stdin, mapText)
+  const inputForwarding = new AbortController()
+  const forwardInput = pipeRelayInput(socket, input, stdin, mapText, inputForwarding.signal)
+  void forwardInput.catch(() => undefined)
   let stderrBytes = 0
   let stderrTail = Buffer.alloc(0)
   const forward = (stream: ReadableStream<Uint8Array>, type: number) => forwardStream(stream, (chunk) => {
@@ -190,21 +205,23 @@ async function handleRelayConnection(
     }
     if (!socket.destroyed) socket.write(frame(type, chunk))
   })
+  // The provider can exit while the provider runtime keeps its input open.
+  // Input forwarding stops at exit, so the relay does not wait for input that the provider no longer reads.
   const [, , exit] = await Promise.all([
     forward(child.stdout, frameStdout),
     forward(child.stderr, frameStderr),
-    child.wait(),
-    forwardInput.catch(() => undefined),
+    child.wait().finally(() => inputForwarding.abort()),
   ])
   exited = true
   processes.delete(child)
   if (exit.code !== 0) {
-    await writeDiagnostic(options.diagnosticPath, {
+    const diagnostic: Record<string, unknown> = {
       exitCode: exit.code,
       stderr: stderrTail.toString("utf8"),
       stderrBytes,
-      ...(stderrBytes > stderrTail.byteLength ? { stderrTruncated: true } : {}),
-    })
+    }
+    if (stderrBytes > stderrTail.byteLength) diagnostic.stderrTruncated = true
+    await writeDiagnostic(options.diagnosticPath, diagnostic)
   }
   if (!socket.destroyed) socket.end(exitFrame(exit.code))
 }
@@ -215,6 +232,7 @@ async function readRelayHeader(socket: Socket, token: string) {
     const cleanup = () => {
       socket.off("data", onData)
       socket.off("end", onEnd)
+      socket.off("close", onEnd)
       socket.off("error", reject)
     }
     const onData = (chunk: Buffer) => {
@@ -231,7 +249,9 @@ async function readRelayHeader(socket: Socket, token: string) {
       reject(invalidRelayConnection())
     }
     socket.on("data", onData)
+    // A launcher that disconnects before it sends the header emits 'close' without 'end'.
     socket.once("end", onEnd)
+    socket.once("close", onEnd)
     socket.once("error", reject)
   })
   let header: unknown
@@ -241,15 +261,15 @@ async function readRelayHeader(socket: Socket, token: string) {
   catch {
     throw invalidRelayConnection()
   }
-  if (!header || typeof header !== "object") throw invalidRelayConnection()
+  if (!isRuntimeRecord(header)) throw invalidRelayConnection()
   const received = Reflect.get(header, "token")
   const args = Reflect.get(header, "args")
   const env = Reflect.get(header, "env")
-  if (typeof received !== "string" || !sameToken(received, token)) throw invalidRelayConnection()
-  if (!Array.isArray(args) || !args.every(arg => typeof arg === "string")) throw invalidRelayConnection()
-  if (!env || typeof env !== "object") throw invalidRelayConnection()
+  if (!hasRuntimeType(received, "string") || !sameToken(received, token)) throw invalidRelayConnection()
+  if (!Array.isArray(args) || !args.every(arg => hasRuntimeType(arg, "string"))) throw invalidRelayConnection()
+  if (!isRuntimeRecord(env)) throw invalidRelayConnection()
   const environment: Record<string, string> = {}
-  for (const [name, value] of Object.entries(env)) if (typeof value === "string") environment[name] = value
+  for (const [name, value] of Object.entries(env)) if (hasRuntimeType(value, "string")) environment[name] = value
   return { args: args.map(String), env: environment, input }
 }
 
@@ -264,7 +284,13 @@ function sameToken(received: string, expected: string) {
 }
 
 /** Forward provider input line by line so local paths map to Box paths without splitting a path. */
-async function pipeRelayInput(socket: Socket, initial: Buffer, stdin: WritableStream<Uint8Array>, mapText: (value: string) => string) {
+async function pipeRelayInput(
+  socket: Socket,
+  initial: Buffer,
+  stdin: WritableStream<Uint8Array>,
+  mapText: (value: string) => string,
+  signal: AbortSignal,
+) {
   const writer = stdin.getWriter()
   let pending = ""
   const decoder = new TextDecoder()
@@ -277,28 +303,43 @@ async function pipeRelayInput(socket: Socket, initial: Buffer, stdin: WritableSt
     pending = pending.slice(newline + 1)
     await writer.write(encoder.encode(mapText(complete)))
   }
+  let stop: (() => void) | undefined
+  const stopped = new Promise<void>((resolve) => {
+    stop = resolve
+  })
+  const onAbort = () => {
+    stop?.()
+    // Pending writes to a process that exited can wait forever. Abort the writer so they settle.
+    void writer.abort(signal.reason).catch(() => undefined)
+  }
+  if (signal.aborted) onAbort()
+  else signal.addEventListener("abort", onAbort, { once: true })
+  let queue = Promise.resolve()
+  let fail: ((error: unknown) => void) | undefined
+  const onData = (chunk: Buffer) => {
+    socket.pause()
+    queue = queue.then(() => push(chunk)).then(() => {
+      if (!signal.aborted) socket.resume()
+    })
+    queue.catch(error => fail?.(error))
+  }
   try {
-    if (initial.byteLength) await push(initial)
+    if (initial.byteLength) await Promise.race([push(initial), stopped])
     // The relay can send its header, input, and end of input before the Box process starts.
     // In that case the socket already emitted 'end' while readRelayHeader held it paused.
-    if (!socket.readableEnded && !socket.destroyed) await new Promise<void>((resolve, reject) => {
-      let queue = Promise.resolve()
-      socket.on("data", (chunk: Buffer) => {
-        socket.pause()
-        queue = queue.then(() => push(chunk)).then(() => {
-          socket.resume()
-        })
-        queue.catch(reject)
-      })
-      socket.once("end", () => {
-        queue.then(resolve, reject)
-      })
-      socket.once("close", () => {
-        queue.then(resolve, reject)
-      })
-      socket.once("error", reject)
-      socket.resume()
-    })
+    if (!signal.aborted && !socket.readableEnded && !socket.destroyed) {
+      await Promise.race([stopped, new Promise<void>((resolve, reject) => {
+        fail = reject
+        socket.on("data", onData)
+        socket.once("end", () => queue.then(resolve, reject))
+        socket.once("close", () => queue.then(resolve, reject))
+        socket.once("error", reject)
+        socket.resume()
+      })])
+    }
+    if (signal.aborted) return
+    await Promise.race([queue, stopped])
+    if (signal.aborted) return
     pending += decoder.decode()
     if (pending) await writer.write(encoder.encode(mapText(pending)))
     await writer.close()
@@ -306,6 +347,12 @@ async function pipeRelayInput(socket: Socket, initial: Buffer, stdin: WritableSt
   catch (error) {
     await writer.abort(error).catch(() => undefined)
     throw error
+  }
+  finally {
+    signal.removeEventListener("abort", onAbort)
+    socket.off("data", onData)
+    // Discard input that arrives after the process exited, so the socket can finish closing.
+    if (signal.aborted && !socket.destroyed) socket.resume()
   }
 }
 
