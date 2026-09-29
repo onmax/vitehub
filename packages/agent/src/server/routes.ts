@@ -42,6 +42,7 @@ import { attachmentStringBytes, isAttachmentData } from "../messages.ts"
 import { agentInvokerLabel, hasResolvedAgentInvokerInput, resolveInputAgentInvoker, resolveAgentInvoker, withResolvedAgentInvokerInput } from "../invoker.ts"
 import { createAgentUIMessageStreamResponse } from "../stream-output.ts"
 import {
+  bindAgentChannelTriggerState,
   isResolvedAgentTriggerHandledInvocation,
   resolveAgentTriggerInvocation as resolveAgentTriggerInvocationWithResolvedContext,
   resolveAgentTriggerInvocationResult,
@@ -7377,6 +7378,13 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
       if (trigger.id !== "chat.message") {
         const channelDelivery = await resolveChannelDelivery()
         context = withAgentChannelDelivery(context, channelDelivery)
+        if (registration.channelId) {
+          const channelState = webhookDeliveryState || deliveryState
+          bindAgentChannelTriggerState(request, registration.channelId, {
+            keyPrefix: `${channelState.keyPrefix}channel-state:`,
+            state: channelState.state,
+          })
+        }
         try {
           const input = createAgentWebhookTriggerInput(request, registration, rawBody)
           // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.

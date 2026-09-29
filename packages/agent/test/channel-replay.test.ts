@@ -4,7 +4,7 @@ import * as v from "valibot"
 import { defineCollection } from "../../source/src/index.ts"
 import { defineChannel, defineChannelTrigger } from "../src/channels.ts"
 import { defineAgent } from "../src/index.ts"
-import { channelReplayRunId, createMemoryAgentInvocationStore, defineAgentInvocations, describeChannelHistory, replayChannel } from "../src/server.ts"
+import { channelMessageRunId, createMemoryAgentInvocationStore, defineAgentInvocations, describeChannelHistory, replayChannel } from "../src/server.ts"
 
 interface Email {
   folder: string
@@ -87,10 +87,10 @@ describe("replayChannel()", () => {
     const first = await replayChannel(agent, "mailbox", { query: { folder: "inbox" } })
     expect(first).toMatchObject({ failed: 0, nextCursor: null, processed: 4, skipped: 0 })
     expect(first.items.map(item => [item.key, item.status])).toEqual([["m1", "completed"], ["m2", "completed"], ["m4", "completed"], ["m5", "completed"]])
-    expect(first.items[0]?.id).toBe(channelReplayRunId("mailbox", "m1"))
+    expect(first.items[0]?.id).toBe(channelMessageRunId("mailbox", "m1"))
     expect(label.mock.calls).toEqual([["m1", "label:Invoice"], ["m2", "label:Receipt"], ["m4", "label:Ticket"], ["m5", "label:Offer"]])
     expect(load).toHaveBeenCalledTimes(2)
-    await expect(invocations.getByRunId(channelReplayRunId("mailbox", "m1"))).resolves.toMatchObject({ status: "completed" })
+    await expect(invocations.getByRunId(channelMessageRunId("mailbox", "m1"))).resolves.toMatchObject({ status: "completed" })
 
     label.mockClear()
     const second = await replayChannel(agent, "mailbox", { query: { folder: "inbox" } })
@@ -107,7 +107,7 @@ describe("replayChannel()", () => {
 
     const forced = await replayChannel(agent, "mailbox", { force: true, limit: 1 })
     expect(forced).toMatchObject({ processed: 1, skipped: 0 })
-    expect(forced.items[0]?.id).toMatch(new RegExp(`^${channelReplayRunId("mailbox", "m1")}:`))
+    expect(forced.items[0]?.id).toMatch(new RegExp(`^${channelMessageRunId("mailbox", "m1")}:`))
     expect(label).toHaveBeenCalledWith("m1", "label:Invoice")
   })
 
@@ -117,7 +117,7 @@ describe("replayChannel()", () => {
 
     const dryRun = await replayChannel(agent, "mailbox", { dryRun: true, limit: 2 })
     expect(dryRun).toMatchObject({ processed: 2 })
-    expect(dryRun.items[0]?.id).toBe(channelReplayRunId("mailbox", "m1", { dryRun: true }))
+    expect(dryRun.items[0]?.id).toBe(channelMessageRunId("mailbox", "m1", { dryRun: true }))
     expect(run).toHaveBeenCalledTimes(2)
     expect(label).not.toHaveBeenCalled()
 

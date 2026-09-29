@@ -12,6 +12,9 @@ import type {
   AgentChannelDefinition,
   AgentChannelDeliveryEffectIntent,
   AgentChannelDeliveryFinishEffect,
+  AgentChannelDispatchItem,
+  AgentChannelDispatchOptions,
+  AgentChannelStateBinding,
   AgentChannels,
   AgentInput,
   AgentRunInput,
@@ -92,6 +95,30 @@ export function agentChannelOptions<TRuntimeConfig extends AgentRuntimeConfig>(
   return (agent.channels || workspaceOptions?.channels || {}) as AgentChannels<TRuntimeConfig>
 }
 
+const channelTriggerStates = new WeakMap<Request, { binding: AgentChannelStateBinding, channelId: string }>()
+
+/** Gives the triggers of one Channel its State Adapter for the lifetime of a webhook request. */
+export function bindAgentChannelTriggerState(request: Request, channelId: string, binding: AgentChannelStateBinding): void {
+  channelTriggerStates.set(request, { binding, channelId })
+}
+
+function agentChannelTriggerState(request: Request | undefined, channelId: string): AgentChannelStateBinding | undefined {
+  const bound = request ? channelTriggerStates.get(request) : undefined
+  return bound?.channelId === channelId ? bound.binding : undefined
+}
+
+async function dispatchAgentChannelItems<TRuntimeConfig extends AgentRuntimeConfig>(
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
+  context: ResolvedAgentRuntimeContext<TRuntimeConfig>,
+  channelId: string,
+  items: readonly AgentChannelDispatchItem[],
+  options: AgentChannelDispatchOptions,
+) {
+  // Loaded on use: Channel replay depends on the Agent runner, which depends on this module.
+  const { dispatchChannelItems } = await import("./channel-replay.ts")
+  return await dispatchChannelItems(agent, context, channelId, items, options)
+}
+
 function assertTriggerName(name: unknown, owner: string): asserts name is string {
   if (typeof name !== "string" || !name.trim()) {
     throw agentDiagnostics.AGENT_R0868({ message: `[vitehub] ${owner} trigger names must be non-empty strings.` })
@@ -164,6 +191,7 @@ export async function resolveAgentTriggers<
   for (const [channelId, channel] of Object.entries(agentChannelOptions(agent))) {
     const channelCapabilities = normalizeCapabilities([...capabilities, ...(channel.capabilities || [])]) as AgentCapabilityDefinition<TRuntimeConfig>[]
     const channelWebhooks = normalizeChannelWebhookRegistrations(channelId, channel.kind, channel.webhooks)
+    const channelState = agentChannelTriggerState(context.request, channelId)
     const capabilityWebhookTrigger = capabilityWebhookTriggerForChannel(triggers, channelId, channel.kind)
     if (capabilityWebhookTrigger && channelWebhooks?.length) {
       capabilityWebhookTrigger.webhooks = [
@@ -187,6 +215,9 @@ export async function resolveAgentTriggers<
           agentCapabilities: channelCapabilities,
           agentName: agent.name || runtimeContext.agentIdentity?.name,
           channel,
+          ...(channelState ? { channelState } : {}),
+          dispatch: (items: readonly AgentChannelDispatchItem[], options: AgentChannelDispatchOptions) =>
+            dispatchAgentChannelItems(agent, context, channelId, items, options),
           trigger: {
             channelId,
             id,

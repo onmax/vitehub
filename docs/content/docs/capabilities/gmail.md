@@ -9,7 +9,7 @@ icon: i-lucide-mail-search
 
 `gmail()` gives an Agent structured Gmail search and authorization tools. Draft mode adds draft creation, but the Capability never exposes a send tool or the underlying `gog` executable.
 
-Use [`email()`](/docs/capabilities/email) for application-owned transactional email through the Email primitive. Use `gmail()` for an operator-owned Gmail account and structured Gmail tools.
+Use [`email()`](/docs/capabilities/email) for application-owned transactional email through the Email primitive. Use `gmail()` for an operator-owned Gmail account and structured Gmail tools. To run an Agent on each new message and label it, use the [Gmail Channel](/docs/agents/gmail).
 
 ## Configure the Agent
 

@@ -27,7 +27,7 @@ export default defineAgent({
 })
 ```
 
-Built-in helpers include `discord()`, `github()`, `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` for an application-owned Channel Kind.
+Built-in helpers include `discord()`, `github()`, [`gmail()`](/docs/agents/gmail), `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` for an application-owned Channel Kind.
 
 `webChat()` enables a generated AI SDK chat route by default. `http()` is a generic HTTP Channel and keeps its route disabled unless you pass `http({ route: true })`.
 
@@ -182,11 +182,32 @@ export default defineEventHandler(async (event) => {
 
 `replayChannel()` validates `query` with the Collection's query schema, then reads pages until it reaches `limit` or the end of the history. It returns `processed`, `skipped`, and `failed` counts, one entry per item, and `nextCursor`. Pass `nextCursor` as `cursor` to continue. It is `null` when no history remains.
 
-Each item gets the Invocation run ID `channel-replay:<channel>:<key>`. Replay skips an item that already has an Invocation with that ID, so a stopped replay can run again safely. This needs an Invocation journal: configure `invocations` or enable the [Console](/docs/development/console). Pass `force: true` to replay handled items again; each forced item gets a new ID. Pass `dryRun: true` to [record Channel message writes](#dry-run) instead of sending them. Dry runs use `channel-replay-dry-run:` IDs, so they never block a later live replay.
+Each item gets the Invocation run ID `channel:<channel>:<key>`. Replay skips an item that already has an Invocation with that ID, so a stopped replay can run again safely. A live message that a trigger [dispatches](#start-several-invocations-from-one-webhook) with the same key has the same ID, so it never runs twice. This needs an Invocation journal: configure `invocations` or enable the [Console](/docs/development/console). Pass `force: true` to replay handled items again; each forced item gets a new ID. Pass `dryRun: true` to [record Channel message writes](#dry-run) instead of sending them. Dry runs use `channel-dry-run:` IDs, so they never block a later live replay.
 
 An inline Agent runs each item before it reads the next one and reports it as `completed`. An Agent with a [Workflow runtime](/docs/agents/invocations) starts one durable Workflow run per item and reports it as `started`. A trigger error, such as invalid item input, marks that item `failed`, and replay continues.
 
-Built-in Channels do not provide `history`. The Telegram Bot API cannot read past messages. Slack, Discord, Teams, and GitHub history are not built in; define a custom Channel with a history Collection when you need them.
+[`gmail()`](/docs/agents/gmail#replay-past-mail) provides `history` from a Gmail search. The other built-in Channels do not. The Telegram Bot API cannot read past messages. Slack, Discord, Teams, and GitHub history are not built in; define a custom Channel with a history Collection when you need them.
+
+### Start several Invocations from one webhook
+
+Some providers send one webhook for several messages. A Channel trigger can answer the webhook itself and call `context.dispatch(items, { trigger })` to start one Invocation per item through another trigger of the same Channel. Each item has an `input` for that trigger and a `key`. Dispatched items get the same Invocation IDs as a replay, so an item that already has an Invocation is skipped.
+
+On a webhook delivery, `context.channelState` gives the trigger the Channel's State Adapter. Store provider cursors under `context.channelState.keyPrefix`.
+
+```ts
+triggers: {
+  push: defineChannelTrigger({
+    async invoke(context, input: { messageIds: string[] }) {
+      const messages = await readMessages(input.messageIds)
+      context.waitUntil(context.dispatch(messages.map(message => ({ input: message, key: message.id })), { trigger: 'received' }))
+      return new Response(null, { status: 204 })
+    },
+  }),
+  received: defineChannelTrigger({ input: email, invoke: (context, message) => ({ input: { prompt: message.subject }, message: { id: message.id } }), webhooks: [] }),
+},
+```
+
+Set `webhooks: []` on the trigger that only receives dispatched items, so the Channel's webhook route does not reach it.
 
 ## Publish Agent activity without opening a chat
 

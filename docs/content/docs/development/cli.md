@@ -48,7 +48,7 @@ Available namespaces:
 | `vitehub agent invocations` | Available | Agent Package | List, inspect, or follow records in the application's Agent Invocation journal. |
 | `vitehub channels history` | Available | Agent Package | Download one deployed conversation and its attachments. |
 | `vitehub channels replay` | Available | Agent Package | Send past Channel messages from a Channel history through its trigger. |
-| `vitehub channels sync` | Available | Agent Package | Inspect or apply provider-owned webhook registrations for a deployed stage. |
+| `vitehub channels sync` | Available | Agent Package | Inspect or apply provider-owned webhook registrations and account resources for a deployed stage. |
 | `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
 | `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
@@ -70,7 +70,7 @@ The command requires an enabled Console integration so the package-owned `consol
 
 ## Synchronize Channel webhooks
 
-Deploy the application stage before registering its Channel webhooks. `channels sync` loads the discovered Agent Definitions with the selected Vite stage, checks that every desired webhook route is live at the exact public HTTPS origin, and then compares the provider state. Telegram is the first supported provider.
+Deploy the application stage before registering its Channel webhooks. `channels sync` loads the discovered Agent Definitions with the selected Vite stage, checks that every desired webhook route is live at the exact public HTTPS origin, and then compares the provider state. Telegram and Gmail are the supported providers.
 
 The command is read-only by default. Start with sanitized JSON when an agent or another command needs to review the complete plan.
 
@@ -98,6 +98,19 @@ Use `--agent <name>` or `--channel <id>` to narrow a multi-Agent application. Sw
 Telegram exposes the registered URL and delivery errors through `getWebhookInfo`, but it does not return the configured secret token or allowed update list. The plan marks those fields as unverifiable. Use `--force` to reapply them when the URL already matches and credential or subscription configuration changed. Telegram accepts public webhook ports 443, 80, 88, and 8443; the CLI rejects other explicit ports before applying.
 
 `channels sync` owns only the provider's mechanical registration. The first Telegram synchronizer subscribes to message updates because that is the built-in Channel's supported inbound event. Admission rules, allowed users, secrets, and additional update types remain in the application. An app that needs a custom adapter, certificate, fixed IP, or connection policy must keep the provider lifecycle application-owned; an app-owned `adapter` is not a synchronization target.
+
+### Synchronize Gmail labels and the watch
+
+The [Gmail Channel](/docs/agents/gmail) synchronizes resources of the Gmail account instead of a webhook URL: it creates and colors the labels declared in `gmail({ labels })`, and starts or renews the Gmail watch on `GMAIL_PUBSUB_TOPIC`. These resources do not depend on the deployment origin, so `--url` and `--confirm-origin` are not required when only account Channels are selected.
+
+```bash [Terminal]
+pnpm vitehub channels sync --stage production --channel gmail
+pnpm vitehub channels sync --stage production --channel gmail --apply
+```
+
+The plan lists one line per change, such as `Create label "Receipts"`. Gmail cannot report the current watch, so the plan marks it unverifiable and every applied plan renews it. The command does not hide or delete labels that the Channel does not declare. Call `syncGmailChannel(channel, { apply: true })` from a daily Schedule to keep the watch alive; see [Start the watch](/docs/agents/gmail#start-the-watch).
+
+In `--json` output, each registration has `mode` (`webhook`, `disabled`, or `account`) and `changes`. `origin` is present only when `--url` is set.
 
 ## Download Channel history
 

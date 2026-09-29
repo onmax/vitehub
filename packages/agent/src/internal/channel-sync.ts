@@ -11,6 +11,8 @@ export type AgentChannelSyncAction = "create" | "delete" | "none" | "update"
 
 export interface AgentChannelSyncPlan {
   action: AgentChannelSyncAction
+  /** One line per planned provider change, for human output. */
+  changes?: string[]
   current: Record<string, unknown>
   desired: Record<string, unknown>
   destructive?: boolean
@@ -19,7 +21,11 @@ export interface AgentChannelSyncPlan {
 
 export interface AgentChannelSyncProvider {
   apply: (plan: AgentChannelSyncPlan, fetchImpl: typeof fetch) => Promise<Record<string, unknown>>
-  mode: "disabled" | "webhook"
+  /**
+   * `webhook` registers the deployed webhook URL, `disabled` removes it, and `account` synchronizes
+   * provider account resources that do not depend on the deployment origin.
+   */
+  mode: "account" | "disabled" | "webhook"
   plan: (input: {
     desiredUrl?: string
     fetch: typeof fetch

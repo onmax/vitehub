@@ -1352,12 +1352,12 @@ export function createAgentCliContributor(options?: false | AgentCliContributorO
             usage: "vitehub channels replay --agent <name> --channel <name> [--url <console-url>] [--dry-run] [--force] [--limit <n>]",
           },
           {
-            description: "Inspect and synchronize provider-owned Channel webhooks for a deployed stage.",
+            description: "Inspect and synchronize provider-owned Channel webhooks and account resources for a deployed stage.",
             name: "sync",
             run: async (args, context) => await runAgentChannelSyncCli(args, context, {
               rootDir: options?.rootDir,
             }),
-            usage: "vitehub channels sync --stage <name> --url <https-origin> [--apply --confirm-origin <https-origin>]",
+            usage: "vitehub channels sync --stage <name> [--url <https-origin>] [--apply [--confirm-origin <https-origin>]]",
           },
         ],
         name: "channels",

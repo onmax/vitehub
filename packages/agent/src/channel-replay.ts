@@ -3,11 +3,22 @@ import { createRuntimeContext } from "@vite-hub/runtime"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { agentErrorMessage } from "./agent-error.ts"
 import { isResolvedAgentTriggerHandledInvocation, resolveAgentTriggerInvocation, runAgent } from "./index.ts"
+import { channelMessageRunId } from "./internal/channel-run-id.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { agentToolJsonSchema } from "./tool-schema.ts"
 import { agentChannelOptions } from "./trigger-runtime.ts"
 
-import type { AgentChannelHistory, AgentChannelHistoryQuery, AgentInput, AgentRuntimeConfig, AgentRuntimeContext } from "./types.ts"
+import type {
+  AgentChannelDispatchItem,
+  AgentChannelDispatchOptions,
+  AgentChannelHistory,
+  AgentChannelHistoryQuery,
+  AgentInput,
+  AgentRuntimeConfig,
+  AgentRuntimeContext,
+} from "./types.ts"
+
+export { channelMessageRunId }
 
 export interface ReplayChannelOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   /** Continue from the `nextCursor` of an earlier replay. */
@@ -99,14 +110,6 @@ export function describeChannelHistory<TRuntimeConfig extends AgentRuntimeConfig
   return { channel, ...(query ? { query } : {}), trigger: triggerName }
 }
 
-/**
- * Replay IDs are stable per Channel and item key, so a repeated replay skips handled items.
- * Dry runs use their own IDs; a dry run never blocks a later live replay.
- */
-export function channelReplayRunId(channel: string, key: string, options: { dryRun?: boolean } = {}): string {
-  return `${options.dryRun ? "channel-replay-dry-run" : "channel-replay"}:${channel}:${key}`
-}
-
 function assertReplayOptions<TRuntimeConfig extends AgentRuntimeConfig>(options: ReplayChannelOptions<TRuntimeConfig>): void {
   if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1)) {
     throw agentDiagnostics.AGENT_R0934({ message: "[vitehub] replayChannel() limit must be a positive integer." })
@@ -119,10 +122,9 @@ function assertReplayOptions<TRuntimeConfig extends AgentRuntimeConfig>(options:
   }
 }
 
-function itemKey(history: AgentChannelHistory, item: unknown, channel: string): string {
-  const key = history.key(item)
+function assertItemKey(key: unknown, channel: string, source: string): string {
   if (!hasRuntimeType(key, "string") || !key.trim() || key.length > 512) {
-    throw agentDiagnostics.AGENT_R0933({ message: `[vitehub] Channel "${channel}" history key() must return a non-empty string of at most 512 characters.` })
+    throw agentDiagnostics.AGENT_R0933({ message: `[vitehub] Channel "${channel}" ${source} must be a non-empty string of at most 512 characters.` })
   }
   return key
 }
@@ -139,6 +141,44 @@ function createMemo(): AgentRuntimeContext["memo"] {
 /** A Workflow runtime returns its run handle instead of the Agent output. */
 function isWorkflowRun(value: unknown): boolean {
   return isRuntimeRecord(value) && hasRuntimeType(value.id, "string") && hasRuntimeType(value.provider, "string") && hasRuntimeType(value.status, "string")
+}
+
+interface ChannelItemRun<TRuntimeConfig extends AgentRuntimeConfig> {
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>
+  agentName?: string
+  channel: string
+  dryRun?: boolean
+  force?: boolean
+  invocations: AgentInput<AgentRuntimeContext<TRuntimeConfig>>["invocations"]
+  runtime: AgentRuntimeContext<TRuntimeConfig>
+  triggerId: string
+}
+
+/** Runs one Channel item through a trigger with the item's stable Invocation ID. */
+async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
+  run: ChannelItemRun<TRuntimeConfig>,
+  key: string,
+  item: unknown,
+): Promise<ReplayChannelItem> {
+  const stableId = channelMessageRunId(run.channel, key, run)
+  if (!run.force && await run.invocations?.getByRunId(stableId, run.agentName)) {
+    return { id: stableId, key, reason: "existing", status: "skipped" }
+  }
+  // A forced run needs a new ID because the stable one already has an Invocation.
+  const id = run.force ? `${stableId}:${crypto.randomUUID()}` : stableId
+  try {
+    const itemRuntime: AgentRuntimeContext<TRuntimeConfig> = { ...run.runtime, memo: createMemo(), run: { ...run.runtime.run, runId: id } }
+    const invocation = await resolveAgentTriggerInvocation(run.agent, itemRuntime, run.triggerId, item)
+    if (isResolvedAgentTriggerHandledInvocation(invocation)) return { id, key, reason: "handled", status: "skipped" }
+    const output = await runAgent(run.agent, { ...itemRuntime, run: { ...invocation.run, runId: id } }, {
+      ...invocation.input,
+      ...(run.dryRun ? { dryRun: true } : {}),
+    })
+    return { id, key, status: isWorkflowRun(output) ? "started" : "completed" }
+  }
+  catch (error) {
+    return { error: agentErrorMessage(error), id, key, status: "failed" }
+  }
 }
 
 /**
@@ -177,28 +217,7 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
   let cursor = options.cursor
   let remaining = options.limit ?? Number.POSITIVE_INFINITY
 
-  const replayItem = async (item: unknown): Promise<ReplayChannelItem> => {
-    const key = itemKey(history, item, channel)
-    const stableId = channelReplayRunId(channel, key, options)
-    if (!options.force && await invocations?.getByRunId(stableId, agentName)) {
-      return { id: stableId, key, reason: "existing", status: "skipped" }
-    }
-    // A forced replay needs a new ID because the stable one already has an Invocation.
-    const id = options.force ? `${stableId}:${crypto.randomUUID()}` : stableId
-    try {
-      const itemRuntime: AgentRuntimeContext<TRuntimeConfig> = { ...runtime, memo: createMemo(), run: { ...runtime.run, runId: id } }
-      const invocation = await resolveAgentTriggerInvocation(agent, itemRuntime, triggerId, item)
-      if (isResolvedAgentTriggerHandledInvocation(invocation)) return { id, key, reason: "handled", status: "skipped" }
-      const output = await runAgent(agent, { ...itemRuntime, run: { ...invocation.run, runId: id } }, {
-        ...invocation.input,
-        ...(options.dryRun ? { dryRun: true } : {}),
-      })
-      return { id, key, status: isWorkflowRun(output) ? "started" : "completed" }
-    }
-    catch (error) {
-      return { error: agentErrorMessage(error), id, key, status: "failed" }
-    }
-  }
+  const replay = { agent, agentName, channel, dryRun: options.dryRun, force: options.force, invocations, runtime, triggerId }
 
   try {
     while (remaining > 0 && !options.signal?.aborted) {
@@ -218,7 +237,7 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
         throw error
       }
       for (const item of page.items.slice(0, Number.isFinite(remaining) ? remaining : undefined)) {
-        const replayed = await replayItem(item)
+        const replayed = await runChannelItem(replay, assertItemKey(history.key(item), channel, "history key()"), item)
         result.items.push(replayed)
         if (replayed.status === "failed") result.failed += 1
         else if (replayed.status === "skipped") result.skipped += 1
@@ -234,6 +253,54 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
   finally {
     await flushWaitUntil?.()
   }
+}
+
+/**
+ * Runs items through a trigger of the same Channel, one Invocation per item.
+ * `AgentChannelTriggerContext.dispatch()` calls it for a webhook that carries several messages.
+ * Items get the same Invocation IDs as a replay, so an item that already has an Invocation is skipped.
+ */
+export async function dispatchChannelItems<TRuntimeConfig extends AgentRuntimeConfig>(
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
+  runtime: AgentRuntimeContext<TRuntimeConfig>,
+  channel: string,
+  items: readonly AgentChannelDispatchItem[],
+  options: AgentChannelDispatchOptions,
+): Promise<ReplayChannelResult> {
+  const definition = agentChannelOptions(agent)[channel]
+  if (!definition?.triggers || !Object.hasOwn(definition.triggers, options.trigger)) {
+    throw agentDiagnostics.AGENT_R0931({ message: `[vitehub] Channel "${channel}" has no trigger "${options.trigger}" to dispatch to.` })
+  }
+  // Items do not inherit the webhook request, its delivery record, or its run.
+  const base: AgentRuntimeContext<TRuntimeConfig> = {
+    ...(runtime.agentIdentity ? { agentIdentity: runtime.agentIdentity } : {}),
+    ...(runtime.box ? { box: runtime.box } : {}),
+    ...(runtime.capabilities ? { capabilities: runtime.capabilities } : {}),
+    ...(runtime.cloudflare ? { cloudflare: runtime.cloudflare } : {}),
+    ...(runtime.runtimeConfig ? { runtimeConfig: runtime.runtimeConfig } : {}),
+    ...(runtime.vercel ? { vercel: runtime.vercel } : {}),
+    memo: createMemo(),
+    runtime: runtime.runtime,
+    waitUntil: runtime.waitUntil,
+  }
+  const run = {
+    agent,
+    agentName: agent.name || runtime.agentIdentity?.name,
+    channel,
+    dryRun: options.dryRun,
+    invocations: agent.invocations,
+    runtime: base,
+    triggerId: `${channel}.${options.trigger}`,
+  }
+  const result: ReplayChannelResult = { failed: 0, items: [], nextCursor: null, processed: 0, skipped: 0 }
+  for (const item of items) {
+    const replayed = await runChannelItem(run, assertItemKey(item.key, channel, "dispatch key"), item.input)
+    result.items.push(replayed)
+    if (replayed.status === "failed") result.failed += 1
+    else if (replayed.status === "skipped") result.skipped += 1
+    else result.processed += 1
+  }
+  return result
 }
 
 export interface ChannelReplayRequestOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
