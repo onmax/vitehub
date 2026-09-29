@@ -50,7 +50,12 @@ interface ConsoleRpcContext {
   waitUntil?: (task: Promise<unknown>) => void
 }
 
-function requestEvent(operation: string, input: ConsoleRpcInput, context: ConsoleRpcContext): ConsoleRequestEvent {
+interface ConsoleOperationContext extends ConsoleRpcContext {
+  // Operations set a success status here, such as 202 for an accepted Agent invocation.
+  response: { status?: number }
+}
+
+function requestEvent(operation: string, input: ConsoleRpcInput, context: ConsoleOperationContext): ConsoleRequestEvent {
   const id = input.id ? `/${encodeURIComponent(input.id)}` : ""
   const url = new URL(`/api/_vitehub/console/${operation}${id}`, "http://vitehub.local")
   for (const [key, value] of Object.entries(input.query ?? {})) {
@@ -68,6 +73,7 @@ function requestEvent(operation: string, input: ConsoleRpcInput, context: Consol
       method: input.method ?? "GET",
       url,
     },
+    res: context.response,
     ...(context.waitUntil ? { waitUntil: context.waitUntil } : {}),
   }
 }
@@ -90,7 +96,7 @@ async function result(resolve: () => unknown | Promise<unknown>): Promise<Consol
   }
 }
 
-type ConsoleOperation = (input: ConsoleRpcInput, context: ConsoleRpcContext) => unknown | Promise<unknown>
+type ConsoleOperation = (input: ConsoleRpcInput, context: ConsoleOperationContext) => unknown | Promise<unknown>
 
 const operations = new Map<string, ConsoleOperation>(Object.entries({
   [consoleRpcMethods.agents]: (input, context) => consoleAgentsHandler(requestEvent("agents", input, context)),
@@ -126,10 +132,16 @@ function isSameOriginRequest(request: Request, url: URL): boolean {
   return request.headers.get(consoleRpcHeader) === "1"
 }
 
-async function callConsoleOperation(request: Request, context: ConsoleRpcContext): Promise<unknown> {
+// Accept an application mount prefix, but no other path before or after the Console route.
+function isConsoleRpcCallPath(pathname: string): boolean {
+  const route = pathname.indexOf("/_vitehub/rpc/")
+  return route !== -1 && pathname.slice(route) === consoleRpcCallPath
+}
+
+async function callConsoleOperation(request: Request, context: ConsoleOperationContext): Promise<unknown> {
   const url = new URL(request.url)
   if (!isSameOriginRequest(request, url)) throw consoleRequestError(403, "Forbidden")
-  if (!url.pathname.endsWith(consoleRpcCallPath)) throw consoleRequestError(404, "Console RPC endpoint not found.")
+  if (!isConsoleRpcCallPath(url.pathname)) throw consoleRequestError(404, "Console RPC endpoint not found.")
   if (request.method !== "POST") throw consoleRequestError(405, "Method not allowed")
   let payload: unknown
   try {
@@ -150,8 +162,9 @@ async function callConsoleOperation(request: Request, context: ConsoleRpcContext
 
 /** Run one Console operation from one request, so any host instance can serve any call. */
 export async function handleConsoleRpcRequest(request: Request, context: ConsoleRpcContext = {}): Promise<Response> {
-  const body = await result(() => callConsoleOperation(request, context))
-  return Response.json(body, { headers: responseHeaders, status: body.ok ? 200 : body.status })
+  const response: ConsoleOperationContext["response"] = {}
+  const body = await result(() => callConsoleOperation(request, { ...context, response }))
+  return Response.json(body, { headers: responseHeaders, status: body.ok ? response.status ?? 200 : body.status })
 }
 
 const consoleRpcHandler: EventHandlerWithFetch<EventHandlerRequest, Promise<Response>> = defineHandler((event) => {

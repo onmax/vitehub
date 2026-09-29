@@ -34,6 +34,7 @@ export interface ConsoleRequestEvent {
     headers?: {
       set(name: string, value: string): void
     }
+    status?: number
   }
   waitUntil?: (task: Promise<unknown>) => void
 }

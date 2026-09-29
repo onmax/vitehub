@@ -63,6 +63,8 @@ describe("Console RPC", () => {
     const cases: Array<[Promise<Response>, number]> = [
       [handleConsoleRpcRequest(new Request(callURL, { headers: { [consoleRpcHeader]: "1" } })), 405],
       [handleConsoleRpcRequest(new Request("http://vitehub.local/_vitehub/rpc/__sse", { body: "{}", headers: { [consoleRpcHeader]: "1" }, method: "POST" })), 404],
+      [handleConsoleRpcRequest(new Request("http://vitehub.local/_vitehub/rpc/other/_vitehub/rpc/__call", { body: "{}", headers: { [consoleRpcHeader]: "1" }, method: "POST" })), 404],
+      [handleConsoleRpcRequest(new Request("http://vitehub.local/_vitehub/rpc/__call/child", { body: "{}", headers: { [consoleRpcHeader]: "1" }, method: "POST" })), 404],
       [call("{"), 400],
       [call(JSON.stringify([])), 400],
       [call(JSON.stringify({ method: "__proto__" })), 404],

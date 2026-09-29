@@ -23,16 +23,17 @@ function setup() {
     projectRoot: root,
   })
   const waitUntil = vi.fn((_task: Promise<unknown>) => undefined)
+  const send = (body: unknown, method: "GET" | "POST" = "POST") => handleConsoleRpcRequest(new Request("http://vitehub.local/_vitehub/rpc/__call", {
+    body: JSON.stringify({ input: { agent: "history-fixture", body, method }, method: consoleRpcMethods.agentInvocations }),
+    headers: { "content-type": "application/json", [consoleRpcHeader]: "1" },
+    method: "POST",
+  }), { waitUntil })
   return {
     invocations,
     async request(body: unknown, method: "GET" | "POST" = "POST"): Promise<unknown> {
-      const response = await handleConsoleRpcRequest(new Request("http://vitehub.local/_vitehub/rpc/__call", {
-        body: JSON.stringify({ input: { agent: "history-fixture", body, method }, method: consoleRpcMethods.agentInvocations }),
-        headers: { "content-type": "application/json", [consoleRpcHeader]: "1" },
-        method: "POST",
-      }), { waitUntil })
-      return response.json()
+      return (await send(body, method)).json()
     },
+    send,
     run,
     waitUntil,
   }
@@ -62,6 +63,14 @@ describe("Console invocation history", () => {
         attributes: expect.objectContaining({ "input.messages": input.messages }),
       }))
     })
+  })
+
+  it("answers an accepted invocation with 202", async () => {
+    const fixture = setup()
+    const response = await fixture.send({ prompt: "Start." })
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ ok: true, value: { agent: "history-fixture" } })
+    await vi.waitFor(() => expect(fixture.run).toHaveBeenCalledOnce())
   })
 
   it("accepts history over 64 KiB and passes background work to the host", async () => {
