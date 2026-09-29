@@ -1,4 +1,4 @@
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it } from "vitest"
@@ -38,5 +38,6 @@ it("local directory removal preserves a symlink replacement", async () => {
   await writeFile(join(root, "target"), "keep")
   await symlink(join(root, "target"), join(root, "replacement"))
   await store.removeEmptyDirectory!("replacement")
-  expect(Buffer.from((await store.readFile("replacement"))!.content).toString()).toBe("keep")
+  expect((await lstat(join(root, "replacement"))).isSymbolicLink()).toBe(true)
+  await expect(readFile(join(root, "replacement"), "utf8")).resolves.toBe("keep")
 })

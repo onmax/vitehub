@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vitest"
+import { resolve } from "node:path"
 
-import { normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern } from "../src/core/path.ts"
+import { normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern, resolveInside } from "../src/core/path.ts"
+
+describe("Workspace path containment", () => {
+  it.each(["C:/outside/file", "C:\\outside\\file", "C:outside", "a\0b"])("rejects non-portable path %j", path => {
+    expect(() => normalizeSafeWorkspacePath(path)).toThrow()
+    expect(() => normalizeSafeWorkspacePattern(path)).toThrow()
+  })
+
+  it("allows ordinary names containing dots and rejects parent traversal", () => {
+    const root = resolve("workspace")
+    for (const path of ["..notes/file", "docs../file", "docs/.../file", ""]) {
+      expect(resolveInside(root, path)).toBe(resolve(root, path))
+    }
+    expect(() => resolveInside(root, "../outside")).toThrow()
+    expect(() => resolveInside(root, "docs/../../outside")).toThrow()
+  })
+})
 
 describe("reserved Workspace metadata namespace", () => {
   it.each([".vitehub", ".VITEHUB", ".ViteHub"])("rejects public paths and patterns under %s", (root) => {

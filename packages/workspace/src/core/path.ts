@@ -1,4 +1,4 @@
-import { relative, resolve, sep } from "node:path"
+import { isAbsolute, relative, resolve, sep } from "node:path"
 import { createHash } from "node:crypto"
 import { minimatch } from "minimatch"
 
@@ -32,7 +32,7 @@ export function normalizeSafeWorkspacePath(path = "", options: SafeWorkspacePath
   const parts = normalized.split("/").filter(Boolean)
 
   if (!options.allowEmpty && !normalized) throw workspacePathError(path)
-  if (raw.startsWith("/") || parts.some(part => part === "." || part === "..")) throw workspacePathError(path)
+  if (raw.startsWith("/") || /^[a-z]:/i.test(raw) || raw.includes("\0") || parts.some(part => part === "." || part === "..")) throw workspacePathError(path)
   if (!options.allowReserved && (parts.some(part => part.toLowerCase() === ".git") || parts[0]?.toLowerCase() === ".vitehub")) throw workspacePathError(path)
 
   return normalized
@@ -47,8 +47,7 @@ export function resolveInside(root: string, path = ""): string {
   const resolved = resolve(resolvedRoot, normalizeWorkspacePath(path))
   const rel = relative(resolvedRoot, resolved)
 
-  if (rel.startsWith("..") || rel === ".." || rel.includes(`..${sep}`) || rel === "") {
-    if (rel === "") return resolved
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw workspacePathError(path)
   }
 
