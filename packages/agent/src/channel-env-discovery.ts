@@ -23,6 +23,7 @@ function isStringToken(token: string | undefined): boolean {
 }
 
 // Visit the top-level properties of the object literal that opens at `start`.
+// `value` is the index of the first value token, or undefined for a method.
 // Returns false when a spread or computed key makes the property list unknown.
 function visitObjectProperties(tokens: string[], start: number, visit: (key: string, value: number | undefined) => void): boolean {
   let depth = 0
@@ -36,7 +37,9 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
         if (token === "." || token === "[") return false
         if (/^[A-Za-z_$][\w$]*$/.test(token) || isStringToken(token)) {
           const key = isStringToken(token) ? token.slice(1, -1) : token
-          visit(key, tokens[i + 1] === ":" ? i + 2 : undefined)
+          // A shorthand property `{ telegram }` is its own value.
+          const shorthand = !isStringToken(token) && [",", "}"].includes(tokens[i + 1]!)
+          visit(key, tokens[i + 1] === ":" ? i + 2 : shorthand ? i : undefined)
           expectKey = false
         }
       }
@@ -47,11 +50,15 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
   return false
 }
 
+// Keys set to `undefined` count as omitted, as they do at runtime.
 function staticOptionKeys(tokens: string[], start: number, empty: string): ReadonlySet<string> | undefined {
   if (tokens[start] === empty) return new Set()
   if (tokens[start] !== "{") return undefined
   const keys = new Set<string>()
-  return visitObjectProperties(tokens, start, key => keys.add(key)) ? keys : undefined
+  return visitObjectProperties(tokens, start, (key, value) => {
+    const omitted = value !== undefined && tokens[value] === "undefined" && [",", "}"].includes(tokens[value + 1]!)
+    if (!omitted) keys.add(key)
+  }) ? keys : undefined
 }
 
 /**
@@ -81,27 +88,41 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
       else if (!channelModule && clause[b] === "defineAgent") agentFactories.add(local)
     }
   }
-  // Channel shorthands count only inside defineAgent() arguments, not in types or unrelated objects.
   const agentBindings = new Map([...agentFactories].map(name => [name, "defineAgent"]))
   const agentNames = new Set(["defineAgent"])
-  const agentArguments: Array<[number, number]> = []
   const uses: Array<DiscoveredChannelUse & { index: number }> = []
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i - 1] === "." || tokens[i - 1] === "as") continue
     const factory = factoryCall(tokens, i, bindings, namespaces, known)
     if (factory) uses.push({ index: i, kind: factory.name, optionKeys: staticOptionKeys(tokens, factory.open + 1, ")") })
+    // Shorthands count only in the top-level `channels` option of defineAgent(), not in types or other objects.
     const agent = factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames)
-    if (agent) agentArguments.push([agent.open, closingToken(tokens, agent.open)])
-    if (tokens[i] === "channels" && tokens[i + 1] === ":" && tokens[i + 2] === "{" && agentArguments.some(([open, close]) => i > open && i < close)) {
-      visitObjectProperties(tokens, i + 2, (key, value) => {
-        if (!known.has(key)) return
-        // Factory call values are found by the call scan.
-        if (value !== undefined && (bindings.has(tokens[value]!) || namespaces.has(tokens[value]!))) return
-        uses.push({ index: value ?? i, kind: key, optionKeys: value === undefined ? undefined : staticOptionKeys(tokens, value, "}") })
+    if (!agent || tokens[agent.open + 1] !== "{") continue
+    visitObjectProperties(tokens, agent.open + 1, (option, channels) => {
+      if (option !== "channels" || channels === undefined || tokens[channels] !== "{") return
+      visitObjectProperties(tokens, channels, (key, value) => {
+        if (!known.has(key) || value === undefined) return
+        const reference = channelFactoryReference(tokens, value, bindings, namespaces, known)
+        // A factory call is found by the call scan; a bare factory is called without options.
+        if (reference === "call") return
+        uses.push({ index: value, kind: key, optionKeys: reference === "bare" ? new Set() : staticOptionKeys(tokens, value, "}") })
       })
-    }
+    })
   }
   return uses.sort((left, right) => left.index - right.index).map(({ kind, optionKeys }) => ({ kind, optionKeys }))
+}
+
+function channelFactoryReference(
+  tokens: string[],
+  index: number,
+  bindings: ReadonlyMap<string, string>,
+  namespaces: ReadonlySet<string>,
+  known: ReadonlySet<string>,
+): "bare" | "call" | undefined {
+  let next = index + 1
+  if (namespaces.has(tokens[index]!) && tokens[index + 1] === "." && known.has(tokens[index + 2]!)) next = index + 3
+  else if (!bindings.has(tokens[index]!)) return undefined
+  return tokens[next] === "(" || tokens[next] === "<" ? "call" : "bare"
 }
 
 // Match `name(`, `name<T>(`, `namespace.name(`, or `namespace.name<T>(` and return the opening parenthesis.
@@ -129,15 +150,6 @@ function skipTypeArguments(tokens: string[], start: number): number {
     if (tokens[i] === "<") depth++
     // The tokenizer splits `=>` into `=` and `>`; an arrow does not close a type argument list.
     else if (tokens[i] === ">" && tokens[i - 1] !== "=" && --depth === 0) return i + 1
-  }
-  return tokens.length
-}
-
-function closingToken(tokens: string[], open: number): number {
-  let depth = 0
-  for (let i = open; i < tokens.length; i++) {
-    if (["{", "(", "["].includes(tokens[i]!)) depth++
-    else if (["}", ")", "]"].includes(tokens[i]!) && --depth === 0) return i
   }
   return tokens.length
 }

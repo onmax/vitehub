@@ -2596,7 +2596,7 @@ function telegramAdapterResolver<TRuntimeConfig extends AgentRuntimeConfig>(
       webhookSecret,
     ] = await Promise.all([
       options.allowedUserIds === undefined ? undefined : resolveRuntimeValue(options.allowedUserIds, context),
-      options.apiBaseUrl === undefined ? undefined : resolveRuntimeValue(options.apiBaseUrl, context),
+      options.apiBaseUrl === undefined ? channelEnvValue("telegram", "apiBaseUrl", context) : resolveRuntimeValue(options.apiBaseUrl, context),
       options.apiUrl === undefined ? undefined : resolveRuntimeValue(options.apiUrl, context),
       options.botToken === undefined ? channelEnvValue("telegram", "botToken", context) : resolveRuntimeValue(options.botToken, context),
       options.longPolling === undefined ? undefined : resolveRuntimeValue(options.longPolling, context),
@@ -2606,7 +2606,7 @@ function telegramAdapterResolver<TRuntimeConfig extends AgentRuntimeConfig>(
     const { createTelegramAdapter } = await import("@chat-adapter/telegram")
     return createTelegramAdapter({
       ...(allowedUserIds ? { allowedUserIds } : {}),
-      ...(apiBaseUrl ? { apiBaseUrl } : {}),
+      ...(apiBaseUrl ? { apiBaseUrl: cleanSecret(apiBaseUrl) } : {}),
       ...(apiUrl ? { apiUrl } : {}),
       ...(botToken ? { botToken: cleanSecret(botToken) } : {}),
       ...(longPolling ? { longPolling } : {}),

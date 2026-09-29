@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { builtInChannelEnv } from "../src/channel-env.ts"
 import { discoverAgentChannelEnv, discoverBuiltInChannelUses } from "../src/channel-env-discovery.ts"
 import { hasRuntimeType } from "../src/internal/runtime-type.ts"
+import { ViteHubError } from "@vite-hub/runtime"
 
 const kinds = Object.keys(builtInChannelEnv)
 
@@ -74,13 +75,26 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
-  it("reads shorthands only inside defineAgent()", () => {
+  it("reads shorthands only in the top-level defineAgent() channels option", () => {
     expect(uses(`
       import { defineAgent as agent } from "vite-hub/agent"
+      import { telegram } from "vite-hub/agent/channels"
       type Settings = { channels: { telegram: {} } }
       const defaults = { channels: { telegram: {} } }
-      export default agent<Runtime>({ channels: { telegram: { adapter } } })
-    `)).toEqual([{ kind: "telegram", keys: ["adapter"] }])
+      export const first = agent<Runtime>({ provider: { channels: { telegram: {} } }, channels: { telegram: { adapter } } })
+      export default agent({ "channels": { telegram, discord: {} } })
+    `)).toEqual([
+      { kind: "telegram", keys: ["adapter"] },
+      { kind: "telegram", keys: [] },
+      { kind: "discord", keys: [] },
+    ])
+  })
+
+  it("treats options set to undefined as omitted", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram({ botToken: undefined, adapter: undefined, mode: "webhook" })
+    `)).toEqual([{ kind: "telegram", keys: ["mode"] }])
   })
 
   it("ignores local and unrelated factories", () => {
@@ -167,9 +181,9 @@ describe("built-in Channel Env at runtime", { timeout: 30_000 }, () => {
     expect(createTelegramAdapter).toHaveBeenCalledWith({ allowUnverifiedWebhooks: true, botToken: "option-token" })
   })
 
-  it("falls back to host names when Server Env cannot resolve", async () => {
+  it("reads host names only for fields that Server Env does not declare", async () => {
     vi.resetModules()
-    vi.doMock("#vitehub/env/server", () => ({ useServerEnv: () => { throw new Error("[vitehub] Required Env value is missing.") } }))
+    vi.doMock("#vitehub/env/server", () => ({ useServerEnv: () => ({ telegram: { webhookSecret: undefined } }) }))
     const createTelegramAdapter = vi.fn(() => ({ name: "telegram" }))
     vi.doMock("@chat-adapter/telegram", () => ({ createTelegramAdapter }))
     const { telegram } = await import("../src/channels.ts")
@@ -177,8 +191,41 @@ describe("built-in Channel Env at runtime", { timeout: 30_000 }, () => {
 
     if (!hasRuntimeType(channel.adapter, "function")) throw new Error("Expected Telegram adapter resolver.")
     // SAFETY: This test fixture intentionally constructs the exact asserted channel contract.
-    await channel.adapter({ cloudflare: { env: { TELEGRAM_BOT_TOKEN: "host-token" } } } as never)
+    await channel.adapter({ cloudflare: { env: { TELEGRAM_BOT_TOKEN: "host-token", TELEGRAM_WEBHOOK_SECRET_TOKEN: "stale-secret" } } } as never)
     expect(createTelegramAdapter).toHaveBeenCalledWith({ botToken: "host-token" })
+  })
+
+  it("keeps Server Env resolution errors visible", async () => {
+    vi.resetModules()
+    const missing = new ViteHubError("ENV_REQUIRED_MISSING", "[vitehub] Required Env value is missing.")
+    vi.doMock("#vitehub/env/server", () => ({ useServerEnv: () => { throw missing } }))
+    vi.doMock("@chat-adapter/telegram", () => ({ createTelegramAdapter: vi.fn() }))
+    const { telegram } = await import("../src/channels.ts")
+    const channel = telegram()
+
+    if (!hasRuntimeType(channel.adapter, "function")) throw new Error("Expected Telegram adapter resolver.")
+    // SAFETY: This test fixture intentionally constructs the exact asserted channel contract.
+    await expect(channel.adapter({ cloudflare: { env: { TELEGRAM_BOT_TOKEN: "host-token" } } } as never)).rejects.toBe(missing)
+  })
+
+  it("loads provider-backed Channel Env asynchronously", async () => {
+    vi.resetModules()
+    const group = Object.defineProperty({}, "botToken", {
+      enumerable: true,
+      get: () => { throw new ViteHubError("ENV_ASYNC_REQUIRED", "[vitehub] Server Env requires asynchronous loading.") },
+    })
+    const loadServerEnv = vi.fn(async () => ({ telegram: { botToken: "provider-token" } }))
+    vi.doMock("#vitehub/env/server", () => ({ loadServerEnv, useServerEnv: () => ({ telegram: group }) }))
+    const createTelegramAdapter = vi.fn(() => ({ name: "telegram" }))
+    vi.doMock("@chat-adapter/telegram", () => ({ createTelegramAdapter }))
+    const { telegram } = await import("../src/channels.ts")
+    const channel = telegram({ webhookSecret: false })
+
+    if (!hasRuntimeType(channel.adapter, "function")) throw new Error("Expected Telegram adapter resolver.")
+    // SAFETY: This test fixture intentionally constructs the exact asserted channel contract.
+    await channel.adapter({} as never)
+    expect(createTelegramAdapter).toHaveBeenCalledWith({ allowUnverifiedWebhooks: true, botToken: "provider-token" })
+    expect(loadServerEnv).toHaveBeenCalledOnce()
   })
 
   it("fills Discord adapter credentials from Server Env", async () => {
