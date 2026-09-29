@@ -1,10 +1,12 @@
 import { EventEmitter } from "node:events"
+import { readFile } from "node:fs/promises"
 import { Readable } from "node:stream"
 import { describe, expect, it, vi } from "vitest"
 
 import {
   findViteHubNitroDevEnvironment,
   forwardViteHubDevRequestToNitro,
+  isViteHubNitroDevHostAllowed,
   registerViteHubNitroDevEndpoint,
   renderViteHubNitroDevHandler,
   validateViteHubNitroDevRequest,
@@ -186,6 +188,36 @@ describe("Nitro dev handler", () => {
     expect(get?.status).toBe(405)
     expect(get?.headers.get("allow")).toBe("POST")
     expect(validateViteHubNitroDevRequest(nitroRequest({ headers: { ...guardHeaders, "content-type": "text/plain" } }), guard)?.status).toBe(415)
+  })
+
+  it("accepts only the loopback host names that the forwarder uses", async () => {
+    const at = (url: string, headers: Record<string, string> = json) => new Request(url, { body: "{}", headers, method: "POST" })
+
+    expect(isViteHubNitroDevHostAllowed(at(`http://localhost${runtimeRoute}`))).toBe(true)
+    expect(isViteHubNitroDevHostAllowed(at(`http://app.localhost:3000${runtimeRoute}`))).toBe(true)
+    expect(isViteHubNitroDevHostAllowed(at(`http://127.0.0.1:3000${runtimeRoute}`))).toBe(true)
+    expect(isViteHubNitroDevHostAllowed(at(`http://[::1]:3000${runtimeRoute}`))).toBe(true)
+
+    const rebound = validateViteHubNitroDevRequest(at(`http://rebound.attacker.test:5173${runtimeRoute}`), guard)
+    expect(rebound?.status).toBe(403)
+    expect(await rebound?.text()).toBe("Forbidden Test Dev host.")
+    expect(validateViteHubNitroDevRequest(at(`http://localhost${runtimeRoute}`, { ...json, host: "rebound.attacker.test" }), guard)?.status).toBe(403)
+    expect(validateViteHubNitroDevRequest(at(`http://localhost${runtimeRoute}`, { ...json, host: "localhost:5173" }), guard)).toBeUndefined()
+  })
+
+  it("keeps the module free of Node value imports, because Worker runtimes load the Nitro-side check", async () => {
+    const source = await readFile(new URL("../src/dev-endpoint.ts", import.meta.url), "utf8")
+    expect(source).not.toMatch(/^import (?!type )[^\n]*from "node:/m)
+  })
+
+  it("accepts the request that the forwarder sends", async () => {
+    const dispatchFetch = vi.fn(async (request: Request) => validateViteHubNitroDevRequest(request, guard) ?? Response.json({ ok: true }))
+    const response = await forwardViteHubDevRequestToNitro(
+      { environments: { nitro: { dispatchFetch } } },
+      incoming({ body: "{}", method: "POST" }),
+      { ...guard, nitroBaseURL: () => "/app/", runtimeRoute },
+    )
+    expect(await response.json()).toEqual({ ok: true })
   })
 
   it("renders a handler that passes the request to the owner export", () => {

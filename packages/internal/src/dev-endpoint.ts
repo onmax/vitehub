@@ -18,7 +18,17 @@ export interface ViteHubDevEndpointGuard {
  * Parts of a Vite development server that dev endpoints use.
  */
 export interface ViteHubDevEndpointServer {
-  config: { server: { port?: number } }
+  config: {
+    server: {
+      /** Host names that Vite accepts in the `Host` header. `true` accepts all hosts. */
+      allowedHosts?: readonly string[] | true
+      /** Host that the dev server listens on. A string host is also an allowed host. */
+      host?: string | boolean
+      /** When set, Vite does not check the `Host` header, because TLS binds the host name. */
+      https?: unknown
+      port?: number
+    }
+  }
   middlewares: {
     use: (handler: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => unknown
   }
@@ -43,6 +53,64 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
 }
 
+const fileOrExtensionProtocol = /^(?:file|.+-extension):/i
+
+const ipv4Octet = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)"
+const ipv4Literal = new RegExp(`^${ipv4Octet}(?:\\.${ipv4Octet}){3}$`)
+
+/**
+ * Tests IP literals like `node:net` `isIP`, without a Node import, so the Nitro-side check also runs in Worker
+ * runtimes. IPv4 uses the Node pattern (dotted decimal, no leading zeros). IPv6 uses the WHATWG URL parser, which
+ * rejects zone IDs. Browsers do not send zone IDs in `Host`.
+ */
+function isIPv4Literal(value: string): boolean {
+  return ipv4Literal.test(value)
+}
+
+function isIPv6Literal(value: string): boolean {
+  if (!value.includes(":") || !/^[\d.:a-f]+$/i.test(value)) return false
+  try {
+    return new URL(`http://[${value}]/`).hostname !== ""
+  }
+  catch {
+    return false
+  }
+}
+
+function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boolean {
+  if (fileOrExtensionProtocol.test(host)) return true
+  const trimmed = host.trim()
+  if (trimmed.startsWith("[")) {
+    const end = trimmed.indexOf("]")
+    return end > 0 && isIPv6Literal(trimmed.slice(1, end))
+  }
+  const colon = trimmed.indexOf(":")
+  const hostname = colon === -1 ? trimmed : trimmed.slice(0, colon)
+  if (isIPv4Literal(hostname)) return true
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) return true
+  return allowedHosts.some(allowed => allowed === hostname
+    || (allowed.startsWith(".") && (allowed.slice(1) === hostname || hostname.endsWith(allowed))))
+}
+
+/**
+ * Checks the `Host` header with the same rules as Vite's host validation.
+ *
+ * Accepts a missing header, IP literals, `localhost`, `*.localhost`, the configured
+ * `server.host`, and `server.allowedHosts`. An entry that starts with `.` also accepts
+ * its subdomains. `allowedHosts: true` or `server.https` accepts all hosts, as in Vite.
+ *
+ * Dev endpoints run this check themselves, so they do not depend on the host
+ * framework to run Vite's host validation before them. This blocks DNS rebinding:
+ * a page on a rebound host name sends a matching `Origin`, but its `Host` is not allowed.
+ */
+export function isViteHubDevHostAllowed(server: Pick<ViteHubDevEndpointServer, "config">, req: IncomingMessage): boolean {
+  const host = firstHeader(req.headers.host)
+  if (host === undefined) return true
+  const { allowedHosts = [], host: listenHost, https } = server.config.server
+  if (allowedHosts === true || https) return true
+  return hostHeaderAllowed(host, typeof listenHost === "string" ? [...allowedHosts, listenHost] : allowedHosts)
+}
+
 /**
  * Origin that the dev server serves the request on. Browser requests from other origins are rejected.
  */
@@ -57,14 +125,18 @@ export function viteHubDevRequestOrigin(server: Pick<ViteHubDevEndpointServer, "
 }
 
 /**
- * Checks the guard header, the request origin, and the JSON content type of `POST` requests.
- * Returns the rejection response, or `undefined` when the request can continue.
+ * Checks the `Host` header, the guard header, the request origin, and the JSON content
+ * type of `POST` requests. Returns the rejection response, or `undefined` when the
+ * request can continue.
  */
 export function validateViteHubDevRequest(
   server: Pick<ViteHubDevEndpointServer, "config" | "resolvedUrls">,
   req: IncomingMessage,
   guard: ViteHubDevEndpointGuard,
 ): Response | undefined {
+  if (!isViteHubDevHostAllowed(server, req)) {
+    return new Response(`Forbidden ${guard.label} host.`, { status: 403 })
+  }
   if (firstHeader(req.headers[guard.header]) !== guard.headerValue) {
     return new Response(`Forbidden ${guard.label} request.`, { status: 403 })
   }
@@ -248,11 +320,27 @@ export function registerViteHubNitroDevEndpoint(server: ViteHubNitroDevServer, o
 }
 
 /**
- * Checks a forwarded request inside the Nitro dev handler: the guard header, the request origin, `POST`, and the JSON
+ * Checks the host of a request that reaches the Nitro dev handler.
+ *
+ * {@link forwardViteHubDevRequestToNitro} always calls `http://localhost`, so a forwarded request passes. The Nitro
+ * route is also reachable over HTTP on the dev server, and the Nitro runtime does not know `server.allowedHosts`.
+ * This check therefore accepts only `localhost`, `*.localhost`, and IP literals in the request URL and in the `Host`
+ * header. A DNS rebinding page uses another host name, so it gets `403`.
+ */
+export function isViteHubNitroDevHostAllowed(request: Request): boolean {
+  const host = request.headers.get("host")
+  return hostHeaderAllowed(new URL(request.url).host, []) && (host === null || hostHeaderAllowed(host, []))
+}
+
+/**
+ * Checks a request inside the Nitro dev handler: the host, the guard header, the request origin, `POST`, and the JSON
  * content type. Returns the rejection response, or `undefined` when the request can continue. The Nitro route exists
  * only in `vite dev`, but it is reachable on the dev server origin, so it checks the same guard as the Vite endpoint.
  */
 export function validateViteHubNitroDevRequest(request: Request, guard: ViteHubDevEndpointGuard): Response | undefined {
+  if (!isViteHubNitroDevHostAllowed(request)) {
+    return new Response(`Forbidden ${guard.label} host.`, { status: 403 })
+  }
   if (request.headers.get(guard.header) !== guard.headerValue) {
     return new Response(`Forbidden ${guard.label} request.`, { status: 403 })
   }
