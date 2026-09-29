@@ -26,7 +26,7 @@ import { hubWorkflow } from "@vite-hub/workflow/vite"
 import { hubMarkdownTemplate } from "@vite-hub/markdown-template/vite"
 import { hubWorkspace } from "@vite-hub/workspace/vite"
 import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
-import { finalizeDeploymentPlanOutput } from "@vite-hub/internal/build/deployment-plan-output"
+import { describeDeploymentPlanOutput, finalizeDeploymentPlanOutput } from "@vite-hub/internal/build/deployment-plan-output"
 import { finalizeDenoDeploymentOutput } from "@vite-hub/internal/build/deno-runtime-packages"
 import { VITEHUB_NITRO_CONFIG_CONTEXT, type ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
 import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
@@ -461,6 +461,7 @@ function deploymentPlugins(
     preserveSymlinks: false,
   }
   let providerOutput: ReturnType<typeof useProviderOutputCatalog> | undefined
+  let deploymentRoot: string | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   const deploymentEnvPlugin = { current: envPlugin }
   const subscribedEnvPlugins = new WeakSet<EnvVitePlugin>()
@@ -625,6 +626,9 @@ function deploymentPlugins(
             subscribeEnvPlugin(plugin)
           },
         },
+        inspect: () => ({
+          providerOutput: describeDeploymentPlanOutput(plan, deploymentRoot ?? process.cwd()),
+        }),
       },
       config(config) {
         deploymentEnvPlugin.current ??= findEnvPlugin(config.plugins)
@@ -636,6 +640,7 @@ function deploymentPlugins(
         }
       },
       configResolved(config) {
+        deploymentRoot = config.root
         const serverResolve = resolveServerOptions(config)
         resolvedBuildConfig = {
           alias: (serverResolve.alias ?? []).map(alias => ({

@@ -8,6 +8,7 @@ import { collectViteHubCliNamespaces, collectViteHubProvisionSteps } from "@vite
 import { formatRuntimeDiagnosticError } from "@vite-hub/runtime"
 import { resolve } from "pathe"
 
+import { createInspectNamespace } from "./inspect.ts"
 import { runProvision } from "./provision.ts"
 
 import type { InlineConfig } from "vite"
@@ -151,17 +152,24 @@ function createProvisionNamespace(plugins: readonly unknown[]): ViteHubCliComman
   }
 }
 
+/** Keeps at least two spaces between a help name and its description. */
+function helpNameWidth(names: readonly string[]): number {
+  return Math.max(12, ...names.map(name => name.length + 1))
+}
+
 function writeRootHelp(namespaces: ViteHubCliCommandNamespace[], stdout: ViteHubCliContext["stdout"]): void {
+  const width = helpNameWidth(namespaces.map(namespace => namespace.name))
   stdout.write([
     "Usage: vitehub <namespace> <feature> [args...]",
     "",
     "Available namespaces:",
-    ...namespaces.map(namespace => `  ${namespace.name.padEnd(12)} ${namespace.description || ""}`.trimEnd()),
+    ...namespaces.map(namespace => `  ${namespace.name.padEnd(width)} ${namespace.description || ""}`.trimEnd()),
     "",
   ].join("\n"))
 }
 
 function writeNamespaceHelp(namespace: ViteHubCliCommandNamespace, stdout: ViteHubCliContext["stdout"]): void {
+  const width = helpNameWidth(namespace.features.map(feature => feature.name))
   stdout.write([
     `Usage: vitehub ${namespace.name} <feature> [args...]`,
     "",
@@ -169,7 +177,7 @@ function writeNamespaceHelp(namespace: ViteHubCliCommandNamespace, stdout: ViteH
     "",
     "Available features:",
     ...namespace.features.flatMap(feature => [
-      `  ${feature.name.padEnd(12)} ${feature.description || ""}`.trimEnd(),
+      `  ${feature.name.padEnd(width)} ${feature.description || ""}`.trimEnd(),
       ...(feature.usage ? [`    Usage: ${feature.usage}`] : []),
     ]),
     "",
@@ -208,6 +216,7 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
   const rootDir = resolve(nuxtConfig?.root || config.root || cwd)
   const namespaces = [
     ...await collectViteHubCliNamespaces(plugins),
+    createInspectNamespace(plugins),
     createProvisionNamespace(plugins),
   ]
 

@@ -17,6 +17,7 @@ import { normalizeWorkspaceOptions } from "../../config.ts"
 import { normalizeWorkspaceDefinition } from "../../core/registry.ts"
 import { installHostedWorkspaceRuntime } from "../../hosted.ts"
 import { installHostedVercelBlobWorkspaceRuntime } from "../../hosted-vercel-blob.ts"
+import { inspectWorkspaceDefinitions } from "../../inspect.ts"
 import { configureCloudflareArtifacts } from "../../integrations/cloudflare.ts"
 import { ensureWorkspaceDevToken, refreshWorkspaceDevToken, runWorkspaceDevCommand, validateWorkspaceDevToken, workspaceDevHeader, workspaceDevHeaderValue, workspaceDevRoute, workspaceDevTokenServerId } from "../../server.ts"
 
@@ -27,6 +28,7 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import type { WorkspaceBuildState } from "../../build/integration.ts"
 import type { ResolvedWorkspaceModuleOptions, WorkspaceDefinitionInput, WorkspaceModuleOptions } from "../../core/types.ts"
 import type { WorkspaceDevTokenOptions } from "../../server.ts"
+import type { ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import { workspaceErrorDiagnostics } from "../../error-diagnostics.ts"
 
 const WORKSPACE_PACKAGE_NAME = "@vite-hub/workspace"
@@ -1655,7 +1657,7 @@ export interface WorkspaceVitePluginAPI {
 }
 
 interface WorkspaceCliContributingPlugin {
-  vitehub?: { cli?: () => unknown | Promise<unknown> }
+  vitehub?: ViteHubInspectionPluginMetadata & { cli?: () => unknown | Promise<unknown> }
 }
 
 const setWorkspacePluginHosting: unique symbol = Symbol("vitehub.workspace.setHosting")
@@ -1903,6 +1905,18 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
       cli: async () => {
         return createWorkspaceCliContributor()
       },
+      inspect: () => ({
+        definitions: [{
+          kind: "workspace",
+          label: "Workspaces",
+          list: () => {
+            const roots = projectRoot && viteRoot
+              ? { projectRoot, viteRoot }
+              : resolveWorkspacePluginRoots(resolved?.root ?? process.cwd(), publicOptions)
+            return inspectWorkspaceDefinitions({ projectRoot: roots.projectRoot, rootDir: roots.viteRoot, serverDirs, serverRootDir: roots.projectRoot })
+          },
+        }],
+      }),
     },
     async handleHotUpdate(ctx: HmrContext) {
       if (!resolved) return

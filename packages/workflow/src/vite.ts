@@ -10,16 +10,19 @@ import { collectViteHubProviderImportAliases, createNoExternalMerger, isServerEn
 import { normalizeHosting } from "@vite-hub/internal/hosting"
 
 import { normalizeWorkflowOptions } from "./config.ts"
+import { inspectWorkflowDefinitions } from "./inspect.ts"
 import { createCloudflareWorkflowNitroConfig, createOptionalViteDevtoolsPlugin, createVercelWorkflowTransformPlugin, discoverWorkflowProviderSources, generateWorkflowProviderOutputs, hasVercelNativeWorkflowEntry, resolveVercelWorkflowWorld, workflowPackageName, writeProviderEntries } from "./internal/vite-build.ts"
 
 import type { WorkflowModuleOptions } from "./types.ts"
 import type { ProviderDeploymentOutputGeneration, ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import type { Plugin as EsbuildPlugin } from "esbuild"
 import type { ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
+import type { ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import type { Plugin, ResolvedConfig } from "vite"
 import { workflowErrorDiagnostics } from "./error-diagnostics.ts"
 
 export { discoverWorkflowDefinitions } from "./discovery.ts"
+export { inspectWorkflowDefinitions, type WorkflowInspectionOptions } from "./inspect.ts"
 
 interface WorkflowNitroConfigOptions {
   nitro: Record<string, unknown>
@@ -29,7 +32,7 @@ interface WorkflowNitroConfigOptions {
 }
 
 export type WorkflowVitePlugin = Plugin & {
-  vitehub?: {
+  vitehub?: ViteHubInspectionPluginMetadata & {
     workflow?: {
       createNitroConfig?: (options: WorkflowNitroConfigOptions) => Promise<Record<string, unknown>>
       prepareScheduleRuntime?: (artifactDir?: string) => Promise<{
@@ -187,6 +190,16 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       }
     },
     vitehub: {
+      inspect: () => ({
+        definitions: [{
+          kind: "workflow",
+          label: "Workflows",
+          list: () => {
+            const rootDir = resolved?.root ?? process.cwd()
+            return inspectWorkflowDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
+          },
+        }],
+      }),
       workflow: {
         async createNitroConfig({ nitro, projectRoot, serverDirs: nitroServerDirs, transformRegistry }: WorkflowNitroConfigOptions) {
           return await createCloudflareWorkflowNitroConfig({

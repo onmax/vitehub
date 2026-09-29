@@ -12,6 +12,7 @@ import { collectViteHubProviderImportAliases, createNoExternalMerger, hasNitroCo
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
 import { discoverScheduleDefinitions } from "./discovery.ts"
+import { inspectScheduleDefinitions } from "./inspect.ts"
 import { getVercelSchedulePath } from "./integrations/vercel.ts"
 import { generateProviderOutputsWithinLock, readDefinitionCrons, readRuntimeDefinitionCrons, schedulePackageName } from "./internal/provider-output.ts"
 import { createScheduleTargetsContents, SCHEDULE_TARGETS_ID } from "./targets-module.ts"
@@ -20,10 +21,12 @@ import type { Plugin, ResolvedConfig, UserConfig } from "vite"
 import type { ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import type { ScheduleWorkflowRuntime } from "./internal/provider-output.ts"
 import type { ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
+import type { ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import type { DiscoveredScheduleDefinition } from "./types.ts"
 import { scheduleErrorDiagnostics } from "./error-diagnostics.ts"
 
 export { discoverScheduleDefinitions } from "./discovery.ts"
+export { inspectScheduleDefinitions, type ScheduleInspectionOptions } from "./inspect.ts"
 
 export async function readScheduleDefinitionCrons(
   definitions: DiscoveredScheduleDefinition[],
@@ -743,5 +746,18 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
   }
 
   // SAFETY: The implementation above supplies Vite's plugin hooks plus ViteHub's intentionally loose public hook index.
-  return plugin as ScheduleVitePlugin
+  const inspectable = plugin as ScheduleVitePlugin
+  inspectable.vitehub = {
+    inspect: () => ({
+      definitions: [{
+        kind: "schedule",
+        label: "Schedules",
+        list: () => {
+          const roots = resolveSchedulePluginRoots(viteRoot ?? process.cwd(), options)
+          return inspectScheduleDefinitions({ projectRoot: roots.projectRoot, rootDir: roots.viteRoot, serverDirs, serverRootDir: roots.projectRoot })
+        },
+      }],
+    }),
+  } satisfies ViteHubInspectionPluginMetadata
+  return inspectable
 }

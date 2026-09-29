@@ -1,4 +1,4 @@
-import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment } from '@vite-hub/internal/build/vite'
+import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot } from '@vite-hub/internal/build/vite'
 import { getHostingProvider } from '@vite-hub/internal/hosting'
 import { isPlainObject, isPlainRecord } from '@vite-hub/internal/object'
 import { realpath } from 'node:fs/promises'
@@ -14,15 +14,19 @@ import {
 } from './feature'
 import { resolveFeatureRuntimePath } from './internal/shared/feature-runtime-path'
 import { prepareSandboxRuntime } from './internal/runtime-preparation'
+import { inspectSandboxDefinitions } from './inspect'
+import type { ViteHubInspectionPluginMetadata } from '@vite-hub/internal/inspect'
 import type { Alias, ConfigEnv, Plugin, ResolvedConfig } from 'vite'
 import type { DiscoveredSandboxDefinition } from './discovery'
 import type { AgentSandboxConfig } from './module-types'
 
 export { discoverSandboxDefinitions } from './discovery'
 export type { DiscoveredSandboxDefinition } from './discovery'
+export { inspectSandboxDefinitions, type SandboxInspectionOptions } from './inspect'
 
 export type SandboxPublicOptions = AgentSandboxConfig | false
 export type SandboxVitePlugin = Plugin & {
+  vitehub: ViteHubInspectionPluginMetadata
   nitro: {
     name: string
     setup: (nitro: {
@@ -312,6 +316,18 @@ export function hubSandbox(options?: SandboxPublicOptions): SandboxVitePlugin {
     name: '@vite-hub/sandbox/vite',
     enforce: 'pre',
     nitro: { name: '@vite-hub/sandbox/provider-runtime', setup: sandboxNitroModule },
+    vitehub: {
+      inspect: () => ({
+        definitions: [{
+          kind: 'sandbox',
+          label: 'Sandboxes',
+          list: () => {
+            const sandboxRoot = rootDir ?? resolvedConfig?.root ?? process.cwd()
+            return inspectSandboxDefinitions({ projectRoot: resolveViteHubProjectRoot(sandboxRoot), rootDir: sandboxRoot })
+          },
+        }],
+      }),
+    },
     async config(config, env) {
       // SAFETY: Vite's config hook provides the mutable record stored for later Sandbox preparation.
       rawConfig = config as Record<string, unknown>

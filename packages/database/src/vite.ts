@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
-import { createNoExternalMerger, isServerEnvironment, resolveNitroVercelFunctionName, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalMerger, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { normalize } from "pathe"
 
 import { createDbCliContributor } from "./cli.ts"
@@ -12,9 +12,11 @@ import { resolveDBViteConfig } from "./config.ts"
 import { removeGeneratedDatabaseTypes, writeGeneratedDatabaseArtifacts } from "./internal/generated.ts"
 import { renderDatabaseConfigExpression } from "./internal/runtime-config-expression.ts"
 import { dbPackageName, generateProviderOutputs, prepareProviderOutputs } from "./internal/vite-build.ts"
+import { inspectDatabaseDefinitions } from "./inspect.ts"
 import { createDatabaseProvisionStep } from "./provision.ts"
 
 import type { ViteHubCliContributor } from "@vite-hub/internal/cli"
+import type { ViteHubInspectionContributor } from "@vite-hub/internal/inspect"
 import type { ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import type { Plugin, ResolvedConfig } from "vite"
 import type { DBModulePublicOptions, ResolvedDBViteConfig } from "./types.ts"
@@ -23,6 +25,7 @@ export const DB_VIRTUAL_SCHEMA_ID = "#vitehub/database/schema"
 export const DB_VIRTUAL_DATABASES_ID = "#vitehub/database/databases"
 const DB_VIRTUAL_DEFINITION_DEFAULTS_ID = "#vitehub/database/definition-defaults"
 export const DB_VITE_PLUGIN_NAME = "@vite-hub/database/vite"
+export { inspectDatabaseDefinitions, type DatabaseInspectionOptions } from "./inspect.ts"
 
 const DB_INTERNAL_VIRTUAL_SCHEMA_ID = "virtual:vitehub/database/schema"
 const DB_INTERNAL_VIRTUAL_DATABASES_ID = "virtual:vitehub/database/databases"
@@ -39,6 +42,7 @@ export interface DBVitePluginAPI {
 interface DBCliContributingPlugin {
   vitehub?: {
     cli?: () => Promise<ViteHubCliContributor | undefined>
+    inspect?: () => ViteHubInspectionContributor | undefined
   }
 }
 
@@ -144,6 +148,20 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
         const contributor = createDbCliContributor(db?.cli, refreshRuntimeConfig)
         const provision = [createDatabaseProvisionStep(databaseRoot, db)]
         return contributor ? { ...contributor, provision } : { namespaces: [], provision }
+      },
+      inspect: () => {
+        if (resolvedOptions() === false) return
+        return {
+          definitions: [{
+            kind: "database",
+            label: "Databases",
+            list: () => inspectDatabaseDefinitions({
+              projectRoot: resolveViteHubProjectRoot(resolved?.root ?? process.cwd()),
+              rootDir: databaseRoot(),
+              serverDirs: databaseServerDirs(),
+            }),
+          }],
+        }
       },
     },
     config(config) {

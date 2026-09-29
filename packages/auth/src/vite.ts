@@ -1,14 +1,17 @@
 import { resolve } from "node:path"
 import { Readable } from "node:stream"
 
-import { createNoExternalMerger, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalMerger, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
+import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 
 import { resolveAuthViteConfig } from "./config.ts"
+import { discoverAuthDefinitions } from "./discovery.ts"
 import { getAuthForDefinition, handleAuthRequest, resetAuth } from "./server.ts"
 import { isAuthRequestPath } from "./shared.ts"
 
+import type { ViteHubDefinitionSummary, ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { Plugin, ResolvedConfig, UserConfig } from "vite"
 import type {
@@ -40,7 +43,18 @@ export interface AuthVitePluginAPI {
   refresh: () => ResolvedAuthViteConfig | undefined
 }
 
-export type AuthVitePlugin = Plugin & { api: AuthVitePluginAPI }
+export type AuthVitePlugin = Plugin & { api: AuthVitePluginAPI, vitehub: ViteHubInspectionPluginMetadata }
+
+export interface AuthInspectionOptions {
+  projectRoot: string
+  rootDir: string
+  serverDirs?: string[]
+}
+
+/** Lists the Auth Definition as a serializable inspection summary. */
+export function inspectAuthDefinitions(options: AuthInspectionOptions): ViteHubDefinitionSummary[] {
+  return summarizeDefinitions(options.projectRoot, discoverAuthDefinitions(options.rootDir, { serverDirs: options.serverDirs }), "server-auth")
+}
 
 export function createAuthNitroConfig(plugin: AuthVitePlugin, options: {
   nitro: Record<string, unknown>
@@ -303,6 +317,21 @@ export function hubAuth(options?: AuthModuleOptions, internalOptions: InternalAu
     api: {
       getConfig: () => runtimeConfig,
       refresh: refreshRuntimeConfig,
+    },
+    vitehub: {
+      inspect: () => {
+        if (resolvedOptions() === false) return
+        return {
+          definitions: [{
+            kind: "auth",
+            label: "Auth",
+            list: () => {
+              const rootDir = resolve(resolved?.root ?? process.cwd())
+              return inspectAuthDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
+            },
+          }],
+        }
+      },
     },
     config(config) {
       const configRoot = config.root || process.cwd()
