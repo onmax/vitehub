@@ -58,10 +58,6 @@ function isRuntimeEnvSource(value: unknown): value is WorkflowRuntimeEnvDeclarat
     && (!("names" in value) || Array.isArray(value.names) && value.names.every(name => typeof name === "string"))
 }
 
-function readDatabaseName(value: unknown): string | undefined {
-  return readString(value, "workflow.database")
-}
-
 function readPositiveInteger(value: unknown, label: string): number | undefined {
   if (typeof value === "undefined") {
     return undefined
@@ -125,8 +121,7 @@ function normalizeOpenWorkflowWorkerOptions(value: unknown): OpenWorkflowWorkerO
 }
 
 function hasOpenWorkflowStorageConfig(options: Record<string, unknown>): boolean {
-  return typeof options.database === "string" && !!options.database.trim()
-    || isPlainObject(options.postgres) && isDefinedRuntimeConfigValue(options.postgres.url)
+  return isPlainObject(options.postgres) && isDefinedRuntimeConfigValue(options.postgres.url)
     || isPlainObject(options.sqlite) && isDefinedRuntimeConfigValue(options.sqlite.path)
 }
 
@@ -172,24 +167,16 @@ function resolveProvider(options: Record<string, unknown>, hosting: string): Res
   }
 
   if (resolved === "openworkflow") {
-    const database = readDatabaseName(options.database)
     const postgres = normalizeOpenWorkflowPostgresOptions(options.postgres)
     const sqlite = normalizeOpenWorkflowSqliteOptions(options.sqlite)
     const worker = normalizeOpenWorkflowWorkerOptions(options.worker)
 
-    if (database && postgres?.url) {
-      throw workflowErrorDiagnostics.WORKFLOW_C0010({ message: "`workflow.database` and `workflow.postgres.url` cannot both configure OpenWorkflow storage." })
-    }
-    if (database && sqlite?.path) {
-      throw workflowErrorDiagnostics.WORKFLOW_C0011({ message: "`workflow.database` and `workflow.sqlite.path` cannot both configure OpenWorkflow storage." })
-    }
     if (postgres?.url && sqlite?.path) {
       throw workflowErrorDiagnostics.WORKFLOW_C0012({ message: "`workflow.postgres.url` and `workflow.sqlite.path` cannot both configure OpenWorkflow storage." })
     }
 
     return defu(
       {
-        ...(database ? { database } : {}),
         ...(postgres ? { postgres } : {}),
         ...(sqlite ? { sqlite } : {}),
         ...(worker ? { worker } : {}),
@@ -206,6 +193,9 @@ export function normalizeWorkflowOptions(options: WorkflowModuleOptions | undefi
   if (options === false) return undefined
   if (typeof options !== "undefined" && !isPlainObject(options)) {
     throw workflowErrorDiagnostics.WORKFLOW_C0013({ message: "`workflow` must be a plain object." })
+  }
+  if (options && "database" in options && options.database !== undefined) {
+    throw workflowErrorDiagnostics.WORKFLOW_C0017({ message: "`workflow.database` is not supported. Set `workflow.sqlite.path` or `workflow.postgres.url` explicitly." })
   }
   return resolveProvider(options || {}, normalizeHosting(input.hosting))
 }

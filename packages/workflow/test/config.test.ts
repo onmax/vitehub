@@ -82,13 +82,11 @@ describe("workflow config", () => {
     })
   })
 
-  it("infers openworkflow from node hosting with a database reference", () => {
-    expect(normalizeWorkflowOptions({
+  it.each([undefined, "openworkflow", "cloudflare", "vercel"])("rejects unsupported database references with provider %s", (provider) => {
+    expect(() => normalizeWorkflowOptions({
       database: "workflow",
-    }, { hosting: "node-server" })).toEqual({
-      database: "workflow",
-      provider: "openworkflow",
-    })
+      provider,
+    } as never, { hosting: "node-server" })).toThrow(/workflow\.database.*not supported/)
   })
 
   it("does not infer openworkflow from docker hosting without Postgres config", () => {
