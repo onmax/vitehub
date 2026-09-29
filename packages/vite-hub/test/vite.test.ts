@@ -790,6 +790,7 @@ describe("vitehub", () => {
       .toThrow("connections.management requires Console production access")
     vitehub({ connections: { management: true }, console: { exposure: "host-managed" }, database: true, preset: "node" })
     expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
+      actor: "#vitehub/console/connections-actor",
       database: "vite-hub/database/drizzle",
       importBase: "vite-hub/connections",
       management: true,

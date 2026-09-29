@@ -27,7 +27,7 @@ import { resolveConsoleProjectNameFromRoot } from "./console/project.ts"
 import { resolveConsoleSectionIds, type ConsoleSectionId } from "./console/runtime/sections.ts"
 import { consoleDefinitionSectionIds } from "./console/runtime/definitions.ts"
 import { addConsoleDevframeHandler } from "./console/nitro.ts"
-import { resolveConsoleAuthConfig, writeConsoleAuthHandlers } from "./console/auth-build.ts"
+import { consoleConnectionsActorId, resolveConsoleAuthConfig, writeConsoleAuthHandlers, writeConsoleConnectionsActor } from "./console/auth-build.ts"
 import { serializeConsoleRefresh } from "./console/refresh.ts"
 import { assertConsoleProductionAccess, closeConsoleInvocationRootState, configureConsoleFixtureLifecycle, consoleInvocationRootPlugin, createConsoleInvocationRootState, generatedConsolePluginRegistration, resolveGeneratedConsolePlugin, type ConsoleInvocationRootState, updateConsoleInvocationRootState } from "./console/vite.ts"
 
@@ -329,6 +329,7 @@ async function installConsole(
           }]
         : []),
       ...(sections.includes("env") ? [{ file: join(consoleRuntimeRoot, "pages/env.vue"), name: "vitehub-console-env", path: "/_vitehub/env" }] : []),
+      ...(sections.includes("connections") ? [{ file: join(consoleRuntimeRoot, "pages/connections.vue"), name: "vitehub-console-connections", path: "/_vitehub/connections" }] : []),
       ...(sections.includes("kv")
         ? [{
             file: join(consoleRuntimeRoot, "pages/kv.vue"),
@@ -1160,6 +1161,15 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
       installConsoleSections(projectRoot, consoleSections, Boolean(options.console !== true && options.console?.access === "auth" && options.console.auth))
       installConsoleProjectName(projectRoot, resolveConsoleProjectNameFromRoot(projectRoot))
       addConsoleDevframeHandler(config, consoleRuntimeRoot)
+      if (consoleSections.includes("connections")) {
+        // The Connections management handler records the signed-in Console user as the actor.
+        const authAccess = options.console !== true && options.console.access === "auth"
+        const actorSource = options.console !== true && options.console.access === "auth" && options.console.auth
+          ? "console-auth"
+          : authAccess && options.auth ? "app-auth" : "none"
+        const consoleAlias = (config.alias ??= {}) as Record<string, string>
+        consoleAlias[consoleConnectionsActorId] = await writeConsoleConnectionsActor(viteRoot, actorSource)
+      }
       const consoleCatalog = await discoverConsoleBuildCatalog({
         databaseDiscoveryRoot: hasReplayedDatabaseDiscoveryRoot
           ? replayedDatabaseDiscoveryRoot

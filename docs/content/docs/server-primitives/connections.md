@@ -76,6 +76,8 @@ The command prints the provider URL. Open it, grant access, and the loopback cal
 
 The development server mounts the management API at `/_vitehub/connections`. Production builds mount it only with `connections: { management: true }`. This option requires Console production access, `console: { access: 'auth' }` or `console: { exposure: 'host-managed' }`, because that access protects every `/_vitehub/**` route. Then open `https://<your-app>/_vitehub/connections/connect/google` while you are signed in to the Console. `vitehub connections connect google --url https://<your-app>` prints that URL.
 
+With the Console enabled, open **Connections** in the Console and select **Connect** or **Reconnect**. The same page shows activity, decides approvals, and revokes a Connection. When Console auth is active, these actions record the signed-in Console user as `user:<id>`. See [Console](/docs/development/console#manage-connections).
+
 ## Call the API
 
 ```ts [server/tasks/label.ts]

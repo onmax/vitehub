@@ -63,6 +63,7 @@ setConnectionsRuntime({
 
 | Option | Default | Meaning |
 | --- | --- | --- |
+| `actor` | none | Module whose default export receives the server event and returns `user:<id>`. Management actions record this actor. Without it, they record `user:local`. `vite-hub` sets it to the signed-in Console user. |
 | `database` | `false` | Module that exports the SQLite Drizzle database as `db`. |
 | `management` | `false` | Mount the management API in production. Protect it with authentication. |
 | `projectRoot` | Vite root | Project root for discovery. |

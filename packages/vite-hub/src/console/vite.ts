@@ -15,7 +15,7 @@ import type { Environment, Plugin } from "vite"
 import type { ConsoleSectionId } from "./runtime/sections.ts"
 
 import { discoverConsoleBuildCatalog } from "./build.ts"
-import { resolveConsoleAuthConfig, writeConsoleAuthHandlers, type ConsoleAuthConfig } from "./auth-build.ts"
+import { consoleConnectionsActorId, resolveConsoleAuthConfig, writeConsoleAuthHandlers, writeConsoleConnectionsActor, type ConsoleAuthConfig } from "./auth-build.ts"
 import { writeConsoleNitroPlugin } from "./plugin.ts"
 import { serializeConsoleRefresh } from "./refresh.ts"
 import { createConsoleCliNamespace } from "./cli.ts"
@@ -287,10 +287,11 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       workspaceDiscoveryRoot = configuredProjectRoot(viteConfig.workspace) ?? configuredProjectRoot({ projectRoot: options.workspaceDiscoveryRoot })
       serverDirs = viteConfig[VITEHUB_SERVER_DIRS]
       cliDiscovery = viteConfig.vitehubCliDiscovery === true
+      const appAuth = configured !== true && configured.access === "auth" && !configured.auth
+        ? options.resolveAuthConfig?.(root, viteConfig[VITEHUB_SERVER_DIRS], viteConfig.auth)
+        : undefined
       assertConsoleProductionAccess(configured, {
-        auth: configured !== true && configured.access === "auth" && !configured.auth
-          ? options.resolveAuthConfig?.(root, viteConfig[VITEHUB_SERVER_DIRS], viteConfig.auth)
-          : undefined,
+        auth: appAuth,
         consoleAuth: configured !== true && configured.access === "auth" && Boolean(configured.auth),
         development: environment.command !== "build",
       })
@@ -395,7 +396,17 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         fallthrough: false,
       })
 
-      consoleConfig.nitro = { ...kit.config, publicAssets }
+      // The Connections management handler records the signed-in Console user as the actor.
+      const connectionsActor = sections.includes("connections")
+        ? await writeConsoleConnectionsActor(root, consoleAuthHandlers ? "console-auth" : appAuth ? "app-auth" : "none")
+        : undefined
+      const alias = kit.config.alias && typeof kit.config.alias === "object" ? kit.config.alias : {}
+
+      consoleConfig.nitro = {
+        ...kit.config,
+        ...(connectionsActor ? { alias: { ...alias, [consoleConnectionsActorId]: connectionsActor } } : {}),
+        publicAssets,
+      }
     },
     async configResolved(config) {
       root = config.root

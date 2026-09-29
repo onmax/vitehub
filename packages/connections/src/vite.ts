@@ -17,6 +17,11 @@ const resolvedConnectionsRegistryId = `\0${CONNECTIONS_REGISTRY_ID}`
 const mergeNoExternal = createNoExternalMerger("@vite-hub/connections")
 
 export interface ConnectionsVitePluginOptions {
+  /**
+   * Module that identifies who manages Connections, for example the signed-in Console user.
+   * Its default export receives the server event and returns `user:<id>`, or `undefined` for `user:local`.
+   */
+  actor?: string
   /** Module that exports the ViteHub Database as `db`. Set `false` when the app has no database. */
   database?: string | false
   /** Package that the generated handler imports from. */
@@ -64,6 +69,20 @@ function renderRegistryTypes(definitions: DiscoveredConnectionDefinition[]): str
     "}",
     "",
     "export {}",
+    "",
+  ].join("\n")
+}
+
+function renderHandler(importBase: string, actor: string | undefined): string {
+  const imports = `import { createConnectionsHandler } from ${JSON.stringify(`${importBase}/server`)}`
+  if (!actor) {
+    return [imports, "", "const handle = createConnectionsHandler()", "", "export default (event: { req: Request }) => handle(event.req)", ""].join("\n")
+  }
+  return [
+    imports,
+    `import actor from ${JSON.stringify(actor)}`,
+    "",
+    "export default (event: { req: Request }) => createConnectionsHandler({ actor: () => actor(event) })(event.req)",
     "",
   ].join("\n")
 }
@@ -135,17 +154,12 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
       nitro.externals = { ...externals, inline }
 
       if (environment.command === "serve" || options.management) {
-        await writeFileIfChanged(handlerFile, [
-          `import { createConnectionsHandler } from ${JSON.stringify(`${importBase}/server`)}`,
-          "",
-          "const handle = createConnectionsHandler()",
-          "",
-          "export default (event: { req: Request }) => handle(event.req)",
-          "",
-        ].join("\n"))
+        await writeFileIfChanged(handlerFile, renderHandler(importBase, options.actor))
         const kit = createNitroServerKit(nitro)
-        kit.addHandler({ handler: handlerFile, route: "/_vitehub/connections" })
-        kit.addHandler({ handler: handlerFile, route: "/_vitehub/connections/**" })
+        // Mount only the API routes. Other requests, such as `GET /_vitehub/connections`, reach the Console page.
+        kit.addHandler({ handler: handlerFile, method: "post", route: "/_vitehub/connections" })
+        kit.addHandler({ handler: handlerFile, method: "get", route: "/_vitehub/connections/connect/**" })
+        kit.addHandler({ handler: handlerFile, method: "get", route: "/_vitehub/connections/callback" })
         Object.assign(nitro, kit.config)
       }
       nextConfig.nitro = nitro

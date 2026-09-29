@@ -33,6 +33,7 @@ import { VITEHUB_NITRO_CONFIG_CONTEXT, type ViteHubProviderImportContributor } f
 import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 
 import { viteHubTypesPlugin } from "./internal/types.ts"
+import { consoleConnectionsActorId } from "./console/auth-build.ts"
 import { consoleInvocationRootPlugin, consoleVitePlugin, type ConsoleOptions } from "./console/vite.ts"
 import { resolveConsoleSectionIds } from "./console/runtime/sections.ts"
 
@@ -862,6 +863,8 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     }
     plugins.push(hubConnections({
       ...(options.connections === true ? {} : options.connections),
+      // The Console writes this module. It returns the signed-in Console user when Console auth is active.
+      ...(options.console && consoleSections.includes("connections") ? { actor: consoleConnectionsActorId } : {}),
       database: "vite-hub/database/drizzle",
       importBase: "vite-hub/connections",
     }))
