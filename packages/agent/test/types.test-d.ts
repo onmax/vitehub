@@ -478,6 +478,43 @@ describe("agent public types", () => {
     // @ts-expect-error Call sites do not pass the schema output type.
     void runAgent(transformed, { data: { count: 2 } })
 
+    const configured = defineAgent({
+      options: { enabled: true },
+      configure: () => defineAgent({ data: schemaFor<{ count: number }, { count: string }>(), driver: { output: { schema: schemaFor<JevDecision>() }, run: () => "ok" }, intercept: () => ({ previous: true as const }), runtime: false }),
+    })
+    const inherited = defineAgent({ extends: configured })
+    expectTypeOf(runAgentInline(inherited, {} as AgentRuntimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision | { previous: true }>>()
+    void runAgent(inherited, { data: { count: "2" } })
+    // @ts-expect-error Configured layers retain their parent's schema input.
+    void runAgent(inherited, { data: { count: 2 } })
+    const selected = defineAgent({ preset: "count", presets: { count: configured } })
+    expectTypeOf(runAgentInline(selected, {} as AgentRuntimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision | { previous: true }>>()
+    void runAgent(selected, { data: { count: "2" } })
+    // @ts-expect-error Selected presets retain the schema input.
+    void runAgent(selected, { data: { count: 2 } })
+    const intercepted = defineAgent({ extends: agent, intercept: () => ({ rule: "new", add: ["new"] } satisfies RuleDecision) })
+    expectTypeOf(runAgentInline(intercepted, {} as AgentRuntimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision | RuleDecision>>()
+    void runAgent(intercepted, { data: { from: "a@example.com", subject: "Hi" } })
+    // @ts-expect-error Replacing only the interceptor preserves the parent schema input.
+    void runAgent(intercepted, { data: { from: "a@example.com" } })
+    const replaced = defineAgent({ extends: selected, data: schemaFor<Email>(), intercept: ({ data }) => {
+      expectTypeOf(data).toEqualTypeOf<Email>()
+      return { rule: "email", add: [data.from] } satisfies RuleDecision
+    } })
+    void runAgent(replaced, { data: { from: "a@example.com", subject: "Hi" } })
+    // @ts-expect-error Replacing a schema removes the parent input type.
+    void runAgent(replaced, { data: { count: "2" } })
+    expectTypeOf(runAgentInline(replaced, {} as AgentRuntimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision | RuleDecision>>()
+
+    const directLayer = defineAgent({ extends: transformed })
+    void runAgent(directLayer, { data: { count: "2" } })
+    // @ts-expect-error Direct layers preserve their parent's input schema.
+    void runAgent(directLayer, { data: { count: 2 } })
+    const directPreset = defineAgent({ preset: "base", presets: { base: transformed } })
+    void runAgent(directPreset, { data: { count: "2" } })
+    // @ts-expect-error Direct presets preserve their parent's input schema.
+    void runAgent(directPreset, { data: { count: 2 } })
+
     const workspaceAgent = defineAgent({
       data: schemaFor<Email>(),
       driver: { output: { schema: schemaFor<JevDecision>() }, run: () => "{}" },

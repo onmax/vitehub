@@ -732,6 +732,7 @@ type AgentDefinitionWithBaseResolve<
 interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
   capabilities?: Record<string, boolean>
   input?: AgentRunInput<CALL_OPTIONS>
+  parsedInputData?: boolean
   invocationRecovery?: {
     agentName?: string
     runId: string
@@ -1097,9 +1098,9 @@ async function runAgentAsWorkflow<
     parsedInput = hasAgentDefinition(agent)
       ? await withParsedAgentMessageMeta<TRuntimeConfig, CALL_OPTIONS>(agent, input, context.run)
       : input
-    // Reject invalid data before the durable handoff. The Workflow run parses the original value again.
+    // Reject invalid data before the durable handoff and carry its parsed value to the Workflow.
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-    if (hasAgentDefinition(agent)) await parseAgentInputData(agent as AgentDefinitionWithBaseResolve<TRuntimeConfig, CALL_OPTIONS>, parsedInput)
+    if (hasAgentDefinition(agent)) parsedInput = await parseAgentInputData(agent as AgentDefinitionWithBaseResolve<TRuntimeConfig, CALL_OPTIONS>, parsedInput)
     workflowInput = await portableAgentWorkflowInput(parsedInput)
   }
   catch (error) {
@@ -1115,6 +1116,7 @@ async function runAgentAsWorkflow<
   // SAFETY: withParsedAgentMessageMeta preserves this invocation's call-options type.
   const parsedMessageMeta = parsedAgentMessageMetaState(agent, parsedInput as AgentRunInput<CALL_OPTIONS>, context.run)
   const payload: AgentWorkflowInvocationPayload<CALL_OPTIONS> = {
+    ...(hasAgentDefinition(agent) ? { parsedInputData: true } : {}),
     ...(context.agentIdentity ? { agentIdentity: context.agentIdentity } : {}),
     ...(Object.keys(workflowCapabilities).length ? { capabilities: workflowCapabilities } : {}),
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
@@ -2187,8 +2189,20 @@ type ConfiguredAgentOptions<TDefinition> = TDefinition extends { options: infer 
 type ConfiguredAgentWorkspaceOptions<TOptions, TDefinition, TKeys extends PropertyKey> = TOptions & Partial<Record<TKeys, unknown>> & Record<
   Exclude<TKeys, keyof ConfiguredAgentSettings<TDefinition> | "preset" | "presets" | "extends" | "options">, never>
 
-type ConfiguredAgentSettings<TDefinition> = TDefinition extends AgentDefinition<infer TRuntimeConfig, infer TCallOptions, infer TInvoker, infer TContext, infer TOutput>
-  ? AgentSettings<TRuntimeConfig, TCallOptions, TInvoker, TContext, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>
+type ConfiguredAgentSettings<TDefinition> = TDefinition extends AgentDefinition<infer TRuntimeConfig, infer TCallOptions, infer TInvoker, infer TContext, infer TOutput, infer TDataInput>
+  ? AgentSettings<TRuntimeConfig, TCallOptions, TInvoker, TContext, AgentCapabilitiesInput<TRuntimeConfig>, TOutput, AgentDriver<TRuntimeConfig, TCallOptions, TContext, TOutput>, TDataInput, never, TDataInput>
+  : never
+
+type LayerDataInput<TDefinition, TSchema> = TSchema extends StandardSchemaV1<infer TInput, unknown> ? TInput : TDefinition extends AgentDataCarrier<infer TInput> ? TInput : unknown
+
+type LayerData<TDefinition, TSchema> = TSchema extends StandardSchemaV1<unknown, infer TOutput> ? TOutput : LayerDataInput<TDefinition, undefined>
+
+type LayerOutput<TDefinition, TIntercept, TReplace extends boolean> = TDefinition extends AgentDefinition<any, any, any, any, infer TOutput, any, infer TDriverOutput>
+  ? (TReplace extends true ? TDriverOutput : TOutput) | TIntercept
+  : never
+
+type LayerDefinition<TDefinition, TDataInput, TIntercept, TReplace extends boolean> = TDefinition extends AgentDefinition<infer TRuntimeConfig, infer TCallOptions, infer TInvoker, infer TContext, any, any, infer TDriverOutput>
+  ? Omit<TDefinition, keyof AgentDefinition> & AgentDefinition<TRuntimeConfig, TCallOptions, TInvoker, TContext, LayerOutput<TDefinition, TIntercept, TReplace>, TDataInput, TDriverOutput>
   : never
 
 type ConfiguredCapabilitiesWorkspace<TCapabilities> = TCapabilities extends readonly (infer TCapability)[]
@@ -2262,20 +2276,20 @@ type ConfiguredAgentWorkspace<TDefinition, TWorkspace, TCapabilities, TChannels,
       & { [configuredAgentWorkspace]: TState }
     : never
 
-type ConfiguredContextDefinition<TDefinition, TCapabilities> = TDefinition extends AgentDefinition<infer TRuntimeConfig, infer TCallOptions, infer TInvoker, infer TContext, infer TOutput>
-  ? TDefinition & AgentDefinition<TRuntimeConfig, TCallOptions, TInvoker,
+type ConfiguredContextDefinition<TDefinition, TCapabilities> = TDefinition extends AgentDefinition<infer TRuntimeConfig, infer TCallOptions, infer TInvoker, infer TContext, infer TOutput, infer TDataInput, infer TDriverOutput>
+  ? Omit<TDefinition, keyof AgentDefinition> & AgentDefinition<TRuntimeConfig, TCallOptions, TInvoker,
       TContext & AgentCapabilitiesInvocationContextValues<ConfiguredAgentSettings<TDefinition>["capabilities"] | TCapabilities>,
-      TOutput>
+      TOutput, TDataInput, TDriverOutput>
   : never
 
-type AgentDefinitionFromWorkspace<TDefinition> = TDefinition extends WorkspaceAgentDefinition<infer TRuntimeConfig, any, infer TCallOptions, infer TInvoker, infer TContext, any, infer TOutput>
-  ? AgentDefinition<TRuntimeConfig, TCallOptions, TInvoker, TContext, TOutput>
+type AgentDefinitionFromWorkspace<TDefinition> = TDefinition extends { __vitehubWorkspaceAgent: true } & AgentDefinition<infer TRuntimeConfig, infer TCallOptions, infer TInvoker, infer TContext, infer TOutput, infer TDataInput, infer TDriverOutput>
+  ? AgentDefinition<TRuntimeConfig, TCallOptions, TInvoker, TContext, TOutput, TDataInput, TDriverOutput>
   : TDefinition
 
-type ConfiguredWorkspaceDefinition<TDefinition, TCapabilities = ConfiguredAgentSettings<TDefinition>["capabilities"]> = TDefinition extends AgentDefinition<infer TRuntimeConfig, infer TCallOptions, infer TInvoker, infer TContext, infer TOutput>
-  ? TDefinition & WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, TCallOptions, TInvoker,
+type ConfiguredWorkspaceDefinition<TDefinition, TCapabilities = ConfiguredAgentSettings<TDefinition>["capabilities"]> = TDefinition extends AgentDefinition<infer TRuntimeConfig, infer TCallOptions, infer TInvoker, infer TContext, infer TOutput, infer TDataInput, infer TDriverOutput>
+  ? Omit<TDefinition, keyof AgentDefinition> & WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, TCallOptions, TInvoker,
       TContext & AgentCapabilitiesInvocationContextValues<ConfiguredAgentSettings<TDefinition>["capabilities"] | TCapabilities>,
-      AgentCapabilitiesInput<TRuntimeConfig>, TOutput>
+      AgentCapabilitiesInput<TRuntimeConfig>, TOutput, TDataInput> & AgentDefinition<TRuntimeConfig, TCallOptions, TInvoker, TContext, TOutput, TDataInput, TDriverOutput>
   : never
 
 export interface DefineAgent {
@@ -2287,15 +2301,20 @@ export interface DefineAgent {
     TContextValues extends object = AgentInvocationContextValues,
     const TWorkspace extends WorkspaceAgentWorkspaceConfig | undefined = undefined,
     TOutput = unknown,
+    TParent extends WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TInvokerProfile, TContextValues, any, TOutput> = WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TInvokerProfile, TContextValues, any, TOutput>,
+    TSchema extends StandardSchemaV1<any, any> | undefined = undefined,
+    TIntercept = never,
   >(
-    options: Omit<Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>>, "driver" | "workspace"> & {
+    options: Omit<Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>>, "driver" | "workspace" | "data" | "intercept"> & {
       preset: TPreset
-      presets: Record<NoInfer<TPreset>, AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput> & { __vitehubWorkspaceAgent: true, options?: never }> & Record<string, unknown>
+      presets: Record<NoInfer<TPreset>, TParent & { options?: never }> & Record<string, unknown>
       extends?: never
       driver?: Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>["driver"]>
+      data?: TSchema
+      intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, TContextValues, LayerData<TParent, TSchema>, TIntercept>
       workspace?: WorkspaceAgentWorkspaceConfig
     },
-  ): WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>
+  ): WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, LayerOutput<TParent, TIntercept, [TIntercept] extends [never] ? false : true>, LayerDataInput<TParent, TSchema>> & LayerDefinition<TParent, LayerDataInput<TParent, TSchema>, TIntercept, [TIntercept] extends [never] ? false : true>
 
   <
     const TPreset extends string,
@@ -2305,15 +2324,20 @@ export interface DefineAgent {
     TContextValues extends object = AgentInvocationContextValues,
     const TWorkspace extends WorkspaceAgentWorkspaceConfig | undefined = undefined,
     TOutput = unknown,
+    TParent extends AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput> = AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput>,
+    TSchema extends StandardSchemaV1<any, any> | undefined = undefined,
+    TIntercept = never,
   >(
-    options: Omit<Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>>, "driver" | "workspace"> & {
+    options: Omit<Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>>, "driver" | "workspace" | "data" | "intercept"> & {
       preset: TPreset
-      presets: Record<NoInfer<TPreset>, AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput> & { options?: never }> & Record<string, unknown>
+      presets: Record<NoInfer<TPreset>, TParent & { options?: never }> & Record<string, unknown>
       extends?: never
       driver?: Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>["driver"]>
+      data?: TSchema
+      intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, TContextValues, LayerData<TParent, TSchema>, TIntercept>
       workspace: WorkspaceAgentWorkspaceConfig
     },
-  ): WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>
+  ): ConfiguredWorkspaceDefinition<LayerDefinition<TParent, LayerDataInput<TParent, TSchema>, TIntercept, [TIntercept] extends [never] ? false : true>>
 
   <
     const TPreset extends string,
@@ -2323,17 +2347,22 @@ export interface DefineAgent {
     TContextValues extends object = AgentInvocationContextValues,
     const TWorkspace extends WorkspaceAgentWorkspaceConfig | undefined = undefined,
     TOutput = unknown,
+    const TPresets extends Record<string, AgentDefinition> = Record<string, AgentDefinition>,
+    TSchema extends StandardSchemaV1<any, any> | undefined = undefined,
+    TIntercept = never,
   >(
-    options: Omit<Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>>, "driver" | "workspace"> & {
+    options: Omit<Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>>, "driver" | "workspace" | "data" | "intercept"> & {
       preset: TPreset
-      presets: Record<NoInfer<TPreset>, AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput> & { options?: never }> & Record<string, unknown>
+      presets: TPresets & Record<NoInfer<TPreset>, AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput> & { options?: never }>
       extends?: never
       driver?: Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>["driver"]>
+      data?: TSchema
+      intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, TContextValues, LayerData<TPresets[TPreset], TSchema>, TIntercept>
       workspace?: TWorkspace
     },
   ): TWorkspace extends WorkspaceAgentWorkspaceConfig
-    ? WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>
-    : AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput>
+    ? ConfiguredWorkspaceDefinition<LayerDefinition<TPresets[TPreset], LayerDataInput<TPresets[TPreset], TSchema>, TIntercept, [TIntercept] extends [never] ? false : true>>
+    : LayerDefinition<TPresets[TPreset], LayerDataInput<TPresets[TPreset], TSchema>, TIntercept, [TIntercept] extends [never] ? false : true>
 
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -2400,13 +2429,18 @@ export interface DefineAgent {
     const TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
     TContextValues extends object = AgentInvocationContextValues,
     TOutput = unknown,
+    TParent extends WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TInvokerProfile, TContextValues, any, TOutput> = WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TInvokerProfile, TContextValues, any, TOutput>,
+    TSchema extends StandardSchemaV1<any, any> | undefined = undefined,
+    TIntercept = never,
   >(
-    options: Omit<Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>>, "driver" | "workspace"> & {
-      extends: AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput> & { __vitehubWorkspaceAgent: true, options?: never }
+    options: Omit<Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>>, "driver" | "workspace" | "data" | "intercept"> & {
+      extends: TParent & { options?: never }
       driver?: Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>["driver"]>
+      data?: TSchema
+      intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, TContextValues, LayerData<TParent, TSchema>, TIntercept>
       workspace?: WorkspaceAgentWorkspaceConfig
     },
-  ): WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>
+  ): ConfiguredWorkspaceDefinition<LayerDefinition<TParent, LayerDataInput<TParent, TSchema>, TIntercept, [TIntercept] extends [never] ? false : true>>
 
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -2414,13 +2448,18 @@ export interface DefineAgent {
     const TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
     TContextValues extends object = AgentInvocationContextValues,
     TOutput = unknown,
+    TParent extends AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput> = AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput>,
+    TSchema extends StandardSchemaV1<any, any> | undefined = undefined,
+    TIntercept = never,
   >(
-    options: Omit<Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>>, "driver" | "workspace"> & {
-      extends: AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput> & { options?: never }
+    options: Omit<Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>>, "driver" | "workspace" | "data" | "intercept"> & {
+      extends: TParent & { options?: never }
       driver?: Partial<AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, TOutput>["driver"]>
+      data?: TSchema
+      intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, TContextValues, LayerData<TParent, TSchema>, TIntercept>
       workspace?: WorkspaceAgentWorkspaceConfig
     },
-  ): AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput>
+  ): LayerDefinition<TParent, LayerDataInput<TParent, TSchema>, TIntercept, [TIntercept] extends [never] ? false : true>
 
   <TOptions extends object, TDefinition extends AgentDefinition>(options: {
     options: TOptions & ConfiguredOptionsRecord<TOptions>
@@ -2434,17 +2473,21 @@ export interface DefineAgent {
     const TKeys extends PropertyKey = never,
     const TCapabilities extends ConfiguredAgentSettings<NoInfer<Extract<TPresets[TPreset], ConfiguredAgentDefinition<object, AgentDefinition>>>>["capabilities"] = undefined,
     const TChannels extends ConfiguredAgentSettings<NoInfer<Extract<TPresets[TPreset], ConfiguredAgentDefinition<object, AgentDefinition>>>>["channels"] = undefined,
+    TSchema extends StandardSchemaV1<any, any> | undefined = undefined,
+    TIntercept = never,
   >(options:
-    Omit<Partial<ConfiguredAgentSettings<NoInfer<Extract<TPresets[TPreset], ConfiguredAgentDefinition<object, AgentDefinition>>>>>, "driver" | "workspace" | "capabilities" | "channels"> & {
+    Omit<Partial<ConfiguredAgentSettings<NoInfer<Extract<TPresets[TPreset], ConfiguredAgentDefinition<object, AgentDefinition>>>>>, "driver" | "workspace" | "capabilities" | "channels" | "data" | "intercept"> & {
       preset: TPreset
       presets: TPresets & Record<TPreset, ConfiguredAgentDefinition<any, AgentDefinition>>
       options?: AgentPresetOptions<NoInfer<ConfiguredAgentOptions<Extract<TPresets[TPreset], ConfiguredAgentDefinition<object, AgentDefinition>>>>>
       extends?: never
       driver?: Partial<ConfiguredAgentSettings<NoInfer<Extract<TPresets[TPreset], ConfiguredAgentDefinition<object, AgentDefinition>>>>["driver"]>
+      data?: TSchema
+      intercept?: AgentInterceptHandler<AgentRuntimeConfig, unknown, AgentInvocationContextValues, LayerData<NoInfer<TPresets[TPreset]>, TSchema>, TIntercept>
       capabilities?: TCapabilities
       channels?: TChannels
     } & ConfiguredAgentWorkspaceOptions<TWorkspace, TPresets[TPreset], TKeys>
-  ): ConfiguredAgentDefinition<ConfiguredAgentOptions<Extract<TPresets[TPreset], ConfiguredAgentDefinition<object, AgentDefinition>>>, ConfiguredAgentWorkspace<TPresets[TPreset], TWorkspace["workspace"], TCapabilities, TChannels>>
+  ): ConfiguredAgentDefinition<ConfiguredAgentOptions<Extract<TPresets[TPreset], ConfiguredAgentDefinition<object, AgentDefinition>>>, ConfiguredAgentWorkspace<LayerDefinition<TPresets[TPreset], LayerDataInput<TPresets[TPreset], TSchema>, TIntercept, [TIntercept] extends [never] ? false : true>, TWorkspace["workspace"], TCapabilities, TChannels>>
 
   <
     TDefinition extends ConfiguredAgentDefinition<object, AgentDefinitionLike>,
@@ -2452,15 +2495,19 @@ export interface DefineAgent {
     const TKeys extends PropertyKey = never,
     const TCapabilities extends ConfiguredAgentSettings<NoInfer<TDefinition>>["capabilities"] = undefined,
     const TChannels extends ConfiguredAgentSettings<NoInfer<TDefinition>>["channels"] = undefined,
+    TSchema extends StandardSchemaV1<any, any> | undefined = undefined,
+    TIntercept = never,
   >(options:
-    Omit<Partial<ConfiguredAgentSettings<NoInfer<TDefinition>>>, "driver" | "workspace" | "capabilities" | "channels"> & {
+    Omit<Partial<ConfiguredAgentSettings<NoInfer<TDefinition>>>, "driver" | "workspace" | "capabilities" | "channels" | "data" | "intercept"> & {
       extends: TDefinition
       options?: AgentPresetOptions<NoInfer<TDefinition["options"]>>
       driver?: Partial<ConfiguredAgentSettings<NoInfer<TDefinition>>["driver"]>
+      data?: TSchema
+      intercept?: AgentInterceptHandler<AgentRuntimeConfig, unknown, AgentInvocationContextValues, LayerData<NoInfer<TDefinition>, TSchema>, TIntercept>
       capabilities?: TCapabilities
       channels?: TChannels
     } & ConfiguredAgentWorkspaceOptions<TWorkspace, TDefinition, TKeys>
-  ): ConfiguredAgentDefinition<TDefinition["options"], ConfiguredAgentWorkspace<TDefinition, TWorkspace["workspace"], TCapabilities, TChannels>>
+  ): ConfiguredAgentDefinition<TDefinition["options"], ConfiguredAgentWorkspace<LayerDefinition<TDefinition, LayerDataInput<TDefinition, TSchema>, TIntercept, [TIntercept] extends [never] ? false : true>, TWorkspace["workspace"], TCapabilities, TChannels>>
 
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -2499,7 +2546,7 @@ export interface DefineAgent {
     >,
   >(
     options: TOptions & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, driver: CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>, data?: StandardSchemaV1<TDataInput, TData>, intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TData, TIntercept> } & ValidateWorkspaceAgentOptions<TOptions>,
-  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput | TIntercept, TDataInput>
+  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput | TIntercept, TDataInput> & AgentDefinition<TRuntimeConfig, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput, TOutput>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
     Name extends WorkspaceName = WorkspaceName,
@@ -2537,7 +2584,7 @@ export interface DefineAgent {
     >,
   >(
     options: TOptions & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, driver: AgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>, data?: StandardSchemaV1<TDataInput, TData>, intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TData, TIntercept> } & ValidateWorkspaceAgentOptions<TOptions>,
-  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput | TIntercept, TDataInput>
+  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput | TIntercept, TDataInput> & AgentDefinition<TRuntimeConfig, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput, TOutput>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
     CALL_OPTIONS = unknown,
@@ -2561,7 +2608,7 @@ export interface DefineAgent {
       TIntercept,
       TDataInput
     > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never, channels?: TChannels },
-  ): ConfiguredAgentWorkspace<AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput>, undefined, TCapabilities, TChannels>
+  ): ConfiguredAgentWorkspace<AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput, TOutput>, undefined, TCapabilities, TChannels>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
     CALL_OPTIONS = unknown,
@@ -2585,7 +2632,7 @@ export interface DefineAgent {
       TIntercept,
       TDataInput
     > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never, channels?: TChannels },
-  ): ConfiguredAgentWorkspace<AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput>, undefined, TCapabilities, TChannels>
+  ): ConfiguredAgentWorkspace<AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput, TOutput>, undefined, TCapabilities, TChannels>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
     CALL_OPTIONS = unknown,
@@ -2608,7 +2655,7 @@ export interface DefineAgent {
       TIntercept,
       TDataInput
     > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never },
-  ): AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput>
+  ): AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput, TOutput>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
     CALL_OPTIONS = unknown,
@@ -2631,7 +2678,7 @@ export interface DefineAgent {
       TIntercept,
       TDataInput
     > & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TCapabilities>, workspace?: never },
-  ): AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput>
+  ): AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | TIntercept, TDataInput, TOutput>
 
 }
 
@@ -3891,7 +3938,9 @@ async function createAgentInvocationContext<
   let failureTraced = false
   const telemetryContentTraceLogWrapped = initialTelemetryUsesContent || mayResolveContentTelemetry
   try {
-    input = await parseAgentInputData(internalDefinition, input)
+    if (!(context as AgentRuntimeContext<TRuntimeConfig> & { [key: symbol]: unknown })[Symbol.for("vitehub.agent.workflow.parsedInputData")]) {
+      input = await parseAgentInputData(internalDefinition, input)
+    }
     const boundRunEvents = bindAgentRunEvents(definition?.runEvents, tracedRuntimeContext)
     runtimeContext = boundRunEvents
       ? { ...tracedRuntimeContext, runEvents: boundRunEvents }
@@ -4117,6 +4166,20 @@ async function createAgentInvocationContext<
       }
     })
     const capabilities = await preparingCapabilities
+    if (internalDefinition?.[baseAgentData] && capabilities.input.data !== input.data) {
+      try {
+        capabilities.input = await parseAgentInputData(internalDefinition, capabilities.input)
+      }
+      catch (error) {
+        try {
+          await capabilities.close()
+        }
+        catch (closeError) {
+          throw new AggregateError([error, closeError], "[vitehub] Agent input validation and cleanup failed.")
+        }
+        throw error
+      }
+    }
     const intercept = internalDefinition?.[baseAgentIntercept]
     // Interception can finish without the Driver, so provider readiness waits for its result.
     if (!capabilities.response && !intercept) await knownUnavailable(capabilities)

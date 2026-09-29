@@ -2,7 +2,7 @@ import { createTraceEventLog } from "@vite-hub/runtime"
 import * as v from "valibot"
 import { describe, expect, it, vi } from "vitest"
 
-import { defineAgent, runAgent, runAgentInline } from "../src/index.ts"
+import { defineAgent, defineCapability, runAgent, runAgentInline } from "../src/index.ts"
 
 const emailSchema = v.object({
   from: v.string(),
@@ -99,12 +99,41 @@ describe("Agent data and intercept", () => {
     expect(seen).toEqual([{ count: 2 }, { count: 2 }, { count: 2 }])
   })
 
+  it("validates data replaced by a Capability before hooks and intercept", async () => {
+    const inputHook = vi.fn()
+    const intercept = vi.fn(() => undefined)
+    const run = vi.fn(() => "ok")
+    const replaceData = defineCapability({
+      id: "replace-data",
+      input(context) {
+        context.input.set({ ...context.input.get(), data: { from: "invalid" } })
+      },
+    })
+    const agent = defineAgent({
+      capabilities: [replaceData],
+      data: emailSchema,
+      driver: { run },
+      hooks: { "agent:input": inputHook },
+      intercept,
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { from: "friend@example.com", subject: "Dinner" } })
+
+    expect(error?.message).toContain("Invalid Agent input data")
+    expect(output).toBeNull()
+    expect(inputHook).not.toHaveBeenCalled()
+    expect(intercept).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it("lets a child Agent replace the parent data schema", async () => {
     const child = defineAgent({
       extends: labeller(),
       data: v.object({ from: v.string() }),
     })
 
+    // @ts-expect-error The child schema requires from, not subject.
     const [error] = await runAgent(child, { data: { subject: "Hi" } })
     const [, output] = await runAgent(child, { data: { from: "a@github.com" } })
 

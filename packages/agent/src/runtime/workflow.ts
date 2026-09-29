@@ -43,6 +43,8 @@ import type { WorkflowExecutionContext, WorkflowProvider } from "@vite-hub/workf
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 export { workspaceAgentWithSourceRoot }
 
+export const parsedAgentWorkflowInputDataContextKey: symbol = Symbol.for("vitehub.agent.workflow.parsedInputData")
+
 export function agentWithColocatedSkills<Agent>(agent: Agent, sources: Parameters<typeof decodeColocatedAgentSkills>[0]): Agent {
   return withColocatedAgentSkills(agent, decodeColocatedAgentSkills(sources))
 }
@@ -58,6 +60,7 @@ export interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
     workflowName: string
   }
   requestUrl?: string
+  parsedInputData?: boolean
   parsedMessageMeta?: ParsedAgentMessageMetaState
   resolvedInvoker?: boolean
   run?: Partial<AgentRunMetadata>
@@ -357,6 +360,9 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
     ? await resumeAgentChannelDeliveryWorkflowOwnership(agent, runtimeContext, channelDeliveryBinding)
     : undefined
   if (channelOwnership?.verify) runtimeContext = withAgentChannelDeliveryOwnershipVerifier(runtimeContext, channelOwnership.verify)
+  if (payload.parsedInputData === true) {
+    Object.defineProperty(runtimeContext, parsedAgentWorkflowInputDataContextKey, { enumerable: true, value: true })
+  }
   const workflowInput = channelOwnership?.abortSignal
     ? {
         ...payload.input,

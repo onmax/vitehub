@@ -1648,10 +1648,15 @@ export type AgentSettings<
 
 declare const agentOutputType: unique symbol
 declare const agentDataType: unique symbol
+declare const agentDriverOutputType: unique symbol
 
 /** Carries the Invocation `data` type that `runAgent()` and related calls accept. This is the `data` schema input type. */
 export interface AgentDataCarrier<TDataInput = unknown> {
   [agentDataType]?: TDataInput
+}
+
+export interface AgentDriverOutputCarrier<TOutput = unknown> {
+  [agentDriverOutputType]?: TOutput
 }
 
 export interface AgentDefinition<
@@ -1661,7 +1666,8 @@ export interface AgentDefinition<
   TContextValues extends object = AgentInvocationContextValues,
   TOutput = unknown,
   TDataInput = unknown,
-> extends AgentDataCarrier<TDataInput> {
+  TDriverOutput = TOutput,
+> extends AgentDataCarrier<TDataInput>, AgentDriverOutputCarrier<TDriverOutput> {
   [agentOutputType]?: TOutput
   box?: AgentBoxInput<TRuntimeConfig>
   health?: AgentHealthDescriptor
