@@ -7,6 +7,7 @@ import { discoverAgentDefinitions, tokenizeAgentSource } from "./discovery.ts"
 import type { ChannelEnvField } from "./channel-env.ts"
 
 const channelFactoryModules = new Set(["@vite-hub/agent/channels", "vite-hub/agent/channels"])
+const agentModules = new Set(["@vite-hub/agent", "vite-hub/agent"])
 
 /** One built-in Channel use in an Agent file. `optionKeys` is undefined when the options are not a static object literal. */
 export interface DiscoveredChannelUse {
@@ -62,30 +63,36 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
   const known = new Set(kinds)
   const bindings = new Map<string, string>()
   const namespaces = new Set<string>()
+  const agentFactories = new Set(["defineAgent"])
+  const agentNamespaces = new Set<string>()
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i] !== "import" || tokens[i + 1] === "(" || tokens[i + 1] === "type" || tokens[i - 1] === ".") continue
     let from = i + 1
     while (from < tokens.length && tokens[from] !== "from" && !isStringToken(tokens[from])) from++
-    if (tokens[from] !== "from" || !channelFactoryModules.has(tokens[from + 1]?.slice(1, -1) ?? "")) continue
+    const module = tokens[from] === "from" ? tokens[from + 1]?.slice(1, -1) ?? "" : ""
     const clause = tokens.slice(i + 1, from)
+    const channelModule = channelFactoryModules.has(module)
+    if (!channelModule && !agentModules.has(module)) continue
     for (let b = 0; b < clause.length; b++) {
-      if (clause[b] === "*" && clause[b + 1] === "as" && clause[b + 2]) namespaces.add(clause[b + 2]!)
-      else if (known.has(clause[b]!) && clause[b - 1] !== "as" && clause[b - 1] !== "type") {
-        bindings.set(clause[b + 1] === "as" ? clause[b + 2]! : clause[b]!, clause[b]!)
-      }
+      const local = clause[b + 1] === "as" ? clause[b + 2]! : clause[b]!
+      if (clause[b] === "*" && clause[b + 1] === "as" && clause[b + 2]) (channelModule ? namespaces : agentNamespaces).add(clause[b + 2]!)
+      else if (clause[b - 1] === "as" || clause[b - 1] === "type") continue
+      else if (channelModule && known.has(clause[b]!)) bindings.set(local, clause[b]!)
+      else if (!channelModule && clause[b] === "defineAgent") agentFactories.add(local)
     }
   }
+  // Channel shorthands count only inside defineAgent() arguments, not in types or unrelated objects.
+  const agentBindings = new Map([...agentFactories].map(name => [name, "defineAgent"]))
+  const agentNames = new Set(["defineAgent"])
+  const agentArguments: Array<[number, number]> = []
   const uses: Array<DiscoveredChannelUse & { index: number }> = []
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i - 1] === "." || tokens[i - 1] === "as") continue
-    let kind = bindings.get(tokens[i]!)
-    let call = i + 1
-    if (!kind && namespaces.has(tokens[i]!) && tokens[i + 1] === "." && known.has(tokens[i + 2]!)) {
-      kind = tokens[i + 2]
-      call = i + 3
-    }
-    if (kind && tokens[call] === "(") uses.push({ index: i, kind, optionKeys: staticOptionKeys(tokens, call + 1, ")") })
-    if (tokens[i] === "channels" && tokens[i + 1] === ":" && tokens[i + 2] === "{") {
+    const factory = factoryCall(tokens, i, bindings, namespaces, known)
+    if (factory) uses.push({ index: i, kind: factory.name, optionKeys: staticOptionKeys(tokens, factory.open + 1, ")") })
+    const agent = factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames)
+    if (agent) agentArguments.push([agent.open, closingToken(tokens, agent.open)])
+    if (tokens[i] === "channels" && tokens[i + 1] === ":" && tokens[i + 2] === "{" && agentArguments.some(([open, close]) => i > open && i < close)) {
       visitObjectProperties(tokens, i + 2, (key, value) => {
         if (!known.has(key)) return
         // Factory call values are found by the call scan.
@@ -95,6 +102,44 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
     }
   }
   return uses.sort((left, right) => left.index - right.index).map(({ kind, optionKeys }) => ({ kind, optionKeys }))
+}
+
+// Match `name(`, `name<T>(`, `namespace.name(`, or `namespace.name<T>(` and return the opening parenthesis.
+function factoryCall(
+  tokens: string[],
+  index: number,
+  bindings: ReadonlyMap<string, string>,
+  namespaces: ReadonlySet<string>,
+  names: ReadonlySet<string>,
+): { name: string, open: number } | undefined {
+  let name = bindings.get(tokens[index]!)
+  let next = index + 1
+  if (!name && namespaces.has(tokens[index]!) && tokens[index + 1] === "." && names.has(tokens[index + 2]!)) {
+    name = tokens[index + 2]
+    next = index + 3
+  }
+  if (!name) return undefined
+  if (tokens[next] === "<") next = skipTypeArguments(tokens, next)
+  return tokens[next] === "(" ? { name, open: next } : undefined
+}
+
+function skipTypeArguments(tokens: string[], start: number): number {
+  let depth = 0
+  for (let i = start; i < tokens.length; i++) {
+    if (tokens[i] === "<") depth++
+    // The tokenizer splits `=>` into `=` and `>`; an arrow does not close a type argument list.
+    else if (tokens[i] === ">" && tokens[i - 1] !== "=" && --depth === 0) return i + 1
+  }
+  return tokens.length
+}
+
+function closingToken(tokens: string[], open: number): number {
+  let depth = 0
+  for (let i = open; i < tokens.length; i++) {
+    if (["{", "(", "["].includes(tokens[i]!)) depth++
+    else if (["}", ")", "]"].includes(tokens[i]!) && --depth === 0) return i
+  }
+  return tokens.length
 }
 
 /**

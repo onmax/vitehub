@@ -62,6 +62,27 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it("finds calls with type arguments", () => {
+    expect(uses(`
+      import * as channels from "vite-hub/agent/channels"
+      import { telegram } from "vite-hub/agent/channels"
+      telegram<Runtime>({ botToken: token })
+      channels.discord<Map<string, (value: string) => void>>()
+    `)).toEqual([
+      { kind: "telegram", keys: ["botToken"] },
+      { kind: "discord", keys: [] },
+    ])
+  })
+
+  it("reads shorthands only inside defineAgent()", () => {
+    expect(uses(`
+      import { defineAgent as agent } from "vite-hub/agent"
+      type Settings = { channels: { telegram: {} } }
+      const defaults = { channels: { telegram: {} } }
+      export default agent<Runtime>({ channels: { telegram: { adapter } } })
+    `)).toEqual([{ kind: "telegram", keys: ["adapter"] }])
+  })
+
   it("ignores local and unrelated factories", () => {
     expect(uses(`
       import { telegram } from "./channels"
