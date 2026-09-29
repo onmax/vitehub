@@ -1662,7 +1662,7 @@ export interface AgentDataOutputCarrier<TData = unknown> {
 }
 
 export interface AgentDriverOutputCarrier<TOutput = unknown> {
-  [agentDriverOutputType]?: TOutput
+  [agentDriverOutputType]?: [TOutput]
 }
 
 export interface AgentDefinition<

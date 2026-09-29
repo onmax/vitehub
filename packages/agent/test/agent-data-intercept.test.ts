@@ -207,6 +207,155 @@ describe("Agent data and intercept", () => {
     expect(intercept).toHaveBeenCalledOnce()
   })
 
+  it("preserves Capability phase order after interception falls through", async () => {
+    const phases: string[] = []
+    let prepared = false
+    const capability = defineCapability({
+      id: "ordered",
+      configure: () => { phases.push("configure") },
+      prepare: () => { phases.push("prepare"); prepared = true },
+      bind: () => { expect(prepared).toBe(true); phases.push("bind") },
+      input: () => { expect(prepared).toBe(true); phases.push("input") },
+      resolve: () => { phases.push("resolve") },
+      output: () => { phases.push("output") },
+      tools: () => { expect(prepared).toBe(true); phases.push("tools"); return {} },
+    })
+    const agent = defineAgent({
+      capabilities: [capability, {
+        id: "following",
+        configure: () => { expect(prepared).toBe(true); phases.push("following:configure") },
+        input: () => { expect(prepared).toBe(true); phases.push("following:input") },
+      }],
+      driver: { run: () => { phases.push("driver"); return "ok" } },
+      intercept: () => undefined,
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { prompt: "go" })
+
+    expect(error).toBeNull()
+    expect(output).toBe("ok")
+    expect(phases).toEqual(["configure", "prepare", "bind", "input", "resolve", "output", "following:configure", "following:input", "tools", "driver"])
+  })
+
+  it("skips preparation-dependent phases and tools for intercepted Invocations", async () => {
+    const dependent = vi.fn(() => { throw new Error("preparation-dependent phase should not run") })
+    const agent = defineAgent({
+      capabilities: [{ id: "prepared", prepare: dependent, bind: dependent, input: dependent, resolve: dependent, output: dependent, tools: dependent }],
+      driver: { run: dependent },
+      intercept: () => "intercepted",
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { prompt: "go" })
+
+    expect(error).toBeNull()
+    expect(output).toBe("intercepted")
+    expect(dependent).not.toHaveBeenCalled()
+  })
+
+  it("validates data changed by a preparation-dependent input phase before the Driver", async () => {
+    const close = vi.fn()
+    const run = vi.fn(() => "ok")
+    const capability = defineCapability({
+      id: "prepared-input",
+      prepare() {},
+      input(context) { context.input.set({ ...context.input.get(), data: { from: "invalid" } }) },
+      close,
+    })
+    const agent = defineAgent({
+      capabilities: [capability],
+      data: emailSchema,
+      driver: { run },
+      intercept: () => undefined,
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { from: "friend@example.com", subject: "Dinner" } })
+
+    expect(error?.message).toContain("Invalid Agent input data")
+    expect(output).toBeNull()
+    expect(run).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it("does not parse unchanged transformed data again after deferred preparation", async () => {
+    const transform = vi.fn((value: string) => Number(value))
+    const run = vi.fn(({ input }: { input: { data?: unknown } }) => input.data)
+    const agent = defineAgent({
+      capabilities: [{ id: "prepared", prepare() {} }],
+      data: v.object({ count: v.pipe(v.string(), v.transform(transform)) }),
+      driver: { run },
+      intercept: () => undefined,
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { count: "2" } })
+
+    expect(error).toBeNull()
+    expect(output).toEqual({ count: 2 })
+    expect(transform).toHaveBeenCalledOnce()
+  })
+
+  it("preserves preparation hook ordering after async interception falls through", async () => {
+    const phases: string[] = []
+    const agent = defineAgent({
+      capabilities: [{ id: "hook-prepared", input: () => { phases.push("input") } }],
+      driver: { run: () => "ok" },
+      hooks: {
+        "capability:prepare": () => { phases.push("prepare:before") },
+        "capability:prepare:after": () => { phases.push("prepare:after") },
+      },
+      intercept: async () => { phases.push("intercept"); return undefined },
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { prompt: "go" })
+
+    expect(error).toBeNull()
+    expect(output).toBe("ok")
+    expect(phases).toEqual(["intercept", "prepare:before", "prepare:after", "input"])
+  })
+
+  it("preserves a Response returned by a deferred Capability input phase", async () => {
+    const response = new Response("handled")
+    const run = vi.fn(() => "driver")
+    const close = vi.fn()
+    const agent = defineAgent({
+      capabilities: [{ id: "prepared-response", prepare() {}, input: () => response, close }],
+      driver: { run },
+      intercept: () => undefined,
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { prompt: "go" })
+
+    expect(error).toBeNull()
+    expect(output).toBeInstanceOf(Response)
+    if (!(output instanceof Response)) throw new Error("Expected a handled Response")
+    expect(await output.text()).toBe("handled")
+    expect(run).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it("closes resources when deferred preparation fails", async () => {
+    const close = vi.fn()
+    const run = vi.fn(() => "driver")
+    const agent = defineAgent({
+      capabilities: [{ id: "failed-preparation", prepare: () => { throw new Error("prepare failed") }, close }],
+      driver: { run },
+      intercept: () => undefined,
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { prompt: "go" })
+
+    expect(error?.message).toContain("prepare failed")
+    expect(output).toBeNull()
+    expect(run).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it("does not report unchanged transformed data as changed", async () => {
     const transform = vi.fn((value: string) => Number(value))
     const capability = defineCapability({

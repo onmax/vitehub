@@ -224,9 +224,11 @@ if (output instanceof Response || !('source' in output)) throw new Error('Expect
 // output: { source: 'rule', rule: 'github' | 'billing', label: 'GitHub' | 'Billing' } | { source: 'model', label: string }
 ```
 
-The `runAgent()` output type is the union of the `intercept` return type and the `driver.output` schema output. The caller narrows it with the fields of each result and does not parse the output again. As for any Agent, the type also includes `Response` and `AgentWorkflowRun`, so exclude those first.
+The `runAgent()` output type is the union of the awaited `intercept` return type, excluding the `undefined` fall-through signal, and the `driver.output` schema output. The caller narrows it with the fields of each result and does not parse the output again. As for any Agent, the type also includes `Response` and `AgentWorkflowRun`, so exclude those first.
 
 An intercepted Invocation skips the Driver, tools, and start Capabilities. `agent:finish` hooks receive the intercepted value as `result`. The `agent.invocation.finish` trace event sets `agent.intercepted: true` and records the value as `result.output`. Traces record `input.data` and `result.output` only when the trace content policy is `content`; the `metadata` policy keeps only `input.hasData`.
+
+The Capability pipeline pauses before its first `prepare` callback or preparation hook, and tool resolution waits for interception. When `intercept` returns `undefined`, the pipeline resumes at that point and keeps the configured Capability and phase order. Phases after that point do not run for an intercepted Invocation, so their input or context changes are not available to `intercept`. Data changed by a resumed phase is validated before the Driver runs.
 
 A child Agent that sets `data` or `intercept` replaces the parent value. ViteHub does not merge schemas or compose interceptors.
 

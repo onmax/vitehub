@@ -524,6 +524,57 @@ describe("agent public types", () => {
     })
     // SAFETY: This compile-time fixture intentionally supplies the exact asserted public contract.
     expectTypeOf(runAgentInline(workspaceAgent, {} as AgentRuntimeContext, { data: { from: "a@example.com", subject: "Hi" } })).toEqualTypeOf<Promise<Response | JevDecision | RuleDecision>>()
+
+    const runtimeContext: AgentRuntimeContext = {
+      memo: (_key, create) => create(),
+      runtime: "unknown",
+      waitUntil: () => {},
+    }
+    const driverResult = runAgent(withoutIntercept, {})
+    const fallthrough = defineAgent({
+      data: schemaFor<Email>(),
+      driver: { output: { schema: schemaFor<JevDecision>() }, run: () => "{}" },
+      intercept: () => undefined,
+      runtime: false,
+    })
+    const asyncFallthrough = defineAgent({
+      data: schemaFor<Email>(),
+      driver: { output: { schema: schemaFor<JevDecision>() }, run: () => "{}" },
+      intercept: async () => undefined,
+      runtime: false,
+      workspace: {},
+    })
+    expectTypeOf(runAgentInline(fallthrough, runtimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision>>()
+    expectTypeOf(runAgent(fallthrough, {})).toEqualTypeOf<typeof driverResult>()
+    expectTypeOf(runAgentInline(asyncFallthrough, runtimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision>>()
+    expectTypeOf(runAgent(asyncFallthrough, {})).toEqualTypeOf<typeof driverResult>()
+
+    const replacedWithFallthrough = defineAgent({ extends: agent, intercept: () => undefined })
+    const replacedWithAsyncFallthrough = defineAgent({ preset: "base", presets: { base: configured }, intercept: async () => undefined })
+    expectTypeOf(runAgentInline(replacedWithFallthrough, runtimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision>>()
+    expectTypeOf(runAgent(replacedWithFallthrough, {})).toEqualTypeOf<typeof driverResult>()
+    expectTypeOf(runAgentInline(replacedWithAsyncFallthrough, runtimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision>>()
+    expectTypeOf(runAgent(replacedWithAsyncFallthrough, {})).toEqualTypeOf<typeof driverResult>()
+
+    const asyncIntercept = defineAgent({
+      data: schemaFor<Email>(),
+      driver: { output: { schema: schemaFor<JevDecision>() }, run: () => "{}" },
+      intercept: async ({ data }) => data.from.endsWith("@github.com") ? { add: ["GitHub"], rule: "github" } satisfies RuleDecision : undefined,
+      runtime: false,
+    })
+    expectTypeOf(runAgentInline(asyncIntercept, runtimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision | RuleDecision>>()
+    expectTypeOf(runAgent(asyncIntercept, {})).toEqualTypeOf<typeof standalone>()
+    const asyncLayer = defineAgent({ extends: withoutIntercept, intercept: async ({ data }) => data.from.endsWith("@github.com") ? { add: ["GitHub"], rule: "github" } satisfies RuleDecision : undefined })
+    expectTypeOf(runAgentInline(asyncLayer, runtimeContext, {})).toEqualTypeOf<Promise<Response | JevDecision | RuleDecision>>()
+    expectTypeOf(runAgent(asyncLayer, {})).toEqualTypeOf<typeof standalone>()
+
+    const nullableDriverSettings = { output: { schema: schemaFor<JevDecision | undefined>() }, run: () => undefined }
+    const nullableDriver = defineAgent({ driver: nullableDriverSettings, runtime: false })
+    const nullableOutput = defineAgent({ driver: nullableDriverSettings, intercept: () => undefined, runtime: false })
+    const nullableDriverResult = runAgentInline(nullableDriver, runtimeContext, {})
+    expectTypeOf(runAgentInline(nullableOutput, runtimeContext, {})).toEqualTypeOf<typeof nullableDriverResult>()
+    const nullableLayer = defineAgent({ extends: nullableDriver, intercept: () => undefined })
+    expectTypeOf(runAgentInline(nullableLayer, runtimeContext, {})).toEqualTypeOf<typeof nullableDriverResult>()
   })
 
   it("scopes output correction attempts to Model Drivers", () => {

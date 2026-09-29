@@ -183,7 +183,7 @@ export interface ResolvedAgentCapabilities {
   input: AgentRunInput
   inputDataChanged: boolean
   messages: Message[]
-  prepare?: () => Promise<Response | undefined>
+  prepare?: (input: AgentRunInput) => Promise<ResolvedAgentCapabilities>
   response?: Response
   registries: AgentCapabilityRegistries
   start?: () => Promise<AgentChannelDeliveryEffectIntent[]>
@@ -499,7 +499,7 @@ function isPlainRecord(input: unknown): input is Record<string, unknown> {
 }
 
 function snapshotCapabilityData(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
-  if (!value || typeof value !== "object") return value
+  if (!value || !hasRuntimeType(value, "object")) return value
   const existing = seen.get(value)
   if (existing) return existing
   if (value instanceof Date) return new Date(value.getTime())
@@ -529,7 +529,7 @@ function snapshotCapabilityData(value: unknown, seen = new WeakMap<object, unkno
 
 function capabilityDataEqual(left: unknown, right: unknown, seen = new WeakMap<object, object>()): boolean {
   if (Object.is(left, right)) return true
-  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false
+  if (!left || !right || !hasRuntimeType(left, "object") || !hasRuntimeType(right, "object")) return false
   const matched = seen.get(left)
   if (matched === right) return true
   seen.set(left, right)
@@ -1186,14 +1186,13 @@ export async function resolveAgentCapabilities<
   const inputMessages = getRunMessages(currentInput)
   let messages = memoizeMessageAttachmentData(inputMessages)
   if (messages !== inputMessages) currentInput = withMessages(currentInput, messages)
-  const initialInputDataReference = currentInput.data
-  const initialInputData = snapshotCapabilityData(currentInput.data)
+  let initialInputDataReference = currentInput.data
+  let initialInputData = snapshotCapabilityData(currentInput.data)
   const inputDataChanged = () => currentInput.data !== initialInputDataReference || !capabilityDataEqual(currentInput.data, initialInputData)
   let tools: AgentToolSet | undefined
   const driverContributions: AgentDriverContribution[] = []
   let capabilityScope: Awaited<ReturnType<typeof openAgentCapabilityScope>> | undefined
   const toolTransforms: AgentToolTransform[] = []
-  const deferredPreparation: Array<() => Promise<Response | undefined>> = []
   const initialDeliveryEffectIntents = invocationContext.get(channelDeliveryEffectsContextKey) || []
   const initialFinishDeliveryEffectProviders = invocationContext.get(channelDeliveryFinishEffectsContextKey) || []
   const registries: AgentCapabilityRegistries = {
@@ -1301,271 +1300,263 @@ export async function resolveAgentCapabilities<
     for (const item of capabilityContexts) syncCapabilityWorkspaceContext(item.context)
   }
 
-  try {
-    for (const capability of capabilities) {
-      // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-      await validateCapabilityRuntimeRequirement(capability as AgentCapabilityDefinition, currentWorkspace, workspaceMode)
-      const phases = invocationOptions.phases || defaultCapabilityRuntimePhases
-      const metadataContext = {
-        ...agentInvocationCallbackContextValues(invocationContext),
-        ...runtimeContext,
-        abortSignal: currentInput.abortSignal,
-        actor: invoker,
-        context: invocationContext,
-        driver: { kind: driverKind },
-        fs: currentWorkspace?.fs,
-        invoker,
-        runtimeContext: runtime,
-        workspace: currentWorkspace,
-        workspaceDefinition: currentWorkspaceDefinition,
-        workspaceMaterializationPaths,
-      }
-      let capabilityContext: AgentCapabilityRuntimeContext<TRuntimeConfig, Name> & WorkspaceOverrideRuntime<Name>
-      const input: AgentCapabilityInputContext = {
-        get: () => currentInput,
-        messages: () => messages,
-        set(value) {
-          currentInput = normalizeRunInput(value)
-          const inputMessages = getRunMessages(currentInput)
-          messages = memoizeMessageAttachmentData(inputMessages)
-          if (messages !== inputMessages) currentInput = withMessages(currentInput, messages)
-        },
-        setMessages(value) {
-          messages = memoizeMessageAttachmentData(value)
-          currentInput = withMessages(currentInput, messages)
-        },
-      }
-      // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-      capabilityContext = {
-        ...metadataContext,
-        ...(invocationOptions.driver ? { agentDriver: invocationOptions.driver } : {}),
-        [workspaceOverrideSymbol](nextWorkspace: ReadonlyWorkspaceFacade<Name>) {
-          currentWorkspace = nextWorkspace
-          syncCapabilityWorkspaceContext(capabilityContext)
-        },
-        capability,
-        mode: capability.mode,
-        input,
-        invocation: { input, kind: invocationOptions.invocationKind || "run" },
-        delivery: {
-          effect(intent) {
-            if (!intent || !hasRuntimeType(intent, "object") || !hasRuntimeType(intent.kind, "string") || !intent.kind.trim()) {
-              throw agentDiagnostics.AGENT_R0334({ message: "[vitehub] delivery.effect() requires an effect intent with a non-empty kind." })
-            }
-            const next = [...registries.deliveryEffectIntents, intent]
-            registries.deliveryEffectIntents = next
-            invocationContext.set(channelDeliveryEffectsContextKey, next, { overwrite: true })
-          },
-          finishEffect(effect) {
-            const effects = Array.isArray(effect) ? effect : [effect]
-            if (!hasRuntimeType(effect, "function") && effects.some(effect => !effect || !isRuntimeRecord(effect) || !hasRuntimeType(effect.kind, "string") || !effect.kind.trim())) {
-              throw agentDiagnostics.AGENT_R0335({ message: "[vitehub] delivery.finishEffect() requires an effect intent or resolver." })
-            }
-            const next = [...registries.finishDeliveryEffectProviders, effect]
-            registries.finishDeliveryEffectProviders = next
-            invocationContext.set(channelDeliveryFinishEffectsContextKey, next, { overwrite: true })
-          },
-        },
-        model: {
-          async resolve(model, options) {
-            const resolver = model ?? invocationOptions.model
-            if (resolver === undefined) {
-              throw agentDiagnostics.AGENT_R0336({ message: `[vitehub] ${capability.id}() requires a model option or an agent model.` })
-            }
-            const resolverContext = {
-              ...metadataContext,
-              ...(options?.abortSignal ? { abortSignal: options.abortSignal } : {}),
-              fs: currentWorkspace?.fs,
-              runtimeConfig: runtime.runtimeConfig,
-              workspace: currentWorkspace,
-              workspaceDefinition: currentWorkspaceDefinition,
-            }
-            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-            const resolved = await resolveRuntimeValue(resolver as never, resolverContext as never)
-            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-            return await materializeAgentModel(resolved as never, resolverContext)
-          },
-        },
-        modelExecution: {
-          instrument(instrumentation) {
-            registries.modelExecutionInstrumentation.push(instrumentation)
-          },
-        },
-        output: {
-          extensions: createAgentExtensionReader(new Map()),
-          final(renderer: AgentOutputRenderer, options?: { order?: "last" }) {
-            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-            const resolved = ((result: unknown, extensions = createAgentExtensionReader(new Map())) => renderer(result, {
-              ...capabilityContext,
-              output: {
-                ...capabilityContext.output,
-                extensions,
-              },
-            })) as ResolvedAgentOutputRenderer
-            resolved.order = options?.order
-            resolved.providerCount = registries.outputExtensionProviders.length
-            registries.finalOutputRenderers.push(resolved)
-          },
-          provide(value) {
-            registries.outputExtensionProviders.push({
-              id: capability.id,
-              resolve: hasRuntimeType(value, "function")
-                // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-                ? value as AgentOutputExtensionProvider
-                : () => value,
-            })
-          },
-          render(renderer: AgentOutputRenderer) {
-            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-            const resolved = ((result: unknown, extensions = createAgentExtensionReader(new Map())) => renderer(result, {
-              ...capabilityContext,
-              output: {
-                ...capabilityContext.output,
-                extensions,
-              },
-            })) as ResolvedAgentOutputRenderer
-            resolved.providerCount = registries.outputExtensionProviders.length
-            registries.outputRenderers.push(resolved)
-          },
-        },
-        providerTools: {
-          add(tool) {
-            registries.providerTools.push(tool)
-            recordDriverContribution("provider tools", capability.id, [tool.name])
-          },
-        },
-        finish: {
-          provide(value) {
-            addFinishExtensionProvider(capability.id, value)
-          },
-        },
-        state: {
-          require(name, options) {
-            if (!registries.stateRequirements.some(requirement => requirement.name === name)) {
-              registries.stateRequirements.push({ name, optional: options?.optional })
-            }
-          },
-        },
-        telemetry: {
-          metadata(metadata) {
-            if (!metadata || !hasRuntimeType(metadata, "object") || Array.isArray(metadata)) {
-              throw agentDiagnostics.AGENT_R0337({ message: `[vitehub] Capability "${capability.id}" telemetry.metadata() requires a metadata object.` })
-            }
-            registries.telemetryMetadata.push({ capabilityId: capability.id, metadata })
-          },
-        },
-        inspection: {
-          async set(state) {
-            await setAgentCapabilityInspection(invocationContext, capability.id, {
-              label: capability.inspection?.label ?? capability.id,
-              ...capability.inspection,
-              state,
-            })
-          },
-        },
-        tools: {
-          add(value) {
-            if (!value) return
-            recordDriverContribution("Capability tools", capability.id, Object.keys(value))
-            tools = { ...tools, ...value }
-          },
-          transform(transform) {
-            toolTransforms.push(transform)
-          },
-        },
-        workspace: currentWorkspace,
-      } as AgentCapabilityRuntimeContext<TRuntimeConfig, Name> & WorkspaceOverrideRuntime<Name>
-      if (inspection) {
-        markCapabilityInspection(capabilityContext)
-      }
-      capabilityContexts.push({ capability, context: capabilityContext })
-      if (capability.telemetry) {
-        registries.telemetry.push({ capabilityId: capability.id, registration: capability.telemetry })
-      }
-      if (capability.finish) {
-        addFinishExtensionProvider(
-          capability.id,
-          capability.finish,
-          // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-          (capability as InternalAgentCapabilityDefinition<TRuntimeConfig, Name>)[eagerFinishExtensionSymbol],
-        )
-      }
-
-      for (const [name, trigger] of Object.entries(capability.triggers || {})) {
-        assertTriggerName(name, capability.id)
+  async function* resolve(): AsyncGenerator<ResolvedAgentCapabilities, ResolvedAgentCapabilities> {
+    let preparationDeferred = false
+    try {
+      for (const capability of capabilities) {
         // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-        const id = `${capability.id}.${name}` as const
-        registries.triggers.push({
-          capabilityId: capability.id,
-          // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-          definition: trigger as never,
-          id,
-          input: trigger.input,
-          invoke: input => trigger.invoke({
-            ...runtimeContext,
-            actor: invoker,
-            capability,
-            trigger: {
-              capabilityId: capability.id,
-              id,
-              name,
-              source: "capability",
-            },
-          // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-          }, input as never),
-          name,
-          output: trigger.output,
-          source: "capability",
-        })
-      }
-
-      if (capability.close || options?.hooks?.["capability:close"] || options?.hooks?.["capability:close:after"]) {
-        capabilityScope ??= await openAgentCapabilityScope()
-        await capabilityScope.add(async () => {
-          await callHooks("capability:close", capabilityContext, options?.hooks)
-          if (capability.close) await runCapabilityCallback(capability.id, "close", () => capability.close!(capabilityContext))
-          await callHooks("capability:close:after", capabilityContext, options?.hooks)
-        })
-      }
-
-      for (const phase of phases) {
-        if (phase === "prepare" && invocationOptions.deferPreparation) {
-          deferredPreparation.push(async () => {
-            await callHooks(`capability:${phase}`, capabilityContext, options?.hooks)
-            const callback = capability[phase]
-            const result: unknown = callback
-              ? await runCapabilityCallback(capability.id, phase, () => callback.call(capability, capabilityContext))
-              : undefined
-            await callHooks(`capability:${phase}:after`, capabilityContext, options?.hooks)
-            return result instanceof Response ? result : undefined
-          })
-          continue
+        await validateCapabilityRuntimeRequirement(capability as AgentCapabilityDefinition, currentWorkspace, workspaceMode)
+        const phases = invocationOptions.phases || defaultCapabilityRuntimePhases
+        const metadataContext = {
+          ...agentInvocationCallbackContextValues(invocationContext),
+          ...runtimeContext,
+          abortSignal: currentInput.abortSignal,
+          actor: invoker,
+          context: invocationContext,
+          driver: { kind: driverKind },
+          fs: currentWorkspace?.fs,
+          invoker,
+          runtimeContext: runtime,
+          workspace: currentWorkspace,
+          workspaceDefinition: currentWorkspaceDefinition,
+          workspaceMaterializationPaths,
         }
-        await callHooks(`capability:${phase}`, capabilityContext, options?.hooks)
-        const callback = capability[phase]
-        const result = callback
-          ? await runCapabilityCallback(capability.id, phase, () => callback.call(capability, capabilityContext))
-          : undefined
-        await callHooks(`capability:${phase}:after`, capabilityContext, options?.hooks)
-        if (result instanceof Response) {
-          return {
-            close: closeCapabilities,
-            driverContributions,
-            hasCloseCallbacks: Boolean(capabilityScope),
-            input: currentInput,
-            inputDataChanged: inputDataChanged(),
-            messages,
-            response: result,
-            registries,
-            start,
-            toolTransforms,
-            tools,
-            workspaceMaterializationPaths,
-            workspace: currentWorkspace,
+        let capabilityContext: AgentCapabilityRuntimeContext<TRuntimeConfig, Name> & WorkspaceOverrideRuntime<Name>
+        const input: AgentCapabilityInputContext = {
+          get: () => currentInput,
+          messages: () => messages,
+          set(value) {
+            currentInput = normalizeRunInput(value)
+            const inputMessages = getRunMessages(currentInput)
+            messages = memoizeMessageAttachmentData(inputMessages)
+            if (messages !== inputMessages) currentInput = withMessages(currentInput, messages)
+          },
+          setMessages(value) {
+            messages = memoizeMessageAttachmentData(value)
+            currentInput = withMessages(currentInput, messages)
+          },
+        }
+        // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+        capabilityContext = {
+          ...metadataContext,
+          ...(invocationOptions.driver ? { agentDriver: invocationOptions.driver } : {}),
+          [workspaceOverrideSymbol](nextWorkspace: ReadonlyWorkspaceFacade<Name>) {
+            currentWorkspace = nextWorkspace
+            syncCapabilityWorkspaceContext(capabilityContext)
+          },
+          capability,
+          mode: capability.mode,
+          input,
+          invocation: { input, kind: invocationOptions.invocationKind || "run" },
+          delivery: {
+            effect(intent) {
+              if (!intent || !hasRuntimeType(intent, "object") || !hasRuntimeType(intent.kind, "string") || !intent.kind.trim()) {
+                throw agentDiagnostics.AGENT_R0334({ message: "[vitehub] delivery.effect() requires an effect intent with a non-empty kind." })
+              }
+              const next = [...registries.deliveryEffectIntents, intent]
+              registries.deliveryEffectIntents = next
+              invocationContext.set(channelDeliveryEffectsContextKey, next, { overwrite: true })
+            },
+            finishEffect(effect) {
+              const effects = Array.isArray(effect) ? effect : [effect]
+              if (!hasRuntimeType(effect, "function") && effects.some(effect => !effect || !isRuntimeRecord(effect) || !hasRuntimeType(effect.kind, "string") || !effect.kind.trim())) {
+                throw agentDiagnostics.AGENT_R0335({ message: "[vitehub] delivery.finishEffect() requires an effect intent or resolver." })
+              }
+              const next = [...registries.finishDeliveryEffectProviders, effect]
+              registries.finishDeliveryEffectProviders = next
+              invocationContext.set(channelDeliveryFinishEffectsContextKey, next, { overwrite: true })
+            },
+          },
+          model: {
+            async resolve(model, options) {
+              const resolver = model ?? invocationOptions.model
+              if (resolver === undefined) {
+                throw agentDiagnostics.AGENT_R0336({ message: `[vitehub] ${capability.id}() requires a model option or an agent model.` })
+              }
+              const resolverContext = {
+                ...metadataContext,
+                ...(options?.abortSignal ? { abortSignal: options.abortSignal } : {}),
+                fs: currentWorkspace?.fs,
+                runtimeConfig: runtime.runtimeConfig,
+                workspace: currentWorkspace,
+                workspaceDefinition: currentWorkspaceDefinition,
+              }
+              // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+              const resolved = await resolveRuntimeValue(resolver as never, resolverContext as never)
+              // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+              return await materializeAgentModel(resolved as never, resolverContext)
+            },
+          },
+          modelExecution: {
+            instrument(instrumentation) {
+              registries.modelExecutionInstrumentation.push(instrumentation)
+            },
+          },
+          output: {
+            extensions: createAgentExtensionReader(new Map()),
+            final(renderer: AgentOutputRenderer, options?: { order?: "last" }) {
+              // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+              const resolved = ((result: unknown, extensions = createAgentExtensionReader(new Map())) => renderer(result, {
+                ...capabilityContext,
+                output: {
+                  ...capabilityContext.output,
+                  extensions,
+                },
+              })) as ResolvedAgentOutputRenderer
+              resolved.order = options?.order
+              resolved.providerCount = registries.outputExtensionProviders.length
+              registries.finalOutputRenderers.push(resolved)
+            },
+            provide(value) {
+              registries.outputExtensionProviders.push({
+                id: capability.id,
+                resolve: hasRuntimeType(value, "function")
+                  // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+                  ? value as AgentOutputExtensionProvider
+                  : () => value,
+              })
+            },
+            render(renderer: AgentOutputRenderer) {
+              // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+              const resolved = ((result: unknown, extensions = createAgentExtensionReader(new Map())) => renderer(result, {
+                ...capabilityContext,
+                output: {
+                  ...capabilityContext.output,
+                  extensions,
+                },
+              })) as ResolvedAgentOutputRenderer
+              resolved.providerCount = registries.outputExtensionProviders.length
+              registries.outputRenderers.push(resolved)
+            },
+          },
+          providerTools: {
+            add(tool) {
+              registries.providerTools.push(tool)
+              recordDriverContribution("provider tools", capability.id, [tool.name])
+            },
+          },
+          finish: {
+            provide(value) {
+              addFinishExtensionProvider(capability.id, value)
+            },
+          },
+          state: {
+            require(name, options) {
+              if (!registries.stateRequirements.some(requirement => requirement.name === name)) {
+                registries.stateRequirements.push({ name, optional: options?.optional })
+              }
+            },
+          },
+          telemetry: {
+            metadata(metadata) {
+              if (!metadata || !hasRuntimeType(metadata, "object") || Array.isArray(metadata)) {
+                throw agentDiagnostics.AGENT_R0337({ message: `[vitehub] Capability "${capability.id}" telemetry.metadata() requires a metadata object.` })
+              }
+              registries.telemetryMetadata.push({ capabilityId: capability.id, metadata })
+            },
+          },
+          inspection: {
+            async set(state) {
+              await setAgentCapabilityInspection(invocationContext, capability.id, {
+                label: capability.inspection?.label ?? capability.id,
+                ...capability.inspection,
+                state,
+              })
+            },
+          },
+          tools: {
+            add(value) {
+              if (!value) return
+              recordDriverContribution("Capability tools", capability.id, Object.keys(value))
+              tools = { ...tools, ...value }
+            },
+            transform(transform) {
+              toolTransforms.push(transform)
+            },
+          },
+          workspace: currentWorkspace,
+        } as AgentCapabilityRuntimeContext<TRuntimeConfig, Name> & WorkspaceOverrideRuntime<Name>
+        if (inspection) {
+          markCapabilityInspection(capabilityContext)
+        }
+        capabilityContexts.push({ capability, context: capabilityContext })
+        if (capability.telemetry) {
+          registries.telemetry.push({ capabilityId: capability.id, registration: capability.telemetry })
+        }
+        if (capability.finish) {
+          addFinishExtensionProvider(
+            capability.id,
+            capability.finish,
+            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+            (capability as InternalAgentCapabilityDefinition<TRuntimeConfig, Name>)[eagerFinishExtensionSymbol],
+          )
+        }
+
+        for (const [name, trigger] of Object.entries(capability.triggers || {})) {
+          assertTriggerName(name, capability.id)
+          // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+          const id = `${capability.id}.${name}` as const
+          registries.triggers.push({
+            capabilityId: capability.id,
+            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+            definition: trigger as never,
+            id,
+            input: trigger.input,
+            invoke: input => trigger.invoke({
+              ...runtimeContext,
+              actor: invoker,
+              capability,
+              trigger: {
+                capabilityId: capability.id,
+                id,
+                name,
+                source: "capability",
+              },
+            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+            }, input as never),
+            name,
+            output: trigger.output,
+            source: "capability",
+          })
+        }
+
+        if (capability.close || options?.hooks?.["capability:close"] || options?.hooks?.["capability:close:after"]) {
+          capabilityScope ??= await openAgentCapabilityScope()
+          await capabilityScope.add(async () => {
+            await callHooks("capability:close", capabilityContext, options?.hooks)
+            if (capability.close) await runCapabilityCallback(capability.id, "close", () => capability.close!(capabilityContext))
+            await callHooks("capability:close:after", capabilityContext, options?.hooks)
+          })
+        }
+
+        for (const phase of phases) {
+          if (phase === "prepare" && invocationOptions.deferPreparation && !preparationDeferred
+            && (capability.prepare || options?.hooks?.["capability:prepare"] || options?.hooks?.["capability:prepare:after"])) {
+            preparationDeferred = true
+            yield resolved()
+          }
+          await callHooks(`capability:${phase}`, capabilityContext, options?.hooks)
+          const callback = capability[phase]
+          const result = callback
+            ? await runCapabilityCallback(capability.id, phase, () => callback.call(capability, capabilityContext))
+            : undefined
+          await callHooks(`capability:${phase}:after`, capabilityContext, options?.hooks)
+          if (result instanceof Response) {
+            return resolved(result)
           }
         }
       }
+      if (invocationOptions.deferPreparation && !preparationDeferred) yield resolved()
+      await resolveTools()
+      return resolved()
     }
+    catch (error) {
+      if (capabilityScope) return await capabilityScope.failSetup(error)
+      throw error
+    }
+  }
+
+  async function resolveTools() {
     await applyWorkspaceContributions()
     for (const { capability, context } of capabilityContexts) {
       let cli: AgentCapabilityCliContribution<TRuntimeConfig, Name> | undefined
@@ -1598,35 +1589,39 @@ export async function resolveAgentCapabilities<
       }
     }
   }
-  catch (error) {
-    if (capabilityScope) return await capabilityScope.failSetup(error)
-    throw error
+
+  function resolved(response?: Response): ResolvedAgentCapabilities {
+    return {
+      close: closeCapabilities,
+      driverContributions,
+      hasCloseCallbacks: Boolean(capabilityScope),
+      input: currentInput,
+      inputDataChanged: inputDataChanged(),
+      messages,
+      response,
+      registries,
+      start,
+      toolTransforms,
+      tools,
+      workspaceMaterializationPaths,
+      workspace: currentWorkspace,
+      workspaceDefinition: currentWorkspaceDefinition,
+    }
   }
 
-  return {
-    close: closeCapabilities,
-    driverContributions,
-    hasCloseCallbacks: Boolean(capabilityScope),
-    input: currentInput,
-    inputDataChanged: inputDataChanged(),
-    messages,
-    prepare: deferredPreparation.length
-      ? async () => {
-          for (const prepare of deferredPreparation) {
-            const response = await prepare()
-            if (response) return response
-          }
-          return undefined
-        }
-      : undefined,
-    registries,
-    start,
-    toolTransforms,
-    tools,
-    workspaceMaterializationPaths,
-    workspace: currentWorkspace,
-    workspaceDefinition: currentWorkspaceDefinition,
+  const resolution = resolve()
+  const first = await resolution.next()
+  const capabilitiesResult = first.value
+  if (!first.done) {
+    capabilitiesResult.prepare = async (input) => {
+      currentInput = input
+      initialInputDataReference = currentInput.data
+      initialInputData = snapshotCapabilityData(currentInput.data)
+      const continued = await resolution.next()
+      return continued.value
+    }
   }
+  return capabilitiesResult
 }
 
 export async function resolveStaticCapabilityTools<
