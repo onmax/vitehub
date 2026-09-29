@@ -1,4 +1,4 @@
-import { createServer } from "node:http"
+import { createServer, request } from "node:http"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
@@ -9,7 +9,7 @@ import {
   resolveViteHubDevServerUrl,
   viteHubDevEndpointUrl,
 } from "../src/cli.ts"
-import { registerViteHubDevEndpoint, validateViteHubDevRequest } from "../src/dev-endpoint.ts"
+import { isViteHubDevHostAllowed, registerViteHubDevEndpoint, validateViteHubDevRequest } from "../src/dev-endpoint.ts"
 
 import type { IncomingMessage, Server, ServerResponse } from "node:http"
 import type { ViteHubDevTargetArgs } from "../src/cli.ts"
@@ -136,11 +136,11 @@ describe("guarded dev endpoint", () => {
     http = undefined
   })
 
-  async function listen(options: { methods?: readonly string[] }): Promise<{ handled: string[], url: string }> {
+  async function listen(options: { methods?: readonly string[], server?: ViteHubDevEndpointServer["config"]["server"] }): Promise<{ handled: string[], url: string }> {
     const handlers: Array<(req: IncomingMessage, res: ServerResponse, next: () => void) => void> = []
     const handled: string[] = []
     const server: ViteHubDevEndpointServer = {
-      config: { server: {} },
+      config: { server: options.server ?? {} },
       middlewares: { use: handler => handlers.push(handler) },
       resolvedUrls: null,
     }
@@ -203,9 +203,67 @@ describe("guarded dev endpoint", () => {
   })
 
   it("derives the request origin from the host header", () => {
-    const server = { config: { server: { port: 5173 } }, resolvedUrls: { local: ["https://localhost:5173/"] } }
+    const server = { config: { server: { allowedHosts: ["example.test"], port: 5173 } }, resolvedUrls: { local: ["https://localhost:5173/"] } }
     const req = { headers: { host: "example.test:5173", origin: "https://example.test:5173", [endpoint.header]: "1" }, method: "GET" }
     // SAFETY: the guard reads only headers and method from the request.
     expect(validateViteHubDevRequest(server, req as unknown as IncomingMessage, { ...endpoint, label: "Test Dev" })).toBeUndefined()
+  })
+
+  // Node fetch does not send a custom Host header, so these requests use node:http.
+  function requestWithHost(url: string, host: string): Promise<[number | undefined, string]> {
+    return new Promise((resolve, reject) => {
+      const req = request(`${url}${endpoint.route}`, {
+        headers: { host, origin: `http://${host}`, [endpoint.header]: "1" },
+      }, (res) => {
+        let body = ""
+        res.setEncoding("utf8")
+        res.on("data", (chunk: string) => { body += chunk })
+        res.on("end", () => resolve([res.statusCode, body]))
+      })
+      req.on("error", reject)
+      req.end()
+    })
+  }
+
+  it("rejects a DNS rebinding host with a matching origin before the handler", async () => {
+    const { handled, url } = await listen({})
+    const port = new URL(url).port
+    expect(await requestWithHost(url, `attacker.example:${port}`)).toEqual([403, "Forbidden Test Dev host."])
+    expect(await requestWithHost(url, `localhost:${port}`)).toEqual([200, "handled"])
+    expect(await requestWithHost(url, `127.0.0.1:${port}`)).toEqual([200, "handled"])
+    expect(handled).toEqual(["GET", "GET"])
+  })
+
+  it("accepts configured allowed hosts and allowedHosts: true", async () => {
+    const configured = await listen({ server: { allowedHosts: ["app.test", ".tunnel.test"] } })
+    const port = new URL(configured.url).port
+    expect(await requestWithHost(configured.url, `app.test:${port}`)).toEqual([200, "handled"])
+    expect(await requestWithHost(configured.url, `dev.tunnel.test:${port}`)).toEqual([200, "handled"])
+    expect(await requestWithHost(configured.url, `attacker.example:${port}`)).toEqual([403, "Forbidden Test Dev host."])
+    await new Promise<void>(resolve => http!.close(() => resolve()))
+    const all = await listen({ server: { allowedHosts: true } })
+    expect(await requestWithHost(all.url, `attacker.example:${new URL(all.url).port}`)).toEqual([200, "handled"])
+  })
+
+  it("matches Vite host validation rules", () => {
+    const allowed = (host: string | undefined, server: ViteHubDevEndpointServer["config"]["server"] = {}) =>
+      // SAFETY: the host check reads only the host header from the request.
+      isViteHubDevHostAllowed({ config: { server } }, { headers: host === undefined ? {} : { host } } as unknown as IncomingMessage)
+    expect(allowed(undefined)).toBe(true)
+    expect(allowed("localhost")).toBe(true)
+    expect(allowed("app.localhost:5173")).toBe(true)
+    expect(allowed("127.0.0.1:5173")).toBe(true)
+    expect(allowed("192.168.1.20:5173")).toBe(true)
+    expect(allowed("[::1]:5173")).toBe(true)
+    expect(allowed("[not-ip]:5173")).toBe(false)
+    expect(allowed("attacker.example:5173")).toBe(false)
+    expect(allowed("localhost.attacker.example")).toBe(false)
+    expect(allowed("tunnel.test", { allowedHosts: [".tunnel.test"] })).toBe(true)
+    expect(allowed("eviltunnel.test", { allowedHosts: [".tunnel.test"] })).toBe(false)
+    expect(allowed("sub.app.test", { allowedHosts: ["app.test"] })).toBe(false)
+    expect(allowed("machine.lan:5173", { host: "machine.lan" })).toBe(true)
+    expect(allowed("machine.lan:5173", { host: true })).toBe(false)
+    expect(allowed("attacker.example", { allowedHosts: true })).toBe(true)
+    expect(allowed("attacker.example", { https: {} })).toBe(true)
   })
 })
