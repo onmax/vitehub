@@ -25,13 +25,16 @@ export type RateLimitIdentityResolver = (
   context: AgentCapabilityRuntimeContext,
 ) => MaybePromise<string | null | undefined>
 
+/** The Rate Limiter operations that the Capability uses. A limiter from `createRateLimiter()` satisfies it. */
+export type RateLimitCapabilityLimiter = Pick<RateLimiter, "capabilities" | "consume" | "policy">
+
 export type RateLimitLimiter =
-  | RateLimiter
+  | RateLimitCapabilityLimiter
   | RateLimitLimiterResolver
 
 export type RateLimitLimiterResolver = (
   context: AgentCapabilityRuntimeContext,
-) => MaybePromise<RateLimiter>
+) => MaybePromise<RateLimitCapabilityLimiter>
 
 interface RateLimitDecisionContext {
   capabilityId: string
@@ -50,7 +53,7 @@ export type RateLimitDecision = WithRateLimitDecisionContext<CoreRateLimitDecisi
 export interface RateLimitEvent {
   context: AgentCapabilityRuntimeContext
   decision: RateLimitDecision
-  limiter: RateLimiter
+  limiter: RateLimitCapabilityLimiter
 }
 
 export interface RateLimitOptions {
@@ -184,7 +187,7 @@ async function resolveScope(
 async function resolveLimiter(
   limiter: RateLimitLimiter,
   context: AgentCapabilityRuntimeContext,
-): Promise<RateLimiter> {
+): Promise<RateLimitCapabilityLimiter> {
   const resolved = typeof limiter === "function" ? await limiter(context) : limiter
   if (!resolved || typeof resolved.consume !== "function") {
     throw agentDiagnostics.AGENT_R0162({ message: "[vitehub] rateLimit({ limiter }) must be a RateLimiter." })
