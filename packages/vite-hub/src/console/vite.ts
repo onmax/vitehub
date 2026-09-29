@@ -382,7 +382,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         kit.addHandler({ handler: consoleAuthHandlers.route, route: "/api/_vitehub/console/auth/**" })
         kit.addHandler({ handler: consoleAuthHandlers.middleware, middleware: true, route: "/**" })
       }
-      addConsoleDevframeHandler(kit.config, consoleRuntimeRoot)
+      addConsoleDevframeHandler(kit.config, consoleRuntimeRoot, { connections: sections.includes("connections") })
       if (Array.isArray(kit.config.plugins)) {
         const plugins = kit.config.plugins.filter(candidate => !generatedConsolePluginRegistration(candidate))
         kit.config.plugins.splice(0, kit.config.plugins.length, ...plugins)
@@ -443,7 +443,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         if (viteConfig.workspace) sections = [...sections, "workspaces"]
       }
       const nitro = viteConfig.nitro ??= {}
-      addConsoleDevframeHandler(nitro, consoleRuntimeRoot)
+      addConsoleDevframeHandler(nitro, consoleRuntimeRoot, { connections: sections.includes("connections") })
       generatedPlugin ||= resolveGeneratedConsolePlugin(config.root, fixture, options.invocationRootState)
       // SAFETY: VITEHUB_SERVER_DIRS is ViteHub-owned config state populated with string paths.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]

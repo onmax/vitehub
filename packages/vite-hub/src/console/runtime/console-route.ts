@@ -40,6 +40,7 @@ export function resolveConsoleRouteName(currentRouteName: string | symbol | null
     "vitehub-console-blob",
     "vitehub-console-kv",
     "vitehub-console-env",
+    "vitehub-console-connections",
     "vitehub-console",
   ].find(
     (routeName) => currentRouteName.startsWith(routeName),

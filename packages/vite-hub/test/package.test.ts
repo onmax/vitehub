@@ -240,6 +240,7 @@ describe("framework package contract", () => {
       "./console/auth/client",
       "./console/auth/inline",
       "./console/blob",
+      "./console/connections",
       "./console/database",
       "./console/definitions",
       "./console/env",

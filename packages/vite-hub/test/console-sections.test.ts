@@ -44,6 +44,8 @@ describe("Console section preferences", () => {
     expect(resolveConsoleSectionIds({})).toEqual([])
     expect(resolveConsoleSectionIds({ env: true })).toEqual(["env"])
     expect(resolveConsoleSectionIds({ env: false })).toEqual([])
+    expect(resolveConsoleSectionIds({ connections: {}, env: true })).toEqual(["env", "connections"])
+    expect(resolveConsoleSectionIds({ connections: false })).toEqual([])
   })
 
   it("prioritizes the last active section without losing configured sections", () => {
