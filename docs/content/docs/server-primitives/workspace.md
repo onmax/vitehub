@@ -316,6 +316,8 @@ Stores can return `revision` from `stat()` to identify a stored file version. Th
 | writable facade | `diff`, `snapshot`, `history.checkpoint`, `history.rebase`, `materializeSources`, `sync`, `startSession`, optional Store metadata methods `getMeta` and `setMeta`, and `tools` |
 | tools | default tools, `tools.inspect(options)`, `tools.write(options)`, `tools.none()` |
 
+Workspace shell tools do not permit controlled `curl` by default. Pass `sourceRequests: true` to `createWorkspaceTools(workspace, { sourceRequests: true })` or `workspace.tools.inspect({ sourceRequests: true })` to allow requests to visible Source targets. The Agent `workspaceShell()` Capability explicitly enables these scoped requests.
+
 ### Runtime method options
 
 | Method | Options | Behavior |

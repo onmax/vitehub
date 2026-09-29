@@ -48,8 +48,8 @@ export function workspaceShell(options: WorkspaceShellOptions = {}): AgentCapabi
         ...(driver?.kind === "provider"
           ? {}
           : mode === "write" && "write" in workspace.tools
-            ? (workspace.tools as unknown as { write: () => AgentToolSet }).write()
-            : workspace.tools.inspect()) as AgentToolSet,
+            ? (workspace.tools as unknown as { write: (options: { sourceRequests: boolean }) => AgentToolSet }).write({ sourceRequests: true })
+            : workspace.tools.inspect({ sourceRequests: true })) as AgentToolSet,
         ...(commands ? workspaceCommandTools(commands, mode, timeout, workspace, { context }) : {}),
       }
     },

@@ -322,7 +322,7 @@ describe("createWorkspaceTools", () => {
         stdout: "session\n",
       })),
     } as unknown as WorkspaceSession))
-    const tools = createWorkspaceTools(workspace)
+    const tools = createWorkspaceTools(workspace, { sourceRequests: true })
 
     expect(tools.shell.description).toContain("controlled `curl`")
     expect(tools.shell.description).toContain(".vitehub/sources/*.json")
@@ -377,7 +377,7 @@ describe("createWorkspaceTools", () => {
       store: { provider: "memory" },
     })
 
-    await expect(runShell(createWorkspaceTools(workspace), "curl -d '{\"region\":\"eu\"}' https://portal.example.com/runtime/inventory-health")).resolves.toMatchObject({
+    await expect(runShell(createWorkspaceTools(workspace, { sourceRequests: true }), "curl -d '{\"region\":\"eu\"}' https://portal.example.com/runtime/inventory-health")).resolves.toMatchObject({
       event: "command_finished",
       exitCode: 0,
     })
@@ -398,7 +398,16 @@ describe("createWorkspaceTools", () => {
       store: { provider: "memory" },
     })
 
-    await expect(runShell(createWorkspaceTools(workspace), "curl 'https://portal.example.com/runtime/items?page=2'")).resolves.toMatchObject({
+    const tools = createWorkspaceTools(workspace, { operations: { list: false, read: false, search: true } })
+    expect(tools.shell.description).not.toContain("controlled `curl`")
+    await expect(runShell(tools, "curl 'https://portal.example.com/runtime/items?page=2'")).resolves.toMatchObject({
+      event: "policy_denied",
+      exitCode: 126,
+      stderr: expect.stringContaining("Unsupported workspace shell command: curl"),
+    })
+    expect(request).not.toHaveBeenCalled()
+
+    await expect(runShell(createWorkspaceTools(workspace, { sourceRequests: true }), "curl 'https://portal.example.com/runtime/items?page=2'")).resolves.toMatchObject({
       event: "command_finished",
       exitCode: 0,
     })

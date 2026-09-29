@@ -133,6 +133,7 @@ export interface WorkspaceToolOptions<Operations extends WorkspaceToolOperations
   cwd?: string
   executionProvider?: ShellExecutionProvider | (() => MaybePromise<ShellExecutionProvider | undefined>)
   operations?: Operations
+  sourceRequests?: boolean
 }
 
 export type EnabledReadCapability<Operations, Key extends keyof WorkspaceReadOperations> = Operations extends Record<Key, infer Value>
@@ -379,7 +380,7 @@ async function runShellCommand(
   const { createReadonlyWorkspaceFs, runWorkspaceInspectionCommand } = await loadWorkspaceShellModule() as WorkspaceShellModule
   const inspectionOptions = {
     broadSearchPaths: options.broadSearchPaths,
-    commands: networkGrants ? [...options.commands, "curl"] : options.commands,
+    commands: options.commands,
     cwd: options.cwd,
     fs: createReadonlyWorkspaceFs(input),
     maxOutputLength: options.maxOutputLength,
@@ -592,6 +593,7 @@ export function createWorkspaceTools<Operations extends WorkspaceToolOperations 
     timeout: options.timeout,
     write: resolveWriteOperations(options.operations?.write),
   }
+  if (options.sourceRequests && getWorkspaceSourceRequestExecution(input)) resolved.commands.push("curl")
   let shellCalls = 0
   const writeEnabled = Object.values(resolved.write).some(Boolean)
 
@@ -608,7 +610,7 @@ export function createWorkspaceTools<Operations extends WorkspaceToolOperations 
   if (resolved.commands.length) {
     result.shell = tool({
       description: describeShellCommands(resolved.commands, {
-        sourceRequests: Boolean(getWorkspaceSourceRequestExecution(input)),
+        sourceRequests: resolved.commands.includes("curl"),
       }),
       inputSchema: jsonSchema<{ command: string }>({
         additionalProperties: false,
