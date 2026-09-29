@@ -609,4 +609,149 @@ export default function (_options, nuxt) {
     const raw = await readFile(join(rootDir, ".vitehub", "provision.json"), "utf8")
     expect(JSON.parse(raw)).toEqual({ cloudflare: { test: { demo: "id-1" } } })
   })
+
+  it("prints one JSON result for provision run", async () => {
+    const rootDir = await createTempDir()
+    const apply = vi.fn(async () => ({ ids: { cloudflare: { test: { demo: "id-1" } } } }))
+    const stdout = stream()
+
+    const exitCode = await runViteHubCli({
+      args: ["provision", "run", "--provider", "cloudflare", "--json"],
+      cwd: rootDir,
+      env: { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token" },
+      loadConfig: async () => ({ plugins: [provisionPlugin(apply)], root: rootDir }),
+      stdout,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(apply).toHaveBeenCalledOnce()
+    expect(stdout.output()).not.toContain("secret-token")
+    expect(JSON.parse(stdout.output())).toEqual({
+      actions: [{ exists: false, kind: "test-resource", name: "demo", step: "test:cloudflare" }],
+      ids: { test: { demo: "id-1" } },
+      mode: "apply",
+      provider: "cloudflare",
+      schemaVersion: 1,
+      stateFile: ".vitehub/provision.json",
+      warnings: [],
+    })
+  })
+
+  it("prints the dry-run plan as JSON and keeps step messages off stdout", async () => {
+    const rootDir = await createTempDir()
+    const apply = vi.fn(async () => ({}))
+    const stdout = stream()
+    const stderr = stream()
+    const plan = vi.fn(async (context: { logger: { log: (message: string) => void, warn: (message: string) => void } }) => {
+      context.logger.log("test: listing resources")
+      context.logger.warn("test: skipping optional lookup")
+      return [{ kind: "test-resource", name: "demo", exists: true, apply }]
+    })
+
+    const exitCode = await runViteHubCli({
+      args: ["provision", "run", "--provider", "cloudflare", "--dry-run", "--json"],
+      cwd: rootDir,
+      env: {},
+      loadConfig: async () => ({
+        plugins: [{ vitehub: { cli: { namespaces: [], provision: [{ id: "test:cloudflare", provider: "cloudflare", plan }] } } }],
+        root: rootDir,
+      }),
+      stderr,
+      stdout,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(apply).not.toHaveBeenCalled()
+    expect(stderr.output()).toBe("test: listing resources\n")
+    expect(JSON.parse(stdout.output())).toEqual({
+      actions: [{ exists: true, kind: "test-resource", name: "demo", step: "test:cloudflare" }],
+      ids: {},
+      mode: "dry-run",
+      provider: "cloudflare",
+      schemaVersion: 1,
+      stateFile: null,
+      warnings: ["test: skipping optional lookup"],
+    })
+  })
+
+  it("shows recorded ids and pending actions without applying", async () => {
+    const rootDir = await createTempDir()
+    await mkdir(join(rootDir, ".vitehub"), { recursive: true })
+    await writeFile(join(rootDir, ".vitehub", "provision.json"), JSON.stringify({
+      cloudflare: { d1: { default: "database-id" } },
+      vercel: { other: { key: "vercel-id" } },
+    }))
+    const apply = vi.fn(async () => ({}))
+    const env = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token" }
+    const loadConfig = async () => ({ plugins: [provisionPlugin(apply)], root: rootDir })
+
+    const human = stream()
+    await expect(runViteHubCli({ args: ["provision", "status", "--provider", "cloudflare"], cwd: rootDir, env, loadConfig, stdout: human }))
+      .resolves.toBe(0)
+    expect(human.output()).toBe([
+      "recorded cloudflare ids (.vitehub/provision.json):",
+      "d1\tdefault\tdatabase-id",
+      "create\ttest-resource\tdemo",
+      "plan: 1 pending action. Run `vitehub provision run --provider cloudflare` to apply.",
+      "",
+    ].join("\n"))
+
+    const json = stream()
+    await expect(runViteHubCli({ args: ["provision", "status", "--provider=cloudflare", "--json"], cwd: rootDir, env, loadConfig, stdout: json }))
+      .resolves.toBe(0)
+    expect(json.output()).not.toContain("secret-token")
+    expect(JSON.parse(json.output())).toEqual({
+      plan: {
+        actions: [{ exists: false, kind: "test-resource", name: "demo", step: "test:cloudflare" }],
+        checked: true,
+        pending: 1,
+      },
+      provider: "cloudflare",
+      recorded: { d1: { default: "database-id" } },
+      schemaVersion: 1,
+      stateFile: ".vitehub/provision.json",
+      warnings: [],
+    })
+    expect(apply).not.toHaveBeenCalled()
+  })
+
+  it("reports an unchecked status plan when provider credentials are missing", async () => {
+    const rootDir = await createTempDir()
+    const plan = vi.fn(async () => [])
+    const loadConfig = async () => ({
+      plugins: [{ vitehub: { cli: { namespaces: [], provision: [{ id: "test:cloudflare", provider: "cloudflare", plan }] } } }],
+      root: rootDir,
+    })
+
+    const human = stream()
+    const stderr = stream()
+    await expect(runViteHubCli({ args: ["provision", "status", "--provider", "cloudflare"], cwd: rootDir, env: {}, loadConfig, stderr, stdout: human }))
+      .resolves.toBe(0)
+    expect(human.output()).toBe("recorded cloudflare ids: none in .vitehub/provision.json\nplan: not checked\n")
+    expect(stderr.output()).toContain("missing CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN")
+
+    const json = stream()
+    await expect(runViteHubCli({ args: ["provision", "status", "--provider", "cloudflare", "--json"], cwd: rootDir, env: {}, loadConfig, stdout: json }))
+      .resolves.toBe(0)
+    expect(JSON.parse(json.output())).toMatchObject({
+      plan: { actions: [], checked: false, pending: 0 },
+      recorded: {},
+      warnings: ["provision: plan not checked, missing CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN."],
+    })
+    expect(plan).not.toHaveBeenCalled()
+  })
+
+  it("rejects --dry-run for provision status", async () => {
+    const stderr = stream()
+    const exitCode = await runViteHubCli({
+      args: ["provision", "status", "--provider", "cloudflare", "--dry-run"],
+      loadConfig: async () => ({ plugins: [], root: "/repo" }),
+      stderr,
+      stdout: stream(),
+    })
+
+    expect(exitCode).toBe(1)
+    expect(stderr.output()).toContain("Unknown provision argument: --dry-run")
+    expect(stderr.output()).toContain("Usage: vitehub provision status")
+  })
 })

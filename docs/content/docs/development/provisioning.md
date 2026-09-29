@@ -50,6 +50,66 @@ Vite Integrations may read that file as a binding-id source during dev or build.
 }
 ```
 
+## Check provision status
+
+`provision status` shows the ids recorded in `.vitehub/provision.json` for one provider and the actions that the current plan would apply.
+It runs the same plan phase as `provision run`, but it never calls `apply()`, creates resources, or writes Provision State.
+
+```bash [Terminal]
+CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm vitehub provision status --provider cloudflare
+```
+
+```txt [Output]
+recorded cloudflare ids (.vitehub/provision.json):
+d1      default database-id
+create  cloudflare-d1   app-content
+plan: 1 pending action. Run `vitehub provision run --provider cloudflare` to apply.
+```
+
+A pending action is a planned resource that does not exist yet.
+Without provider credentials, the command still shows recorded ids, but it reports the plan as not checked instead of reporting no pending actions.
+
+## JSON output
+
+Add `--json` to `provision run` or `provision status` when CI or an Agent reads the result.
+The command writes one JSON document to stdout. Step messages and warnings stay out of stdout; warnings are included in the `warnings` array.
+Output never contains provider credentials. Recorded ids are non-secret.
+
+```bash [Terminal]
+pnpm vitehub provision run --provider cloudflare --dry-run --json
+pnpm vitehub provision status --provider cloudflare --json
+```
+
+```json [provision status --json]
+{
+  "plan": {
+    "actions": [{ "exists": false, "kind": "cloudflare-d1", "name": "app-content", "step": "database:cloudflare-d1" }],
+    "checked": true,
+    "pending": 1
+  },
+  "provider": "cloudflare",
+  "recorded": { "d1": { "default": "database-id" } },
+  "schemaVersion": 1,
+  "stateFile": ".vitehub/provision.json",
+  "warnings": []
+}
+```
+
+`provision run --json` returns `mode` (`dry-run` or `apply`), the planned `actions`, the `ids` written by this run, `stateFile` (`null` when nothing was written), and `warnings`.
+Both commands exit with code `0` when the plan phase succeeds, also when actions are pending. Read `plan.pending` to gate a CI step.
+
+## Resources without provisioning
+
+Provision creates only resources that a provider requires before first use. These providers need no ViteHub Provision Step:
+
+| Provider resource | Provisioning | Source |
+| --- | --- | --- |
+| Vercel Queues topics and consumer groups | None. A topic exists when a message is sent to it. Push consumers come from the deployed function configuration. | [Vercel Queues concepts](https://vercel.com/docs/queues/concepts) |
+| Netlify Blobs stores | None. A store is created on first write and needs no site setting. | [Netlify Blobs](https://docs.netlify.com/build/data-and-storage/netlify-blobs/) |
+| Node and self-hosted drivers, such as KV `fs-lite` and Blob `fs` | None. They use the local filesystem. | [Node and self-hosted](/docs/frameworks-hosts/node-self-hosted) |
+
+Deno KV on Deno Deploy needs a KV database that is created and assigned to the app before `Deno.openKv()` can use it. ViteHub does not provision it: the Deno Deploy API can create a database instance, but it has no lookup for an idempotent plan, and assignment creates a new app revision. Create and assign the database in the Deno Deploy dashboard. Read [Deno KV on Deno Deploy](https://docs.deno.com/deploy/reference/deno_kv/).
+
 ## Resource ownership
 
 | Owner | Responsibility |
