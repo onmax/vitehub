@@ -2,7 +2,7 @@ import { defineDevframe, defineRpcFunction } from "devframe"
 import { initDevframe } from "devframe/initiate"
 import { fromWebHandler } from "h3"
 
-import { consoleRpcMethods } from "../rpc.ts"
+import { consoleRpcHeader, consoleRpcMethods } from "../rpc.ts"
 import consoleAgentsHandler from "./agents.get.ts"
 import consoleAgentInvocationsHandler from "./agent-invocations.post.ts"
 import consoleBlobHandler from "./blob.get.ts"
@@ -40,23 +40,26 @@ function createDevframeH3Handler(definition: DevframeDefinition, options: Devfra
   // SAFETY: H3 returns an EventHandler; this adapter adds the close method assigned below.
   const handler = fromWebHandler(async (request) => {
     const url = new URL(request.url)
+    const marker = url.pathname.indexOf(consoleDevframeBase)
+    if (marker > 0) {
+      url.pathname = url.pathname.slice(marker)
+      request = new Request(url, request)
+    }
     const origin = request.headers.get("origin")
     const site = request.headers.get("sec-fetch-site")
+    // Discovery opens no session and Devframe fetches it before the SSE fetch hook.
+    const discovery = request.method === "GET" && url.pathname === `${consoleDevframeBase}__connection.json`
     // Browsers control Fetch Metadata, which survives trusted TLS termination.
-    // Fall back to the request origin when that metadata is unavailable.
+    // Without origin evidence, require a header that foreign pages cannot send without preflight.
     if (origin === "null" || site === "cross-site" || site === "same-site"
-      || (site !== "same-origin" && origin !== null && origin !== url.origin)) {
+      || (site !== "same-origin" && origin !== null && origin !== url.origin)
+      || (!discovery && site !== "same-origin" && origin === null && request.headers.get(consoleRpcHeader) !== "1")) {
       return new Response("Forbidden", {
         headers: responseHeaders,
         status: 403,
       })
     }
     instance ??= initDevframe(definition, initOptions)
-    const marker = url.pathname.indexOf(instance.base)
-    if (marker > 0) {
-      url.pathname = url.pathname.slice(marker)
-      request = new Request(url, request)
-    }
     const response = await instance.handler(request)
     if (!responseHeaders) return response
     const headers = new Headers(response.headers)
