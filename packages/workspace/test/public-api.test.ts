@@ -68,7 +68,7 @@ describe("workspace public API", () => {
     await expect(workspace.fs.rm(path)).rejects.toMatchObject(invalidPath)
   })
 
-  it.each([".. /secret.txt", ".. ./secret.txt", ".. . /secret.txt", "git~1/config", "nested/git~1/config", "vitehu~1/file-metadata/secret/metadata.json"])(
+  it.each([".. /secret.txt", ".. ./secret.txt", ".. . /secret.txt", ".:$DATA/secret.txt", "..:$DATA/secret.txt", "..::$INDEX_ALLOCATION/secret.txt", "git~1/config", "nested/git~1/config", "vitehu~1/file-metadata/secret/metadata.json"])(
     "rejects Windows traversal and short-name aliases through filesystem operations: %s",
     async (path) => {
       registerWorkspace("windows-alias", defineWorkspace({ store: { provider: "memory" } }))

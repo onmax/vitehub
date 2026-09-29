@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern, resolveInside } from "../src/core/path.ts"
 
 describe("Workspace path containment", () => {
-  it.each(["C:/outside/file", "C:\\outside\\file", "C:outside", "a\0b", ".. /outside", ".. ./outside", ".. . /outside", "docs/.. /outside", "docs/.. ./outside"])("rejects non-portable path %j", path => {
+  it.each(["C:/outside/file", "C:\\outside\\file", "C:outside", "a\0b", ".. /outside", ".. ./outside", ".. . /outside", ".:$DATA/file", "..:$DATA/outside", "..::$INDEX_ALLOCATION/outside", "docs/.. /outside", "docs/.. ./outside", "docs/..:$DATA/outside"])("rejects non-portable path %j", path => {
     expect(() => normalizeSafeWorkspacePath(path)).toThrow()
     expect(() => normalizeSafeWorkspacePattern(path)).toThrow()
   })
@@ -19,6 +19,8 @@ describe("Workspace path containment", () => {
     expect(() => resolveInside(root, ".. /outside")).toThrow()
     expect(() => resolveInside(root, ".. ./outside")).toThrow()
     expect(() => resolveInside(root, ".. . /outside")).toThrow()
+    expect(() => resolveInside(root, "..:$DATA/outside")).toThrow()
+    expect(() => resolveInside(root, "..::$INDEX_ALLOCATION/outside")).toThrow()
   })
 })
 

@@ -28,8 +28,9 @@ export interface SafeWorkspacePathOptions {
 
 function classifyWindowsComponent(part: string): { normalized: string; isTraversal: boolean } {
   const name = part.toLowerCase()
-  const basename = name.split(":", 1)[0]!.replace(/[ .]+$/, "")
-  return { normalized: basename, isTraversal: /^(?:\.(?: +[. ]*)?|\.\.(?: +[. ]*)?)$/.test(name) }
+  const withoutStream = name.split(":", 1)[0]!
+  const basename = withoutStream.replace(/[ .]+$/, "")
+  return { normalized: basename, isTraversal: /^(?:\.(?: +[. ]*)?|\.\.(?: +[. ]*)?)$/.test(withoutStream) }
 }
 
 export function normalizeSafeWorkspacePath(path = "", options: SafeWorkspacePathOptions = {}): string {
