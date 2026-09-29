@@ -121,7 +121,11 @@ Channels is an outbound delivery interface. It does not include Slack, Telegram,
 
 `send()` waits for the selected connector and returns `[null, receipt]` or `[error, null]`. Invalid input, discovery failures, and connector failures return an `Error` in the first slot. Check it before using the receipt. Channels does not persist messages, retry delivery, impose a timeout, deduplicate sends, or recover work after the process exits. Add those behaviors before `send()` or inside the connector when the delivery contract requires them.
 
+Only connectors declared as own properties of the definition can receive messages. An omitted `connector` uses `defaultConnector`; an empty or invalid selector returns an error. A failed definition load can be retried by a later `send()` call.
+
 Every send writes `outbound.started`, `outbound.completed`, or `outbound.failed` JSON metadata under the `vitehub.channel.send` scope. ViteHub omits message text and connector options from those events. Failed events include up to 2,000 characters of the thrown error message, so connectors must not put credentials or message content in errors. Connector code can still read, transmit, or log every value it receives; keep credentials in server-only configuration and redact provider failures before throwing them.
+
+Delivery logging is best effort. A logging failure does not change the result of a send.
 
 This package is separate from Agent Channels. `@vite-hub/channels` sends ordinary application messages. [`@vite-hub/agent/channels`](https://vitehub.dev/docs/agents/channels) describes where Agent Invocations come from, inbound delivery, threads, and Agent reply policy.
 

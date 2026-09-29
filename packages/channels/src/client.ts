@@ -31,7 +31,12 @@ function channelSendErrorMessage(error: Error): string {
 }
 
 function logDelivery(event: string, deliveryId: string, channel: string, connector: string, extra: Record<string, unknown> = {}): void {
-  console.info(JSON.stringify({ scope: "vitehub.channel.send", event, deliveryId, channel, connector, ...extra }))
+  try {
+    console.info(JSON.stringify({ scope: "vitehub.channel.send", event, deliveryId, channel, connector, ...extra }))
+  }
+  catch {
+    // Logging must not change delivery results or encourage retrying a delivered message.
+  }
 }
 
 export function createChannel<
@@ -60,12 +65,17 @@ export function createChannel<
         }
 
         // SAFETY: The object check above establishes that options can carry a connector selector.
-        connectorName = (options as { connector?: string }).connector || definition.defaultConnector
-        if (!connectorName) {
+        const requestedConnector = (options as { connector?: unknown }).connector
+        const selectedConnector = requestedConnector === undefined ? definition.defaultConnector : requestedConnector
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Reject malformed JavaScript selectors before resolving a configured connector.
+        if (typeof selectedConnector !== "string" || selectedConnector.length === 0) {
           throw channelError(`Channel "${name}" requires a connector in send options.`)
         }
+        connectorName = selectedConnector
 
-        const connector = definition.connectors[connectorName]
+        const connector = Object.hasOwn(definition.connectors, connectorName)
+          ? definition.connectors[connectorName]
+          : undefined
         if (!connector) {
           throw channelError(`Channel "${name}" does not define connector "${connectorName}".`)
         }

@@ -36,6 +36,45 @@ describe("createChannel", () => {
     info.mockRestore()
   })
 
+  it("rejects inherited connectors before dispatch", async () => {
+    const inheritedSend = vi.fn(() => ({ id: "unexpected" }))
+    const connectors = { configured: { send: vi.fn(() => ({})) } }
+    Object.setPrototypeOf(connectors, { inherited: { send: inheritedSend } })
+    const channel = createChannel("alerts", { connectors })
+
+    const [error, receipt] = await channel.send("Build finished.", { connector: "inherited" } as never)
+    expect(error?.message).toContain('does not define connector "inherited"')
+    expect(receipt).toBeNull()
+    expect(inheritedSend).not.toHaveBeenCalled()
+  })
+
+  it.each(["", null, false, 0, { toString: () => "configured" }])("rejects invalid connector selectors without using the default: %j", async (connector) => {
+    const send = vi.fn(() => ({}))
+    const channel = createChannel("alerts", {
+      connectors: { configured: { send } },
+      defaultConnector: "configured",
+    })
+
+    const [error, receipt] = await channel.send("Build finished.", { connector } as never)
+    expect(error).toBeInstanceOf(Error)
+    expect(receipt).toBeNull()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it.each(["started", "completed"])("preserves successful delivery when %s logging throws", async (event) => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => { throw new Error("log unavailable") })
+    if (event === "completed") info.mockImplementationOnce(() => {})
+    const send = vi.fn(() => ({ id: "delivered" }))
+    try {
+      const channel = createChannel("alerts", { connectors: { configured: { send } } })
+      await expect(channel.send("Build finished.", { connector: "configured" })).resolves.toMatchObject([null, { id: "delivered" }])
+      expect(send).toHaveBeenCalledOnce()
+    }
+    finally {
+      info.mockRestore()
+    }
+  })
+
   it.each([
     ["", "non-empty"],
     ["Build finished.", "requires a connector"],
@@ -92,6 +131,42 @@ describe("createChannel", () => {
     }
     finally {
       setChannelRuntimeRegistry(undefined)
+    }
+  })
+
+  it("does not load inherited registry entries", async () => {
+    const load = vi.fn(async () => ({ connectors: { configured: { send: () => ({}) } } }))
+    const registry = {}
+    Object.setPrototypeOf(registry, { inherited: load })
+    setChannelRuntimeRegistry(registry)
+    try {
+      const [error, receipt] = await useChannel("inherited" as string).send("Build finished.", { connector: "configured" })
+      expect(error?.message).toContain('No Channel Definition was discovered for "inherited"')
+      expect(receipt).toBeNull()
+      expect(load).not.toHaveBeenCalled()
+    }
+    finally {
+      setChannelRuntimeRegistry(undefined)
+    }
+  })
+
+  it("retries failed discovery on a later send", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {})
+    const send = vi.fn(() => ({ id: "delivered" }))
+    const load = vi.fn()
+      .mockRejectedValueOnce(new Error("temporary loader failure"))
+      .mockResolvedValue({ connectors: { configured: { send } } })
+    setChannelRuntimeRegistry({ alerts: load })
+    try {
+      const channel = useChannel("alerts" as string)
+      await expect(channel.send("Build finished.", { connector: "configured" })).resolves.toMatchObject([expect.any(Error), null])
+      await expect(channel.send("Build finished.", { connector: "configured" })).resolves.toMatchObject([null, { id: "delivered" }])
+      expect(load).toHaveBeenCalledTimes(2)
+      expect(send).toHaveBeenCalledOnce()
+    }
+    finally {
+      setChannelRuntimeRegistry(undefined)
+      info.mockRestore()
     }
   })
 
