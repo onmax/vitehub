@@ -12,7 +12,6 @@ import type {
   AgentCapabilityDefinition,
   AgentCapabilityMode,
   AgentRuntimeConfig,
-  AgentToolSet,
 } from "../types.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
@@ -48,8 +47,8 @@ export function workspaceShell(options: WorkspaceShellOptions = {}): AgentCapabi
         ...(driver?.kind === "provider"
           ? {}
           : mode === "write" && "write" in workspace.tools
-            ? (workspace.tools as unknown as { write: (options: { sourceRequests: boolean }) => AgentToolSet }).write({ sourceRequests: true })
-            : workspace.tools.inspect({ sourceRequests: true })) as AgentToolSet,
+            ? workspace.tools.write({ sourceRequests: true })
+            : workspace.tools.inspect({ sourceRequests: true })),
         ...(commands ? workspaceCommandTools(commands, mode, timeout, workspace, { context }) : {}),
       }
     },
