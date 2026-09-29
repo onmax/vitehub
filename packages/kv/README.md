@@ -66,4 +66,10 @@ KV operations return `[error, value]`. Provider failures use `ViteHubError` with
 
 Upstash also supports `kv.getAndDelete(key)` and `kv.increment(key, ttl)`. These operations are atomic in the provider. Deno KV, Cloudflare KV, and `fs-lite` reject them because they cannot provide the same contract without extra storage or non-atomic calls.
 
+## CLI
+
+`hubKv()` contributes the `vitehub kv` CLI namespace: `list [--prefix] [--limit] [--cursor]`, `get <key>`, `has <key>`, `set <key> <value|@file> [--ttl <seconds>] [--json-value]`, and `del <key>`. Each command accepts `--store <name>` and `--json`. Write commands print what they changed. There is no `clear` command.
+
+The commands call a guarded endpoint that exists only on the Vite Development Server. The endpoint forwards each operation into the Nitro dev environment, so it uses the same KV storage as the running app. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 there. `handleKVDevRequest()` from `@vite-hub/kv/runtime/dev` is the Nitro handler; it is not a public runtime API.
+
 Learn more at [vitehub.dev](https://vitehub.dev).

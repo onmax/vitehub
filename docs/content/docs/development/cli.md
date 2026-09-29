@@ -25,7 +25,7 @@ Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, KV contributes `kv` when `hubKv()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
@@ -33,6 +33,7 @@ Available namespaces:
   agent       Agent development workflows.
   channels    External Channel registration workflows.
   db          Database development workflows.
+  kv          Read and write keys of the KV stores in a running Vite + Nitro Development Server.
   schedule    Inspect and control Runtime Schedules in a running Vite + Nitro Development Server.
   workspace   Workspace development workflows.
   types       Generate ViteHub TypeScript declarations.
@@ -53,6 +54,11 @@ Available namespaces:
 | `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
 | `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
+| `vitehub kv list` | Available | KV Package | List the keys of one KV store, one page at a time. |
+| `vitehub kv get` | Available | KV Package | Print the value of one key. |
+| `vitehub kv has` | Available | KV Package | Check if a key exists. The exit status is 0 or 1. |
+| `vitehub kv set` | Available | KV Package | Write the value of one key and print what changed. |
+| `vitehub kv del` | Available | KV Package | Delete one key and print what changed. |
 | `vitehub schedule list` | Available | Schedule Package | List Runtime Schedules with enabled state, next due time, and last run. |
 | `vitehub schedule get` | Available | Schedule Package | Show one Runtime Schedule. |
 | `vitehub schedule runs` | Available | Schedule Package | List the recorded runs of one Schedule, newest first. |
@@ -172,6 +178,42 @@ pnpm vitehub db migrate
 ```
 
 `db generate` forwards Drizzle Kit arguments, supports `--name <name>` for a migration name, and uses `--custom` to create an empty custom migration. `db migrate` accepts forwarded Drizzle Kit migration arguments.
+
+## Read and write KV keys
+
+Start the app's Vite Development Server, then run `vitehub kv` from another terminal. The commands call the same KV storage as the running app, so they read and write the keys that the app uses.
+
+```bash [Terminal]
+pnpm vitehub kv list --prefix users: --limit 20
+pnpm vitehub kv get settings
+pnpm vitehub kv has settings
+pnpm vitehub kv set settings '{"theme":"dark"}' --json-value
+pnpm vitehub kv set session:42 active --ttl 3600
+pnpm vitehub kv set template @./fixtures/template.txt
+pnpm vitehub kv del settings
+```
+
+Each write command prints what it changed:
+
+```txt [Output]
+Created key settings in store default (object).
+Created key session:42 in store default (string, TTL 3600 s).
+Deleted key settings from store default.
+```
+
+Every command accepts `--store <name>`, `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>`. The commands use the Default KV Store. Pass `--store` to select a named store from `kv.stores`. An unknown store fails and lists the configured stores, with `default` first, as the Console does.
+
+- `list` prints one key per line. `--limit` defaults to 100 and has a maximum of 1000. When more keys exist, stderr shows the `--cursor` value for the next page. Some drivers count scanned entries toward the limit, so a page can hold fewer keys than the limit, or none, and still have a next cursor.
+- `get` prints a string value as it is and other JSON values as formatted JSON. Binary values are written to stdout as bytes, or as base64 with `"encoding": "base64"` in `--json` output. A missing key exits with status 1.
+- `has` exits with status 0 when the key exists and 1 when it does not.
+- `set` writes a string. Add `--json-value` to parse the value as JSON. A value that starts with `@` reads a UTF-8 file relative to the current directory. The output says if the key was created or updated. `--ttl <seconds>` sets an expiry. The `fs-lite` driver ignores TTL and Cloudflare KV raises a TTL below 60 seconds to 60 seconds; the output prints a notice in these cases.
+- `del` says if the key existed. Deleting a missing key changes nothing and exits with status 0.
+
+The KV storage deserializes stored strings that look like JSON, so a string such as `"2026"` can read back as the number `2026`. There is no `clear` command. Delete keys one at a time so that each change is explicit.
+
+Errors go to stderr, or into `{ "error": { "code", "message" } }` on stdout with `--json`. The commands print values as they are stored and do not redact them, as the Console KV page does. Do not store credentials in keys that you inspect in shared logs.
+
+The commands use a guarded dev endpoint that `hubKv()` registers only on the Development Server. The endpoint forwards each operation into the Nitro dev environment, which owns the KV storage. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 and the CLI prints that the host is not supported. Deployed runtimes do not expose the endpoint.
 
 ## Inspect and control Runtime Schedules
 
@@ -362,6 +404,8 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 | Agent eval times out | The eval case, model call, or provider run exceeds `agent.eval.testTimeout`. | Increase `agent.eval.testTimeout` in `vite.config.ts` or narrow the eval case. |
 | Vite config fails while loading a ViteHub plugin import | A fresh npm project is loading `vite.config.ts` as CommonJS, but ViteHub packages are ESM-only. | Set `"type": "module"` in `package.json` or rename the config to `vite.config.mts`. |
 | `No Compatible Vite Development Server found` | The app dev server is not running or `--url` points at the wrong port. | Start Vite separately, then pass the dev server URL. |
+| `vitehub kv` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
+| `vitehub kv list` fails with `KV_CURSOR_EXPIRED` | The provider no longer keeps the listing that the cursor points to. | Run `list` again without `--cursor`. |
 | `vitehub schedule` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
 | `vitehub schedule run` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
 | `Unknown Workspace Dev target` | The named Workspace is not discovered by the running Vite dev server. | Check the Workspace Definition name and make sure `hubWorkspace()` is active. |

@@ -162,6 +162,19 @@ The KV package selects the default or named store and generates store-name types
 
 Application code keeps importing `kv` from `@vite-hub/kv` when you switch between local, Cloudflare, Deno, Vercel-compatible, or other drivers.
 
+## Read and write keys during development
+
+`hubKv()` contributes the `vitehub kv` CLI namespace. Start the Vite Development Server, then read and write keys from another terminal.
+
+```bash [Terminal]
+pnpm vitehub kv list --prefix users:
+pnpm vitehub kv get settings --json
+pnpm vitehub kv set settings '{"theme":"dark"}' --json-value
+pnpm vitehub kv del settings
+```
+
+The commands call the same KV storage as the running app. Pass `--store <name>` for a named store. Each write command prints what it changed. There is no `clear` command. The commands call a guarded endpoint that exists only on the Vite Development Server. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 there. Read [CLI](/docs/development/cli#read-and-write-kv-keys) for every command and option.
+
 ## Connect KV to Agents
 
 Direct KV access is for app and server code. To let a model inspect or edit scoped key-value data, attach the KV Capability from the agent capability catalog.

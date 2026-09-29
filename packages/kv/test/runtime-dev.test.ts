@@ -1,0 +1,126 @@
+import { rm } from "node:fs/promises"
+
+import { afterAll, describe, expect, it, vi } from "vitest"
+
+import { kvDevHeader, kvDevHeaderValue } from "../src/dev.ts"
+import { handleKVDevRequest, listKVDevStores } from "../src/runtime/dev.ts"
+
+const roots = vi.hoisted(() => {
+  const base = `${process.env.TMPDIR || "/tmp"}/vitehub-kv-dev-${process.pid}-${Date.now()}`
+  return { archive: `${base}/archive`, base, cache: `${base}/cache`, default: `${base}/default` }
+})
+
+vi.mock("#vitehub/kv/config", () => ({
+  hosting: undefined,
+  kv: {
+    store: { base: roots.default, driver: "fs-lite" },
+    stores: {
+      cache: { base: roots.cache, driver: "fs-lite" },
+      default: { base: roots.default, driver: "fs-lite" },
+      archive: { base: roots.archive, driver: "fs-lite" },
+    },
+  },
+}))
+
+// The runtime handler imports the package entry, so the test runs the real KV storage on fs-lite.
+vi.mock("@vite-hub/kv", async () => await import("../src/index.ts"))
+
+afterAll(async () => {
+  await rm(roots.base, { force: true, recursive: true })
+})
+
+function devRequest(body: unknown, init: { headers?: Record<string, string>, method?: string } = {}): Request {
+  const method = init.method ?? "POST"
+  return new Request("http://localhost/_vitehub/kv/dev", {
+    ...(method === "POST" ? { body: typeof body === "string" ? body : JSON.stringify(body) } : {}),
+    headers: { "content-type": "application/json", [kvDevHeader]: kvDevHeaderValue, ...init.headers },
+    method,
+  })
+}
+
+async function run(body: unknown): Promise<{ body: Record<string, unknown>, status: number }> {
+  const response = await handleKVDevRequest(devRequest(body))
+  expect(response.headers.get("cache-control")).toBe("no-store")
+  return { body: await response.json() as Record<string, unknown>, status: response.status }
+}
+
+describe("KV dev runtime handler", () => {
+  it("lists stores in the Console order", () => {
+    expect(listKVDevStores()).toEqual([
+      { driver: "fs-lite", name: "default" },
+      { driver: "fs-lite", name: "archive" },
+      { driver: "fs-lite", name: "cache" },
+    ])
+  })
+
+  it("writes, reads, lists, and deletes keys in the real storage", async () => {
+    expect(await run({ key: "settings", operation: "set", value: { theme: "dark" } })).toEqual({
+      body: { created: true, key: "settings", store: "default", type: "object" },
+      status: 200,
+    })
+    expect((await run({ key: "settings", operation: "set", ttl: 30, value: "light" })).body).toEqual({
+      created: false,
+      key: "settings",
+      notice: "The fs-lite driver ignores TTL. The value does not expire.",
+      store: "default",
+      ttl: 30,
+      type: "string",
+    })
+    expect((await run({ key: "settings", operation: "get" })).body).toEqual({ found: true, key: "settings", store: "default", type: "string", value: "light" })
+    expect((await run({ key: "settings", operation: "has" })).body).toEqual({ exists: true, key: "settings", store: "default" })
+
+    await run({ key: "users:1", operation: "set", value: "Ada" })
+    await run({ key: "users:2", operation: "set", value: "Grace" })
+    const first = await run({ limit: 1, operation: "list", prefix: "users" })
+    expect(first.body).toMatchObject({ limit: 1, prefix: "users", store: "default", stores: ["default", "archive", "cache"] })
+    // fs-lite counts scanned entries, so a page can hold fewer keys than the limit. The cursor reads the rest.
+    const keys = [...first.body.keys as string[]]
+    let cursor = first.body.cursor
+    for (let page = 0; cursor && page < 10; page += 1) {
+      const next = await run({ cursor, limit: 1, operation: "list", prefix: "users" })
+      keys.push(...next.body.keys as string[])
+      cursor = next.body.cursor
+    }
+    expect(cursor).toBeUndefined()
+    expect(keys.sort()).toEqual(["users:1", "users:2"])
+
+    expect((await run({ key: "settings", operation: "del" })).body).toEqual({ deleted: true, key: "settings", store: "default" })
+    expect((await run({ key: "settings", operation: "del" })).body).toEqual({ deleted: false, key: "settings", store: "default" })
+    expect((await run({ key: "settings", operation: "get" })).body).toEqual({ found: false, key: "settings", store: "default" })
+    expect((await run({ key: "settings", operation: "has" })).body).toEqual({ exists: false, key: "settings", store: "default" })
+  })
+
+  it("keeps named stores apart", async () => {
+    await run({ key: "report", operation: "set", store: "archive", value: "q2" })
+    expect((await run({ key: "report", operation: "get", store: "archive" })).body).toMatchObject({ found: true, value: "q2" })
+    expect((await run({ key: "report", operation: "has" })).body).toMatchObject({ exists: false, store: "default" })
+    expect((await run({ operation: "list", store: "archive" })).body).toMatchObject({ keys: ["report"], store: "archive" })
+  })
+
+  it("rejects unknown stores, bad bodies, and expired cursors", async () => {
+    expect(await run({ key: "a", operation: "get", store: "missing" })).toEqual({
+      body: { error: { code: "KV_STORE_NOT_FOUND", message: "KV store \"missing\" was not found. Stores: default, archive, cache." } },
+      status: 404,
+    })
+    expect((await run({ operation: "clear" })).status).toBe(400)
+    expect((await run("not json")).status).toBe(400)
+    expect(await run({ operation: "get" })).toEqual({ body: { error: { message: "The get operation requires a key." } }, status: 400 })
+    expect((await run({ key: "a", operation: "set" })).status).toBe(400)
+    expect((await run({ key: "a", operation: "set", ttl: 0, value: "x" })).status).toBe(400)
+    expect((await run({ limit: 5_000, operation: "list" })).status).toBe(400)
+    expect((await run({ cursor: "not-a-cursor", limit: 1, operation: "list" })).body).toMatchObject({ error: { code: "KV_CURSOR_EXPIRED" } })
+  })
+
+  it("reports disabled KV", async () => {
+    const response = await handleKVDevRequest(devRequest({ key: "a", operation: "get" }), [])
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: { code: "KV_DISABLED" } })
+  })
+
+  it("rejects requests without the guard header, from another origin, or with the wrong method", async () => {
+    expect((await handleKVDevRequest(devRequest({ operation: "list" }, { headers: { [kvDevHeader]: "" } }))).status).toBe(403)
+    expect((await handleKVDevRequest(devRequest({ operation: "list" }, { headers: { origin: "https://attacker.test" } }))).status).toBe(403)
+    expect((await handleKVDevRequest(devRequest({ operation: "list" }, { headers: { "content-type": "text/plain" } }))).status).toBe(415)
+    expect((await handleKVDevRequest(devRequest(undefined, { method: "GET" }))).status).toBe(405)
+  })
+})
