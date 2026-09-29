@@ -615,6 +615,29 @@ describe("Vite schedule integration", () => {
     await expect(readFile(join(root, ".vitehub", "nitro", "schedule", "runtime-registry.js"), "utf8")).rejects.toThrow()
   })
 
+  it("adds the Schedule dev handler to Nitro only for the Development Server", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-schedule-dev-handler-"))
+    const serveConfig: Record<string, unknown> = { nitro: { baseURL: "/app/" }, root }
+    await (hubSchedule({ projectRoot: root }).config as (config: Record<string, unknown>, env: { command: "build" | "serve", mode: string }) => unknown)(
+      serveConfig,
+      { command: "serve", mode: "development" },
+    )
+
+    expect(serveConfig.nitro).toMatchObject({
+      baseURL: "/app/",
+      handlers: [{ handler: join(root, ".vitehub", "nitro", "schedule", "dev-handler.ts"), route: "/_vitehub/schedule/dev" }],
+    })
+    const source = await readFile(join(root, ".vitehub", "nitro", "schedule", "dev-handler.ts"), "utf8")
+    expect(source).toContain("import { handleScheduleDevRequest } from \"@vite-hub/schedule/runtime/console\"")
+
+    const buildConfig: Record<string, unknown> = { root }
+    await (hubSchedule({ projectRoot: root }).config as (config: Record<string, unknown>, env: { command: "build" | "serve", mode: string }) => unknown)(
+      buildConfig,
+      { command: "build", mode: "production" },
+    )
+    expect(JSON.stringify(buildConfig.nitro ?? {})).not.toContain("dev-handler")
+  })
+
   it("rejects invalid Process Runtime options before generating Nitro code", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-schedule-invalid-process-"))
     await mkdir(join(root, "server", "schedules"), { recursive: true })

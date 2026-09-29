@@ -21,3 +21,21 @@ it("keeps build dependencies out of the published application entry", async () =
   expect(imports).not.toContain("node:fs/promises")
   expect(imports).not.toContain("node:path")
 })
+
+it("keeps build dependencies out of the runtime Console entry", async () => {
+  const result = await build({
+    bundle: true,
+    entryPoints: [resolve(import.meta.dirname, "../dist/runtime/console.js")],
+    format: "esm",
+    metafile: true,
+    packages: "external",
+    platform: "node",
+    write: false,
+  })
+  const imports = Object.values(result.metafile.outputs).flatMap(output => output.imports.map(entry => entry.path))
+
+  expect(imports).not.toContain("esbuild")
+  expect(imports).not.toContain("vite")
+  expect(imports).not.toContain("node:fs")
+  expect(imports).not.toContain("node:fs/promises")
+})

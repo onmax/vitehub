@@ -8,6 +8,7 @@ let runtimeRegistry: ScheduleDefinitionRegistry | undefined
 let runtimeStore: RuntimeScheduleStore | undefined
 let runtimeRegistryVersion = 0
 let runStore: ScheduleRunStore | undefined
+let activeWakeDrivers = 0
 const loadedRegistryEntries = new Map<string, ScheduleRegistryDefinition | undefined>()
 const loadingRegistryEntries = new Map<string, {
   promise: Promise<ScheduleRegistryDefinition | undefined>
@@ -44,6 +45,19 @@ export function setScheduleRunStore(store: ScheduleRunStore | undefined): void {
 
 export function getScheduleRunStore(): ScheduleRunStore {
   return runStore ??= createMemoryScheduleRunStore()
+}
+
+/**
+ * Records that `installScheduleRuntime` installed a wake driver, or that the driver closed.
+ * Inspection uses this state to report whether Runtime Schedules run automatically.
+ */
+export function setScheduleWakeDriverActive(active: boolean): void {
+  activeWakeDrivers = Math.max(0, activeWakeDrivers + (active ? 1 : -1))
+}
+
+/** Returns `true` when a wake driver runs due Runtime Schedules in this runtime. */
+export function isScheduleWakeDriverActive(): boolean {
+  return activeWakeDrivers > 0
 }
 
 export async function loadScheduleDefinition(name: string): Promise<ScheduleRegistryDefinition | undefined> {
@@ -98,6 +112,7 @@ export function resetScheduleRuntime(): void {
   runtimeRegistryVersion++
   runtimeStore = undefined
   runStore = undefined
+  activeWakeDrivers = 0
   loadedRegistryEntries.clear()
   loadingRegistryEntries.clear()
 }
