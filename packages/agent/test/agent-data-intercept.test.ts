@@ -156,6 +156,36 @@ describe("Agent data and intercept", () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  it("validates data when a Capability replaces the input wrapper in place", async () => {
+    const inputHook = vi.fn()
+    const intercept = vi.fn(() => undefined)
+    const run = vi.fn(() => "ok")
+    const replaceInput = defineCapability({
+      id: "replace-input",
+      input(context) {
+        const input = context.input.get()
+        input.data = { count: 2 }
+        context.input.set(input)
+      },
+    })
+    const agent = defineAgent({
+      capabilities: [replaceInput],
+      data: v.object({ count: v.pipe(v.string(), v.transform(Number)) }),
+      driver: { run },
+      hooks: { "agent:input": inputHook },
+      intercept,
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { count: "2" } })
+
+    expect(error?.message).toContain("Invalid Agent input data")
+    expect(output).toBeNull()
+    expect(inputHook).not.toHaveBeenCalled()
+    expect(intercept).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it("does not report unchanged transformed data as changed", async () => {
     const transform = vi.fn((value: string) => Number(value))
     const capability = defineCapability({

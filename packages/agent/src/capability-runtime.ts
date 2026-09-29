@@ -1184,8 +1184,9 @@ export async function resolveAgentCapabilities<
   const inputMessages = getRunMessages(currentInput)
   let messages = memoizeMessageAttachmentData(inputMessages)
   if (messages !== inputMessages) currentInput = withMessages(currentInput, messages)
+  const initialInputDataReference = currentInput.data
   const initialInputData = snapshotCapabilityData(currentInput.data)
-  const inputDataChanged = () => !capabilityDataEqual(currentInput.data, initialInputData)
+  const inputDataChanged = () => currentInput.data !== initialInputDataReference || !capabilityDataEqual(currentInput.data, initialInputData)
   let tools: AgentToolSet | undefined
   const driverContributions: AgentDriverContribution[] = []
   let capabilityScope: Awaited<ReturnType<typeof openAgentCapabilityScope>> | undefined

@@ -4148,7 +4148,7 @@ async function createAgentInvocationContext<
     callbackContext = createAgentCallbackContext(runtimeContext)
     // Capabilities with preparation hooks may install runtimes or allocate
     // resources. Reject known provider failures before starting those hooks.
-    const preflightReadiness = resolvedCapabilityDefinitions.some(capability => capability.prepare)
+    const preflightReadiness = resolvedCapabilityDefinitions.some(capability => capability.prepare) && !internalDefinition?.[baseAgentIntercept]
     const readiness = preflightReadiness
       ? await resolveReadiness()
       : undefined
