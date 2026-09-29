@@ -25,12 +25,13 @@ Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Blob contributes `blob` when `hubBlob()` is active, Database contributes `db` when `hubDb()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
 Available namespaces:
   agent       Agent development workflows.
+  blob        Read and write blobs of the Blob stores in a running Vite + Nitro Development Server.
   channels    External Channel registration workflows.
   db          Database development workflows.
   schedule    Inspect and control Runtime Schedules in a running Vite + Nitro Development Server.
@@ -48,6 +49,11 @@ Available namespaces:
 | `vitehub agent info` | Available | Agent Package | Inspect resolved Agent metadata through a running Vite Development Server. |
 | `vitehub agent dev` | Available | Agent Package | Talk to a discovered Agent through a running Vite Development Server. |
 | `vitehub agent invocations` | Available | Agent Package | List, inspect, or follow records in the application's Agent Invocation journal. |
+| `vitehub blob list` | Available | Blob Package | List blobs of a Blob store, one page at a time. |
+| `vitehub blob head` | Available | Blob Package | Show the metadata of one blob. |
+| `vitehub blob get` | Available | Blob Package | Download one blob to a file or to stdout, byte for byte. |
+| `vitehub blob put` | Available | Blob Package | Upload one file as a blob and print what changed. |
+| `vitehub blob del` | Available | Blob Package | Delete one blob and print what changed. |
 | `vitehub channels history` | Available | Agent Package | Download one deployed conversation and its attachments. |
 | `vitehub channels sync` | Available | Agent Package | Inspect or apply provider-owned webhook registrations for a deployed stage. |
 | `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
@@ -172,6 +178,40 @@ pnpm vitehub db migrate
 ```
 
 `db generate` forwards Drizzle Kit arguments, supports `--name <name>` for a migration name, and uses `--custom` to create an empty custom migration. `db migrate` accepts forwarded Drizzle Kit migration arguments.
+
+## Read and write blobs
+
+Start the app's Vite Development Server, then run `vitehub blob` from another terminal. The commands call the same Blob storage as the running app, so they read and write the blobs that the app uses.
+
+```bash [Terminal]
+pnpm vitehub blob list --prefix avatars/ --limit 20
+pnpm vitehub blob head avatars/ada.png
+pnpm vitehub blob get avatars/ada.png --output ./ada.png
+pnpm vitehub blob get reports/2026.csv > report.csv
+pnpm vitehub blob put avatars/ada.png ./ada.png --content-type image/png
+pnpm vitehub blob del avatars/ada.png
+```
+
+Each write command prints what it changed:
+
+```txt [Output]
+Created blob avatars/ada.png in store default (48213 B, image/png).
+Deleted blob avatars/ada.png from store default.
+```
+
+Every command accepts `--store <name>`, `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>`. The commands use the Default Blob Store. Pass `--store` to select a named store from `blob.stores`. An unknown store fails and lists the configured stores, with `default` first, as the Console does.
+
+- `list` prints a table of pathname, size, content type, and upload time. `--limit` defaults to 100 and has a maximum of 250. When more blobs exist, stderr shows the `--cursor` value for the next page.
+- `head` prints the metadata of one blob. A missing blob exits with status 1.
+- `get` writes the file bytes unchanged. Without `--output`, the bytes go to stdout, so redirect them to a file or a pipe. With `--output <file>`, the command writes the file and prints a summary. `--json` needs `--output`, because stdout carries the file bytes otherwise.
+- `put` uploads a file relative to the current directory. Without `--content-type`, the Blob storage detects the type from the pathname. The output says if the blob was created or replaced.
+- `del` says if the blob existed. Deleting a missing blob changes nothing and exits with status 0.
+
+The Vite dev endpoint forwards a JSON request body, so `put` sends the file as base64 and accepts files up to 8 MiB. The CLI checks the size before it reads the file. `get` returns the raw bytes, but the dev endpoint holds the whole file in memory. Use the application or the provider tools for larger files. There is no `sign` command.
+
+Errors go to stderr, or into `{ "error": { "code", "message" } }` on stdout with `--json`. The commands do not print blob URLs, because a signed URL can carry credentials. Metadata values under secret names, such as `token`, are redacted, as the Console Blob page does.
+
+The commands use a guarded dev endpoint that `hubBlob()` registers only on the Development Server. The endpoint forwards each operation into the Nitro dev environment, which owns the Blob storage. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 and the CLI prints that the host is not supported. Deployed runtimes do not expose the endpoint.
 
 ## Inspect and control Runtime Schedules
 
@@ -362,6 +402,8 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 | Agent eval times out | The eval case, model call, or provider run exceeds `agent.eval.testTimeout`. | Increase `agent.eval.testTimeout` in `vite.config.ts` or narrow the eval case. |
 | Vite config fails while loading a ViteHub plugin import | A fresh npm project is loading `vite.config.ts` as CommonJS, but ViteHub packages are ESM-only. | Set `"type": "module"` in `package.json` or rename the config to `vite.config.mts`. |
 | `No Compatible Vite Development Server found` | The app dev server is not running or `--url` points at the wrong port. | Start Vite separately, then pass the dev server URL. |
+| `vitehub blob` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
+| `vitehub blob put` fails with `BLOB_DEV_UPLOAD_TOO_LARGE` | The file is larger than 8 MiB, the limit of the dev endpoint. | Upload the file through the application or the provider tools. |
 | `vitehub schedule` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
 | `vitehub schedule run` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
 | `Unknown Workspace Dev target` | The named Workspace is not discovered by the running Vite dev server. | Check the Workspace Definition name and make sure `hubWorkspace()` is active. |
