@@ -1,6 +1,6 @@
 import { defineChannel } from "./definition.ts"
 
-import type { ChannelClient, ChannelConnectorMap, ChannelDefinition, ChannelSendOptions, ChannelSendOutcome } from "./types.ts"
+import type { ChannelClient, ChannelConnectorMap, ChannelConnectorResult, ChannelDefinition, ChannelSendOptions, ChannelSendOutcome } from "./types.ts"
 import { channelsErrorDiagnostics } from "./error-diagnostics.ts"
 
 const uninspectableSendErrorMessage = "Channel send failed with an uninspectable value."
@@ -37,6 +37,20 @@ function logDelivery(event: string, deliveryId: string, channel: string, connect
   catch {
     // Logging must not change delivery results or encourage retrying a delivered message.
   }
+}
+
+function normalizeConnectorResult(result: ChannelConnectorResult): ChannelConnectorResult {
+  const normalized: ChannelConnectorResult = Object.fromEntries(Reflect.ownKeys(result)
+    .filter(key => key !== "id" && Object.prototype.propertyIsEnumerable.call(result, key))
+    .map(key => [key, Reflect.get(result, key)]))
+  try {
+    const id = result.id
+    if (id !== undefined) normalized.id = id
+  }
+  catch {
+    // Delivery already succeeded. An inaccessible optional ID must not encourage a resend.
+  }
+  return normalized
 }
 
 export function createChannel<
@@ -89,9 +103,10 @@ export function createChannel<
         if (!result || typeof result !== "object") {
           throw channelError(`Channel connector "${connectorName}" returned an invalid result.`)
         }
-        logDelivery("outbound.completed", deliveryId, name, connectorName, () => ({ messageId: result.id }))
+        const normalized = normalizeConnectorResult(result)
+        logDelivery("outbound.completed", deliveryId, name, connectorName, () => ({ messageId: normalized.id }))
         return [null, {
-          ...result,
+          ...normalized,
           channel: name,
           connector: connectorName,
           deliveryId,

@@ -75,21 +75,56 @@ describe("createChannel", () => {
     }
   })
 
-  it("preserves successful delivery when logging reads an inaccessible message id", async () => {
+  it.each([false, true])("preserves delivery fields when the message id is inaccessible, enumerable=%s", async (enumerable) => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {})
     const readId = vi.fn(() => { throw new Error("message id is unavailable") })
-    const result = Object.defineProperty({ raw: { accepted: true } }, "id", { get: readId })
+    const extension = Symbol("connector extension")
+    const raw = { accepted: true }
+    const result = Object.defineProperty({
+      [extension]: "preserved",
+      providerStatus: "accepted",
+      raw,
+      get providerMetadata() { return this.raw },
+    }, "id", { enumerable, get: readId })
     const send = vi.fn(() => result)
     try {
       const channel = createChannel("alerts", { connectors: { configured: { send } } })
       const [error, receipt] = await channel.send("Build finished.", { connector: "configured" })
 
       expect(error).toBeNull()
-      expect(receipt).toMatchObject({ channel: "alerts", connector: "configured", raw: { accepted: true } })
+      expect(receipt).toMatchObject({
+        [extension]: "preserved",
+        channel: "alerts",
+        connector: "configured",
+        providerMetadata: raw,
+        providerStatus: "accepted",
+        raw,
+      })
+      expect(receipt?.raw).toBe(raw)
       expect(receipt).not.toHaveProperty("id")
       expect(send).toHaveBeenCalledOnce()
       expect(readId).toHaveBeenCalledOnce()
       expect(info.mock.calls.flat().join("\n")).not.toContain("outbound.failed")
+    }
+    finally {
+      info.mockRestore()
+    }
+  })
+
+  it("reads optional message ids once for both the receipt and delivery log", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {})
+    const readId = vi.fn()
+      .mockReturnValueOnce("delivered")
+      .mockImplementation(() => { throw new Error("message id was read again") })
+    const result = Object.defineProperty({ raw: { accepted: true } }, "id", { enumerable: true, get: readId })
+    try {
+      const channel = createChannel("alerts", { connectors: { configured: { send: () => result } } })
+      const [error, receipt] = await channel.send("Build finished.", { connector: "configured" })
+
+      expect(error).toBeNull()
+      expect(receipt).toMatchObject({ id: "delivered", raw: { accepted: true } })
+      expect(readId).toHaveBeenCalledOnce()
+      expect(info.mock.calls.flat().join("\n")).toContain('"messageId":"delivered"')
     }
     finally {
       info.mockRestore()
