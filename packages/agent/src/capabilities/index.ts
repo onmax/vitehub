@@ -241,6 +241,7 @@ export type {
   LlmGateOptions,
 } from "./llm-gate.ts"
 export type {
+  RateLimitCapabilityLimiter,
   RateLimitDecision,
   RateLimitEvent,
   RateLimitIdentity,
