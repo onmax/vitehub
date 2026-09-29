@@ -10,7 +10,7 @@ import { encodeProviderOutputAliases } from "@vite-hub/internal/build/esbuild"
 import { rebasePublishedProviderSourceLinks, removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources, rewriteRetainedProviderSourcePaths } from "@vite-hub/internal/build/provider-output-sources"
 import { copyNodeRuntimePackages, copyVercelFunctionRuntimePackages } from "@vite-hub/internal/build/vercel-runtime-packages"
 import { deploymentPresetFromNitro } from "@vite-hub/internal/deployment"
-import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubGeneratedRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, generatedViteHubWatchIgnoredAddition, hasNitroConfigContext, isServerEnvironment, resolveViteHubGeneratedRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 
 import { registerAgentInvocationStreamEndpoint } from "./vite/invocation-stream-endpoint.ts"
@@ -48,8 +48,7 @@ interface AgentCliContributingPlugin {
 export type AgentVitePlugin = Plugin & AgentCliContributingPlugin
 
 const agentPackageName = "@vite-hub/agent"
-const mergeNoExternal = createNoExternalMerger(agentPackageName)
-const mergeProviderRuntimeNoExternal = createNoExternalMerger("@t3tools/provider-runtime")
+const noExternalAddition = createNoExternalAddition(agentPackageName, "@t3tools/provider-runtime")
 const generatedAgentDenoServer = "agent/deno-server.ts"
 const generatedAgentDiscordGatewayRouteHandler = "agent/discord-gateway-route.ts"
 const generatedAgentDiscordGatewayPlugin = "agent/discord-gateway-plugin.ts"
@@ -3054,7 +3053,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         },
         server: {
           watch: {
-            ignored: mergeGeneratedViteHubWatchIgnored(config.server?.watch?.ignored),
+            ignored: generatedViteHubWatchIgnoredAddition(config.server?.watch?.ignored),
           },
         },
       }
@@ -3100,7 +3099,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         // SAFETY: Vite passes its environment build configuration, which this adapter augments without changing its owned fields.
         build: mergeBuildExternal(config as BuildWithRolldownOptions, []),
         resolve: {
-          noExternal: mergeProviderRuntimeNoExternal(mergeNoExternal(config.resolve?.noExternal)),
+          noExternal: noExternalAddition(config.resolve?.noExternal),
         },
       }
     },
