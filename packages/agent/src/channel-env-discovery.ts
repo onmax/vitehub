@@ -88,6 +88,8 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
       else if (!channelModule && clause[b] === "defineAgent") agentFactories.add(local)
     }
   }
+  // A factory name that the module declares again, for example as a parameter, is not tracked.
+  for (const name of locallyDeclaredNames(tokens)) bindings.delete(name)
   const declarations = moduleObjectDeclarations(tokens)
   const agentBindings = new Map([...agentFactories].map(name => [name, "defineAgent"]))
   const agentNames = new Set(["defineAgent"])
@@ -108,8 +110,14 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
         // A factory call is found by the call scan. Runtime calls a bare factory without options
         // and uses the kind it returns, whatever the key is.
         if (reference?.call) return
-        if (reference) uses.push({ index: value, kind: reference.kind, optionKeys: new Set() })
-        else if (known.has(key)) uses.push({ index: value, kind: key, optionKeys: staticOptionKeys(tokens, localObject(tokens, value, declarations) ?? value, "}") })
+        if (reference) {
+          uses.push({ index: value, kind: reference.kind, optionKeys: new Set() })
+          return
+        }
+        if (!known.has(key)) return
+        const optionKeys = staticOptionKeys(tokens, localObject(tokens, value, declarations) ?? value, "}")
+        // An object with `kind` is a complete Channel definition, not built-in Channel options.
+        if (!optionKeys?.has("kind")) uses.push({ index: value, kind: key, optionKeys })
       })
     })
   }
@@ -138,6 +146,35 @@ function localObject(tokens: string[], index: number, declarations: ReadonlyMap<
   const declaration = declarations.get(tokens[index]!)
   const end = tokens[index + 1]
   return declaration !== undefined && tokens[declaration] === "{" && [",", "}", ")"].includes(end!) ? declaration : undefined
+}
+
+// Names bound by variable, function, and class declarations and by function parameters.
+function locallyDeclaredNames(tokens: string[]): Set<string> {
+  const names = new Set<string>()
+  const identifier = /^[A-Za-z_$][\w$]*$/
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!
+    if (["const", "let", "var", "function", "class"].includes(token) && identifier.test(tokens[i + 1] ?? "")) names.add(tokens[i + 1]!)
+    // A single arrow parameter: `name => ...`.
+    if (identifier.test(token) && tokens[i + 1] === "=" && tokens[i + 2] === ">") names.add(token)
+    if (token !== "(") continue
+    let depth = 0
+    let close = i
+    for (; close < tokens.length; close++) {
+      if (["{", "(", "["].includes(tokens[close]!)) depth++
+      else if (["}", ")", "]"].includes(tokens[close]!) && --depth === 0) break
+    }
+    const arrow = tokens[close + 1] === "=" && tokens[close + 2] === ">"
+    const declaredFunction = tokens[i - 1] === "function" || tokens[i - 2] === "function"
+    if (!arrow && !declaredFunction) continue
+    depth = 0
+    for (let j = i + 1; j < close; j++) {
+      if (["{", "(", "["].includes(tokens[j]!)) depth++
+      else if (["}", ")", "]"].includes(tokens[j]!)) depth--
+      else if (depth === 0 && identifier.test(tokens[j]!) && [",", ")", ":", "=", "?"].includes(tokens[j + 1] ?? ")")) names.add(tokens[j]!)
+    }
+  }
+  return names
 }
 
 // Map module-level `const name = {` declarations to the index of their opening brace.

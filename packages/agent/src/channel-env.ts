@@ -62,11 +62,23 @@ interface ServerEnvModule {
 
 let serverEnvModule: Promise<ServerEnvModule | undefined> | undefined
 
+// Without hubEnv() the generated module does not resolve. Other import failures, such as a
+// provider module that throws while it loads, are configuration errors and stay visible.
+function isMissingModule(error: unknown): boolean {
+  const code = isRecord(error) ? error.code : undefined
+  if (code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_IMPORT_NOT_DEFINED") return true
+  const message = error instanceof Error ? error.message : ""
+  return message.includes(serverEnvModuleId) && /cannot find|failed to (?:resolve|load)|no such module|missing|not defined/i.test(message)
+}
+
 function importServerEnvModule(): Promise<ServerEnvModule | undefined> {
   // hubEnv() rewrites the tagged import so Vite can resolve its generated module.
   // SAFETY: The generated server env module exposes the optional useServerEnv and loadServerEnv entrypoints.
   serverEnvModule ??= (import(/* @vite-ignore */ /* @vitehub-env */ serverEnvModuleId) as Promise<ServerEnvModule>)
-    .catch(() => undefined)
+    .catch((error: unknown) => {
+      if (isMissingModule(error)) return undefined
+      throw error
+    })
   return serverEnvModule
 }
 

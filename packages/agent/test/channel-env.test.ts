@@ -104,6 +104,16 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it("ignores complete definitions and shadowed factory names", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { telegram, discord } from "vite-hub/agent/channels"
+      function run(telegram) { return telegram() }
+      const wrap = (discord, other) => discord({})
+      export default defineAgent({ channels: { telegram: { kind: "custom" } } })
+    `)).toEqual([])
+  })
+
   it("treats options set to undefined as omitted", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
@@ -207,6 +217,18 @@ describe("built-in Channel Env at runtime", { timeout: 30_000 }, () => {
     // SAFETY: This test fixture intentionally constructs the exact asserted channel contract.
     await channel.adapter({ cloudflare: { env: { TELEGRAM_BOT_TOKEN: "host-token", TELEGRAM_WEBHOOK_SECRET_TOKEN: "stale-secret" } } } as never)
     expect(createTelegramAdapter).toHaveBeenCalledWith({ botToken: "host-token" })
+  })
+
+  it("keeps Server Env module load errors visible", async () => {
+    vi.resetModules()
+    vi.doMock("#vitehub/env/server", () => { throw new Error("provider module failed") })
+    vi.doMock("@chat-adapter/telegram", () => ({ createTelegramAdapter: vi.fn() }))
+    const { telegram } = await import("../src/channels.ts")
+    const channel = telegram()
+
+    if (!hasRuntimeType(channel.adapter, "function")) throw new Error("Expected Telegram adapter resolver.")
+    // SAFETY: This test fixture intentionally constructs the exact asserted channel contract.
+    await expect(channel.adapter({ cloudflare: { env: { TELEGRAM_BOT_TOKEN: "host-token" } } } as never)).rejects.toThrow()
   })
 
   it("keeps Server Env resolution errors visible", async () => {
