@@ -5,7 +5,7 @@ import type { LanguageModel } from "ai"
 import { defineAgent, defineAgentInvoker, defineCapability, runAgent, runAgentInline, startAgentInvocation, type AgentActor, type AgentCallbackContext, type AgentCapabilityCliCommand, type AgentCapabilityCliResolver, type AgentCapabilityDefinition, type AgentChannelDeliveryEffectIntent, type AgentChannelDeliveryFinishEffect, type AgentChannelDeliveryFinishEffectContext, type AgentChannelDefinition, type AgentChannelDeliveryReplyPayload, type AgentChannelDeliveryReplyInput, type AgentChannelDeliveryStatusInput, type AgentChannelMessage, type AgentChannelMessageContext, type AgentChannelDeliveryReplyStream, type AgentChannelFactory, type AgentChannelInput, type AgentChannelInputs, type AgentDeliveryArtifact, type AgentDriverAdaptiveCapacityOptions, type AgentDriverCapacityOptions, type AgentDriverCapacityQueueOptions, type AgentErrorHookEvent, type AgentFinishEvent, type AgentFinishHookEvent, type AgentGatewayModel, type AgentHookObserverEvent, type AgentInvoker, type AgentMessageChannelSettings, type AgentMessageDeliveryKind, type AgentModelInput, type AgentModuleOptions, type AgentRunInput, type AgentRunResult, type AgentRuntimeConfig, type AgentRuntimeContext, type AgentTriggerInvokeResult, type AgentTriggerRunInvokeResult, type AgentUIMessageStreamProjection, type AgentUsageRecord, type ImagePart, type PublishedAgentDeliveryArtifact, type ResolvedAgentRuntimeContext } from "../src/index.ts"
 import { createProcessAgentCapacity, type ProcessAgentCapacityOptions } from "../src/runtime/process.ts"
 import { access, chat, email, executor, getTranscriptionResults, git, inputCommands, kv, mcp, modelsDevPricing, openapi, sandbox, schedule, skills, streamTranscription, transcribe, usage, webSearch, workspaceShell, type AgentUsagePricing, type EmailCapabilityOptions, type EmailCapabilityToolPolicy, type ExecutorCapabilityOptions, type ModelsDevPricingOptions, type UsageOptions } from "../src/capabilities.ts"
-import { defineChannel, github, http, pullRequest, teams, telegram, webChat, type GitHubPullRequestCommand, type GitHubPullRequestFilter, type GitHubPullRequestFilterContext, type GitHubPullRequestRunContext } from "../src/channels.ts"
+import { defineChannel, github, http, pullRequest, slack, teams, telegram, webChat, type GitHubPullRequestCommand, type GitHubPullRequestFilter, type GitHubPullRequestFilterContext, type GitHubPullRequestRunContext } from "../src/channels.ts"
 import { defineEval, hasCapabilityExtension, textContains, type AgentEvalDefinition, type AgentObservation, type AgentScorer } from "../src/eval.ts"
 import { remoteMcpServer } from "../src/mcp.ts"
 import { stdioMcpServer } from "../src/mcp/stdio.ts"
@@ -316,7 +316,7 @@ describe("agent public types", () => {
           expectTypeOf(event.message.channel).toEqualTypeOf<"mail">()
           expectTypeOf(event.message.kind).toEqualTypeOf<"mail">()
           expectTypeOf(event.message.data).toEqualTypeOf<{ id: string }>()
-          expectTypeOf(event.message.label).toEqualTypeOf<(input: { add: string[] }) => Promise<{ applied: number }>>()
+          expectTypeOf(event.message.label).toEqualTypeOf<(input: { add: string[] }) => Promise<{ applied: number } | undefined>>()
           expectTypeOf(event.message.subject).toEqualTypeOf<() => Promise<string>>()
           // @ts-expect-error The mail Channel declares no reply method.
           void event.message.reply
@@ -335,13 +335,28 @@ describe("agent public types", () => {
         async "agent:finish"(event) {
           if (event.message?.channel === "support") {
             expectTypeOf(event.message.kind).toEqualTypeOf<"telegram">()
-            expectTypeOf(event.message.reply).toEqualTypeOf<(input: AgentChannelDeliveryReplyInput) => Promise<void>>()
+            expectTypeOf(event.message.reply).toEqualTypeOf<((input: AgentChannelDeliveryReplyInput) => Promise<void>) | undefined>()
           }
           if (event.message?.channel === "github") {
             expectTypeOf(event.message.status).toEqualTypeOf<((input: AgentChannelDeliveryStatusInput) => Promise<void>) | undefined>()
           }
           if (event.message?.channel === "mail") {
             expectTypeOf(event.message.data).toEqualTypeOf<{ id: string }>()
+          }
+        },
+      },
+    })
+
+    defineAgent({
+      channels: { slack: slack(), disabled: slack({ messages: false }) },
+      driver: { run: () => "ok" },
+      hooks: {
+        "agent:finish"(event) {
+          if (event.message?.channel === "slack") {
+            expectTypeOf(event.message.reply).toEqualTypeOf<((input: AgentChannelDeliveryReplyInput) => Promise<void>) | undefined>()
+          }
+          if (event.message?.channel === "disabled") {
+            expectTypeOf(event.message.reply).toEqualTypeOf<((input: AgentChannelDeliveryReplyInput) => Promise<void>) | undefined>()
           }
         },
       },

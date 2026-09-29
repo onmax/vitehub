@@ -2067,12 +2067,12 @@ type AgentChannelMessageMethodResult<TMethod> =
 
 /** Callable form of Channel message methods, without the Channel context argument. */
 export type AgentChannelMessageCalls<TMethods> = {
-  readonly [TName in keyof TMethods]: (...args: AgentChannelMessageMethodArgs<TMethods[TName]>) => Promise<Awaited<AgentChannelMessageMethodResult<TMethods[TName]>>>
+  readonly [TName in keyof TMethods]: (...args: AgentChannelMessageMethodArgs<TMethods[TName]>) => Promise<Awaited<AgentChannelMessageMethodResult<TMethods[TName]>> | (TMethods[TName] extends { read: true } ? never : undefined)>
 }
 
-/** Message methods that the Discord, Slack, Teams, and Telegram Channels provide. */
+/** Message methods available when Discord, Slack, Teams, or Telegram has an adapter and messages are enabled. */
 export interface AgentChannelReplyCalls {
-  readonly reply: (input: AgentChannelDeliveryReplyInput) => Promise<void>
+  readonly reply?: (input: AgentChannelDeliveryReplyInput) => Promise<void>
 }
 
 /** Message methods that the GitHub Channel provides. They exist only when the Channel has a GitHub App. */

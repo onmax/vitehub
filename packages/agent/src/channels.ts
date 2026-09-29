@@ -3122,7 +3122,7 @@ export function defineChannel<
     : options[channelDeliveryHandlers]
   const channel = {
     ...options,
-    ...(handlers ? { [channelDeliveryHandlers]: handlers } : {}),
+    [channelDeliveryHandlers]: handlers,
     kind,
     messages,
   }
@@ -3187,7 +3187,7 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
       ...(workspaceCapability ? [workspaceCapability] : []),
       ...channelOptions.capabilities || [],
     ],
-    ...(appEffects ? { [channelDeliveryHandlers]: appEffects } : {}),
+    [channelDeliveryHandlers]: appEffects,
     messages: false,
     triggers: {
       ...githubEventTriggers(pullRequest, appOptions, openedActivityDefinition, activity && activity !== true ? activity : undefined),

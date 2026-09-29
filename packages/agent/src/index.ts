@@ -1307,7 +1307,7 @@ async function channelMessageData<TRuntimeConfig extends AgentRuntimeConfig>(
 ): Promise<unknown> {
   const stored = context.get(channelMessageContextKey)
   const schema = channel.message?.data
-  return schema && stored !== undefined
+  return schema
     ? await parseStandardSchema(schema, stored, `Channel "${channelId}" message data`)
     : stored
 }
@@ -1323,7 +1323,9 @@ function channelMessageMethodHandler<TRuntimeConfig extends AgentRuntimeConfig>(
 function channelMessageIntentInput(intent: AgentChannelDeliveryEffectIntent): unknown {
   if (intent.kind !== "reply" || !intent.artifacts?.length || isAsyncIterable(intent.payload)) return intent.payload
   if (hasRuntimeType(intent.payload, "string")) return { artifacts: intent.artifacts, markdown: intent.payload }
-  return { ...(isRuntimeRecord(intent.payload) ? intent.payload : {}), artifacts: intent.artifacts }
+  const input = isRuntimeRecord(intent.payload) ? { ...intent.payload } : {}
+  input.artifacts = intent.artifacts
+  return input
 }
 
 /** Readable call text for the trace, such as `label({"add":["Receipts"]})`. */
@@ -1538,10 +1540,12 @@ async function applyChannelDeliveryEffectIntents<
 
     if (context.input.dryRun) {
       const recorded = await dryRunDeliveryIntent(intent)
+      const traceMetadata: Record<string, unknown> = { ...metadata }
+      if (recorded.kind !== "reply") {
+        traceMetadata["channel.effect.content"] = channelMessageCallContent(recorded.kind, recorded.payload === undefined ? [] : [recorded.payload])
+      }
       await traceAgentChannelDeliveryEffect(toTraceContext(context), recorded, {
-        ...metadata,
-        // Reply text is the recorded content. Other intents record their call.
-        ...(recorded.kind === "reply" ? {} : { "channel.effect.content": channelMessageCallContent(recorded.kind, recorded.payload === undefined ? [] : [recorded.payload]) }),
+        ...traceMetadata,
         "channel.effect.skipped": "dry-run",
       })
       continue
@@ -1810,7 +1814,10 @@ async function callChannelMessageMethod<
       name: "channel:message",
       owner: "channel",
       phase: "message",
-    }, async () => await channelMessageMethodHandler(method)(messageContext, ...args))
+    }, async () => {
+      if (!read) await agentChannelDeliveryOwnershipVerifier(context.runtimeContext)?.()
+      return await channelMessageMethodHandler(method)(messageContext, ...args)
+    })
     await traceAgentChannelDeliveryEffect(toTraceContext(context), traceIntent, metadata)
     return result
   }

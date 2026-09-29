@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest"
 import * as v from "valibot"
 
 import { createTraceEventLog } from "@vite-hub/runtime"
-import { defineChannel } from "../src/channels.ts"
+import { defineChannel, slack } from "../src/channels.ts"
+import { withAgentChannelDeliveryOwnershipVerifier } from "../src/internal/channel-delivery.ts"
 import { defineAgent, runAgent, runAgentTrigger } from "../src/index.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
 import type { AgentChannelMessage } from "../src/index.ts"
@@ -78,6 +79,32 @@ describe("Channel message handle", () => {
     expect(provider.label).toHaveBeenCalledWith("m1", ["Receipts"])
   })
 
+  it("validates omitted message data against the declared schema", async () => {
+    let reachedHook = false
+    const agent = defineAgent({
+      channels: {
+        mail: defineChannel("mail", {
+          message: { data: v.object({ id: v.string() }) },
+          messages: false,
+          triggers: {
+            message: {
+              invoke: () => ({ input: { prompt: "mail" } }),
+            },
+          },
+        }),
+      },
+      driver: { run: () => "ok" },
+      hooks: {
+        "agent:finish"() {
+          reachedHook = true
+        },
+      },
+    })
+
+    await expect(runAgentTrigger(agent, runtimeContext(), "mail.message", {})).rejects.toThrow(/Invalid Channel "mail" message data/)
+    expect(reachedHook).toBe(false)
+  })
+
   it("records write methods in a dry run and still runs read methods", async () => {
     const provider = { label: vi.fn(), subject: vi.fn(() => "Invoice") }
     const invocations = consoleInvocations()
@@ -109,6 +136,46 @@ describe("Channel message handle", () => {
         },
       },
     ])
+  })
+
+  it("fences custom writes after delivery ownership is lost but allows reads", async () => {
+    const provider = { label: vi.fn(), subject: vi.fn(() => "Invoice") }
+    const verifyOwnership = vi.fn(async () => { throw new Error("delivery ownership lost") })
+    const agent = defineAgent({
+      channels: { mail: mailChannel(provider) },
+      driver: { run: () => "Receipts" },
+      hooks: {
+        async "agent:finish"(event) {
+          expect(await event.message?.subject()).toBe("Invoice")
+          await expect(event.message?.label({ add: ["Receipts"] })).rejects.toThrow("delivery ownership lost")
+        },
+      },
+    })
+
+    await runAgentTrigger(agent, withAgentChannelDeliveryOwnershipVerifier(runtimeContext(), verifyOwnership), "mail.message", { id: "m3" })
+    expect(provider.subject).toHaveBeenCalledWith("m3")
+    expect(provider.label).not.toHaveBeenCalled()
+    expect(verifyOwnership).toHaveBeenCalledOnce()
+  })
+
+  it.each([false, true])("omits built-in reply without delivery support (disabled: %s)", async (disabled) => {
+    const agent = defineAgent({
+      channels: {
+        slack: slack({
+          adapter: disabled ? () => { throw new Error("disabled adapter must not run") } : undefined,
+          messages: disabled ? false : undefined,
+          triggers: { message: { invoke: () => ({ input: { prompt: "hello" } }) } },
+        }),
+      },
+      driver: { run: () => "ok" },
+      hooks: {
+        "agent:finish"(event) {
+          expect(event.message?.reply).toBeUndefined()
+        },
+      },
+    })
+
+    await runAgentTrigger(agent, runtimeContext(), "slack.message", {})
   })
 
   it("routes event.reply() to a Channel reply method and skips it in a dry run", async () => {
