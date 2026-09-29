@@ -62,8 +62,21 @@ describe("Definition inspection parity", () => {
       expect(inspector, `Expected a ${kind} inspector`).toBeDefined()
       const listed = await inspector!.list()
       expect(listed.length, `Expected ${kind} Definitions`).toBeGreaterThan(0)
-      expect(catalog.content[section]?.kind, kind).toBe("definition-catalog")
-      expect({ definitions: listed, kind: "definition-catalog" }, kind).toEqual(catalog.content[section])
+      const content = catalog.content[section]
+      if (content?.kind === "record-table") {
+        // Record tables keep one `definition:<name>` record per Definition, with the same file and fields.
+        expect(content.records.map(record => record.id), kind).toEqual(listed.map(definition => `definition:${definition.name}`))
+        for (const [index, definition] of listed.entries()) {
+          expect(content.records[index]?.fields, kind).toEqual(expect.arrayContaining([
+            ...definition.fields,
+            { label: "File", value: definition.file },
+            { label: "Source", value: definition.source },
+          ]))
+        }
+        continue
+      }
+      expect(content?.kind, kind).toBe("definition-catalog")
+      expect({ definitions: listed, kind: "definition-catalog" }, kind).toEqual(content)
     }
   }, 60_000)
 })
