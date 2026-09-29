@@ -63,6 +63,29 @@ describe("Rate Limit core", () => {
     expect(driver.size()).toBe(1)
   })
 
+  it("reclaims expired counters across different windows without resetting live limits", async () => {
+    let now = 1
+    const driver = memoryRateLimitDriver({ maxEntries: 2, now: () => now })
+    const minute = createRateLimiter({ driver, limit: 1, name: "minute", window: "1m" })
+    const second = createRateLimiter({ driver, limit: 1, name: "second", window: "1s" })
+    await minute.consume({ key: "user" })
+    await second.consume({ key: "old" })
+
+    now = 1_000
+    await expect(second.consume({ key: "new" })).resolves.toMatchObject({ allowed: true, used: 1 })
+    await expect(minute.consume({ key: "user" })).resolves.toMatchObject({ allowed: false, used: 1 })
+    expect(driver.size()).toBe(2)
+
+    now = 60_000
+    await expect(minute.consume({ key: "user" })).resolves.toMatchObject({ allowed: true, used: 1 })
+    expect(driver.size()).toBe(1)
+
+    driver.clear()
+    await second.consume({ key: "after-clear" })
+    now = 61_000
+    await expect(second.consume({ key: "after-clear" })).resolves.toMatchObject({ allowed: true, used: 1 })
+  })
+
   it("validates driver guarantees before consumption", () => {
     expect(() => createRateLimiter({
       driver: { capabilities: { ...strictCapabilities, enforcement: "best-effort" }, consume: () => [null, { allowed: true }], name: "edge" },
