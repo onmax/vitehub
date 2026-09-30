@@ -694,6 +694,16 @@ it.each([
   expect(definition?.workspace).toBeUndefined()
 })
 
+it("rejects angle-bracket assertion mutations of Channel options", async () => {
+  const source = `${imports} const options: { pullRequest: boolean } = { pullRequest: false }; (<typeof options>options).pullRequest = true; export default defineAgent({ channels: { custom: github(options) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
+it("rejects aliases assigned through container properties", async () => {
+  const source = `${imports} const options = { pullRequest: false }; const holder = {} as { options: typeof options }; holder.options = options; holder.options.pullRequest = true; export default defineAgent({ channels: { custom: github(options) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
 it.each<[string, string, Record<string, string>]>([
   ["package re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "@acme/channels"' }],
   ["package star re-export", 'import { portal } from "../../portal.ts"', { "portal.ts": 'export * from "@acme/channels"' }],
@@ -719,6 +729,19 @@ it.each([
     "inner.ts": `${imports} ${named ? "export const portal =" : "export default"} github({ pullRequest: false })`,
   })
   expect(definition?.workspace).toBeUndefined()
+})
+
+it.each(["\\\\8", "\\\\9", "\\\\1", "\\\\07"])("rejects invalid escaped relative Channel specifiers: %s", async escape => {
+  await expect(discover(`import portal from "../../portal${escape}.ts"; export default defineAgent({ channels: { custom: portal } })`, {
+    [`portal${escape}.ts`]: `${imports} export default github({ pullRequest: true })`,
+  })).rejects.toThrow(/cannot inspect an imported Channel|opaque Channel/)
+})
+
+it.each([String.raw`'review\8'`, String.raw`'review\07'`])("rejects invalid escaped relative Channel export names: %s", async exportedName => {
+  const source = `import { ${exportedName} as portal } from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })`
+  await expect(discover(source, {
+    "portal.ts": `${imports} const channel = github({ pullRequest: true }); export { channel as ${exportedName} }`,
+  })).rejects.toThrow("cannot inspect an imported Channel")
 })
 
 it.each(["channels?.github", "channels.github?.", "channels?.github?."])("recognizes optional namespace Channel calls: %s", async helper => {

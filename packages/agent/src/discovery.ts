@@ -91,14 +91,21 @@ function tokenizeAgentSource(source: string) {
 // Decode ESM string literals without executing the source module.
 function moduleSpecifier(token: string | undefined): string {
   if (!token) return ""
+  const body = token.slice(1, -1)
+  // Legacy octal and decimal escapes are invalid in strict-mode modules.
+  if (/\\(?:[89]|[1-7][0-7]?|0[0-7])/.test(body)) return ""
   const escapes: Record<string, string> = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "0": "\0" }
-  return token.slice(1, -1).replace(/\\(?:u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|x([\da-fA-F]{2})|(\r\n|[\n\r\u2028\u2029])|([\s\S]))/g,
+  return body.replace(/\\(?:u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|x([\da-fA-F]{2})|(\r\n|[\n\r\u2028\u2029])|([\s\S]))/g,
     (_match, codePoint: string | undefined, unicode: string | undefined, hex: string | undefined, continuation: string | undefined, escaped: string | undefined) => {
       const code = codePoint ?? unicode ?? hex
       if (code !== undefined) return String.fromCodePoint(Number.parseInt(code, 16))
       if (continuation !== undefined) return ""
       return escapes[escaped!] ?? escaped!
     })
+}
+
+function invalidModuleLiteral(token: string | undefined): boolean {
+  return !!token && /^['"]/.test(token) && /\\(?:[89]|[1-7][0-7]?|0[0-7])/.test(token.slice(1, -1))
 }
 
 // First-party Channel helpers from the Agent Channel entry. Only `github()`
@@ -165,6 +172,7 @@ function exportName(token: string | undefined): string | undefined {
   if (!token) return
   if (/^[A-Za-z_$][\w$]*$/.test(token)) return token
   if (!/^["']/.test(token)) return
+  if (invalidModuleLiteral(token)) return
   try {
     return moduleSpecifier(token)
   }
@@ -724,7 +732,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         const accessor = tokens.findIndex((token, cursor) => cursor > opening && cursor < close
           && tokenScopes[cursor] === opening && ["get", "set"].includes(token)
           && (tokens[cursor + 1] === "[" || propertyName(tokens[cursor + 1] ?? "") === tokens[property]))
-        if (accessor === -1) continue
+        if (accessor === -1) {
+          // An assignment to a previously absent property can alias a local
+          // options object. Invalidate RHS bindings so stale literals are not
+          // inspected after `holder.options = options`.
+          if (assignmentOperator(memberEnd)) {
+            for (const target of containerAliasTargets(memberEnd + 1)) mutatedBindings.add(target)
+          }
+          continue
+        }
         // Computed accessors can select any captured value. Invalidate all
         // references in the container rather than guessing the selected body.
       }
@@ -803,6 +819,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const pattern = patternOpening(index - 1)
     if (pattern === undefined) continue
     recordDestructuringAliases(pattern, index, index + 1)
+  }
+  // A property assignment can introduce an alias into a container that had
+  // no literal property to inspect. Invalidate direct local RHS bindings so a
+  // later mutation through that property cannot use a stale initializer.
+  for (let index = 0; index + 4 < tokens.length; index++) {
+    if (tokens[index + 1] !== "." || !assignmentOperator(index + 3)) continue
+    const target = tokens[index + 4]
+    if (target && /^[A-Za-z_$][\w$]*$/.test(target) && visibleDeclaration(index + 4) !== undefined) {
+      mutatedBindings.add(target)
+    }
   }
   const opaqueCalls = new Set<number>()
   const trustedCalls = new Set<number>()
@@ -1064,9 +1090,23 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         continue
       }
       if (tokens[end] === ")" && wrappers > 0) { wrappers--; end++; continue }
+      if (tokens[end] === ")" && hasAngleAssertion(index)) { end++; continue }
       break
     }
     return end
+  }
+
+  function hasAngleAssertion(index: number): boolean {
+    if (tokens[index - 1] !== ">") return false
+    let depth = 0
+    for (let cursor = index - 1; cursor >= 0; cursor--) {
+      if (tokens[cursor] === ">") depth++
+      else if (tokens[cursor] === "<") {
+        depth--
+        if (depth === 0) return tokens[cursor - 1] === "("
+      }
+    }
+    return false
   }
 
   function resolveReference(index: number, seen = new Set<number>(), preserveCalls = false): number {
