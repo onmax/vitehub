@@ -85,7 +85,7 @@ describe("built-in Channel discovery", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
       const helpers = {
-        run(telegram: () => void): void { telegram() },
+        run(telegram: () => void): { result: string } { return telegram() },
       }
       class Runner {
         constructor(telegram: () => void) { telegram() }
@@ -101,6 +101,8 @@ describe("built-in Channel discovery", () => {
       class Tools extends mixin({ feature: true }) {
         telegram() {}
       }
+      const present = "telegram" in { telegram() {} }
+      type Conditional<T> = T extends { telegram(): void } ? true : false
     `)).toEqual([])
   })
 
@@ -308,9 +310,11 @@ describe("built-in Channel discovery", () => {
   it("unwraps single parenthesized Channels maps", () => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
+      const channels: AgentChannelInputs | undefined = { telegram: {} }
+      defineAgent({ channels: channels! })
       defineAgent({ channels: (({ telegram: {} })) })
       defineAgent({ channels: ({ telegram: {} }, custom) })
-    `)).toEqual([{ kind: "telegram", keys: [] }])
+    `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: [] }])
   })
 
   it("follows typed maps and explicit properties after spreads", () => {

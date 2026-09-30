@@ -255,7 +255,7 @@ describe("built-in deployment preset integration", () => {
           `import { telegram } from "vite-hub/agent/channels"`,
           source,
         ].join("\n"))
-        expect((requiredSecrets(await resolve()) ?? []).includes("TELEGRAM_BOT_TOKEN")).toBe(required)
+        expect((requiredSecrets(await resolve()) ?? []).includes("TELEGRAM_BOT_TOKEN"), source).toBe(required)
       }
 
       await writeFile(join(root, "server", "agents", "support.ts"), [

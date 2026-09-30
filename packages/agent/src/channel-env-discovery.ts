@@ -222,7 +222,8 @@ function isObjectOrTypeContainer(tokens: string[], open: number, outer?: number)
     }
     if (nested > 0) continue
     if (["class", "interface"].includes(token) && tokens[i - 1] !== ".") return true
-    if (token === "function" || token === ";") return false
+    if (token === "function") return false
+    if (token === ";") break
   }
   // Statement blocks have a statement boundary, a control/function header,
   // or an arrow before them. Other braces occur in expressions or types.
@@ -265,7 +266,9 @@ function localObject(tokens: string[], index: number, declarations: ReadonlyMap<
   }
   if (tokens[index] === "{") return index
   const declaration = declarations.get(tokens[index]!)
-  const end = tokens[index + 1]
+  let after = index + 1
+  while (tokens[after] === "!" && tokens[after + 1] !== "=") after++
+  const end = tokens[after]
   return declaration !== undefined && tokens[declaration] === "{" && [",", "}", ")", "as", "satisfies"].includes(end!) ? declaration : undefined
 }
 
@@ -311,7 +314,15 @@ function isShadowedAt(tokens: string[], index: number, name: string, bindings: R
     let body = close === undefined ? undefined : close + 1
     if (body !== undefined && tokens[body] === ":") {
       body++
-      while (body < tokens.length && !["{", ";", "="].includes(tokens[body]!)) body = (closes.get(body) ?? body) + 1
+      let expectType = true
+      while (body < tokens.length) {
+        const token = tokens[body]!
+        if (token === "{" && !expectType) break
+        if (token === ";" || token === "=") break
+        if (token === "<") { body = skipTypeArguments(tokens, body); continue }
+        expectType = ["|", "&", "?", ":"].includes(token)
+        body = (closes.get(body) ?? body) + 1
+      }
     }
     if (close === undefined || tokens[body!] !== "{") continue
     if (!parameterListHasName(tokens, open + 1, close, name, closes)) continue
