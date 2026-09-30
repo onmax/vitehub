@@ -905,6 +905,25 @@ it("rejects predeclared for-of Channel option targets", async () => {
   await expect(discover(source)).rejects.toThrow("opaque Channel")
 })
 
+it.each([
+  '1 / Number(options.pullRequest = true) / 1',
+  '(1) / Number(options.pullRequest = true) / 1',
+  'numerator / Number(options.pullRequest = true) / 1',
+  '"1" / Number(options.pullRequest = true) / 1',
+  '.5 / Number(options.pullRequest = true) / 1',
+  '/pattern/ / Number(options.pullRequest = true) / 1',
+  'numerator++ / Number(options.pullRequest = true) / 1',
+  '1 / 2 / valueOf(options.pullRequest = true)',
+])("rejects Channel option writes inside division operands: %s", async expression => {
+  const source = `${imports} const options = { pullRequest: false }; let numerator = 1; const valueOf = Number; const ignored = ${expression}; export default defineAgent({ channels: { custom: github(options) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
+it("preserves regex literals containing apparent Channel option writes", async () => {
+  const source = `${imports} const options = { pullRequest: false }; const pattern = /options.pullRequest = true/; export default defineAgent({ channels: { custom: github(options) } })`
+  expect((await discover(source))?.workspace).toBeUndefined()
+})
+
 it.each(["of", "in"])("rejects member-expression for-%s Channel option targets", async operator => {
   const source = `${imports} let options = { pullRequest: false }; for (options.pullRequest ${operator} { enabled: true }) {} export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")

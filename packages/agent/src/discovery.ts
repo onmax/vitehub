@@ -81,10 +81,23 @@ function tokenizeAgentSource(source: string) {
   const tokens: string[] = []
   const lineBreaks = new Set<number>()
   let previousEnd = 0
-  for (const match of source.matchAll(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?[\d_]+)?)n?|(?:[\p{ID_Start}$_]|\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4})(?:(?:[\p{ID_Continue}$\u200C\u200D])|(?:\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4}))*|[^\s]/gu)) {
-    const token = match[0]
+  const tokenPattern = /"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?[\d_]+)?)n?|(?:[\p{ID_Start}$_]|\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4})(?:(?:[\p{ID_Continue}$\u200C\u200D])|(?:\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4}))*|[^\s]/gu
+  for (let match = tokenPattern.exec(source); match !== null; match = tokenPattern.exec(source)) {
+    let token = match[0]
     if (token.startsWith("//") || token.startsWith("/*")) continue
     if (/[\r\n\u2028\u2029]/.test(source.slice(previousEnd, match.index))) lineBreaks.add(tokens.length)
+    const previous = tokens.at(-1)
+    const endsExpression = previous !== undefined && (
+      /^(?:\d|\.\d|["'`]|\/.)/.test(previous) || [")", "]", "}"].includes(previous)
+      || (["+", "-"].includes(previous) && tokens.at(-2) === previous)
+      || (isIdentifier(previous) && !["return", "throw", "yield", "await", "case", "else", "in", "of", "instanceof", "typeof", "void", "delete", "new"].includes(previous))
+    )
+    // A slash after an expression divides it. Expose operands that the
+    // regex-literal matcher would otherwise hide, including option writes.
+    if (token.startsWith("/") && token.length > 1 && endsExpression) {
+      token = "/"
+      tokenPattern.lastIndex = match.index + 1
+    }
     // Identifier escapes name the same bindings and properties at runtime.
     tokens.push(/^[\p{ID_Start}$_\\]/u.test(token)
       ? token.replace(/\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g, (_escape, point: string | undefined, unit: string | undefined) => String.fromCodePoint(Number.parseInt(point ?? unit!, 16)))
