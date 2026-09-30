@@ -62,3 +62,30 @@ export function registerMessageChannelDeferredReplyTrace<TRuntimeConfig extends 
 ): boolean {
   return deferredReplyTraces.get(context)?.(callback) ?? false
 }
+
+/**
+ * Input context key that the Chat route sets for each automatic-delivery
+ * Invocation. "pending" means the Chat finish effect posts the final text.
+ * "posted" means the route already streamed or posted it.
+ */
+export const chatFinalReplyContextKey = "vitehub.chat.final-reply"
+export type ChatFinalReplyMode = "pending" | "posted"
+export const chatFinalReplyIntent = "chat.final-reply"
+
+export function chatFinalReplyMode(input: { context?: unknown } | undefined): ChatFinalReplyMode | undefined {
+  const context = input?.context
+  if (!context || typeof context !== "object") return
+  const mode = (context as Record<string, unknown>)[chatFinalReplyContextKey]
+  return mode === "pending" || mode === "posted" ? mode : undefined
+}
+
+const chatFinalReplyTexts = new WeakMap<object, string>()
+
+/** Remember the final text of one Invocation so a finish hook reply with the same text is not posted twice. */
+export function setChatFinalReplyText(store: object, text: string): void {
+  chatFinalReplyTexts.set(store, text)
+}
+
+export function chatFinalReplyText(store: object): string | undefined {
+  return chatFinalReplyTexts.get(store)
+}

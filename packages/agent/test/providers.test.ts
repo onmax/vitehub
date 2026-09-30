@@ -13406,6 +13406,55 @@ describe("server helpers", () => {
     }
   })
 
+  it("posts the final text from a durable Agent Workflow with a loading message", { timeout: 60_000 }, async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const { resetWorkflowRuntime, setWorkflowRuntimeConfig } = await import("@vite-hub/workflow/runtime/state")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-chat-loading-workflow-state-"))
+    const state = Object.assign(createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` }), { workflowCustody: true })
+    const adapter = createTestChatAdapter()
+    const waitUntilTasks: Array<Promise<unknown>> = []
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages: { loading: { text: "Loading…" }, state },
+        }),
+      },
+      driver: { run: () => "Durable answer" },
+      hooks: {
+        "agent:finish": event => event.reply("Durable follow-up"),
+      },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    setWorkflowRuntimeConfig({ provider: "vercel" })
+
+    try {
+      await state.connect()
+      const response = await handler(chatWebhookRequest(91_219), "telegram", {
+        agentIdentity: { name: "calories" },
+        cloudflare: { env: {} },
+        waitUntil: (task) => waitUntilTasks.push(task),
+      })
+
+      expect(response.status).toBe(200)
+      await Promise.all(waitUntilTasks)
+      await vi.waitFor(() => {
+        expect(adapter.postMessage).toHaveBeenCalledWith("telegram:456", { markdown: "Durable follow-up" })
+      })
+      expect(adapter.postMessage).toHaveBeenCalledTimes(2)
+      expect(adapter.postMessage).toHaveBeenNthCalledWith(1, "telegram:456", { markdown: "Durable answer" })
+    } finally {
+      resetWorkflowRuntime()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
   it("detaches an accepted steered Workflow when queued evidence cannot be journaled", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { telegram } = await import("../src/channels.ts")
@@ -18162,6 +18211,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: {
               text: "Loading…",
@@ -18224,6 +18274,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: { intervalMs: 1_000, text: "Loading…", updates: "commentary" },
           },
@@ -18544,6 +18595,99 @@ describe("server helpers", () => {
     })
   })
 
+  it("replaces the loading message with the final text by default", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const adapter = createTestChatAdapter()
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages: {
+            loading: { text: "Loading…" },
+          },
+        }),
+      },
+      driver: { run: () => "Final answer" },
+      hooks: {
+        "agent:finish": event => [event.reply(" Final answer\n"), event.reply("Dashboard link")],
+      },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+
+    const response = await handler(chatWebhookRequest(91_216), "telegram")
+
+    expect(response.status).toBe(200)
+    expect(adapter.postMessage).toHaveBeenCalledTimes(3)
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(1, "telegram:456", "Loading…")
+    expect(adapter.deleteMessage).toHaveBeenCalledWith("telegram:456", "sent-1")
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "Final answer" })
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(3, "telegram:456", { markdown: "Dashboard link" })
+    expect(adapter.deleteMessage.mock.invocationCallOrder[0]).toBeLessThan(adapter.postMessage.mock.invocationCallOrder[1]!)
+  })
+
+  it("posts the final text as a new message before removing the loading message", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const adapter = createTestChatAdapter()
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages: {
+            final: { delivery: "new-message" },
+            loading: { text: "Loading…" },
+          },
+        }),
+      },
+      driver: { run: () => "Final answer" },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+
+    const response = await handler(chatWebhookRequest(91_217), "telegram")
+
+    expect(response.status).toBe(200)
+    expect(adapter.postMessage).toHaveBeenCalledTimes(2)
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "Final answer" })
+    expect(adapter.deleteMessage).toHaveBeenCalledWith("telegram:456", "sent-1")
+    expect(adapter.postMessage.mock.invocationCallOrder[1]).toBeLessThan(adapter.deleteMessage.mock.invocationCallOrder[0]!)
+  })
+
+  it("does not repeat the final text when a finish hook replies with it after streaming", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const adapter = createTestChatAdapter()
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages: { stream: false },
+        }),
+      },
+      driver: { run: () => "Final answer" },
+      hooks: {
+        "agent:finish": event => [event.reply(event.text!), event.reply("Follow-up")],
+      },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+
+    const response = await handler(chatWebhookRequest(91_218), "telegram")
+
+    expect(response.status).toBe(200)
+    expect(adapter.postMessage).toHaveBeenCalledTimes(2)
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(1, "telegram:456", { markdown: "Final answer" })
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "Follow-up" })
+  })
+
   it("keeps the posted final reply when loading-message deletion fails", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { telegram } = await import("../src/channels.ts")
@@ -18556,6 +18700,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: { text: "Analyzing photo…" },
           },
@@ -18593,6 +18738,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: { text: "Loading…", updates: "commentary" },
           },
@@ -18627,6 +18773,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: { text: "Loading…", updates: "commentary" },
           },
@@ -18670,6 +18817,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: { text: "Loading…" },
           },

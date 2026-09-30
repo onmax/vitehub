@@ -50,8 +50,8 @@ import {
 import { AgentHttpError, toHttpErrorResponse } from "../http-error.ts"
 import { isWorkflowRun } from "../http-response.ts"
 import { messageChannelStateContextKey } from "../internal/channels.ts"
-import { chatFinishDeliveryRegistrarKey, chatFinishDirectReplyTrace, chatFinishPrimaryReplyTrace } from "../internal/chat-finish-delivery.ts"
-import type { ChatFinishDeliveryCallback, ChatFinishDeliveryCapture, ChatFinishDeliveryRegistrar } from "../internal/chat-finish-delivery.ts"
+import { chatFinalReplyContextKey, chatFinishDeliveryRegistrarKey, chatFinishDirectReplyTrace, chatFinishPrimaryReplyTrace } from "../internal/chat-finish-delivery.ts"
+import type { ChatFinalReplyMode, ChatFinishDeliveryCallback, ChatFinishDeliveryCapture, ChatFinishDeliveryRegistrar } from "../internal/chat-finish-delivery.ts"
 import { createAgentChatApprovalCustody, resolveAgentChatApprovalTtl } from "../internal/chat-approvals.ts"
 import { agentChatInvocationIdHeader } from "../internal/routes.ts"
 import { requireAtomicAgentStateQueue } from "../internal/state-queue.ts"
@@ -5283,8 +5283,11 @@ async function handleChatSdkMessage(
       }
     }
 
-    const manualDelivery = options?.loading !== undefined || options?.delivery === "manual"
-    const streamsPhasedReplies = !manualDelivery && (options?.stream !== false || options?.commentary !== undefined)
+    // Only delivery: "manual" leaves the final text to finish hooks. A loading
+    // message buffers the reply and posts the final text when the Agent finishes.
+    const manualDelivery = options?.delivery === "manual"
+    const bufferedDelivery = manualDelivery || options?.loading !== undefined
+    const streamsPhasedReplies = !bufferedDelivery && (options?.stream !== false || options?.commentary !== undefined)
     input = {
       ...input,
       messages,
@@ -5301,7 +5304,7 @@ async function handleChatSdkMessage(
       return
     }
 
-    typing = streamsPhasedReplies || manualDelivery ? startChatTypingRefresh(thread, context) : undefined
+    typing = streamsPhasedReplies || bufferedDelivery ? startChatTypingRefresh(thread, context) : undefined
     assertChatDeliveryOptions(options || {})
     run = invocation.run
     if (inlineTurn) inlineTurn.runId = run?.runId
@@ -5316,7 +5319,7 @@ async function handleChatSdkMessage(
       ...(invocation.run ? { run: invocation.run } : {}),
     }
     const durableDelivery =
-      manualDelivery &&
+      bufferedDelivery &&
       options?.durable !== false &&
       (options?.durable === true ||
         ((options?.concurrency === undefined || options.concurrency === "parallel" || options.concurrency === "steer") &&
@@ -5346,6 +5349,7 @@ async function handleChatSdkMessage(
           context: {
             ...resolvedInvocationInput.context,
             [agentChannelDeliveryWorkflowContextKey]: workflowBinding,
+            ...(manualDelivery ? {} : { [chatFinalReplyContextKey]: "pending" satisfies ChatFinalReplyMode }),
             [finalChannelOutputContextKey]: true,
             [requireAgentWorkflowContextKey]: true,
           },
@@ -5897,7 +5901,7 @@ async function handleChatSdkMessage(
     invocationDeadlineAbort ??= new AbortController()
     const inlineRunContext = run?.runId ? withAgentInvocationResponseOwner(runContext, run.runId) : runContext
     const thinkingFallback = invocation.metadata?.thinkingFallback
-    if (manualDelivery && isRuntimeString(thinkingFallback)) {
+    if (bufferedDelivery && isRuntimeString(thinkingFallback)) {
       const placeholderDelivery = thread.post(thinkingFallback).then(async (placeholder) => {
         if (invocationDeadlineAbort?.signal.aborted) {
           await deleteManualDeliveryPlaceholder(placeholder)
@@ -5912,7 +5916,7 @@ async function handleChatSdkMessage(
       )
     }
     chatFinish = createChatFinishExtension(input, registration)
-    progress = manualDelivery
+    progress = bufferedDelivery
       ? createManualDeliveryProgressUpdater(manualDeliveryState, context.waitUntil, invocationDeadlineAbort?.signal, {
           intervalMs: options?.loading?.intervalMs,
           updates: options?.loading?.updates,
@@ -5934,7 +5938,8 @@ async function handleChatSdkMessage(
           context: {
             ...resolvedInvocationInput.context,
             [messageChannelStateContextKey]: state,
-            ...(options?.stream === false || manualDelivery ? { [finalChannelOutputContextKey]: true } : {}),
+            ...(options?.stream === false || bufferedDelivery ? { [finalChannelOutputContextKey]: true } : {}),
+            ...(manualDelivery ? {} : { [chatFinalReplyContextKey]: (bufferedDelivery ? "pending" : "posted") satisfies ChatFinalReplyMode }),
           },
         },
         invoker,
@@ -5947,7 +5952,7 @@ async function handleChatSdkMessage(
       // framework-owned placeholder without exposing ordinary Agent text.
       await enforceChatInvocationTimeout(
         (async () => {
-          const result = manualDelivery
+          const result = bufferedDelivery
             ? // SAFETY: The route normalized this value for an internal boundary whose generic signature cannot express the narrowed variant.
               await streamAgent(agent as never, inlineRunContext as never, invocationInput as never, {
                 output: "events",
@@ -5956,7 +5961,7 @@ async function handleChatSdkMessage(
               await runAgentInline(agent as never, inlineRunContext as never, invocationInput as never)
           // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
           const text = await collectAgentOutput(result, progress?.update, (toolResult) => toolResults.push(toolResult))
-          if (!manualDelivery && text) {
+          if (!bufferedDelivery && text) {
             await deliverPrimaryChatReply(chatFinish, async () => {
               invocationDeadlineAbort?.signal.throwIfAborted()
               if (!(await postDiscordSplitContent(thread, { markdown: text }, invocationDeadlineAbort?.signal))) {

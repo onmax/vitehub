@@ -49,7 +49,7 @@ import type {
   PublishedAgentDeliveryArtifact,
 } from "./types.ts"
 import { defineMessageChannelInstructions } from "./internal/channels.ts"
-import { chatFinishDeliveryRegistrarKey, setMessageChannelDeferredReplyTrace } from "./internal/chat-finish-delivery.ts"
+import { chatFinalReplyIntent, chatFinalReplyText, chatFinishDeliveryRegistrarKey, setMessageChannelDeferredReplyTrace } from "./internal/chat-finish-delivery.ts"
 import type { ChatFinishDeliveryRegistrar } from "./internal/chat-finish-delivery.ts"
 import { withAgentChannelSyncDefinition } from "./internal/channel-sync.ts"
 import { withAgentChannelHistoryDefinition } from "./internal/channel-history.ts"
@@ -2109,6 +2109,18 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     return
   }
   let body = messageChannelReplyBody(context)
+  // ViteHub posts the final text once. A finish hook reply with the same text is skipped.
+  const finalText = context.effect.intent === chatFinalReplyIntent ? undefined : chatFinalReplyText(context.context)
+  const payload = context.effect.payload
+  const textOnly = !isRecord(payload) || (payload.attachments === undefined && payload.files === undefined)
+  if (!stream && textOnly && finalText !== undefined && body?.trim() === finalText) {
+    setMessageChannelDeliveredReplyBody(context, body)
+    setMessageChannelDeferredReplyTrace(context, (callback) => {
+      void callback({ content: finalText.slice(0, 16 * 1024), skipped: "Same text as the final reply.", truncated: finalText.length > 16 * 1024 }).catch(() => undefined)
+      return true
+    })
+    return
+  }
   if (stream) {
     for await (const chunk of stream) body = `${body || ""}${chunk}`
   }
