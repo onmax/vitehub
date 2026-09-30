@@ -662,3 +662,57 @@ it.each<[string, string, Record<string, string>]>([
   const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
   expect(definition?.workspace).toBe("review")
 })
+
+it.each([
+  ['../../p\\u006frtal.ts', 'export { default } from "./i\\x6ener.ts"'],
+  ['../../p\\u{6f}rtal.ts', "export { default } from './i\\u006ener.ts'"],
+  ["../../p\\\nortal.ts", 'export * from "./i\\u006ener.ts"'],
+])("decodes escaped relative Channel specifiers: %s", async (specifier, barrel) => {
+  const named = barrel.includes("export *")
+  const definition = await discover(`import ${named ? "{ portal }" : "portal"} from "${specifier}"; export default defineAgent({ channels: { custom: portal } })`, {
+    "portal.ts": barrel,
+    "inner.ts": `${imports} ${named ? "export const portal =" : "export default"} github({ pullRequest: false })`,
+  })
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it.each(["channels?.github", "channels.github?.", "channels?.github?."])("recognizes optional namespace Channel calls: %s", async helper => {
+  for (const enabled of [false, true]) {
+    const channel = `${helper}({ pullRequest: ${enabled} })`
+    const setup = 'import * as channels from "vite-hub/agent/channels";'
+    const source = `${setup} export default defineAgent({ channels: { custom: ${channel} } })`
+    const local = await discover(source)
+    expect(local?.workspace).toBe(enabled ? "review" : undefined)
+    const imported = await discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+      "portal.ts": `${setup} export default ${channel}`,
+    })
+    expect(imported?.workspace).toBe(enabled ? "review" : undefined)
+  }
+})
+
+it.each([
+  ['{ id: "stateless", workspace: false }', false],
+  ['defineCapability({ workspace: false })', false],
+  ['{ id: "stateless", workspace: (false as boolean) }', false],
+  ['{ id: "storage", workspace: (false as boolean) || {} }', true],
+  ['{ id: "combined", workspace: false, capabilities: [{ id: "storage", workspace: {} }] }', true],
+  ['defineCapability({ workspace: false, capabilities: [{ id: "storage", workspace: {} }] })', true],
+])("matches runtime ownership for falsy Capability Workspaces: %s", async (capability, ownsWorkspace) => {
+  for (const settings of [`capabilities: [${capability}]`, `channels: { custom: webChat({ capabilities: [${capability}] }) }`]) {
+    const local = await discover(`${imports} export default defineAgent({ ${settings} })`)
+    expect(local?.workspace).toBe(ownsWorkspace ? "review" : undefined)
+  }
+})
+
+it.each([
+  'const wrapper = { get options() { return options } }; wrapper.options.pullRequest = true',
+  'const wrapper = { get options() { return options } }; wrapper.options.enable()',
+  'const wrapper = { set options(value) { options.pullRequest = value } }; wrapper.options = true',
+  '({ get options() { return options } }).options.pullRequest = true',
+])("rejects mutations through accessor container aliases: %s", async mutation => {
+  const source = `${imports} const options = { pullRequest: false }; ${mutation}; export default github(options)`
+  await expect(discover(source.replace("export default github(options)", "export default defineAgent({ channels: { custom: github(options) } })"))).rejects.toThrow(/opaque Channel/)
+  await expect(discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": source,
+  })).rejects.toThrow(/opaque Channel/)
+})

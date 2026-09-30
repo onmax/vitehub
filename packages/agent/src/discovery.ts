@@ -78,7 +78,7 @@ function tokenizeAgentSource(source: string) {
   const tokens: string[] = []
   const lineBreaks = new Set<number>()
   let previousEnd = 0
-  for (const match of source.matchAll(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|[A-Za-z_$][\w$]*|[^\s]/g)) {
+  for (const match of source.matchAll(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|[A-Za-z_$][\w$]*|[^\s]/g)) {
     const token = match[0]
     if (token.startsWith("//") || token.startsWith("/*")) continue
     if (/[\r\n\u2028\u2029]/.test(source.slice(previousEnd, match.index))) lineBreaks.add(tokens.length)
@@ -86,6 +86,19 @@ function tokenizeAgentSource(source: string) {
     previousEnd = match.index + token.length
   }
   return { tokens, lineBreaks }
+}
+
+// Decode ESM string literals without executing the source module.
+function moduleSpecifier(token: string | undefined): string {
+  if (!token) return ""
+  const escapes: Record<string, string> = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "0": "\0" }
+  return token.slice(1, -1).replace(/\\(?:u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|x([\da-fA-F]{2})|(\r\n|[\n\r\u2028\u2029])|([\s\S]))/g,
+    (_match, codePoint: string | undefined, unicode: string | undefined, hex: string | undefined, continuation: string | undefined, escaped: string | undefined) => {
+      const code = codePoint ?? unicode ?? hex
+      if (code !== undefined) return String.fromCodePoint(Number.parseInt(code, 16))
+      if (continuation !== undefined) return ""
+      return escapes[escaped!] ?? escaped!
+    })
 }
 
 // First-party Channel helpers from the Agent Channel entry. Only `github()`
@@ -258,7 +271,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
                 break
               }
             }
-            const moduleName = moduleToken?.slice(1, -1)
+            const moduleName = moduleSpecifier(moduleToken)
             if (moduleName === "@vite-hub/agent" || moduleName === "vite-hub/agent") importedNamespaces.add(tokens[j + 1])
             if (moduleName === "@vite-hub/agent/channels" || moduleName === "vite-hub/agent/channels") importedChannelNamespaces.add(tokens[j + 1])
             continue
@@ -266,7 +279,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           if (!sawFrom && j === i + 1 && /^['"`]/.test(token)) { i = j; break }
           if (sawFrom) {
             if (/^["'`]/.test(token)) {
-              const moduleName = token.slice(1, -1)
+              const moduleName = moduleSpecifier(token)
               if (moduleName === "@vite-hub/agent" || moduleName === "vite-hub/agent") {
                 const bindings = tokens.slice(i + 1, j)
                 for (let b = 0; b < bindings.length; b++) {
@@ -326,7 +339,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         } else {
           // `export { name as alias } from "./channel"` exports the other
           // module's binding. Package re-exports stay unresolved.
-          const specifier = tokens[close + 2]?.slice(1, -1) ?? ""
+          const specifier = moduleSpecifier(tokens[close + 2])
           if (specifier.startsWith("./") || specifier.startsWith("../")) {
             for (const [alias, name] of relativeExportBindings(tokens.slice(i + 2, close))) {
               reExports.set(alias, { specifier, name })
@@ -335,7 +348,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         }
       }
       if (tokens[i] === "export" && tokens[i + 1] === "*" && tokens[i + 2] === "from") {
-        starExports.push(tokens[i + 3]?.slice(1, -1) ?? "")
+        starExports.push(moduleSpecifier(tokens[i + 3]))
       }
       if (tokens[i] === "export" && tokens[i + 1] === "function" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "")) {
         namedExports.set(tokens[i + 2]!, i + 2)
@@ -428,6 +441,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           else if (["}", "]", ")"].includes(token)) nesting--
         }
         if (separator !== -1) value = value.slice(separator + 1)
+        else if (["get", "set"].includes(value[0]!) && value.includes("{")) {
+          // Accessors can return or mutate captured values. Retain their
+          // references so writes through the container invalidate them.
+          const body = value.indexOf("{")
+          targets.push(...containerAliasTargets(0, value.slice(body + 1), true))
+          continue
+        }
         else if (value.length !== 1) continue
       }
       targets.push(...containerAliasTargets(0, value, true))
@@ -678,8 +698,17 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (tokens[opening] === "[") continue
       const property = member + 1
       const value = properties(opening).get(tokens[property])
-      if (value === undefined) continue
-      targets = containerAliasTargets(value, tokens, true)
+      if (value === undefined) {
+        const accessor = tokens.findIndex((token, cursor) => cursor > opening && cursor < close
+          && tokenScopes[cursor] === opening && ["get", "set"].includes(token)
+          && propertyName(tokens[cursor + 1] ?? "") === tokens[property])
+        if (accessor === -1) continue
+        let body = accessor + 2
+        while (body < close && tokens[body] !== "{") body++
+        const bodyEnd = [...openingDelimiters].find(([, start]) => start === body)?.[0] ?? close
+        targets = containerAliasTargets(0, tokens.slice(body + 1, bodyEnd), true)
+      }
+      else targets = containerAliasTargets(value, tokens, true)
       valueEnd = property + 1
     }
     else if (tokens[member] === "[") {
@@ -904,7 +933,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (tokens[index] === "{") {
         const options = properties(index, true, true)
         const workspace = options.get("workspace")
-        if (workspace !== undefined && !undefinedValue(workspace)) return true
+        if (workspace !== undefined && capabilityWorkspaceOwnsWorkspace(workspace)) return true
         const nested = options.get("capabilities")
         return nested !== undefined && capabilityOwnsWorkspace(nested, seen)
       }
@@ -929,7 +958,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (tokens[capabilityCall] === "(") {
       const options = properties(capabilityCall + 1, false, true)
       const workspace = options.get("workspace")
-      if (workspace !== undefined && !undefinedValue(workspace)) return true
+      if (workspace !== undefined && capabilityWorkspaceOwnsWorkspace(workspace)) return true
       const nested = options.get("capabilities")
       return nested !== undefined && capabilityOwnsWorkspace(nested, seen)
     }
@@ -1062,6 +1091,26 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(tokens[index]))) return index
     const reference = declarations.get(tokens[index])
     return reference === undefined ? index : resolveReference(reference, seen, preserveCalls)
+  }
+
+  function capabilityWorkspaceOwnsWorkspace(index: number): boolean {
+    index = resolveReference(index)
+    if (undefinedValue(index)) return false
+    if (tokens[index] !== "false") return true
+    // A compound expression starting with false may still return a Workspace.
+    let end = index + 1
+    let scope = tokenScopes[index]
+    for (;;) {
+      if (tokens[end] === "as" || tokens[end] === "satisfies") { end = skipAssertion(end); continue }
+      if (tokens[end] === "!" && tokens[end + 1] !== "=") { end++; continue }
+      if (tokens[end] === ")" && openingDelimiters.get(end) === scope && tokens[scope!] === "(") {
+        end++
+        scope = scopeParents.get(scope!)
+        continue
+      }
+      break
+    }
+    return ![",", ";", ")", "]", "}"].includes(tokens[end])
   }
 
   function undefinedValue(index: number): boolean {
@@ -1219,7 +1268,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const call = factoryCall(index, "channelHelper")
     if (call === undefined) return
     const reference = resolveReference(index)
-    const helper = importedChannelFactories.get(tokens[reference]) ?? tokens[reference + 2]
+    const member = tokens[reference + 1] === "?" ? reference + 3 : reference + 2
+    const helper = importedChannelFactories.get(tokens[reference]) ?? tokens[member]
     return helper === undefined ? undefined : { call, helper }
   }
 
@@ -1229,7 +1279,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       reference >= scope.start && reference < scope.end && scope.names.has(tokens[reference]))) return undefined
     // A binding to an Agent value is not an alias of the factory itself.
     let identityEnd = reference + 1
-    while (tokens[identityEnd] === ".") identityEnd += 2
+    while (tokens[identityEnd] === "." || (tokens[identityEnd] === "?" && tokens[identityEnd + 1] === ".")) identityEnd += tokens[identityEnd] === "?" ? 3 : 2
     if (tokens[identityEnd] === "<") identityEnd = skipTypeArguments(identityEnd)
     if (reference !== index && tokens[identityEnd] === "(") return undefined
     let scope = tokenScopes[reference]
@@ -1247,7 +1297,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (name === "channelHelper") {
       // Channel helpers are trusted only when imported from the Channel entry.
       if (!importedChannelFactories.has(factory) && !(importedChannelNamespaces.has(factory)
-        && tokens[reference + 1] === "." && firstPartyChannelFactories.has(tokens[reference + 2]))) return undefined
+        && ((tokens[reference + 1] === "." && firstPartyChannelFactories.has(tokens[reference + 2]))
+          || (tokens[reference + 1] === "?" && tokens[reference + 2] === "." && firstPartyChannelFactories.has(tokens[reference + 3]))))) return undefined
     }
     else {
       const bindings = name === "defineAgent" ? importedAgentBindings : name === "defineCapability" ? importedCapabilityBindings : importedChannelBindings
@@ -1256,7 +1307,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           !(namespaces.has(factory) && tokens[reference + 1] === "." && tokens[reference + 2] === name)) return undefined
     }
     let call = index + 1
-    while (tokens[call] === ".") call += 2
+    while (tokens[call] === "." || (tokens[call] === "?" && tokens[call + 1] === ".")) {
+      call += tokens[call] === "?" ? 2 : 1
+      if (tokens[call] !== "(") call++
+    }
     if (tokens[call] === "<") call = skipTypeArguments(call)
     return tokens[call] === "(" ? call : undefined
   }
