@@ -121,6 +121,37 @@ describe("provider Agent Drivers in Worker builds", () => {
     expect(usesProviderAgentDriver(`${imports} switch (${call}) { case 0: let ${binding}; }`)).toBe(true)
   })
 
+  it.each([
+    ["codexDriver", "codexDriver()"],
+    ["defineAgent", `defineAgent({ driver: "codex" })`],
+    ["agent", "agent.codexDriver()"],
+    ["title", `defineAgent({ capabilities: [title({ driver: "codex" })] })`],
+    ["capabilities", `defineAgent({ capabilities: [capabilities.title({ driver: "codex" })] })`],
+  ])("respects static-block bindings for %s", async (binding, call) => {
+    const imports = `import { codexDriver, defineAgent } from "@vite-hub/agent"; import * as agent from "@vite-hub/agent"; import { title } from "@vite-hub/agent/capabilities"; import * as capabilities from "@vite-hub/agent/capabilities";`
+    const source = `${imports} class Setup { static { const ${binding} = localHelper; ${call} } }`
+    expect(usesProviderAgentDriver(source)).toBe(false)
+    await expect(transformServerModule(source, ["workerd", "worker"])).resolves.toBeUndefined()
+    expect(usesProviderAgentDriver(`${imports} class Setup { static { ${call}; if (true) { var ${binding}; } } }`)).toBe(false)
+    expect(usesProviderAgentDriver(`${source} ${call}`)).toBe(true)
+    expect(usesProviderAgentDriver(`${source} class Other { static { ${call} } }`)).toBe(true)
+  })
+
+  it.each([
+    ["codexDriver", "codexDriver()"],
+    ["defineAgent", `defineAgent({ driver: "codex" })`],
+    ["agent", "agent.codexDriver()"],
+    ["title", `defineAgent({ capabilities: [title({ driver: "codex" })] })`],
+    ["capabilities", `defineAgent({ capabilities: [capabilities.title({ driver: "codex" })] })`],
+  ])("respects named class-expression bindings for %s", async (binding, call) => {
+    const imports = `import { codexDriver, defineAgent } from "@vite-hub/agent"; import * as agent from "@vite-hub/agent"; import { title } from "@vite-hub/agent/capabilities"; import * as capabilities from "@vite-hub/agent/capabilities";`
+    const source = `${imports} const Setup = class ${binding} { static driver = ${call}; method() { ${call} } };`
+    expect(usesProviderAgentDriver(source)).toBe(false)
+    await expect(transformServerModule(source, ["workerd", "worker"])).resolves.toBeUndefined()
+    expect(usesProviderAgentDriver(`${source} ${call}`)).toBe(true)
+    expect(usesProviderAgentDriver(`${source} class Other { static driver = ${call} }`)).toBe(true)
+  })
+
   it.each(["title", "progressSummary"])("respects shadowed %s Capability imports", async (capability) => {
     const imports = `import { defineAgent } from "@vite-hub/agent"; import { ${capability} as makeCapability } from "@vite-hub/agent/capabilities";`
     const options = `{ capabilities: [makeCapability({ driver: "codex" })], driver: { model: "openai/gpt-5" } }`

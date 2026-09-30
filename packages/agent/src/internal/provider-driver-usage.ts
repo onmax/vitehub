@@ -113,6 +113,7 @@ function isShadowedByFunctionBinding(
   ancestors: Map<PositionedNode, PositionedNode[]>,
 ): boolean {
   for (const ancestor of ancestors.get(node) ?? []) {
+    if (ancestor.type === "ClassExpression" && identifierName(ancestor.id) === binding) return true
     if (
       ancestor.type !== "FunctionDeclaration"
       && ancestor.type !== "FunctionExpression"
@@ -169,7 +170,8 @@ function isShadowedByLexicalDeclaration(
       const body = ancestor.body
       if (isPositionedNode(body) && body.start <= node.start && node.end <= body.end && hasHoistedVariable(body, binding)) return true
     }
-    if (ancestor.type === "BlockStatement" || ancestor.type === "Program") {
+    if (ancestor.type === "StaticBlock" && hasHoistedVariable(ancestor, binding)) return true
+    if (ancestor.type === "BlockStatement" || ancestor.type === "Program" || ancestor.type === "StaticBlock") {
       const statements = Array.isArray(ancestor.body) ? ancestor.body : []
       if (statements.some(statement => isPositionedNode(statement) && declaredNames(statement).includes(binding))) return true
     }
