@@ -860,16 +860,26 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     recordDestructuringAliases(pattern, index, index + 1)
   }
   // A property assignment can introduce an alias into a container that had
-  // no literal property to inspect. Invalidate direct local RHS bindings so a
+  // no literal property to inspect. Invalidate local RHS references so a
   // later mutation through that property cannot use a stale initializer.
   for (let index = 0; index + 4 < tokens.length; index++) {
+    if (declarationTypeTokens.has(index) || ["const", "let", "var"].includes(tokens[index]!)) continue
+    if (!isIdentifier(tokens[index]) && ![")", "]", "}"].includes(tokens[index]!)) continue
     if (![".", "["].includes(tokens[index + 1]!)) continue
     let assignment = memberCallEnd(index)
     if (!assignmentOperator(assignment)) continue
     while (tokens[assignment] !== "=") assignment++
-    const target = tokens[assignment + 1]
-    if (target && isIdentifier(target) && visibleDeclaration(assignment + 1) !== undefined) {
-      mutatedBindings.add(target)
+    let depth = 0
+    for (let reference = assignment + 1; reference < tokens.length; reference++) {
+      const token = tokens[reference]!
+      if (depth === 0 && ([";", ",", ")", "]", "}"].includes(token) || startsStatement(reference))) break
+      if (token === "<" && (reference === assignment + 1 || tokens[reference - 1] === "(")) {
+        reference = skipTypeArguments(reference) - 1
+        continue
+      }
+      if (["(", "[", "{"].includes(token)) depth++
+      else if ([")", "]", "}"].includes(token)) depth--
+      if (visibleDeclaration(reference) !== undefined && tokens[reference - 1] !== ".") mutatedBindings.add(token)
     }
   }
   const opaqueCalls = new Set<number>()
@@ -885,8 +895,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     opaqueCalls.add(call)
     if (tokens[index] === "eval" && tokens[index - 1] !== ".") directEvalCalls.add(call)
     if (call > index + 1 && visibleDeclaration(index) !== undefined) mutatedBindings.add(tokens[index])
-    if (tokens[index] === "Object" && tokens[index + 1] === "." && tokens[index + 2] === "freeze"
-      && visibleDeclaration(index) === undefined) trustedCalls.add(call)
+    if (globalObjectReference(index) && tokens[index + 1] === "." && tokens[index + 2] === "freeze") trustedCalls.add(call)
     if (tokens[index - 1] !== "." && factories.some(name => factoryCall(index, name) === call)) trustedCalls.add(call)
   }
   const opaqueResultBindings = new Set<string>()
@@ -920,6 +929,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // Direct eval executes in this module's lexical scope and can mutate any
   // captured Channel options without leaving a statically visible write.
   if (directEvalCalls.size > 0) invalidateCapturedBindings()
+  // Template interpolations execute expressions hidden inside a literal token.
+  // Their side effects cannot be inspected by this scanner.
+  if (tokens.some(token => token.startsWith("`") && /(?<!\\)(?:\\\\)*\$\{/.test(token))) {
+    invalidateCapturedBindings()
+    for (const name of imported) mutatedBindings.add(name)
+  }
   // Invoking an extracted member of an opaque result may mutate captured
   // options even though the invocation has no receiver or arguments.
   const invokedBindings = new Set<string>()
@@ -1027,6 +1042,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       return binding
     }
     return undefined
+  }
+
+  function globalObjectReference(index: number): boolean {
+    if (tokens[index] !== "Object" || imported.has("Object") || mutatedBindings.has("Object") || visibleDeclaration(index) !== undefined
+      || callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has("Object"))) return false
+    for (let scope = tokenScopes[index]; ; scope = scopeParents.get(scope!)) {
+      if (tokens.some((token, declaration) => ["function", "class"].includes(token)
+        && tokens[declaration + 1] === "Object" && tokenScopes[declaration] === scope)) return false
+      if (scope === undefined) return true
+    }
   }
 
   function conditionalBranches(index: number): [number, number] | undefined {
@@ -1422,7 +1447,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     index = resolveReference(index)
     // Preserve object literals wrapped in value-preserving helpers such as
     // Object.freeze({ ... }).
-    if (tokens[index + 1] === "." && tokens[index + 2] === "freeze" && tokens[index + 3] === "(") {
+    if (globalObjectReference(index) && tokens[index + 1] === "." && tokens[index + 2] === "freeze" && tokens[index + 3] === "(") {
       index = resolveReference(index + 4)
     }
     if (inspectChannels && imported.has(tokens[index]) && visibleDeclaration(index) === undefined

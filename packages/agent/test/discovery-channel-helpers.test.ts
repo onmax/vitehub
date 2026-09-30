@@ -640,11 +640,52 @@ it.each([
   'holder[0] = options; holder[0].pullRequest = true',
   'holder.nested["options"] = options; holder.nested["options"].pullRequest = true',
   'holder["options"] ||= options; holder["options"].pullRequest = true',
+  'holder.options = (options); holder.options.pullRequest = true',
+  'holder.options = (options as Options); holder.options.pullRequest = true',
+  'holder.options = ((options satisfies Options)!); holder.options.pullRequest = true',
+  'holder.options = <Options>options; holder.options.pullRequest = true',
+  'holder.options = <Map<string, Options>>options; holder.options.pullRequest = true',
+  'holder.options = (false, options); holder.options.pullRequest = true',
 ])("rejects Channel options stored through property assignments: %s", async mutation => {
   const source = `${imports} const options = { pullRequest: false }; const holder = { nested: {} }; const key = "options"; ${mutation}; export default defineAgent({ channels: { github: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
   const explicit = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
   expect(explicit?.workspace).toBe("review")
+})
+
+it.each([
+  'const ignored = `${options.pullRequest = true}`',
+  'const ignored = tag`${options.pullRequest = true}`',
+  'const ignored = `${`${options.pullRequest = true}`}`',
+  'const ignored = `${enable()}`; function enable() { options.pullRequest = true }',
+])("rejects Channel options with opaque template interpolations: %s", async expression => {
+  const source = `${imports} const options = { pullRequest: false }; ${expression}; export default defineAgent({ channels: { github: github(options) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+  const explicit = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
+  expect(explicit?.workspace).toBe("review")
+})
+
+it.each(['`plain text`', '`\\${options.pullRequest = true}`'])("keeps templates without interpolation stateless: %s", async template => {
+  const definition = await discover(`${imports} const options = { pullRequest: false }; const ignored = ${template}; export default defineAgent({ channels: { github: github(options) } })`)
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it.each([
+  'import Object from "./builder";',
+  'import { builder as Object } from "./builder";',
+  'import * as Object from "./builder";',
+  'const Object = builder;',
+  'function Object() {}',
+  'class Object {}',
+  'const builder = { freeze: value => value };',
+])("rejects shadowed or custom settings freeze helpers: %s", async declaration => {
+  const helper = declaration.startsWith("const builder") ? "builder" : "Object"
+  await expect(discover(`${imports} ${declaration} export default defineAgent(${helper}.freeze({ channels: { github: github({ pullRequest: false }) } }))`)).rejects.toThrow("opaque Agent settings")
+})
+
+it.each([false, true])("preserves global Object.freeze settings with pullRequest=%s", async pullRequest => {
+  const definition = await discover(`${imports} export default defineAgent(Object.freeze({ channels: { github: github({ pullRequest: ${pullRequest} }) } }))`)
+  expect(definition?.workspace).toBe(pullRequest ? "review" : undefined)
 })
 
 it.each([
