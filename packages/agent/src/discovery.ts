@@ -1005,26 +1005,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   function staticConditionalBranch(index: number): number | undefined {
     if ((tokens[index] !== "true" && tokens[index] !== "false") || tokens[index + 1] !== "?") return
-    let depth = 0
-    for (let i = index; i < tokens.length; i++) {
-      const token = tokens[i]
-      if (depth === 0 && token === "?") {
-        const consequent = i + 1
-        let branchDepth = 0
-        for (let j = consequent; j < tokens.length; j++) {
-          const branchToken = tokens[j]
-          if (["(", "[", "{"].includes(branchToken)) branchDepth++
-          else if ([")", "]", "}"].includes(branchToken)) branchDepth--
-          else if (branchToken === ":" && branchDepth === 0) {
-            return tokens[index] === "true" ? consequent : j + 1
-          }
-        }
-        return
-      }
-      if (["(", "[", "{"].includes(token)) depth++
-      else if ([")", "]", "}"].includes(token)) depth--
-      else if (depth === 0 && [";", ",", ")", "]", "}"].includes(token)) return
-    }
+    const branches = conditionalBranches(index)
+    return branches?.[tokens[index] === "true" ? 0 : 1]
   }
 
   function hasLogicalOperator(index: number): boolean {

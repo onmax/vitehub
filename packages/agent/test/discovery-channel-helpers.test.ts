@@ -61,14 +61,22 @@ it.each([
   expect(definition?.source).toBe("server-agents")
 })
 
-it("ignores unreachable conditional pullRequest branches", async () => {
-  const source = `${imports} export default defineAgent({ channels: { custom: github({ pullRequest: false ? true : false }) } })`
-  const definition = await discover(source)
-  expect(definition?.workspace).toBeUndefined()
+it.each([
+  ["false ? true : false", false],
+  ["true ? false : true", false],
+  ["false ? true ? true : true : false", false],
+  ["true ? true : false", true],
+  ["{ workspace: false ? true : false }", false],
+  ["{ workspace: true ? false : true }", false],
+  ["{ workspace: true ? true : false }", true],
+])("ignores unreachable conditional pullRequest branches: %s", async (pullRequest, ownsWorkspace) => {
+  const channel = `github({ pullRequest: ${pullRequest} })`
+  const definition = await discover(`${imports} export default defineAgent({ channels: { custom: ${channel} } })`)
+  expect(definition?.workspace).toBe(ownsWorkspace ? "review" : undefined)
   const imported = await discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
-    "portal.ts": `${imports} export default github({ pullRequest: false ? true : false })`,
+    "portal.ts": `${imports} export default ${channel}`,
   })
-  expect(imported?.workspace).toBeUndefined()
+  expect(imported?.workspace).toBe(ownsWorkspace ? "review" : undefined)
 })
 
 it.each([
