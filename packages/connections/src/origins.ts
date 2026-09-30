@@ -8,7 +8,8 @@ export function assertConnectionOrigins(origins: unknown, path = "provider.origi
   if (!Array.isArray(origins) || !origins.length || origins.some(origin => !originPattern.test(String(origin)))) {
     throw connectionError("invalid", { path })
   }
-  return origins.map(origin => String(origin).toLowerCase())
+  // `URL.port` is empty for a default port, so `:443` and `:80` are removed here.
+  return origins.map(origin => String(origin).toLowerCase().replace(/^(https:\/\/[^/]+):443$|^(http:\/\/[^/]+):80$/, "$1$2"))
 }
 
 /** Whether `url` is one of the origins. `*.` matches one or more subdomain labels, not the bare domain. */

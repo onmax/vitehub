@@ -1,7 +1,7 @@
 import * as v from "valibot"
 
 import { connectionError } from "../errors.ts"
-import { assertConnectionOrigins } from "../origins.ts"
+import { assertConnectionOrigins, matchesConnectionOrigin } from "../origins.ts"
 
 import type {
   ConnectionOAuthClient,
@@ -31,6 +31,7 @@ export interface OAuth2ProviderOptions {
   revokeUrl?: string
   scopes: readonly string[]
   tokenUrl: string
+  /** Returns the account label. It receives the access token, so its origin must be in `origins`. */
   userInfoUrl?: string
 }
 
@@ -75,6 +76,10 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionProvider {
     throw connectionError("invalid", { path: "provider" })
   }
   const origins = assertConnectionOrigins(options.origins)
+  // User info receives the access token, so it must be one of the API origins.
+  if (options.userInfoUrl && !matchesConnectionOrigin(origins, new URL(options.userInfoUrl))) {
+    throw connectionError("invalid", { path: "provider.userInfoUrl" })
+  }
   for (const key of Object.keys(options.authorizationParams ?? {})) {
     if (reservedAuthorizationParams.has(key)) throw connectionError("invalid", { path: `provider.authorizationParams.${key}` })
   }
@@ -182,7 +187,12 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionProvider {
             const response = await clientRequest(context, options.revokeUrl!, token.refreshToken
               ? { token: token.refreshToken, token_type_hint: "refresh_token" }
               : { token: token.accessToken, token_type_hint: "access_token" })
-            if (!response.ok && response.status !== 400) throw connectionError("provider_failed", { status: response.status })
+            // RFC 7009 answers 200 for a token that is already invalid. Some providers answer 400 `invalid_token`.
+            // Other 400 errors, such as `invalid_client`, mean the upstream token may still be active.
+            if (response.ok) return
+            const error = response.status === 400 ? v.safeParse(errorResponse, await readJson(response)) : undefined
+            if (error?.success && error.output.error === "invalid_token") return
+            throw connectionError("provider_failed", { status: response.status })
           },
         }
       : {}),
