@@ -74,12 +74,71 @@ function hasValueImport(specifier: unknown): boolean {
   return isPositionedNode(specifier) && specifier.importKind !== "type"
 }
 
-function isProviderFactoryCall(node: PositionedNode, factoryBindings: Set<string>, namespaces: Set<string>): boolean {
+function collectAncestors(root: PositionedNode): Map<PositionedNode, PositionedNode[]> {
+  const ancestors = new Map<PositionedNode, PositionedNode[]>()
+  const visit = (node: PositionedNode, parents: PositionedNode[]) => {
+    ancestors.set(node, parents)
+    for (const value of Object.values(node)) {
+      if (isPositionedNode(value)) visit(value, [...parents, node])
+      else if (Array.isArray(value)) {
+        for (const item of value) {
+          if (isPositionedNode(item)) visit(item, [...parents, node])
+        }
+      }
+    }
+  }
+  visit(root, [])
+  return ancestors
+}
+
+function patternIdentifiers(node: unknown): string[] {
+  if (!isPositionedNode(node)) return []
+  if (node.type === "Identifier") return identifierName(node) ? [identifierName(node)!] : []
+  if (node.type === "RestElement" || node.type === "TSParameterProperty") return patternIdentifiers(node.argument)
+  if (node.type === "AssignmentPattern") return patternIdentifiers(node.left)
+  if (node.type === "ObjectPattern") {
+    return (Array.isArray(node.properties) ? node.properties : []).flatMap(property => {
+      if (!isPositionedNode(property)) return []
+      return property.type === "Property" ? patternIdentifiers(property.value) : patternIdentifiers(property.argument)
+    })
+  }
+  if (node.type === "ArrayPattern") return (Array.isArray(node.elements) ? node.elements : []).flatMap(patternIdentifiers)
+  return []
+}
+
+function isShadowedByFunctionParameter(
+  node: PositionedNode,
+  binding: string,
+  ancestors: Map<PositionedNode, PositionedNode[]>,
+): boolean {
+  for (const ancestor of ancestors.get(node) ?? []) {
+    if (
+      ancestor.type !== "FunctionDeclaration"
+      && ancestor.type !== "FunctionExpression"
+      && ancestor.type !== "ArrowFunctionExpression"
+    ) continue
+    const params = Array.isArray(ancestor.params) ? ancestor.params : []
+    if (params.some(parameter => patternIdentifiers(parameter).includes(binding))) return true
+  }
+  return false
+}
+
+function isProviderFactoryCall(
+  node: PositionedNode,
+  factoryBindings: Set<string>,
+  namespaces: Set<string>,
+  ancestors: Map<PositionedNode, PositionedNode[]>,
+): boolean {
   if (node.type !== "CallExpression" || !isPositionedNode(node.callee)) return false
-  if (node.callee.type === "Identifier") return factoryBindings.has(identifierName(node.callee) ?? "")
+  if (node.callee.type === "Identifier") {
+    const name = identifierName(node.callee) ?? ""
+    return factoryBindings.has(name) && !isShadowedByFunctionParameter(node, name, ancestors)
+  }
   if (node.callee.type !== "MemberExpression" || node.callee.computed === true) return false
-  return namespaces.has(identifierName(node.callee.object) ?? "")
+  const namespace = identifierName(node.callee.object) ?? ""
+  return namespaces.has(namespace)
     && providerFactoryNames.has(identifierName(node.callee.property) ?? "")
+    && !isShadowedByFunctionParameter(node, namespace, ancestors)
 }
 
 function hasProviderDriverValue(node: PositionedNode): boolean {
@@ -202,10 +261,11 @@ export function usesProviderAgentDriver(source: string): boolean {
   })
   if (hasProviderPreset) return true
 
+  const ancestors = collectAncestors(program)
   let found = false
   visitNodes(program, (node) => {
     if (found) return
-    found = isProviderFactoryCall(node, factoryBindings, namespaces)
+    found = isProviderFactoryCall(node, factoryBindings, namespaces, ancestors)
       || hasProviderDriverDefinition(node, defineAgentBindings, namespaces, capabilityBindings, capabilityNamespaces)
   })
   return found
