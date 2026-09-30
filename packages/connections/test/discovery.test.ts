@@ -38,6 +38,12 @@ describe("discoverConnectionDefinitions", () => {
     ])
   })
 
+  it("rejects a Connection name longer than the management routes accept", async () => {
+    const root = await createTempProject()
+    await touch(root, `server/connections/${"n".repeat(129)}.ts`)
+    expect(() => discoverConnectionDefinitions({ rootDir: root })).toThrow("Invalid Connection request.")
+  })
+
   it("returns no definitions without a connections directory", async () => {
     const root = await createTempProject()
     await touch(root, "server/channels/alerts.ts")

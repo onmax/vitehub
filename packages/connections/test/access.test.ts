@@ -95,10 +95,10 @@ describe("decideConnectionAccess", () => {
 
 describe("Connection origins", () => {
   it("matches exact origins and subdomain wildcards", () => {
-    const origins = assertConnectionOrigins(["https://API.example.com", "https://*.googleapis.com", "http://localhost:8787", "https://default.example:443", "http://plain.example:80"])
+    const origins = assertConnectionOrigins(["https://API.example.com", "https://*.googleapis.com", "http://localhost:8787", "https://default.example:443", "http://127.0.0.1:80"])
     // Default ports are normalized, as `URL.port` is empty for them.
     expect(matchesConnectionOrigin(origins, new URL("https://default.example/x"))).toBe(true)
-    expect(matchesConnectionOrigin(origins, new URL("http://plain.example:80/x"))).toBe(true)
+    expect(matchesConnectionOrigin(origins, new URL("http://127.0.0.1:80/x"))).toBe(true)
     expect(matchesConnectionOrigin(origins, new URL("https://api.example.com/v1?x=1"))).toBe(true)
     expect(matchesConnectionOrigin(origins, new URL("https://gmail.googleapis.com/gmail/v1"))).toBe(true)
     expect(matchesConnectionOrigin(origins, new URL("http://localhost:8787/x"))).toBe(true)
@@ -107,8 +107,12 @@ describe("Connection origins", () => {
     }
   })
 
-  it("rejects missing or malformed origins", () => {
-    for (const origins of [undefined, [], ["api.example.com"], ["https://api.example.com/v1"], ["https://user@api.example.com"], ["ftp://api.example.com"], ["https://a.*.example.com"]]) {
+  it("matches default ports in origins that a custom provider did not normalize", () => {
+    expect(matchesConnectionOrigin(["https://api.example.com:443"], new URL("https://api.example.com/x"))).toBe(true)
+  })
+
+  it("rejects missing or malformed origins, and plain http for remote hosts", () => {
+    for (const origins of [undefined, [], ["api.example.com"], ["https://api.example.com/v1"], ["https://user@api.example.com"], ["ftp://api.example.com"], ["https://a.*.example.com"], ["http://api.example.com"], ["http://*.localhost"]]) {
       expect(() => assertConnectionOrigins(origins)).toThrow("Invalid Connection request.")
     }
   })
