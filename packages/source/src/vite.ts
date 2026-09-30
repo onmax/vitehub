@@ -429,6 +429,7 @@ function sourceDefinitionPath(file: string, projectRoot: string, serverDirs: str
     const path = relative(resolve(projectRoot, directory), resolve(file)).replaceAll("\\", "/")
     if (path.startsWith("../") || isAbsolute(path)) return false
     return /^content\.(?:[cm]?[jt]s)$/.test(path)
+      || /^auth\.(?:[cm]?[jt]s)$/.test(path)
       || (/^collections\/.+\.(?:[cm]?[jt]s)$/.test(path) && !/\.d\.[cm]?ts$/.test(path))
   })
 }
