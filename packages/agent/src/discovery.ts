@@ -847,6 +847,26 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
   for (const call of opaqueCalls) {
     if (trustedCalls.has(call) || parameterLists.has(call)) continue
+    // A write through an opaque call result may mutate a captured options
+    // object even when the call has no arguments (`getOptions().pullRequest =
+    // true`). Invalidate local bindings so Channel ownership is not inferred
+    // from a stale initializer.
+    let close = call + 1
+    let callNesting = 1
+    for (; close < tokens.length && callNesting > 0; close++) {
+      if (["(", "[", "{"].includes(tokens[close]!)) callNesting++
+      else if ([")", "]", "}"].includes(tokens[close]!)) callNesting--
+    }
+    if (callNesting === 0) {
+      const memberEnd = memberCallEnd(close - 1, call)
+      const update = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
+      if (memberEnd > close && (assignmentOperator(memberEnd) || update)) {
+        for (const name of declarations.keys()) mutatedBindings.add(name)
+        for (const binding of variableDeclarations.keys()) {
+          for (const name of destructuredBindings.get(binding) ?? [tokens[binding + 1]!]) mutatedBindings.add(name)
+        }
+      }
+    }
     let nesting = 1
     for (let argument = call + 1; argument < tokens.length && nesting > 0; argument++) {
       if (["(", "[", "{"].includes(tokens[argument])) nesting++

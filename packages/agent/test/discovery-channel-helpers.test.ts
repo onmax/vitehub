@@ -814,3 +814,26 @@ it.each([
     "portal.ts": source,
   })).rejects.toThrow(/opaque Channel/)
 })
+
+it.each([
+  'const getOptions = () => options; getOptions().pullRequest = true',
+  'function getOptions() { return options }; getOptions()["pullRequest"] = true',
+  'const getOptions = () => ({ nested: options }); getOptions().nested.pullRequest = true',
+  'const getOptions = () => options; getOptions().pullRequest++',
+])("rejects mutations through opaque call results: %s", async mutation => {
+  const source = `${imports} const options = { pullRequest: false }; ${mutation}; export default github(options)`
+  await expect(discover(source.replace("export default github(options)", "export default defineAgent({ channels: { custom: github(options) } })"))).rejects.toThrow(/opaque Channel/)
+  await expect(discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": source,
+  })).rejects.toThrow(/opaque Channel/)
+})
+
+it("keeps read-only opaque call results from invalidating Channel options", async () => {
+  const source = `${imports} const options = { pullRequest: false }; const getOptions = () => options; const enabled = getOptions().pullRequest; export default defineAgent({ channels: { custom: github(options) } })`
+  expect((await discover(source))?.workspace).toBeUndefined()
+})
+
+it("rejects writes through captured call results inside configure callbacks", async () => {
+  const source = `${imports} export default defineAgent({ options: {}, configure: () => { const options = { pullRequest: false }; const getOptions = () => options; getOptions().pullRequest = true; return defineAgent({ channels: { custom: github(options) } }) } })`
+  await expect(discover(source)).rejects.toThrow(/opaque Channel/)
+})
