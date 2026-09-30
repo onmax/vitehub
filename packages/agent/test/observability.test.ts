@@ -242,3 +242,27 @@ it.each(["statusCode", "status"])("keeps errors with a throwing %s getter on the
   expect(exporter.exception).toHaveBeenCalledTimes(1)
   expect(exporter.capture).not.toHaveBeenCalled()
 })
+
+it("installs one host instance for useObservability() and every Agent", async () => {
+  const { useObservability } = await import("../src/observability.ts")
+  const { installObservability } = await import("../src/observability/host.ts")
+  const { createMemoryAgentInvocationStore, defineAgentInvocations } = await import("../src/server.ts")
+  expect(() => useObservability()).toThrow("Observability is not configured")
+  const exporter = { capture: vi.fn(async () => {}), exception: vi.fn(async () => {}), logs: vi.fn(async () => {}), flush: vi.fn(async () => {}) }
+  const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+  const plugin = installObservability({ service: "host", exporter, papercuts: { invocations: () => invocations } })
+  const closeHooks: Function[] = []
+  plugin({ hooks: { hook(name, callback) { if (name === "close") closeHooks.push(callback) } } })
+  const observability = useObservability()
+  expect(observability.status()).toMatchObject({ configured: true, papercuts: { running: true, pending: 0, delivered: 0, failed: 0 } })
+
+  // The Agent declares no Capabilities; the host instance still receives its terminal event.
+  const agent = defineAgent({ driver: { run: () => "answer" } })
+  await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil, agentIdentity: { name: "bot" }, run: { runId: "host" } }, { prompt: "hello" })
+  await Promise.allSettled(background.splice(0))
+  expect(exporter.capture).toHaveBeenCalledWith("$ai_trace", expect.objectContaining({ agent_name: "bot", service: "host", status: "completed" }), expect.anything())
+
+  for (const close of closeHooks) await close()
+  expect(observability.status().closed).toBe(true)
+  expect(() => useObservability()).toThrow("Observability is not configured")
+})

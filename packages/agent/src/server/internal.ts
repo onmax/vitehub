@@ -14,6 +14,7 @@ export {
   setAgentChannelDeliveryWorkflowStateResolver,
 } from "./routes.ts"
 export { defineScheduledAgentTarget } from "./scheduled-turn.ts"
+export { observabilityStatus } from "../internal/observability-host.ts"
 export { agentGeneratedRuntimeError } from "./generated-runtime-error.ts"
 export { createAgentWebhookRequest } from "../internal/webhook-request.ts"
 export { markDiscoveredWorkspaceAgentDefinitionRegistered } from "../workspace-agent.ts"

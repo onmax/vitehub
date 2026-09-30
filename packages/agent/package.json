@@ -75,14 +75,6 @@
       "types": "./dist/eve.d.ts",
       "import": "./dist/eve.js"
     },
-    "./evlog": {
-      "types": "./dist/evlog.d.ts",
-      "import": "./dist/evlog.js"
-    },
-    "./evlog/posthog": {
-      "types": "./dist/evlog/posthog.d.ts",
-      "import": "./dist/evlog/posthog.js"
-    },
     "./invocations/d1": {
       "types": "./dist/invocations/d1.d.ts",
       "import": "./dist/invocations/d1.js"
@@ -102,6 +94,18 @@
     "./messages": {
       "types": "./dist/messages.d.ts",
       "import": "./dist/messages.js"
+    },
+    "./observability": {
+      "types": "./dist/observability.d.ts",
+      "import": "./dist/observability.js"
+    },
+    "./observability/host": {
+      "types": "./dist/observability/host.d.ts",
+      "import": "./dist/observability/host.js"
+    },
+    "./observability/posthog": {
+      "types": "./dist/observability/posthog.d.ts",
+      "import": "./dist/observability/posthog.js"
     },
     "./output": {
       "types": "./dist/output.d.ts",
