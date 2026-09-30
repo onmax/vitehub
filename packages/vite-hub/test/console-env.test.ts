@@ -23,7 +23,7 @@ describe("Console Env", () => {
     expect(generated).toContain('import { describeServerEnv } from "#vitehub/env/description"')
     expect(generated).not.toContain('from "#vitehub/env/server"')
     // Status inspection can call providers, so the plugin imports it only on request.
-    expect(generated).toContain('async () => (await import("#vitehub/env/server")).inspectServerEnv()')
+    expect(generated).toContain('async event => (await import("#vitehub/env/server")).inspectServerEnv(event)')
   })
   it("uses registry keys distinct from KV", () => { expect(consoleEnvKey).not.toBe(consoleKVKey) })
   it("serves declaration metadata and rejects mutations", async () => {
@@ -38,10 +38,12 @@ describe("Console Env", () => {
     const metadata = { entries: [
       { path: "env.server.token", source: "provider" as const, provider: "vault", secret: true, required: true, hasDefault: false },
       { path: "env.server.label", source: "env" as const, secret: false, required: false, hasDefault: false },
+      { source: "provider" as const, provider: "vault", secret: true, required: true, hasDefault: false },
     ] }
     const inspect = vi.fn(async () => ({ entries: [
       { masked: true, path: "env.server.token", provider: "vault", required: true, source: "provider" as const, status: "error" as const },
       { masked: false, path: "env.server.label", required: false, source: "env" as const, status: "missing" as const },
+      { masked: true, provider: "vault", required: true, source: "provider" as const, status: "missing" as const },
     ] }))
     installConsoleEnv("/env-test", metadata, undefined, inspect)
     await expect(envHandler({ method: "GET" })).resolves.toEqual(metadata)
@@ -51,9 +53,11 @@ describe("Console Env", () => {
       status: [
         { blocking: true, path: "env.server.token", status: "error" },
         { blocking: false, path: "env.server.label", status: "missing" },
+        { blocking: true, status: "missing" },
       ],
     })
     expect(inspect).toHaveBeenCalledOnce()
+    expect(inspect).toHaveBeenCalledWith(expect.objectContaining({ method: "GET" }))
   })
   it("hides status failures behind a fixed message", async () => {
     installConsoleSections("/env-test", ["env"])

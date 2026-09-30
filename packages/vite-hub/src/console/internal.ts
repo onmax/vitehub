@@ -55,7 +55,7 @@ type ConsoleDefinitionsByRoot = {
 
 export type ConsoleEnvInspection = ServerEnvDescription & {
   /** Loads status-only Server Env inspection on request. It may call providers. */
-  inspect?: () => Promise<ServerEnvInspection>
+  inspect?: (event: unknown) => Promise<ServerEnvInspection>
   manage?: (request: Request) => Promise<Response>
 }
 

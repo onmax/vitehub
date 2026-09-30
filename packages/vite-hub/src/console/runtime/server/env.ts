@@ -2,6 +2,7 @@ import { isBlockingServerEnvEntry } from "@vite-hub/env"
 import { installConsoleEnvScope, resolveConsoleEnv } from "../../internal.ts"
 import type { ServerEnvDescription, ServerEnvInspection, ServerEnvInspectionEntry } from "@vite-hub/env"
 import type { ConsoleEnvInspection } from "../../internal.ts"
+import type { ConsoleRequestEvent } from "./request.ts"
 import { getConsoleSections } from "./sections.ts"
 
 export type ConsoleEnvStatusEntry = Pick<ServerEnvInspectionEntry, "path" | "status"> & {
@@ -18,9 +19,15 @@ export function installConsoleEnv(
   projectRoot: string,
   description: ServerEnvDescription,
   manage?: (request: Request) => Promise<Response>,
-  inspect?: () => Promise<ServerEnvInspection>,
+  inspect?: (event: ConsoleRequestEvent) => Promise<ServerEnvInspection>,
 ): ConsoleEnvInspection {
-  return installConsoleEnvScope(projectRoot, { ...description, ...(inspect ? { inspect } : {}), ...(manage ? { manage } : {}) })
+  const scope: ConsoleEnvInspection = { ...description }
+  if (inspect) {
+    // SAFETY: This callback is invoked only by getConsoleEnvStatus with a ConsoleRequestEvent.
+    scope.inspect = event => inspect(event as ConsoleRequestEvent)
+  }
+  if (manage) scope.manage = manage
+  return installConsoleEnvScope(projectRoot, scope)
 }
 
 export function getConsoleEnv(): ServerEnvDescription {
@@ -28,13 +35,21 @@ export function getConsoleEnv(): ServerEnvDescription {
 }
 
 /** Returns declaration metadata with status from `inspectServerEnv()`. Values never leave the owner package. */
-export async function getConsoleEnvStatus(): Promise<ConsoleEnvResponse | undefined> {
+export async function getConsoleEnvStatus(event: ConsoleRequestEvent): Promise<ConsoleEnvResponse | undefined> {
   const inspection = resolveConsoleEnv()
   if (!inspection?.inspect) return undefined
-  const { entries } = await inspection.inspect()
+  const { entries } = await inspection.inspect(event)
+  const status = entries.map((entry) => {
+    const statusEntry: ConsoleEnvStatusEntry = {
+      blocking: isBlockingServerEnvEntry(entry),
+      status: entry.status,
+    }
+    if (entry.path) statusEntry.path = entry.path
+    return statusEntry
+  })
   return {
     entries: inspection.entries,
-    status: entries.map(entry => ({ ...(entry.path ? { path: entry.path } : {}), blocking: isBlockingServerEnvEntry(entry), status: entry.status })),
+    status,
   }
 }
 

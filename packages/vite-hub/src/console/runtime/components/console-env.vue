@@ -95,7 +95,7 @@ const statusLabels: Record<EnvStatus["status"], string> = {
   missing: "Missing",
 };
 function statusBadge(entry: ServerEnvDescriptionEntry) {
-  const status = entry.path ? statuses.value?.get(entry.path) : undefined;
+  const status = statuses.value?.[entries.value.indexOf(entry)];
   if (!status) return undefined;
   return {
     color: status.blocking ? "error" : status.status === "available" ? "success" : "neutral",
@@ -123,9 +123,7 @@ async function refresh(includeStatus = Boolean(statuses.value)) {
     if (current.signal.aborted) return;
     entries.value = result.entries;
     statuses.value = result.status
-      ? new Map(
-          result.status.flatMap((status) => (status.path ? [[status.path, status] as const] : [])),
-        )
+      ? result.status
       : undefined;
     if (!sourceItems.value.some((item) => item.value === source.value)) source.value = "all";
     selected.value = selected.value
@@ -133,7 +131,10 @@ async function refresh(includeStatus = Boolean(statuses.value)) {
       : undefined;
   } catch {
     if (current.signal.aborted) return;
-    if (includeStatus && entries.value.length) statusFailed.value = true;
+    if (includeStatus && entries.value.length) {
+      statuses.value = undefined;
+      statusFailed.value = true;
+    }
     else failed.value = true;
   } finally {
     if (!current.signal.aborted) loading.value = false;

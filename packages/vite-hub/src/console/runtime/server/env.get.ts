@@ -16,7 +16,7 @@ export default async function consoleEnvHandler(event: ConsoleRequestEvent): Pro
   if (consoleRequestURL(event).searchParams.get("status") !== "1") return getConsoleEnv()
   let result: ConsoleEnvResponse | undefined
   try {
-    result = await getConsoleEnvStatus()
+    result = await getConsoleEnvStatus(event)
   }
   catch {
     // Keep runtime and provider failure text out of the response.
