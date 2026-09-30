@@ -10,7 +10,7 @@ import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, res
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 import { findExportNames } from "mlly"
-import { resolve } from "pathe"
+import { relative, resolve } from "pathe"
 
 import { createCloudflareR2Bindings, generateProviderOutputs, prepareProviderOutputs, registerSupportedProviderRuntimeModules, renderBlobRuntimeModule, blobPackageName } from "./internal/vite-build.ts"
 import { blobErrorDiagnostics } from "./error-diagnostics.ts"
@@ -303,6 +303,16 @@ async function resolveBlobServeAuthorizeModule(
   return authorizeModule
 }
 
+function isAuthDefinitionPath(file: string, rootDir: string, serverDirs: string[] | undefined): boolean {
+  const projectRelativePath = relative(rootDir, resolve(file)).replaceAll("\\", "/")
+  if (/^server\.auth\.(?:[cm]?[jt]s)$/.test(projectRelativePath)) return true
+  const directories = serverDirs === undefined ? [resolve(rootDir, "server")] : serverDirs.map(directory => resolve(rootDir, directory))
+  return directories.some(directory => {
+    const path = relative(directory, resolve(file)).replaceAll("\\", "/")
+    return !path.startsWith("../") && !path.startsWith("/") && /^auth\.(?:[cm]?[jt]s)$/.test(path)
+  })
+}
+
 async function refreshBlobGeneratedFiles(root: string, blob: BlobViteRuntimeConfig["blob"], cloudflare: boolean, importBase = blobPackageName, provider?: "cloudflare" | "vercel", authorizeModule?: string): Promise<void> {
   const runtimeFile = resolve(root, generatedNitroBlobRuntime)
   await Promise.all([
@@ -389,6 +399,18 @@ export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBl
         hosting === "cloudflare" || hosting === "vercel" ? hosting : undefined,
         await resolveBlobServeAuthorizeModule(config, rootDir, runtimeConfig.blob ? runtimeConfig.blob.serve : undefined),
       )
+    },
+    configureServer(server) {
+      const serverDirs = (server.config as ResolvedConfig & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
+      const watchedDirectories = (serverDirs ?? [resolve(rootDir, "server")]).map(directory => resolve(rootDir, directory))
+      server.watcher.add([...watchedDirectories, rootDir])
+      const restartForAuthChange = (file: string) => {
+        if (!isAuthDefinitionPath(file, rootDir, serverDirs)) return
+        void server.restart()
+      }
+      server.watcher.on("add", restartForAuthChange)
+      server.watcher.on("change", restartForAuthChange)
+      server.watcher.on("unlink", restartForAuthChange)
     },
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) {

@@ -424,6 +424,8 @@ function generatedSourceNitroContribution(
 }
 
 function sourceDefinitionPath(file: string, projectRoot: string, serverDirs: string[] | undefined): boolean {
+  const projectRelativePath = relative(resolve(projectRoot), resolve(file)).replaceAll("\\", "/")
+  if (/^server\.auth\.(?:[cm]?[jt]s)$/.test(projectRelativePath)) return true
   const directories = serverDirs === undefined ? [resolve(projectRoot, "server")] : serverDirs
   return directories.some((directory) => {
     const path = relative(resolve(projectRoot, directory), resolve(file)).replaceAll("\\", "/")

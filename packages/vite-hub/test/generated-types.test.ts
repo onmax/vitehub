@@ -995,6 +995,40 @@ describe("framework generated types", () => {
     )
   })
 
+  it("refreshes generated Collection routes when root-level Auth discovery changes", async () => {
+    const { root } = await createNestedProject()
+    const collection = join(root, "server/collections/meals.ts")
+    const auth = join(root, "server.auth.ts")
+    await mkdir(join(root, "server/collections"), { recursive: true })
+    await writeFile(collection, collectionModule("meals"))
+    await writeFile(auth, "export const auth = {}\n")
+    let authEnabled = true
+    const plugin = hubSource({
+      auth: () => authEnabled,
+      contentImportBase: "vite-hub/content",
+      importBase: "vite-hub/source",
+    })
+    await config(plugin)({ root })
+    const listeners = new Map<string, (file: string) => Promise<void> | void>()
+
+    configureServer(plugin)({
+      config: { logger: { error: vi.fn() } },
+      restart: vi.fn(async () => {}),
+      watcher: { add: vi.fn(), on: (event, callback) => listeners.set(event, callback) },
+    })
+
+    await expect(readFile(join(root, ".vitehub/source/routes/meals.mjs"), "utf8")).resolves.toContain(
+      `import { authorizeRequest } from "#vitehub/auth/server"`,
+    )
+    authEnabled = false
+    await rm(auth)
+    await listeners.get("unlink")?.(auth)
+
+    await expect(readFile(join(root, ".vitehub/source/routes/meals.mjs"), "utf8")).resolves.not.toContain(
+      `import { authorizeRequest } from "#vitehub/auth/server"`,
+    )
+  })
+
   it("restarts the Vite host when a generated handler changes its source target", async () => {
     const { root } = await createNestedProject()
     const typescriptCollection = join(root, "server/collections/meals.ts")
