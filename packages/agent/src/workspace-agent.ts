@@ -209,6 +209,17 @@ export function workspaceDefinitionWithAutoCommitRules(definition: WorkspaceDefi
   return { ...definition, rules: mergeWorkspaceCommitRules(definition.rules, commit) }
 }
 
+/**
+ * Reports whether an explicit Agent Workspace `commit: false` leaves no commit to resolve.
+ * The Workspace definition, its plugins, and Capability contributions can still add commit rules.
+ */
+export function workspaceAutoCommitDisabled(definition: WorkspaceDefinition, commit: boolean | string | undefined): boolean {
+  if (commit !== false) return false
+  if (definition.commit === true || hasRuntimeType(definition.commit, "string")) return false
+  const rules = [...(definition.plugins ?? []).map(plugin => plugin?.rules), definition.rules]
+  return !rules.some(ruleSet => Object.values(ruleSet ?? {}).some(rule => Boolean(rule?.commit)))
+}
+
 function isWorkspaceReference(workspace: WorkspaceAgentWorkspaceConfig): workspace is { mode?: AgentCapabilityMode, name: string } {
   return hasRuntimeType(workspace, "object")
     && workspace !== null

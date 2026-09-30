@@ -143,6 +143,7 @@ import {
   workspaceAgentOwnsWorkspaceDefinition,
   workspaceAgentUsesRegisteredDefinition,
   workspaceDefinitionFromOptions,
+  workspaceAutoCommitDisabled,
   workspaceDefinitionWithAutoCommitRules,
   workspaceModeFromOptions,
   workspaceNameFromOptions,
@@ -5850,6 +5851,8 @@ async function commitWorkspaceChanges<
   CALL_OPTIONS,
 >(context: InvocationRunContext<TRuntimeConfig, CALL_OPTIONS>): Promise<void> {
   if (!context.workspaceDefinition || !isWritableWorkspaceFacade(context.workspace)) return
+  // With no commit rule, a whole-tree diff has no consumer.
+  if (workspaceAutoCommitDisabled(context.workspaceDefinition, context.workspaceAutoCommit)) return
 
   const diff = await context.workspace.diff()
   const { isWorkspaceConflict, resolveWorkspaceAutoCommit } = await import("@vite-hub/workspace")
