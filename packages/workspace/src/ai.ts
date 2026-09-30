@@ -128,19 +128,20 @@ export type WorkspaceToolOperations = WorkspaceReadOperations & {
   write?: true | WorkspaceWriteOperations
 }
 
-export interface WorkspaceToolOptions<Operations extends WorkspaceToolOperations | undefined = undefined> extends Pick<ShellSessionPolicy, "maxOutputLength" | "maxShellCalls" | "timeout"> {
+export interface WorkspaceToolOptions<Operations extends WorkspaceToolOperations | undefined = undefined, SourceRequests extends boolean = boolean> extends Pick<ShellSessionPolicy, "maxOutputLength" | "maxShellCalls" | "timeout"> {
   broadSearchPaths?: string[]
   cwd?: string
   executionProvider?: ShellExecutionProvider | (() => MaybePromise<ShellExecutionProvider | undefined>)
   operations?: Operations
-  sourceRequests?: boolean
+  sourceRequests?: SourceRequests
 }
 
 export type EnabledReadCapability<Operations, Key extends keyof WorkspaceReadOperations> = Operations extends Record<Key, infer Value>
   ? Value extends false ? false : true
   : true
 
-export type ShellEnabled<Operations> = true extends
+export type ShellEnabled<Operations, SourceRequests extends boolean = false> = true extends
+  | SourceRequests
   | EnabledReadCapability<Operations, "list">
   | EnabledReadCapability<Operations, "read">
   | EnabledReadCapability<Operations, "search">
@@ -168,7 +169,7 @@ type EnabledWriteTools<Selection> = Selection extends true
       }
     : {}
 
-export type WorkspaceTools<Operations = undefined> = ((ShellEnabled<Operations> extends true
+export type WorkspaceTools<Operations = undefined, SourceRequests extends boolean = false> = ((ShellEnabled<Operations, SourceRequests> extends true
   ? { shell: Tool<{ command: string }, WorkspaceShellResult> }
   : {}) & EnabledWriteTools<ResolvedWriteOperations<Operations>>
   & (Operations extends { materialize: true }
@@ -578,10 +579,10 @@ function createWriteTools(workspace: Workspace, enabled: ReturnType<typeof resol
   return result
 }
 
-export function createWorkspaceTools<Operations extends WorkspaceToolOperations | undefined = undefined>(
+export function createWorkspaceTools<Operations extends WorkspaceToolOperations | undefined = undefined, SourceRequests extends boolean = false>(
   input: Workspace | WorkspaceAssets,
-  options: WorkspaceToolOptions<Operations> = {},
-): WorkspaceTools<Operations> {
+  options: WorkspaceToolOptions<Operations, SourceRequests> = {},
+): WorkspaceTools<Operations, SourceRequests> {
   const resolved = {
     broadSearchPaths: options.broadSearchPaths || [],
     commands: shellCommandsFor(resolveReadOperations(options.operations)),
@@ -667,5 +668,5 @@ export function createWorkspaceTools<Operations extends WorkspaceToolOperations 
 
   if (writeEnabled) Object.assign(result, createWriteTools(input as Workspace, resolved.write))
 
-  return result as WorkspaceTools<Operations>
+  return result as WorkspaceTools<Operations, SourceRequests>
 }

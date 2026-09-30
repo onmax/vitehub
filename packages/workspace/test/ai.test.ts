@@ -290,7 +290,7 @@ describe("createWorkspaceTools", () => {
   })
 
   it("runs controlled curl through visible fetch request descriptors", async () => {
-    const request = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ status: "ok" }), {
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ status: "ok" }), {
       headers: { "content-type": "application/json" },
       status: 200,
     }))
@@ -344,6 +344,20 @@ describe("createWorkspaceTools", () => {
     })
     expect(workspace.startSession).toHaveBeenCalledWith({ paths: ["README.md"] })
     expect(request).toHaveBeenCalledTimes(1)
+
+    const sourceOnlyTools = createWorkspaceTools(workspace, {
+      operations: { list: false, read: false, search: false },
+      sourceRequests: true,
+    })
+    await expect(runShell(sourceOnlyTools, "curl -sS 'https://portal.example.com/runtime/inventory-health?region=eu'")).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: JSON.stringify({ status: "ok" }, null, 2),
+    })
+    await expect(runShell(sourceOnlyTools, "cat README.md")).resolves.toMatchObject({
+      event: "policy_denied",
+      exitCode: 126,
+    })
+    expect(request).toHaveBeenCalledTimes(2)
 
     await expect(runShell(tools, "curl -d '{\"region\":\"eu\"}' https://portal.example.com/runtime/inventory-health")).resolves.toMatchObject({
       event: "policy_denied",

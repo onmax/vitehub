@@ -125,7 +125,7 @@ type EnabledWriteCapability<Options, Key extends keyof WorkspaceWriteOperations>
   ? Value extends false ? false : true
   : true
 
-export type WorkspaceReadTools<Options = undefined> = ((ShellEnabled<Options> extends true
+export type WorkspaceReadTools<Options = undefined> = ((ShellEnabled<Options, Options extends { sourceRequests: true } ? true : false> extends true
   ? { shell: Tool<{ command: string }, WorkspaceShellResult> }
   : {}) & (Options extends { materialize: true }
     ? { materialize_sources: Tool<{ path?: string, sources?: string[] }, WorkspaceMaterializeSourcesResult> }
