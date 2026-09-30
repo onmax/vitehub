@@ -49,6 +49,8 @@ export interface ConnectionsStore {
   openPending: (ticket: string, now: number) => Promise<PendingConnection | undefined>
   /** Clears the lease and sets a status without a new token. Only changes the grant at `revision`. */
   release: (name: string, revision: string, status: ConnectionStatus, lastError?: string) => Promise<void>
+  /** One read of the grant, with its tokens when the key matches. Disconnect uses it as a consistent snapshot. */
+  snapshot: (name: string) => Promise<{ grant: StoredGrant, tokens?: ConnectionTokenSet } | undefined>
   tokens: (name: string) => Promise<{ grant: StoredGrant, tokens: ConnectionTokenSet } | undefined>
   /** Writes a new token set. With `expectedRevision`, only replaces that revision. */
   write: (input: { expectedRevision?: string, name: string, provider: string, tokens: ConnectionTokenSet }) => Promise<StoredGrant>
@@ -217,6 +219,14 @@ export function createConnectionsStore(options: { db: ConnectionsDatabase, encry
     async release(name, revision, nextStatus, lastError) {
       await initialize()
       await db.run(sql`UPDATE vitehub_connection_grants SET lease_until = NULL, status = ${nextStatus}, last_error = ${lastError ?? null}, updated_at = ${new Date().toISOString()} WHERE name = ${name} AND revision = ${revision}`)
+    },
+    async snapshot(name) {
+      const row = await readRow(name)
+      if (!row) return
+      const grant = toGrant(row, await keyId)
+      if (!grant.keyMatches) return { grant }
+      const value = await unseal(await key, grantAad(name, row.revision), row.payload)
+      return { grant, tokens: v.parse(tokenSet, parseJson(value)) }
     },
     async tokens(name) {
       const row = await readRow(name)
