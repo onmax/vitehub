@@ -204,6 +204,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   let consoleAuthHandlers: ConsoleAuthHandlers | undefined
   let refreshConsoleAuthClient: (() => Promise<void>) | undefined
   let hostManagedCloudflareBuild = false
+  let baseURL = "/"
 
   const refreshConsoleCatalog = serializeConsoleRefresh(async () => {
     if (!generatedPlugin || !projectRoot || !root) return
@@ -301,9 +302,10 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       const configuredConsoleAuth = configured !== true && configured.access === "auth" ? configured.auth : undefined
       const resolvedConsoleAuth = configuredConsoleAuth ? resolveConsoleAuthConfig(root, configuredConsoleAuth, options.preset) : undefined
       const consoleAuthConfig = registeredConsoleAuthMode(configuredConsoleAuth, environment.command !== "build") ? resolvedConsoleAuth : undefined
-      consoleAuthHandlers = consoleAuthConfig ? await writeConsoleAuthHandlers(root, consoleAuthConfig) : undefined
+      baseURL = config.base ?? "/"
+      consoleAuthHandlers = consoleAuthConfig ? await writeConsoleAuthHandlers(root, consoleAuthConfig, baseURL) : undefined
       refreshConsoleAuthClient = consoleAuthConfig
-        ? async () => { consoleAuthHandlers = await writeConsoleAuthHandlers(root!, consoleAuthConfig) }
+        ? async () => { consoleAuthHandlers = await writeConsoleAuthHandlers(root!, consoleAuthConfig, baseURL) }
         : undefined
       projectRoot = resolveViteHubProjectRoot(root)
       const configuredFixture = viteConfig.vitehubCliDiscovery
@@ -404,6 +406,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         config.logger.warn(consoleHostManagedCloudflareWarning)
       }
       root = config.root
+      baseURL = config.base
       projectRoot ||= resolveViteHubProjectRoot(config.root)
       generatedPlugin ||= resolve(config.root, generatedConsolePlugin)
       // SAFETY: ViteHub KV and Nitro extend the resolved Vite config with these documented keys.

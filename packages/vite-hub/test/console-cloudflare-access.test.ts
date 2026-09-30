@@ -112,6 +112,31 @@ describe("Cloudflare Access Console Auth", () => {
     await expect(createCloudflareAccessVerifier({ fetch: certsFetch() })(token, { audience, issuer })).resolves.toBeUndefined()
   })
 
+  it("refreshes Access keys immediately after signing-key rotation", async () => {
+    const fetch = certsFetch()
+    const verify = createCloudflareAccessVerifier({ fetch })
+    await expect(verify(await accessToken(), { audience, issuer })).resolves.toEqual({ email: "maintainer@example.com" })
+
+    const originalJwks = jwks
+    const rotated = await generateKeyPair("RS256", { extractable: true })
+    jwks = { keys: [{ ...(await exportJWK(rotated.publicKey)), alg: "RS256", kid: "rotated-key", use: "sig" }] }
+    const rotatedToken = await new SignJWT({ email: "maintainer@example.com" })
+      .setProtectedHeader({ alg: "RS256", kid: "rotated-key" })
+      .setIssuer(issuer)
+      .setAudience(audience)
+      .setIssuedAt()
+      .setExpirationTime("5m")
+      .sign(rotated.privateKey)
+
+    try {
+      await expect(verify(rotatedToken, { audience, issuer })).resolves.toEqual({ email: "maintainer@example.com" })
+      expect(fetch).toHaveBeenCalledTimes(2)
+    }
+    finally {
+      jwks = originalJwks
+    }
+  })
+
   it("guards only Console routes and serves the Access identity", async () => {
     const verify = createCloudflareAccessVerifier({ fetch: certsFetch() })
     const settings = () => ({ audience, teamDomain })
@@ -249,6 +274,18 @@ describe("Cloudflare Access Console Auth", () => {
       await mkdir(resolve(root, "vitehub/console/auth"), { recursive: true })
       await writeFile(resolve(root, "vitehub/console/auth/server.ts"), "export default {}")
       expect(() => resolveConsoleAuthConfig(root, { provider: "cloudflare-access" }, "cloudflare")).toThrow("conflicts with vitehub/console/auth/server")
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it("writes a guard using the Vite application base", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-cf-access-base-"))
+    try {
+      const handlers = await writeConsoleAuthHandlers(root, resolveConsoleAuthConfig(root, { provider: "cloudflare-access" }, "cloudflare"), "/portal/")
+      const middleware = await readFile(handlers.middleware, "utf8")
+      expect(middleware).toContain('"/portal/"')
     }
     finally {
       await rm(root, { recursive: true, force: true })

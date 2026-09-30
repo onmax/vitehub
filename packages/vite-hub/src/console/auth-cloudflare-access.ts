@@ -43,7 +43,10 @@ export function createCloudflareAccessVerifier(options: CloudflareAccessVerifier
   return async (token, { audience, issuer }) => {
     let keys = keySets.get(issuer)
     if (!keys) {
-      keys = createRemoteJWKSet(new URL("/cdn-cgi/access/certs", issuer), options.fetch ? { [customFetch]: options.fetch } : {})
+      keys = createRemoteJWKSet(new URL("/cdn-cgi/access/certs", issuer), {
+        cooldownDuration: 0,
+        ...(options.fetch ? { [customFetch]: options.fetch } : {}),
+      })
       keySets.set(issuer, keys)
     }
     try {
