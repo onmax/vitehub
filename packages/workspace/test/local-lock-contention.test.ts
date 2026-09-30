@@ -106,6 +106,62 @@ it("times out readers behind an open local writer and recovers after release", a
   await expect(store.stat(path)).resolves.toMatchObject({ path })
 }, 20_000)
 
+it.each([false, true])("preserves the read deadline during admission, joining an existing batch: %s", async (joinBatch) => {
+  const { gate, paths, store } = await storeWithFiles(1)
+  const writerGate = gate("docs")
+  const started = Date.now()
+  const clock = vi.spyOn(Date, "now").mockReturnValue(started)
+  const readers: Promise<unknown>[] = []
+  const resumes: (() => void)[] = []
+  const pausedReader = async () => {
+    let entered!: () => void
+    let resume!: () => void
+    const probed = new Promise<void>((resolve) => { entered = resolve })
+    const continued = new Promise<void>((resolve) => { resume = resolve })
+    resumes.push(resume)
+    pausedProbes.set(writerGate, { entered, resume: continued })
+    const result = store.readFile(paths[0]!).catch(error => error as Error)
+    readers.push(result)
+    await probed
+    return { result, resume }
+  }
+  let watchdog!: ReturnType<typeof setTimeout>
+  try {
+    const older = await pausedReader()
+    clock.mockReturnValue(started + 9_000)
+    const younger = joinBatch ? await pausedReader() : undefined
+    await mkdir(writerGate)
+    gateAttempts.clear()
+    younger?.resume()
+    if (younger) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(gateAttempts.get(writerGate)).toBeGreaterThan(0)
+    }
+    older.resume()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(gateAttempts.get(writerGate)).toBeGreaterThan(0)
+    clock.mockReturnValue(started + 10_001)
+    const results = await Promise.race([
+      Promise.all(readers),
+      new Promise<never>((_, reject) => {
+        watchdog = setTimeout(() => reject(new Error("Reader admission restarted the lock deadline")), 1_000)
+      }),
+    ])
+    for (const result of results) {
+      expect(result).toBeInstanceOf(Error)
+      expect((result as Error).message).toContain("Timed out waiting to read Workspace path: docs.")
+    }
+  }
+  finally {
+    clearTimeout(watchdog)
+    clock.mockRestore()
+    for (const resume of resumes) resume()
+    await rm(writerGate, { recursive: true, force: true })
+    await Promise.all(readers)
+  }
+  await expect(store.readFile(paths[0]!)).resolves.toMatchObject({ path: paths[0] })
+}, 10_000)
+
 it("shares one directory read registration across parallel reads", async () => {
   const { gate, paths, root, store } = await storeWithFiles(32)
   gateAttempts.clear()

@@ -191,11 +191,10 @@ async function removeOwnedGate(lock: string) {
   }
 }
 
-async function withFilesystemLock<T>(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, operation: () => Promise<T>, timeoutMs = 10_000): Promise<T> {
+async function withFilesystemLock<T>(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, operation: () => Promise<T>, deadline: number | (() => number) = Date.now() + 10_000): Promise<T> {
   const owner = randomUUID()
   const ownerPath = `${lock}/owner`
   let lease: import("node:fs/promises").FileHandle | undefined
-  const deadline = Date.now() + timeoutMs
   while (true) {
     let created = false
     try {
@@ -221,7 +220,7 @@ async function withFilesystemLock<T>(lock: string, permissions: Pick<import("nod
       await validateLockDirectory(lock)
       // Marker age cannot distinguish a crashed owner from active I/O whose
       // heartbeat failed or was delayed. Only the owner may release its gate.
-      if (Date.now() >= deadline) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
+      if (Date.now() >= (typeof deadline === "function" ? deadline() : deadline)) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
       else await delay(25)
     }
   }
@@ -252,7 +251,7 @@ async function withFilesystemReadLock<T>(lock: string, permissions: Pick<import(
       await rmdir(`${lock}.readers`).catch((error: NodeJS.ErrnoException) => {
         if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code ?? "")) throw error
       })
-    }, 0).catch(() => {})
+    }, Date.now()).catch(() => {})
   }
 }
 
@@ -316,12 +315,12 @@ async function openSharedReadLease(lock: string, permissions: Pick<import("node:
 
 // Readers that arrive together share one gate acquisition. The gate protects
 // the count update as well as the filesystem registration from external writers.
-const readAdmissions = new Map<string, { count: number, admitted: Promise<SharedReadLease | undefined> }>()
+const readAdmissions = new Map<string, { count: number, deadline: number, admitted: Promise<SharedReadLease | undefined> }>()
 
-async function admitSharedReader(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string): Promise<SharedReadLease | undefined> {
+async function admitSharedReader(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, deadline: number): Promise<SharedReadLease | undefined> {
   let admission = readAdmissions.get(lock)
   if (!admission) {
-    admission = { count: 0, admitted: Promise.resolve(undefined) }
+    admission = { count: 0, deadline, admitted: Promise.resolve(undefined) }
     const batch = admission
     readAdmissions.set(lock, batch)
     let chargedLease: SharedReadLease | undefined
@@ -336,7 +335,7 @@ async function admitSharedReader(lock: string, permissions: Pick<import("node:fs
       lease.readers += batch.count
       chargedLease = lease
       return lease
-    }).catch(async (error: unknown) => {
+    }, () => batch.deadline).catch(async (error: unknown) => {
       if (chargedLease) {
         try { await releaseSharedReaders(lock, chargedLease, batch.count) }
         catch (cleanupError) { throw new AggregateError([error, cleanupError], "Workspace reader admission and cleanup failed", { cause: error }) }
@@ -346,6 +345,9 @@ async function admitSharedReader(lock: string, permissions: Pick<import("node:fs
       if (readAdmissions.get(lock) === batch) readAdmissions.delete(lock)
     })
   }
+  // A reader can join after spending part of its deadline behind another writer.
+  // Keep the batch bounded by its earliest reader rather than restarting a wait.
+  admission.deadline = Math.min(admission.deadline, deadline)
   admission.count++
   return await admission.admitted
 }
@@ -382,7 +384,7 @@ async function withSharedFilesystemReadLock<T>(lock: string, permissions: Pick<i
       throw error
     })
     if (!gate && !pendingWriters.has(lock)) {
-      lease = await admitSharedReader(lock, permissions, description)
+      lease = await admitSharedReader(lock, permissions, description, deadline)
       if (lease) break
     }
     if (gate) await validateLockDirectory(`${lock}.gate`)
