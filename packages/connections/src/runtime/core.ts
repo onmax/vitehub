@@ -40,8 +40,8 @@ export interface ConnectionsRuntimeOptions {
 export interface ConnectionCallOptions {
   actor: ConnectionActor
   /**
-   * Treats a `require-approval` decision as approved. Agent Capabilities set it after the tool approval flow
-   * approved this Operation. `deny` rules still apply.
+   * Trusted server integration input, like `actor`. Set only after approval for this exact call and Operation.
+   * Never forward an approval flag from tool input or an HTTP request. `deny` rules still apply.
    */
   approved?: boolean
   audit?: "all" | "changes"

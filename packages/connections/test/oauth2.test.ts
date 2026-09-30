@@ -56,6 +56,28 @@ describe("oauth2", () => {
     expect(client).toHaveBeenCalledWith({ event })
   })
 
+  it.each([undefined, ""])("keeps Basic authentication with client secret %s", async (clientSecret) => {
+    const upstream = mockFetch(() => Response.json({ access_token: "new" }))
+    const provider = oauth2(options({
+      client: () => ({ clientId: "client id", clientSecret }),
+      clientAuth: "basic",
+      revokeUrl: "https://auth.example/revoke",
+    }))
+    const context = { fetch: upstream.fetch }
+
+    await provider.exchange({ code: "code", codeVerifier: "verifier", redirectUri: "https://app.example/cb" }, context)
+    await provider.refresh(tokenSet(), context)
+    await provider.revoke!(tokenSet(), context)
+
+    expect(upstream.mock).toHaveBeenCalledTimes(3)
+    for (const [, init] of upstream.mock.mock.calls) {
+      expect(new Headers(init?.headers).get("authorization")).toBe(`Basic ${btoa("client+id:")}`)
+      const body = new URLSearchParams(String(init?.body))
+      expect(body.has("client_id")).toBe(false)
+      expect(body.has("client_secret")).toBe(false)
+    }
+  })
+
   it("uses HTTP basic client authentication when configured", async () => {
     const upstream = mockFetch(() => Response.json({ access_token: "new", expires_in: "120" }))
     const provider = oauth2(options({ clientAuth: "basic" }))
