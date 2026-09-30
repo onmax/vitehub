@@ -828,7 +828,9 @@ export type AgentErrorHook<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TData = unknown,
-> = (event: AgentErrorHookEvent<TRuntimeConfig, CALL_OPTIONS, TData>) => MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
+> = {
+  bivarianceHack(event: AgentErrorHookEvent<TRuntimeConfig, CALL_OPTIONS, TData>): MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
+}["bivarianceHack"]
 
 export type AgentFinishHook<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -844,7 +846,9 @@ export type AgentInputHook<
   CALL_OPTIONS = unknown,
   TContextValues extends object = AgentInvocationContextValues,
   TData = unknown,
-> = (context: AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData>) => MaybePromise<void>
+> = {
+  bivarianceHack(context: AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData>): MaybePromise<void>
+}["bivarianceHack"]
 
 export interface AgentInvocationHooks<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
