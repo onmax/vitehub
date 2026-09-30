@@ -10,7 +10,7 @@ import { build as bundle } from "esbuild"
 import { H3Event, toResponse } from "h3"
 import { describe, expect, it, vi } from "vitest"
 import { toSafeAppName } from "@vite-hub/internal/build/user-entry"
-import { VITEHUB_NITRO_CONFIG_CONTEXT } from "@vite-hub/internal/build/vite"
+import { VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 
 import { BLOB_VIRTUAL_CONFIG_ID, hubBlob } from "../src/vite.ts"
 
@@ -1037,6 +1037,27 @@ describe("hubBlob", () => {
           plugins: [authPlugin],
           root,
         } as never)).rejects.toThrow("but `blob.serve.authorize` is not true")
+      }
+      finally {
+        await rm(root, { force: true, recursive: true })
+      }
+    })
+
+    it("does not scan the default server directory when the host selects none", async () => {
+      const root = await mkdtemp(join(tmpdir(), "vitehub-blob-authorize-empty-server-dirs-"))
+      try {
+        await mkdir(join(root, "server"), { recursive: true })
+        await writeFile(join(root, "server", "blob.ts"), "export const authorize = () => true\n")
+        const plugin = hubBlob({ driver: "fs", serve: { authorize: true } })
+        await (plugin.configResolved as (config: unknown) => void | Promise<void>)({
+          build: { outDir: "dist" },
+          plugins: [authPlugin],
+          root,
+          [VITEHUB_SERVER_DIRS]: [],
+        } as never)
+        const handler = await readFile(join(root, ".vitehub", "blob", "serve-route.ts"), "utf8")
+        expect(handler).not.toContain(JSON.stringify(join(root, "server", "blob.ts")))
+        expect(handler).toContain("authorizeRequest(event, true)")
       }
       finally {
         await rm(root, { force: true, recursive: true })

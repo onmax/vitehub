@@ -467,30 +467,24 @@ export function hubSource(options: SourceVitePluginOptions = {}): Plugin & {
     configuredAuth?: boolean,
   ) => {
     const root = resolve(input.projectRoot)
-    const configuredState = configuredStateByRoot.get(root)
-    const resolvedConfiguredAuth = configuredAuth === undefined
-      ? configuredState?.configuredAuth
-      : configuredAuth
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The Auth option is an untagged boolean-or-callback union; callability selects the callback.
-    const auth = typeof options.auth === "function"
-      ? options.auth({ configuredAuth: resolvedConfiguredAuth, projectRoot: root, serverDirs: input.serverDirs })
-      : options.auth
     const previousPreparation = sourcePreparationByRoot.get(root) ?? Promise.resolve()
-    const preparation = previousPreparation.then(() =>
-      prepareSourceGeneration({
+    const runPreparation = () => {
+      const configuredState = configuredStateByRoot.get(root)
+      const resolvedConfiguredAuth = configuredAuth === undefined
+        ? configuredState?.configuredAuth
+        : configuredAuth
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The Auth option is an untagged boolean-or-callback union; callability selects the callback.
+      const auth = typeof options.auth === "function"
+        ? options.auth({ configuredAuth: resolvedConfiguredAuth, projectRoot: root, serverDirs: input.serverDirs })
+        : options.auth
+      return prepareSourceGeneration({
         ...input,
         auth,
         importBase: options.importBase,
         contentImportBase: options.contentImportBase,
-      }),
-    () =>
-      prepareSourceGeneration({
-        ...input,
-        auth,
-        importBase: options.importBase,
-        contentImportBase: options.contentImportBase,
-      }),
-    )
+      })
+    }
+    const preparation = previousPreparation.then(runPreparation, runPreparation)
     sourcePreparationByRoot.set(root, preparation)
     void preparation.finally(() => {
       if (sourcePreparationByRoot.get(root) === preparation) sourcePreparationByRoot.delete(root)

@@ -628,6 +628,29 @@ describe("framework generated types", () => {
     )
   })
 
+  it("keeps queued Source preparation on the latest resolved Auth setting", async () => {
+    const { root, viteRoot } = await createNestedProject()
+    await mkdir(join(root, "server/collections"), { recursive: true })
+    await writeFile(join(root, "server/collections/meals.ts"), collectionModule("meals"))
+
+    const [source] = frameworkHubSource({
+      auth: ({ configuredAuth }) => configuredAuth !== false,
+    })
+    const resolveConfig = configResolved(source!)({ auth: false, root: viteRoot })
+    const queuedPreparation = (source as ReturnType<typeof sourcePlugin>).api.prepareSources({ projectRoot: root })
+    await Promise.all([resolveConfig, queuedPreparation])
+
+    await expect(readFile(join(root, ".vitehub/source/routes/meals.mjs"), "utf8")).resolves.toBe(
+      [
+        `import { defineCollectionHandler } from "vite-hub/source/server"`,
+        `import { meals as collection } from ${JSON.stringify(pathToFileURL(join(root, "server/collections/meals.ts")).href)}`,
+        ``,
+        `export default defineCollectionHandler(collection)`,
+        ``,
+      ].join("\n"),
+    )
+  })
+
   it("serves server/content.ts through the Comark Content runtime", async () => {
     const { root } = await createNestedProject()
     await Promise.all([

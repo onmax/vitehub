@@ -273,7 +273,7 @@ function hasAuthDefinition(plugins: readonly unknown[]): boolean {
 }
 
 async function discoverBlobAuthorizeModule(rootDir: string, serverDirs: string[] | undefined): Promise<string | undefined> {
-  const directories = (serverDirs?.length ? serverDirs : ["server"]).map(directory => resolve(rootDir, directory))
+  const directories = (serverDirs === undefined ? ["server"] : serverDirs).map(directory => resolve(rootDir, directory))
   const files = directories
     .flatMap(directory => blobServeModuleExtensions.map(extension => resolve(directory, `blob${extension}`)))
     .filter(file => existsSync(file))
