@@ -1,0 +1,7 @@
+{
+  "extends": "/home/maxi/.t3/worktrees/vitehub/resume-after-restart/packages/agent/tsconfig.json",
+  "include": [
+    ".vitehub/agent/chat-webhook-route.ts",
+    "server/agents/**/*.ts"
+  ]
+}

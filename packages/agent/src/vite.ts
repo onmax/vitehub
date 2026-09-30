@@ -1593,10 +1593,10 @@ function generatedLibsqlChatStateHelper(state: GeneratedLibsqlAgentStateOptions,
 
 function generatedWebhookQueueResumeHelper(routeCapabilities: { requestOption: string }, typescript = false, runtimeRouteOption = ""): string[] {
   return [
-    `export function resumeWebhookQueues(waitUntil${typescript ? ": AgentWaitUntil | undefined" : ""}) {`,
+    `export function resumeWebhookQueues(waitUntil${typescript ? ": AgentWaitUntil | undefined" : ""}, recoverInterruptedBefore${typescript ? "?: number" : ""}) {`,
     "  const runtimeUrl = typeof process === 'object' ? process.env.VITEHUB_AGENT_STATE_URL : undefined",
     "  if (!runtimeUrl && !viteHubChatStateOptions.url) return async () => undefined",
-    `  const stops = Object.entries(webhookHandlers).flatMap(([name, handler]) => typeof handler.resume === 'function' ? [handler.resume({ agentIdentity: agentIdentities[name]${runtimeRouteOption}, ${routeCapabilities.requestOption}webhookState: viteHubChatStateResolver, waitUntil })] : [])`,
+    `  const stops = Object.entries(webhookHandlers).flatMap(([name, handler]) => typeof handler.resume === 'function' ? [handler.resume({ agentIdentity: agentIdentities[name]${runtimeRouteOption}, ${routeCapabilities.requestOption}recoverInterruptedBefore, webhookState: viteHubChatStateResolver, waitUntil })] : [])`,
     "  return async () => await Promise.all(stops.map(stop => stop()))",
     "}",
     "",
@@ -2175,8 +2175,11 @@ async function writeAgentWebhookRouteHandler(
   }
   const queuePluginPath = join(root, generatedAgentWebhookQueuePlugin)
   if (options.libsqlState) {
+    // A persistent server resumes queued deliveries at startup. Ephemeral hosts resume on
+    // the first webhook request, so its waitUntil keeps the function alive during the drain.
+    const persistent = !options.libsqlState.ephemeralHosting
     await writeFile(queuePluginPath, [
-      `import { resumeWebhookQueues, waitUntilFromEvent } from ${JSON.stringify(`./${generatedAgentWebhookRouteHandler.split("/").at(-1)!.replace(/\.ts$/, "")}`)}`,
+      `import { resumeWebhookQueues${persistent ? "" : ", waitUntilFromEvent"} } from ${JSON.stringify(`./${generatedAgentWebhookRouteHandler.split("/").at(-1)!.replace(/\.ts$/, "")}`)}`,
       "",
       "export default function viteHubWebhookQueuePlugin(nitroApp) {",
       "  let stop",
@@ -2191,17 +2194,29 @@ async function writeAgentWebhookRouteHandler(
       "    if (stopping) waitUntil?.(stopping)",
       "    return stopping",
       "  }",
-      `  const webhookRoutePattern = new RegExp(${JSON.stringify(routeRegexSource(options.webhookRoute))});`,
-      `  const webhookAliases = ${JSON.stringify(Object.fromEntries(Object.entries(options.webhookAliases || {}).map(([path, target]) => [normalizeNitroRoute(path).replace(/\/$/, '') || '/', target])))};`,
-      "  nitroApp.hooks.hook('request', event => {",
-      "    const pathname = new URL(event?.path || event?.node?.req?.url || event?.node?.req?.originalUrl || '/', 'http://vitehub.local').pathname.replace(/\\/$/, '') || '/';",
-      "    if (!(webhookAliases[pathname] || webhookRoutePattern.test(pathname))) return;",
-      "    if (stop) return",
-      "    waitUntil ||= waitUntilFromEvent(event)",
-      "    stop = resumeWebhookQueues(waitUntil)",
+      "  function startWebhookQueues(recoverInterruptedBefore) {",
+      "    if (stop || stopping) return",
+      "    stop = resumeWebhookQueues(waitUntil, recoverInterruptedBefore)",
       "    shutdownSignals = ['SIGINT', 'SIGTERM'].filter(signal => nodeProcess?.listeners(signal).some(listener => listener.name === 'shutdown'))",
       "    for (const signal of shutdownSignals) nodeProcess?.prependOnceListener(signal, shutdownWebhookQueues)",
-      "  })",
+      "  }",
+      ...(persistent
+        ? [
+            "  const startedAt = Date.now()",
+            "  // Start after the server installs its shutdown listeners. Invocations that started",
+            "  // before this process are interrupted unless a queued delivery runs them again.",
+            "  if (!import.meta.prerender) setTimeout(() => startWebhookQueues(startedAt), 0)",
+          ]
+        : [
+            `  const webhookRoutePattern = new RegExp(${JSON.stringify(routeRegexSource(options.webhookRoute))});`,
+            `  const webhookAliases = ${JSON.stringify(Object.fromEntries(Object.entries(options.webhookAliases || {}).map(([path, target]) => [normalizeNitroRoute(path).replace(/\/$/, '') || '/', target])))};`,
+            "  nitroApp.hooks.hook('request', event => {",
+            "    const pathname = new URL(event?.path || event?.node?.req?.url || event?.node?.req?.originalUrl || '/', 'http://vitehub.local').pathname.replace(/\\/$/, '') || '/';",
+            "    if (stop || !(webhookAliases[pathname] || webhookRoutePattern.test(pathname))) return;",
+            "    waitUntil ||= waitUntilFromEvent(event)",
+            "    startWebhookQueues()",
+            "  })",
+          ]),
       "  nitroApp.hooks.hook('close', shutdownWebhookQueues)",
       "}",
       "",
