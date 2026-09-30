@@ -1697,7 +1697,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
   let resolved: ResolvedConfig | undefined
   let providerOutput: ReturnType<typeof useProviderOutputCatalog> | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
-  let resolvedOptions: ReturnType<typeof normalizeWorkspaceOptions> = false
+  let resolvedOptions: ReturnType<typeof normalizeWorkspaceOptions> | undefined
   let projectRoot: string | undefined
   let viteRoot: string | undefined
   let assetsRegistryFile: string | undefined
@@ -1823,7 +1823,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
     },
     async buildStart() {
       providerOutputGenerations.capture(this, providerOutput)
-      if (!resolved) return
+      if (!resolved || !resolvedOptions) return
       const roots = {
         projectRoot: projectRoot || resolveViteHubProjectRoot(resolved.root),
         viteRoot: viteRoot || resolve(resolved.root),
@@ -1839,7 +1839,8 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
         await providerOutputGenerations.reset(this, providerOutput, error)
         return
       }
-      if (!resolved || shouldSkipViteProviderBuild(resolved.command, getViteMode())) return
+      if (!resolved || !resolvedOptions || shouldSkipViteProviderBuild(resolved.command, getViteMode())) return
+      const workspaceOptions = resolvedOptions
       const roots = {
         projectRoot: projectRoot || resolveViteHubProjectRoot(resolved.root),
         viteRoot: viteRoot || resolve(resolved.root),
@@ -1857,7 +1858,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
           await writeCloudflareArtifactsProviderOutput(
             roots.projectRoot,
             resolved!.build?.outDir ?? "dist/client",
-            resolvedOptions,
+            workspaceOptions,
             definitions,
             readCloudflareState,
             write,
@@ -1905,7 +1906,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
       cli: async () => {
         return createWorkspaceCliContributor()
       },
-      inspect: () => ({
+      inspect: () => resolvedOptions === false ? undefined : ({
         definitions: [{
           kind: "workspace",
           label: "Workspaces",

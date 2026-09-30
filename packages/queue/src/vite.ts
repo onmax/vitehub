@@ -233,6 +233,7 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
     },
     config(config) {
       queue = config.queue ?? queue
+      // SAFETY: Vite preserves the user-defined server directory field on the config, while UserConfig omits this ViteHub extension from its type.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       const nitro = (config as { nitro?: unknown }).nitro
       ;(config as { nitro?: unknown }).nitro = mergeNitroConfig(config, nitro, queue, config.root || process.cwd())

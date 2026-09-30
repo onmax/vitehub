@@ -210,6 +210,17 @@ afterEach(async () => {
 })
 
 describe("hubWorkspace", () => {
+  it("does not contribute inspection Definitions when Workspace is disabled", async () => {
+    const { hubWorkspace } = await import("../src/vite.ts")
+    const plugin = hubWorkspace()
+    const configResolved = plugin.configResolved as (config: { root: string, workspace: false }) => Promise<void>
+    const inspect = plugin.vitehub?.inspect as () => unknown
+
+    await configResolved({ root: await createViteRoot(), workspace: false })
+
+    expect(inspect()).toBeUndefined()
+  })
+
   it("runs before downstream framework integrations that consume Provider Output config", async () => {
     const { hubWorkspace } = await import("../src/vite.ts")
     const plugin = hubWorkspace()
