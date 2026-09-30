@@ -4,9 +4,9 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
-import { mkdtemp, realpath, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, realpath, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { promisify } from "node:util"
 import { Diagnostic } from "nostics"
 
@@ -37,6 +37,12 @@ export interface GitHubHostCredentialContext {
 
 export interface GitHubHostOptions {
   cacheMs?: number
+  /**
+   * Keeps pull request checkouts under `root` and reuses them per repository. Reuse keeps ignored
+   * files, such as dependencies and build output, resets everything else, and fetches only the new head.
+   * Use it only when one process owns `root`.
+   */
+  checkouts?: { root: string }
   credentials: (context: GitHubHostCredentialContext) => GitHubHostCredentials | Promise<GitHubHostCredentials>
   graphQLCheckTimeout?: number
   identity?: { email?: string, login?: string }
@@ -233,8 +239,67 @@ export function parseGraphQLRateLimit(value: unknown, checkedAt: number = Date.n
   return { checkedAt, remaining, resetAt: reset * 1_000 }
 }
 
+/**
+ * Reusable pull request checkouts under one root that one process owns. A checkout with a verified
+ * head returns to its repository's idle list with its ignored files. A restarted process adopts
+ * the directories that a previous process left under the root.
+ */
+function createCheckoutPool(root: string) {
+  const idle = new Map<string, string[]>()
+  let adopted: Promise<void> | undefined
+  const release = (repository: string, directory: string) => {
+    idle.set(repository, [...idle.get(repository) ?? [], directory])
+  }
+  const adopt = () => adopted ??= (async () => {
+    await mkdir(root, { recursive: true })
+    for (const entry of await readdir(root, { withFileTypes: true })) {
+      const match = /^(.+?)--(.+?)-[A-Za-z0-9]{6}$/.exec(entry.name)
+      if (entry.isDirectory() && match) release(`${match[1]}/${match[2]}`, join(root, entry.name))
+    }
+  })().catch((error: unknown) => {
+    adopted = undefined
+    throw error
+  })
+  return {
+    async acquire(repository: string): Promise<{ directory: string, reused: boolean }> {
+      await adopt()
+      const directory = idle.get(repository)?.pop()
+      if (directory) return { directory, reused: true }
+      return { directory: await mkdtemp(join(root, `${repository.replace("/", "--")}-`)), reused: false }
+    },
+    release,
+  }
+}
+
+type GitHubCommandOptions = { env: NodeJS.ProcessEnv, maxBuffer: number, signal: AbortSignal }
+
+/**
+ * Removes the state of the previous pull request from a pooled checkout. Ignored files stay.
+ * The previous run could write Git configuration and hooks, so both are recreated.
+ */
+async function resetPooledCheckout(checkout: string, repository: string, commandOptions: GitHubCommandOptions) {
+  for (const path of [".git/hooks", ".git/index.lock", ".git/config", ".git/config.worktree", ".vitehub"]) {
+    await rm(join(checkout, path), { force: true, recursive: true })
+  }
+  await rm(`${checkout}.meta.json`, { force: true })
+  await exec("git", ["-C", checkout, "init", "-q", "--template="], commandOptions)
+  for (const [key, value] of [
+    ["core.repositoryformatversion", "1"],
+    ["remote.origin.url", `https://github.com/${repository}.git`],
+    ["remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
+    ["remote.origin.promisor", "true"],
+    ["remote.origin.partialclonefilter", "blob:none"],
+  ] as const) await exec("git", ["-C", checkout, "config", key, value], commandOptions)
+  await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "reset", "-q", "--hard"], commandOptions)
+  await exec("git", ["-C", checkout, "clean", "-ffdq"], commandOptions)
+}
+
 export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
   const checkoutScope = new AsyncLocalStorage<GitHubHostAccess & { path: string }>()
+  if (options.checkouts !== undefined && (!hasRuntimeType(options.checkouts?.root, "string") || !options.checkouts.root.trim())) {
+    throw agentDiagnostics.AGENT_R0748({ message: "GitHub host checkouts.root must be a directory path." })
+  }
+  const checkoutPool = options.checkouts ? createCheckoutPool(resolve(options.checkouts.root)) : undefined
   const reserve = options.reserve ?? 1_500
   const cacheMs = options.cacheMs ?? 15_000
   const graphQLCheckTimeout = options.graphQLCheckTimeout ?? GITHUB_GRAPHQL_CHECK_TIMEOUT_MS
@@ -652,8 +717,10 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     if (pullRequest.headRepository && !pullRequest.headRef) {
       throw agentDiagnostics.AGENT_R0766({ message: "A pull request headRef is required when headRepository is supplied." })
     }
-    const checkout = await mkdtemp(join(tmpdir(), `vitehub-${pullRequest.repository.replace("/", "-")}-pr-${pullRequest.number}-`))
+    const pooled = checkoutPool ? await checkoutPool.acquire(pullRequest.repository) : undefined
+    const checkout = pooled?.directory ?? await mkdtemp(join(tmpdir(), `vitehub-${pullRequest.repository.replace("/", "-")}-pr-${pullRequest.number}-`))
     const operation = controlledOperation(options)
+    let keepCheckout = false
     try {
       const baseAuth = await access({
         refresh: true,
@@ -666,17 +733,18 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         await exec("git", ["check-ref-format", `refs/heads/${pullRequest.headRef}`], commandOptions)
         if (pullRequest.headRef.startsWith("-")) throw agentDiagnostics.AGENT_R0766({ message: "A pull request headRef cannot start with a dash." })
       }
-      await exec("git", ["clone", "--filter=blob:none", "--no-checkout", "--", `https://github.com/${pullRequest.repository}.git`, checkout], commandOptions)
+      if (pooled?.reused) await resetPooledCheckout(checkout, pullRequest.repository, commandOptions)
+      else await exec("git", ["clone", "--filter=blob:none", "--no-checkout", "--", `https://github.com/${pullRequest.repository}.git`, checkout], commandOptions)
       if (pullRequest.headRef) {
         // Fetch the source branch: GitHub's synthetic pull refs can lag a push.
         const sourceRepository = pullRequest.headRepository ?? pullRequest.repository
         const sourceAuth = sourceRepository === pullRequest.repository ? baseAuth : await access({ refresh: true, repository: sourceRepository, signal: operation.signal })
         await exec("git", ["-C", checkout, "fetch", "--no-tags", "--", `https://github.com/${sourceRepository}.git`, `refs/heads/${pullRequest.headRef}`], { ...commandOptions, env: { ...env, ...sourceAuth.env } })
-        await exec("git", ["-C", checkout, "checkout", "-B", pullRequest.headRef, "FETCH_HEAD"], commandOptions)
+        await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "checkout", "-f", "-B", pullRequest.headRef, "FETCH_HEAD"], commandOptions)
       }
       else {
         await exec("git", ["-C", checkout, "fetch", "--no-tags", "--", "origin", pullRequest.headSha], commandOptions)
-        await exec("git", ["-C", checkout, "checkout", "--detach", "FETCH_HEAD"], commandOptions)
+        await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "checkout", "-f", "--detach", "FETCH_HEAD"], commandOptions)
       }
       await exec("git", ["-C", checkout, "remote", "set-url", "origin", `https://github.com/${pullRequest.repository}.git`], commandOptions)
       const pushUrl = pullRequest.headRepository
@@ -690,6 +758,8 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       const fetched = (await exec("git", ["-C", checkout, "rev-parse", "HEAD"], commandOptions)).stdout.trim()
       if (fetched !== pullRequest.headSha) throw agentDiagnostics.AGENT_R0767({ message: `Pull request head changed from ${pullRequest.headSha} to ${fetched}.` })
       operation.signal.throwIfAborted()
+      // Only a checkout with a verified head returns to the pool. Reuse resets it again.
+      keepCheckout = Boolean(checkoutPool)
       const prepareWorkspace = async (target: string) => await prepareGitHubPullRequestWorkspace(checkout, target, { signal: operation.signal })
       let pushHead = pullRequest.headSha
       const push = async (target: string = checkout, options: { signal?: AbortSignal, beforePush?: () => void } = {}) => {
@@ -741,7 +811,11 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     }
     finally {
       operation.close()
-      await rm(checkout, { force: true, recursive: true })
+      if (keepCheckout && checkoutPool) checkoutPool.release(pullRequest.repository, checkout)
+      else {
+        await rm(checkout, { force: true, recursive: true })
+        if (checkoutPool) await rm(`${checkout}.meta.json`, { force: true })
+      }
     }
   }
 

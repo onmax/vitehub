@@ -120,7 +120,7 @@ export default defineAgent({
 
 ## Preserve GitHub PR history
 
-A Node process host can use `createGitHubHost()` from `@vite-hub/agent/server/github` to prepare an exact PR head with Git. Supply `repository`, `number`, `headSha`, `headRepository`, and `headRef` to `withPullRequestCheckout()`. The host fetches the source branch directly and rejects a changed head.
+A Node process host can use `createGitHubHost()` from `@vite-hub/agent/server/github` to prepare an exact PR head with Git. Supply `repository`, `number`, `headSha`, `headRepository`, and `headRef` to `withPullRequestCheckout()`. The host fetches the source branch directly and rejects a changed head. Set `checkouts: { root }` on the host to reuse checkouts per repository: reuse keeps ignored files such as dependencies, resets tracked and untracked files, Git hooks, and Git configuration, and fetches only the new head. Use one `root` for each process.
 
 When a provider materializes a separate directory, call the checkout callback's `prepareWorkspace(cwd)` in the provider launch hook. It restores independent Git history and removes saved authentication configuration. Set Workspace `commit: false` if the host will push the provider's commits instead of copying files back through Workspace writeback.
 
