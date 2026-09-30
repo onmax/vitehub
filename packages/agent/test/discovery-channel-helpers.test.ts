@@ -882,6 +882,11 @@ it("rejects direct eval that may mutate captured Channel options", async () => {
   })).rejects.toThrow(/opaque Channel/)
 })
 
+it("keeps indirect eval from invalidating lexical Channel options", async () => {
+  const definition = await discover(`${imports} const options = { pullRequest: false }; (0, eval)("options.pullRequest = true"); export default defineAgent({ channels: { custom: github(options) } })`)
+  expect(definition?.workspace).toBeUndefined()
+})
+
 it.each([
   '(true ? options : other).pullRequest = true',
   '++(true ? options : other).pullRequest',
