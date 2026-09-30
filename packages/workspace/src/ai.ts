@@ -668,5 +668,8 @@ export function createWorkspaceTools<Operations extends WorkspaceToolOperations 
 
   if (writeEnabled) Object.assign(result, createWriteTools(input as Workspace, resolved.write))
 
+  // SAFETY: The resolved operation flags select shell, materialize_sources, and write tools
+  // with the input/output contracts declared by WorkspaceTools. Source requests add curl
+  // only with an executor; configurations without any executable operation throw above.
   return result as WorkspaceTools<Operations, SourceRequests>
 }
