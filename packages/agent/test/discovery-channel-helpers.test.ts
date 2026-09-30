@@ -196,6 +196,38 @@ it("does not trust a Channel helper from another package or a shadowed helper", 
   await expect(discover(`${imports} export default defineAgent({ options: {}, configure: github => defineAgent({ channels: { github: github({ pullRequest: false }) } }) })`)).rejects.toThrow("opaque Channel")
 })
 
+it.each([
+  'const { github: gh } = channels; export default defineAgent({ channels: { github: gh({ pullRequest: true }) } })',
+  'const { github: gh } = channels\nexport default defineAgent({ channels: { github: gh({ pullRequest: true }) } })',
+  'const { github: gh, telegram: tg } = channels; export default defineAgent({ channels: { github: gh({ pullRequest: true }), telegram: tg() } })',
+  'const [gh] = [github]; export default defineAgent({ channels: { github: gh({ pullRequest: true }) } })',
+])("infers Workspace ownership through destructured Channel helpers: %s", async declaration => {
+  const source = `${imports} import * as channels from "vite-hub/agent/channels"; ${declaration}`
+  const definition = await discover(source)
+  expect(definition?.workspace).toBe("review")
+  const stateless = await discover(source.replace("pullRequest: true", "pullRequest: false"))
+  expect(stateless?.workspace).toBeUndefined()
+  for (const enabled of [true, false]) {
+    const imported = await discover('import channel from "../../channel.ts"; export default defineAgent({ channels: { custom: channel } })', {
+      "channel.ts": `${source.split("export default")[0]} export default gh({ pullRequest: ${enabled} })`,
+    })
+    expect(imported?.workspace).toBe(enabled ? "review" : undefined)
+  }
+})
+
+it.each([
+  'import * as channels from "other-package"; const { github: gh } = channels;',
+  'import * as channels from "vite-hub/agent/channels"; const channels = { github: custom }; const { github: gh } = channels;',
+  'import * as channels from "vite-hub/agent/channels"; let { github: gh } = channels; gh = custom;',
+  'const [gh] = [custom];',
+  'import * as channels from "vite-hub/agent/channels"; const { custom: github } = channels; const gh = github;',
+  'import * as channels from "vite-hub/agent/channels"; const { github: gh } = channels && custom;',
+  'const { github: gh } = [github];',
+  'const [gh] = [github]; gh = custom;',
+])("does not trust opaque or mutated destructured Channel helpers: %s", async declaration => {
+  await expect(discover(`${imports} ${declaration} export default defineAgent({ channels: { custom: gh({ pullRequest: false }) } })`)).rejects.toThrow("opaque Channel")
+})
+
 const portalChannel = `import type { AgentChannelTriggerContext } from "vite-hub/agent"
 import { github } from "vite-hub/agent/channels"
 
@@ -693,6 +725,15 @@ it.each(["channels?.github", "channels.github?.", "channels?.github?."])("recogn
 it.each([
   ['{ id: "stateless", workspace: false }', false],
   ['defineCapability({ workspace: false })', false],
+  ['{ id: "stateless", workspace: null }', false],
+  ['defineCapability({ workspace: 0 })', false],
+  ['{ id: "stateless", workspace: -0 }', false],
+  ['{ id: "stateless", workspace: "" }', false],
+  ['{ id: "stateless", workspace: `` }', false],
+  ['{ id: "stateless", workspace: false && {} }', false],
+  ['{ id: "stateless", workspace: false ?? {} }', false],
+  ['{ id: "stateless", workspace: false || null }', false],
+  ['{ id: "storage", workspace: null ?? {} }', true],
   ['{ id: "stateless", workspace: (false as boolean) }', false],
   ['{ id: "storage", workspace: (false as boolean) || {} }', true],
   ['{ id: "combined", workspace: false, capabilities: [{ id: "storage", workspace: {} }] }', true],
@@ -709,6 +750,10 @@ it.each([
   'const wrapper = { get options() { return options } }; wrapper.options.enable()',
   'const wrapper = { set options(value) { options.pullRequest = value } }; wrapper.options = true',
   '({ get options() { return options } }).options.pullRequest = true',
+  '({ get ["options"]() { return options } }).options.pullRequest = true',
+  '({ get ["opt" + "ions"]() { return options } }).options.pullRequest = true',
+  'const wrapper = { get ["options"]() { return options } }; wrapper.options.pullRequest = true',
+  '({ get ["other"]() { return {} }, get ["options"]() { return options } }).options.pullRequest = true',
 ])("rejects mutations through accessor container aliases: %s", async mutation => {
   const source = `${imports} const options = { pullRequest: false }; ${mutation}; export default github(options)`
   await expect(discover(source.replace("export default github(options)", "export default defineAgent({ channels: { custom: github(options) } })"))).rejects.toThrow(/opaque Channel/)

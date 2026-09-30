@@ -593,6 +593,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   const destructuredBindings = new Map<number, Set<string>>()
+  const destructuredChannelHelpers = new Map<number, Map<string, { reference: number, helper: string }>>()
+  const destructuredImportedHelpers = new Map<number, Map<string, number>>()
   const variableDeclarations = new Map<number, number>()
   for (let i = 0; i < tokens.length; i++) {
     if (!["const", "let", "var"].includes(tokens[i])) continue
@@ -619,6 +621,27 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         cursor++
       } while (cursor < tokens.length && nesting > 0)
       if (["=", "of"].includes(tokens[cursor])) recordDestructuringAliases(binding + 1, cursor, cursor + 1, false)
+      if (tokens[binding + 1] === "{" && tokens[cursor] === "=" && importedChannelNamespaces.has(tokens[cursor + 1]!)
+        && ([";", ",", undefined].includes(tokens[cursor + 2]) || startsStatement(cursor + 2))) {
+        const helpers = new Map<string, { reference: number, helper: string }>()
+        for (let property = binding + 2; property < cursor - 1; property++) {
+          if (tokenScopes[property] !== binding + 1 || !["{", ","].includes(tokens[property - 1]!)
+            || !firstPartyChannelFactories.has(tokens[property]!)) continue
+          const name = tokens[property + 1] === ":" ? tokens[property + 2] : tokens[property]
+          const end = tokens[property + 1] === ":" ? property + 3 : property + 1
+          if (name && [",", "}"].includes(tokens[end]!)) helpers.set(name, { reference: cursor + 1, helper: tokens[property]! })
+        }
+        destructuredChannelHelpers.set(binding, helpers)
+      }
+      if (tokens[binding + 1] === "[" && tokens[cursor] === "=" && tokens[cursor + 1] === "[") {
+        const references = new Map<string, number>()
+        let value = cursor + 2
+        for (let name = binding + 2; name < cursor - 1; name += 2, value += 2) {
+          if (![",", "]"].includes(tokens[name + 1]!) || ![",", "]"].includes(tokens[value + 1]!)) break
+          if (importedChannelFactories.has(tokens[value]!) && names.has(tokens[name]!)) references.set(tokens[name]!, value)
+        }
+        destructuredImportedHelpers.set(binding, references)
+      }
       for (let index = binding + 2; index < cursor; index++) {
         if (tokens[index] !== "=" || ["=", ">"].includes(tokens[index + 1]) || tokens[index - 1] === "=") continue
         const targets = containerAliasTargets(0, tokens.slice(index + 1, cursor), true)
@@ -701,12 +724,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (value === undefined) {
         const accessor = tokens.findIndex((token, cursor) => cursor > opening && cursor < close
           && tokenScopes[cursor] === opening && ["get", "set"].includes(token)
-          && propertyName(tokens[cursor + 1] ?? "") === tokens[property])
+          && (tokens[cursor + 1] === "[" || propertyName(tokens[cursor + 1] ?? "") === tokens[property]))
         if (accessor === -1) continue
-        let body = accessor + 2
-        while (body < close && tokens[body] !== "{") body++
-        const bodyEnd = [...openingDelimiters].find(([, start]) => start === body)?.[0] ?? close
-        targets = containerAliasTargets(0, tokens.slice(body + 1, bodyEnd), true)
+        // Computed accessors can select any captured value. Invalidate all
+        // references in the container rather than guessing the selected body.
       }
       else targets = containerAliasTargets(value, tokens, true)
       valueEnd = property + 1
@@ -1078,6 +1099,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
             const resolved = resolveReference(target, seen, preserveCalls)
             if (factoryCall(resolved, "channelHelper") !== undefined) return resolved
           }
+          else {
+            const importedReference = destructuredImportedHelpers.get(binding)?.get(tokens[index]!)
+            if (importedReference !== undefined && isModuleBinding(importedReference)
+              && !mutatedBindings.has(tokens[importedReference]!)) return importedReference
+          }
         }
         return index
       }
@@ -1093,12 +1119,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return reference === undefined ? index : resolveReference(reference, seen, preserveCalls)
   }
 
-  function capabilityWorkspaceOwnsWorkspace(index: number): boolean {
+  function capabilityWorkspaceOwnsWorkspace(index: number, seen = new Set<number>()): boolean {
     index = resolveReference(index)
+    if (seen.has(index)) throw new Error("[vitehub] Agent Workspace discovery cannot inspect a cyclic Capability Workspace expression. Use a literal Workspace value.")
+    seen.add(index)
     if (undefinedValue(index)) return false
-    if (tokens[index] !== "false") return true
-    // A compound expression starting with false may still return a Workspace.
-    let end = index + 1
+    const negativeZero = tokens[index] === "-" && tokens[index + 1] === "0"
+    if (!["false", "null", "0", '""', "''", "``"].includes(tokens[index]) && !negativeZero) return true
+    // A compound expression starting with a falsy literal may still return a
+    // Workspace. Do not confuse zero with a longer numeric literal either.
+    let end = index + (negativeZero ? 2 : 1)
     let scope = tokenScopes[index]
     for (;;) {
       if (tokens[end] === "as" || tokens[end] === "satisfies") { end = skipAssertion(end); continue }
@@ -1109,6 +1139,31 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         continue
       }
       break
+    }
+    if ((tokens[end] === "|" && tokens[end + 1] === "|")
+      || (tokens[end] === "?" && tokens[end + 1] === "?" && tokens[index] === "null")) {
+      return capabilityWorkspaceOwnsWorkspace(end + 2, seen)
+    }
+    if ((tokens[end] === "&" && tokens[end + 1] === "&")
+      || (tokens[end] === "?" && tokens[end + 1] === "?")) {
+      // A short-circuit conjunction or non-nullish coalescing preserves the falsy left value.
+      // Mixed logical expressions need evaluation beyond literal inference.
+      let depth = 0
+      let expressionScope = scope
+      for (let cursor = end + 2; cursor < tokens.length; cursor++) {
+        const token = tokens[cursor]
+        if (depth === 0 && token === ")" && openingDelimiters.get(cursor) === expressionScope && tokens[expressionScope!] === "(") {
+          expressionScope = scopeParents.get(expressionScope!)
+          continue
+        }
+        if (depth === 0 && [",", ";", ")", "]", "}"].includes(token)) break
+        if ((token === "|" && tokens[cursor + 1] === "|") || token === "?") {
+          throw new Error("[vitehub] Agent Workspace discovery cannot inspect a compound Capability Workspace expression. Use a literal Workspace value, or add workspace: {} to the Agent definition when the Capability owns a Workspace.")
+        }
+        if (["(", "[", "{"].includes(token)) depth++
+        else if ([")", "]", "}"].includes(token)) depth--
+      }
+      return false
     }
     return ![",", ";", ")", "]", "}"].includes(tokens[end])
   }
@@ -1269,13 +1324,23 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (call === undefined) return
     const reference = resolveReference(index)
     const member = tokens[reference + 1] === "?" ? reference + 3 : reference + 2
-    const helper = importedChannelFactories.get(tokens[reference]) ?? tokens[member]
+    const helper = destructuredChannelHelper(reference)?.helper ?? importedChannelFactories.get(tokens[reference]) ?? tokens[member]
     return helper === undefined ? undefined : { call, helper }
+  }
+
+  function destructuredChannelHelper(index: number) {
+    const binding = visibleDeclaration(index)
+    if (binding === undefined || binding > index || mutatedBindings.has(tokens[index]!)) return
+    const helper = destructuredChannelHelpers.get(binding)?.get(tokens[index]!)
+    if (!helper || visibleDeclaration(helper.reference) !== undefined || mutatedBindings.has(tokens[helper.reference]!)
+      || callbackParameters.some(scope => helper.reference >= scope.start && helper.reference < scope.end && scope.names.has(tokens[helper.reference]!))) return
+    return helper
   }
 
   function factoryCall(index: number, name: "defineAgent" | "defineChannel" | "defineCapability" | "channelHelper" = "defineAgent"): number | undefined {
     const reference = resolveReference(index)
-    if (visibleDeclaration(reference) !== undefined || callbackParameters.some(scope =>
+    const destructuredHelper = name === "channelHelper" ? destructuredChannelHelper(reference) : undefined
+    if ((!destructuredHelper && visibleDeclaration(reference) !== undefined) || callbackParameters.some(scope =>
       reference >= scope.start && reference < scope.end && scope.names.has(tokens[reference]))) return undefined
     // A binding to an Agent value is not an alias of the factory itself.
     let identityEnd = reference + 1
@@ -1296,7 +1361,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const factory = tokens[reference]
     if (name === "channelHelper") {
       // Channel helpers are trusted only when imported from the Channel entry.
-      if (!importedChannelFactories.has(factory) && !(importedChannelNamespaces.has(factory)
+      if (!destructuredHelper && !importedChannelFactories.has(factory) && !(importedChannelNamespaces.has(factory)
         && ((tokens[reference + 1] === "." && firstPartyChannelFactories.has(tokens[reference + 2]))
           || (tokens[reference + 1] === "?" && tokens[reference + 2] === "." && firstPartyChannelFactories.has(tokens[reference + 3]))))) return undefined
     }
