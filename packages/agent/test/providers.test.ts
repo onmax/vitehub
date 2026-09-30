@@ -2656,11 +2656,31 @@ export default defineAgent({
         expect(webhookRoute).toContain("function chatStateFromLibsql()")
         expect(webhookRoute).toContain("export function resumeWebhookQueues(waitUntil: AgentWaitUntil | undefined, recoverInterruptedBefore?: number)")
         expect(webhookRoute).toContain("if (!runtimeUrl && !viteHubChatStateOptions.url) return async () => undefined")
-        expect(webhookRoute).toContain("handler.resume({ agentIdentity: agentIdentities[name], recoverInterruptedBefore, webhookState: viteHubChatStateResolver, waitUntil })")
+        expect(webhookRoute).toContain("handler.resume({ agentIdentity: agentIdentities[name], recoverInterruptedBefore, webhookState: chatStateFromLibsql(), waitUntil })")
         expect(webhookRoute).toContain("return async () => await Promise.all(stops.map(stop => stop()))")
         expect(queuePlugin).toContain('import { resumeWebhookQueues } from "./chat-webhook-route"')
         expect(queuePlugin).not.toContain("nitroApp.hooks.hook('request'")
         expect(queuePlugin).toContain("if (!import.meta.prerender) setTimeout(() => startWebhookQueues(startedAt), 0)")
+        const resumeWebhookQueues = vi.fn((_waitUntil: unknown, _before: number) => vi.fn())
+        const hooks = new Map<string, () => void>()
+        let startup: (() => void) | undefined
+        // Execute the generated plugin with an earlier process start and a deferred timer.
+        const install = new Function("resumeWebhookQueues", "performance", "setTimeout", "process", `${queuePlugin.replace(/^import .*\n/m, "").replace("export default ", "return ").replace("import.meta.prerender", "false")}`)(
+          resumeWebhookQueues,
+          { timeOrigin: Date.now() - 60_000 },
+          (callback: () => void) => { startup = callback },
+          undefined,
+        )
+        install({ hooks: { hook: (name: string, callback: () => void) => hooks.set(name, callback) } })
+        hooks.get("close")?.()
+        startup?.()
+        expect(resumeWebhookQueues).not.toHaveBeenCalled()
+        install({ hooks: { hook: (name: string, callback: () => void) => hooks.set(name, callback) } })
+        const pluginStartedAt = Date.now()
+        startup?.()
+        expect(resumeWebhookQueues).toHaveBeenCalledWith(undefined, expect.any(Number))
+        expect(resumeWebhookQueues.mock.calls[0]![1]).toBeLessThan(pluginStartedAt - 30_000)
+        hooks.get("close")?.()
         expect(queuePlugin).toContain("stop = resumeWebhookQueues(waitUntil, recoverInterruptedBefore)")
         expect(queuePlugin).toContain("if (!stopping) stopping = stop?.()")
         expect(queuePlugin).toContain("if (stopping) waitUntil?.(stopping)")
@@ -10448,8 +10468,9 @@ describe("server helpers", () => {
     }
   })
 
-  it("fails interrupted invocations before it resumes queued deliveries that run them again", async () => {
+  it.each(["adapter", "shared resolver"])("fails interrupted invocations before it resumes queued deliveries with a %s", async (stateKind) => {
     const { defineAgent } = await import("../src/index.ts")
+    const { github } = await import("../src/channels.ts")
     const { agentInvocationId, createMemoryAgentInvocationStore, defineAgentInvocations } = await import("../src/server.ts")
     const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
     const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
@@ -10467,7 +10488,28 @@ describe("server helpers", () => {
       for (const id of ["orphaned", resumedId, "other-agent"]) statusesAtRun[id] = (await invocations.get(id))?.status
       return "resumed"
     })
-    const agent = defineAgent({ driver: { run }, invocations })
+    const agent = defineAgent({
+      ...(stateKind === "shared resolver"
+        ? {
+            channels: {
+              github: github({
+                triggers: { webhook: { invoke: () => ({ input: { prompt: "github delivery" } }) } },
+                webhooks: { secretToken: false },
+              }),
+            },
+          }
+        : {}),
+      driver: { run },
+      invocations,
+    })
+    const resolver = Object.assign(vi.fn((context: { webhook: { agentName: string; provider: string; stateKeyPrefix: string } }) => {
+      expect(context.webhook).toMatchObject({
+        agentName: "review",
+        provider: "github",
+        stateKeyPrefix: "webhook:review:github:github:",
+      })
+      return state
+    }), { ownsScope: false })
     await state.connect()
     await state.enqueueWebhookDelivery({
       concurrencyGroup: "review:default",
@@ -10484,11 +10526,12 @@ describe("server helpers", () => {
     const stop = createChannelWebhookRouteHandler(agent as never).resume({
       agentName: "review",
       recoverInterruptedBefore: Date.parse("2026-09-30T11:00:00.000Z"),
-      webhookState: state,
+      webhookState: stateKind === "shared resolver" ? resolver : state,
     })
 
     try {
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      if (stateKind === "shared resolver") expect(resolver).toHaveBeenCalled()
       expect(statusesAtRun).toEqual({ "orphaned": "failed", [resumedId]: "running", "other-agent": "running" })
       await expect(invocations.get("orphaned")).resolves.toMatchObject({
         error: { message: "The host stopped before this Agent Invocation finished." },

@@ -7829,15 +7829,18 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
         handlerOptions.capabilities,
         routeAgentIdentity(handlerOptions),
       )
-      let trackedState: StateAdapter | undefined
-      if (handlerOptions.webhookState && !stateResolverOwnsScope(handlerOptions.webhookState)) {
-        // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
-        trackedState = await resolveMaybe(handlerOptions.webhookState, context as never) || undefined
-        await trackedState?.connect()
+      const trackedStates = new Set<StateAdapter>()
+      const sharedState = handlerOptions.webhookState && !stateResolverOwnsScope(handlerOptions.webhookState)
+      if (sharedState && !isRuntimeFunction(handlerOptions.webhookState)) {
+        // SAFETY: Non-resolver webhook state is the state adapter itself.
+        const state = handlerOptions.webhookState as StateAdapter
+        await state.connect()
+        trackedStates.add(state)
       }
       const registrations: AgentWebhookQueueRegistration<AgentChannelWebhookRouteOptions>[] = []
       for (const { registration } of await agentWebhookRegistrations(agent, context)) {
         const webhookState = await resolveAgentWebhookState(context, registration, handlerOptions)
+        if (sharedState && webhookState) trackedStates.add(webhookState.state)
         if (webhookState && hasAgentWebhookQueue(webhookState.state)) {
           registrations.push({
             backendId: await resolveWebhookStateBackendId(webhookState.state),
@@ -7850,12 +7853,12 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
       if (recoveryBefore !== undefined) {
         // Recover before the queue claims work, so recovery cannot race a resumed delivery.
         await recoverInterruptedWebhookAgentInvocations(agent, context, recoveryBefore, [
-          ...(trackedState && hasAgentWebhookQueue(trackedState) ? [{ owns: (scope: string) => scope.startsWith(agentScopePrefix), state: trackedState }] : []),
+          ...[...trackedStates].filter(hasAgentWebhookQueue).map(state => ({ owns: (scope: string) => scope.startsWith(agentScopePrefix), state })),
           ...registrations.map(({ scope, state }) => ({ owns: (candidate: string) => candidate === scope, state })),
         ]).catch(error => console.error("[vitehub] Interrupted Agent invocation recovery failed.", error))
         recoveryBefore = undefined
       }
-      if (trackedState) registrar.track(trackedState, handlerOptions, agentScopePrefix)
+      for (const state of trackedStates) registrar.track(state, handlerOptions, agentScopePrefix)
       for (const registration of registrations) await registrar.register(registration)
     }, { scopePrefix: agentScopePrefix })
   }
