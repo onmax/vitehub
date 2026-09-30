@@ -1702,7 +1702,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const agentName = bindOptions.agentName || context.agentIdentity?.name
       const recordId = await agentInvocationId(runId, agentName)
       const claimId = createInvocationId()
-      const traceId = await boundedIdentity(context.trace?.id || runId)
+      let traceId = await boundedIdentity(context.trace?.id || runId)
       const annotations = normalizeAnnotations(context.run?.annotations)
       let writes = Promise.resolve()
       let finished = false
@@ -1746,6 +1746,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         if (!creationTask) {
           const task = Promise.resolve().then(() => store.create(createInput)).then((result) => {
             if (result) {
+              traceId = result.record.traceId
               limits = observationLimits(result.record.observationLimits)
               observationCount = result.record.observations.length
               observationsTruncated = result.record.observationsTruncated === true
@@ -1984,7 +1985,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       }
       return {
         configuration: options.configuration,
-        traceId,
+        get traceId() { return traceId },
         context: {
           ...context,
           run: { ...context.run, runId },

@@ -1106,6 +1106,80 @@ describe("Agent Invocations", () => {
     expect(finished?.traceId).toMatch(/^sha256_/)
   })
 
+  it("reuses the stored trace id for duplicate invocation observations", async () => {
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const first = await bindAgentInvocations(invocations, {
+      ...runtime("duplicate-trace"), trace: { id: "first-trace" },
+    }, { agentName: "duplicate-agent", deferClaim: true })
+    const retry = await bindAgentInvocations(invocations, {
+      ...runtime("duplicate-trace"), trace: { id: "retry-trace" },
+    }, { agentName: "duplicate-agent" })
+    if (!first || !retry) throw new Error("Expected invocation journals.")
+
+    expect(retry.traceId).toBe(first.traceId)
+    await retry.running()
+    await retry.context.traceLog?.append({ name: "agent.tool.call", trace: { id: "retry-trace" }, type: "run" })
+    await retry.finish("completed")
+
+    const record = await invocations.getByRunId("duplicate-trace", "duplicate-agent")
+    expect(record?.traceId).toBe(first.traceId)
+    expect(record?.observations.length).toBeGreaterThan(0)
+    expect(record?.observations.every(observation => observation.trace?.id === first.traceId)).toBe(true)
+  })
+
+  it("adopts a duplicate record's trace id when creation resolves after the timeout", async () => {
+    const memory = createMemoryAgentInvocationStore()
+    const context = { ...runtime("late-duplicate-trace"), trace: { id: "first-trace" } }
+    const first = await bindAgentInvocations(defineAgentInvocations({ store: memory }), context, { deferClaim: true })
+    let releaseCreate!: () => void
+    const createGate = new Promise<void>((resolve) => { releaseCreate = resolve })
+    const invocations = defineAgentInvocations({ store: {
+      ...memory,
+      async create(input) {
+        await createGate
+        return memory.create(input)
+      },
+    } })
+    const retry = await bindAgentInvocations(invocations, { ...context, trace: { id: "retry-trace" } }, { deferClaim: true })
+    if (!first || !retry) throw new Error("Expected invocation journals.")
+    expect(retry.traceId).not.toBe(first.traceId)
+
+    releaseCreate()
+    await vi.waitFor(() => expect(retry.traceId).toBe(first.traceId))
+    await retry.running()
+    await retry.context.traceLog?.append({ name: "agent.tool.call", trace: { id: "retry-trace" }, type: "run" })
+    await retry.finish("completed")
+
+    const record = await invocations.getByRunId("late-duplicate-trace")
+    expect(record?.observations[0]?.trace?.id).toBe(first.traceId)
+  })
+
+  it.each([false, true])("reuses the stored trace id on duplicate invocation hooks, failure: %s", async (fail) => {
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const finish = vi.fn()
+    const error = vi.fn()
+    const agent = defineAgent({
+      driver: { run: () => { if (fail) throw new Error("failed"); return "done" } },
+      hooks: { "agent:error": error, "agent:finish": finish },
+      invocations,
+      runtime: false,
+    })
+    const invoke = async (traceId: string) => {
+      const result = runAgent(agent, { ...runtime("duplicate-hook-trace"), trace: { id: traceId } }, {})
+      if (fail) await expect(result).rejects.toThrow("failed")
+      else await result
+    }
+
+    await invoke("first-trace")
+    await invoke("retry-trace")
+
+    const record = await invocations.getByRunId("duplicate-hook-trace")
+    const hook = fail ? error : finish
+    expect(hook).toHaveBeenCalledTimes(2)
+    expect(hook.mock.calls[1]?.[0].invocation.traceId).toBe(record?.traceId)
+    expect(hook.mock.calls[1]?.[0].invocation.traceId).toBe(hook.mock.calls[0]?.[0].invocation.traceId)
+  })
+
   it("rejects redaction hooks that are not functions", () => {
     const store = createMemoryAgentInvocationStore()
     expect(() => defineAgentInvocations({ redact: "all" as never, store })).toThrow("redact must be a function")
