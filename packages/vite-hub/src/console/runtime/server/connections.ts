@@ -8,18 +8,27 @@ import type { ConnectionsAccess } from "@vite-hub/connections/http"
 import type { ConnectionsRuntime } from "@vite-hub/connections/server"
 import type { ConsoleConnectionsInspection } from "../../internal.ts"
 
-// Console Auth guards /_vitehub/** before these routes run. Console server code has no per-user identity, so the actor is the Console.
-const consoleAccess: ConnectionsAccess = { actor: { id: "console", kind: "user" }, admin: true }
+export interface ConsoleConnectionsOptions {
+  /**
+   * Allows connect, refresh, disconnect, and key changes. Console access alone only allows reads.
+   * `console: true` in development and `console: { manageConnections: true }` set it.
+   */
+  manage?: boolean
+  runtime?: () => ConnectionsRuntime
+}
 
 export function consoleConnectionsReturnTo(name: string, outcome: "connected" | "failed"): string {
   return `/_vitehub/connections?connection=${encodeURIComponent(name)}&result=${outcome}`
 }
 
 /** Mounts the Connections management, connect, and callback routes for the Console. */
-export function installConsoleConnections(projectRoot: string, runtime: () => ConnectionsRuntime = useConnectionsRuntime): ConsoleConnectionsInspection {
+export function installConsoleConnections(projectRoot: string, options: ConsoleConnectionsOptions = {}): ConsoleConnectionsInspection {
+  const runtime = options.runtime ?? useConnectionsRuntime
+  // Console Auth guards /_vitehub/** before these routes run. Console server code has no per-user identity, so the actor is the Console.
+  const access: ConnectionsAccess = { actor: { id: "console", kind: "user" }, admin: options.manage === true }
   return installConsoleConnectionsScope(projectRoot, {
     handle: (request, event) =>
-      createConnectionsHandler({ authenticate: () => consoleAccess, returnTo: consoleConnectionsReturnTo, runtime: runtime() })(request, event),
+      createConnectionsHandler({ authenticate: () => access, returnTo: consoleConnectionsReturnTo, runtime: runtime() })(request, event),
   })
 }
 

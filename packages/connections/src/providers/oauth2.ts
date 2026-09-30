@@ -40,6 +40,19 @@ const tokenResponse = v.object({
 const errorResponse = v.object({ error: v.string() })
 const userInfoResponse = v.looseObject({ email: optionalString, sub: optionalString })
 
+// ViteHub sets these for each flow. An override would break the state, redirect, or PKCE binding.
+const reservedAuthorizationParams = new Set(["client_id", "code_challenge", "code_challenge_method", "redirect_uri", "response_type", "scope", "state"])
+
+/** `application/x-www-form-urlencoded` encoding for Basic credentials, as RFC 6749 section 2.3.1 requires. */
+function formEncode(value: string): string {
+  return new URLSearchParams({ value }).toString().slice("value=".length)
+}
+
+function basicCredentials(id: string, secret: string): string {
+  const bytes = new TextEncoder().encode(`${formEncode(id)}:${formEncode(secret)}`)
+  return `Basic ${btoa(String.fromCharCode(...bytes))}`
+}
+
 function secretValue(secret: ConnectionSecret | undefined): string | undefined {
   if (secret === undefined) return
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- ConnectionSecret is a typed union of a string and a sealed Secret Env value.
@@ -55,6 +68,9 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionOAuth2Provider
   if (!options.authorizationUrl || !options.tokenUrl || !options.scopes.length) {
     throw connectionError("invalid", { path: "provider" })
   }
+  for (const key of Object.keys(options.authorizationParams ?? {})) {
+    if (reservedAuthorizationParams.has(key)) throw connectionError("invalid", { path: `provider.authorizationParams.${key}` })
+  }
   const clientAuth = options.clientAuth ?? "body"
 
   async function client(context: ConnectionProviderContext): Promise<{ id: string, secret?: string }> {
@@ -64,11 +80,8 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionOAuth2Provider
     return { id: value.clientId, ...(secret ? { secret } : {}) }
   }
 
-  async function tokenRequest(
-    context: ConnectionProviderContext,
-    params: Record<string, string>,
-    previous?: ConnectionTokenSet,
-  ): Promise<ConnectionTokenSet> {
+  /** Form request with the configured client authentication. Token and revocation endpoints use it. */
+  async function clientRequest(context: ConnectionProviderContext, url: string, params: Record<string, string>): Promise<Response> {
     const { id, secret } = await client(context)
     const body = new URLSearchParams(params)
     const headers: Record<string, string> = {
@@ -76,13 +89,21 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionOAuth2Provider
       "content-type": "application/x-www-form-urlencoded",
     }
     if (clientAuth === "basic" && secret) {
-      headers.authorization = `Basic ${btoa(`${encodeURIComponent(id)}:${encodeURIComponent(secret)}`)}`
+      headers.authorization = basicCredentials(id, secret)
     }
     else {
       body.set("client_id", id)
       if (secret) body.set("client_secret", secret)
     }
-    const response = await context.fetch(options.tokenUrl, { body, headers, method: "POST" })
+    return context.fetch(url, { body, headers, method: "POST" })
+  }
+
+  async function tokenRequest(
+    context: ConnectionProviderContext,
+    params: Record<string, string>,
+    previous?: ConnectionTokenSet,
+  ): Promise<ConnectionTokenSet> {
+    const response = await clientRequest(context, options.tokenUrl, params)
     const result: unknown = await readJson(response)
     const parsed = v.safeParse(tokenResponse, result)
     if (!response.ok || !parsed.success) {
@@ -150,11 +171,9 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionOAuth2Provider
     ...(options.revokeUrl
       ? {
           async revoke(token: ConnectionTokenSet, context: ConnectionProviderContext) {
-            const response = await context.fetch(options.revokeUrl!, {
-              body: new URLSearchParams({ token: token.refreshToken ?? token.accessToken }),
-              headers: { "content-type": "application/x-www-form-urlencoded" },
-              method: "POST",
-            })
+            const response = await clientRequest(context, options.revokeUrl!, token.refreshToken
+              ? { token: token.refreshToken, token_type_hint: "refresh_token" }
+              : { token: token.accessToken, token_type_hint: "access_token" })
             if (!response.ok && response.status !== 400) throw connectionError("provider_failed", { status: response.status })
           },
         }

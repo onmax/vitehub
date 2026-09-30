@@ -68,6 +68,8 @@ describe("Console Connections", () => {
       const generated = await readFile(plugin, "utf8")
       expect(generated).toContain('import { installConsoleConnections } from "vite-hub/console/connections"')
       expect(generated).toContain(`installConsoleConnections(${JSON.stringify(root)})`)
+      await writeConsoleNitroPlugin(plugin, root, ["connections"], [], { agents: [], definitions: {} }, [], [], undefined, undefined, false, undefined, undefined, undefined, false, true)
+      expect(await readFile(plugin, "utf8")).toContain(`installConsoleConnections(${JSON.stringify(root)}, { manage: true })`)
       await writeConsoleNitroPlugin(plugin, root, ["env"], [], { agents: [], definitions: {} }, [], [])
       expect(await readFile(plugin, "utf8")).not.toContain("installConsoleConnections")
     }
@@ -79,7 +81,7 @@ describe("Console Connections", () => {
   it("lists, connects, and records Console actions through the Console routes", async () => {
     installConsoleSections("/connections-test", ["connections"])
     const connections = runtime()
-    installConsoleConnections("/connections-test", () => connections)
+    installConsoleConnections("/connections-test", { manage: true, runtime: () => connections })
     const list = await connectionsRoute({ req: manage({ action: "list" }) })
     expect(list.status).toBe(200)
     expect(await list.json()).toMatchObject({ admin: true, connections: [{ kind: "oauth2", name: "example", provider: "example", status: "disconnected" }, { kind: "api-key", name: "executor", status: "disconnected" }] })
@@ -107,7 +109,7 @@ describe("Console Connections", () => {
   it("sets an API key through the Console route and records the Console actor", async () => {
     installConsoleSections("/connections-test", ["connections"])
     const connections = runtime()
-    installConsoleConnections("/connections-test", () => connections)
+    installConsoleConnections("/connections-test", { manage: true, runtime: () => connections })
     const saved = await handleConsoleConnections(manage({ action: "set-key", key: "sk_console_marker", name: "executor" }))
     expect(saved.status).toBe(200)
     const body = await saved.text()
@@ -117,15 +119,29 @@ describe("Console Connections", () => {
     expect(await activity.json()).toMatchObject({ events: [{ action: "connect", actor: { id: "console", kind: "user" }, outcome: "succeeded" }] })
   })
 
+  it("lets Console users read but not change Connections without manage", async () => {
+    installConsoleSections("/connections-test", ["connections"])
+    const connections = runtime()
+    installConsoleConnections("/connections-test", { runtime: () => connections })
+    const list = await handleConsoleConnections(manage({ action: "list" }))
+    expect(await list.json()).toMatchObject({ admin: false })
+    expect((await handleConsoleConnections(manage({ action: "activity", name: "example" }))).status).toBe(200)
+    for (const input of [{ action: "start", name: "example" }, { action: "refresh", name: "example" }, { action: "disconnect", name: "example" }, { action: "set-key", key: "sk_denied", name: "executor" }]) {
+      const response = await handleConsoleConnections(manage(input))
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({ code: "CONNECTIONS_DENIED" })
+    }
+  })
+
   it("rejects cross-origin management requests", async () => {
     installConsoleSections("/connections-test", ["connections"])
-    installConsoleConnections("/connections-test", runtime)
+    installConsoleConnections("/connections-test", { runtime })
     const response = await handleConsoleConnections(new Request(`${origin}/_vitehub/connections/manage`, { body: JSON.stringify({ action: "list" }), headers: { origin: "https://other.test" }, method: "POST" }))
     expect(response.status).toBe(403)
   })
 
   it("returns 404 when the section is disabled", async () => {
-    installConsoleConnections("/connections-test", runtime)
+    installConsoleConnections("/connections-test", { runtime })
     installConsoleSections("/connections-test", [])
     const response = await handleConsoleConnections(manage({ action: "list" }))
     expect(response.status).toBe(404)

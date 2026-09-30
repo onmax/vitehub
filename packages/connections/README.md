@@ -7,10 +7,10 @@ Most ViteHub applications should install the `vite-hub` framework distribution a
 ## Install the owner package
 
 ```sh
-pnpm add @vite-hub/connections
+pnpm add @vite-hub/connections @vite-hub/database
 ```
 
-The package requires Node.js 24 or newer. Vite is an optional peer and is needed only for Connection Definition discovery.
+The package requires Node.js 24 or newer. `@vite-hub/database` is a peer: Connections store grants and activity in a Database. Vite is an optional peer and is needed only for Connection Definition discovery.
 
 ## Define a Connection
 
@@ -55,14 +55,15 @@ const response = await connection.fetch("https://gmail.googleapis.com/gmail/v1/u
 ```ts
 // vite.config.ts
 import { hubConnections } from "@vite-hub/connections/vite";
+import { hubDb } from "@vite-hub/database/vite";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [hubConnections()],
+  plugins: [hubDb(), hubConnections()],
 });
 ```
 
-The integration discovers `server/connections/<path>.ts`, writes registry types to `.vitehub/types/connections.d.ts`, and generates `#vitehub/connections/runtime`. The generated runtime reads grants from the `default` Database and the key from the secret `VITEHUB_CONNECTIONS_KEY`. The key is 32 random bytes in base64url.
+Register `hubDb()` too. Without a configured Database, every Connection call fails with `CONNECTIONS_NOT_CONFIGURED`. The integration discovers `server/connections/<path>.ts`, writes registry types to `.vitehub/types/connections.d.ts`, and generates `#vitehub/connections/runtime`. The generated runtime reads grants from the `default` Database and the key from the secret `VITEHUB_CONNECTIONS_KEY`. The key is 32 random bytes in base64url.
 
 Without the Vite integration, create the runtime yourself and install it with `setConnectionsRuntime()` from `@vite-hub/connections/server`:
 

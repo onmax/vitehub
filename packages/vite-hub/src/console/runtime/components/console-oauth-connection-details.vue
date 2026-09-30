@@ -236,7 +236,10 @@ function disconnect() {
           @click="disconnect"
         />
       </div>
-      <p v-else class="text-sm text-muted">Only Console admins can change Connections.</p>
+      <p v-else class="text-sm text-muted">
+        Connections are read-only in this Console. Set <code>console.manageConnections</code> to
+        change them.
+      </p>
     </template>
     <template v-else-if="tab === 'access'">
       <p class="text-xs text-muted">
