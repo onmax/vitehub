@@ -11,6 +11,7 @@ import { createConsoleD1Invocations, getConsoleInvocations, getConsoleUsageIndex
 import usageHandler from "../src/console/runtime/server/usage.get.ts"
 
 import type { AgentInvocationD1Database, AgentInvocationD1Statement } from "@vite-hub/agent/invocations/d1"
+import type { AgentInvocationRetentionOptions } from "@vite-hub/agent/server"
 
 describe("Console D1 journal", () => {
   let miniflare: Miniflare
@@ -63,6 +64,14 @@ describe("Console D1 journal", () => {
     await expect(query.get()).resolves.toMatchObject({ id: summary.id, status: "completed" })
     await expect(db.query.invocations.findFirst({ where: eq(schema.invocations.id, summary.id) })).resolves.toMatchObject({ id: summary.id, status: "completed" })
     expect(env).toHaveBeenCalled()
+  })
+
+  it.each(["maxAgeMs", "maxRecords"] as const)("rejects null %s before accessing the D1 binding", (limit) => {
+    const retention: AgentInvocationRetentionOptions = {}
+    Reflect.set(retention, limit, null)
+    const env = vi.fn(() => ({ DB: database }))
+    expect(() => createConsoleD1Invocations({ binding: "DB", env }, undefined, retention)).toThrow("retention limits must be positive safe integers or false")
+    expect(env).not.toHaveBeenCalled()
   })
 
   it("applies configured retention and terminal deletion to the D1 fallback journal", async () => {

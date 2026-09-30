@@ -78,7 +78,7 @@ export function d1AgentInvocationSchema(options: Pick<D1AgentInvocationStoreOpti
 
 function retention(value: false | number | undefined, fallback: number, maximum = Number.MAX_SAFE_INTEGER) {
   if (value === false) return false
-  const result = value ?? fallback
+  const result = value === undefined ? fallback : value
   if (!Number.isSafeInteger(result) || result < 1 || result > maximum) {
     throw agentDiagnostics.AGENT_R0911({ message: "[vitehub] D1 Agent Invocation retention limits must be positive safe integers or false." })
   }

@@ -424,6 +424,11 @@ describe("D1 Agent Invocation store", () => {
     expect(() => d1AgentInvocationSchema({ tablePrefix: "unsafe;" })).toThrow(/identifier/)
     expect(() => store({ maxRecords: 0 })).toThrow(/retention/)
     expect(() => store({ maxAgeMs: Infinity })).toThrow(/retention/)
+    for (const limit of ["maxAgeMs", "maxRecords"] as const) {
+      const options: Partial<D1AgentInvocationStoreOptions> = {}
+      Reflect.set(options, limit, null)
+      expect(() => store(options)).toThrow(/retention/)
+    }
     await expect(store().list({ cursor: "01" })).rejects.toThrow(/cursor/)
     await expect(store().list({ limit: 0 })).rejects.toThrow(/limit/)
     await expect(store().list({ search: "x".repeat(257) })).rejects.toThrow(/search/)

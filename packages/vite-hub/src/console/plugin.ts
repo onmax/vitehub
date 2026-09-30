@@ -27,7 +27,8 @@ function renderRetentionLimit(value: number | false | undefined): string {
   if (Number.isNaN(value)) return "NaN"
   if (value === Number.POSITIVE_INFINITY) return "Infinity"
   if (value === Number.NEGATIVE_INFINITY) return "-Infinity"
-  return JSON.stringify(value)
+  // Keep non-serializable invalid limits subject to runtime validation.
+  return JSON.stringify(value) ?? "null"
 }
 
 function renderConsoleNitroPlugin(
