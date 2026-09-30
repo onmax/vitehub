@@ -6,8 +6,8 @@ import { callMcpTool } from "../src/mcp.ts"
 
 type ToolCallResult = Record<string, unknown>
 
-async function startMcpServer(response: "json" | "sse", result: ToolCallResult) {
-  const calls: Array<{ arguments?: unknown, authorization?: string, name?: unknown }> = []
+async function startMcpServer(response: "json" | "sse", result: ToolCallResult, options: { parameterHeader?: boolean, stall?: "tools/list" | "tools/call" } = {}) {
+  const calls: Array<{ arguments?: unknown, authorization?: string, name?: unknown, parameterHeader?: string | string[] }> = []
   const server = createServer(async (request, reply) => {
     if (request.method !== "POST") {
       reply.writeHead(405).end()
@@ -20,6 +20,7 @@ async function startMcpServer(response: "json" | "sse", result: ToolCallResult) 
       reply.writeHead(202).end()
       return
     }
+    if (message.method === options.stall) return
     let payload: unknown
     if (message.method === "initialize") {
       payload = {
@@ -28,15 +29,30 @@ async function startMcpServer(response: "json" | "sse", result: ToolCallResult) 
         serverInfo: { name: "test", version: "1.0.0" },
       }
     }
+    else if (message.method === "server/discover") {
+      payload = { capabilities: { tools: {} }, supportedVersions: [request.headers["mcp-protocol-version"]] }
+    }
+    else if (message.method === "tools/list") {
+      payload = { tools: [{
+        name: "threads_get",
+        inputSchema: { type: "object", properties: {
+          id: { type: "string", ...(options.parameterHeader ? { "x-mcp-header": "Thread-Id" } : {}) },
+        } },
+      }] }
+    }
     else if (message.method === "tools/call") {
       calls.push({ arguments: message.params?.arguments, authorization: request.headers.authorization, name: message.params?.name })
-      payload = result
+      if (options.parameterHeader) calls[calls.length - 1]!.parameterHeader = request.headers["mcp-param-thread-id"]
+      payload = options.parameterHeader && request.headers["mcp-param-thread-id"] !== "thread-1"
+        ? { content: [{ text: "Missing parameter header", type: "text" }], isError: true }
+        : result
     }
     else {
       reply.writeHead(200, { "content-type": "application/json" })
       reply.end(JSON.stringify({ error: { code: -32601, message: "Method not found" }, id: message.id, jsonrpc: "2.0" }))
       return
     }
+    if (options.parameterHeader) payload = { ...payload as Record<string, unknown>, resultType: "complete" }
     const json = JSON.stringify({ id: message.id, jsonrpc: "2.0", result: payload })
     if (response === "sse") {
       reply.writeHead(200, { "content-type": "text/event-stream" })
@@ -55,7 +71,10 @@ async function startMcpServer(response: "json" | "sse", result: ToolCallResult) 
 const servers: ReturnType<typeof createServer>[] = []
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map(server => new Promise(resolve => server.close(resolve))))
+  await Promise.all(servers.splice(0).map(server => new Promise((resolve) => {
+    server.close(resolve)
+    server.closeAllConnections()
+  })))
 })
 
 describe("callMcpTool", () => {
@@ -69,6 +88,48 @@ describe("callMcpTool", () => {
     expect(error).toBeNull()
     expect(value).toEqual({ thread })
     expect(calls).toEqual([{ arguments: { id: "thread-1" }, authorization: "Bearer token", name: "threads_get" }])
+  })
+
+  it("discovers modern HTTP tool parameter headers before calling", async () => {
+    const { calls, url } = await startMcpServer("json", { content: [{ text: "ok", type: "text" }] }, { parameterHeader: true })
+
+    await expect(callMcpTool({ protocolVersionDiscovery: true, transport: { type: "http", url } }, "threads_get", { id: "thread-1" })).resolves.toEqual([null, "ok"])
+    expect(calls).toEqual([{ arguments: { id: "thread-1" }, authorization: undefined, name: "threads_get", parameterHeader: "thread-1" }])
+  })
+
+  it.each(["tools/list", "tools/call"] as const)("times out a stalled HTTP %s request", async (stall) => {
+    const { url } = await startMcpServer("json", {}, { stall })
+    const [error, value] = await callMcpTool({ transport: { type: "http", url } }, "threads_get", {}, { timeout: 50 })
+
+    expect(error).toMatchObject({ name: "TimeoutError" })
+    expect(value).toBeNull()
+  })
+
+  it.each(["discovery", "execution"] as const)("bounds fallback %s even when the client ignores cancellation", async (stage) => {
+    const execute = vi.fn((_args: unknown, _options: { abortSignal: AbortSignal }) => new Promise<never>(() => {}))
+    const tools = vi.fn(() => stage === "discovery" ? new Promise<never>(() => {}) : Promise.resolve({ lookup: { execute } }))
+    const client = { close: vi.fn(async () => undefined), tools }
+    const [error, value] = await callMcpTool(() => client, "lookup", {}, { timeout: 10 })
+
+    expect(error).toMatchObject({ name: "TimeoutError" })
+    expect(value).toBeNull()
+    expect(client.close).toHaveBeenCalledOnce()
+    if (stage === "discovery") expect(execute).not.toHaveBeenCalled()
+    else expect(execute.mock.calls[0]?.[1]).toMatchObject({ abortSignal: expect.objectContaining({ aborted: true }) })
+  })
+
+  it("honors caller cancellation during fallback execution", async () => {
+    const controller = new AbortController()
+    const execute = vi.fn(async () => {
+      controller.abort(new Error("Cancelled by caller"))
+      return await new Promise<never>(() => {})
+    })
+    const client = { close: vi.fn(async () => undefined), tools: async () => ({ lookup: { execute } }) }
+
+    const [error, value] = await callMcpTool(client, "lookup", {}, { signal: controller.signal, timeout: 10_000 })
+    expect(error?.message).toBe("Cancelled by caller")
+    expect(value).toBeNull()
+    expect(client.close).not.toHaveBeenCalled()
   })
 
   it("returns structured content before text content", async () => {

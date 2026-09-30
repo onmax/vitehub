@@ -67,17 +67,44 @@ function toolResultValue(name: string, result: unknown): unknown {
 }
 
 async function callResolvedMcpTool(client: McpClient, name: string, args: Record<string, unknown>, options: CallMcpToolOptions): Promise<unknown> {
-  const requestOptions: CallMcpToolOptions = {}
-  if (options.signal) requestOptions.signal = options.signal
-  if (options.timeout !== undefined) requestOptions.timeout = options.timeout
-  if ("callTool" in client && hasRuntimeType(client.callTool, "function")) {
-    return await client.callTool({ name, arguments: args, options: requestOptions })
+  const controller = new AbortController()
+  const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal
+  const timer = options.timeout === undefined ? undefined : setTimeout(() => {
+    controller.abort(new DOMException(`[vitehub] MCP tool "${name}" timed out.`, "TimeoutError"))
+  }, options.timeout)
+  let onAbort: () => void = () => {}
+  try {
+    signal.throwIfAborted()
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(signal.reason)
+      signal.addEventListener("abort", onAbort, { once: true })
+    })
+    const execute = async () => {
+      const requestOptions = { signal, timeout: options.timeout }
+      if ("callTool" in client && hasRuntimeType(client.callTool, "function")) {
+        // Discovery prepares the SDK's HTTP parameter-header bindings.
+        if ("listTools" in client && hasRuntimeType(client.listTools, "function")) {
+          await client.listTools({ options: requestOptions })
+        }
+        else {
+          await client.tools()
+        }
+        signal.throwIfAborted()
+        return await client.callTool({ name, arguments: args, options: requestOptions })
+      }
+      const tool = (await client.tools())[name]
+      signal.throwIfAborted()
+      if (!isRuntimeRecord(tool) || !hasRuntimeType(tool.execute, "function")) {
+        throw new ViteHubError("MCP_TOOL_NOT_FOUND", `[vitehub] MCP tool "${name}" is not available.`, { details: { tool: name } })
+      }
+      return await tool.execute(args, { abortSignal: signal, messages: [], toolCallId: crypto.randomUUID() })
+    }
+    return await Promise.race([execute(), aborted])
   }
-  const tool = (await client.tools())[name]
-  if (!isRuntimeRecord(tool) || !hasRuntimeType(tool.execute, "function")) {
-    throw new ViteHubError("MCP_TOOL_NOT_FOUND", `[vitehub] MCP tool "${name}" is not available.`, { details: { tool: name } })
+  finally {
+    clearTimeout(timer)
+    signal.removeEventListener("abort", onAbort)
   }
-  return await tool.execute(args, { abortSignal: options.signal, messages: [], toolCallId: crypto.randomUUID() })
 }
 
 /**
