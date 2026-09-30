@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -130,6 +131,58 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it("ignores complete Channel definitions with explicit kinds after spreads", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      const custom = { ...base, kind: "custom" }
+      export default defineAgent({ channels: {
+        telegram: { ...base, kind: "custom" },
+        discord: { kind: "custom", ...base },
+        github: custom,
+      } })
+    `)).toEqual([])
+  })
+
+  it("respects local declarations without hiding imported factories outside their scope", () => {
+    expect(uses(`
+      import { telegram, discord, github } from "vite-hub/agent/channels"
+      if (enabled) { const telegram = () => ({}); telegram() }
+      function format() { const telegram = () => ({}); return telegram() }
+      function mutable() { let discord = () => ({}); return discord() }
+      function hoisted() { github(); if (enabled) { var github = () => ({}) } }
+      const wrap = () => { const telegram = () => ({}); return telegram() }
+      function multiple() { const first = value, telegram = () => ({}); telegram() }
+      function destructured() { const { factory: telegram } = local; telegram() }
+      for (const telegram of factories) { telegram() }
+      const helpers = { format() { var telegram = local; return telegram() } }
+      telegram({ botToken: token })
+      discord()
+      github()
+    `)).toEqual([
+      { kind: "telegram", keys: ["botToken"] },
+      { kind: "discord", keys: [] },
+      { kind: "github", keys: [] },
+    ])
+  })
+
+  it("respects shadowed namespace and bare factory references", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      import * as channels from "vite-hub/agent/channels"
+      function local() {
+        const telegram = custom
+        const channels = customFactories
+        channels.discord()
+        return defineAgent({ channels: { bot: telegram } })
+      }
+      channels.discord()
+      export default defineAgent({ channels: { bot: telegram } })
+    `)).toEqual([
+      { kind: "discord", keys: [] },
+      { kind: "telegram", keys: [] },
+    ])
+  })
+
   it("treats options set to undefined as omitted", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
@@ -188,6 +241,32 @@ describe("built-in Channel Env at runtime", { timeout: 30_000 }, () => {
     vi.doUnmock("@chat-adapter/telegram")
     vi.doUnmock("@chat-adapter/discord")
     vi.resetModules()
+  })
+
+  it.each([
+    { code: "ERR_MODULE_NOT_FOUND", message: "Cannot find package 'missing-provider' imported from /app/#vitehub/env/server/generated.mjs", missing: false },
+    { code: "ERR_PACKAGE_IMPORT_NOT_DEFINED", message: 'Package import specifier "#missing-provider" is not defined in package /app/#vitehub/env/server/package.json', missing: false },
+    { code: "ERR_MODULE_NOT_FOUND", message: "Cannot find package '#vitehub/env/server' imported from /app/agent.mjs", missing: true },
+    { code: "ERR_PACKAGE_IMPORT_NOT_DEFINED", message: 'Package import specifier "#vitehub/env/server" is not defined in package /app/package.json', missing: true },
+    { code: "ERR_LOAD_URL", message: "Failed to load url #vitehub/env/server (resolved id: #vitehub/env/server) in /app/agent.mjs. Does the file exist?", missing: true },
+    { code: "ERR_LOAD_URL", message: "Failed to load url missing-provider (resolved id: missing-provider) in /app/#vitehub/env/server/generated.mjs. Does the file exist?", missing: false },
+  ])("falls back only for the missing generated Env specifier: $message", ({ code, message, missing }) => {
+    // Native imports preserve loader errors. Vitest wraps errors thrown by mock factories.
+    const stdout = execFileSync(process.execPath, ["--input-type=module", "--eval", `
+      import { registerHooks } from "node:module"
+      registerHooks({ resolve(specifier, context, next) {
+        if (specifier === "#vitehub/env/server") throw Object.assign(new Error(${JSON.stringify(message)}), { code: ${JSON.stringify(code)} })
+        return next(specifier, context)
+      } })
+      const { channelEnvValue } = await import(${JSON.stringify(new URL("../src/channel-env.ts", import.meta.url).href)})
+      try {
+        const value = await channelEnvValue("telegram", "botToken", { cloudflare: { env: { TELEGRAM_BOT_TOKEN: "host-token" } } })
+        console.log(JSON.stringify({ value }))
+      } catch (error) {
+        console.log(JSON.stringify({ code: error.code, message: error.message }))
+      }
+    `], { encoding: "utf8", timeout: 10_000 })
+    expect(JSON.parse(stdout)).toEqual(missing ? { value: "host-token" } : { code, message })
   })
 
   it("reads Telegram values from Server Env before host names", async () => {

@@ -208,6 +208,17 @@ describe("built-in deployment preset integration", () => {
 
       const renamed = await resolve({ telegram: { botToken: env({ secret: true, source: env.source("TELEGRAM_TOKEN") }) } })
       expect(requiredSecrets(renamed)).toEqual(["TELEGRAM_TOKEN"])
+
+      await writeFile(join(root, "server", "agents", "support.ts"), [
+        `import { defineAgent } from "vite-hub/agent"`,
+        `import { telegram } from "vite-hub/agent/channels"`,
+        `function format() { const telegram = () => ({}); return telegram() }`,
+        `const base = {}`,
+        `export default defineAgent({ channels: { telegram: { ...base, kind: "custom" } } })`,
+      ].join("\n"))
+      const custom = await resolve()
+      expect(requiredSecrets(custom) ?? []).not.toContain("TELEGRAM_BOT_TOKEN")
+      expect(await readFile(join(root, ".vitehub", "types", "env.d.ts"), "utf8")).not.toContain("\"telegram\": {")
     }
     finally {
       await rm(root, { force: true, recursive: true })

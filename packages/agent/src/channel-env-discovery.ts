@@ -95,12 +95,13 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
     }
   }
   const declarations = moduleObjectDeclarations(tokens)
+  const shadowBindings = new Map([...bindings, ...[...namespaces].map(name => [name, name] as const)])
   const agentBindings = new Map([...agentFactories].map(name => [name, "defineAgent"]))
   const agentNames = new Set(["defineAgent"])
   const uses: Array<DiscoveredChannelUse & { index: number }> = []
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i - 1] === "." || tokens[i - 1] === "as") continue
-    const factory = !isShadowedAt(tokens, i, tokens[i]!, bindings) && factoryCall(tokens, i, bindings, namespaces, known)
+    const factory = !isShadowedAt(tokens, i, tokens[i]!, shadowBindings) && factoryCall(tokens, i, bindings, namespaces, known)
     if (factory) uses.push({ index: i, kind: factory.name, optionKeys: staticOptionKeys(tokens, factory.open + 1, ")") })
     // Shorthands count only in the top-level `channels` option of defineAgent(), not in types or other objects.
     const agent = factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames)
@@ -111,6 +112,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
       visitObjectProperties(tokens, channels, (key, value) => {
         if (value === undefined) return
         const reference = channelFactoryReference(tokens, value, bindings, namespaces, known)
+        if (reference && isShadowedAt(tokens, value, tokens[value]!, shadowBindings)) return
         // A factory call is found by the call scan. Runtime calls a bare factory without options
         // and uses the kind it returns, whatever the key is.
         if (reference?.call) return
@@ -119,9 +121,15 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
           return
         }
         if (!known.has(key)) return
-        const optionKeys = staticOptionKeys(tokens, localObject(tokens, value, declarations) ?? value, "}")
+        const options = localObject(tokens, value, declarations) ?? value
+        const optionKeys = staticOptionKeys(tokens, options, "}")
         // An object with `kind` is a complete Channel definition, not built-in Channel options.
-        if (!optionKeys?.has("kind")) uses.push({ index: value, kind: key, optionKeys })
+        let complete = false
+        if (tokens[options] === "{") visitObjectProperties(tokens, options, (key, value) => {
+          const omitted = value !== undefined && tokens[value] === "undefined" && [",", "}"].includes(tokens[value + 1]!)
+          if (key === "kind" && !omitted) complete = true
+        })
+        if (!complete && !optionKeys?.has("kind")) uses.push({ index: value, kind: key, optionKeys })
       })
     })
   }
@@ -154,6 +162,7 @@ function localObject(tokens: string[], index: number, declarations: ReadonlyMap<
 
 function isShadowedAt(tokens: string[], index: number, name: string, bindings: ReadonlyMap<string, string>): boolean {
   if (!bindings.has(name)) return false
+  if (hasLocalBinding(tokens, index, name)) return true
   const identifier = /^[A-Za-z_$][\w$]*$/
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i] !== "function") continue
@@ -197,6 +206,72 @@ function isShadowedAt(tokens: string[], index: number, name: string, bindings: R
       else if (tokens[end] === "}") bodyDepth--
     }
     if (index > body && index < end) return true
+  }
+  return false
+}
+
+// Lexical declarations shadow the import throughout their block. `var` belongs
+// to the enclosing function, including declarations inside a nested block.
+function hasLocalBinding(tokens: string[], index: number, name: string): boolean {
+  const closes = new Map<number, number>()
+  const stack: number[] = []
+  for (let i = 0; i < tokens.length; i++) {
+    if (["{", "(", "["].includes(tokens[i]!)) stack.push(i)
+    else if (["}", ")", "]"].includes(tokens[i]!)) {
+      const open = stack.pop()
+      if (open !== undefined) closes.set(open, i)
+    }
+  }
+  const functionBodies = new Set<number>()
+  const loopScopes = new Map<number, number>()
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] === "function") {
+      const params = tokens.indexOf("(", i + 1)
+      const body = (closes.get(params) ?? tokens.length) + 1
+      if (tokens[body] === "{") functionBodies.add(body)
+    }
+    if (tokens[i] === "=" && tokens[i + 1] === ">" && tokens[i + 2] === "{") functionBodies.add(i + 2)
+    if (tokens[i] === "for") {
+      const params = tokens[i + 1] === "await" ? i + 2 : i + 1
+      const close = closes.get(params)
+      if (close !== undefined && tokens[close + 1] === "{") loopScopes.set(params, closes.get(close + 1) ?? close)
+    }
+    // Method bodies have parameters too, but control-flow blocks are lexical scopes.
+    if (tokens[i] === "(" && !["if", "while", "for", "switch", "catch", "with"].includes(tokens[i - 1]!)) {
+      const body = (closes.get(i) ?? tokens.length) + 1
+      if (tokens[body] === "{") functionBodies.add(body)
+    }
+  }
+  for (let i = 0; i < tokens.length; i++) {
+    if (!["const", "let", "var"].includes(tokens[i]!)) continue
+    let scope = -1
+    for (const [open, close] of closes) {
+      if (tokens[open] !== "{" || open >= i || close <= i) continue
+      if (tokens[i] === "var" && !functionBodies.has(open)) continue
+      if (open > scope) scope = open
+    }
+    if (tokens[i] !== "var") for (const open of loopScopes.keys()) {
+      if (open < i && (closes.get(open) ?? -1) > i && open > scope) scope = open
+    }
+    const endOfScope = loopScopes.get(scope) ?? closes.get(scope) ?? tokens.length
+    if (index <= scope || index >= endOfScope) continue
+    // Walk declarators without mistaking identifiers in initializers for bindings.
+    for (let binding = i + 1; binding < tokens.length;) {
+      const end = closes.get(binding)
+      const pattern = end === undefined ? [tokens[binding]!] : tokens.slice(binding + 1, end)
+      if (pattern.some((token, offset) => token === name && pattern[offset + 1] !== ":" && pattern[offset - 1] !== "=")) return true
+      let next = (end ?? binding) + 1
+      while (next < tokens.length && !["=", ",", ";", "in", "of", ")", "}"].includes(tokens[next]!)) next++
+      if (tokens[next] === "=") {
+        next++
+        while (next < tokens.length && ![",", ";", ")", "}"].includes(tokens[next]!)) {
+          next = (closes.get(next) ?? next) + 1
+          if (["const", "let", "var", "return", "export"].includes(tokens[next]!)) break
+        }
+      }
+      if (tokens[next] !== ",") break
+      binding = next + 1
+    }
   }
   return false
 }

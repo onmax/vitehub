@@ -67,8 +67,9 @@ let serverEnvModule: Promise<ServerEnvModule | undefined> | undefined
 function isMissingModule(error: unknown): boolean {
   const code = isRecord(error) ? error.code : undefined
   const message = error instanceof Error ? error.message : ""
-  if (code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_IMPORT_NOT_DEFINED") return message.includes(serverEnvModuleId)
-  return message.includes(serverEnvModuleId) && /cannot find|failed to (?:resolve|load)|no such module|missing|not defined/i.test(message)
+  if (code === "ERR_MODULE_NOT_FOUND") return /^Cannot find (?:package|module) ['"]#vitehub\/env\/server['"]/.test(message)
+  if (code === "ERR_PACKAGE_IMPORT_NOT_DEFINED") return /^Package import specifier ["']#vitehub\/env\/server["'] is not defined/.test(message)
+  return /(?:cannot find (?:package|module)|failed to (?:resolve|load)(?: (?:module|url))?|no such module|missing (?:module|package))\s+(?:["']#vitehub\/env\/server["']|#vitehub\/env\/server(?=\s|\(|$))/i.test(message)
 }
 
 function importServerEnvModule(): Promise<ServerEnvModule | undefined> {
