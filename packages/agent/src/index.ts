@@ -63,8 +63,9 @@ import {
   teams as builtInTeams,
   telegram as builtInTelegram,
   webChat as builtInWebChat,
+  githubChannelIdentity,
 } from "./channels.ts"
-import { registerMessageChannelDeferredReplyTrace, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
+import { registerMessageChannelDeferredReplyTrace, setChatFinalReplyText, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
 import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, createAgentInvocationContextStore } from "./invocation-context.ts"
 import { bindAgentRunEvents, type AgentRunEventPublisher } from "./run-events.ts"
 import { bindAgentInvocations, type AgentInvocationJournal } from "./invocations.ts"
@@ -456,6 +457,8 @@ export type {
   AgentRunResult,
   AgentRuntime,
   AgentBoxContext,
+  AgentGitHub,
+  AgentGitHubAccess,
   AgentBoxDefinitions,
   AgentBoxInput,
   AgentBoxValue,
@@ -830,6 +833,7 @@ function withAgentBox<TRuntimeConfig extends AgentRuntimeConfig>(
   agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
   context: AgentRuntimeContext<TRuntimeConfig>,
 ): AgentRuntimeContext<TRuntimeConfig> {
+  if (agent.github && !context.githubIdentity) context = { ...context, githubIdentity: agent.github }
   if (context.box) return context
   const input = agent.box
   const configured = hasRuntimeType(input, "function") ? input() : input
@@ -1132,9 +1136,11 @@ async function runAgentAsWorkflow<
     : context.run
   // SAFETY: withParsedAgentMessageMeta preserves this invocation's call-options type.
   const parsedMessageMeta = parsedAgentMessageMetaState(agent, parsedInput as AgentRunInput<CALL_OPTIONS>, context.run)
+  const invocationName = agentInvocationName(agent, context)
+  const workflowIdentity = context.agentIdentity ?? (invocationName ? { name: invocationName } : undefined)
   const payload: AgentWorkflowInvocationPayload<CALL_OPTIONS> = {
     ...(parsedInputData ? { parsedInputData: true } : {}),
-    ...(context.agentIdentity ? { agentIdentity: context.agentIdentity } : {}),
+    ...(workflowIdentity ? { agentIdentity: workflowIdentity } : {}),
     ...(Object.keys(workflowCapabilities).length ? { capabilities: workflowCapabilities } : {}),
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     input: cloneWorkflowJsonValue(workflowInput) as AgentRunInput<CALL_OPTIONS>,
@@ -1809,6 +1815,7 @@ function defineBaseAgent<
   const driver = normalizeAgentDriver(options)
   const { box, capabilities, cli, description, hooks, invocations, messages, name, runtime = defaultAgentWorkflowRuntime(), runEvents, uiMessageStream, version, workspace } = options
   const channels = normalizeAgentChannels(options.channels)
+  const github = options.github ?? githubChannelIdentity(channels)
   const run = driver.kind === "run" ? driver.run : undefined
   const capabilitiesResolver = hasRuntimeType(capabilities, "function")
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
@@ -1880,6 +1887,7 @@ function defineBaseAgent<
     [baseAgentResolve]: resolveBaseAgent,
     health: options.health || { handler: (request: Request, healthOptions?: Record<string, unknown>) => createAgentHealthHandler(definition)(request, healthOptions) },
     box,
+    ...(github ? { github } : {}),
     channels,
     chat,
     cli,
@@ -6000,6 +6008,7 @@ async function finishAgentInvocation<
             })
           })
           setChatFinishPrimaryReplyTrace(chatFinish, async (capture) => {
+            if (!capture.error && !capture.skipped && finishEvent.text?.trim()) setChatFinalReplyText(context.context, finishEvent.text.trim())
             await traceAgentChannelDeliveryEffect(toTraceContext(context), {
               kind: "reply",
               payload: "",
