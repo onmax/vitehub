@@ -236,10 +236,12 @@ function isUndefinedValue(tokens: string[], start: number, terminators: Readonly
     return terminators.has(tokens[close + 1]!) && isUndefinedValue(tokens, start + 1, new Set([")"]))
   }
   if (tokens[start] !== "undefined") return false
-  if (terminators.has(tokens[start + 1]!)) return true
-  if (!["as", "satisfies"].includes(tokens[start + 1]!)) return false
+  let after = start + 1
+  while (tokens[after] === "!" && tokens[after + 1] !== "=") after++
+  if (terminators.has(tokens[after]!)) return true
+  if (!["as", "satisfies"].includes(tokens[after]!)) return false
   let depth = 0
-  for (let i = start + 2; i < tokens.length; i++) {
+  for (let i = after + 1; i < tokens.length; i++) {
     const token = tokens[i]!
     if (["+", "*", "/", "%"].includes(token) || (["|", "&", "?"].includes(token) && tokens[i + 1] === token)) return false
     if (token === "<") { i = skipTypeArguments(tokens, i) - 1; continue }
@@ -255,6 +257,12 @@ function isUndefinedValue(tokens: string[], start: number, terminators: Readonly
 
 // Resolve an object literal, or a module-level `const name = { ... }` reference to one.
 function localObject(tokens: string[], index: number, declarations: ReadonlyMap<string, number>): number | undefined {
+  while (tokens[index] === "(") {
+    const close = closingDelimiter(tokens, index)
+    const valueEnd = ["{", "("].includes(tokens[index + 1]!) ? closingDelimiter(tokens, index + 1) : index + 1
+    if (valueEnd !== close - 1) return undefined
+    index++
+  }
   if (tokens[index] === "{") return index
   const declaration = declarations.get(tokens[index]!)
   const end = tokens[index + 1]

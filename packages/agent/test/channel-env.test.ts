@@ -271,10 +271,12 @@ describe("built-in Channel discovery", () => {
       telegram({ botToken: undefined as string | undefined })
       telegram({ botToken: undefined satisfies string | undefined })
       telegram({ botToken: (undefined) })
+      telegram({ botToken: undefined! })
       telegram(undefined as TelegramOptions | undefined)
       telegram({ botToken: token as string | undefined })
       telegram({ botToken: undefined as string | undefined ?? token })
     `)).toEqual([
+      { kind: "telegram", keys: [] },
       { kind: "telegram", keys: [] },
       { kind: "telegram", keys: [] },
       { kind: "telegram", keys: [] },
@@ -301,6 +303,14 @@ describe("built-in Channel discovery", () => {
       const typed: { telegram(): void } = helpers
       function getHelpers(): { telegram(): void } { return helpers }
     `)).toEqual(Array.from({ length: 4 }, () => ({ kind: "telegram", keys: [] })))
+  })
+
+  it("unwraps single parenthesized Channels maps", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      defineAgent({ channels: (({ telegram: {} })) })
+      defineAgent({ channels: ({ telegram: {} }, custom) })
+    `)).toEqual([{ kind: "telegram", keys: [] }])
   })
 
   it("follows typed maps and explicit properties after spreads", () => {
