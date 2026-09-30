@@ -875,13 +875,25 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
   const opaqueResultBindings = new Set<string>()
   for (let binding = 0; binding < tokens.length; binding++) {
-    if (tokens[binding - 1] === "." || visibleDeclaration(binding) === undefined) continue
+    if (tokens[binding - 1] === "." || (!destructuredBindings.has(binding) && visibleDeclaration(binding) === undefined)) continue
     let initializer = declaratorInitializers.get(binding)
       ?? (tokens[binding + 1] === "=" && !["=", ">"].includes(tokens[binding + 2]!) ? binding + 2 : undefined)
+    if (initializer === undefined && destructuredBindings.has(binding)) {
+      let cursor = binding + 1
+      let nesting = 0
+      do {
+        if (["[", "{"].includes(tokens[cursor]!)) nesting++
+        else if (["]", "}"].includes(tokens[cursor]!)) nesting--
+        cursor++
+      } while (cursor < tokens.length && nesting > 0)
+      if (["=", "of"].includes(tokens[cursor]!)) initializer = cursor + 1
+    }
     if (initializer === undefined) continue
     while (tokens[initializer] === "(") initializer++
     const call = memberCallEnd(initializer)
-    if (opaqueCalls.has(call) && !trustedCalls.has(call)) opaqueResultBindings.add(tokens[binding]!)
+    if (opaqueCalls.has(call) && !trustedCalls.has(call)) {
+      for (const name of destructuredBindings.get(binding) ?? [tokens[binding]!]) opaqueResultBindings.add(name)
+    }
   }
   function invalidateCapturedBindings() {
     for (const name of declarations.keys()) mutatedBindings.add(name)
@@ -1004,9 +1016,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function staticConditionalBranch(index: number): number | undefined {
-    if ((tokens[index] !== "true" && tokens[index] !== "false") || tokens[index + 1] !== "?") return
+    let condition = index
+    while (tokens[condition] === "(") condition++
+    let conditionEnd = condition
+    for (let opening = condition - 1; opening >= index; opening--) {
+      conditionEnd++
+      if (tokens[conditionEnd] !== ")" || openingDelimiters.get(conditionEnd) !== opening) return
+    }
+    if ((tokens[condition] !== "true" && tokens[condition] !== "false") || tokens[conditionEnd + 1] !== "?") return
     const branches = conditionalBranches(index)
-    return branches?.[tokens[index] === "true" ? 0 : 1]
+    return branches?.[tokens[condition] === "true" ? 0 : 1]
   }
 
   function hasLogicalOperator(index: number): boolean {

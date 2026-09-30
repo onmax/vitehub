@@ -69,6 +69,12 @@ it.each([
   ["{ workspace: false ? true : false }", false],
   ["{ workspace: true ? false : true }", false],
   ["{ workspace: true ? true : false }", true],
+  ["(false) ? true : false", false],
+  ["(true) ? false : true", false],
+  ["((true)) ? (false) ? true : false : true", false],
+  ["(false) ? false : true", true],
+  ["{ workspace: ((true)) ? false : true }", false],
+  ["{ workspace: (true) ? true : false }", true],
 ])("ignores unreachable conditional pullRequest branches: %s", async (pullRequest, ownsWorkspace) => {
   const channel = `github({ pullRequest: ${pullRequest} })`
   const definition = await discover(`${imports} export default defineAgent({ channels: { custom: ${channel} } })`)
@@ -77,6 +83,21 @@ it.each([
     "portal.ts": `${imports} export default ${channel}`,
   })
   expect(imported?.workspace).toBe(ownsWorkspace ? "review" : undefined)
+})
+
+it.each([
+  'const { options: alias } = getOptions(); alias.pullRequest = true',
+  'const { nested: { options: alias } } = getOptions(); alias.pullRequest = true',
+  'const [alias] = getOptions(); alias.pullRequest = true',
+  'const other = 1, { options: alias } = getOptions(); alias.pullRequest = true',
+  'const { options: alias } = (getOptions()); const next = alias; next.pullRequest = true',
+  'const { enable } = getOptions(); enable()',
+])("rejects mutations through destructured opaque call results: %s", async mutation => {
+  const setup = `${imports} const options = { pullRequest: false }; const getOptions = () => ({ options }); ${mutation};`
+  await expect(discover(`${setup} export default defineAgent({ channels: { custom: github(options) } })`)).rejects.toThrow(/opaque Channel/)
+  await expect(discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": `${setup} export default github(options)`,
+  })).rejects.toThrow(/opaque Channel/)
 })
 
 it.each([
@@ -875,6 +896,14 @@ it.each([
 ])("keeps read-only aliases of opaque call results from invalidating Channel options: %s", async read => {
   const source = `${imports} const options = { pullRequest: false }; const getOptions = () => options; ${read}; export default defineAgent({ channels: { custom: github(options) } })`
   expect((await discover(source))?.workspace).toBeUndefined()
+})
+
+it("keeps read-only destructured opaque call results from invalidating Channel options", async () => {
+  const setup = `${imports} const options = { pullRequest: false }; const getOptions = () => ({ options }); const { options: alias } = getOptions(); const enabled = alias.pullRequest;`
+  expect((await discover(`${setup} export default defineAgent({ channels: { custom: github(options) } })`))?.workspace).toBeUndefined()
+  expect((await discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": `${setup} export default github(options)`,
+  }))?.workspace).toBeUndefined()
 })
 
 it.each([
