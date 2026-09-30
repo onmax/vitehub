@@ -393,10 +393,16 @@ it("rejects a Channel Capability list changed by a receiver call", async () => {
   expect(explicit?.workspace).toBe("review")
 })
 
-it.each(['"review-channel"', "'review-channel'", '""', '"review-\\u0063hannel"'])("resolves string-named relative Channel imports: %s", async exportedName => {
+it.each([
+  ['"review-channel"', "review-channel"], ["'review-channel'", "review-channel"], ['""', ""],
+  ['"review-\\u0063hannel"', "review-channel"],
+  [String.raw`'review\'channel'`, "review'channel"], [String.raw`"review\'channel"`, "review'channel"],
+  [String.raw`'review\x2dchannel'`, "review-channel"], [String.raw`"review\u{2d}channel"`, "review-channel"],
+  [String.raw`'review\channel'`, "reviewchannel"], [`'review"channel'`, 'review"channel'],
+])("resolves string-named relative Channel imports: %s", async (exportedName, plainName) => {
   for (const pullRequest of [false, true]) {
     const source = `import { ${exportedName} as portal } from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })`
-    const channel = `${imports} const channel = github({ pullRequest: ${pullRequest} }); export { channel as ${exportedName} };`
+    const channel = `${imports} const channel = github({ pullRequest: ${pullRequest} }); export { channel as ${JSON.stringify(plainName)} };`
     const direct = await discover(source, { "portal.ts": channel })
     expect(direct?.workspace).toBe(pullRequest ? "review" : undefined)
     const reExported = await discover(source, {
@@ -404,6 +410,11 @@ it.each(['"review-channel"', "'review-channel'", '""', '"review-\\u0063hannel"']
       "inner.ts": channel,
     })
     expect(reExported?.workspace).toBe(pullRequest ? "review" : undefined)
+    const aliased = await discover('import { barrel as portal } from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })', {
+      "portal.ts": `export { ${exportedName} as barrel } from "./inner.ts"`,
+      "inner.ts": channel,
+    })
+    expect(aliased?.workspace).toBe(pullRequest ? "review" : undefined)
   }
 })
 

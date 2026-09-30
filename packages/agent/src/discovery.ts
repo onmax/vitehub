@@ -166,9 +166,7 @@ function exportName(token: string | undefined): string | undefined {
   if (/^[A-Za-z_$][\w$]*$/.test(token)) return token
   if (!/^["']/.test(token)) return
   try {
-    return token[0] === '"'
-      ? JSON.parse(token)
-      : JSON.parse(`"${token.slice(1, -1).replace(/\\"/g, '\\\\"')}"`)
+    return moduleSpecifier(token)
   }
   catch {
     return
