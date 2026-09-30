@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { defineAgent, runAgentInline, startAgentInvocation, workflow } from "../src/index.ts"
 import { setAgentWorkflowRuntimeLoaders } from "../src/internal/workflow-runtime-loaders.ts"
-import { parsedAgentWorkflowInputDataContextKey, runAgentWorkflowDefinition } from "../src/runtime/workflow.ts"
+import { parsedAgentWorkflowInputDataKey, runAgentWorkflowDefinition } from "../src/runtime/workflow.ts"
 
 vi.mock("#vitehub/agent/registry", () => ({ default: {} }))
 
@@ -124,7 +124,7 @@ describe("durable Agent data handoff", () => {
       payload: { input },
       provider: "cloudflare",
     }, async (definition, context, workflowInput) => {
-      expect(Reflect.get(context, parsedAgentWorkflowInputDataContextKey)).toBeUndefined()
+      expect(Reflect.get(context, parsedAgentWorkflowInputDataKey)).toBeUndefined()
       return runAgentInline(definition, context, workflowInput)
     })
 
@@ -157,5 +157,37 @@ describe("durable Agent data handoff", () => {
       provider: "cloudflare",
     }, runAgentInline)).rejects.toThrow("Invalid Agent input data")
     expect(childRun).not.toHaveBeenCalled()
+  })
+
+  it("validates nested invocations of the same Workflow Agent", async () => {
+    const validate = vi.fn((value: string) => Number(value))
+    const data = v.object({ count: v.pipe(v.string(), v.transform(validate)) })
+    const run = vi.fn(({ input }: { input: { data?: unknown } }) => input.data)
+    const nestedResults: unknown[] = []
+    const agent = defineAgent({
+      data,
+      driver: { run },
+      hooks: {
+        "agent:input": async (context) => {
+          if (context.input.data?.count !== 2) return
+          await expect(runAgentInline(agent, context, { data: { count: 1 } as never })).rejects.toThrow("Invalid Agent input data")
+          nestedResults.push(await runAgentInline(agent, context, { data: { count: "3" } }))
+        },
+      },
+      runtime: false,
+    })
+    const parsedData = v.parse(data, { count: "2" })
+
+    const result = await runAgentWorkflowDefinition(agent, {
+      id: "recursive-agent-data",
+      name: "recursive-agent-data",
+      payload: { input: { data: parsedData }, parsedInputData: true },
+      provider: "cloudflare",
+    }, runAgentInline)
+
+    expect(result).toEqual({ count: 2 })
+    expect(nestedResults).toEqual([{ count: 3 }])
+    expect(validate).toHaveBeenCalledTimes(2)
+    expect(run).toHaveBeenCalledTimes(2)
   })
 })

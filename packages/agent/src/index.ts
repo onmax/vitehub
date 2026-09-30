@@ -3918,6 +3918,7 @@ async function createAgentInvocationContext<
   invocationTools?: AgentToolSet,
 ): Promise<AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS>> {
   const startedAt = Date.now()
+  const parsedInputDefinition = Reflect.get(input, Symbol.for("vitehub.agent.workflow.parsedInputData"))
   const resolvedContext = createResolvedRuntimeContext(context)
   const invocationContext = createAgentInvocationContextStore(input.context)
   await parseAgentMessageMeta(definition, invocationContext, context.run)
@@ -3973,7 +3974,7 @@ async function createAgentInvocationContext<
   let failureTraced = false
   const telemetryContentTraceLogWrapped = initialTelemetryUsesContent || mayResolveContentTelemetry
   try {
-    if (Reflect.get(context, Symbol.for("vitehub.agent.workflow.parsedInputData")) !== definition) {
+    if (parsedInputDefinition !== definition) {
       input = await parseAgentInputData(internalDefinition, input)
     }
     const boundRunEvents = bindAgentRunEvents(definition?.runEvents, tracedRuntimeContext)

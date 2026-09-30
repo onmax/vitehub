@@ -43,7 +43,7 @@ import type { WorkflowExecutionContext, WorkflowProvider } from "@vite-hub/workf
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 export { workspaceAgentWithSourceRoot }
 
-export const parsedAgentWorkflowInputDataContextKey: symbol = Symbol.for("vitehub.agent.workflow.parsedInputData")
+export const parsedAgentWorkflowInputDataKey: symbol = Symbol.for("vitehub.agent.workflow.parsedInputData")
 
 export function agentWithColocatedSkills<Agent>(agent: Agent, sources: Parameters<typeof decodeColocatedAgentSkills>[0]): Agent {
   return withColocatedAgentSkills(agent, decodeColocatedAgentSkills(sources))
@@ -360,15 +360,15 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
     ? await resumeAgentChannelDeliveryWorkflowOwnership(agent, runtimeContext, channelDeliveryBinding)
     : undefined
   if (channelOwnership?.verify) runtimeContext = withAgentChannelDeliveryOwnershipVerifier(runtimeContext, channelOwnership.verify)
-  if (payload.parsedInputData === true) {
-    Object.defineProperty(runtimeContext, parsedAgentWorkflowInputDataContextKey, { enumerable: true, value: agent })
-  }
   const workflowInput = channelOwnership?.abortSignal
     ? {
         ...payload.input,
         abortSignal: payload.input?.abortSignal ? AbortSignal.any([payload.input.abortSignal, channelOwnership.abortSignal]) : channelOwnership.abortSignal,
       }
-    : (payload.input ?? {})
+    : { ...payload.input }
+  if (payload.parsedInputData === true) {
+    Object.defineProperty(workflowInput, parsedAgentWorkflowInputDataKey, { value: agent })
+  }
 
   let channelDeliveryStatus: "completed" | "failed" = "failed"
   let channelDeliveryJournaled = !channelDelivery
