@@ -28,8 +28,9 @@ import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
 
 export const consoleRpcCallPath = "/_vitehub/rpc/__call"
 
-// Invocation calls carry image data URLs; each operation still applies its own body limit.
-const maximumConsoleRpcRequestBytes = consoleAttachmentRequestBytes + 64 * 1_024
+const maximumConsoleRpcRequestBytes = 64 * 1_024
+// Invocation envelopes also carry image data URLs.
+const maximumConsoleInvocationRpcRequestBytes = consoleAttachmentRequestBytes + maximumConsoleRpcRequestBytes
 
 const responseHeaders = {
   "cache-control": "no-store",
@@ -144,9 +145,16 @@ async function callConsoleOperation(request: Request, context: ConsoleOperationC
   if (!isSameOriginRequest(request, url)) throw consoleRequestError(403, "Forbidden")
   if (!isConsoleRpcCallPath(url.pathname)) throw consoleRequestError(404, "Console RPC endpoint not found.")
   if (request.method !== "POST") throw consoleRequestError(405, "Method not allowed")
+  let requestBytes = 0
+  const body = request.body?.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      requestBytes += chunk.byteLength
+      controller.enqueue(chunk)
+    },
+  }))
   let payload: unknown
   try {
-    payload = await consoleRequestJSON({ req: request }, maximumConsoleRpcRequestBytes)
+    payload = await consoleRequestJSON({ req: { body, json: () => request.json() } }, maximumConsoleInvocationRpcRequestBytes)
   }
   catch (error) {
     if (Reflect.get(Object(error), "statusCode") === 413) throw error
@@ -154,6 +162,11 @@ async function callConsoleOperation(request: Request, context: ConsoleOperationC
   }
   const envelope = v.safeParse(envelopeSchema, payload)
   if (!envelope.success) throw consoleRequestError(400, "Invalid Console request.")
+  // The method can appear anywhere in JSON. Count raw bytes, including whitespace,
+  // and enforce its limit before dispatching the operation.
+  if (envelope.output.method !== consoleRpcMethods.agentInvocations && requestBytes > maximumConsoleRpcRequestBytes) {
+    throw consoleRequestError(413, "Console request body exceeds the byte limit.")
+  }
   const operation = operations.get(envelope.output.method)
   if (!operation) throw consoleRequestError(404, "Console operation not found.")
   const input = v.safeParse(inputSchema, envelope.output.input ?? {})

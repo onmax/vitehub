@@ -136,4 +136,25 @@ describe("Console RPC", () => {
     expect(oversized.status).toBe(413)
     await expect(oversized.json()).resolves.toEqual({ message: "Console request body exceeds the byte limit.", ok: false, status: 413 })
   })
+
+  it("enforces the non-invocation limit on raw envelope bytes", async () => {
+    const envelope = JSON.stringify({ method: consoleRpcMethods.sections })
+    const body = envelope.padEnd(64 * 1_024, " ")
+    expect((await call(body)).status).toBe(200)
+    const response = await call(`${body} `)
+    expect(response.status).toBe(413)
+    await expect(response.json()).resolves.toEqual({ message: "Console request body exceeds the byte limit.", ok: false, status: 413 })
+  })
+
+  it("counts UTF-8 bytes for non-invocation envelopes", async () => {
+    const body = JSON.stringify({ input: { body: "é".repeat(40 * 1_024) }, method: consoleRpcMethods.sections })
+    expect(body.length).toBeLessThan(64 * 1_024)
+    expect((await call(body)).status).toBe(413)
+  })
+
+  it("keeps the larger allowance for invocation envelopes", async () => {
+    const response = await call(JSON.stringify({ input: { body: "x".repeat(80 * 1_024), method: "POST" }, method: consoleRpcMethods.agentInvocations }))
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({ message: "Missing Agent name.", ok: false, status: 400 })
+  })
 })
