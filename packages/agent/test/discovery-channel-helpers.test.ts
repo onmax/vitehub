@@ -228,6 +228,47 @@ it.each([
 })
 
 it.each([
+  "[options][0]",
+  "({ options }).options",
+  "[{ options }][0].options",
+  "({ nested: [options] }).nested[0]",
+  "([options])[0]",
+  "(([options]))[0]",
+])("rejects Channel option mutations through inline containers: %s", async receiver => {
+  const setup = `${imports} const options = { pullRequest: false };`
+  const definition = 'export default defineAgent({ channels: { github: github(options) } })'
+  const unchanged = await discover(`${setup} ${receiver}.pullRequest === false; ${definition}`)
+  expect(unchanged?.workspace).toBeUndefined()
+  for (const mutation of [
+    `${receiver}.pullRequest = true`,
+    `${receiver}.pullRequest ||= true`,
+    `${receiver}.pullRequest++`,
+    `++${receiver}.pullRequest`,
+    `delete ${receiver}.pullRequest`,
+    `${receiver}.enable()`,
+  ]) {
+    const source = `${setup} ${mutation}; ${definition}`
+    await expect(discover(source)).rejects.toThrow("opaque Channel")
+    const explicit = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
+    expect(explicit?.workspace).toBe("review")
+  }
+})
+
+it.each([
+  "[portal][0]",
+  "({ portal }).portal",
+  "([{ portal }])[0].portal",
+])("rejects relative Channel mutations through inline containers: %s", async receiver => {
+  const files = {
+    "portal.ts": `${imports} export const portal = github({ pullRequest: false }); ${receiver}.capabilities = []`,
+  }
+  const source = 'import { defineAgent } from "vite-hub/agent"; import { portal } from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })'
+  await expect(discover(source, files)).rejects.toThrow("opaque Channel")
+  const explicit = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
+  expect(explicit?.workspace).toBe("review")
+})
+
+it.each([
   "webChat({ capabilities: [storage] })",
   "github({ pullRequest: false, capabilities: [storage] })",
   '{ kind: "custom", capabilities: [storage] }',

@@ -662,6 +662,25 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
     }
   }
+  for (const [close, opening] of openingDelimiters) {
+    if (!["[", "{"].includes(tokens[opening]) || declarationTypeTokens.has(opening)) continue
+    const memberEnd = memberCallEnd(close, opening)
+    if (memberEnd <= close + 1) continue
+    const assignment = assignmentOperator(memberEnd)
+    const postfixUpdate = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
+    let receiver = opening
+    while (tokens[receiver - 1] === "(") receiver--
+    const prefixUpdate = ["+", "-"].includes(tokens[receiver - 2] ?? "") && tokens[receiver - 1] === tokens[receiver - 2]
+    const deletion = tokens[receiver - 1] === "delete"
+    if (!assignment && !postfixUpdate && !prefixUpdate && !deletion && tokens[memberEnd] !== "(") continue
+    const targets = new Set(containerAliasTargets(opening))
+    for (let reference = opening + 1; reference < close; reference++) {
+      if (targets.has(tokens[reference]) && tokens[reference - 1] !== "."
+        && (visibleDeclaration(reference) !== undefined || imported.has(tokens[reference])) && !isFunctionParameter(reference)) {
+        mutatedBindings.add(tokens[reference])
+      }
+    }
+  }
   for (let index = 0; index < tokens.length; index++) {
     if (tokens[index] === "=" && ["]", "}"].includes(tokens[index - 1] ?? "")) {
       const pattern = patternOpening(index - 1)
@@ -914,10 +933,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return end
   }
 
-  function memberCallEnd(index: number): number {
+  function memberCallEnd(index: number, receiverStart = index): number {
     let end = index + 1
     let wrappers = 0
-    for (let i = index - 1; tokens[i] === "("; i--) wrappers++
+    for (let i = receiverStart - 1; tokens[i] === "("; i--) wrappers++
     while (end < tokens.length) {
       if (tokens[end] === "!") { end++; continue }
       if (tokens[end] === "?" && tokens[end + 1] === ".") {
