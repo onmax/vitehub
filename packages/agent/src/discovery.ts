@@ -853,7 +853,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       member--
     }
     while (member >= 2 && tokens[member - 1] === ".") member -= 2
-    if (member >= 0 && isIdentifier(tokens[member]) && tokens[member - 1] === "(" && tokens[member - 2] === "for"
+    const loopHeader = tokens[member - 1] === "(" && (tokens[member - 2] === "for"
+      || (tokens[member - 2] === "await" && tokens[member - 3] === "for"))
+    if (member >= 0 && isIdentifier(tokens[member]) && loopHeader
       && declarations.has(tokens[member]!)) {
       mutatedBindings.add(tokens[member]!)
       continue
@@ -871,7 +873,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       // A predeclared `for...of` target is assigned on every iteration. Its
       // initialiser cannot safely be used for Channel ownership inference.
       if (!["const", "let", "var"].includes(tokens[declaration]!)) continue
-      const loopDeclaration = tokens[declaration - 1] === "(" && tokens[declaration - 2] === "for"
+      const loopDeclaration = tokens[declaration - 1] === "(" && (tokens[declaration - 2] === "for"
+        || (tokens[declaration - 2] === "await" && tokens[declaration - 3] === "for"))
       if (!loopDeclaration) mutatedBindings.add(alias)
       const targets = containerAliasTargets(index + 1, tokens, true)
       if (targets.length) {
