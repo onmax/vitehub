@@ -396,6 +396,15 @@ it.each([
   'const { value: alias } = { value: options }; alias.pullRequest = true',
   'const [{ value: alias }] = [{ value: options }]; alias.pullRequest = true',
   'const container = [options]; const [alias] = container; alias.pullRequest = true',
+  'const [alias = options] = []; alias.pullRequest = true',
+  'const { value: alias = options } = {}; alias.pullRequest = true',
+  'const [{ value: alias = options } = {}] = []; alias.pullRequest = true',
+  'const [alias = (options)] = []; alias.pullRequest = true',
+  'const flag = false; const [alias = flag ? options : options] = []; alias.pullRequest = true',
+  'for (const [alias] of [[options]]) alias.pullRequest = true',
+  'const iterable = [[options]]; for (const [alias] of iterable) alias.pullRequest = true',
+  'const iterable = [{ value: options }]; for (const { value: alias } of iterable) alias.pullRequest = true',
+  'const container = [{ value: options }]; const iterable = container; for (const { value: alias } of iterable) alias.pullRequest = true',
   'const alias: Options = options; alias.pullRequest.workspace = true',
   'const alias: { pullRequest: { workspace: boolean } } = options; alias.pullRequest.workspace = true',
   'const alias: typeof options = options; mutate(alias)',
@@ -431,6 +440,12 @@ it.each([
   'const channels = [portal]; const iterable = channels; for (const alias of iterable) alias.capabilities = []',
   'const [alias] = [portal]; alias.capabilities = []',
   'const { value: alias } = { value: portal }; alias.capabilities = []',
+  'const [alias = portal] = []; alias.capabilities = []',
+  'const { value: alias = portal } = {}; alias.capabilities = []',
+  'const [{ value: alias = portal } = {}] = []; alias.capabilities = []',
+  'for (const [alias] of [[portal]]) alias.capabilities = []',
+  'const iterable = [[portal]]; for (const [alias] of iterable) alias.capabilities = []',
+  'const container = [{ value: portal }]; const iterable = container; for (const { value: alias } of iterable) alias.capabilities = []',
 ])("rejects a mutated loop alias in a relative Channel export: %s", async mutation => {
   const source = 'import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })'
   const files = { "portal.ts": `import { github } from "vite-hub/agent/channels"; const options = { pullRequest: false }; const portal = github(options); ${mutation}; export default portal` }
@@ -442,6 +457,10 @@ it.each([
 it.each([
   'const [alias] = [options]; alias.pullRequest === false',
   'const { value: alias } = { value: options }; alias.pullRequest === false',
+  'const [alias = options] = []; alias.pullRequest === false',
+  'const { value: alias = options } = {}; alias.pullRequest === false',
+  'const iterable = [[options]]; for (const [alias] of iterable) alias.pullRequest === false',
+  'const iterable = [{ value: options }]; for (const { value: alias } of iterable) alias.pullRequest === false',
   'const container = [options]; for (const alias of container) alias.pullRequest === false',
   'const container = [options]; const iterable = container; for (const alias of iterable) alias.pullRequest === false',
 ])("keeps read-only container aliases stateless: %s", async read => {

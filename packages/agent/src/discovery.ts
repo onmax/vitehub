@@ -435,56 +435,6 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return targets
   }
 
-  for (let i = 0; i < tokens.length; i++) {
-    if (declarationTypeTokens.has(i)) continue
-    const name = tokens[i]
-    if (!declarations.has(name) && !/^[A-Za-z_$][\w$]*$/.test(name ?? "")) continue
-    const memberEnd = memberCallEnd(i)
-    const propertyAssignment = memberEnd > i + 1 && assignmentOperator(memberEnd)
-    const directAssignment = assignmentOperator(i + 1) && !declaratorInitializers.has(i)
-    const prefixUpdate = ["+", "-"].includes(tokens[i - 2] ?? "") && tokens[i - 1] === tokens[i - 2]
-    const postfixUpdate = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
-    let deletion = tokens[i - 1] === "delete"
-    for (let cursor = i - 1; !deletion && tokens[cursor] === "("; cursor--) {
-      deletion = tokens[cursor - 1] === "delete"
-    }
-    if (propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion) mutatedBindings.add(name)
-
-    const initializer = declaratorInitializers.get(i) ?? (tokens[i + 1] === "=" ? i + 2 : undefined)
-    if (initializer !== undefined) {
-      const targets = containerAliasTargets(initializer)
-      const aliases = assignedAliases.get(name) ?? new Set<string>()
-      for (const target of targets) aliases.add(target)
-      if (aliases.size) assignedAliases.set(name, aliases)
-    }
-    if (initializer !== undefined && /^[A-Za-z_$][\w$]*$/.test(tokens[initializer] ?? "")) {
-      let aliasEnd = initializer + 1
-      while (tokens[aliasEnd] === "." || tokens[aliasEnd] === "[") {
-        if (tokens[aliasEnd] === ".") {
-          if (!/^[A-Za-z_$][\w$]*$/.test(tokens[aliasEnd + 1] ?? "")) break
-          aliasEnd += 2
-        }
-        else {
-          let nesting = 1
-          aliasEnd++
-          while (aliasEnd < tokens.length && nesting > 0) {
-            if (tokens[aliasEnd] === "[") nesting++
-            if (tokens[aliasEnd] === "]") nesting--
-            aliasEnd++
-          }
-          if (nesting > 0) break
-        }
-      }
-      while (tokens[aliasEnd] === "!" || tokens[aliasEnd] === "as" || tokens[aliasEnd] === "satisfies") {
-        aliasEnd = tokens[aliasEnd] === "!" ? aliasEnd + 1 : skipAssertion(aliasEnd)
-      }
-      if ([";", ",", undefined].includes(tokens[aliasEnd])) {
-        const targets = assignedAliases.get(name) ?? new Set<string>()
-        targets.add(tokens[initializer]!)
-        assignedAliases.set(name, targets)
-      }
-    }
-  }
   // A declaration is visible only in its containing scope and descendants.
   const tokenScopes: (number | undefined)[] = []
   const scopeParents = new Map<number, number | undefined>()
@@ -517,7 +467,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   const callbackParameters: { start: number; end: number; names: Set<string> }[] = []
 
-  function callbackBindingNames(start: number, end: number): Set<string> {
+  function callbackBindingNames(start: number, end: number, initializers?: Map<number, number>): Set<string> {
     const names = new Set<string>()
     let cursor = start
     if (tokens[cursor] === "async") cursor++
@@ -566,6 +516,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         cursor++
       } else {
         if (/^[A-Za-z_$][\w$]*$/.test(token ?? "")) names.add(token)
+        if (tokens[cursor + 1] === "=") initializers?.set(cursor, cursor + 2)
         cursor++
       }
     }
@@ -596,7 +547,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
   for (const binding of variableDeclarations.keys()) {
     if (["[", "{"].includes(tokens[binding + 1])) {
-      const names = callbackBindingNames(binding + 1, tokens.length)
+      const names = callbackBindingNames(binding + 1, tokens.length, declaratorInitializers)
       destructuredBindings.set(binding, names)
       let cursor = binding + 1
       let nesting = 0
@@ -605,13 +556,65 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         else if (["]", "}"].includes(tokens[cursor])) nesting--
         cursor++
       } while (cursor < tokens.length && nesting > 0)
-      if (tokens[cursor] === "=") {
-        const targets = containerAliasTargets(cursor + 1, tokens, true)
-        for (const name of names) {
-          const aliases = assignedAliases.get(name) ?? new Set<string>()
-          for (const target of targets) aliases.add(target)
-          if (aliases.size) assignedAliases.set(name, aliases)
+      const targets = ["=", "of"].includes(tokens[cursor]) ? containerAliasTargets(cursor + 1, tokens, true) : []
+      for (let index = binding + 2; index < cursor; index++) {
+        if (tokens[index] !== "=" || ["=", ">"].includes(tokens[index + 1]) || tokens[index - 1] === "=") continue
+        targets.push(...containerAliasTargets(0, tokens.slice(index + 1, cursor), true))
+      }
+      for (const name of names) {
+        const aliases = assignedAliases.get(name) ?? new Set<string>()
+        for (const target of targets) aliases.add(target)
+        if (aliases.size) assignedAliases.set(name, aliases)
+      }
+    }
+  }
+  for (let i = 0; i < tokens.length; i++) {
+    if (declarationTypeTokens.has(i)) continue
+    const name = tokens[i]
+    if (!declarations.has(name) && !/^[A-Za-z_$][\w$]*$/.test(name ?? "")) continue
+    const memberEnd = memberCallEnd(i)
+    const propertyAssignment = memberEnd > i + 1 && assignmentOperator(memberEnd)
+    const directAssignment = assignmentOperator(i + 1) && !declaratorInitializers.has(i)
+    const prefixUpdate = ["+", "-"].includes(tokens[i - 2] ?? "") && tokens[i - 1] === tokens[i - 2]
+    const postfixUpdate = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
+    let deletion = tokens[i - 1] === "delete"
+    for (let cursor = i - 1; !deletion && tokens[cursor] === "("; cursor--) {
+      deletion = tokens[cursor - 1] === "delete"
+    }
+    if (propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion) mutatedBindings.add(name)
+
+    const initializer = declaratorInitializers.get(i) ?? (tokens[i + 1] === "=" ? i + 2 : undefined)
+    if (initializer !== undefined) {
+      const targets = containerAliasTargets(initializer)
+      const aliases = assignedAliases.get(name) ?? new Set<string>()
+      for (const target of targets) aliases.add(target)
+      if (aliases.size) assignedAliases.set(name, aliases)
+    }
+    if (initializer !== undefined && /^[A-Za-z_$][\w$]*$/.test(tokens[initializer] ?? "")) {
+      let aliasEnd = initializer + 1
+      while (tokens[aliasEnd] === "." || tokens[aliasEnd] === "[") {
+        if (tokens[aliasEnd] === ".") {
+          if (!/^[A-Za-z_$][\w$]*$/.test(tokens[aliasEnd + 1] ?? "")) break
+          aliasEnd += 2
         }
+        else {
+          let nesting = 1
+          aliasEnd++
+          while (aliasEnd < tokens.length && nesting > 0) {
+            if (tokens[aliasEnd] === "[") nesting++
+            if (tokens[aliasEnd] === "]") nesting--
+            aliasEnd++
+          }
+          if (nesting > 0) break
+        }
+      }
+      while (tokens[aliasEnd] === "!" || tokens[aliasEnd] === "as" || tokens[aliasEnd] === "satisfies") {
+        aliasEnd = tokens[aliasEnd] === "!" ? aliasEnd + 1 : skipAssertion(aliasEnd)
+      }
+      if ([";", ",", undefined].includes(tokens[aliasEnd])) {
+        const targets = assignedAliases.get(name) ?? new Set<string>()
+        targets.add(tokens[initializer]!)
+        assignedAliases.set(name, targets)
       }
     }
   }
