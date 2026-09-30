@@ -11,6 +11,7 @@ export interface ProvisionContext {
   env: Record<string, string | undefined>
   fetch: typeof globalThis.fetch
   logger: ProvisionLogger
+  markPlanUnchecked?: () => void
 }
 
 // Non-secret identifiers produced by an applied action, merged into Provision State.
@@ -28,6 +29,7 @@ export interface ProvisionAction {
   kind: string
   name: string
   exists: boolean
+  pending?: boolean
   apply: () => Promise<ProvisionResult>
 }
 
