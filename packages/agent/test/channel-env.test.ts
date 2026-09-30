@@ -190,6 +190,50 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: ["mode"] }])
   })
 
+  it("treats undefined Channel inputs as empty options", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram(undefined)
+      export default defineAgent({ channels: { telegram: undefined } })
+    `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: [] }])
+  })
+
+  it("recognizes async option methods and asserted local maps", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      const channels = { telegram: { async botToken() { return token } } }
+      export const first = defineAgent({ channels: channels satisfies AgentChannelInputs })
+      export const second = defineAgent({ channels: channels as AgentChannelInputs })
+      telegram({ async botToken() { return token }, get webhookSecret() { return secret } })
+    `)).toEqual([
+      { kind: "telegram", keys: ["botToken"] },
+      { kind: "telegram", keys: ["botToken"] },
+      { kind: "telegram", keys: ["botToken", "webhookSecret"] },
+    ])
+  })
+
+  it("distinguishes destructuring keys and defaults from binding names", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      function computed() { const { [telegram]: value } = source; telegram() }
+      function defaultValue() { const { value = fallback || telegram() } = source }
+      function nested() { const { nested: { telegram } } = source; telegram() }
+      function rest() { const { ...telegram } = source; telegram() }
+    `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: [] }])
+  })
+
+  it("respects function, class, and catch bindings in their lexical scopes", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      function local() { function telegram() {}; telegram() }
+      if (enabled) { class telegram {}; new telegram() }
+      try {} catch (telegram) { telegram() }
+      const named = function telegram() { return telegram() }
+      const namedClass = class telegram { static run() { return new telegram() } }
+      telegram()
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
   it("ignores local and unrelated factories", () => {
     expect(uses(`
       import { telegram } from "./channels"

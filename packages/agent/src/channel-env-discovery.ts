@@ -41,6 +41,7 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
           expectKey = false
           continue
         }
+        if (["async", "get", "set"].includes(token) && tokens[i + 2] === "(") continue
         if (/^[A-Za-z_$][\w$]*$/.test(token) || isStringToken(token)) {
           const key = isStringToken(token) ? token.slice(1, -1) : token
           // A shorthand property `{ telegram }` is its own value.
@@ -59,6 +60,7 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
 // Keys set to `undefined` count as omitted, as they do at runtime.
 function staticOptionKeys(tokens: string[], start: number, empty: string): ReadonlySet<string> | undefined {
   if (tokens[start] === empty) return new Set()
+  if (tokens[start] === "undefined" && [",", ")", "}"].includes(tokens[start + 1]!)) return new Set()
   if (tokens[start] !== "{") return undefined
   const keys = new Set<string>()
   return visitObjectProperties(tokens, start, (key, value) => {
@@ -157,7 +159,7 @@ function localObject(tokens: string[], index: number, declarations: ReadonlyMap<
   if (tokens[index] === "{") return index
   const declaration = declarations.get(tokens[index]!)
   const end = tokens[index + 1]
-  return declaration !== undefined && tokens[declaration] === "{" && [",", "}", ")"].includes(end!) ? declaration : undefined
+  return declaration !== undefined && tokens[declaration] === "{" && [",", "}", ")", "as", "satisfies"].includes(end!) ? declaration : undefined
 }
 
 function isShadowedAt(tokens: string[], index: number, name: string, bindings: ReadonlyMap<string, string>): boolean {
@@ -243,23 +245,39 @@ function hasLocalBinding(tokens: string[], index: number, name: string): boolean
     }
   }
   for (let i = 0; i < tokens.length; i++) {
-    if (!["const", "let", "var"].includes(tokens[i]!)) continue
+    const declaration = tokens[i]!
+    if (declaration === "catch" && tokens[i + 1] === "(") {
+      const body = (closes.get(i + 1) ?? tokens.length) + 1
+      if (tokens[body] === "{" && index > body && index < (closes.get(body) ?? body)
+        && bindingPatternHasName(tokens, i + 2, name, closes)) return true
+    }
+    if (!["const", "let", "var", "function", "class"].includes(declaration)) continue
     let scope = -1
     for (const [open, close] of closes) {
       if (tokens[open] !== "{" || open >= i || close <= i) continue
-      if (tokens[i] === "var" && !functionBodies.has(open)) continue
+      if (declaration === "var" && !functionBodies.has(open)) continue
       if (open > scope) scope = open
     }
-    if (tokens[i] !== "var") for (const open of loopScopes.keys()) {
+    if (declaration !== "var") for (const open of loopScopes.keys()) {
       if (open < i && (closes.get(open) ?? -1) > i && open > scope) scope = open
     }
     const endOfScope = loopScopes.get(scope) ?? closes.get(scope) ?? tokens.length
     if (index <= scope || index >= endOfScope) continue
+    if (declaration === "function" || declaration === "class") {
+      const binding = tokens[i + 1] === "*" ? i + 2 : i + 1
+      if (tokens[binding] !== name) continue
+      // Named expressions bind only inside their own body, unlike declarations.
+      if (["=", "(", ":", ",", "return"].includes(tokens[i - 1]!)) {
+        const params = declaration === "function" ? tokens.indexOf("(", binding + 1) : -1
+        const body = declaration === "function" ? (closes.get(params) ?? tokens.length) + 1 : tokens.indexOf("{", binding + 1)
+        if (index !== binding && !(index > body && index < (closes.get(body) ?? body))) continue
+      }
+      return true
+    }
     // Walk declarators without mistaking identifiers in initializers for bindings.
     for (let binding = i + 1; binding < tokens.length;) {
       const end = closes.get(binding)
-      const pattern = end === undefined ? [tokens[binding]!] : tokens.slice(binding + 1, end)
-      if (pattern.some((token, offset) => token === name && pattern[offset + 1] !== ":" && pattern[offset - 1] !== "=")) return true
+      if (bindingPatternHasName(tokens, binding, name, closes)) return true
       let next = (end ?? binding) + 1
       while (next < tokens.length && !["=", ",", ";", "in", "of", ")", "}"].includes(tokens[next]!)) next++
       if (tokens[next] === "=") {
@@ -272,6 +290,26 @@ function hasLocalBinding(tokens: string[], index: number, name: string): boolean
       if (tokens[next] !== ",") break
       binding = next + 1
     }
+  }
+  return false
+}
+
+// Computed property keys and default values are expressions, not new bindings.
+function bindingPatternHasName(tokens: string[], start: number, name: string, closes: ReadonlyMap<number, number>): boolean {
+  if (!["{", "["].includes(tokens[start]!)) return tokens[start] === name
+  const end = closes.get(start) ?? start
+  for (let entry = start + 1; entry < end;) {
+    if (tokens[entry] === ",") { entry++; continue }
+    let binding = entry
+    if (tokens[entry] === ".") binding += 3
+    else if (tokens[start] === "{") {
+      const next = (closes.get(entry) ?? entry) + 1
+      if (tokens[next] === ":") binding = next + 1
+    }
+    if (bindingPatternHasName(tokens, binding, name, closes)) return true
+    let next = (closes.get(binding) ?? binding) + 1
+    while (next < end && tokens[next] !== ",") next = (closes.get(next) ?? next) + 1
+    entry = next + 1
   }
   return false
 }
