@@ -401,8 +401,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         })
       }
       if (snapshot) await db.deleteGrant(name, snapshot.grant.revision)
-      await record({ action: "disconnect", actor: lifecycle.actor, connection: name, outcome: "succeeded", ...(revokeError ? { error: revokeError } : {}) }, lifecycle.event)
-      return summary(name, value, undefined)
+      // The grant is gone now. An audit failure must not report the disconnect as failed.
+      await recordQuietly({ action: "disconnect", actor: lifecycle.actor, connection: name, outcome: "succeeded", ...(revokeError ? { error: revokeError } : {}) }, lifecycle.event)
+      // A connect that finished during revocation keeps its newer grant, so report the Connection as it is now.
+      return summary(name, value, await db.grant(name))
     },
     async fetch(name, input, init = {}, callOptions) {
       const value = await definition(name)
