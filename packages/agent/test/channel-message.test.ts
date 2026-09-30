@@ -212,6 +212,35 @@ describe("Channel message handle", () => {
     }])
   })
 
+  it("preserves a Channel message method named __proto__", async () => {
+    const invoked = vi.fn()
+    const agent = defineAgent({
+      channels: {
+        mail: defineChannel("mail", {
+          message: {
+            methods: {
+              ["__proto__"]: () => {
+                invoked()
+                return "ok"
+              },
+            },
+          },
+          messages: false,
+          triggers: { message: { invoke: () => ({ input: { prompt: "hello" } }) } },
+        }),
+      },
+      driver: { run: () => "ok" },
+      hooks: {
+        async "agent:finish"(event) {
+          expect(await event.message?.["__proto__"]()).toBe("ok")
+        },
+      },
+    })
+
+    await runAgentTrigger(agent, runtimeContext(), "mail.message", {})
+    expect(invoked).toHaveBeenCalledOnce()
+  })
+
   it("keeps the built-in reply of Chat SDK Channels on event.message", async () => {
     const postMessage = vi.fn()
     const agent = defineAgent({

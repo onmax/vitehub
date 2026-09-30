@@ -1746,7 +1746,7 @@ async function createChannelMessageHandle<
     reply: delivery.reply,
     status: delivery.status,
   }
-  const calls: Record<string, (...args: unknown[]) => Promise<unknown>> = {}
+  const calls: Record<string, (...args: unknown[]) => Promise<unknown>> = Object.create(null)
   for (const [name, create] of Object.entries(builtIn)) {
     if (!active.channel[channelDeliveryHandlers]?.[name]) continue
     calls[name] = async (input) => {
