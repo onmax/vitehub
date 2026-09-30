@@ -212,9 +212,17 @@ function isObjectOrTypeContainer(tokens: string[], open: number, outer?: number)
     return isObjectOrTypeContainer(tokens, outer, parents.at(-1))
   }
   // Class and interface bodies remain declarations even after an extends clause.
-  for (let i = open - 1; i >= 0 && !["{", "}", ";"].includes(tokens[i]!); i--) {
-    if (["class", "interface"].includes(tokens[i]!) && tokens[i - 1] !== ".") return true
-    if (tokens[i] === "function") return false
+  let nested = 0
+  for (let i = open - 1; i >= 0; i--) {
+    const token = tokens[i]!
+    if ([")", "]", "}"].includes(token)) { nested++; continue }
+    if (["(", "[", "{"].includes(token)) {
+      if (nested > 0) { nested--; continue }
+      break
+    }
+    if (nested > 0) continue
+    if (["class", "interface"].includes(token) && tokens[i - 1] !== ".") return true
+    if (token === "function" || token === ";") return false
   }
   // Statement blocks have a statement boundary, a control/function header,
   // or an arrow before them. Other braces occur in expressions or types.

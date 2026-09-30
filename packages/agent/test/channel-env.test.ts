@@ -94,6 +94,15 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: [] }])
   })
 
+  it("ignores methods after nested class heritage expressions", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      class Tools extends mixin({ feature: true }) {
+        telegram() {}
+      }
+    `)).toEqual([])
+  })
+
   it("requires imported, unshadowed Agent factories for shorthand discovery", () => {
     expect(uses(`
       const defineAgent = (options) => options
