@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { resolve } from "node:path"
 
 import { getViteMode } from "@vite-hub/internal/build/mode"
-import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { contributeProviderDeploymentOutput, createDefaultCloudflareOutputRoot, createDefaultVercelOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
 import { createNoExternalMerger, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { normalize } from "pathe"
@@ -150,7 +150,8 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
         return contributor ? { ...contributor, provision } : { namespaces: [], provision }
       },
       inspect: () => {
-        if (resolvedOptions() === false) return
+        const config = resolvedOptions()
+        if (config === false) return
         return {
           definitions: [{
             kind: "database",
@@ -161,6 +162,10 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
               serverDirs: databaseServerDirs(),
             }),
           }],
+          providerOutput: [
+            { description: "Generated Cloudflare Database worker", owner: "database", path: resolve(createDefaultCloudflareOutputRoot(resolveViteHubProjectRoot(resolved?.root ?? process.cwd())), "index.js") },
+            { description: "Generated Vercel Database function", owner: "database", path: resolve(createDefaultVercelOutputRoot(resolveViteHubProjectRoot(resolved?.root ?? process.cwd())), "functions", resolveNitroVercelFunctionName(resolved ?? {}, "database"), "index.mjs") },
+          ],
         }
       },
     },

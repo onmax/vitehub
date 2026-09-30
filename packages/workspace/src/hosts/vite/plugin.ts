@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path"
 
-import { createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { createDefaultCloudflareOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { copyVercelFunctionRuntimePackages } from "@vite-hub/internal/build/vercel-runtime-packages"
 import { createNoExternalMerger, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
@@ -1906,7 +1906,12 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
       cli: async () => {
         return createWorkspaceCliContributor()
       },
-      inspect: () => resolvedOptions === false ? undefined : ({
+      inspect: () => {
+        if (resolvedOptions === false) return
+        const roots = projectRoot && viteRoot
+          ? { projectRoot, viteRoot }
+          : resolveWorkspacePluginRoots(resolved?.root ?? process.cwd(), publicOptions)
+        return {
         definitions: [{
           kind: "workspace",
           label: "Workspaces",
@@ -1917,7 +1922,15 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
             return inspectWorkspaceDefinitions({ projectRoot: roots.projectRoot, rootDir: roots.viteRoot, serverDirs, serverRootDir: roots.projectRoot })
           },
         }],
-      }),
+        providerOutput: resolvedOptions?.store.provider === "cloudflare-artifacts"
+          ? [{
+              description: "Generated Cloudflare Workspace artifacts config",
+              owner: "workspace",
+              path: resolve(createDefaultCloudflareOutputRoot(roots.projectRoot), "wrangler.json"),
+            }]
+          : [],
+        }
+      },
     },
     async handleHotUpdate(ctx: HmrContext) {
       if (!resolved) return
