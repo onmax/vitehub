@@ -481,6 +481,21 @@ function createViteRawPlugin(rootDir: string | undefined, frameworkRuntime: bool
   }
 }
 
+const bundleDefinesKey = Symbol.for("vitehub.build.bundle-defines")
+type BundleDefinesScope = typeof globalThis & { [bundleDefinesKey]?: Record<string, string> }
+// SAFETY: Only setViteHubBundleDefine() writes this well-known slot, with string values.
+const bundleDefinesScope = globalThis as BundleDefinesScope
+
+/**
+ * Set a build-time constant for provider bundles that esbuild creates outside the Vite pipeline.
+ * Each owner package bundles its own copy of this module, so the values live on a global slot.
+ */
+export function setViteHubBundleDefine(name: string, value: string | undefined): void {
+  const defines = bundleDefinesScope[bundleDefinesKey] ??= {}
+  if (value === undefined) delete defines[name]
+  else defines[name] = value
+}
+
 function createFileUrlPlugin(): Plugin {
   return {
     name: "vitehub-file-url",
@@ -532,6 +547,7 @@ export async function bundleEsmEntry(
       : undefined,
     bundle: true,
     conditions: options.conditions ?? (platform === "node" ? ["node"] : undefined),
+    define: { ...bundleDefinesScope[bundleDefinesKey] },
     entryPoints: [entryFile],
     external: options.external,
     format,

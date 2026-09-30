@@ -22,6 +22,25 @@ afterEach(async () => {
 })
 
 describe("bundleEsmEntry", () => {
+  it("applies ViteHub build constants to provider bundles", async () => {
+    const rootDir = await createTempDir()
+    const entry = resolve(rootDir, "entry.mjs")
+    const outfile = resolve(rootDir, "output.mjs")
+    await writeFile(entry, 'export const value = typeof __VITEHUB_PUBLIC_URL__ === "undefined" ? undefined : __VITEHUB_PUBLIC_URL__.url\n', "utf8")
+
+    const { bundleEsmEntry, setViteHubBundleDefine } = await import("../src/build/esbuild.ts")
+    setViteHubBundleDefine("__VITEHUB_PUBLIC_URL__", JSON.stringify({ url: "https://agents.example.com" }))
+    try {
+      await bundleEsmEntry(entry, outfile, { format: "esm", platform: "node" })
+    }
+    finally {
+      setViteHubBundleDefine("__VITEHUB_PUBLIC_URL__", undefined)
+    }
+    expect((await import(`${pathToFileURL(outfile).href}?defined`)).value).toBe("https://agents.example.com")
+    await bundleEsmEntry(entry, outfile, { format: "esm", platform: "node" })
+    expect((await import(`${pathToFileURL(outfile).href}?cleared`)).value).toBeUndefined()
+  })
+
   it("applies Vite replacement-string tokens in prefix aliases", async () => {
     const rootDir = await createTempDir()
     const replacementDir = resolve(rootDir, "replacement")

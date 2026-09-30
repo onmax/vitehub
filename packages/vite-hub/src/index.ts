@@ -28,7 +28,7 @@ import { hubWorkspace } from "@vite-hub/workspace/vite"
 import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { finalizeDeploymentPlanOutput } from "@vite-hub/internal/build/deployment-plan-output"
 import { finalizeDenoDeploymentOutput } from "@vite-hub/internal/build/deno-runtime-packages"
-import { resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS, type ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
+import { createNoExternalMerger, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS, type ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
 import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 
 import { viteHubTypesPlugin } from "./internal/types.ts"
@@ -45,7 +45,7 @@ import type { EmailVitePluginOptions } from "@vite-hub/email/vite"
 import type { EnvIntegrationOptions, EnvRuntimeRegistry } from "@vite-hub/env"
 import type { EnvVitePlugin } from "@vite-hub/env/vite"
 import type { KVModuleOptions } from "@vite-hub/kv"
-import type { ViteAlias } from "@vite-hub/internal/build/esbuild"
+import { setViteHubBundleDefine, type ViteAlias } from "@vite-hub/internal/build/esbuild"
 import type { DeploymentPlan, DeploymentService } from "@vite-hub/internal/deployment"
 import type { QueueModuleOptions } from "@vite-hub/queue"
 import type { RateLimitModuleOptions } from "@vite-hub/rate-limit"
@@ -721,24 +721,31 @@ function normalizePublicUrl(value: string): string {
   return url.origin
 }
 
+const mergeRuntimeNoExternal = createNoExternalMerger("@vite-hub/runtime")
+
 function publicUrlPlugin(publicUrl: ViteHubOptions["publicUrl"]): Plugin {
   return {
     name: "vite-hub/public-url",
     config(config, { command }) {
-      if (!publicUrl || command !== "build") return
+      // Provider bundles built outside Vite read the same value, and a dev run must not reuse a build value.
+      setViteHubBundleDefine("__VITEHUB_PUBLIC_URL__", undefined)
+      if (publicUrl === undefined || command !== "build") return
       let resolved: PublicUrlConfig
-      if (publicUrl instanceof Function) {
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The option is a string or a callback; typeof also accepts callbacks from another realm.
+      if (typeof publicUrl === "function") {
         const root = resolveViteHubProjectRoot(config.root ?? process.cwd())
         // SAFETY: ViteHub hosts add this private server-directory symbol before plugins read the config.
         const serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
         resolved = { agents: Object.fromEntries(discoverAgentDefinitionEntries(root, serverDirs).map(({ name }) => [name, normalizePublicUrl(publicUrl(name))])) }
       }
       else resolved = { url: normalizePublicUrl(publicUrl) }
-      return { define: { __VITEHUB_PUBLIC_URL__: JSON.stringify(resolved) } }
+      const define = JSON.stringify(resolved)
+      setViteHubBundleDefine("__VITEHUB_PUBLIC_URL__", define)
+      return { define: { __VITEHUB_PUBLIC_URL__: define } }
     },
-    configEnvironment(_name, config) {
+    configEnvironment(name, config) {
       // The shared URL helper reads the public URL and app base defines, so server code must inline it.
-      if (config.consumer === "server") return { resolve: { noExternal: ["@vite-hub/runtime"] } }
+      if (isServerEnvironment(name, config)) return { resolve: { noExternal: mergeRuntimeNoExternal(config.resolve?.noExternal) } }
     },
   }
 }

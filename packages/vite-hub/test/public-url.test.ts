@@ -35,9 +35,18 @@ describe("vitehub({ publicUrl })", () => {
       })
       expect(define(byAgent, root, "serve")).toBeUndefined()
       expect(() => define(publicUrlPlugin("https://agents.example.com/app"), root, "build")).toThrow("publicUrl must be an http(s) origin")
+      expect(() => define(publicUrlPlugin(""), root, "build")).toThrow("publicUrl must be an http(s) origin")
     }
     finally {
       await rm(root, { force: true, recursive: true })
     }
+  })
+
+  it("keeps an existing noExternal: true for server environments", () => {
+    // SAFETY: The hook reads only the environment consumer and resolve options, which this fixture supplies.
+    const hook = publicUrlPlugin(undefined).configEnvironment as (name: string, config: { consumer: string, resolve?: { noExternal?: true | string[] } }) => { resolve: { noExternal: unknown } } | undefined
+    expect(hook("nitro", { consumer: "server", resolve: { noExternal: true } })?.resolve.noExternal).toBe(true)
+    expect(hook("nitro", { consumer: "server", resolve: { noExternal: ["vite-hub"] } })?.resolve.noExternal).toEqual(["vite-hub", "@vite-hub/runtime"])
+    expect(hook("client", { consumer: "client" })).toBeUndefined()
   })
 })
