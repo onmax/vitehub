@@ -376,6 +376,40 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       for (let index = binding + 1; index < initializer; index++) declarationTypeTokens.add(index)
     }
   }
+
+  function containerAliasTargets(index: number): string[] {
+    const opening = tokens[index]
+    if (opening !== "[" && opening !== "{") return []
+    const closing = opening === "[" ? "]" : "}"
+    const targets: string[] = []
+    const elements: string[][] = []
+    let element: string[] = []
+    let depth = 0
+    for (let cursor = index + 1; cursor < tokens.length; cursor++) {
+      const token = tokens[cursor]
+      if (depth === 0 && token === closing) {
+        if (element.length) elements.push(element)
+        break
+      }
+      if (depth === 0 && token === ",") {
+        elements.push(element)
+        element = []
+        continue
+      }
+      element.push(token)
+      if (["{", "[", "("].includes(token)) depth++
+      else if (["}", "]", ")"].includes(token)) depth--
+    }
+    for (const value of elements) {
+      if (value.length === 0) continue
+      const candidate = opening === "{" && value[1] === ":" ? value[2] : value[0]
+      if (value.length === 1 || (opening === "{" && value[1] === ":" && value.length === 3)) {
+        if (candidate && /^[A-Za-z_$][\w$]*$/.test(candidate)) targets.push(candidate)
+      }
+    }
+    return targets
+  }
+
   for (let i = 0; i < tokens.length; i++) {
     if (declarationTypeTokens.has(i)) continue
     const name = tokens[i]
@@ -392,6 +426,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion) mutatedBindings.add(name)
 
     const initializer = declaratorInitializers.get(i) ?? (tokens[i + 1] === "=" ? i + 2 : undefined)
+    if (initializer !== undefined && ["[", "{"].includes(tokens[initializer]!)) {
+      const targets = containerAliasTargets(initializer)
+      const aliases = assignedAliases.get(name) ?? new Set<string>()
+      for (const target of targets) aliases.add(target)
+      if (aliases.size) assignedAliases.set(name, aliases)
+    }
     if (initializer !== undefined && /^[A-Za-z_$][\w$]*$/.test(tokens[initializer] ?? "")) {
       let aliasEnd = initializer + 1
       while (tokens[aliasEnd] === "." || tokens[aliasEnd] === "[") {

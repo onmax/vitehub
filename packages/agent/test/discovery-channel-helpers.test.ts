@@ -182,6 +182,23 @@ it("inspects a first-party Channel imported from a relative module", async () =>
   expect(definition?.source).toBe("server-agents")
 })
 
+it.each([
+  ["[portal]", "aliases[0]"],
+  ["{ portal }", "aliases.portal"],
+  ["{ channel: portal }", "aliases.channel"],
+])("rejects a relative Channel mutated through a container alias: %s", async (container, member) => {
+  const definition = 'import { portal } from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })'
+  const portal = `${imports} const storage = defineCapability({ workspace: {} }); export const portal = github({ pullRequest: false }); const aliases = ${container};`
+  const unchanged = await discover(definition, { "portal.ts": portal })
+  expect(unchanged?.workspace).toBeUndefined()
+  for (const mutation of [`${member}.capabilities = [storage]`, `const other = aliases; ${member.replace("aliases", "other")}.capabilities = [storage]`]) {
+    const files = { "portal.ts": `${portal} ${mutation};` }
+    await expect(discover(definition, files)).rejects.toThrow("opaque Channel")
+    const explicit = await discover(definition.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
+    expect(explicit?.workspace).toBe("review")
+  }
+})
+
 const stateless = 'import { github } from "vite-hub/agent/channels"; export default github({ pullRequest: false })'
 
 it.each<[string, string, Record<string, string>]>([
