@@ -85,13 +85,14 @@ describe("built-in Channel discovery", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
       const helpers = {
-        run(telegram: () => void) { telegram() },
+        run(telegram: () => void): void { telegram() },
       }
       class Runner {
         constructor(telegram: () => void) { telegram() }
         run() { return telegram() }
       }
-    `)).toEqual([{ kind: "telegram", keys: [] }])
+      telegram({ botToken: token })
+    `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: ["botToken"] }])
   })
 
   it("ignores methods after nested class heritage expressions", () => {
@@ -107,7 +108,9 @@ describe("built-in Channel discovery", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
       const inspect = telegram => telegram()
-    `)).toEqual([])
+      const inspectBlock = telegram => { telegram() }
+      telegram({ botToken: token })
+    `)).toEqual([{ kind: "telegram", keys: ["botToken"] }])
   })
 
   it("requires imported, unshadowed Agent factories for shorthand discovery", () => {
@@ -267,10 +270,12 @@ describe("built-in Channel discovery", () => {
       import { telegram } from "vite-hub/agent/channels"
       telegram({ botToken: undefined as string | undefined })
       telegram({ botToken: undefined satisfies string | undefined })
+      telegram({ botToken: (undefined) })
       telegram(undefined as TelegramOptions | undefined)
       telegram({ botToken: token as string | undefined })
       telegram({ botToken: undefined as string | undefined ?? token })
     `)).toEqual([
+      { kind: "telegram", keys: [] },
       { kind: "telegram", keys: [] },
       { kind: "telegram", keys: [] },
       { kind: "telegram", keys: [] },

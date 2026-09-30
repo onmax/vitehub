@@ -231,6 +231,10 @@ function isObjectOrTypeContainer(tokens: string[], open: number, outer?: number)
 }
 
 function isUndefinedValue(tokens: string[], start: number, terminators: ReadonlySet<string>): boolean {
+  if (tokens[start] === "(") {
+    const close = closingDelimiter(tokens, start)
+    return terminators.has(tokens[close + 1]!) && isUndefinedValue(tokens, start + 1, new Set([")"]))
+  }
   if (tokens[start] !== "undefined") return false
   if (terminators.has(tokens[start + 1]!)) return true
   if (!["as", "satisfies"].includes(tokens[start + 1]!)) return false
@@ -296,7 +300,11 @@ function isShadowedAt(tokens: string[], index: number, name: string, bindings: R
     const previous = tokens[open - 1]
     if (["if", "while", "for", "switch", "catch", "with", "function"].includes(previous!)) continue
     const close = closes.get(open)
-    const body = close === undefined ? undefined : close + 1
+    let body = close === undefined ? undefined : close + 1
+    if (body !== undefined && tokens[body] === ":") {
+      body++
+      while (body < tokens.length && !["{", ";", "="].includes(tokens[body]!)) body = (closes.get(body) ?? body) + 1
+    }
     if (close === undefined || tokens[body!] !== "{") continue
     if (!parameterListHasName(tokens, open + 1, close, name, closes)) continue
     const end = closes.get(body!) ?? body!
