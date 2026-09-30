@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from "vit
 import { defineAgent } from "../src/agent.ts"
 import { installConsoleAgentDefinitions } from "../src/console/runtime/server/agents.ts"
 import { console as consoleRuntime } from "../src/console/server.ts"
-import { createConsoleD1Invocations, getConsoleUsageIndex, installConsoleInvocations } from "../src/console/runtime/server/invocations.ts"
+import { createConsoleD1Invocations, getConsoleInvocations, getConsoleUsageIndex, installConsoleInvocations } from "../src/console/runtime/server/invocations.ts"
 
 import usageHandler from "../src/console/runtime/server/usage.get.ts"
 
@@ -213,6 +213,63 @@ describe("Console D1 journal", () => {
     const calls = env.mock.calls.length
     await request()
     expect(env).toHaveBeenCalledTimes(calls)
+  })
+
+  it.each(["update", "delete"])("keeps newer cached D1 usage when an older response finishes after an %s", { timeout: 30_000 }, async (change) => {
+    installConsoleInvocations(`/console-d1-usage-order-${change}`, undefined, undefined, undefined, {
+      binding: "DB", env: () => ({ DB: database }),
+    })
+    const invocations = getConsoleInvocations()
+    const index = getConsoleUsageIndex(invocations)
+    if (!index) throw new Error("Expected a D1 usage index.")
+    const journalDatabase = consoleRuntime.resolve({ memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }).invocations
+    if (journalDatabase.driver !== "d1") throw new Error("Expected the D1 Console database.")
+    const { db, schema } = journalDatabase
+    const now = new Date().toISOString()
+    const observation = (totalTokens: number) => ({
+      name: "agent.invocation.finish", type: "lifecycle" as const, sequence: 1, timestamp: now,
+      attributes: { "usage.record": { usage: { totalTokens } } },
+    })
+    const record = {
+      id: `usage-order-${change}`, agentName: `usage-order-${change}`, traceId: `usage-order-${change}`,
+      status: "completed" as const, createdAt: now, updatedAt: now, completedAt: now,
+      observations: [observation(5)],
+    }
+    await db.insert(schema.invocations).values({ id: record.id, status: record.status, agentName: record.agentName, search: "", summary: record, updatedAt: now, record }).run()
+    const request = () => usageHandler({ method: "GET", req: { url: `http://localhost/api/_vitehub/console/usage?agent=${record.agentName}` } })
+    let release: (() => void) | undefined
+    const ready = new Promise<void>(resolve => { release = resolve })
+    const query = index.query.bind(index)
+    const spy = vi.spyOn(index, "query")
+    let capture: (() => void) | undefined
+    const captured = new Promise<void>(resolve => { capture = resolve })
+    spy.mockImplementationOnce(async options => {
+      const result = await query(options)
+      capture?.()
+      await ready
+      return result
+    })
+    const older = request()
+    try {
+      await captured
+      if (change === "delete") {
+        await db.delete(schema.invocations).where(eq(schema.invocations.id, record.id)).run()
+      } else {
+        const updated = { ...record, observations: [observation(9)] }
+        await db.update(schema.invocations).set({ record: updated, updatedAt: new Date().toISOString() }).where(eq(schema.invocations.id, record.id)).run()
+      }
+      const newer = await request()
+      expect(newer).toMatchObject({ totals: { invocations: change === "delete" ? 0 : 1, totalTokens: change === "delete" ? 0 : 9 } })
+      release?.()
+      expect(await older).toMatchObject({ totals: { invocations: 1, totalTokens: 5 } })
+      expect(await request()).toEqual(newer)
+      expect(spy).toHaveBeenCalledTimes(2)
+    } finally {
+      release?.()
+      await older
+      spy.mockRestore()
+      await db.delete(schema.invocations).where(eq(schema.invocations.id, record.id)).run()
+    }
   })
 
   it("reports a missing D1 binding", async () => {

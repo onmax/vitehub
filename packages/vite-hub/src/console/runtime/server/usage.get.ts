@@ -12,6 +12,8 @@ const caches = new WeakMap<
   Map<string, { expiresAt: number; value: Record<string, unknown> }>
 >();
 
+const requests = new WeakMap<AgentInvocations, Map<string, symbol>>();
+
 async function cached(
   invocations: AgentInvocations,
   key: string,
@@ -26,9 +28,19 @@ async function cached(
   const current = cache.get(key);
   if (current && current.expiresAt > now) return current.value;
   // Cache completed responses only. Worker requests cannot share pending D1 I/O.
-  const value = await resolve();
-  cache.set(key, { expiresAt: Date.now() + 5_000, value });
-  return value;
+  const active = requests.get(invocations) ?? new Map<string, symbol>();
+  requests.set(invocations, active);
+  const token = Symbol();
+  active.set(key, token);
+  try {
+    const value = await resolve();
+    if (active.get(key) === token) {
+      cache.set(key, { expiresAt: Date.now() + 5_000, value });
+    }
+    return value;
+  } finally {
+    if (active.get(key) === token) active.delete(key);
+  }
 }
 
 const usageHandler = async (event: ConsoleRequestEvent): Promise<Record<string, unknown>> => {
