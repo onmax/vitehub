@@ -855,3 +855,15 @@ it("keeps read-only aliases of opaque call results from invalidating Channel opt
   const source = `${imports} const options = { pullRequest: false }; const getOptions = () => options; const alias = getOptions(); const enabled = alias.pullRequest; export default defineAgent({ channels: { custom: github(options) } })`
   expect((await discover(source))?.workspace).toBeUndefined()
 })
+
+it.each([
+  'getOptions().enable()',
+  'getOptions()["enable"]()',
+  'const alias = getOptions(); alias.enable()',
+])("rejects mutating method calls through opaque results: %s", async mutation => {
+  const setup = `${imports} const options = { pullRequest: false, enable() { this.pullRequest = true } }; const getOptions = () => options; ${mutation};`
+  await expect(discover(`${setup} export default defineAgent({ channels: { custom: github(options) } })`)).rejects.toThrow(/opaque Channel/)
+  await expect(discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": `${setup} export default github(options)`,
+  })).rejects.toThrow(/opaque Channel/)
+})

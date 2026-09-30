@@ -876,7 +876,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (callNesting === 0) {
       const memberEnd = memberCallEnd(close - 1, call)
       const update = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
-      if (memberEnd > close && (assignmentOperator(memberEnd) || update)) {
+      if (memberEnd > close && (assignmentOperator(memberEnd) || update || tokens[memberEnd] === "(")) {
         invalidateCapturedBindings()
       }
     }
