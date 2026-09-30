@@ -46,7 +46,7 @@ describe("KV Cloudflare provision step", () => {
     await expect(actions[0]!.apply()).resolves.toEqual({ ids: { cloudflare: { kv: { default: "ns-app" } } } })
     expect(requests.every(request => request.method === "GET")).toBe(true)
     expect(requests[0]!.url.pathname).toBe("/client/v4/accounts/acc/storage/kv/namespaces")
-    expect(requests[0]!.url.searchParams.get("per_page")).toBe("1000")
+    expect(requests[0]!.url.searchParams.get("per_page")).toBe("100")
   })
 
   it("creates a missing namespace and records the id for every store that shares it", async () => {
@@ -71,7 +71,7 @@ describe("KV Cloudflare provision step", () => {
   })
 
   it("pages through the namespace list", async () => {
-    const firstPage = Array.from({ length: 1000 }, (_, index) => ({ id: `ns-${index}`, title: `title-${index}` }))
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: `ns-${index}`, title: `title-${index}` }))
     const { context, requests } = createContext(url => jsonResponse({
       success: true,
       result: url.searchParams.get("page") === "1" ? firstPage : [{ id: "ns-late", title: "late" }],
@@ -84,10 +84,24 @@ describe("KV Cloudflare provision step", () => {
     await expect(actions[0]!.apply()).resolves.toEqual({ ids: { cloudflare: { kv: { default: "ns-late" } } } })
   })
 
+  it("follows pagination metadata after a short non-final page", async () => {
+    const { context, requests } = createContext(url => {
+      const page = url.searchParams.get("page")
+      return page === "1"
+        ? jsonResponse({ success: true, result: [{ id: "ns-first", title: "first" }], result_info: { count: 1, page: 1, per_page: 100, total_count: 101 } })
+        : jsonResponse({ success: true, result: [{ id: "ns-late", title: "late" }], result_info: { count: 1, page: 2, per_page: 100, total_count: 101 } })
+    })
+
+    const actions = await createKVCloudflareProvisionStep(() => namedStore("late")).plan(context)
+
+    expect(requests.map(request => request.url.searchParams.get("page"))).toEqual(["1", "2"])
+    expect(actions[0]!.exists).toBe(true)
+  })
+
   it("reads the id back when another run created the namespace first", async () => {
     let listCalls = 0
     const { context } = createContext((_url, init) => {
-      if (init?.method === "POST") return jsonResponse({ success: false, errors: [{ code: 10014, message: "exists" }] }, 400)
+      if (init?.method === "POST") return jsonResponse({ success: false, errors: [{ message: "exists" }] }, 400)
       listCalls++
       return jsonResponse({ success: true, result: listCalls === 1 ? [] : [{ id: "ns-race", title: "app-cache" }] })
     })
@@ -105,6 +119,16 @@ describe("KV Cloudflare provision step", () => {
     const actions = await createKVCloudflareProvisionStep(() => namedStore("app-cache")).plan(context)
 
     await expect(actions[0]!.apply()).rejects.toMatchObject({ name: "ProvisionRequestError", status: 403 })
+  })
+
+  it("rethrows a duplicate-looking 400 when the namespace is still absent", async () => {
+    const { context } = createContext((_url, init) => init?.method === "POST"
+      ? jsonResponse({ success: false, errors: [{ message: "invalid title" }] }, 400)
+      : jsonResponse({ success: true, result: [] }))
+
+    const actions = await createKVCloudflareProvisionStep(() => namedStore("app-cache")).plan(context)
+
+    await expect(actions[0]!.apply()).rejects.toMatchObject({ name: "ProvisionRequestError", status: 400 })
   })
 
   it("skips without credentials and never calls the API", async () => {

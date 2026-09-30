@@ -16,7 +16,7 @@ interface CloudflareKVNamespace {
   title?: string
 }
 
-const CLOUDFLARE_KV_NAMESPACE_LIST_PER_PAGE = 1000
+const CLOUDFLARE_KV_NAMESPACE_LIST_PER_PAGE = 100
 // Cloudflare rejects a duplicate namespace title with this error code.
 const CLOUDFLARE_KV_DUPLICATE_TITLE_CODE = 10014
 
@@ -42,6 +42,17 @@ async function listNamespaceIds(request: CloudflareProvisionRequest): Promise<Ma
     for (const namespace of namespaces) {
       if (namespace.id && namespace.title && !ids.has(namespace.title)) ids.set(namespace.title, namespace.id)
     }
+    const resultInfo = listed.result_info
+    if (resultInfo?.total_pages !== undefined) {
+      if (page >= resultInfo.total_pages) return ids
+      continue
+    }
+    if (resultInfo?.total_count !== undefined) {
+      const currentPage = resultInfo.page ?? page
+      const pageSize = resultInfo.per_page ?? CLOUDFLARE_KV_NAMESPACE_LIST_PER_PAGE
+      if (currentPage * pageSize < resultInfo.total_count) continue
+      return ids
+    }
     if (namespaces.length < CLOUDFLARE_KV_NAMESPACE_LIST_PER_PAGE) return ids
   }
 }
@@ -54,7 +65,7 @@ async function createNamespace(request: CloudflareProvisionRequest, title: strin
   catch (error) {
     // Another run created the namespace after this plan listed it.
     const duplicate = error instanceof ProvisionRequestError
-      && (error.status === 409 || error.codes.includes(CLOUDFLARE_KV_DUPLICATE_TITLE_CODE))
+      && (error.status === 400 || error.status === 409 || error.codes.includes(CLOUDFLARE_KV_DUPLICATE_TITLE_CODE))
     if (!duplicate) throw error
     const id = (await listNamespaceIds(request)).get(title)
     if (!id) throw error
