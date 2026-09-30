@@ -78,6 +78,43 @@ afterEach(async () => {
 })
 
 describe("callMcpTool", () => {
+  it.each(["resolution", "discovery", "execution", "result"])("returns error tuples for hostile thrown values during %s", async (stage) => {
+    const proxy = Proxy.revocable({}, {})
+    proxy.revoke()
+    const hostileValues = [proxy.proxy, { [Symbol.toPrimitive]() { throw new Error("coercion failed") } }]
+    for (const thrown of hostileValues) {
+      const fail = () => { throw thrown }
+      const client = {
+        close: vi.fn(async () => undefined),
+        tools: async () => {
+          if (stage === "discovery") fail()
+          return {
+            lookup: {
+              execute: async () => {
+                if (stage === "execution") fail()
+                return { get content() { return fail() } }
+              },
+            },
+          }
+        },
+      }
+      const [error, value] = await callMcpTool(() => stage === "resolution" ? fail() : client, "lookup")
+      expect(value).toBeNull()
+      expect(error).toBeInstanceOf(Error)
+      expect(error?.message).toBe("[vitehub] MCP tool call failed.")
+      expect(error?.cause).toBe(thrown)
+      expect(client.close).toHaveBeenCalledTimes(stage === "resolution" ? 0 : 1)
+    }
+  })
+
+  it("preserves Error instances and converts ordinary thrown values", async () => {
+    const original = new Error("original")
+    await expect(callMcpTool(() => { throw original }, "lookup")).resolves.toEqual([original, null])
+    const [error, value] = await callMcpTool(() => { throw "plain failure" }, "lookup")
+    expect(value).toBeNull()
+    expect(error).toMatchObject({ message: "plain failure", cause: "plain failure" })
+  })
+
   it.each(["json", "sse"] as const)("calls a Streamable HTTP tool that answers with %s", async (response) => {
     const thread = { id: "thread-1", title: "Forecast export" }
     const { calls, url } = await startMcpServer(response, { content: [{ text: JSON.stringify({ thread }), type: "text" }] })

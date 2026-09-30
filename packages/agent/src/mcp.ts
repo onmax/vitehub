@@ -32,6 +32,19 @@ export interface CallMcpToolOptions {
 
 const invalidServerMessage = "[vitehub] callMcpTool() requires an MCP client, an MCP client config, or a function that returns one."
 
+function normalizeMcpCallError(error: unknown): Error {
+  try {
+    if (error instanceof Error) return error
+  }
+  catch {}
+  let message = "[vitehub] MCP tool call failed."
+  try {
+    message = String(error)
+  }
+  catch {}
+  return new Error(message, { cause: error })
+}
+
 function parseJsonText(text: string): unknown {
   try {
     return JSON.parse(text)
@@ -141,7 +154,7 @@ export async function callMcpTool(
     return [null, toolResultValue(name, result)]
   }
   catch (error) {
-    return [error instanceof Error ? error : new Error(String(error), { cause: error }), null]
+    return [normalizeMcpCallError(error), null]
   }
   finally {
     // A close failure must not replace the tool result or the original error.
