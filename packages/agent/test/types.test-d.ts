@@ -602,6 +602,124 @@ describe("agent public types", () => {
     expectTypeOf(runAgentInline(nullableLayer, runtimeContext, {})).toEqualTypeOf<typeof nullableDriverResult>()
   })
 
+  it("replaces Driver schema output across direct, preset, and configured layers", () => {
+    interface ParentOutput { parent: string }
+    interface ChildOutput { child: number }
+    interface InheritedOutput { inherited: boolean }
+    interface ReplacedOutput { replaced: string }
+    function schemaFor<TOutput, TInput = TOutput>(): StandardSchemaV1<TInput, TOutput> {
+      return { "~standard": { validate: () => ({ value: {} as TOutput }), vendor: "test", version: 1 } }
+    }
+    const parent = defineAgent({
+      data: schemaFor<{ count: number }, { count: string }>(),
+      driver: { output: { schema: schemaFor<ParentOutput>() }, run: () => "{}" },
+      intercept: (): InheritedOutput => ({ inherited: true }),
+      runtime: false,
+    })
+    const workspaceParent = defineAgent({ extends: parent, workspace: {} })
+    const nativeWorkspaceParent = defineAgent({
+      driver: { output: { schema: schemaFor<ParentOutput>() }, run: () => "{}" },
+      intercept: (): InheritedOutput => ({ inherited: true }),
+      runtime: false,
+      workspace: {},
+    })
+    const configured = defineAgent({ options: { label: "base" }, configure: () => parent })
+    const configuredWorkspace = defineAgent({ options: { label: "base" }, configure: () => nativeWorkspaceParent })
+    const driver = { output: { schema: schemaFor<ChildOutput, string>() } }
+    const intercept = async (): Promise<ReplacedOutput> => ({ replaced: "child" })
+    const direct = defineAgent({ extends: parent, driver })
+    const preset = defineAgent({ preset: "base", presets: { base: parent, other: nativeWorkspaceParent }, driver })
+    const directWorkspace = defineAgent({ extends: workspaceParent, driver })
+    const presetWorkspace = defineAgent({ preset: "base", presets: { base: nativeWorkspaceParent }, driver })
+    const promotedWorkspace = defineAgent({ preset: "base", presets: { base: parent }, driver, workspace: {} })
+    const configuredDirect = defineAgent({ extends: configured, options: { label: "child" }, driver })
+    const configuredPreset = defineAgent({ preset: "base", presets: { base: configured }, driver })
+    const configuredWorkspaceDirect = defineAgent({ extends: configuredWorkspace, driver })
+    const configuredWorkspacePreset = defineAgent({ preset: "base", presets: { base: configuredWorkspace }, driver })
+    const configuredPromoted = defineAgent({ extends: configured, driver, workspace: {} })
+    const runtime = {} as AgentRuntimeContext
+    expectTypeOf(runAgentInline(direct, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | InheritedOutput>>()
+    expectTypeOf(runAgentInline(preset, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | InheritedOutput>>()
+    expectTypeOf(runAgentInline(directWorkspace, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | InheritedOutput>>()
+    void runAgentInline(presetWorkspace, runtime, {})
+    void runAgentInline(promotedWorkspace, runtime, {})
+    expectTypeOf(runAgentInline(configuredDirect, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | InheritedOutput>>()
+    expectTypeOf(runAgentInline(configuredPreset, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | InheritedOutput>>()
+    expectTypeOf(runAgentInline(configuredWorkspaceDirect, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | InheritedOutput>>()
+    expectTypeOf(runAgentInline(configuredWorkspacePreset, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | InheritedOutput>>()
+    expectTypeOf(runAgentInline(configuredPromoted, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | InheritedOutput>>()
+
+    const replacedDirect = defineAgent({ extends: parent, driver, intercept })
+    const replacedPreset = defineAgent({ preset: "base", presets: { base: parent }, driver, intercept })
+    const replacedWorkspace = defineAgent({ extends: nativeWorkspaceParent, driver, intercept })
+    const replacedWorkspacePreset = defineAgent({ preset: "base", presets: { base: nativeWorkspaceParent }, driver, intercept })
+    const replacedConfigured = defineAgent({ extends: configured, driver, intercept })
+    const replacedConfiguredPreset = defineAgent({ preset: "base", presets: { base: configured }, driver, intercept })
+    const replacedConfiguredWorkspace = defineAgent({ extends: configuredWorkspace, driver, intercept })
+    const replacedConfiguredWorkspacePreset = defineAgent({ preset: "base", presets: { base: configuredWorkspace }, driver, intercept })
+    expectTypeOf(runAgentInline(replacedDirect, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ReplacedOutput>>()
+    expectTypeOf(runAgentInline(replacedPreset, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ReplacedOutput>>()
+    expectTypeOf(runAgentInline(replacedWorkspace, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ReplacedOutput>>()
+    expectTypeOf(runAgentInline(replacedWorkspacePreset, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ReplacedOutput>>()
+    expectTypeOf(runAgentInline(replacedConfigured, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ReplacedOutput>>()
+    expectTypeOf(runAgentInline(replacedConfiguredPreset, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ReplacedOutput>>()
+    expectTypeOf(runAgentInline(replacedConfiguredWorkspace, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ReplacedOutput>>()
+    expectTypeOf(runAgentInline(replacedConfiguredWorkspacePreset, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ReplacedOutput>>()
+    const fallthrough = defineAgent({ extends: direct, intercept: async () => undefined })
+    expectTypeOf(runAgentInline(fallthrough, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput>>()
+    const runResult = runAgent(direct, {})
+    expectTypeOf(runAgent(preset, {})).toEqualTypeOf<typeof runResult>()
+    expectTypeOf(runAgent(configuredDirect, {})).toEqualTypeOf<typeof runResult>()
+    expectTypeOf(runAgent(configuredPreset, {})).toEqualTypeOf<typeof runResult>()
+    void runAgent(direct, { data: { count: "1" } })
+    void runAgent(configuredPreset, { data: { count: "1" } })
+    // @ts-expect-error Replacing Driver output preserves the Agent data schema input.
+    void runAgent(configuredDirect, { data: { count: 1 } })
+    const dataLayer = defineAgent({ extends: configuredDirect, intercept: ({ data }) => {
+      expectTypeOf(data).toEqualTypeOf<{ count: number }>()
+      return undefined
+    } })
+    expectTypeOf(runAgentInline(dataLayer, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput>>()
+  })
+
+  it("preserves overlapping intercepted output and schema output through chained layers", () => {
+    interface ParentOutput { value: string }
+    interface ChildOutput { child: number }
+    function schemaFor<TOutput>(): StandardSchemaV1<unknown, TOutput> {
+      return { "~standard": { validate: () => ({ value: {} as TOutput }), vendor: "test", version: 1 } }
+    }
+    const parent = defineAgent({
+      driver: { output: { schema: schemaFor<ParentOutput>() }, run: () => "{}" },
+      intercept: async (): Promise<ParentOutput | undefined> => ({ value: "intercepted" }),
+      runtime: false,
+    })
+    const configured = defineAgent({ options: {}, configure: () => parent })
+    const driver = { output: { schema: schemaFor<ChildOutput | undefined>() } }
+    const direct = defineAgent({ extends: parent, driver })
+    const preset = defineAgent({ preset: "base", presets: { base: configured }, driver })
+    const chained = defineAgent({ extends: preset, driver: { output: { schema: schemaFor<boolean>() } }, workspace: {} })
+    const runtime = {} as AgentRuntimeContext
+    expectTypeOf(runAgentInline(direct, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ParentOutput | undefined>>()
+    expectTypeOf(runAgentInline(preset, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ParentOutput | undefined>>()
+    expectTypeOf(runAgentInline(chained, runtime, {})).toMatchTypeOf<Promise<Response | boolean | ParentOutput>>()
+    const settingsOnly = defineAgent({ extends: direct, driver: { run: () => "{}" } })
+    expectTypeOf(runAgentInline(settingsOnly, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ParentOutput | undefined>>()
+    const noIntercept = defineAgent({ driver: { output: { schema: schemaFor<ParentOutput>() }, run: () => "{}" } })
+    const replaced = defineAgent({ extends: noIntercept, driver })
+    expectTypeOf(runAgentInline(replaced, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | undefined>>()
+    const removed = defineAgent({ extends: preset, intercept: () => undefined })
+    expectTypeOf(runAgentInline(removed, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | undefined>>()
+    const untypedParent = defineAgent({ driver: { run: () => "{}" }, intercept: (): ParentOutput => ({ value: "intercepted" }) })
+    const typedChild = defineAgent({ extends: untypedParent, driver })
+    expectTypeOf(runAgentInline(typedChild, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | ParentOutput | undefined>>()
+    const subtypeParent = defineAgent({
+      driver: { output: { schema: schemaFor<ParentOutput>() }, run: () => "{}" },
+      intercept: (): ParentOutput & { matched: true } => ({ matched: true, value: "intercepted" }),
+    })
+    const subtypeChild = defineAgent({ extends: subtypeParent, driver })
+    expectTypeOf(runAgentInline(subtypeChild, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | (ParentOutput & { matched: true }) | undefined>>()
+  })
+
   it("scopes output correction attempts to Model Drivers", () => {
     const schema = {
       "~standard": {

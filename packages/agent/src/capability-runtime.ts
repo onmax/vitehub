@@ -181,7 +181,7 @@ export interface ResolvedAgentCapabilities {
   driverContributions: AgentDriverContribution[]
   hasCloseCallbacks: boolean
   input: AgentRunInput
-  inputDataChanged: boolean
+  inputDataChanged: () => boolean
   messages: Message[]
   setInputDataBaseline: (input: AgentRunInput) => void
   prepare?: (input: AgentRunInput) => Promise<ResolvedAgentCapabilities>
@@ -504,7 +504,13 @@ function snapshotCapabilityData(value: unknown, seen = new WeakMap<object, unkno
   const existing = seen.get(value)
   if (existing) return existing
   if (value instanceof Date) return new Date(value.getTime())
-  if (value instanceof RegExp) return new RegExp(value.source, value.flags)
+  if (value instanceof RegExp) {
+    const snapshot = new RegExp(value.source, value.flags)
+    snapshot.lastIndex = value.lastIndex
+    return snapshot
+  }
+  if (value instanceof URL) return new URL(value.href)
+  if (value instanceof URLSearchParams) return new URLSearchParams(value)
   if (value instanceof Map) {
     const snapshot = new Map<unknown, unknown>()
     seen.set(value, snapshot)
@@ -517,7 +523,9 @@ function snapshotCapabilityData(value: unknown, seen = new WeakMap<object, unkno
     for (const entry of value) snapshot.add(snapshotCapabilityData(entry, seen))
     return snapshot
   }
-  const snapshot = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value))
+  const prototype = Object.getPrototypeOf(value)
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return value
+  const snapshot = Array.isArray(value) ? [] : Object.create(prototype)
   seen.set(value, snapshot)
   for (const key of Reflect.ownKeys(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
@@ -534,8 +542,10 @@ function capabilityDataEqual(left: unknown, right: unknown, seen = new WeakMap<o
   const matched = seen.get(left)
   if (matched === right) return true
   seen.set(left, right)
-  if (left instanceof Date || right instanceof Date) return left instanceof Date && right instanceof Date && left.getTime() === right.getTime()
-  if (left instanceof RegExp || right instanceof RegExp) return left instanceof RegExp && right instanceof RegExp && left.source === right.source && left.flags === right.flags
+  if (left instanceof Date || right instanceof Date) return left instanceof Date && right instanceof Date && Object.is(left.getTime(), right.getTime())
+  if (left instanceof RegExp || right instanceof RegExp) return left instanceof RegExp && right instanceof RegExp && left.source === right.source && left.flags === right.flags && left.lastIndex === right.lastIndex
+  if (left instanceof URL || right instanceof URL) return left instanceof URL && right instanceof URL && left.href === right.href
+  if (left instanceof URLSearchParams || right instanceof URLSearchParams) return left instanceof URLSearchParams && right instanceof URLSearchParams && left.toString() === right.toString()
   if (left instanceof Map || right instanceof Map) {
     if (!(left instanceof Map) || !(right instanceof Map) || left.size !== right.size) return false
     const leftEntries = [...left.entries()]
@@ -549,10 +559,9 @@ function capabilityDataEqual(left: unknown, right: unknown, seen = new WeakMap<o
   }
   const leftPrototype = Object.getPrototypeOf(left)
   const rightPrototype = Object.getPrototypeOf(right)
-  const isSupportedRecord = (prototype: object | null): boolean => prototype === Object.prototype || prototype === null
-  if (Array.isArray(left) !== Array.isArray(right)
-    || leftPrototype !== rightPrototype
-    || (!Array.isArray(left) && !isSupportedRecord(leftPrototype))) return false
+  const isSupportedRecord = (prototype: unknown): boolean => prototype === Object.prototype || prototype === null
+  if (Array.isArray(left) !== Array.isArray(right) || leftPrototype !== rightPrototype) return false
+  if (!Array.isArray(left) && !isSupportedRecord(leftPrototype)) return Object.is(left, right)
   const leftKeys = Reflect.ownKeys(left)
   const rightKeys = Reflect.ownKeys(right)
   if (leftKeys.length !== rightKeys.length || leftKeys.some((key, index) => key !== rightKeys[index])) return false
@@ -1602,7 +1611,7 @@ export async function resolveAgentCapabilities<
       driverContributions,
       hasCloseCallbacks: Boolean(capabilityScope),
       input: currentInput,
-      inputDataChanged: inputDataChanged(),
+      inputDataChanged,
       messages,
       setInputDataBaseline(input) {
         currentInput = input

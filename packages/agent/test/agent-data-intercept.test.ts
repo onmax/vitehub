@@ -99,6 +99,46 @@ describe("Agent data and intercept", () => {
     expect(seen).toEqual([{ count: 2 }, { count: 2 }, { count: 2 }])
   })
 
+  it.each(["replace", "clear", "mutate"])("revalidates data changed by an input hook through %s", async (change) => {
+    const run = vi.fn(() => "ok")
+    const close = vi.fn()
+    const agent = defineAgent({
+      capabilities: [defineCapability({ id: "hook-data-validation", close })],
+      data: emailSchema,
+      driver: { run },
+      hooks: { "agent:input": ({ input }) => {
+        if (change === "clear") input.data = undefined
+        else if (change === "replace") Reflect.set(input, "data", { from: "invalid" })
+        else if (input.data) Reflect.deleteProperty(input.data, "subject")
+      } },
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { from: "friend@example.com", subject: "Dinner" } })
+
+    expect(error?.message).toContain("Invalid Agent input data")
+    expect(output).toBeNull()
+    expect(run).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it("does not reparse transformed data after an unchanged input hook without interception", async () => {
+    const transform = vi.fn(Number)
+    const run = vi.fn(({ input }: { input: { data?: unknown } }) => input.data)
+    const agent = defineAgent({
+      data: v.object({ count: v.pipe(v.string(), v.transform(transform)) }),
+      driver: { run },
+      hooks: { "agent:input": () => {} },
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { count: "2" } })
+
+    expect(error).toBeNull()
+    expect(output).toEqual({ count: 2 })
+    expect(transform).toHaveBeenCalledOnce()
+  })
+
   it("validates data replaced by a Capability before hooks and intercept", async () => {
     const inputHook = vi.fn()
     const intercept = vi.fn(() => undefined)
@@ -192,6 +232,44 @@ describe("Agent data and intercept", () => {
     expect(error?.message).toContain("Invalid Agent input data")
     expect(output).toBeNull()
     expect(run).not.toHaveBeenCalled()
+  })
+
+  it("does not reparse unchanged internal-slot data", async () => {
+    const run = vi.fn(({ input }: { input: { data?: unknown } }) => input.data)
+    const agent = defineAgent({
+      data: v.object({ url: v.pipe(v.string(), v.transform(value => new URL(value))) }),
+      driver: { run },
+      intercept: () => undefined,
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { url: "https://example.com/original" } })
+
+    expect(error).toBeNull()
+    expect(output).toEqual({ url: new URL("https://example.com/original") })
+    expect(run).toHaveBeenCalledOnce()
+  })
+
+  it("does not reparse unchanged custom class data", async () => {
+    class Count {
+      constructor(readonly value: number) {}
+    }
+    const transform = vi.fn((value: string) => new Count(Number(value)))
+    const run = vi.fn(({ input }: { input: { data?: unknown } }) => input.data)
+    const agent = defineAgent({
+      data: v.pipe(v.string(), v.transform(transform)),
+      driver: { run },
+      hooks: { "agent:input": () => {} },
+      intercept: () => undefined,
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: "2" })
+
+    expect(error).toBeNull()
+    expect(output).toEqual(new Count(2))
+    expect(transform).toHaveBeenCalledOnce()
+    expect(run).toHaveBeenCalledOnce()
   })
 
   it("validates data when a Capability replaces the input wrapper in place", async () => {
