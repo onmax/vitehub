@@ -28,6 +28,9 @@ export function decodeColocatedAgentSkills(
 export function withColocatedAgentSkills<Agent>(agent: Agent, skills: ColocatedAgentSkills | undefined): Agent {
   if (!agent || !hasRuntimeType(agent, "object")) return agent
   if (!skills || !Object.keys(skills).length) {
+    // Keep inherited Skills getters installed by Agent layers. Only clear a
+    // concrete decoration owned by this definition.
+    if (Object.getOwnPropertyDescriptor(agent, colocatedAgentSkillsSymbol)?.get) return agent
     // SAFETY: Runtime object narrowing above guarantees a symbol-keyed property target.
     delete (agent as Record<symbol, unknown>)[colocatedAgentSkillsSymbol]
     return agent

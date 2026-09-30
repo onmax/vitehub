@@ -3,10 +3,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { transform } from "esbuild"
-import { expect, it } from "vitest"
+import { expect, it, vi } from "vitest"
 
 import { getAgentLayerOptions, inheritAgentLayerOptions } from "../src/agent-layers.ts"
-import { defineAgent } from "../src/index.ts"
+import { defineAgent, runAgent } from "../src/index.ts"
 import { colocatedAgentSkillsSymbol } from "../src/internal/colocated-agent-skills.ts"
 import { hubAgent } from "../src/vite.ts"
 import { workspaceAgentWithSourceRoot, workspaceDefinitionFromOptions } from "../src/workspace-agent.ts"
@@ -104,6 +104,17 @@ it("keeps generated colocated skills available to derived definitions", async ()
     expect(Reflect.get(child, colocatedAgentSkillsSymbol)).toEqual(
       Object.getOwnPropertyDescriptor(discovered, colocatedAgentSkillsSymbol)?.value,
     )
+    const discoveredChild = decorate(child, "/child", undefined, undefined)
+    expect(Reflect.get(discoveredChild, colocatedAgentSkillsSymbol)).toEqual(Reflect.get(child, colocatedAgentSkillsSymbol))
+
+    const seen: unknown[] = []
+    const runnable = defineAgent({ driver: { run: ({ context }) => { seen.push(context.get("agent.colocatedSkills")); return { text: "ok" } } } })
+    const inheritedOnly = defineAgent({ extends: runnable })
+    decorate(runnable, "/parent", undefined, encodedSkills)
+    const discoveredInheritedOnly = decorate(inheritedOnly, "/child", undefined, undefined)
+    await runAgent(discoveredInheritedOnly as typeof inheritedOnly, { runtime: "unknown", memo: vi.fn(), waitUntil: vi.fn() }, { prompt: "hello" })
+    expect(seen).toEqual([Reflect.get(runnable, colocatedAgentSkillsSymbol)])
+    expect(seen[0]).toMatchObject({ review: { content: new TextEncoder().encode("Review.") } })
     const cleared = decorate(base, "/discovered", undefined, undefined)
     expect(Object.getOwnPropertyDescriptor(cleared, colocatedAgentSkillsSymbol)).toBeUndefined()
     expect(Object.getOwnPropertyDescriptor(base, colocatedAgentSkillsSymbol)).toBeUndefined()

@@ -151,12 +151,14 @@ export function resolveAgentLayerOptions(input: unknown, ownsWorkspace: (setting
       : discoveryDefaults
     const resolved = merge(applicableDefaults, settings, "")
     if (!record(resolved)) throw new TypeError("[vitehub] Invalid Agent layer options.")
-    inheritColocatedSkills(asMetadataTarget(parent), asMetadataTarget(resolved))
     // SAFETY: Resolved settings merge a registered definition with its overrides.
     rememberLayerMetadata(resolved, { options: resolved as AgentSettings, configured: { ...configured, options, overrides: inheritedOverrides }, defaults: inherited.defaults, parent })
     // Preserve application-owned decorations from the configure result on every reconfiguration.
     // SAFETY: resolved is the freshly merged Agent definition settings object.
     copyDefinitionDecorations(asMetadataTarget(definition), asMetadataTarget(resolved))
+    const skills = Object.getOwnPropertyDescriptor(definition, colocatedSkills)
+    if (skills) Object.defineProperty(resolved, colocatedSkills, skills)
+    else inheritColocatedSkills(asMetadataTarget(parent), asMetadataTarget(resolved))
     return resolved
   }
   const { name: _parentName, ...defaults } = layerMetadata(parent)!.options
@@ -197,7 +199,9 @@ export function rememberAgentLayerOptions<T extends AgentDefinition>(definition:
   const metadataTarget = asMetadataTarget(definition)
   rememberLayerMetadata(metadataTarget, { options: { ...options }, configured: inherited?.configured, defaults: inherited?.defaults })
   copyDefinitionDecorations(asMetadataTarget(source), metadataTarget)
-  if (inherited?.parent) inheritColocatedSkills(asMetadataTarget(inherited.parent), asMetadataTarget(definition))
+  if (inherited?.parent && !Object.prototype.hasOwnProperty.call(definition, colocatedSkills)) {
+    inheritColocatedSkills(asMetadataTarget(inherited.parent), asMetadataTarget(definition))
+  }
   // SAFETY: Metadata stores the private configured layer shape created by this module.
   if (inherited?.configured) rememberConfiguredLayer(definition, inherited.configured as ConfiguredLayer)
   return definition

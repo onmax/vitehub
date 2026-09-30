@@ -117,6 +117,8 @@ describe("Agent definition layers", () => {
     const changelog = defineAgent({ extends: development, description: "changelog" })
     const review = { content: "# Review", materialize: "startup", mount: "", workspacePath: ".agents/skills/review/SKILL.md" }
     withColocatedAgentSkills(base, { "__vitehubAgentSkill:.agents/skills/review/SKILL.md": review } as never)
+    // Empty discovery decoration must preserve the inherited getter.
+    withColocatedAgentSkills(development, undefined)
     const withChangelog = agentWithSkills(changelog, { "customer-changelog": "# Changelog" })
 
     const runtime = { runtime: "unknown" as const, memo: vi.fn(), waitUntil: vi.fn() }

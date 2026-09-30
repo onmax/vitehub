@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { agentWithColocatedInstructions, defineAgent, defineCapability, runAgent } from "../src/index.ts"
+import { agentWithColocatedInstructions, agentWithSkills, defineAgent, defineCapability, runAgent } from "../src/index.ts"
 import { getAgentLayerOptions } from "../src/agent-layers.ts"
 import { colocatedAgentSkillsSymbol, withColocatedAgentSkills } from "../src/internal/colocated-agent-skills.ts"
 import { markWorkspaceAgentDefinitionRegistered, workspaceAgentUsesRegisteredDefinition, workspaceAgentWithSourceRoot } from "../src/workspace-agent.ts"
@@ -172,6 +172,18 @@ it("keeps configured presets extendable after colocated Skills and Workspace dis
   expect(Reflect.get(child, colocatedAgentSkillsSymbol)).toBe(skills)
   expect(preset.options.autoMerge).toBe(false)
   expect(getAgentLayerOptions(preset)?.workspace).not.toHaveProperty("sourceRootDir")
+})
+
+it("keeps Skills returned by a configured preset callback", () => {
+  const preset = defineAgent({ options: { skill: "first" }, configure: options => agentWithSkills(
+    defineAgent({ driver: "codex" }),
+    { [options.skill]: options.skill },
+  ) })
+  const discovered = withColocatedAgentSkills(preset, { inherited: { content: "parent", workspacePath: "SKILL.md" } })
+  const child = defineAgent({ extends: discovered, options: { skill: "second" } })
+  expect(Reflect.get(child, colocatedAgentSkillsSymbol)).toEqual({
+    "__vitehubAgentSkill:.agents/skills/second/SKILL.md": { content: "second", materialize: "startup", mount: "", workspacePath: ".agents/skills/second/SKILL.md" },
+  })
 })
 
 it("keeps plain Agents extendable after colocated Skills discovery", () => {
