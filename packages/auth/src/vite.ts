@@ -54,8 +54,9 @@ export function createAuthNitroConfig(plugin: AuthVitePlugin, options: {
     auth: options.viteAuth,
     ...(options.serverDirs ? { [VITEHUB_SERVER_DIRS]: options.serverDirs } : {}),
   }
-  // The config hook replaces `nitro` on the config it receives.
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vite config hooks can be functions or handler objects; this helper invokes the function form.
   if (plugin.config && typeof plugin.config === "function") {
+    // SAFETY: This config hook does not use its hook context and replaces Nitro config on the supplied UserConfig.
     plugin.config.call({} as never, viteConfig, { command: "build", isPreview: false, isSsrBuild: true, mode: "production" })
   }
   return viteConfig.nitro
@@ -313,6 +314,7 @@ export function hubAuth(options?: AuthModuleOptions, internalOptions: InternalAu
       const hasNitroHandlers = Boolean(authConfig && (authConfig.route !== false || authConfig.access.routes.length > 0))
       if (hasNitroHandlers) {
         // Replace the Nitro config in place. A returned Nitro config would repeat its arrays when Vite merges it.
+        // SAFETY: Nitro extends Vite's config with this optional field; the merger validates its unknown input.
         ;(config as { nitro?: unknown }).nitro = mergeNitroAuthHandler((config as { nitro?: unknown }).nitro, authConfig)
       }
       return {

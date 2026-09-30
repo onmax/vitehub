@@ -125,6 +125,7 @@ export function hubChannels(options: ChannelsVitePluginOptions = {}): ChannelsVi
         const root = resolveViteHubProjectRoot(resolve(config.root || process.cwd()), { projectRoot: options.projectRoot })
         const nitroDefinitions = discoverChannelDefinitions({ rootDir: root, serverDirs })
         // Replace the Nitro config in place. A returned Nitro config would repeat its arrays when Vite merges it.
+        // SAFETY: Nitro extends Vite's config with this optional record; configureNitroChannels produces the replacement.
         ;(config as { nitro?: Record<string, unknown> }).nitro = await configureNitroChannels(config as Record<string, unknown>, root, nitroDefinitions)
         nitroRegistryFile = resolve(root, ".vitehub", "nitro", "channels", "registry.ts")
       }
