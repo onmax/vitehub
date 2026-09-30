@@ -82,6 +82,37 @@ it.each([
 })
 
 it.each([
+  ["{ pullRequest: false }", false],
+  ["{ pullRequest: true }", true],
+  ["{ pullRequest: { workspace: false } }", false],
+  ["{ pullRequest: { workspace: {} } }", true],
+  ['{ kind: "custom", pullRequest: true }', false],
+  ['defineChannel("custom", { pullRequest: true })', false],
+])("applies GitHub ownership to built-in channel options: %s", async (options, ownsWorkspace) => {
+  const source = `${imports} export default defineAgent({ channels: { github: ${options} } })`
+  const definition = await discover(source)
+  expect(definition?.workspace).toBe(ownsWorkspace ? "review" : undefined)
+  const imported = await discover('import options from "../../options.ts"; export default defineAgent({ channels: { github: options } })', {
+    "options.ts": `${imports} export default ${options}`,
+  })
+  expect(imported?.workspace).toBe(ownsWorkspace ? "review" : undefined)
+})
+
+it.each([
+  "<T = unknown>() => T",
+  "string",
+  "{ value: string }",
+])("records Channels after uninitialized typed declarators: %s", async annotation => {
+  const declaration = `let unused: ${annotation}, portal = github({ pullRequest: true });`
+  const local = await discover(`${imports} ${declaration} export default defineAgent({ channels: { github: portal } })`)
+  expect(local?.workspace).toBe("review")
+  const imported = await discover('import { portal } from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })', {
+    "portal.ts": `${imports} export ${declaration}`,
+  })
+  expect(imported?.workspace).toBe("review")
+})
+
+it.each([
   "github({ __proto__: { pullRequest: true } })",
   "github({ pullRequest: { __proto__: { workspace: false } } })",
 ])("rejects prototype-backed Channel options: %s", async channel => {

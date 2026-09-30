@@ -1048,11 +1048,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       && !callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(tokens[index]))
   }
 
-  function channelOwnsWorkspace(channel: number): boolean {
+  function channelOwnsWorkspace(channel: number, channelId?: string): boolean {
     let channelOptions = resolveReference(channel, new Set(), true)
     const moduleImport = moduleImports.get(tokens[channelOptions])
     if (moduleImport && isModuleBinding(channelOptions) && !["(", "<", ".", "[", "?", "!"].includes(tokens[channelOptions + 1])) {
-      return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name)
+      return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId)
     }
     const helper = channelHelper(channelOptions)
     if (helper !== undefined) return channelHelperOwnsWorkspace(helper.call, helper.helper)
@@ -1075,7 +1075,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (opaque) throw opaqueChannelError()
     if (tokens[channelOptions] !== "{" || tokens[channelOptions - 1] === ")") throw opaqueChannelError()
     const capabilities = channelProperties.get("capabilities")
-    return capabilities !== undefined && capabilityOwnsWorkspace(capabilities)
+    if (capabilities !== undefined && capabilityOwnsWorkspace(capabilities)) return true
+    const pullRequest = channelProperties.get("pullRequest")
+    if (channelId !== "github" || channelCall !== undefined || pullRequest === undefined) return false
+    const kind = channelProperties.get("kind")
+    if (kind !== undefined) {
+      const value = resolveReference(kind, new Set(), true)
+      if (/^["'`]/.test(tokens[value] ?? "")) return false
+      throw opaqueChannelError()
+    }
+    return pullRequestOwnsWorkspace(pullRequest)
   }
 
   // Mirrors the Workspace ownership of the first-party Channel helpers:
@@ -1140,21 +1149,21 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return inspectAgentModule(module.source, module.file, new Set([...modules, module.file]))
   }
 
-  function importedChannelOwnsWorkspace(specifier: string, name: string): boolean {
-    return importedModule(specifier).exportedChannelOwnsWorkspace(name)
+  function importedChannelOwnsWorkspace(specifier: string, name: string, channelId?: string): boolean {
+    return importedModule(specifier).exportedChannelOwnsWorkspace(name, channelId)
   }
 
   // Returns undefined when this module does not export the name.
-  function exportOwnsWorkspace(name: string): boolean | undefined {
+  function exportOwnsWorkspace(name: string, channelId?: string): boolean | undefined {
     const reExport = reExports.get(name)
-    if (reExport !== undefined) return importedChannelOwnsWorkspace(reExport.specifier, reExport.name)
+    if (reExport !== undefined) return importedChannelOwnsWorkspace(reExport.specifier, reExport.name, channelId)
     if (opaqueExports.has(name)) throw opaqueChannelError()
     const index = name === "default" ? exported : namedExports.get(name)
-    if (index !== undefined) return channelOwnsWorkspace(index)
+    if (index !== undefined) return channelOwnsWorkspace(index, channelId)
     // `export *` never re-exports the default binding.
     if (name === "default") return
     for (const specifier of starExports) {
-      const owns = importedModule(specifier).exportOwnsWorkspace(name)
+      const owns = importedModule(specifier).exportOwnsWorkspace(name, channelId)
       if (owns !== undefined) return owns
     }
   }
@@ -1179,9 +1188,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           initializer = k + 1
           if (/^[A-Za-z_$][\w$]*$/.test(tokens[name] ?? "")) result.push([tokens[name]!, initializer, name])
         }
-        // A comma separates declarators only after an initializer or a bare
-        // name, and only before a binding. This skips type argument commas.
-        if (token === "," && (initializer !== undefined || k === name + 1)
+        // A comma separates declarators after an initializer or an uninitialized
+        // binding, and only before a binding. This skips type argument commas.
+        if (token === "," && (initializer !== undefined || k === name + 1 || tokens[name + 1] === ":")
           && /^[A-Za-z_$][\w$]*$/.test(tokens[k + 1] ?? "") && ["=", ":", ",", ";"].includes(tokens[k + 2] ?? ";")) {
           name = k + 1
           initializer = undefined
@@ -1243,8 +1252,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (capabilities !== undefined && capabilityOwnsWorkspace(capabilities)) return true
     const channels = options.get("channels")
     if (channels !== undefined) {
-      for (const channel of properties(channels, true).values()) {
-        if (channelOwnsWorkspace(channel)) return true
+      for (const [channelId, channel] of properties(channels, true)) {
+        if (channelOwnsWorkspace(channel, channelId)) return true
       }
     }
     const inherited = options.get("extends")
@@ -1516,8 +1525,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       return tokens.some((token, index) => token === "defineAgent" && ownsWorkspace(index))
     },
     exportOwnsWorkspace,
-    exportedChannelOwnsWorkspace(name: string): boolean {
-      const owns = exportOwnsWorkspace(name)
+    exportedChannelOwnsWorkspace(name: string, channelId?: string): boolean {
+      const owns = exportOwnsWorkspace(name, channelId)
       if (owns === undefined) throw importedChannelError()
       return owns
     },
