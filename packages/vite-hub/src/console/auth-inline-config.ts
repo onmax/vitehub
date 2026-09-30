@@ -21,7 +21,7 @@ export interface InlineConsoleAuthGates {
   orgs: string[]
 }
 
-const githubLogin = /^[a-z\d][a-z\d-]{0,38}$/i
+const githubLogin = /^(?=.{1,39}$)[a-z\d](?:[a-z\d]|-(?=[a-z\d]))*$/i
 
 /** Validate inline Console Auth at build time and at runtime with the same rules. */
 export function resolveInlineConsoleAuthGates(config: InlineConsoleAuth): InlineConsoleAuthGates {

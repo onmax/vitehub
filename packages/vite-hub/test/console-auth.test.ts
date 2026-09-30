@@ -492,7 +492,13 @@ describe("independent Console Auth", () => {
 
       expect(() => createInlineConsoleAuth({ provider: "github", org: [], allowedEmails: ["primary@example.com"], databasePath })).toThrow("GitHub organization login")
       expect(() => resolveConsoleAuthConfig(root, { provider: "github", org: [], allowedEmails: ["primary@example.com"], databasePath })).toThrow("GitHub organization login")
-      expect(() => createInlineConsoleAuth({ provider: "github", org: "../admin", databasePath })).toThrow("GitHub organization login")
+      for (const org of ["../admin", "-acme", "acme-", "acme--team", "a".repeat(40)]) {
+        expect(() => createInlineConsoleAuth({ provider: "github", org, databasePath })).toThrow("GitHub organization login")
+        expect(() => resolveConsoleAuthConfig(root, { provider: "github", org, databasePath })).toThrow("GitHub organization login")
+      }
+      for (const org of ["a", "Acme-Team", "a".repeat(39)]) {
+        expect(() => resolveConsoleAuthConfig(root, { provider: "github", org, databasePath })).not.toThrow()
+      }
       expect(() => createInlineConsoleAuth({ provider: "github", databasePath })).toThrow("allowedEmails, org, or both")
       expect(() => resolveConsoleAuthConfig(root, { provider: "github", org: "acme" })).toThrow("Set databasePath or dataDir")
     }
