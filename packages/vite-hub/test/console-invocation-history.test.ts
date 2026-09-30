@@ -24,7 +24,7 @@ function setup() {
   })
   const waitUntil = vi.fn((_task: Promise<unknown>) => undefined)
   const send = (body: unknown, method: "GET" | "POST" = "POST") => handleConsoleRpcRequest(new Request("http://vitehub.local/_vitehub/rpc/__call", {
-    body: JSON.stringify({ input: { agent: "history-fixture", body, method }, method: consoleRpcMethods.agentInvocations }),
+    body: JSON.stringify({ method: consoleRpcMethods.agentInvocations, input: { agent: "history-fixture", body, method } }),
     headers: { "content-type": "application/json", [consoleRpcHeader]: "1" },
     method: "POST",
   }), { waitUntil })
