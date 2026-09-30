@@ -840,7 +840,24 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
       continue
     }
-    if (tokens[index] !== "of") continue
+    if (!["of", "in"].includes(tokens[index]!)) continue
+    // Member expressions are also assignment targets in `for...in/of`.
+    // Invalidate their local base binding before inspecting Channel options.
+    let member = index - 1
+    if (tokens[member] === "]") {
+      let nesting = 1
+      for (member--; member >= 0 && nesting > 0; member--) {
+        if (tokens[member] === "]") nesting++
+        else if (tokens[member] === "[") nesting--
+      }
+      member--
+    }
+    while (member >= 2 && tokens[member - 1] === ".") member -= 2
+    if (member >= 0 && isIdentifier(tokens[member]) && tokens[member - 1] === "(" && tokens[member - 2] === "for"
+      && declarations.has(tokens[member]!)) {
+      mutatedBindings.add(tokens[member]!)
+      continue
+    }
     if (isIdentifier(tokens[index - 1] ?? "")) {
       const alias = tokens[index - 1]!
       // A binding declared outside the loop is assigned by the `of` target.

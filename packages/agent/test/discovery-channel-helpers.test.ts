@@ -901,6 +901,11 @@ it("rejects predeclared for-of Channel option targets", async () => {
   await expect(discover(source)).rejects.toThrow("opaque Channel")
 })
 
+it.each(["of", "in"])("rejects member-expression for-%s Channel option targets", async operator => {
+  const source = `${imports} let options = { pullRequest: false }; for (options.pullRequest ${operator} { enabled: true }) {} export default defineAgent({ channels: { custom: github(options) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
 it.each<[string, string, Record<string, string>]>([
   ["package re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "@acme/channels"' }],
   ["package star re-export", 'import { portal } from "../../portal.ts"', { "portal.ts": 'export * from "@acme/channels"' }],
