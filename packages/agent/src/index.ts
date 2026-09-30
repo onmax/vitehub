@@ -2641,6 +2641,56 @@ export interface DefineAgent {
     const TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig, Name> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig, Name>[] | undefined,
     TOutput = unknown,
+    const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
+    const TWorkspace extends WorkspaceAgentWorkspaceConfig<Name> = WorkspaceAgentWorkspaceConfig<Name>,
+  >(
+    options: Omit<WorkspaceAgentOptions<
+      TRuntimeConfig,
+      Name,
+      CALL_OPTIONS,
+      TInvokerProfile,
+      AgentCapabilitiesInvocationContextValues<TCapabilities>,
+      AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>,
+      TOutput,
+      CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>
+    >, "channels" | "hooks" | "workspace"> & {
+      channels: TChannels
+      hooks?: AgentDefinitionHooks<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput, AgentChannelMessageOf<TChannels>>
+      workspace: TWorkspace
+    } & ValidateWorkspaceAgentOptions<{ capabilities?: TCapabilities, workspace: TWorkspace }>,
+  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput>
+  <
+    TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+    Name extends WorkspaceName = WorkspaceName,
+    CALL_OPTIONS = unknown,
+    const TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
+    const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig, Name> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig, Name>[] | undefined,
+    TOutput = unknown,
+    const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
+    const TWorkspace extends WorkspaceAgentWorkspaceConfig<Name> = WorkspaceAgentWorkspaceConfig<Name>,
+  >(
+    options: Omit<WorkspaceAgentOptions<
+      TRuntimeConfig,
+      Name,
+      CALL_OPTIONS,
+      TInvokerProfile,
+      AgentCapabilitiesInvocationContextValues<TCapabilities>,
+      AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>,
+      TOutput
+    >, "channels" | "hooks" | "workspace"> & {
+      channels: TChannels
+      hooks?: AgentDefinitionHooks<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput, AgentChannelMessageOf<TChannels>>
+      workspace: TWorkspace
+    } & ValidateWorkspaceAgentOptions<{ capabilities?: TCapabilities, workspace: TWorkspace }>,
+  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, TInvokerProfile, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput>
+
+  <
+    TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+    Name extends WorkspaceName = WorkspaceName,
+    CALL_OPTIONS = unknown,
+    const TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
+    const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig, Name> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig, Name>[] | undefined,
+    TOutput = unknown,
     const TOptions extends WorkspaceAgentOptions<
       TRuntimeConfig,
       Name,

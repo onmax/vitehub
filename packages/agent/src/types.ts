@@ -2039,11 +2039,11 @@ export type AgentChannelMessageMethod<
   | AgentChannelMessageMethodHandler<TRuntimeConfig, TData>
   | { read: true, handler: AgentChannelMessageMethodHandler<TRuntimeConfig, TData> }
 
-/** `channel`, `data`, and `kind` are reserved for the handle's own properties. */
+/** `channel`, `data`, `kind`, and `then` are reserved for the handle's own properties and Promise protocol. */
 export type AgentChannelMessageMethods<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
-> = Record<string, AgentChannelMessageMethod<TRuntimeConfig, TData>> & { [TName in "channel" | "data" | "kind"]?: never }
+> = Record<string, AgentChannelMessageMethod<TRuntimeConfig, TData>> & { [TName in "channel" | "data" | "kind" | "then"]?: never }
 
 export interface AgentChannelMessageDefinition<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,

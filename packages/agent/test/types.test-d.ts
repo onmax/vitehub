@@ -329,6 +329,40 @@ describe("agent public types", () => {
     })
 
     defineAgent({
+      channels: { mail },
+      driver: { run: () => "ok" },
+      workspace: { mode: "read" },
+      hooks: {
+        "agent:finish"(event) {
+          if (event.message?.channel !== "mail") return
+          expectTypeOf(event.message.data).toEqualTypeOf<{ id: string }>()
+          expectTypeOf(event.message.label).toEqualTypeOf<(input: { add: string[] }) => Promise<{ applied: number } | undefined>>()
+        },
+        "agent:error"(event) {
+          expectTypeOf(event.message?.subject).toEqualTypeOf<(() => Promise<string>) | undefined>()
+        },
+      },
+    })
+
+    defineAgent({
+      channels: { mail, support: telegram() },
+      driver: { model: "zai/glm-5v-turbo" },
+      workspace: { mode: "read" },
+      hooks: {
+        "agent:finish"(event) {
+          if (event.message?.channel === "mail") {
+            expectTypeOf(event.message.label).toEqualTypeOf<(input: { add: string[] }) => Promise<{ applied: number } | undefined>>()
+          }
+        },
+        "agent:error"(event) {
+          if (event.message?.channel === "mail") {
+            expectTypeOf(event.message.data).toEqualTypeOf<{ id: string }>()
+          }
+        },
+      },
+    })
+
+    defineAgent({
       channels: { mail, support: telegram(), github: github() },
       driver: { run: () => "ok" },
       hooks: {
@@ -375,6 +409,8 @@ describe("agent public types", () => {
     expectTypeOf<AgentRunInput["dryRun"]>().toEqualTypeOf<boolean | undefined>()
     // @ts-expect-error Message methods cannot use the handle's reserved names.
     defineChannel("bad", { message: { methods: { data: () => undefined } } })
+    // @ts-expect-error Message methods cannot use the Promise protocol's reserved names.
+    defineChannel("bad", { message: { methods: { then: () => undefined } } })
   })
 
   it("types static and per-invocation UI message stream projection", () => {
