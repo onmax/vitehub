@@ -76,13 +76,9 @@ export default defineNuxtConfig({
 
 Restart the development server after changing the option. Open `http://localhost:3000/_vitehub`, using your app's actual origin and port.
 
-<<<<<<< ours
 `@nuxt/icon` does not scan dependencies. The Nuxt module adds every icon that the Console and ViteHub UI use to the `@nuxt/icon` client bundle through the `icon:clientBundleIcons` hook, so the Console does not fetch icons at runtime on edge presets. Do not add `icon.clientBundle.scan` entries for `node_modules/vite-hub`.
 
-If `console` is omitted or set to `false`, ViteHub does not register a Console page, Devframe transport, Nitro plugin, or public asset path. A disabled Console returns the host's normal not-found response.
-=======
 If `console` is omitted or set to `false`, ViteHub does not register a Console page, RPC endpoint, Nitro plugin, or public asset path. A disabled Console returns the host's normal not-found response.
->>>>>>> theirs
 
 ## Inspect environment declarations
 
