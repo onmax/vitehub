@@ -1182,6 +1182,9 @@ importers:
 
   packages/connections:
     dependencies:
+      '@vite-hub/database':
+        specifier: workspace:*
+        version: link:../database
       '@vite-hub/env':
         specifier: workspace:*
         version: link:../env

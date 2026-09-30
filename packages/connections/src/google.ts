@@ -2,6 +2,7 @@ export { gmail, gmailOperations } from "./providers/gmail.ts"
 export { google } from "./providers/google.ts"
 
 export type {
+  GmailAttachment,
   GmailClient,
   GmailDraft,
   GmailHistoryList,
