@@ -357,6 +357,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function assignmentOperator(index: number): boolean {
+    if (tokens[index] === "=" && (["=", ">"].includes(tokens[index + 1]) || tokens[index - 1] === "=")) return false
     const operators = [
       ["="],
       ["+", "="], ["-", "="], ["*", "="], ["*", "*", "="], ["/", "="], ["%", "="],
@@ -366,20 +367,22 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return operators.some(operator => operator.every((token, offset) => tokens[index + offset] === token))
   }
 
+  const declaratorInitializers = new Map<number, number>()
+  const declarationTypeTokens = new Set<number>()
+  for (let keyword = 0; keyword < tokens.length; keyword++) {
+    if (!["const", "let", "var"].includes(tokens[keyword])) continue
+    for (const [, initializer, binding] of declarators(keyword)) {
+      declaratorInitializers.set(binding, initializer)
+      for (let index = binding + 1; index < initializer; index++) declarationTypeTokens.add(index)
+    }
+  }
   for (let i = 0; i < tokens.length; i++) {
+    if (declarationTypeTokens.has(i)) continue
     const name = tokens[i]
     if (!declarations.has(name) && !/^[A-Za-z_$][\w$]*$/.test(name ?? "")) continue
-    const next = tokens[i + 1]
-    let declarationBinding = false
-    for (let cursor = i - 1; cursor >= 0 && ![";", "{"].includes(tokens[cursor]!); cursor--) {
-      if (["const", "let", "var"].includes(tokens[cursor]!)) {
-        declarationBinding = true
-        break
-      }
-    }
     const memberEnd = memberCallEnd(i)
     const propertyAssignment = memberEnd > i + 1 && assignmentOperator(memberEnd)
-    const directAssignment = assignmentOperator(i + 1) && !declarationBinding && declarations.get(name) !== i + 2
+    const directAssignment = assignmentOperator(i + 1) && !declaratorInitializers.has(i)
     const prefixUpdate = ["+", "-"].includes(tokens[i - 2] ?? "") && tokens[i - 1] === tokens[i - 2]
     const postfixUpdate = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
     let deletion = tokens[i - 1] === "delete"
@@ -388,8 +391,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
     if (propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion) mutatedBindings.add(name)
 
-    if (next === "=" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "")) {
-      let aliasEnd = i + 3
+    const initializer = declaratorInitializers.get(i) ?? (tokens[i + 1] === "=" ? i + 2 : undefined)
+    if (initializer !== undefined && /^[A-Za-z_$][\w$]*$/.test(tokens[initializer] ?? "")) {
+      let aliasEnd = initializer + 1
       while (tokens[aliasEnd] === "." || tokens[aliasEnd] === "[") {
         if (tokens[aliasEnd] === ".") {
           if (!/^[A-Za-z_$][\w$]*$/.test(tokens[aliasEnd + 1] ?? "")) break
@@ -411,7 +415,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
       if ([";", ",", undefined].includes(tokens[aliasEnd])) {
         const targets = assignedAliases.get(name) ?? new Set<string>()
-        targets.add(tokens[i + 2]!)
+        targets.add(tokens[initializer]!)
         assignedAliases.set(name, targets)
       }
     }
@@ -1064,7 +1068,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (!hasOptions || undefinedValue(channelOptions) || tokens[channelOptions] === ")") return false
     }
     channelOptions = resolveReference(channelOptions, new Set(), true)
-    const channelProperties = properties(channelOptions, true)
+    let opaque = false
+    const channelProperties = properties(channelOptions, true, false, () => { opaque = true })
+    if (opaque) throw opaqueChannelError()
     if (tokens[channelOptions] !== "{" || tokens[channelOptions - 1] === ")") throw opaqueChannelError()
     const capabilities = channelProperties.get("capabilities")
     return capabilities !== undefined && capabilityOwnsWorkspace(capabilities)
@@ -1151,10 +1157,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
 
-  // Returns [name, initializer] pairs for a top-level `const`, `let`, or
+  // Returns [name, initializer, binding] tuples for a `const`, `let`, or
   // `var` declaration. Declarators without an initializer are skipped.
-  function declarators(keyword: number): [string, number][] {
-    const result: [string, number][] = []
+  function declarators(keyword: number): [string, number, number][] {
+    const result: [string, number, number][] = []
     let name = keyword + 1
     let initializer: number | undefined
     let depth = 0
@@ -1165,7 +1171,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           || (lineBreaks.has(k) && ["const", "let", "var", "export", "import", "function", "class"].includes(token))))) break
         if (token === "=" && initializer === undefined && tokens[k + 1] !== ">") {
           initializer = k + 1
-          if (/^[A-Za-z_$][\w$]*$/.test(tokens[name] ?? "")) result.push([tokens[name]!, initializer])
+          if (/^[A-Za-z_$][\w$]*$/.test(tokens[name] ?? "")) result.push([tokens[name]!, initializer, name])
         }
         // A comma separates declarators only after an initializer or a bare
         // name, and only before a binding. This skips type argument commas.

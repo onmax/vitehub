@@ -93,6 +93,18 @@ it.each([
   expect(definition?.workspace).toBe("review")
 })
 
+it.each([
+  '{ kind: "custom", capabilities: [], ...extra }',
+  'defineChannel("custom", { capabilities: [], ...extra })',
+])("rejects opaque generic Channel option spreads: %s", async channel => {
+  const source = `${imports} import { defineChannel } from "vite-hub/agent/channels"; import { defineCapability } from "vite-hub/agent"; const storage = defineCapability({ workspace: {} }); const makeOptions = () => ({ capabilities: [storage] }); const extra = makeOptions(); export default defineAgent({ channels: { custom: ${channel} } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+  const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
+  expect(definition?.workspace).toBe("review")
+  const stateless = await discover(source.replace("const extra = makeOptions()", 'const extra = { kind: "custom" }'))
+  expect(stateless?.workspace).toBeUndefined()
+})
+
 it("does not trust a Channel helper from another package or a shadowed helper", async () => {
   await expect(discover('import { github } from "other-package"; export default defineAgent({ channels: { github: github({ pullRequest: false }) } })')).rejects.toThrow("opaque Channel")
   await expect(discover(`${imports} export default defineAgent({ options: {}, configure: github => defineAgent({ channels: { github: github({ pullRequest: false }) } }) })`)).rejects.toThrow("opaque Channel")
@@ -251,6 +263,10 @@ it.each([
   'const enable = value => { value.pullRequest = true }; enable((options as Options))',
   'const enable = value => { value.pullRequest = true }; const alias = options; enable(alias)',
   'const enable = value => { value.pullRequest = true }; const alias = options as Options; enable(alias)',
+  'const alias: typeof options = options; alias.pullRequest = true',
+  'const alias: Options = options; alias.pullRequest.workspace = true',
+  'const alias: { pullRequest: { workspace: boolean } } = options; alias.pullRequest.workspace = true',
+  'const alias: typeof options = options; mutate(alias)',
   'const enable = value => { value.workspace = true }; enable(options.pullRequest)',
   'const enable = value => { value.workspace = true }; const alias = options.pullRequest; enable(alias)',
   'const enable = value => { value.options.pullRequest = true }; enable({ options })',
@@ -278,6 +294,8 @@ it.each([
   ["default export clause", 'portal', 'const portal = github({ pullRequest: false }); portal.capabilities = [storage]; export { portal as default }'],
   ["named export alias", '{ channel as portal }', 'const portal = github({ pullRequest: false }); portal.capabilities = [storage]; export { portal as channel }'],
   ["mutated alias", '{ portal }', 'export const portal = github({ pullRequest: false }); const alias = portal; mutate(alias)'],
+  ["assignment in a later initializer", '{ portal }', 'export let portal = github({ pullRequest: false }), replacement = (portal = github({ pullRequest: true }))'],
+  ["type-annotated alias", '{ portal }', 'export const portal = github({ pullRequest: false }); const alias: typeof portal = portal; mutate(alias)'],
 ])("rejects a mutated relative Channel export: %s", async (_name, binding, declaration) => {
   const source = `import { defineAgent } from "vite-hub/agent"; import ${binding} from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })`
   const files = { "portal.ts": `import { github } from "vite-hub/agent/channels"; import { defineCapability } from "vite-hub/agent"; const storage = defineCapability({ workspace: {} }); ${declaration}` }
@@ -289,6 +307,11 @@ it.each([
 it.each([
   'options.pullRequest <= true',
   'options.pullRequest >= true',
+  'options.pullRequest === false',
+  'options.pullRequest !== false',
+  'options === options',
+  'options !== undefined',
+  'const alias: typeof options = options; alias.pullRequest === false',
   'const unused = { read(options) { return options.pullRequest } }',
 ])("does not treat read-only expressions as mutated Channel option bindings: %s", async (comparison) => {
   const source = `${imports} const options = { pullRequest: false }; ${comparison}; export default defineAgent({ channels: { custom: github(options) } })`
