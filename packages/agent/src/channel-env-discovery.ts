@@ -76,11 +76,11 @@ function staticOptionKeys(tokens: string[], start: number, empty: string): Reado
     start++
   }
   if (tokens[start] === empty) return new Set()
-  if (tokens[start] === "undefined" && [",", ")", "}"].includes(tokens[start + 1]!)) return new Set()
+  if (isUndefinedValue(tokens, start, new Set([",", ")", "}"]))) return new Set()
   if (tokens[start] !== "{") return undefined
   const keys = new Set<string>()
   return visitObjectProperties(tokens, start, (key, value) => {
-    const omitted = value !== undefined && tokens[value] === "undefined" && [",", "}"].includes(tokens[value + 1]!)
+    const omitted = value !== undefined && isUndefinedValue(tokens, value, new Set([",", "}"]))
     if (!omitted) keys.add(key)
   }) ? keys : undefined
 }
@@ -145,7 +145,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
         // An object with `kind` is a complete Channel definition, not built-in Channel options.
         let complete = false
         if (tokens[options] === "{") visitObjectProperties(tokens, options, (key, value) => {
-          const omitted = value !== undefined && tokens[value] === "undefined" && [",", "}"].includes(tokens[value + 1]!)
+          const omitted = value !== undefined && isUndefinedValue(tokens, value, new Set([",", "}"]))
           if (key === "kind" && !omitted) complete = true
         })
         if (!complete && !optionKeys?.has("kind")) uses.push({ index: value, kind: key, optionKeys })
@@ -183,9 +183,60 @@ function isMethodContainer(tokens: string[], index: number): boolean {
   }
   const open = stack.at(-1)
   if (open === undefined || tokens[open] !== "{") return false
-  if (["=", "(", "[", ":", ",", ".", "return", "throw", "default", "yield", "?", "|", "&", "!", "~", "+", "-", "void", "await", "<"].includes(tokens[open - 1]!)) return true
+  return isObjectOrTypeContainer(tokens, open, stack.at(-2))
+}
+
+function isObjectOrTypeContainer(tokens: string[], open: number, outer?: number): boolean {
+  const previous = tokens[open - 1]
+  if (previous === ":") {
+    for (let i = open - 2; i >= 0 && !["{", ";"].includes(tokens[i]!); i--) {
+      if (["}", ")", "]"].includes(tokens[i]!)) {
+        let depth = 1
+        while (i > 0 && depth > 0) {
+          i--
+          if (["}", ")", "]"].includes(tokens[i]!)) depth++
+          else if (["{", "(", "["].includes(tokens[i]!)) depth--
+        }
+        continue
+      }
+      if (["const", "let", "var", "function", "type"].includes(tokens[i]!)) return true
+    }
+    // A colon in a statement container introduces a label or case block.
+    if (outer === undefined) return false
+    if (tokens[outer] !== "{") return true
+    const parents: number[] = []
+    for (let i = 0; i < outer; i++) {
+      if (["{", "(", "["].includes(tokens[i]!)) parents.push(i)
+      else if (["}", ")", "]"].includes(tokens[i]!)) parents.pop()
+    }
+    return isObjectOrTypeContainer(tokens, outer, parents.at(-1))
+  }
+  // Class and interface bodies remain declarations even after an extends clause.
   for (let i = open - 1; i >= 0 && !["{", "}", ";"].includes(tokens[i]!); i--) {
     if (["class", "interface"].includes(tokens[i]!) && tokens[i - 1] !== ".") return true
+    if (tokens[i] === "function") return false
+  }
+  // Statement blocks have a statement boundary, a control/function header,
+  // or an arrow before them. Other braces occur in expressions or types.
+  return previous !== undefined && !["{", "}", ";", ")", "else", "do", "try", "catch", "finally", "static"].includes(previous)
+    && !(previous === ">" && tokens[open - 2] === "=")
+}
+
+function isUndefinedValue(tokens: string[], start: number, terminators: ReadonlySet<string>): boolean {
+  if (tokens[start] !== "undefined") return false
+  if (terminators.has(tokens[start + 1]!)) return true
+  if (tokens[start + 1] !== "as") return false
+  let depth = 0
+  for (let i = start + 2; i < tokens.length; i++) {
+    const token = tokens[i]!
+    if (["+", "*", "/", "%"].includes(token) || (["|", "&", "?"].includes(token) && tokens[i + 1] === token)) return false
+    if (token === "<") { i = skipTypeArguments(tokens, i) - 1; continue }
+    if (["(", "[", "{"].includes(token)) depth++
+    else if ([")", "]", "}"].includes(token)) {
+      if (depth === 0) return terminators.has(token)
+      depth--
+    }
+    else if (depth === 0 && terminators.has(token)) return true
   }
   return false
 }
@@ -201,7 +252,15 @@ function localObject(tokens: string[], index: number, declarations: ReadonlyMap<
 function isShadowedAt(tokens: string[], index: number, name: string, bindings: ReadonlyMap<string, string>, lineBreaks: ReadonlySet<number>): boolean {
   if (!bindings.has(name)) return false
   if (hasLocalBinding(tokens, index, name)) return true
-  const identifier = /^[A-Za-z_$][\w$]*$/
+  const closes = new Map<number, number>()
+  const stack: number[] = []
+  for (let i = 0; i < tokens.length; i++) {
+    if (["{", "(", "["].includes(tokens[i]!)) stack.push(i)
+    else if (["}", ")", "]"].includes(tokens[i]!)) {
+      const open = stack.pop()
+      if (open !== undefined) closes.set(open, i)
+    }
+  }
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i] !== "function") continue
     const open = tokens.indexOf("(", i + 1)
@@ -213,9 +272,7 @@ function isShadowedAt(tokens: string[], index: number, name: string, bindings: R
       else if ([")", "]", "}"].includes(tokens[close]!) && --depth === 0) break
     }
     if (tokens[close + 1] !== "{") continue
-    const params = new Set<string>()
-    for (let j = open + 1; j < close; j++) if (identifier.test(tokens[j]!)) params.add(tokens[j]!)
-    if (!params.has(name)) continue
+    if (!parameterListHasName(tokens, open + 1, close, name, closes)) continue
     let bodyDepth = 0
     let end = close + 1
     for (; end < tokens.length; end++) {
@@ -233,8 +290,7 @@ function isShadowedAt(tokens: string[], index: number, name: string, bindings: R
       else if (tokens[close] === ")") depth--
     }
     if (tokens[close] !== "=" || tokens[close + 1] !== ">") continue
-    const params = new Set(tokens.slice(i + 1, close).filter(token => identifier.test(token)))
-    if (!params.has(name)) continue
+    if (!parameterListHasName(tokens, i + 1, close, name, closes)) continue
     const body = close + 2
     if (tokens[body] !== "{") {
       const end = expressionBodyEnd(tokens, body, lineBreaks)
@@ -248,6 +304,19 @@ function isShadowedAt(tokens: string[], index: number, name: string, bindings: R
       else if (tokens[end] === "}") bodyDepth--
     }
     if (index > body && index < end) return true
+  }
+  return false
+}
+
+function parameterListHasName(tokens: string[], start: number, end: number, name: string, closes: ReadonlyMap<number, number>): boolean {
+  for (let entry = start; entry < end;) {
+    if (tokens[entry] === ",") { entry++; continue }
+    let binding = entry
+    if (tokens[binding] === ".") binding += 3
+    if (bindingPatternHasName(tokens, binding, name, closes)) return true
+    const nestedEnd = closes.get(binding)
+    entry = nestedEnd !== undefined ? nestedEnd + 1 : binding + 1
+    while (entry < end && tokens[entry] !== ",") entry = (closes.get(entry) ?? entry) + 1
   }
   return false
 }

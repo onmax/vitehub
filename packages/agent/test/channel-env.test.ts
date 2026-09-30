@@ -221,6 +221,52 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([])
   })
 
+  it("distinguishes destructured parameter keys, bindings, types, and defaults", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      function build({ telegram: configured }: { telegram?: string }) { return telegram() }
+      const buildArrow = ({ telegram: configured }: { telegram?: string }) => telegram()
+      function typed(configured: telegram) { return telegram() }
+      function defaulted(configured = telegram) { return telegram() }
+      function shadowed({ factory: telegram }) { return telegram() }
+      const shadowedArrow = ({ telegram }) => telegram()
+    `)).toEqual(Array.from({ length: 4 }, () => ({ kind: "telegram", keys: [] })))
+  })
+
+  it("treats asserted undefined options as omitted", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram({ botToken: undefined as string | undefined })
+      telegram(undefined as TelegramOptions | undefined)
+      telegram({ botToken: token as string | undefined })
+      telegram({ botToken: undefined as string | undefined ?? token })
+    `)).toEqual([
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: ["botToken"] },
+      { kind: "telegram", keys: ["botToken"] },
+    ])
+  })
+
+  it("keeps calls in labeled and case statement blocks", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      label: { telegram()
+        {} }
+      switch (value) { case "ready": { telegram()
+        {} } }
+      try {} catch { telegram()
+        {} }
+      class Tools { static { telegram()
+        {} } }
+      const helpers = { telegram() {} }
+      const present = "telegram" in { telegram() {} }
+      type Conditional<T> = T extends { telegram(): void } ? true : { telegram(): void }
+      const typed: { telegram(): void } = helpers
+      function getHelpers(): { telegram(): void } { return helpers }
+    `)).toEqual(Array.from({ length: 4 }, () => ({ kind: "telegram", keys: [] })))
+  })
+
   it("follows typed maps and explicit properties after spreads", () => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"

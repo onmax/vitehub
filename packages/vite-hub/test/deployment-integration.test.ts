@@ -242,6 +242,11 @@ describe("built-in deployment preset integration", () => {
         { source: `defineAgent({ channels: { telegram: telegram((({ botToken: "token" }))) } })`, required: false },
         { source: `defineAgent({ channels: { telegram: telegram?.({ botToken: "token" }) } })`, required: false },
         { source: `function run() { telegram()\n{} }; defineAgent({ channels: {} })`, required: true },
+        { source: `label: { telegram()\n{} }; defineAgent({ channels: {} })`, required: true },
+        { source: `switch (value) { case "ready": { telegram()\n{} } }; defineAgent({ channels: {} })`, required: true },
+        { source: `function build({ telegram: configured }: { telegram?: string }) { return telegram() }; defineAgent({ channels: { support: build({}) } })`, required: true },
+        { source: `defineAgent({ channels: { telegram: telegram({ botToken: undefined as string | undefined }) } })`, required: true },
+        { source: `const present = "telegram" in { telegram() {} }; type Conditional<T> = T extends { telegram(): void } ? true : false; defineAgent({ channels: {} })`, required: false },
         { source: `const channels = { telegram: {} }; defineAgent({ channels: channels satisfies AgentChannelInputs })`, required: true },
         { source: `defineAgent({ channels: { telegram: { async botToken() { return "token" } } } })`, required: false },
       ]) {
