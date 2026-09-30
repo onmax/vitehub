@@ -462,6 +462,7 @@ function shouldInstallNitroSchedulePlugin(definitions: DiscoveredScheduleDefinit
 }
 
 function shouldEmitStandaloneProviderOutput(definitions: DiscoveredScheduleDefinition[], options: ScheduleVitePluginOptions): boolean {
+  if (options.runtime !== undefined && options.providerOutput !== "standalone") return false
   if (options.providerOutput === false || options.providerOutput === "nitro") return false
   if (options.providerOutput === "standalone") return definitions.some(definition => definition.runtimeOnly !== true)
   if (hasServerScheduleDefinitions(definitions)) return hasViteSuffixScheduleDefinitions(definitions)

@@ -28,7 +28,7 @@ export { inspectQueueDefinitions, type QueueInspectionOptions } from "./inspect.
 interface QueueProvisionContributingPlugin {
   vitehub?: {
     cli?: () => Promise<ViteHubCliContributor>
-    inspect?: () => ViteHubInspectionContributor
+    inspect?: () => ViteHubInspectionContributor | undefined
     queue?: {
       createNitroConfig: (options: QueueNitroConfigOptions) => Promise<Record<string, unknown>>
     }
@@ -186,7 +186,9 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
   let serverDirs: string[] | undefined
   const queueOutputRoot = () => {
     const rootDir = resolved?.root ?? process.cwd()
+    // SAFETY: Nitro adds this optional output config to Vite's resolved config; its directory remains unknown until checked below.
     const outputDir = (resolved as (ResolvedConfig & { nitro?: { output?: { dir?: unknown } } }) | undefined)?.nitro?.output?.dir
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Nitro output.dir is an unknown config value at this integration boundary; only strings are valid paths.
     if (typeof outputDir === "string") return resolve(rootDir, outputDir)
     return hosting === "cloudflare" ? createDefaultCloudflareOutputRoot(rootDir) : createDefaultVercelOutputRoot(rootDir)
   }
@@ -194,31 +196,32 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
   return {
     name: "@vite-hub/queue/vite",
     vitehub: {
-      inspect: () => ({
-        definitions: [{
-          kind: "queue",
-          label: "Queues",
-          list: () => {
-            const rootDir = resolved?.root ?? process.cwd()
-            return inspectQueueDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
-          },
-        }],
-        providerOutput: queue === false || nitroQueue === false
-          ? []
-          : [
-              hosting === "cloudflare"
-                ? {
-                    description: "Generated Cloudflare Queue provider config",
-                    owner: "queue",
-                    path: resolve(queueOutputRoot(), nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker ? "server/wrangler.json" : "wrangler.json"),
-                  }
-                : {
-                    description: "Generated Vercel Queue provider config",
-                    owner: "queue",
-                    path: resolve(queueOutputRoot(), "config.json"),
-                  },
-            ],
-      }),
+      inspect: () => {
+        if (queue === false || nitroQueue === false) return
+        return {
+          definitions: [{
+            kind: "queue",
+            label: "Queues",
+            list: () => {
+              const rootDir = resolved?.root ?? process.cwd()
+              return inspectQueueDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
+            },
+          }],
+          providerOutput: [
+            hosting === "cloudflare"
+              ? {
+                  description: "Generated Cloudflare Queue provider config",
+                  owner: "queue",
+                  path: resolve(queueOutputRoot(), nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker ? "server/wrangler.json" : "wrangler.json"),
+                }
+              : {
+                  description: "Generated Vercel Queue provider config",
+                  owner: "queue",
+                  path: resolve(queueOutputRoot(), "config.json"),
+                },
+          ],
+        }
+      },
       cli: async () => {
         return {
           namespaces: [],

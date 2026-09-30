@@ -206,7 +206,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
           providerOutput: normalized.provider === "cloudflare"
             ? [{ description: "Generated Cloudflare Workflow worker", owner: "workflow", path: resolve(createDefaultCloudflareOutputRoot(rootDir), "worker.mjs") }]
             : normalized.provider === "vercel"
-              ? [{ description: "Generated Vercel Workflow function", owner: "workflow", path: resolve(createDefaultVercelOutputRoot(rootDir), "functions", resolveNitroVercelFunctionName(resolved ?? {}, "workflow"), "index.mjs") }]
+              ? [{ description: "Generated Vercel Workflow function", owner: "workflow", path: resolve(createDefaultVercelOutputRoot(rootDir), "functions", resolveNitroVercelFunctionName(resolved ?? {}, "workflow") ?? "__server.func", "index.mjs") }]
               : [],
         }
       },

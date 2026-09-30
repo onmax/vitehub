@@ -10,6 +10,7 @@ import { promisify } from "node:util"
 import { Chat, Message } from "chat"
 import { removeProviderOutputArtifactDir } from "@vite-hub/internal/build/provider-output-sources"
 import { VITEHUB_GENERATED_ROOT, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
 import { mergeConfig, build as viteBuild } from "vite"
 import { describe, expect, it, vi } from "vitest"
 
@@ -2815,10 +2816,15 @@ export default defineAgent({
       const plugin = hubAgent({ runtime: "deno" })
       if (isRuntimeFunction(plugin.configResolved)) {
         // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
-        await plugin.configResolved.call({} as never, { root } as never)
+        await plugin.configResolved.call({} as never, { root, nitro: { preset: "netlify" } } as never)
       }
 
       const denoServer = await readFile(join(root, ".vitehub/agent/deno-server.ts"), "utf8")
+      expect(await collectViteHubProviderOutputEntries([plugin])).toEqual([{
+        description: "Generated Deno Agent server",
+        owner: "agent",
+        path: join(root, ".vitehub/agent/deno-server.ts"),
+      }])
 
       expect(denoServer).toContain(
         'createChannelChatRouteHandler, createChannelWebhookRouteHandler, hasChannelChatRoute } from "@vite-hub/agent/server/internal"',

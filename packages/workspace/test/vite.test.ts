@@ -6,6 +6,9 @@ import { pathToFileURL } from "node:url"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+import { createDefaultCloudflareOutputRoot } from "@vite-hub/internal/build/deployment-output"
+import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
+
 import { getWorkspaceHostedStoreLoader, setWorkspaceHostedStoreLoader } from "../src/runtime/state.ts"
 
 import type { IncomingMessage, ServerResponse } from "node:http"
@@ -218,7 +221,7 @@ describe("hubWorkspace", () => {
 
     await configResolved({ root: await createViteRoot(), workspace: false })
 
-    expect(inspect()).toBeUndefined()
+    expect(await inspect()).toBeUndefined()
   })
 
   it("runs before downstream framework integrations that consume Provider Output config", async () => {
@@ -1028,6 +1031,24 @@ describe("hubWorkspace", () => {
     const registrySource = await readFile(join(root, ".vitehub", "nitro", "workspace", "registry.js"), "utf8")
     expect(pluginSource).toContain("setWorkspaceRuntimeRegistry")
     expect(registrySource).toContain('["docs"]: async () => {')
+  })
+
+  it("inspects provider output for Definition-level Cloudflare Artifacts stores", async () => {
+    const root = await createViteRoot()
+    await writeFile(join(root, "src", "docs.workspace.ts"), "export default { store: { provider: 'cloudflare-artifacts' } }\n")
+    const { hubWorkspace } = await import("../src/vite.ts")
+    const plugin = hubWorkspace({ store: { provider: "local" } })
+    const configResolved = testFunction(plugin.configResolved, async (_config: { root: string, command: string }) => {})
+    await configResolved({ root, command: "build" })
+
+    expect(await collectViteHubProviderOutputEntries([plugin])).toEqual([{
+      description: "Generated Cloudflare Workspace artifacts config",
+      owner: "workspace",
+      path: join(createDefaultCloudflareOutputRoot(root), "wrangler.json"),
+    }])
+
+    await writeFile(join(root, "src", "docs.workspace.ts"), "export default { store: { provider: 'local' } }\n")
+    expect(await collectViteHubProviderOutputEntries([plugin])).toEqual([])
   })
 
   it("activates Cloudflare Artifacts bindings in the Vite-generated Nitro runtime", async () => {

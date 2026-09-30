@@ -54,6 +54,7 @@ async function collectContributors(plugins: readonly unknown[]): Promise<ViteHub
     if (!plugin || typeof plugin !== "object") continue
     // SAFETY: Vite plugin objects are structurally compatible with this optional inspection metadata at this boundary.
     const value = (plugin as ViteHubInspectionContributingPlugin).vitehub?.inspect
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The public metadata contract permits an object or a callable contributor factory.
     const contributor = typeof value === "function" ? await value() : value
     if (contributor) contributors.push(contributor)
   }
@@ -114,6 +115,7 @@ export function redactInspectionValue(value: unknown, key?: string): unknown {
   if (!value || typeof value !== "object") return value
   return Object.fromEntries(Object.entries(value).map(([entryKey, entry]) => [
     entryKey,
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Unknown JSON-like Worker vars must be an object before enumerating keys for redaction.
     entryKey === "vars" && entry && typeof entry === "object" && !Array.isArray(entry)
       ? Object.fromEntries(Object.keys(entry).map(name => [name, redactedInspectionValue]))
       : redactInspectionValue(entry, entryKey),

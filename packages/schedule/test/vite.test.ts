@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import { contributeProviderDeploymentOutput, createDefaultCloudflareOutputRoot, createDefaultNetlifyOutputRoot, createDefaultVercelOutputRoot, finalizeProviderDeploymentOutputs, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
 import { createScheduleNitroConfig, hubSchedule } from "../src/vite.ts"
 
 async function runProviderOutputHooks(plugin: ReturnType<typeof hubSchedule>) {
@@ -386,6 +387,7 @@ describe("Vite schedule integration", () => {
       root,
     })
     await runProviderOutputHooks(plugin)
+    expect(await collectViteHubProviderOutputEntries([plugin])).toEqual([])
     expect(existsSync(join(createDefaultCloudflareOutputRoot(root), "wrangler.json"))).toBe(false)
     await expect(readFile(join(createDefaultNetlifyOutputRoot(root), "functions", "vitehub-schedule-cleanup.mjs"), "utf8")).rejects.toThrow()
   })
@@ -434,6 +436,9 @@ describe("Vite schedule integration", () => {
     await runProviderOutputHooks(plugin)
 
     await expect(readFile(join(root, ".vitehub", "nitro", "schedule", "plugin.ts"), "utf8")).resolves.not.toContain("cloudflare:scheduled")
+    const inspected = await collectViteHubProviderOutputEntries([plugin])
+    expect(inspected).toHaveLength(4)
+    expect(inspected.every(entry => existsSync(entry.path))).toBe(true)
     await expect(readFile(join(root, ".vitehub", "nitro", "schedule", "static-registry.js"), "utf8")).resolves.not.toContain("src/cleanup.schedule.ts")
     await expect(readFile(join(createDefaultCloudflareOutputRoot(root), "wrangler.json"), "utf8")).resolves.toContain("\"0 0 * * *\"")
     await expect(readFile(join(createDefaultNetlifyOutputRoot(root), "functions", "vitehub-schedule-cleanup.mjs"), "utf8")).resolves.toContain("schedule: \"0 0 * * *\"")
@@ -474,7 +479,10 @@ describe("Vite schedule integration", () => {
       readFile(join(createDefaultVercelOutputRoot(root), "functions", "api", "vitehub", "schedules", "vercel", "cleanup.func", "index.mjs"), "utf8"),
     ])
     expect(providerOutputs.join("\n")).not.toContain("schedule-generations")
-    expect(providerOutputs.join("\n")).toContain("./.vitehub/schedule/sources/")
+    for (const output of providerOutputs) {
+      expect(output).toContain('cron: "0 0 * * *"')
+      expect(output).not.toContain('cron: "5 0 * * *"')
+    }
     const retainedScheduleSpecifier = registry.match(/import\("(\.\/sources\/[^"]+\/cleanup\.schedule\.ts)"\)/)?.[1]
     expect(retainedScheduleSpecifier).toBeDefined()
     const retainedSchedulePath = retainedScheduleSpecifier!.slice(2)

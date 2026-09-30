@@ -2955,7 +2955,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
               owner: "agent",
               path: resolve(resolveViteHubGeneratedRoot(resolved ?? { root: rootDir }), generatedAgentDenoServer),
             }] : []),
-            ...(hostedAgents && resolveAgentHosting(resolved) === "netlify" ? [{
+            ...(hostedAgents && !denoHostedAgents && resolveAgentHosting(resolved) === "netlify" ? [{
                 description: "Generated Netlify Agent function",
                 owner: "agent",
                 path: resolve(createDefaultNetlifyOutputRoot(rootDir), "functions", `${netlifyAgentFunctionName}.mjs`),
