@@ -757,9 +757,18 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   } as Parameters<typeof vitehub>[0])
   const plan = resolveDeploymentPlan(options.preset)
   const rootDir = nuxt.options.rootDir || process.cwd()
+  const configuredOptions = options.database && nuxt.options.database && typeof nuxt.options.database === "object"
+    ? {
+        ...options,
+        database: {
+          ...nuxt.options.database,
+          ...(options.database === true ? {} : options.database),
+        },
+      }
+    : options
   const consoleJournal = resolveConsoleJournal(
     consoleDatabaseUrl(options),
-    consoleD1Binding(plan.preset, options.database, { root: rootDir, serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined }),
+    consoleD1Binding(plan.preset, configuredOptions.database, { root: rootDir, serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined }),
     !nuxt.options.dev,
   )
   const nitro = (nuxt.options.nitro ??= {})
@@ -858,15 +867,6 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
       ...(envConfig.server ? { server: mergeEnvDeclarationNamespaces(existingEnv.server, envConfig.server) } : {}),
     }
   }
-  const configuredOptions = options.database && nuxt.options.database && typeof nuxt.options.database === "object"
-    ? {
-        ...options,
-        database: {
-          ...nuxt.options.database,
-          ...(options.database === true ? {} : options.database),
-        },
-      }
-    : options
   const secondaryProjectRoots = configuredProjectRoots(configuredOptions, rootDir, viteRoot)
     .filter(root => root !== projectRoot)
   const generatedTypes = [

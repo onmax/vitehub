@@ -585,6 +585,22 @@ describe("ViteHub Nuxt integration", () => {
     await application.runCloseHook()
   })
 
+  it("uses the resolved top-level Nuxt D1 Database configuration for the Console journal", async () => {
+    const application = createNuxt(false)
+    Object.assign(application.nuxt.options, {
+      database: { binding: "TOP_LEVEL_DB", driver: "d1" },
+    })
+    await viteHubNuxtModule({
+      preset: "cloudflare",
+      agent: true,
+      console: { exposure: "host-managed" },
+      database: true,
+    }, application.nuxt)
+    const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
+    expect(generated).toContain('d1: { binding: "TOP_LEVEL_DB",')
+    await application.runCloseHook()
+  })
+
   it("discovers the Nuxt Console D1 journal from the Database project root", async () => {
     await mkdir("/tmp/vitehub-nuxt/custom-server/databases", { recursive: true })
     await writeFile("/tmp/vitehub-nuxt/custom-server/databases/config.ts", 'export default defineDatabase({ cloudflare: { binding: "APP_DB", databaseName: "app" }, schema: {} })\n')
