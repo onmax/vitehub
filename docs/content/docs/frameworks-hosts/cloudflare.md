@@ -165,6 +165,10 @@ Cloudflare Provider Output can require real Worker bindings such as D1, R2, KV, 
 
 Agent Definitions run on Cloudflare through generated host output where the Agent integration owns the route. Keep model keys, Durable Object state bindings, and other Runtime Env in Worker bindings.
 
+### Console on Workers
+
+Cloudflare can send consecutive requests from one browser to different Worker instances. The [Console](/docs/development/console) sends each operation as one stateless `POST /_vitehub/rpc/__call` request, so it does not need session affinity or in-memory state. With `access: 'auth'`, the access policy checks the session cookie on each call. Agent invocations started from the Console pass background work to the Worker's `waitUntil`. Configure a durable hosted invocation journal, as the [Console guide](/docs/development/console) describes.
+
 ## Next steps
 
 - Use [Runtime and host support](/docs/frameworks-hosts/support-matrix) for exact package and proof coverage.

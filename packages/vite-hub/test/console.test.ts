@@ -567,7 +567,7 @@ describe("Agent invocation console", () => {
     }
   })
 
-  it("keeps an application Blob route beside the standalone Console Devframe", async () => {
+  it("keeps an application Blob route beside the standalone Console RPC route", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-blob-conflict-"))
     try {
       await writeFile(join(root, "package.json"), "{}\n")

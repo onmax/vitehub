@@ -26,7 +26,7 @@ import { installConsoleProjectName, installConsoleSections } from "./console/run
 import { resolveConsoleProjectNameFromRoot } from "./console/project.ts"
 import { resolveConsoleSectionIds, type ConsoleSectionId } from "./console/runtime/sections.ts"
 import { consoleDefinitionSectionIds } from "./console/runtime/definitions.ts"
-import { addConsoleDevframeHandler } from "./console/nitro.ts"
+import { addConsoleRpcHandler } from "./console/nitro.ts"
 import { resolveConsoleAuthConfig, writeConsoleAuthHandlers } from "./console/auth-build.ts"
 import { serializeConsoleRefresh } from "./console/refresh.ts"
 import { assertConsoleProductionAccess, closeConsoleInvocationRootState, configureConsoleFixtureLifecycle, consoleInvocationRootPlugin, createConsoleInvocationRootState, generatedConsolePluginRegistration, resolveGeneratedConsolePlugin, type ConsoleInvocationRootState, updateConsoleInvocationRootState } from "./console/vite.ts"
@@ -402,7 +402,7 @@ async function installConsole(
     handlers?: Array<{ handler: string, route: string }>
     plugins?: string[]
   }
-  addConsoleDevframeHandler(nitro, consoleRuntimeRoot)
+  addConsoleRpcHandler(nitro, consoleRuntimeRoot)
   const clientHandler = join(consoleRuntimeRoot, "server/client.get.js")
   if (!nitro.handlers?.some(handler => handler.route === "/api/_vitehub/console/client.js")) {
     (nitro.handlers ??= []).push({ handler: clientHandler, route: "/api/_vitehub/console/client.js" })
@@ -1159,7 +1159,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
       )
       installConsoleSections(projectRoot, consoleSections, Boolean(options.console !== true && options.console?.access === "auth" && options.console.auth))
       installConsoleProjectName(projectRoot, resolveConsoleProjectNameFromRoot(projectRoot))
-      addConsoleDevframeHandler(config, consoleRuntimeRoot)
+      addConsoleRpcHandler(config, consoleRuntimeRoot)
       const consoleCatalog = await discoverConsoleBuildCatalog({
         databaseDiscoveryRoot: hasReplayedDatabaseDiscoveryRoot
           ? replayedDatabaseDiscoveryRoot
