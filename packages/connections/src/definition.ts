@@ -1,4 +1,5 @@
 import { connectionError } from "./errors.ts"
+import { assertConnectionOrigins } from "./origins.ts"
 
 import type { ConnectionAccessRule, ConnectionDefinition, ConnectionProvider } from "./types.ts"
 
@@ -27,6 +28,7 @@ export function defineConnection<TProvider extends ConnectionProvider>(
   if (!definition || typeof definition !== "object" || !definition.provider || definition.provider.kind !== "oauth2") {
     throw connectionError("invalid", { path: "provider" })
   }
+  assertConnectionOrigins(definition.provider.origins)
   assertRule(definition.access?.server, "access.server")
   for (const [name, rule] of Object.entries(definition.access?.routes ?? {})) assertRule(rule, `access.routes.${name}`)
   for (const [name, rule] of Object.entries(definition.access?.agents ?? {})) assertRule(rule, `access.agents.${name}`)

@@ -68,6 +68,11 @@ export interface ConnectionProviderContext {
 
 /** Provider contract. v1 supports OAuth 2 with PKCE. */
 export interface ConnectionProvider {
+  /**
+   * API origins that may receive the credential, for example `https://api.example.com` or `https://*.example.com`.
+   * Calls to any other origin fail before ViteHub attaches the credential.
+   */
+  origins: readonly string[]
   authorizationUrl: (input: ConnectionAuthorizationInput, context: ConnectionProviderContext) => Promise<string>
   exchange: (input: ConnectionExchangeInput, context: ConnectionProviderContext) => Promise<ConnectionTokenSet>
   id: string
@@ -150,6 +155,8 @@ export interface ConnectionSummary {
   expiresAt?: string
   lastError?: string
   name: string
+  /** API origins that may receive the credential. */
+  origins: readonly string[]
   provider: string
   scopes: readonly string[]
   status: ConnectionStatus

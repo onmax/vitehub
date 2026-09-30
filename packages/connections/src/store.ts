@@ -41,7 +41,8 @@ export interface ConnectionsStore {
   append: (activity: ConnectionActivity) => Promise<void>
   consumePending: (state: string, now: number) => Promise<PendingConnection | undefined>
   createPending: (pending: PendingConnection & { expiresAt: number, ticket: string }) => Promise<void>
-  deleteGrant: (name: string) => Promise<void>
+  /** Deletes the grant only at `revision`, so a newer connect survives a slow disconnect. */
+  deleteGrant: (name: string, revision: string) => Promise<void>
   grant: (name: string) => Promise<StoredGrant | undefined>
   /** Takes the refresh lease when the revision is current and no lease is active. */
   lease: (name: string, revision: string, now: number, until: number) => Promise<boolean>
@@ -189,12 +190,14 @@ export function createConnectionsStore(options: { db: ConnectionsDatabase, encry
     async createPending(pending) {
       await initialize()
       await db.run(sql`DELETE FROM vitehub_connection_pending WHERE expires_at < ${Date.now()}`)
-      const payload = await seal(await key, pendingAad(pending.state), JSON.stringify({ actor: pending.actor, redirectUri: pending.redirectUri, verifier: pending.verifier }))
+      // Parse with the read schema, so `openPending()` can always read the row back.
+      const value = v.parse(pendingPayload, { actor: { ...pending.actor, id: pending.actor.id.slice(0, 512) }, redirectUri: pending.redirectUri, verifier: pending.verifier })
+      const payload = await seal(await key, pendingAad(pending.state), JSON.stringify(value))
       await db.run(sql`INSERT INTO vitehub_connection_pending (state, ticket, name, payload, expires_at) VALUES (${pending.state}, ${pending.ticket}, ${pending.name}, ${payload}, ${pending.expiresAt})`)
     },
-    async deleteGrant(name) {
+    async deleteGrant(name, revision) {
       await initialize()
-      await db.run(sql`DELETE FROM vitehub_connection_grants WHERE name = ${name}`)
+      await db.run(sql`DELETE FROM vitehub_connection_grants WHERE name = ${name} AND revision = ${revision}`)
     },
     async grant(name) {
       const row = await readRow(name)
