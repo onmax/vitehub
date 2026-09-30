@@ -17,7 +17,7 @@ interface DenoKV {
   // doctor-disable-next-line typescript/evidence/no-caller-chosen-result-type -- This models Deno KV's caller-typed get contract.
   get: <T = unknown>(key: DenoKVKey) => Promise<DenoKVEntry<T>>
   list: <T = unknown>(selector: { prefix: [] }, options?: { cursor?: string; limit?: number }) => AsyncIterable<DenoKVEntry<T>> & { cursor?: string }
-  set: <T = unknown>(key: DenoKVKey, value: T) => Promise<unknown>
+  set: <T = unknown>(key: DenoKVKey, value: T, options?: { expireIn: number }) => Promise<unknown>
 }
 
 interface DenoRuntime {
@@ -41,13 +41,21 @@ function fromDenoKey(key: DenoKVKey): string | undefined {
 export default function createDenoKVDriver(options: ResolvedDenoKVStoreConfig = { driver: "deno-kv" }): KVRuntimeDriver {
   let kvPromise: Promise<DenoKV> | undefined
 
-  const open = () => kvPromise ||= (async () => {
-    const openKv = getDenoRuntime()?.openKv
-    if (!openKv) {
-      throw kvErrorDiagnostics.KV_R0001({ message: "[vitehub] Deno KV requires Deno.openKv(). The runtime must be Deno with KV enabled, or the KV Store needs another driver." })
-    }
-    return openKv(options.path)
-  })()
+  function open(): Promise<DenoKV> {
+    if (kvPromise) return kvPromise
+    const pending = (async () => {
+      const openKv = getDenoRuntime()?.openKv
+      if (!openKv) {
+        throw kvErrorDiagnostics.KV_R0001({ message: "[vitehub] Deno KV requires Deno.openKv(). The runtime must be Deno with KV enabled, or the KV Store needs another driver." })
+      }
+      return openKv(options.path)
+    })()
+    kvPromise = pending
+    void pending.catch(() => {
+      if (kvPromise === pending) kvPromise = undefined
+    })
+    return pending
+  }
 
   async function matchingKeys(base = "") {
     const kv = await open()
@@ -98,8 +106,11 @@ export default function createDenoKVDriver(options: ResolvedDenoKVStoreConfig = 
     async removeItem(key) {
       await (await open()).delete(toDenoKey(key))
     },
-    async setItem(key, value) {
-      await (await open()).set(toDenoKey(key), value)
+    async setItem(key, value, writeOptions) {
+      const ttl = writeOptions?.ttl
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Match unstorage's Deno TTL normalization at the write-options boundary.
+      const expireIn = typeof ttl === "number" && ttl > 0 ? { expireIn: ttl * 1_000 } : undefined
+      await (await open()).set(toDenoKey(key), value, expireIn)
     },
   }
 }
