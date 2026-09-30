@@ -356,6 +356,8 @@ it.each([
   'options["pullRequest"]["workspace"] = true',
   'const alias = options; alias["pullRequest"] = true',
   'for (const alias of [options]) alias.pullRequest = true',
+  'const container = [options]; for (const alias of container) alias.pullRequest = true',
+  'const container = [options]; const iterable = container; for (const alias of iterable) alias.pullRequest = true',
   'options.pullRequest ||= true',
   'options.pullRequest.workspace ||= true',
   'options.pullRequest ??= { workspace: true }',
@@ -390,6 +392,10 @@ it.each([
   'const enable = value => { value.pullRequest = true }; const alias = options; enable(alias)',
   'const enable = value => { value.pullRequest = true }; const alias = options as Options; enable(alias)',
   'const alias: typeof options = options; alias.pullRequest = true',
+  'const [alias] = [options]; alias.pullRequest = true',
+  'const { value: alias } = { value: options }; alias.pullRequest = true',
+  'const [{ value: alias }] = [{ value: options }]; alias.pullRequest = true',
+  'const container = [options]; const [alias] = container; alias.pullRequest = true',
   'const alias: Options = options; alias.pullRequest.workspace = true',
   'const alias: { pullRequest: { workspace: boolean } } = options; alias.pullRequest.workspace = true',
   'const alias: typeof options = options; mutate(alias)',
@@ -419,12 +425,28 @@ it("rejects a reassigned relative Channel export", async () => {
   expect(definition?.workspace).toBe("review")
 })
 
-it("rejects a mutated loop alias in a relative Channel export", async () => {
+it.each([
+  'for (const alias of [portal]) alias.capabilities = []',
+  'const channels = [portal]; for (const alias of channels) alias.capabilities = []',
+  'const channels = [portal]; const iterable = channels; for (const alias of iterable) alias.capabilities = []',
+  'const [alias] = [portal]; alias.capabilities = []',
+  'const { value: alias } = { value: portal }; alias.capabilities = []',
+])("rejects a mutated loop alias in a relative Channel export: %s", async mutation => {
   const source = 'import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })'
-  const files = { "portal.ts": 'import { github } from "vite-hub/agent/channels"; const options = { pullRequest: false }; const portal = github(options); for (const alias of [portal]) alias.capabilities = []; export default portal' }
+  const files = { "portal.ts": `import { github } from "vite-hub/agent/channels"; const options = { pullRequest: false }; const portal = github(options); ${mutation}; export default portal` }
   await expect(discover(source, files)).rejects.toThrow(/opaque Channel|cannot inspect an imported Channel/)
   const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
   expect(definition?.workspace).toBe("review")
+})
+
+it.each([
+  'const [alias] = [options]; alias.pullRequest === false',
+  'const { value: alias } = { value: options }; alias.pullRequest === false',
+  'const container = [options]; for (const alias of container) alias.pullRequest === false',
+  'const container = [options]; const iterable = container; for (const alias of iterable) alias.pullRequest === false',
+])("keeps read-only container aliases stateless: %s", async read => {
+  const definition = await discover(`${imports} const options = { pullRequest: false }; ${read}; export default defineAgent({ channels: { github: github(options) } })`)
+  expect(definition?.workspace).toBeUndefined()
 })
 
 it.each([

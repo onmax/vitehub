@@ -387,6 +387,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const opening = containerTokens[index]
     if (opening !== "[" && opening !== "{") {
       if (!inspectReference) return []
+      const reference = containerTokens[index]
+      if (containerTokens === tokens && /^[A-Za-z_$][\w$]*$/.test(reference ?? "")) {
+        return [reference!]
+      }
       return containerTokens.slice(index).filter((reference, offset) =>
         /^[A-Za-z_$][\w$]*$/.test(reference) && containerTokens[index + offset - 1] !== ".",
       )
@@ -601,12 +605,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         else if (["]", "}"].includes(tokens[cursor])) nesting--
         cursor++
       } while (cursor < tokens.length && nesting > 0)
-      const target = tokens[cursor + 1]
-      if (tokens[cursor] === "=" && target && /^[A-Za-z_$][\w$]*$/.test(target)) {
+      if (tokens[cursor] === "=") {
+        const targets = containerAliasTargets(cursor + 1, tokens, true)
         for (const name of names) {
-          const targets = assignedAliases.get(name) ?? new Set<string>()
-          targets.add(target)
-          assignedAliases.set(name, targets)
+          const aliases = assignedAliases.get(name) ?? new Set<string>()
+          for (const target of targets) aliases.add(target)
+          if (aliases.size) assignedAliases.set(name, aliases)
         }
       }
     }
@@ -617,7 +621,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     while (declaration >= 0 && !["const", "let", "var", "for"].includes(tokens[declaration]!)) declaration--
     if (!["const", "let", "var"].includes(tokens[declaration]!)) continue
     const alias = tokens[index - 1]!
-    const targets = containerAliasTargets(index + 1)
+    const targets = containerAliasTargets(index + 1, tokens, true)
     if (targets.length) {
       const aliases = assignedAliases.get(alias) ?? new Set<string>()
       for (const target of targets) aliases.add(target)
