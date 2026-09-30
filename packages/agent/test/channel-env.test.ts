@@ -60,6 +60,26 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: [] }])
   })
 
+  it("recognizes only single parenthesized bare factory references", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { telegram } from "vite-hub/agent/channels"
+      import * as factories from "vite-hub/agent/channels"
+      defineAgent({ channels: { support: (telegram), other: ((factories["telegram"])), typed: (telegram<Runtime>) } })
+      defineAgent({ channels: { support: (telegram, custom), other: (telegram || custom) } })
+      function build(telegram) { return defineAgent({ channels: { support: (telegram) } }) }
+    `)).toEqual(Array.from({ length: 3 }, () => ({ kind: "telegram", keys: [] })))
+  })
+
+  it("distinguishes JavaScript comparisons from TypeScript generic calls", () => {
+    const source = `
+      import { telegram } from "vite-hub/agent/channels"
+      telegram < Runtime > ({ botToken: token })
+    `
+    expect(discoverBuiltInChannelUses(source, kinds, { typescript: false })).toEqual([])
+    expect(uses(source)).toEqual([{ kind: "telegram", keys: ["botToken"] }])
+  })
+
   it("finds generic bare factory references by their imported kind", () => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
@@ -372,6 +392,20 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: [] }])
   })
 
+  it("resolves single parenthesized module-level map initializers", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      const first = ({ telegram: {} })
+      const second = (({ telegram: {} } satisfies AgentChannels))
+      const comma = ({ telegram: {} }, custom)
+      const operation = ({ telegram: {} } || custom)
+      defineAgent({ channels: first })
+      defineAgent({ channels: second })
+      defineAgent({ channels: comma })
+      defineAgent({ channels: operation })
+    `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: [] }])
+  })
+
   it("follows typed maps and explicit properties after spreads", () => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
@@ -608,7 +642,7 @@ describe("built-in Channel discovery", () => {
     }
   })
 
-  it.each(["telegram<Runtime>", "channels?.[\"telegram\"]()", "channels?.[\"telegram\"]"])("requires Telegram Env for %s", async (factory) => {
+  it.each(["(telegram)", "((telegram))", "telegram<Runtime>", "channels?.[\"telegram\"]()", "channels?.[\"telegram\"]"])("requires Telegram Env for %s", async (factory) => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-channel-env-"))
     try {
       await mkdir(join(root, "server", "agents"), { recursive: true })
@@ -621,6 +655,25 @@ describe("built-in Channel discovery", () => {
       expect(discoverAgentChannelEnv({ rootDir: root }).telegram?.botToken).toEqual({
         names: ["TELEGRAM_BOT_TOKEN"], required: true, secret: true,
       })
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+})
+
+describe("JavaScript Channel Env discovery", () => {
+  it.each(["js", "mjs", "cjs"])("does not declare Env for comparisons in %s Agent files", async (extension) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-channel-env-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      await writeFile(join(root, "server", "agents", `support.${extension}`), `
+        import { defineAgent } from "vite-hub/agent"
+        import { telegram } from "vite-hub/agent/channels"
+        const compared = telegram < Runtime > ({ botToken: token })
+        export default defineAgent({ channels: {} })
+      `)
+      expect(discoverAgentChannelEnv({ rootDir: root })).toEqual({})
     }
     finally {
       await rm(root, { force: true, recursive: true })

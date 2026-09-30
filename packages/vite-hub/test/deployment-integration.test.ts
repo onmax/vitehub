@@ -242,6 +242,8 @@ describe("built-in deployment preset integration", () => {
         { source: `defineAgent({ channels: { telegram: telegram((({ botToken: "token" }))) } })`, required: false },
         { source: `defineAgent({ channels: { telegram: telegram?.({ botToken: "token" }) } })`, required: false },
         { source: `defineAgent({ channels: { support: telegram<Runtime> } })`, required: true },
+        { source: `defineAgent({ channels: { support: (telegram) } })`, required: true },
+        { source: `const channels = ({ telegram: {} }); defineAgent({ channels })`, required: true },
         { source: `defineAgent({ channels: { support: channelFactories?.["telegram"]() } })`, required: true },
         { source: `defineAgent({ channels: { support: channelFactories?.["telegram"]?.<Runtime>({ botToken: "token" }) } })`, required: false },
         { source: `function run() { telegram()\n{} }; defineAgent({ channels: {} })`, required: true },
@@ -263,6 +265,18 @@ describe("built-in deployment preset integration", () => {
         ].join("\n"))
         expect((requiredSecrets(await resolve()) ?? []).includes("TELEGRAM_BOT_TOKEN"), source).toBe(required)
       }
+
+      await rm(join(root, "server", "agents", "support.ts"))
+      await writeFile(join(root, "server", "agents", "support.js"), [
+        `import { defineAgent } from "vite-hub/agent"`,
+        `import { telegram } from "vite-hub/agent/channels"`,
+        `const compared = telegram < Runtime > ({ botToken: "token" })`,
+        `export default defineAgent({ channels: {} })`,
+      ].join("\n"))
+      const comparison = await resolve()
+      expect(requiredSecrets(comparison) ?? []).not.toContain("TELEGRAM_BOT_TOKEN")
+      expect(await readFile(join(root, ".vitehub", "types", "env.d.ts"), "utf8")).not.toContain("\"telegram\": {")
+      await rm(join(root, "server", "agents", "support.js"))
 
       await writeFile(join(root, "server", "agents", "support.ts"), [
         `const defineAgent = (options) => options`,

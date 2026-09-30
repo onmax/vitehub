@@ -88,8 +88,10 @@ function staticOptionKeys(tokens: string[], start: number, empty: string): Reado
 /**
  * Find built-in Channel factory calls, such as `telegram({ ... })` imported from
  * `vite-hub/agent/channels`, and Channel shorthands such as `channels: { telegram: { ... } }`.
+ * Source is TypeScript by default. JavaScript files must disable type argument handling.
  */
-export function discoverBuiltInChannelUses(source: string, kinds: Iterable<string>): DiscoveredChannelUse[] {
+export function discoverBuiltInChannelUses(source: string, kinds: Iterable<string>, options: { typescript?: boolean } = {}): DiscoveredChannelUse[] {
+  const typescript = options.typescript !== false
   const { tokens, lineBreaks } = tokenizeAgentSource(source)
   const known = new Set(kinds)
   const bindings = new Map<string, string>()
@@ -120,18 +122,18 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
   const uses: Array<DiscoveredChannelUse & { index: number }> = []
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i - 1] === "." || tokens[i - 1] === "as") continue
-    const factory = !isShadowedAt(tokens, i, tokens[i]!, shadowBindings, lineBreaks) && factoryCall(tokens, i, bindings, namespaces, known, lineBreaks)
+    const factory = !isShadowedAt(tokens, i, tokens[i]!, shadowBindings, lineBreaks) && factoryCall(tokens, i, bindings, namespaces, known, lineBreaks, typescript)
     if (factory) uses.push({ index: i, kind: factory.name, optionKeys: staticOptionKeys(tokens, factory.open + 1, ")") })
     // Shorthands count only in the top-level `channels` option of defineAgent(), not in types or other objects.
-    const agent = !isShadowedAt(tokens, i, tokens[i]!, agentShadowBindings, lineBreaks) && factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames, lineBreaks)
+    const agent = !isShadowedAt(tokens, i, tokens[i]!, agentShadowBindings, lineBreaks) && factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames, lineBreaks, typescript)
     if (!agent || tokens[agent.open + 1] !== "{") continue
     visitObjectProperties(tokens, agent.open + 1, (option, channelsValue) => {
       const channels = channelsValue === undefined ? undefined : localObject(tokens, channelsValue, declarations)
       if (option !== "channels" || channels === undefined) return
       visitObjectProperties(tokens, channels, (key, value) => {
         if (value === undefined) return
-        const reference = channelFactoryReference(tokens, value, bindings, namespaces, known)
-        if (reference && isShadowedAt(tokens, value, tokens[value]!, shadowBindings, lineBreaks)) return
+        const reference = channelFactoryReference(tokens, value, bindings, namespaces, known, typescript)
+        if (reference && isShadowedAt(tokens, reference.index, tokens[reference.index]!, shadowBindings, lineBreaks)) return
         // A factory call is found by the call scan. Runtime calls a bare factory without options
         // and uses the kind it returns, whatever the key is.
         if (reference?.call) return
@@ -161,7 +163,14 @@ function channelFactoryReference(
   bindings: ReadonlyMap<string, string>,
   namespaces: ReadonlySet<string>,
   known: ReadonlySet<string>,
-): { call: boolean, kind: string } | undefined {
+  typescript: boolean,
+): { call: boolean, kind: string, index: number, end: number } | undefined {
+  if (tokens[index] === "(") {
+    const reference = channelFactoryReference(tokens, index + 1, bindings, namespaces, known, typescript)
+    const close = closingDelimiter(tokens, index)
+    return reference && isValueEnd(tokens, reference.end, new Set([")"])) && isValueEnd(tokens, close + 1, new Set([",", "}", ")"]))
+      ? { ...reference, end: close + 1 } : undefined
+  }
   let kind = bindings.get(tokens[index]!)
   let next = index + 1
   let member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
@@ -177,8 +186,12 @@ function channelFactoryReference(
     }
   }
   if (tokens[next] === "?" && tokens[next + 1] === ".") next += 2
-  if (tokens[next] === "<") next = skipTypeArguments(tokens, next)
-  return kind ? { call: tokens[next] === "(", kind } : undefined
+  if (tokens[next] === "<") {
+    if (!typescript) return undefined
+    next = skipTypeArguments(tokens, next)
+  }
+  const call = tokens[next] === "("
+  return kind && (call || isValueEnd(tokens, next, new Set([",", "}", ")"]))) ? { call, kind, index, end: call ? closingDelimiter(tokens, next) + 1 : next } : undefined
 }
 
 // A method key belongs directly to an object, class, or interface body. Function
@@ -560,7 +573,7 @@ function bindingPatternHasName(tokens: string[], start: number, name: string, cl
   return false
 }
 
-// Map module-level `const name = {` declarations to the index of their opening brace.
+// Map module-level const object initializers to the index of their opening brace.
 function moduleObjectDeclarations(tokens: string[]): Map<string, number> {
   const declarations = new Map<string, number>()
   let depth = 0
@@ -569,7 +582,10 @@ function moduleObjectDeclarations(tokens: string[]): Map<string, number> {
     if (depth === 0 && token === "const" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 1] ?? "")) {
       let equals = i + 2
       while (tokens[equals] && tokens[equals] !== "=" && tokens[equals] !== ";") equals++
-      if (tokens[equals] === "=" && tokens[equals + 1] === "{") declarations.set(tokens[i + 1]!, equals + 1)
+      if (tokens[equals] === "=") {
+        const object = localObject(tokens, equals + 1, declarations)
+        if (object !== undefined) declarations.set(tokens[i + 1]!, object)
+      }
     }
     if (["{", "(", "["].includes(token)) depth++
     else if (["}", ")", "]"].includes(token)) depth--
@@ -585,6 +601,7 @@ function factoryCall(
   namespaces: ReadonlySet<string>,
   names: ReadonlySet<string>,
   lineBreaks: ReadonlySet<number>,
+  typescript: boolean,
 ): { name: string, open: number } | undefined {
   let name = bindings.get(tokens[index]!)
   let next = index + 1
@@ -602,7 +619,10 @@ function factoryCall(
   }
   if (!name) return undefined
   if (tokens[next] === "?" && tokens[next + 1] === ".") next += 2
-  if (tokens[next] === "<") next = skipTypeArguments(tokens, next)
+  if (tokens[next] === "<") {
+    if (!typescript) return undefined
+    next = skipTypeArguments(tokens, next)
+  }
   if (tokens[next] !== "(") return undefined
   const after = tokens[closingDelimiter(tokens, next) + 1]
   const previous = tokens[index - 1]!
@@ -636,7 +656,7 @@ export function discoverAgentChannelEnv(options: { rootDir: string, serverDirs?:
   const fields: Readonly<Record<string, Readonly<Record<string, ChannelEnvField>>>> = builtInChannelEnv
   const declared: AgentChannelEnv = {}
   for (const handler of handlers) {
-    for (const { kind, optionKeys } of discoverBuiltInChannelUses(readFileSync(handler, "utf8"), Object.keys(fields))) {
+    for (const { kind, optionKeys } of discoverBuiltInChannelUses(readFileSync(handler, "utf8"), Object.keys(fields), { typescript: /\.(?:c|m)?ts$/i.test(handler) })) {
       const group = declared[kind] ??= {}
       for (const [field, spec] of Object.entries(fields[kind] ?? {})) {
         const entry = group[field] ??= { names: [...spec.names], required: false, secret: spec.secret === true }
