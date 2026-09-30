@@ -5,7 +5,9 @@ import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { createLocalWorkspaceStore } from "../src/storage/local.ts"
 
+const failedGateRemovals = new Map<string, number>()
 const gateAttempts = new Map<string, number>()
+const pausedProbes = new Map<string, { entered: () => void, resume: Promise<void> }>()
 const pausedReads = new Map<string, { entered: () => void, resume: Promise<void> }>()
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -14,6 +16,27 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     const path = String(args[0])
     if (path.endsWith(".gate")) gateAttempts.set(path, (gateAttempts.get(path) ?? 0) + 1)
     return await actual.mkdir(...args)
+  }
+  const lstat = async (...args: Parameters<typeof actual.lstat>) => {
+    const result = await actual.lstat(...args).catch((error) => error as NodeJS.ErrnoException)
+    const paused = pausedProbes.get(String(args[0]))
+    if (paused) {
+      pausedProbes.delete(String(args[0]))
+      paused.entered()
+      await paused.resume
+    }
+    if ("code" in result) throw result
+    return result
+  }
+  const rm = async (...args: Parameters<typeof actual.rm>) => {
+    const path = String(args[0])
+    const failures = failedGateRemovals.get(path) ?? 0
+    if (failures) {
+      if (failures === 1) failedGateRemovals.delete(path)
+      else failedGateRemovals.set(path, failures - 1)
+      throw Object.assign(new Error("Admission gate removal failed"), { code: "EACCES" })
+    }
+    return await actual.rm(...args)
   }
   const readFile = async (...args: Parameters<typeof actual.readFile>) => {
     const paused = pausedReads.get(String(args[0]))
@@ -24,7 +47,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     }
     return await actual.readFile(...args)
   }
-  return { ...actual, default: { ...actual, mkdir, readFile }, mkdir, readFile }
+  return { ...actual, default: { ...actual, mkdir, readFile, lstat, rm }, mkdir, readFile, lstat, rm }
 })
 
 const roots: string[] = []
@@ -92,6 +115,70 @@ it("lets a cross-process writer drain a shared lease before later reads", async 
     await later
   }
   expect(await later).toMatchObject({ content: new TextEncoder().encode("updated by independent writer") })
+}, 20_000)
+
+it("does not attach a reader when a writer takes the gate after its probe", async () => {
+  const { gate, paths, root, store } = await storeWithFiles(2)
+  let entered!: () => void
+  let resume!: () => void
+  const reading = new Promise<void>((resolve) => { entered = resolve })
+  const resumed = new Promise<void>((resolve) => { resume = resolve })
+  pausedReads.set(join(root, paths[0]!), { entered, resume: resumed })
+  const first = store.readFile(paths[0]!)
+  await reading
+
+  let probed!: () => void
+  let continueProbe!: () => void
+  const probe = new Promise<void>((resolve) => { probed = resolve })
+  const continued = new Promise<void>((resolve) => { continueProbe = resolve })
+  const writerGate = gate("docs")
+  pausedProbes.set(writerGate, { entered: probed, resume: continued })
+  let completed = false
+  const later = store.readFile(paths[1]!).then(file => { completed = true; return file })
+  await probe
+  await mkdir(writerGate)
+  try {
+    continueProbe()
+    resume()
+    await first
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(completed).toBe(false)
+    expect(await readdir(writerGate.replace(/\.gate$/, ".readers"))).toEqual([])
+    await writeFile(join(root, paths[1]!), "written after probe")
+  }
+  finally {
+    continueProbe()
+    resume()
+    await first
+    await rm(writerGate, { recursive: true, force: true })
+    await later
+  }
+  expect(await later).toMatchObject({ content: new TextEncoder().encode("written after probe") })
+}, 20_000)
+
+it("rolls back shared reader admission when gate cleanup fails", async () => {
+  const { gate, paths, root, store } = await storeWithFiles(2)
+  let entered!: () => void
+  let resume!: () => void
+  const reading = new Promise<void>((resolve) => { entered = resolve })
+  const resumed = new Promise<void>((resolve) => { resume = resolve })
+  pausedReads.set(join(root, paths[0]!), { entered, resume: resumed })
+  const first = store.readFile(paths[0]!)
+  await reading
+  const admissionGate = gate("docs")
+  failedGateRemovals.set(admissionGate, 3)
+  try {
+    await expect(store.readFile(paths[1]!)).rejects.toThrow("Admission gate removal failed")
+    resume()
+    await first
+    expect(await readdir(admissionGate.replace(/\.gate$/, ".readers"))).toEqual([])
+  }
+  finally {
+    resume()
+    await first
+    await rm(admissionGate, { recursive: true, force: true })
+  }
+  await expect(store.readFile(paths[1]!)).resolves.toMatchObject({ path: paths[1] })
 }, 20_000)
 
 it("lets a writer pass continuous shared reads in the same process", async () => {

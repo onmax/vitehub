@@ -237,11 +237,10 @@ async function withFilesystemLock<T>(lock: string, permissions: Pick<import("nod
 
 async function withFilesystemReadLock<T>(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, operation: () => Promise<T>): Promise<T> {
   const reader = `${lock}.readers/${randomUUID()}`
-  const lease = await withFilesystemLock(`${lock}.gate`, permissions, description, async () => {
-    await ensureLockDirectory(`${lock}.readers`)
-    if (process.platform !== "win32") await applyMetadataPermissions(`${lock}.readers`, permissions.mode & 0o770, permissions.gid)
-    return await open(reader, "wx")
-  })
+  // The admission batch already owns the gate during reader registration.
+  await ensureLockDirectory(`${lock}.readers`)
+  if (process.platform !== "win32") await applyMetadataPermissions(`${lock}.readers`, permissions.mode & 0o770, permissions.gid)
+  const lease = await open(reader, "wx")
   try {
     return await withLeaseHeartbeat(lease, operation)
   }
@@ -296,7 +295,7 @@ const sharedReadLeases = new Map<string, SharedReadLease>()
 // this wait cannot include the writer's own operation.
 const pendingWriters = new Map<string, { count: number, idle: Promise<void>, resolve: () => void }>()
 
-function openSharedReadLease(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string): SharedReadLease {
+async function openSharedReadLease(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string): Promise<SharedReadLease> {
   let release!: () => void
   const released = new Promise<void>((resolve) => { release = resolve })
   let settled!: Promise<void>
@@ -311,12 +310,60 @@ function openSharedReadLease(lock: string, permissions: Pick<import("node:fs").S
   settled.catch(() => {
     if (sharedReadLeases.get(lock) === lease) sharedReadLeases.delete(lock)
   })
+  await acquired
   return lease
+}
+
+// Readers that arrive together share one gate acquisition. The gate protects
+// the count update as well as the filesystem registration from external writers.
+const readAdmissions = new Map<string, { count: number, admitted: Promise<SharedReadLease | undefined> }>()
+
+async function admitSharedReader(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string): Promise<SharedReadLease | undefined> {
+  let admission = readAdmissions.get(lock)
+  if (!admission) {
+    admission = { count: 0, admitted: Promise.resolve(undefined) }
+    const batch = admission
+    readAdmissions.set(lock, batch)
+    let chargedLease: SharedReadLease | undefined
+    batch.admitted = withFilesystemLock(`${lock}.gate`, permissions, description, async () => {
+      readAdmissions.delete(lock)
+      if (pendingWriters.has(lock)) return undefined
+      let lease = sharedReadLeases.get(lock)
+      if (!lease) {
+        lease = await openSharedReadLease(lock, permissions, description)
+        sharedReadLeases.set(lock, lease)
+      }
+      lease.readers += batch.count
+      chargedLease = lease
+      return lease
+    }).catch(async (error: unknown) => {
+      if (chargedLease) {
+        try { await releaseSharedReaders(lock, chargedLease, batch.count) }
+        catch (cleanupError) { throw new AggregateError([error, cleanupError], "Workspace reader admission and cleanup failed", { cause: error }) }
+      }
+      throw error
+    }).finally(() => {
+      if (readAdmissions.get(lock) === batch) readAdmissions.delete(lock)
+    })
+  }
+  admission.count++
+  return await admission.admitted
+}
+
+async function releaseSharedReaders(lock: string, lease: SharedReadLease, count = 1): Promise<void> {
+  lease.readers -= count
+  if (lease.readers === 0) {
+    if (sharedReadLeases.get(lock) === lease) sharedReadLeases.delete(lock)
+    lease.release()
+    // The last reader reports a failed release, as an unshared reader does.
+    await lease.settled
+  }
 }
 
 async function withSharedFilesystemReadLock<T>(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, operation: () => Promise<T>): Promise<T> {
   const deadline = Date.now() + 10_000
-  while (true) {
+  let lease: SharedReadLease | undefined
+  while (!lease) {
     for (let writers = pendingWriters.get(lock); writers; writers = pendingWriters.get(lock)) await writers.idle
     // A writer in another process holds the gate while existing readers drain.
     // Do not extend their shared lease while that writer is waiting.
@@ -324,28 +371,20 @@ async function withSharedFilesystemReadLock<T>(lock: string, permissions: Pick<i
       if (error.code === "ENOENT") return undefined
       throw error
     })
-    if (!gate && !pendingWriters.has(lock)) break
+    if (!gate && !pendingWriters.has(lock)) {
+      lease = await admitSharedReader(lock, permissions, description)
+      if (lease) break
+    }
     if (gate) await validateLockDirectory(`${lock}.gate`)
     if (Date.now() >= deadline) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
     await delay(25)
   }
-  let lease = sharedReadLeases.get(lock)
-  if (!lease) {
-    lease = openSharedReadLease(lock, permissions, description)
-    sharedReadLeases.set(lock, lease)
-  }
-  lease.readers++
   try {
     await lease.acquired
     return await operation()
   }
   finally {
-    if (--lease.readers === 0) {
-      if (sharedReadLeases.get(lock) === lease) sharedReadLeases.delete(lock)
-      lease.release()
-      // The last reader reports a failed release, as an unshared reader does.
-      await lease.settled
-    }
+    await releaseSharedReaders(lock, lease)
   }
 }
 
@@ -465,8 +504,6 @@ class LocalWorkspaceStore implements WorkspaceStore {
   #baseline: WorkspaceSnapshot | undefined
   #files = new Map<string, { version: string, value: Pick<WorkspaceFile, "mediaType" | "metadata"> }>()
   #fileMetadataRoot: string
-  #meta = new Map<string, unknown>()
-  #metaLoaded = false
   #metaPath: string
 
   constructor(public root: string) {
@@ -976,14 +1013,15 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async getMeta(key: string): Promise<unknown> {
-    await this.#loadMeta()
-    return this.#meta.get(key)
+    return (await this.#readMeta()).get(key)
   }
 
   async setMeta(key: string, value: unknown): Promise<void> {
-    await this.#loadMeta()
-    this.#meta.set(key, value)
-    await this.#writeMeta()
+    await withWorkspacePathLock(this.root, ".vitehub/metadata", async () => {
+      const metadata = await this.#readMeta()
+      metadata.set(key, value)
+      await this.#writeMeta(metadata)
+    })
   }
 
   async #createSnapshot(name?: string): Promise<WorkspaceSnapshot> {
@@ -1004,25 +1042,23 @@ class LocalWorkspaceStore implements WorkspaceStore {
     }
   }
 
-  async #loadMeta() {
-    if (this.#metaLoaded) return
-    this.#metaLoaded = true
+  async #readMeta(): Promise<Map<string, unknown>> {
     const content = await readFile(this.#metaPath, "utf8").catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined
       throw error
     })
-    if (!content) return
+    if (!content) return new Map()
     const value: unknown = JSON.parse(content)
-    if (!value || Object(value) !== value || Array.isArray(value)) return
-    this.#meta = new Map(Object.entries(Object(value)))
+    if (!value || Object(value) !== value || Array.isArray(value)) return new Map()
+    return new Map(Object.entries(Object(value)))
   }
 
-  async #writeMeta() {
+  async #writeMeta(metadata: Map<string, unknown>) {
     const { dirname } = await import("node:path")
     const temp = `${this.#metaPath}.${randomUUID()}.tmp`
     await mkdir(dirname(this.#metaPath), { recursive: true })
     try {
-      await writeFile(temp, JSON.stringify(Object.fromEntries(this.#meta), null, 2))
+      await writeFile(temp, JSON.stringify(Object.fromEntries(metadata), null, 2))
       await rename(temp, this.#metaPath)
     }
     catch (error) {
