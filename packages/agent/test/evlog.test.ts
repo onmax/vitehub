@@ -17,7 +17,7 @@ function setup(overrides: Partial<AgentEvlogExporter> = {}, options = {}) {
   instances.push(telemetry)
   return { telemetry, exporter }
 }
-afterEach(async () => { await Promise.allSettled(instances.splice(0).map(item => item.flush())); vi.restoreAllMocks() })
+afterEach(async () => { await Promise.allSettled(instances.splice(0).map(item => item.flush())); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 it("keeps concurrent invocation identity and terminal events separate", async () => {
   const { telemetry, exporter } = setup()
@@ -161,14 +161,16 @@ it.each([
   ["team/support", "~007400650061006d002f0073007500700070006f00720074"],
   ["Reviewer", "~00520065007600690065007700650072"],
 ])("builds Console links and owns its host lifecycle for %j", async (name, segment) => {
-  const { telemetry, exporter } = setup({}, { console: { origin: "https://console.example", base: "/inspect" } })
+  vi.stubGlobal("__VITEHUB_PUBLIC_URL__", { agents: { [name]: "https://console.example" } })
+  vi.stubGlobal("__VITEHUB_APP_BASE_URL__", "/inspect/")
+  const { telemetry, exporter } = setup()
   const hooks = new Map<string, Function>()
   telemetry.plugin({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
   const agent = defineAgent({ driver: { run: () => "answer" }, capabilities: [telemetry.capability] })
   await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil, agentIdentity: { name }, run: { runId: "links" } }, { prompt: "hello" })
   await Promise.allSettled(background.splice(0))
   const terminal = exporter.capture.mock.calls.find(([name]) => name === "$ai_trace")
-  expect(terminal?.[1].session_url).toMatch(new RegExp(`^https://console.example/inspect/agents/${segment}/invocations/`))
+  expect(terminal?.[1].session_url).toMatch(new RegExp(`^https://console.example/inspect/_vitehub/agents/${segment}/invocations/`))
   await hooks.get("close")!()
   expect(telemetry.status().closed).toBe(true)
 })

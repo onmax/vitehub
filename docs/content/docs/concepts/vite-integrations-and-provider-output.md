@@ -58,4 +58,26 @@ Enabled integrations use `agent-state.sqlite`, `console.sqlite`, `kv/`, `blob/`,
 
 The host must provide a persistent, writable filesystem at this path. The option does not create a volume or make an ephemeral filesystem durable, and it is rejected for other presets. Keep the existing provider configuration for hosted storage.
 
+## Public URL
+
+Set `publicUrl` in `vitehub()` to the public origin of the deployed application. Console invocation links, GitHub activity links, telemetry `session_url` values, and the default Auth `baseURL` use it:
+
+```ts
+vitehub({
+  preset: "node",
+  publicUrl: "https://agents.example.com",
+})
+```
+
+Use a function when one build serves Agents from different origins. ViteHub calls it once per discovered Agent at build time:
+
+```ts
+vitehub({
+  preset: "node",
+  publicUrl: agent => agent === "bot" ? "https://agent.example.com" : "https://agent-dev.example.com",
+})
+```
+
+The value must be an `http(s)` origin without a path. ViteHub adds the application base path. It applies to `vite build` only; `vite dev` uses the request origin. Without `publicUrl`, request-bound links and Auth use the request origin, and links created outside a request are omitted. Auth uses the configured origin whose host matches the request host when the function form is set.
+
 Use `agent.providers.state.url`, `console.databaseUrl`, or each store's path option to preserve an existing location. Existing runtime database URL overrides still take precedence. Changing the directory does not migrate stored data.

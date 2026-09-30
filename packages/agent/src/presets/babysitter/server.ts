@@ -34,8 +34,8 @@ export interface BabysitterRuntimeOptions {
   inboxPath: string;
   repositories: string[];
   concurrency: number;
+  /** Public Console origin. Defaults to `vitehub({ publicUrl })`. */
   publicUrl?: string;
-  sessionUrl?: (runId: string) => string | undefined;
   event?: (name: string, properties: Record<string, unknown>) => void;
   error?: (name: string, error: unknown, properties: Record<string, unknown>) => void;
   wake?: () => void;
@@ -459,7 +459,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 agentName: "babysitter",
                 runId,
                 publicUrl,
-                sessionUrl: options.sessionUrl?.(runId),
               });
               // The GitHub run helper uses a stable PR thread id. Scope the
               // provider session to this pass so a new checkout never

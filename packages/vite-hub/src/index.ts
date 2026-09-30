@@ -7,7 +7,7 @@ import frameworkPackageManifest from "../package.json" with { type: "json" }
 
 import { defaultServerConditions } from "vite"
 
-import { hubAgent } from "@vite-hub/agent/vite"
+import { discoverAgentDefinitionEntries, hubAgent } from "@vite-hub/agent/vite"
 import { hubAuth, resolveAuthViteConfig } from "@vite-hub/auth/vite"
 import { hubBlob, resolveBlobViteConfig } from "@vite-hub/blob/vite"
 import { hubBrowser } from "@vite-hub/browser/vite"
@@ -28,7 +28,7 @@ import { hubWorkspace } from "@vite-hub/workspace/vite"
 import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { finalizeDeploymentPlanOutput } from "@vite-hub/internal/build/deployment-plan-output"
 import { finalizeDenoDeploymentOutput } from "@vite-hub/internal/build/deno-runtime-packages"
-import { VITEHUB_NITRO_CONFIG_CONTEXT, type ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
+import { resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS, type ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
 import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 
 import { viteHubTypesPlugin } from "./internal/types.ts"
@@ -54,6 +54,7 @@ import type { SandboxPublicOptions } from "@vite-hub/sandbox/vite"
 import type { ScheduleVitePluginOptions } from "@vite-hub/schedule/vite"
 import type { WorkflowModuleOptions } from "@vite-hub/workflow"
 import type { WorkspaceModuleOptions } from "@vite-hub/workspace"
+import type { PublicUrlConfig } from "@vite-hub/runtime"
 import type { Plugin, PluginOption, ResolvedConfig, UserConfig } from "vite"
 import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
 
@@ -250,6 +251,12 @@ export interface ViteHubOptions {
   dataDir?: string
   preset: DeploymentPreset
   name?: string
+  /**
+   * Public origin of the deployed application, such as `https://agents.example.com`.
+   * Console links, GitHub activity links, telemetry session links, and the Auth base URL use it.
+   * A function receives each discovered Agent name. Builds only; `vite dev` uses the request origin.
+   */
+  publicUrl?: string | ((agentName: string) => string)
   agent?: boolean | AgentModuleOptions
   auth?: true | AuthModuleOptions
   blob?: boolean | BlobModuleOptions
@@ -706,6 +713,36 @@ function presetBlobOptions(
   }
 }
 
+function normalizePublicUrl(value: unknown): string {
+  const url = typeof value === "string" && URL.canParse(value) ? new URL(value) : undefined
+  if (!url || !["http:", "https:"].includes(url.protocol) || url.pathname !== "/" || url.search || url.hash) {
+    throw viteHubErrorDiagnostics.VITE_HUB_R0124({ message: `[vitehub] publicUrl must be an http(s) origin without a path, received ${JSON.stringify(value)}.` })
+  }
+  return url.origin
+}
+
+function publicUrlPlugin(publicUrl: ViteHubOptions["publicUrl"]): Plugin {
+  return {
+    name: "vite-hub/public-url",
+    config(config, { command }) {
+      if (!publicUrl || command !== "build") return
+      let resolved: PublicUrlConfig
+      if (typeof publicUrl === "string") resolved = { url: normalizePublicUrl(publicUrl) }
+      else {
+        const root = resolveViteHubProjectRoot(config.root ?? process.cwd())
+        // SAFETY: ViteHub hosts add this private server-directory symbol before plugins read the config.
+        const serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
+        resolved = { agents: Object.fromEntries(discoverAgentDefinitionEntries(root, serverDirs).map(({ name }) => [name, normalizePublicUrl(publicUrl(name))])) }
+      }
+      return { define: { __VITEHUB_PUBLIC_URL__: JSON.stringify(resolved) } }
+    },
+    configEnvironment(_name, config) {
+      // The shared URL helper reads the public URL and app base defines, so server code must inline it.
+      if (config.consumer === "server") return { resolve: { noExternal: ["@vite-hub/runtime"] } }
+    },
+  }
+}
+
 export function vitehub(options: ViteHubOptions): PluginOption[] {
   if (!options || typeof options !== "object") throw viteHubErrorDiagnostics.VITE_HUB_R0085({ message: "vitehub() requires a built-in deployment preset." })
   options = withDataDir(options)
@@ -753,6 +790,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
         },
       })
   plugins.push(...deploymentPlugins(plan, requestedServices, blobEnabled, manifestServices, options, envPlugin))
+  plugins.push(publicUrlPlugin(options.publicUrl))
   const providerImportAliases: Record<string, string> = {}
   const configuredKV = options.kv && options.kv !== true ? options.kv : undefined
   const presetKV = options.kv ? resolveKVViteConfig(configuredKV, { hosting: plan.nitroPreset }).kv : false

@@ -1,5 +1,6 @@
 import discoveredDefinition from "#vitehub/auth/definition"
 import { betterAuth } from "better-auth"
+import { resolvePublicUrl } from "@vite-hub/runtime"
 
 import { normalizeAuthBasePath } from "./shared.ts"
 import { throwAuthenticationProviderError } from "./errors.ts"
@@ -180,11 +181,11 @@ export function createAuthRequestRuntimeOptions(
     ...resolveRequestRuntimeOptions(definition, request, event),
     ...runtimeOptions,
   }
-  const baseURL = requestRuntimeOptions.baseURL || new URL(request.url).origin
+  const baseURL = requestRuntimeOptions.baseURL || resolvePublicUrl({ request })
   return {
-    baseURL,
     ...(!hasTrustedOrigins(requestRuntimeOptions) && !hasStaticTrustedOrigins(definition) ? { trustedOrigins: [baseURL] } : {}),
     ...requestRuntimeOptions,
+    baseURL,
   } as AuthRuntimeOptions
 }
 

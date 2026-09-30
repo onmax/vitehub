@@ -31,9 +31,10 @@ export function createInlineConsoleAuth(config: InlineConsoleAuth): ConsoleAuthD
   const database = new DatabaseSync(config.databasePath)
   const allowedEmails = new Set(config.allowedEmails.map(email => email.toLowerCase()))
   return defineConsoleAuth({
-    auth: defineAuth(({ requestOrigin }) => ({
+    auth: defineAuth(() => ({
       appName: "ViteHub Console",
-      baseURL: config.baseURL ?? process.env.CONSOLE_AUTH_BASE_URL ?? requestOrigin,
+      // Unset falls back to `vitehub({ publicUrl })`, then the request origin.
+      baseURL: config.baseURL ?? process.env.CONSOLE_AUTH_BASE_URL,
       database,
       secret: requiredEnv(config.secretEnv ?? "BETTER_AUTH_SECRET"),
       socialProviders: {

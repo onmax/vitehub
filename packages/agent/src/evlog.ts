@@ -9,7 +9,7 @@ import { papercuts } from "./capabilities/papercuts.ts"
 import { diagnostics } from "./capabilities/diagnostics.ts"
 import { agentInvocationId } from "./invocations.ts"
 import { sanitizeAgentLog } from "./evlog/privacy.ts"
-import { encodeRouteSegment } from "@vite-hub/runtime"
+import { consoleInvocationUrl, resolvePublicUrl } from "@vite-hub/runtime"
 import type { AgentCapabilityDefinition, AgentFinishEvent, ResolvedAgentRuntimeContext } from "./types.ts"
 import type { RuntimeDiagnosticReporter } from "@vite-hub/runtime"
 
@@ -35,9 +35,8 @@ export interface AgentEvlogOptions {
   level?: "minimal" | "standard" | "full"
   /** HTTP request logs sent through the exporter. Defaults to failures only. */
   logs?: "all" | "failures" | false
-  sessionUrl?: (invocation: { agentName: string, id: string }) => string
-  /** Build Console links for all events and reports from one origin. */
-  console?: { origin: string | ((agent: string) => string), base?: string }
+  /** Console link for an invocation. Defaults to `vitehub({ publicUrl })`. */
+  sessionUrl?: (invocation: { agentName: string, id: string }) => string | undefined
   /** Enable resource diagnostics on the same drain. */
   resources?: NonNullable<Parameters<typeof diagnostics>[0]>["resources"]
   /** Durable papercut delivery shares the exporter and its shutdown lifecycle. */
@@ -91,11 +90,10 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
   if (!Number.isSafeInteger(maxPending) || maxPending < 1) throw new TypeError("[vitehub] evlog maxPending must be a positive integer.")
   const timeoutMs = options.deliveryTimeoutMs ?? 10_000
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) throw new TypeError("[vitehub] evlog deliveryTimeoutMs must be a positive timer duration.")
-  const sessionUrl = options.sessionUrl ?? (options.console ? ({ agentName, id }: { agentName: string, id: string }) => {
-    const origin = hasRuntimeType(options.console!.origin, "function") ? options.console!.origin(agentName) : options.console!.origin
-    const base = (options.console!.base ?? "/_vitehub").replace(/\/$/, "")
-    return new URL(`${base}/agents/${encodeRouteSegment(agentName)}/invocations/${encodeURIComponent(id)}`, origin).href
-  } : undefined)
+  const sessionUrl = options.sessionUrl ?? (({ agentName, id }: { agentName: string, id: string }) => {
+    const origin = resolvePublicUrl({ agentName })
+    return origin ? consoleInvocationUrl(origin, agentName, id) : undefined
+  })
   const exporter = options.exporter
   const level = options.level ?? "standard"
   const exportedLogs = options.logs ?? "failures"
@@ -181,7 +179,7 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
       agent_name: agentName, run_id: run?.runId, invocation_id: id, thread_id: run?.threadId,
       trace_id: runtime.trace?.id, parent_trace_id: runtime.trace?.parentId,
       $ai_trace_id: runtime.trace?.id || id,
-      session_url: agentName && id ? sessionUrl?.({ agentName, id }) : undefined,
+      session_url: agentName && id ? sessionUrl({ agentName, id }) : undefined,
     }
   }
 
