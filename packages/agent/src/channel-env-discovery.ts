@@ -274,7 +274,7 @@ function localObject(tokens: string[], index: number, declarations: ReadonlyMap<
 
 function isShadowedAt(tokens: string[], index: number, name: string, bindings: ReadonlyMap<string, string>, lineBreaks: ReadonlySet<number>): boolean {
   if (!bindings.has(name)) return false
-  if (hasLocalBinding(tokens, index, name)) return true
+  if (hasLocalBinding(tokens, index, name, lineBreaks)) return true
   const closes = new Map<number, number>()
   const stack: number[] = []
   for (let i = 0; i < tokens.length; i++) {
@@ -318,6 +318,11 @@ function isShadowedAt(tokens: string[], index: number, name: string, bindings: R
       while (body < tokens.length) {
         const token = tokens[body]!
         if (token === "{" && !expectType) break
+        if (token === "=" && tokens[body + 1] === ">") {
+          expectType = true
+          body += 2
+          continue
+        }
         if (token === ";" || token === "=") break
         if (token === "<") { body = skipTypeArguments(tokens, body); continue }
         expectType = ["|", "&", "?", ":"].includes(token)
@@ -381,7 +386,7 @@ function parameterListHasName(tokens: string[], start: number, end: number, name
   return false
 }
 
-function expressionBodyEnd(tokens: string[], start: number, lineBreaks: ReadonlySet<number>): number {
+function expressionBodyEnd(tokens: string[], start: number, lineBreaks: ReadonlySet<number>, stopAtComma = true): number {
   const stack: string[] = []
   for (let i = start; i < tokens.length; i++) {
     const token = tokens[i]!
@@ -399,14 +404,37 @@ function expressionBodyEnd(tokens: string[], start: number, lineBreaks: Readonly
       stack.pop()
       continue
     }
-    if (stack.length === 0 && [",", ";"].includes(token)) return i
+    if (stack.length === 0 && (token === ";" || (stopAtComma && token === ","))) return i
   }
   return tokens.length
 }
 
+// An unbraced loop owns one complete statement, including nested control flow.
+function statementEnd(tokens: string[], start: number, closes: ReadonlyMap<number, number>, lineBreaks: ReadonlySet<number>): number {
+  if (tokens[start] === "{") return (closes.get(start) ?? start) + 1
+  if (tokens[start] === ";") return start + 1
+  if (["if", "for", "while", "with", "switch"].includes(tokens[start]!)) {
+    const params = tokens[start + 1] === "await" ? start + 2 : start + 1
+    const close = closes.get(params)
+    if (close !== undefined) {
+      const end = statementEnd(tokens, close + 1, closes, lineBreaks)
+      return tokens[start] === "if" && tokens[end] === "else" ? statementEnd(tokens, end + 1, closes, lineBreaks) : end
+    }
+  }
+  if (tokens[start] === "do") {
+    const end = statementEnd(tokens, start + 1, closes, lineBreaks)
+    const close = tokens[end] === "while" ? closes.get(end + 1) : undefined
+    if (close !== undefined) return tokens[close + 1] === ";" ? close + 2 : close + 1
+    return end
+  }
+  if (/^[A-Za-z_$][\w$]*$/.test(tokens[start] ?? "") && tokens[start + 1] === ":") return statementEnd(tokens, start + 2, closes, lineBreaks)
+  const end = expressionBodyEnd(tokens, start, lineBreaks, false)
+  return tokens[end] === ";" ? end + 1 : end
+}
+
 // Lexical declarations shadow the import throughout their block. `var` belongs
 // to the enclosing function, including declarations inside a nested block.
-function hasLocalBinding(tokens: string[], index: number, name: string): boolean {
+function hasLocalBinding(tokens: string[], index: number, name: string, lineBreaks: ReadonlySet<number>): boolean {
   const closes = new Map<number, number>()
   const stack: number[] = []
   for (let i = 0; i < tokens.length; i++) {
@@ -428,7 +456,11 @@ function hasLocalBinding(tokens: string[], index: number, name: string): boolean
     if (tokens[i] === "for") {
       const params = tokens[i + 1] === "await" ? i + 2 : i + 1
       const close = closes.get(params)
-      if (close !== undefined && tokens[close + 1] === "{") loopScopes.set(params, closes.get(close + 1) ?? close)
+      if (close !== undefined) {
+        const body = close + 1
+        const end = statementEnd(tokens, body, closes, lineBreaks)
+        loopScopes.set(params, end)
+      }
     }
     // Method bodies have parameters too, but control-flow blocks are lexical scopes.
     if (tokens[i] === "(" && !["if", "while", "for", "switch", "catch", "with"].includes(tokens[i - 1]!)) {

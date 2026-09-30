@@ -95,6 +95,20 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: ["botToken"] }])
   })
 
+  it("keeps method parameter shadows through arrow-function return types", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      const helpers = {
+        run(telegram: () => void): () => { ready: boolean } { telegram() },
+        nested(telegram: () => void): () => () => { ready: boolean } { telegram() },
+      }
+      class Runner {
+        run(telegram: () => void): () => { ready: boolean } { telegram() }
+      }
+      telegram({ botToken: token })
+    `)).toEqual([{ kind: "telegram", keys: ["botToken"] }])
+  })
+
   it("ignores methods after nested class heritage expressions", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
@@ -317,6 +331,16 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: [] }])
   })
 
+  it("resolves parenthesized local Channel maps without accepting comma expressions", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      const channels = { telegram: {} }
+      defineAgent({ channels: (channels) })
+      defineAgent({ channels: ((channels)) })
+      defineAgent({ channels: (channels, custom) })
+    `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: [] }])
+  })
+
   it("follows typed maps and explicit properties after spreads", () => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
@@ -365,6 +389,23 @@ describe("built-in Channel discovery", () => {
       { kind: "discord", keys: [] },
       { kind: "github", keys: [] },
     ])
+  })
+
+  it("limits unbraced loop bindings to the loop body", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { telegram } from "vite-hub/agent/channels"
+      for (const telegram of factories) telegram()
+      for (let telegram of factories) telegram();
+      for (let telegram = local; ready; next()) telegram();
+      for await (const telegram of factories) telegram()
+      for (const telegram of factories) telegram(), telegram();
+      for (const telegram of factories) if (enabled) telegram(); else telegram();
+      for (const telegram of factories) while (enabled) telegram();
+      for (const telegram of factories) do telegram(); while (enabled);
+      for (const telegram of factories) label: { telegram() }
+      defineAgent({ channels: { support: telegram() } })
+    `)).toEqual([{ kind: "telegram", keys: [] }])
   })
 
   it("respects shadowed namespace and bare factory references", () => {
