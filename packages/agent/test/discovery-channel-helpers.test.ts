@@ -692,6 +692,34 @@ it.each([false, true])("preserves global Object.freeze settings with pullRequest
   expect(definition?.workspace).toBe(pullRequest ? "review" : undefined)
 })
 
+it.each([false, true])("infers frozen GitHub helper options with pullRequest=%s", async pullRequest => {
+  for (const declaration of [
+    `github(Object.freeze({ pullRequest: ${pullRequest} }))`,
+    `github(Object.freeze(Object.freeze({ pullRequest: ${pullRequest} })))`,
+    'github(options)',
+  ]) {
+    const definition = await discover(`${imports} const options = Object.freeze({ pullRequest: ${pullRequest} }); export default defineAgent({ channels: { custom: ${declaration} } })`)
+    expect(definition?.workspace).toBe(pullRequest ? "review" : undefined)
+  }
+})
+
+it("infers Workspace Capabilities in frozen helper options", async () => {
+  const definition = await discover(`${imports} const storage = defineCapability({ workspace: {} }); export default defineAgent({ channels: { custom: webChat(Object.freeze({ capabilities: [storage] })) } })`)
+  expect(definition?.workspace).toBe("review")
+})
+
+it("rejects cyclic frozen helper options", async () => {
+  await expect(discover(`${imports} const options = Object.freeze(options); export default defineAgent({ channels: { custom: github(options) } })`)).rejects.toThrow("opaque Channel")
+})
+
+it.each([
+  'const Object = { freeze: () => ({ pullRequest: true }) };',
+  'const options = () => ({ pullRequest: true });',
+])("rejects opaque or shadowed helper option freezes: %s", async declaration => {
+  const argument = declaration.startsWith('const Object') ? '{ pullRequest: false }' : 'options()'
+  await expect(discover(`${imports} ${declaration} export default defineAgent({ channels: { custom: github(Object.freeze(${argument})) } })`)).rejects.toThrow("opaque Channel")
+})
+
 it.each([
   'options.pullRequest = true',
   'opt\\u0069ons.pullRequest = true',

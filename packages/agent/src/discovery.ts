@@ -1772,7 +1772,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (tokens[argument] === ")") return false
     if (tokens[argument] === ".") throw opaqueChannelError()
     if (undefinedValue(argument)) return false
-    const options = resolveReference(argument, new Set(), true)
+    let options = resolveReference(argument, new Set(), true)
+    const frozenOptions = new Set<number>()
+    while (globalObjectReference(options) && tokens[options + 1] === "." && tokens[options + 2] === "freeze" && tokens[options + 3] === "(") {
+      if (frozenOptions.has(options)) throw opaqueChannelError()
+      frozenOptions.add(options)
+      options = resolveReference(options + 4, new Set(), true)
+    }
     if (tokens[options] !== "{" || tokens[options - 1] === ")") throw opaqueChannelError()
     let opaque = false
     const settings = properties(options, true, false, () => { opaque = true })
