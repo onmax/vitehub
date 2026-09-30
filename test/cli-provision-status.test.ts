@@ -32,12 +32,14 @@ describe("Vercel Blob provision status", () => {
       root: rootDir,
     })
 
-    for (const connection of ["absent", "other-project", "incomplete", "equivalent"]) {
-      const connected = connection === "equivalent"
+    for (const connection of ["absent", "other-project", "incomplete", "equivalent", "complete-last", "complete-first"]) {
+      const connected = ["equivalent", "complete-last", "complete-first"].includes(connection)
       projectsMetadata = connection === "absent" ? [] : [{
         projectId: connection === "other-project" ? "prj_other" : "prj_1",
         environments: connection === "incomplete" ? ["production"] : ["production", "preview", "development"],
       }]
+      if (connection === "complete-last") projectsMetadata.unshift({ projectId: "prj_1", environments: ["production"] })
+      if (connection === "complete-first") projectsMetadata.push({ projectId: "prj_1", environments: ["production"] })
       const stdout = { write: vi.fn<(chunk: string | Uint8Array) => void>() }
       const exitCode = await runViteHubCli({
         args: ["provision", "status", "--provider", "vercel", ...json ? ["--json"] : []],
@@ -64,7 +66,7 @@ describe("Vercel Blob provision status", () => {
       }
       expect(output).not.toContain("secret-token")
     }
-    expect(fetch).toHaveBeenCalledTimes(8)
+    expect(fetch).toHaveBeenCalledTimes(12)
     await expect(readFile(join(rootDir, ".vitehub/provision.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" })
   })
 

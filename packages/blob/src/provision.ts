@@ -117,9 +117,9 @@ function parseCloudflareBucket(value: unknown): CloudflareR2Bucket {
 }
 
 function vercelConnectionState(store: VercelBlobStore, projectId: string): "absent" | "equivalent" | "mismatched" {
-  const connection = store.projectsMetadata?.find(project => project.projectId === projectId)
-  if (!connection) return "absent"
-  return VERCEL_PROJECT_ENVIRONMENTS.every(environment => connection.environments?.includes(environment))
+  const connections = store.projectsMetadata?.filter(project => project.projectId === projectId)
+  if (!connections?.length) return "absent"
+  return connections.some(connection => VERCEL_PROJECT_ENVIRONMENTS.every(environment => connection.environments?.includes(environment)))
     ? "equivalent"
     : "mismatched"
 }

@@ -302,6 +302,44 @@ describe("blob vercel provision step", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
 
+  it.each([false, true])("accepts a complete matching connection regardless of entry order with completeFirst=%s", async (completeFirst) => {
+    const projectsMetadata = [connectedProject("prj_1", ["production"]), connectedProject()]
+    if (completeFirst) projectsMetadata.reverse()
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (init?.method === "POST") throw new Error("must not reconnect an equivalent store")
+      if (String(input).includes("/storage/stores/store_1")) {
+        return jsonResponse({ store: { projectsMetadata } })
+      }
+      return jsonResponse({ stores: [{ id: "store_1", type: "blob" }] })
+    })
+
+    const actions = await createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan(context(fetchImpl))
+    expect(actions[0]!.exists).toBe(true)
+    expect(actions[0]!.pending).toBe(false)
+    await expect(actions[0]!.apply()).resolves.toEqual({})
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
+  it("does not combine incomplete matching connections", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (init?.method === "POST") throw new Error("must not create a duplicate project connection")
+      if (String(input).includes("/storage/stores/store_1")) {
+        return jsonResponse({ store: { projectsMetadata: [
+          connectedProject("prj_1", ["production"]),
+          connectedProject("prj_1", ["preview", "development"]),
+          connectedProject("prj_other"),
+        ] } })
+      }
+      return jsonResponse({ stores: [{ id: "store_1", type: "blob" }] })
+    })
+
+    const actions = await createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan(context(fetchImpl))
+    expect(actions[0]!.exists).toBe(true)
+    expect(actions[0]!.pending).toBe(true)
+    await expect(actions[0]!.apply()).rejects.toThrow("without all required environments")
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
   it("is idempotent across repeated provision runs", async () => {
     let connected = false
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
