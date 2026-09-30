@@ -4278,10 +4278,10 @@ async function createAgentInvocationContext<
         throw error
       }
     }
-    if (intercept && !capabilities.response && !intercepted) {
-      capabilities = await capabilities.prepare?.(capabilities.input) ?? capabilities
+    if (intercept && !capabilities.response) {
+      if (!intercepted) capabilities = await capabilities.prepare?.(capabilities.input) ?? capabilities
       await validateCapabilityInput()
-      if (!capabilities.response) await knownUnavailable(capabilities)
+      if (!intercepted && !capabilities.response) await knownUnavailable(capabilities)
     }
     let transformed: { tools: typeof capabilities.tools, originalNames: Map<string, string> }
     if (intercepted) {

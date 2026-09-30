@@ -250,6 +250,26 @@ describe("Agent data and intercept", () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  it("validates data mutated in place by a handled intercept before finishing", async () => {
+    const finish = vi.fn()
+    const agent = defineAgent({
+      data: emailSchema,
+      driver: { run: vi.fn(() => "unused") },
+      hooks: { "agent:finish": finish },
+      intercept: ({ data }) => {
+        delete (data as { subject?: string }).subject
+        return { intercepted: true }
+      },
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { from: "friend@example.com", subject: "Dinner" } })
+
+    expect(error?.message).toContain("Invalid Agent input data")
+    expect(output).toBeNull()
+    expect(finish).not.toHaveBeenCalled()
+  })
+
   it("treats internal-slot data mutations as changed", async () => {
     const run = vi.fn(() => "ok")
     const agent = defineAgent({
