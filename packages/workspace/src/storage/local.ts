@@ -315,7 +315,20 @@ function openSharedReadLease(lock: string, permissions: Pick<import("node:fs").S
 }
 
 async function withSharedFilesystemReadLock<T>(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, operation: () => Promise<T>): Promise<T> {
-  for (let writers = pendingWriters.get(lock); writers; writers = pendingWriters.get(lock)) await writers.idle
+  const deadline = Date.now() + 10_000
+  while (true) {
+    for (let writers = pendingWriters.get(lock); writers; writers = pendingWriters.get(lock)) await writers.idle
+    // A writer in another process holds the gate while existing readers drain.
+    // Do not extend their shared lease while that writer is waiting.
+    const gate = await lstat(`${lock}.gate`).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined
+      throw error
+    })
+    if (!gate && !pendingWriters.has(lock)) break
+    if (gate) await validateLockDirectory(`${lock}.gate`)
+    if (Date.now() >= deadline) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
+    await delay(25)
+  }
   let lease = sharedReadLeases.get(lock)
   if (!lease) {
     lease = openSharedReadLease(lock, permissions, description)

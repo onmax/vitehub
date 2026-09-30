@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto"
-import { mkdtemp, readdir, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { createLocalWorkspaceStore } from "../src/storage/local.ts"
 
 const gateAttempts = new Map<string, number>()
+const pausedReads = new Map<string, { entered: () => void, resume: Promise<void> }>()
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>()
@@ -14,7 +15,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     if (path.endsWith(".gate")) gateAttempts.set(path, (gateAttempts.get(path) ?? 0) + 1)
     return await actual.mkdir(...args)
   }
-  return { ...actual, default: { ...actual, mkdir }, mkdir }
+  const readFile = async (...args: Parameters<typeof actual.readFile>) => {
+    const paused = pausedReads.get(String(args[0]))
+    if (paused) {
+      pausedReads.delete(String(args[0]))
+      paused.entered()
+      await paused.resume
+    }
+    return await actual.readFile(...args)
+  }
+  return { ...actual, default: { ...actual, mkdir, readFile }, mkdir, readFile }
 })
 
 const roots: string[] = []
@@ -49,6 +59,40 @@ it("shares one directory read registration across parallel reads", async () => {
   for (const readers of locks.filter(name => name.endsWith(".readers")))
     expect(await readdir(join(root, ".vitehub/locks", readers))).toEqual([])
 }, 60_000)
+
+it("lets a cross-process writer drain a shared lease before later reads", async () => {
+  const { gate, paths, root, store } = await storeWithFiles(2)
+  let entered!: () => void
+  let resume!: () => void
+  const reading = new Promise<void>((resolve) => { entered = resolve })
+  const resumed = new Promise<void>((resolve) => { resume = resolve })
+  pausedReads.set(join(root, paths[0]!), { entered, resume: resumed })
+  const first = store.readFile(paths[0]!)
+  await reading
+
+  // An independent writer takes the filesystem gate without pendingWriters
+  // in this process, then waits for the existing reader marker to drain.
+  const writerGate = gate("docs")
+  await mkdir(writerGate)
+  let completed = false
+  const later = store.readFile(paths[1]!).then(file => { completed = true; return file })
+  try {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(completed).toBe(false)
+    resume()
+    await first
+    const readers = writerGate.replace(/\.gate$/, ".readers")
+    expect(await readdir(readers)).toEqual([])
+    await writeFile(join(root, paths[1]!), "updated by independent writer")
+  }
+  finally {
+    resume()
+    await first
+    await rm(writerGate, { recursive: true, force: true })
+    await later
+  }
+  expect(await later).toMatchObject({ content: new TextEncoder().encode("updated by independent writer") })
+}, 20_000)
 
 it("lets a writer pass continuous shared reads in the same process", async () => {
   const { paths, store } = await storeWithFiles(16)
