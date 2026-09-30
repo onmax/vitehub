@@ -490,9 +490,11 @@ describe("agent Vite plugin", () => {
     // SAFETY: The plugin under test produced this hook, so the test invokes its documented callable shape.
     const config = plugin.config as (config: { define?: Record<string, string>; root?: string; server?: { watch?: { ignored?: string | string[] } } }) => { define?: Record<string, string>; server?: { watch?: { ignored?: string[] } } }
 
-    expect(config({}).server?.watch?.ignored).toEqual(["**/.vitehub/**"])
-    expect(config({ server: { watch: { ignored: ["**/node_modules/**"] } } }).server?.watch?.ignored).toEqual(["**/node_modules/**", "**/.vitehub/**"])
-    expect(config({ server: { watch: { ignored: ["**/.vitehub/**"] } } }).server?.watch?.ignored).toEqual(["**/.vitehub/**"])
+    const watchIgnored = (input: { server?: { watch?: { ignored?: string[] } } }) => mergeConfig(input, config(input)).server?.watch?.ignored
+
+    expect(watchIgnored({})).toEqual(["**/.vitehub/**"])
+    expect(watchIgnored({ server: { watch: { ignored: ["**/node_modules/**"] } } })).toEqual(["**/node_modules/**", "**/.vitehub/**"])
+    expect(watchIgnored({ server: { watch: { ignored: ["**/.vitehub/**"] } } })).toEqual(["**/.vitehub/**"])
     expect(config({ root: "/repo/apps/web" }).define?.__VITEHUB_AGENT_APP_ROOT__).toBe(JSON.stringify("/repo/apps/web"))
     expect(config({ define: { __VITEHUB_AGENT_APP_ROOT__: "configured" }, root: "/repo/apps/web" }).define?.__VITEHUB_AGENT_APP_ROOT__).toBe("configured")
   })
@@ -500,6 +502,7 @@ describe("agent Vite plugin", () => {
   it("merges server noExternal", async () => {
     const { hubAgent } = await import("../src/vite.ts")
     const plugin = hubAgent()
+    const environment = { consumer: "server", resolve: { noExternal: ["existing", "@vite-hub/agent"] } }
 
     const hook = plugin.configEnvironment
     const result = isRuntimeFunction(hook)
@@ -507,20 +510,14 @@ describe("agent Vite plugin", () => {
           // SAFETY: This synthetic test input exercises a hook that does not inspect the omitted host-only context.
           {} as never,
           "ssr",
-          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
-          {
-            // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
-            consumer: "server",
-            resolve: { noExternal: ["existing"] },
-          } as never,
+          // SAFETY: This fixture supplies the environment fields read by the hook.
+          environment as never,
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           {} as never,
         )
       : undefined
 
-    expect(result).toMatchObject({
-      resolve: { noExternal: ["existing", "@vite-hub/agent", "@t3tools/provider-runtime"] },
-    })
+    expect(result ? mergeConfig(environment, result).resolve.noExternal : undefined).toEqual(["existing", "@vite-hub/agent", "@t3tools/provider-runtime"])
   })
 
   it("bundles the provider runtime into hosted Vite server output", async () => {
