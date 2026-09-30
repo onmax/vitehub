@@ -318,7 +318,7 @@ async function openSharedReadLease(lock: string, permissions: Pick<import("node:
 // the count update as well as the filesystem registration from external writers.
 const readAdmissions = new Map<string, { count: number, admitted: Promise<SharedReadLease | undefined> }>()
 
-async function admitSharedReader(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string): Promise<SharedReadLease | undefined> {
+async function admitSharedReader(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, deadline: number): Promise<SharedReadLease | undefined> {
   let admission = readAdmissions.get(lock)
   if (!admission) {
     admission = { count: 0, admitted: Promise.resolve(undefined) }
@@ -336,7 +336,7 @@ async function admitSharedReader(lock: string, permissions: Pick<import("node:fs
       lease.readers += batch.count
       chargedLease = lease
       return lease
-    }).catch(async (error: unknown) => {
+    }, Math.max(0, deadline - Date.now())).catch(async (error: unknown) => {
       if (chargedLease) {
         try { await releaseSharedReaders(lock, chargedLease, batch.count) }
         catch (cleanupError) { throw new AggregateError([error, cleanupError], "Workspace reader admission and cleanup failed", { cause: error }) }
@@ -382,7 +382,7 @@ async function withSharedFilesystemReadLock<T>(lock: string, permissions: Pick<i
       throw error
     })
     if (!gate && !pendingWriters.has(lock)) {
-      lease = await admitSharedReader(lock, permissions, description)
+      lease = await admitSharedReader(lock, permissions, description, deadline)
       if (lease) break
     }
     if (gate) await validateLockDirectory(`${lock}.gate`)

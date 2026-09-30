@@ -240,3 +240,41 @@ it("lets a writer pass continuous shared reads in the same process", async () =>
   }
   await expect(store.readFile(paths[0]!)).resolves.toBeUndefined()
 }, 60_000)
+
+
+it("keeps the original read deadline when a writer races admission", async () => {
+  const { gate, paths, store } = await storeWithFiles(1)
+  const writerGate = gate("docs")
+  let probed!: () => void
+  let continueProbe!: () => void
+  const probe = new Promise<void>((resolve) => { probed = resolve })
+  const continued = new Promise<void>((resolve) => { continueProbe = resolve })
+  pausedProbes.set(writerGate, { entered: probed, resume: continued })
+  const started = Date.now()
+  const reading = store.readFile(paths[0]!).then(() => undefined, error => error as Error)
+  await probe
+  // The reader has spent nearly its full budget before a second writer wins
+  // the gate between the absence probe and the serialized admission attempt.
+  const now = vi.spyOn(Date, "now").mockImplementation(() => Date.prototype.getTime.call(new Date()) + 9_900)
+  await mkdir(writerGate)
+  let watchdog!: ReturnType<typeof setTimeout>
+  try {
+    continueProbe()
+    const error = await Promise.race([
+      reading,
+      new Promise<never>((_, reject) => {
+        watchdog = setTimeout(() => reject(new Error("Admission restarted the read deadline")), 1_500)
+      }),
+    ])
+    expect(error?.message).toContain("Timed out waiting to read Workspace path: docs.")
+    expect(Date.now() - started).toBeGreaterThanOrEqual(10_000)
+  }
+  finally {
+    clearTimeout(watchdog)
+    continueProbe()
+    await rm(writerGate, { recursive: true, force: true })
+    await reading
+    now.mockRestore()
+  }
+  await expect(store.readFile(paths[0]!)).resolves.toMatchObject({ path: paths[0] })
+}, 20_000)
