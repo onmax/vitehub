@@ -75,14 +75,39 @@ it.each([
   ["(false) ? false : true", true],
   ["{ workspace: ((true)) ? false : true }", false],
   ["{ workspace: (true) ? true : false }", true],
+  ["(true as boolean) ? false : true", false],
+  ["(false satisfies boolean) ? true : false", false],
+  ["((true as boolean) satisfies boolean) ? true : false", true],
+  ["{ workspace: (true as boolean) ? false : true }", false],
+  ["{ workspace: (false satisfies boolean) ? true : false }", false],
+  ["enabled ? true : false", false],
+  ["(enabled as boolean) ? true : false", false],
+  ["{ workspace: (enabled satisfies boolean) ? true : false }", false],
 ])("ignores unreachable conditional pullRequest branches: %s", async (pullRequest, ownsWorkspace) => {
   const channel = `github({ pullRequest: ${pullRequest} })`
-  const definition = await discover(`${imports} export default defineAgent({ channels: { custom: ${channel} } })`)
+  const definition = await discover(`${imports} const enabled = false; export default defineAgent({ channels: { custom: ${channel} } })`)
   expect(definition?.workspace).toBe(ownsWorkspace ? "review" : undefined)
   const imported = await discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
-    "portal.ts": `${imports} export default ${channel}`,
+    "portal.ts": `${imports} const enabled = false; export default ${channel}`,
   })
   expect(imported?.workspace).toBe(ownsWorkspace ? "review" : undefined)
+})
+
+it.each([
+  ['const enabled = true', true],
+  ['const enabled = ((false as boolean) satisfies boolean)', false],
+  ['const flag = false; const enabled = flag', false],
+  ['const enabled = false || true', true],
+  ['const enabled = (false as boolean || true)', true],
+  ['let enabled = false; enabled = true', true],
+  ['const enabled = alias; const alias = enabled', true],
+])("inspects constant condition bindings without trusting compound or mutated initializers: %s", async (declaration, ownsWorkspace) => {
+  const setup = `${imports} ${declaration};`
+  const channel = 'github({ pullRequest: enabled ? true : false })'
+  expect((await discover(`${setup} export default defineAgent({ channels: { custom: ${channel} } })`))?.workspace).toBe(ownsWorkspace ? "review" : undefined)
+  expect((await discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": `${setup} export default ${channel}`,
+  }))?.workspace).toBe(ownsWorkspace ? "review" : undefined)
 })
 
 it.each([

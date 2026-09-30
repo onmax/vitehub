@@ -1016,16 +1016,43 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function staticConditionalBranch(index: number): number | undefined {
+    const branches = conditionalBranches(index)
+    if (branches === undefined) return
+    const condition = staticBooleanValue(index, branches[0] - 1)
+    return condition === undefined ? undefined : branches[condition ? 0 : 1]
+  }
+
+  function staticBooleanValue(index: number, boundary?: number, seen = new Set<number>()): boolean | undefined {
     let condition = index
     while (tokens[condition] === "(") condition++
-    let conditionEnd = condition
-    for (let opening = condition - 1; opening >= index; opening--) {
-      conditionEnd++
-      if (tokens[conditionEnd] !== ")" || openingDelimiters.get(conditionEnd) !== opening) return
+    if (hasLogicalOperator(condition)) return
+    let end = condition + 1
+    function skipAssertions() {
+      while (tokens[end] === "as" || tokens[end] === "satisfies" || (tokens[end] === "!" && tokens[end + 1] !== "=")) {
+        end = tokens[end] === "!" ? end + 1 : skipAssertion(end)
+      }
     }
-    if ((tokens[condition] !== "true" && tokens[condition] !== "false") || tokens[conditionEnd + 1] !== "?") return
-    const branches = conditionalBranches(index)
-    return branches?.[tokens[condition] === "true" ? 0 : 1]
+    skipAssertions()
+    for (let opening = condition - 1; opening >= index; opening--) {
+      if (tokens[end] !== ")" || openingDelimiters.get(end) !== opening) return
+      end++
+      skipAssertions()
+    }
+    if (boundary === undefined
+      ? ![";", ",", ")", "}", "]", undefined].includes(tokens[end]) && !startsStatement(end)
+      : end !== boundary) return
+    if (tokens[condition] === "true" || tokens[condition] === "false") return tokens[condition] === "true"
+    const binding = visibleDeclaration(condition)
+    if (binding === undefined || binding > condition || destructuredBindings.has(binding)
+      || mutatedBindings.has(tokens[condition]!) || seen.has(binding)) return
+    seen.add(binding)
+    let initializer = declaratorInitializers.get(binding + 1)
+    if (initializer === undefined) {
+      let cursor = binding + 2
+      while (cursor < condition && !["=", ";", ","].includes(tokens[cursor]!)) cursor++
+      if (tokens[cursor] === "=") initializer = cursor + 1
+    }
+    return initializer === undefined ? undefined : staticBooleanValue(initializer, undefined, seen)
   }
 
   function hasLogicalOperator(index: number): boolean {
