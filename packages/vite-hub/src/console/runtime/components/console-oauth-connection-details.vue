@@ -205,7 +205,7 @@ function disconnect() {
           <p class="break-all text-highlighted">{{ entry.actor }}</p>
           <p v-for="kind in ruleKinds" :key="kind" class="break-all">
             <template v-if="entry.rule[kind]?.length"
-              ><span class="text-muted">{{ kind }}</span>
+              ><span class="mr-2 text-muted">{{ kind }}</span>
               <span class="font-mono">{{ entry.rule[kind]?.join(", ") }}</span></template
             >
           </p>
