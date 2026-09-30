@@ -25,7 +25,7 @@ Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `provision` namespace.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types` and `box`, and the CLI includes the built-in `provision` namespace. `box` does not load the project config, so it also runs in a deployed container without Vite.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
@@ -36,6 +36,7 @@ Available namespaces:
   workspace   Workspace development workflows.
   types       Generate ViteHub TypeScript declarations.
   provision   Idempotently create missing provider resources.
+  box         Serve and check an SSH Box runner. Does not load the project config.
 ```
 
 ## Commands
@@ -54,6 +55,40 @@ Available namespaces:
 | `vitehub workspace dev` | Available | Workspace Package | Run commands through a Workspace Session exposed by a Compatible Vite Development Server. |
 | `vitehub types prepare` | Available | ViteHub Framework | Prepare generated TypeScript declarations for editors and type checking. |
 | `vitehub provision run` | Available | ViteHub CLI plus package Provision Steps | Create missing provider resources idempotently. |
+| `vitehub box serve` | Available | ViteHub Framework with the Box Package | Serve authenticated SSH commands for provider Drivers from a runner container. |
+| `vitehub box check` | Available | ViteHub Framework with the Agent and Box Packages | Start a provider Driver through the SSH runner and report its readiness. |
+
+## Run an SSH Box runner
+
+`vitehub box serve` wraps `serveSsh` from `vite-hub/box/ssh`. `vitehub box check` defines a Codex or Claude Code Driver with `sshLaunch` and calls `status()`. Neither command loads the project config. Each flag falls back to an environment variable:
+
+| Flag | Environment | Default | Command |
+| --- | --- | --- | --- |
+| `--user` | `CRABBOX_STATIC_USER` | Required | `serve`, `check` |
+| `--port` | `CRABBOX_STATIC_PORT`, then `SSH_PORT` | `2222` | `serve`, `check` |
+| `--host` | `CRABBOX_STATIC_HOST` (`check` only) | `127.0.0.1` | `serve` listens on it, `check` connects to it |
+| `--host-key` | `SSH_HOST_KEY` | Required | `serve` |
+| `--authorized-key` | `SSH_AUTHORIZED_KEY` | Required | `serve` |
+| `--cwd` | `RUNNER_WORKSPACE` | Current directory | `serve` |
+| `--identity-file` | `CRABBOX_SSH_KEY` | Required | `check` |
+| `--host-key-file` | `SSH_HOST_PUBLIC_KEY` | OpenSSH host verification | `check` |
+| `--known-hosts-file` | None | OpenSSH host verification | `check` |
+| `--driver` | None | `codex` | `check` |
+| `--timeout` | None | `25000` ms | `check` |
+
+```bash [Terminal]
+# Runner container
+vitehub box serve --host 0.0.0.0 --user agent \
+  --host-key /ssh/ssh_host_ed25519_key --authorized-key /ssh/id_ed25519.pub --cwd /workspace
+
+# Application container
+vitehub box check --user agent \
+  --identity-file /ssh/id_ed25519 --host-key-file /ssh/ssh_host_ed25519_key.pub
+```
+
+`serve` prints `{"event":"box.listening","port":2222}` and closes connections and supervised processes on `SIGINT` or `SIGTERM`. It requires the optional `ssh2` package. It grants command execution as the server user and is not a sandbox.
+
+`check` reads `CODEX_AUTH_JSON` as Codex credentials when it is set. It prints one `box.check` JSON line with `readiness`, `installed`, `authenticated`, and `reason`. It exits with `1` only when the provider executable cannot start or its account probe does not complete. A signed-out provider or an exhausted quota is reported but exits with `0`, so a container probe does not restart the runner for account state.
 
 ## Run the Console with saved data
 
