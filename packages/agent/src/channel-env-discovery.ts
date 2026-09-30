@@ -81,7 +81,7 @@ function staticOptionKeys(tokens: string[], start: number, empty: string): Reado
   const keys = new Set<string>()
   return visitObjectProperties(tokens, start, (key, value) => {
     const omitted = value !== undefined && isUndefinedValue(tokens, value, new Set([",", "}"]))
-    if (!omitted) keys.add(key)
+    if (!omitted && (key !== "adapter" || (value !== undefined && isStaticAdapter(tokens, value)))) keys.add(key)
   }) ? keys : undefined
 }
 
@@ -259,6 +259,27 @@ function isUndefinedValue(tokens: string[], start: number, terminators: Readonly
   }
   if (tokens[start] === "undefined") return isValueEnd(tokens, start + 1, terminators)
   return tokens[start] === "void" && tokens[start + 1] === "0" && isValueEnd(tokens, start + 2, terminators)
+}
+
+// Unknown adapter expressions can resolve to undefined and select the built-in
+// adapter. Only a complete object or function literal guarantees an override.
+function isStaticAdapter(tokens: string[], start: number): boolean {
+  if (tokens[start] === "true") return isValueEnd(tokens, start + 1, new Set([",", "}", ")"]))
+  if (tokens[start] === "(") {
+    const close = closingDelimiter(tokens, start)
+    if (isValueEnd(tokens, close + 1, new Set([",", "}", ")"]))) {
+      return isStaticAdapter(tokens, start + 1)
+    }
+  }
+  if (tokens[start] === "{") return isValueEnd(tokens, closingDelimiter(tokens, start) + 1, new Set([",", "}", ")"]))
+  if (tokens[start] === "async") start++
+  if (tokens[start] === "function") {
+    const parameters = tokens.indexOf("(", start + 1)
+    const body = closingDelimiter(tokens, parameters) + 1
+    return tokens[body] === "{" && isValueEnd(tokens, closingDelimiter(tokens, body) + 1, new Set([",", "}", ")"]))
+  }
+  const afterParameters = tokens[start] === "(" ? closingDelimiter(tokens, start) + 1 : start + 1
+  return tokens[afterParameters] === "=" && tokens[afterParameters + 1] === ">"
 }
 
 // Non-null and type assertions preserve a value. Reject runtime expressions
