@@ -827,6 +827,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (destructuredBindings.has(binding)) return index
       if (mutatedBindings.has(tokens[index]!)) return index
       if (binding > index) return index
+      const declaratorInitializer = declaratorInitializers.get(binding + 1)
+      if (declaratorInitializer !== undefined) return resolveReference(declaratorInitializer, seen, preserveCalls)
       let initializer = binding + 2
       while (initializer < index && !["=", ";", ","].includes(tokens[initializer])) initializer++
       return tokens[initializer] === "=" ? resolveReference(initializer + 1, seen, preserveCalls) : index
@@ -1166,6 +1168,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     let depth = 0
     for (let k = keyword + 1; k < tokens.length; k++) {
       const token = tokens[k]
+      if (initializer === undefined && tokens[name + 1] === ":" && token === "<") {
+        k = skipTypeArguments(k) - 1
+        continue
+      }
       if (depth === 0) {
         if (token === ";" || (k > keyword + 1 && (startsStatement(k)
           || (lineBreaks.has(k) && ["const", "let", "var", "export", "import", "function", "class"].includes(token))))) break

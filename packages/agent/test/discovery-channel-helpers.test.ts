@@ -28,6 +28,18 @@ async function discover(agent: string, files: Record<string, string> = {}) {
 const imports = 'import { defineAgent } from "vite-hub/agent"; import { github, telegram, webChat } from "vite-hub/agent/channels";'
 
 it.each([
+  ['channels', 'export default { review: github({ pullRequest: true }) }'],
+  ['{ channels }', 'export const channels = { review: github({ pullRequest: true }) }'],
+])("rejects relative Channel-map imports: %s", async (binding, declaration) => {
+  const source = `${imports} import ${binding} from "../../channels"; export default defineAgent({ channels })`
+  const files = { "channels.ts": `import { github } from "vite-hub/agent/channels"; ${declaration}` }
+  await expect(discover(source, files)).rejects.toThrow("cannot inspect an imported Channel")
+  await expect(discover(source.replace("defineAgent({ channels })", "defineAgent({ channels: { ...channels } })"), files)).rejects.toThrow("cannot inspect an imported Channel")
+  const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
+  expect(definition?.workspace).toBe("review")
+})
+
+it.each([
   "github()",
   "github({})",
   "github(undefined)",
@@ -267,6 +279,11 @@ it.each([
   'const alias: Options = options; alias.pullRequest.workspace = true',
   'const alias: { pullRequest: { workspace: boolean } } = options; alias.pullRequest.workspace = true',
   'const alias: typeof options = options; mutate(alias)',
+  'const alias: typeof options & { <T = unknown>(): T } = options as typeof options & { <T = unknown>(): T }; alias.pullRequest.workspace = true',
+  'const alias: typeof options & (<T = unknown>() => T) = options as typeof options & (<T = unknown>() => T); alias.pullRequest.workspace = true',
+  'const alias: typeof options & (<T = unknown>() => T) = options as typeof options & (<T = unknown>() => T); mutate(alias)',
+  'const alias: <T = unknown>() => T = options as unknown as <T = unknown>() => T; mutate(alias)',
+  'const alias: <T = unknown>() => { value: T } = options as unknown as <T = unknown>() => { value: T }; mutate(alias)',
   'const enable = value => { value.workspace = true }; enable(options.pullRequest)',
   'const enable = value => { value.workspace = true }; const alias = options.pullRequest; enable(alias)',
   'const enable = value => { value.options.pullRequest = true }; enable({ options })',
@@ -312,6 +329,7 @@ it.each([
   'options === options',
   'options !== undefined',
   'const alias: typeof options = options; alias.pullRequest === false',
+  'const alias: <T = unknown>() => { value: T } = options as unknown as <T = unknown>() => { value: T }; alias === alias',
   'const unused = { read(options) { return options.pullRequest } }',
 ])("does not treat read-only expressions as mutated Channel option bindings: %s", async (comparison) => {
   const source = `${imports} const options = { pullRequest: false }; ${comparison}; export default defineAgent({ channels: { custom: github(options) } })`
