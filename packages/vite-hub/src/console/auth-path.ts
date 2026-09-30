@@ -1,4 +1,7 @@
 export function consoleAuthMountBase(baseURL: string): string {
+  // Vite asset bases can be relative or absolute URLs; auth routes use only the application pathname.
+  if (!baseURL || baseURL === "./") return ""
+  if (/^https?:\/\//.test(baseURL)) baseURL = new URL(baseURL).pathname
   const segments = baseURL.split("/").filter(Boolean)
   return segments.length ? `/${segments.join("/")}` : ""
 }

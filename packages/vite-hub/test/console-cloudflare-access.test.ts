@@ -57,12 +57,12 @@ function consoleEvent(url: string, token?: string, method = "GET"): { req: Reque
   return { req: new Request(url, { headers, method }), url: new URL(url) }
 }
 
-async function bundleMiddleware(root: string, platform: "browser" | "node"): Promise<string> {
-  const handlers = await writeConsoleAuthHandlers(root, resolveConsoleAuthConfig(root, { provider: "cloudflare-access" }, "cloudflare"))
+async function bundleMiddleware(root: string, platform: "browser" | "node", middleware?: string): Promise<string> {
+  middleware ??= (await writeConsoleAuthHandlers(root, resolveConsoleAuthConfig(root, { provider: "cloudflare-access" }, "cloudflare"))).middleware
   const bundled = await build({
     bundle: true,
     conditions: platform === "browser" ? ["workerd", "worker", "browser"] : [],
-    entryPoints: [handlers.middleware],
+    entryPoints: [middleware],
     external: ["node:*"],
     format: "esm",
     platform,
@@ -302,6 +302,40 @@ describe("Cloudflare Access Console Auth", () => {
       const handlers = await writeConsoleAuthHandlers(root, resolveConsoleAuthConfig(root, { provider: "cloudflare-access" }, "cloudflare"), "/portal/")
       const middleware = await readFile(handlers.middleware, "utf8")
       expect(middleware).toContain('"/portal/"')
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ["", ""],
+    ["./", ""],
+    ["/", ""],
+    ["/portal/", "/portal"],
+    ["https://assets.example.com/", ""],
+    ["https://assets.example.com/portal/", "/portal"],
+  ])("guards mounted Console routes with Vite base %j", async (base, mount) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-cf-access-vite-base-"))
+    try {
+      const plugin = consoleVitePlugin({ console: { access: "auth", auth: { provider: "cloudflare-access", audience, teamDomain } }, preset: "cloudflare" })
+      const hook = plugin.config
+      if (!hook) throw new TypeError("Expected Console config hook.")
+      const handler = "handler" in hook ? hook.handler : hook
+      const config: { root: string, base: string, nitro?: { handlers: Array<{ handler: string, middleware?: boolean }> } } = { root, base }
+      await Reflect.apply(handler, {}, [config, { command: "build", mode: "production" }])
+      const middleware = config.nitro?.handlers.find(entry => entry.middleware)?.handler
+      if (!middleware) throw new TypeError("Expected Console auth middleware.")
+      const bundled = await bundleMiddleware(root, "node", middleware)
+      const file = join(root, "guard.mjs")
+      await writeFile(file, bundled)
+      const { default: guard } = await import(pathToFileURL(file).href) as { default: (event: ReturnType<typeof consoleEvent>) => Promise<Response | undefined> }
+      for (const path of ["/_vitehub", "/_vitehub/rpc/__call", "/api/_vitehub/console/auth/identity"]) {
+        for (const method of ["GET", "POST"]) {
+          expect((await guard(consoleEvent(`https://app.example.com${mount}${path}`, undefined, method)))?.status).toBe(401)
+        }
+      }
+      expect(await guard(consoleEvent("https://app.example.com/api/app"))).toBeUndefined()
     }
     finally {
       await rm(root, { recursive: true, force: true })
