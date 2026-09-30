@@ -3070,7 +3070,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       if (resolved) {
         const alias = isRecord(mergedNitro.alias) ? { ...mergedNitro.alias } : {}
         alias[agentRegistryId] = join(generatedRoot, generatedAgentRegistry)
-        mergedNitro.alias = { ...alias, ...workerAliases }
+        mergedNitro.alias = { ...workerAliases, ...alias }
       }
       const result: UserConfig = {
         define: {

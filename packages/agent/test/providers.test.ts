@@ -2045,6 +2045,31 @@ describe("agent Vite plugin", () => {
     expect(result.nitro.plugins).toEqual(["/app/plugin.ts"])
   })
 
+  it.each([undefined, "/app/pkce-worker-shim.ts"])("preserves the configured Nitro pkce alias %s with the Worker fallback", async (pkceAlias) => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const config = {
+      [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
+      nitro: {
+        alias: {
+          "user-module": "/app/user-module.ts",
+          ...(pkceAlias === undefined ? {} : { "pkce-challenge": pkceAlias }),
+        },
+      },
+      preset: "cloudflare",
+      root: hostedAgentRoot,
+    }
+
+    const result = await resolveAgentViteConfig(hubAgent(), config)
+
+    expect(result.nitro.alias["user-module"]).toBe("/app/user-module.ts")
+    if (pkceAlias === undefined) {
+      expect(result.nitro.alias["pkce-challenge"]).toMatch(/\/index\.browser\.js$/)
+    }
+    else {
+      expect(result.nitro.alias["pkce-challenge"]).toBe(pkceAlias)
+    }
+  })
+
   it("uses a configured import in the Cloudflare Agent state Rollup entry", async () => {
     const { hubAgent } = await import("../src/vite.ts")
     // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
