@@ -54,7 +54,24 @@ export function mergeProvisionState(base: ProvisionState, next: ProvisionState):
 
 function parseProvisionState(raw: string): ProvisionState {
   const parsed: unknown = JSON.parse(raw)
-  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as ProvisionState) : {}
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {}
+
+  const state: ProvisionState = {}
+  for (const provider of ["cloudflare", "vercel"] as const) {
+    const categories = (parsed as Record<string, unknown>)[provider]
+    if (!categories || typeof categories !== "object" || Array.isArray(categories)) continue
+    const validCategories: Record<string, Record<string, string>> = {}
+    for (const [category, ids] of Object.entries(categories)) {
+      if (!ids || typeof ids !== "object" || Array.isArray(ids)) continue
+      const validIds: Record<string, string> = {}
+      for (const [key, id] of Object.entries(ids)) {
+        if (typeof id === "string") validIds[key] = id
+      }
+      if (Object.keys(validIds).length) validCategories[category] = validIds
+    }
+    if (Object.keys(validCategories).length) state[provider] = validCategories
+  }
+  return state
 }
 
 function sortState(state: ProvisionState): ProvisionState {

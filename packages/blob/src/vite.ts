@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { getViteMode } from "@vite-hub/internal/build/mode"
-import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, contributeProviderDeploymentOutput, createDefaultCloudflareOutputRoot, createDefaultVercelOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir } from "@vite-hub/internal/build/provider-output-sources"
 import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
@@ -107,6 +107,12 @@ function mergeNitroCloudflareBlobOutput(config: object, nitro: Record<string, un
   }
   contributeCloudflareProviderOutput(providerOutput, { owner: "blob", ...(bindings ? { r2Buckets: bindings } : {}) })
   return composeNitroCloudflareProviderOutput(providerOutput, baseNitro, nitro)
+}
+
+function blobCreatesProviderOutput(blob: BlobViteRuntimeConfig["blob"]): boolean {
+  if (!blob) return false
+  const stores = "stores" in blob && blob.stores ? Object.values(blob.stores) : [blob.store]
+  return stores.every(store => store.driver !== "fs")
 }
 
 function normalizeNitroRoute(route: string): string {
@@ -280,6 +286,17 @@ export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBl
         return {
           namespaces: [],
           provision: [createBlobCloudflareProvisionStep(() => blob), createBlobVercelProvisionStep(() => blob)],
+        }
+      },
+      inspect: () => {
+        if (!runtimeConfig || !blobCreatesProviderOutput(runtimeConfig.blob)) return
+        const projectRoot = resolveViteHubProjectRoot(resolved?.root ?? process.cwd())
+        const functionName = resolveNitroVercelFunctionName(resolved ?? {}, "blob") ?? "__server.func"
+        return {
+          providerOutput: [
+            { description: "Generated Cloudflare Blob worker", owner: "blob", path: resolve(createDefaultCloudflareOutputRoot(projectRoot), "index.js") },
+            { description: "Generated Vercel Blob function", owner: "blob", path: resolve(createDefaultVercelOutputRoot(projectRoot), "functions", functionName, "index.mjs") },
+          ],
         }
       },
     },

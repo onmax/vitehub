@@ -6,6 +6,7 @@ import {
 
 import {
   contributeProviderDeploymentOutput,
+  createDefaultCloudflareOutputRoot,
   createProviderDeploymentOutputGenerationState,
   finalizeProviderDeploymentOutputs,
   isProviderJsonRecord,
@@ -260,6 +261,18 @@ export function hubKv(options?: KVModuleOptions): KVVitePlugin {
         namespaces: [],
         provision: [createKVCloudflareProvisionStep(() => configuredOptions)],
       }),
+      inspect: () => {
+        const config = getConfig()
+        if (!isCloudflareKVConfig(config.kv) || nitroOwned) return
+        const rootDir = resolved?.root ?? process.cwd()
+        return {
+          providerOutput: [{
+            description: "Generated Cloudflare KV worker config",
+            owner: "kv",
+            path: resolve(createDefaultCloudflareOutputRoot(rootDir), "wrangler.json"),
+          }],
+        }
+      },
     },
     nitro: {
       name: "@vite-hub/kv/cloudflare-bindings",
