@@ -2,6 +2,8 @@ import { hasRuntimeType } from "./runtime-type.ts"
 import type { WorkspaceSourceInput } from "@vite-hub/workspace"
 
 export const colocatedAgentSkillsSymbol: symbol = Symbol.for("vitehub.agent.colocatedSkills")
+export const discoveredSkillsSetter: symbol = Symbol.for("vitehub.agent.discoveredSkillsSetter")
+
 export const colocatedAgentSkillsContextKey = "agent.colocatedSkills"
 
 export type ColocatedAgentSkills = Record<string, WorkspaceSourceInput>
@@ -27,6 +29,11 @@ export function decodeColocatedAgentSkills(
 
 export function withColocatedAgentSkills<Agent>(agent: Agent, skills: ColocatedAgentSkills | undefined): Agent {
   if (!agent || !hasRuntimeType(agent, "object")) return agent
+  const setDiscoveredSkills: unknown = Reflect.get(agent, discoveredSkillsSetter)
+  if (hasRuntimeType(setDiscoveredSkills, "function")) {
+    setDiscoveredSkills(skills)
+    return agent
+  }
   if (!skills || !Object.keys(skills).length) {
     // Keep inherited Skills getters installed by Agent layers. Only clear a
     // concrete decoration owned by this definition.
@@ -62,12 +69,18 @@ export function agentWithSkills<Agent extends object>(agent: Agent, skills: Reco
   }
   // SAFETY: The copy keeps the prototype and every own property descriptor of the Agent Definition.
   const resolved = Object.create(Object.getPrototypeOf(agent), Object.getOwnPropertyDescriptors(agent)) as Agent
+  let discovered: ColocatedAgentSkills | undefined
+  // Discovery updates local sources without replacing the manually composed getter.
+  Object.defineProperty(resolved, discoveredSkillsSetter, {
+    configurable: true,
+    value: (sources: ColocatedAgentSkills | undefined) => { discovered = sources },
+  })
   Object.defineProperty(resolved, colocatedAgentSkillsSymbol, {
     configurable: true,
     enumerable: true,
     get: () => {
       const inherited: unknown = Reflect.get(agent, colocatedAgentSkillsSymbol)
-      return { ...(hasRuntimeType(inherited, "object") ? inherited : undefined), ...added }
+      return { ...(hasRuntimeType(inherited, "object") ? inherited : undefined), ...discovered, ...added }
     },
   })
   return resolved
