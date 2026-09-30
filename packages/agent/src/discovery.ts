@@ -394,6 +394,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (tokens[i] === "export" && tokens[i + 1] === "*" && tokens[i + 2] === "from") {
         starExports.push(moduleSpecifier(tokens[i + 3]))
       }
+      if (tokens[i] === "export" && tokens[i + 1] === "*" && tokens[i + 2] === "as"
+        && isIdentifier(tokens[i + 3] ?? "") && tokens[i + 4] === "from") {
+        // `export * as name from "./module"` is a namespace binding.
+        moduleNamespaces.set(tokens[i + 3]!, moduleSpecifier(tokens[i + 5]))
+      }
       if (tokens[i] === "export" && tokens[i + 1] === "function" && isIdentifier(tokens[i + 2] ?? "")) {
         namedExports.set(tokens[i + 2]!, i + 2)
       }
@@ -760,6 +765,18 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
     if ((propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion)
       && !isFunctionParameter(i)) mutatedBindings.add(name)
+    // `globalThis.Object.freeze = ...` and `globalThis["Object"].freeze = ...`
+    // mutate the same intrinsic as a bare Object.freeze assignment.
+    if (name === "globalThis") {
+      const objectMember = tokens[i + 1] === "." && tokens[i + 2] === "Object"
+        || tokens[i + 1] === "[" && /^['\"]Object['\"]$/.test(tokens[i + 2] ?? "") && tokens[i + 3] === "]"
+      const freezeOffset = tokens[i + 1] === "." ? 3 : 4
+      const assignment = i + freezeOffset + 2
+      if (objectMember && tokens[i + freezeOffset] === "." && tokens[i + freezeOffset + 1] === "freeze"
+        && assignmentOperator(assignment)) {
+        mutatedBindings.add("Object")
+      }
+    }
 
     const initializer = declaratorInitializers.get(i) ?? (tokens[i + 1] === "=" ? i + 2 : undefined)
     if (initializer !== undefined) {
@@ -768,31 +785,61 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       for (const target of targets) aliases.add(target)
       if (aliases.size) assignedAliases.set(name, aliases)
     }
-    if (initializer !== undefined && isIdentifier(tokens[initializer] ?? "")) {
-      let aliasEnd = initializer + 1
-      while (tokens[aliasEnd] === "." || tokens[aliasEnd] === "[") {
-        if (tokens[aliasEnd] === ".") {
-          if (!isIdentifier(tokens[aliasEnd + 1] ?? "")) break
-          aliasEnd += 2
+    if (initializer !== undefined) {
+      let aliasInitializer = initializer
+      while (tokens[aliasInitializer] === "(") aliasInitializer++
+      let aliasEnd = aliasInitializer
+      let nesting = 0
+      while (aliasEnd < tokens.length) {
+        const token = tokens[aliasEnd]
+        if (nesting === 0 && [";", ","].includes(token!)) break
+        if (["(", "[", "{"].includes(token!)) nesting++
+        else if ([")", "]", "}"].includes(token!)) {
+          if (nesting === 0) break
+          nesting--
         }
-        else {
-          let nesting = 1
-          aliasEnd++
-          while (aliasEnd < tokens.length && nesting > 0) {
-            if (tokens[aliasEnd] === "[") nesting++
-            if (tokens[aliasEnd] === "]") nesting--
-            aliasEnd++
+        aliasEnd++
+      }
+      if (["?", "||", "&&", "??"].some(operator => tokens.slice(aliasInitializer, aliasEnd).includes(operator))) {
+        const aliases = assignedAliases.get(name) ?? new Set<string>()
+        const possibleTargets = tokens.slice(aliasInitializer, aliasEnd).flatMap((token, offset) =>
+          isIdentifier(token) && tokens[aliasInitializer + offset - 1] !== "." ? [token] : [])
+        for (const target of possibleTargets) {
+          aliases.add(target)
+        }
+        if (aliases.size) assignedAliases.set(name, aliases)
+      }
+    }
+    if (initializer !== undefined) {
+      let aliasReference = initializer
+      while (tokens[aliasReference] === "(") aliasReference++
+      if (isIdentifier(tokens[aliasReference] ?? "")) {
+        let aliasEnd = aliasReference + 1
+        while (tokens[aliasEnd] === "." || tokens[aliasEnd] === "[") {
+          if (tokens[aliasEnd] === ".") {
+            if (!isIdentifier(tokens[aliasEnd + 1] ?? "")) break
+            aliasEnd += 2
           }
-          if (nesting > 0) break
+          else {
+            let nesting = 1
+            aliasEnd++
+            while (aliasEnd < tokens.length && nesting > 0) {
+              if (tokens[aliasEnd] === "[") nesting++
+              if (tokens[aliasEnd] === "]") nesting--
+              aliasEnd++
+            }
+            if (nesting > 0) break
+          }
         }
-      }
-      while (tokens[aliasEnd] === "!" || tokens[aliasEnd] === "as" || tokens[aliasEnd] === "satisfies") {
-        aliasEnd = tokens[aliasEnd] === "!" ? aliasEnd + 1 : skipAssertion(aliasEnd)
-      }
-      if ([";", ",", undefined].includes(tokens[aliasEnd])) {
-        const targets = assignedAliases.get(name) ?? new Set<string>()
-        targets.add(tokens[initializer]!)
-        assignedAliases.set(name, targets)
+        while (tokens[aliasEnd] === "!" || tokens[aliasEnd] === "as" || tokens[aliasEnd] === "satisfies") {
+          aliasEnd = tokens[aliasEnd] === "!" ? aliasEnd + 1 : skipAssertion(aliasEnd)
+        }
+        while (tokens[aliasEnd] === ")") aliasEnd++
+        if ([";", ",", undefined].includes(tokens[aliasEnd])) {
+          const targets = assignedAliases.get(name) ?? new Set<string>()
+          targets.add(tokens[aliasReference]!)
+          assignedAliases.set(name, targets)
+        }
       }
     }
   }
@@ -1032,7 +1079,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // an opaque result. Keep their writes subject to captured-binding taint.
   for (const [initializer, names] of loopResultBindings) {
     let value = initializer
-    while (tokens[value] === "(") value++
+    while (tokens[value] === "(" || tokens[value] === "await") value++
     const call = memberCallEnd(value)
     if (opaqueCalls.has(call) && !trustedCalls.has(call)) {
       for (const name of names) opaqueResultBindings.add(name)
@@ -1790,6 +1837,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       return importedChannelOwnsWorkspace(moduleNamespace, member.name, channelId)
     }
     const moduleImport = moduleImports.get(tokens[channelOptions])
+    const namespaceMember = memberAccess(channelOptions)
+    if (moduleImport && namespaceMember?.name === "default" && isModuleBinding(channelOptions)
+      && !mutatedBindings.has(tokens[channelOptions]!)) {
+      return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId)
+    }
     if (moduleImport && isModuleBinding(channelOptions) && !["(", "<", ".", "[", "?", "!"].includes(tokens[channelOptions + 1])) {
       if (mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId)
@@ -1905,6 +1957,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   // Returns undefined when this module does not export the name.
   function exportOwnsWorkspace(name: string, channelId?: string): boolean | undefined {
+    const namespace = moduleNamespaces.get(name)
+    if (namespace !== undefined) return importedModule(namespace).exportOwnsWorkspace("default", channelId)
     const reExport = reExports.get(name)
     if (reExport !== undefined) return importedChannelOwnsWorkspace(reExport.specifier, reExport.name, channelId)
     if (opaqueExports.has(name)) throw opaqueChannelError()

@@ -597,6 +597,12 @@ it("preserves relative namespace re-export traversal and cycle checks", async ()
   await expect(discover(source, { "portal.ts": 'import * as inner from "./inner.ts"; export const channel = inner.channel', "inner.ts": 'export { channel } from "./portal.ts"' })).rejects.toThrow(/imported Channel/)
 })
 
+it("follows namespace re-exports of relative Channels", async () => {
+  const source = 'import { portal } from "../../portal.ts"; export default defineAgent({ channels: { custom: portal.default } })'
+  const files = { "portal.ts": 'export * as portal from "./inner.ts"', "inner.ts": owning }
+  expect((await discover(source, files))?.workspace).toBe("review")
+})
+
 it("keeps relative namespace imports separate from local shadowing and mutations", async () => {
   const files = { "portal.ts": `${imports} export const channel = github({ pullRequest: true })` }
   const prefix = 'import * as portal from "../../portal.ts";'
@@ -989,6 +995,8 @@ it.each([
   'Object.freeze = value => value;',
   'Object["freeze"] = value => value;',
   'Object.defineProperty(Object, "freeze", { value: value => value });',
+  'globalThis.Object.freeze = value => value;',
+  'globalThis["Object"].freeze = value => value;',
 ])("rejects reassigned global Object.freeze: %s", async mutation => {
   const source = `${imports} const value = (input: unknown) => input; ${mutation} export default defineAgent({ channels: { custom: github(Object.freeze({ pullRequest: false })) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
@@ -996,6 +1004,15 @@ it.each([
 
 it.each(["of", "in"])("rejects member-expression for-%s Channel option targets", async operator => {
   const source = `${imports} let options = { pullRequest: false }; for (options.pullRequest ${operator} { enabled: true }) {} export default defineAgent({ channels: { custom: github(options) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
+it.each([
+  "const alias = (options); alias.pullRequest = true;",
+  "const alias = true ? options : {}; alias.pullRequest = true;",
+  "for (const { value: alias } of await values()) alias.pullRequest = true;",
+])("rejects aliases that can mutate Channel options: %s", async mutation => {
+  const source = `${imports} const options = { pullRequest: false }; const values = async () => []; ${mutation} export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
 })
 
