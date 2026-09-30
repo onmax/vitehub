@@ -613,6 +613,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
   for (let i = 0; i < tokens.length; i++) {
     if (declarationTypeTokens.has(i)) continue
+    if (tokens[i - 1] === "." && tokens[i - 2] !== ".") continue
     const name = tokens[i]
     if (!declarations.has(name) && !/^[A-Za-z_$][\w$]*$/.test(name ?? "")) continue
     const memberEnd = memberCallEnd(i)
@@ -666,6 +667,51 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (!["[", "{"].includes(tokens[opening]) || declarationTypeTokens.has(opening)) continue
     const memberEnd = memberCallEnd(close, opening)
     if (memberEnd <= close + 1) continue
+    let member = close + 1
+    while ([")", "!", "as", "satisfies"].includes(tokens[member])) {
+      member = ["as", "satisfies"].includes(tokens[member]) ? skipAssertion(member) : member + 1
+    }
+    if (tokens[member] === "?" && tokens[member + 1] === ".") member += tokens[member + 2] === "[" ? 2 : 1
+    let valueEnd = member
+    let targets = containerAliasTargets(opening)
+    if (tokens[member] === ".") {
+      if (tokens[opening] === "[") continue
+      const property = member + 1
+      const value = properties(opening).get(tokens[property])
+      if (value === undefined) continue
+      targets = containerAliasTargets(value, tokens, true)
+      valueEnd = property + 1
+    }
+    else if (tokens[member] === "[") {
+      let nesting = 1
+      for (valueEnd++; valueEnd < tokens.length && nesting > 0; valueEnd++) {
+        if (tokens[valueEnd] === "[") nesting++
+        else if (tokens[valueEnd] === "]") nesting--
+      }
+      if (valueEnd === member + 3) {
+        const token = tokens[resolveReference(member + 1)]
+        const key = token === undefined ? undefined : /^["'`]/.test(token) ? propertyName(token) : token
+        if (tokens[opening] === "[" && /^\d+$/.test(key ?? "")) {
+          let start = opening + 1
+          let position = 0
+          for (let cursor = start; cursor <= close; cursor++) {
+            if (cursor !== close && (tokens[cursor] !== "," || tokenScopes[cursor] !== opening)) continue
+            if (tokens[start] === "." && tokens[start + 1] === "." && tokens[start + 2] === ".") break
+            if (position === Number(key)) {
+              targets = containerAliasTargets(0, tokens.slice(start, cursor), true)
+              break
+            }
+            start = cursor + 1
+            position++
+          }
+        }
+        else if (tokens[opening] === "{" && /^["'`]/.test(token ?? "")) {
+          const value = properties(opening).get(key!)
+          targets = value === undefined ? [] : containerAliasTargets(value, tokens, true)
+        }
+      }
+    }
+    else continue
     const assignment = assignmentOperator(memberEnd)
     const postfixUpdate = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
     let receiver = opening
@@ -673,9 +719,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const prefixUpdate = ["+", "-"].includes(tokens[receiver - 2] ?? "") && tokens[receiver - 1] === tokens[receiver - 2]
     const deletion = tokens[receiver - 1] === "delete"
     if (!assignment && !postfixUpdate && !prefixUpdate && !deletion && tokens[memberEnd] !== "(") continue
-    const targets = new Set(containerAliasTargets(opening))
+    if (tokens[memberEnd] !== "(" && memberEnd <= valueEnd) continue
+    const referenced = new Set(targets)
     for (let reference = opening + 1; reference < close; reference++) {
-      if (targets.has(tokens[reference]) && tokens[reference - 1] !== "."
+      if (referenced.has(tokens[reference]) && tokens[reference - 1] !== "."
         && (visibleDeclaration(reference) !== undefined || imported.has(tokens[reference])) && !isFunctionParameter(reference)) {
         mutatedBindings.add(tokens[reference])
       }

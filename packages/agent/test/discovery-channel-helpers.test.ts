@@ -298,6 +298,31 @@ it.each([
 })
 
 it.each([
+  "[options].push(other)",
+  "[options].pop()",
+  "[options].shift()",
+  "([options]).reverse()",
+  "[options][0] = other",
+  "delete [options][0]",
+  "[options].length = 0",
+  "({ options }).options = other",
+  "delete ({ options }).options",
+  "({ options }).toString()",
+  "[options, other][1].pullRequest = true",
+  "[options, other][1].enable()",
+  '[options, other]["1"].enable()',
+  "({ options, other }).other.pullRequest = true",
+  '({ options, other })["other"].enable()',
+])("keeps temporary container operations stateless: %s", async operation => {
+  const definition = await discover(`${imports} const options = { pullRequest: false }; const other = {}; ${operation}; export default defineAgent({ channels: { github: github(options) } })`)
+  expect(definition?.workspace).toBeUndefined()
+  const imported = await discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })', {
+    "portal.ts": `${imports} const options = { pullRequest: false }; const other = {}; ${operation}; export default github(options)`,
+  })
+  expect(imported?.workspace).toBeUndefined()
+})
+
+it.each([
   "[portal][0]",
   "({ portal }).portal",
   "([{ portal }])[0].portal",
