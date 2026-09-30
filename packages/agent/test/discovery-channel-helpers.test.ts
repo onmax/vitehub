@@ -603,6 +603,39 @@ it("follows namespace re-exports of relative Channels", async () => {
   expect((await discover(source, files))?.workspace).toBe("review")
 })
 
+it.each([true, false])("follows named Channels in namespace re-exports with pullRequest %s", async enabled => {
+  const files = {
+    "portal.ts": 'export * as portal from "./inner.ts"',
+    "inner.ts": `${imports} export const review = github({ pullRequest: ${enabled} })`,
+    "barrel.ts": 'export { portal as channels } from "./portal.ts"',
+    "star.ts": 'export * from "./barrel.ts"',
+  }
+  for (const specifier of ["barrel", "star"]) {
+    for (const member of ["channels.review", 'channels["review"]']) {
+      const source = `import { channels } from "../../${specifier}.ts"; export default defineAgent({ channels: { custom: ${member} } })`
+      expect((await discover(source, files))?.workspace).toBe(enabled ? "review" : undefined)
+    }
+  }
+})
+
+it.each(["portal.missing", "portal.review()", "portal.review.capabilities", "portal.review || github({ pullRequest: true })"])('rejects opaque namespace re-export members: %s', async member => {
+  await expect(discover(`import { portal } from "../../portal.ts"; export default defineAgent({ channels: { custom: ${member} } })`, {
+    "portal.ts": 'export * as portal from "./inner.ts"',
+    "inner.ts": `${imports} export const review = github({ pullRequest: false })`,
+  })).rejects.toThrow(/opaque Channel|imported Channel/)
+})
+
+it("rejects cyclic namespace re-exports and members of ordinary Channel imports", async () => {
+  const source = 'import { portal } from "../../portal.ts"; export default defineAgent({ channels: { custom: portal.review } })'
+  await expect(discover(source, {
+    "portal.ts": 'export * as portal from "./inner.ts"',
+    "inner.ts": 'export { portal as review } from "./portal.ts"',
+  })).rejects.toThrow(/imported Channel/)
+  await expect(discover(source, {
+    "portal.ts": `${imports} export const portal = github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
 it("keeps relative namespace imports separate from local shadowing and mutations", async () => {
   const files = { "portal.ts": `${imports} export const channel = github({ pullRequest: true })` }
   const prefix = 'import * as portal from "../../portal.ts";'
@@ -1003,6 +1036,10 @@ it.each([
   'globalThis["Object"]["defineProperty"](globalThis["Object"], "freeze", { value: value => ({ pullRequest: true }) });',
   'Object.defineProperty(globalThis.Object, "freeze", { value: value => ({ pullRequest: true }) });',
   'globalThis.Object.defineProperty(Object, "freeze", { value: value => ({ pullRequest: true }) });',
+  'Reflect.defineProperty(Object, "freeze", { value: value => ({ pullRequest: true }) });',
+  'Reflect["defineProperty"](Object, "freeze", { value: value => ({ pullRequest: true }) });',
+  'globalThis.Reflect.defineProperty(globalThis.Object, "freeze", { value: value => ({ pullRequest: true }) });',
+  'globalThis["Reflect"]["defineProperty"](globalThis["Object"], "freeze", { value: value => ({ pullRequest: true }) });',
 ])("rejects reassigned global Object.freeze: %s", async mutation => {
   const source = `${imports} const value = (input: unknown) => input; ${mutation} export default defineAgent({ channels: { custom: github(Object.freeze({ pullRequest: false })) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
@@ -1014,7 +1051,11 @@ it.each([
   'const globalThis = { Object: { freeze() {} } }; globalThis.Object.freeze = value => value;',
   'const globalThis = { Object: { freeze() {} } }; globalThis.Object["freeze"] = value => value;',
   'function configure(globalThis) { globalThis["Object"]["freeze"] = value => value; }',
-])("preserves intrinsic freeze after writes to a shadowed globalThis: %s", async setup => {
+  'const Reflect = { defineProperty() {} }; Reflect.defineProperty(Object, "freeze", {});',
+  'function configure(Reflect) { Reflect["defineProperty"](Object, "freeze", {}); }',
+  'const globalThis = { Reflect: { defineProperty() {} } }; globalThis.Reflect.defineProperty(Object, "freeze", {});',
+  'function configure(Object) { Reflect.defineProperty(Object, "freeze", {}); }',
+])("preserves intrinsic freeze after writes through shadowed globals: %s", async setup => {
   expect((await discover(`${imports} ${setup} export default defineAgent({ channels: { custom: github(Object.freeze({ pullRequest: false })) } })`))?.workspace).toBeUndefined()
 })
 

@@ -1022,9 +1022,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // Object.freeze call as value-preserving.
   for (let index = 0; index < tokens.length; index++) {
     const objectEnd = intrinsicObjectEnd(index)
-    if (objectEnd === undefined) continue
-    const member = memberAccess(objectEnd - 1)
-    if (member?.name === "freeze" && assignmentOperator(member.end)) mutatedBindings.add("Object")
+    const receiverEnd = objectEnd ?? intrinsicReflectEnd(index)
+    if (receiverEnd === undefined) continue
+    const member = memberAccess(receiverEnd - 1)
+    if (objectEnd !== undefined && member?.name === "freeze" && assignmentOperator(member.end)) mutatedBindings.add("Object")
     if (member?.name === "defineProperty" && tokens[member.end] === "(") {
       const target = resolveReference(member.end + 1, new Set(), true)
       const targetEnd = intrinsicObjectEnd(target)
@@ -1214,6 +1215,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (!globalBindingReference(index, "globalThis")) return
     const member = memberAccess(index)
     if (member?.name === "Object") return member.end
+  }
+
+  function intrinsicReflectEnd(index: number): number | undefined {
+    if (globalBindingReference(index, "Reflect")) return index + 1
+    if (!globalBindingReference(index, "globalThis")) return
+    const member = memberAccess(index)
+    if (member?.name === "Reflect") return member.end
   }
 
   function globalBindingReference(index: number, name: string): boolean {
@@ -1845,9 +1853,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
     const moduleImport = moduleImports.get(tokens[channelOptions])
     const namespaceMember = memberAccess(channelOptions)
-    if (moduleImport && namespaceMember?.name === "default" && isModuleBinding(channelOptions)
+    if (moduleImport && namespaceMember && isModuleBinding(channelOptions)
       && !mutatedBindings.has(tokens[channelOptions]!)) {
-      return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId)
+      if (hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?", "!"].includes(tokens[namespaceMember.end])) throw opaqueChannelError()
+      return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId, namespaceMember.name)
     }
     if (moduleImport && isModuleBinding(channelOptions) && !["(", "<", ".", "[", "?", "!"].includes(tokens[channelOptions + 1])) {
       if (mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
@@ -1958,23 +1967,26 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return inspectAgentModule(module.source, module.file, new Set([...modules, module.file]))
   }
 
-  function importedChannelOwnsWorkspace(specifier: string, name: string, channelId?: string): boolean {
-    return importedModule(specifier).exportedChannelOwnsWorkspace(name, channelId)
+  function importedChannelOwnsWorkspace(specifier: string, name: string, channelId?: string, member?: string): boolean {
+    return importedModule(specifier).exportedChannelOwnsWorkspace(name, channelId, member)
   }
 
   // Returns undefined when this module does not export the name.
-  function exportOwnsWorkspace(name: string, channelId?: string): boolean | undefined {
+  function exportOwnsWorkspace(name: string, channelId?: string, member?: string): boolean | undefined {
     const namespace = moduleNamespaces.get(name)
-    if (namespace !== undefined) return importedModule(namespace).exportOwnsWorkspace("default", channelId)
+    if (namespace !== undefined) return importedModule(namespace).exportOwnsWorkspace(member ?? "default", channelId)
     const reExport = reExports.get(name)
-    if (reExport !== undefined) return importedChannelOwnsWorkspace(reExport.specifier, reExport.name, channelId)
+    if (reExport !== undefined) return importedChannelOwnsWorkspace(reExport.specifier, reExport.name, channelId, member)
     if (opaqueExports.has(name)) throw opaqueChannelError()
     const index = name === "default" ? exported : namedExports.get(name)
-    if (index !== undefined) return channelOwnsWorkspace(index, channelId)
+    if (index !== undefined) {
+      if (member !== undefined) throw opaqueChannelError()
+      return channelOwnsWorkspace(index, channelId)
+    }
     // `export *` never re-exports the default binding.
     if (name === "default") return
     for (const specifier of starExports) {
-      const owns = importedModule(specifier).exportOwnsWorkspace(name, channelId)
+      const owns = importedModule(specifier).exportOwnsWorkspace(name, channelId, member)
       if (owns !== undefined) return owns
     }
   }
@@ -2344,8 +2356,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       return tokens.some((token, index) => token === "defineAgent" && ownsWorkspace(index))
     },
     exportOwnsWorkspace,
-    exportedChannelOwnsWorkspace(name: string, channelId?: string): boolean {
-      const owns = exportOwnsWorkspace(name, channelId)
+    exportedChannelOwnsWorkspace(name: string, channelId?: string, member?: string): boolean {
+      const owns = exportOwnsWorkspace(name, channelId, member)
       if (owns === undefined) throw importedChannelError()
       return owns
     },
