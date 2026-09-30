@@ -229,7 +229,7 @@ The CLI calls the management route of a running development server with the Cons
 | `vitehub connections activity [name]` | Show recent activity. |
 | `vitehub connections connect <name>` | Print a single-use connect URL. |
 | `vitehub connections refresh <name>` | Refresh the access token now. |
-| `vitehub connections disconnect <name>` | Revoke the grant at the provider and delete it. |
+| `vitehub connections disconnect <name>` | Revoke the grant at the provider and delete it. If revocation fails, ViteHub still deletes the local grant and records the error in the `disconnect` activity. Revoke the app at the provider then. |
 | `vitehub connections set-key <name>` | Set the key of an API key Connection. Pipe the key on stdin. A key in an argument would stay in the shell history. |
 
 ## Errors
