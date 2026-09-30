@@ -123,6 +123,37 @@ function isShadowedByFunctionParameter(
   return false
 }
 
+function declaredNames(node: PositionedNode): string[] {
+  if (node.type === "VariableDeclaration") {
+    return (Array.isArray(node.declarations) ? node.declarations : []).flatMap(declaration => {
+      return isPositionedNode(declaration) ? patternIdentifiers(declaration.id) : []
+    })
+  }
+  if (node.type === "ClassDeclaration" || node.type === "FunctionDeclaration") {
+    const name = identifierName(node.id)
+    return name ? [name] : []
+  }
+  return []
+}
+
+function isShadowedByLexicalDeclaration(
+  node: PositionedNode,
+  binding: string,
+  ancestors: Map<PositionedNode, PositionedNode[]>,
+): boolean {
+  for (const ancestor of ancestors.get(node) ?? []) {
+    if (ancestor.type === "BlockStatement" || ancestor.type === "Program") {
+      const statements = Array.isArray(ancestor.body) ? ancestor.body : []
+      if (statements.some(statement => isPositionedNode(statement) && declaredNames(statement).includes(binding))) return true
+    }
+    if (ancestor.type === "ForStatement" || ancestor.type === "ForInStatement" || ancestor.type === "ForOfStatement") {
+      if (isPositionedNode(ancestor.left) && declaredNames(ancestor.left).includes(binding)) return true
+      if (isPositionedNode(ancestor.init) && declaredNames(ancestor.init).includes(binding)) return true
+    }
+  }
+  return false
+}
+
 function isProviderFactoryCall(
   node: PositionedNode,
   factoryBindings: Set<string>,
@@ -132,13 +163,16 @@ function isProviderFactoryCall(
   if (node.type !== "CallExpression" || !isPositionedNode(node.callee)) return false
   if (node.callee.type === "Identifier") {
     const name = identifierName(node.callee) ?? ""
-    return factoryBindings.has(name) && !isShadowedByFunctionParameter(node, name, ancestors)
+    return factoryBindings.has(name)
+      && !isShadowedByFunctionParameter(node, name, ancestors)
+      && !isShadowedByLexicalDeclaration(node, name, ancestors)
   }
   if (node.callee.type !== "MemberExpression" || node.callee.computed === true) return false
   const namespace = identifierName(node.callee.object) ?? ""
   return namespaces.has(namespace)
     && providerFactoryNames.has(identifierName(node.callee.property) ?? "")
     && !isShadowedByFunctionParameter(node, namespace, ancestors)
+    && !isShadowedByLexicalDeclaration(node, namespace, ancestors)
 }
 
 function hasProviderDriverValue(node: PositionedNode): boolean {
@@ -198,10 +232,12 @@ function hasProviderDriverDefinition(
   const isDefineAgent = callee.type === "Identifier"
     ? defineAgentBindings.has(identifierName(callee) ?? "")
       && !isShadowedByFunctionParameter(node, identifierName(callee) ?? "", ancestors)
+      && !isShadowedByLexicalDeclaration(node, identifierName(callee) ?? "", ancestors)
     : callee.type === "MemberExpression" && callee.computed !== true
       && namespaces.has(identifierName(callee.object) ?? "")
       && identifierName(callee.property) === "defineAgent"
       && !isShadowedByFunctionParameter(node, identifierName(callee.object) ?? "", ancestors)
+      && !isShadowedByLexicalDeclaration(node, identifierName(callee.object) ?? "", ancestors)
   if (!isDefineAgent) return false
   const options = Array.isArray(node.arguments) && isPositionedNode(node.arguments[0])
     ? unwrapTypeScriptExpression(node.arguments[0])
