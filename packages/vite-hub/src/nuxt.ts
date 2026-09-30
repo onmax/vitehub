@@ -26,12 +26,8 @@ import { installConsoleProjectName, installConsoleSections } from "./console/run
 import { resolveConsoleProjectNameFromRoot } from "./console/project.ts"
 import { resolveConsoleSectionIds, type ConsoleSectionId } from "./console/runtime/sections.ts"
 import { consoleDefinitionSectionIds } from "./console/runtime/definitions.ts"
-<<<<<<< ours
 import { consoleIcons } from "./console/icons.ts"
 import { addConsoleRpcHandler } from "./console/nitro.ts"
-=======
-import { addConsoleRpcHandler } from "./console/nitro.ts"
->>>>>>> theirs
 import { resolveConsoleAuthConfig, writeConsoleAuthHandlers } from "./console/auth-build.ts"
 import { serializeConsoleRefresh } from "./console/refresh.ts"
 import { assertConsoleProductionAccess, closeConsoleInvocationRootState, configureConsoleFixtureLifecycle, consoleInvocationRootPlugin, createConsoleInvocationRootState, generatedConsolePluginRegistration, resolveGeneratedConsolePlugin, type ConsoleInvocationRootState, updateConsoleInvocationRootState } from "./console/vite.ts"
