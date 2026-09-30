@@ -276,11 +276,18 @@ describe("mcp capability", () => {
       await transport.fetch("https://executor.test/mcp", { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: {}, name: "search" } }), method: "POST" })
       await transport.fetch("https://executor.test/mcp", { body: JSON.stringify({ id: 2, jsonrpc: "2.0", method: "tools/list" }), method: "POST" })
       await transport.fetch(new URL("https://executor.test/mcp"), { method: "GET" })
+      await transport.fetch(new Request("https://executor.test/mcp", { body: JSON.stringify({ id: 3, jsonrpc: "2.0", method: "tools/call", params: { name: "search" } }), headers: { "mcp-session-id": "s1" }, method: "POST" }))
       expect(connections.fetch.mock.calls.map(([name, url, , options]) => [name, String(url), options])).toEqual([
         ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "all", effect: "write", operation: "mcp.executor.tools.search", trace: expect.objectContaining({ tool: "mcp_executor_search" }) })],
         ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "changes", effect: "read", operation: "mcp.executor.rpc.tools/list" })],
         ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "changes", effect: "read", operation: "mcp.executor.rpc.stream" })],
+        ["executor", "https://executor.test/mcp", expect.objectContaining({ effect: "write", operation: "mcp.executor.tools.search" })],
       ])
+      // A Request keeps its method, headers, and body.
+      const requestInit = connections.fetch.mock.calls[3]?.[2]
+      expect(requestInit?.method).toBe("POST")
+      expect(new Headers(requestInit?.headers).get("mcp-session-id")).toBe("s1")
+      expect(JSON.parse(String(requestInit?.body))).toMatchObject({ method: "tools/call" })
 
       const tool = resolved.tools?.mcp_executor_search
       expect(tool?.metadata).toMatchObject({ connection: { name: "executor", operation: "mcp.executor.tools.search" }, mcpServer: "executor" })

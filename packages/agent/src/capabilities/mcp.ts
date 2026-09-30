@@ -90,11 +90,14 @@ function withMcpConnection(context: AgentCapabilityContext, server: string, conf
     throw agentDiagnostics.AGENT_R0082({ message: `[vitehub] mcp({ servers }) server "${server}" uses a connection, so it requires an http or sse transport config without authProvider.` })
   }
   const connection = useAgentConnection(context, name.output, "mcp")
-  const fetch: typeof globalThis.fetch = (input, init) => connection.fetch(
-    mcpConnectionRequest(server, init),
-    input instanceof Request ? input.url : input,
-    init,
-  )
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    if (!(input instanceof Request)) return connection.fetch(mcpConnectionRequest(server, init), input, init)
+    // A Request carries its own method, headers, body, and signal. `init` overrides them, as in `new Request(input, init)`.
+    const request = new Request(input, init)
+    const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text()
+    const merged: RequestInit = { body, headers: request.headers, method: request.method, signal: request.signal }
+    return connection.fetch(mcpConnectionRequest(server, merged), request.url, merged)
+  }
   return {
     binding: { connection, operation: tool => mcpToolOperation(server, tool) },
     config: { ...rest, transport: { ...transport, fetch } },

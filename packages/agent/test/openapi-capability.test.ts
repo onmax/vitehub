@@ -481,6 +481,19 @@ describe("openapi capability", () => {
     await resolved.close()
   })
 
+  it("uses the trimmed Connection name", async () => {
+    const connections = { decide: vi.fn(async () => "allow" as const), fetch: vi.fn(async (_name: string, _url: string | URL, _init?: RequestInit, _options?: unknown) => jsonResponse({ customers: [] })), record: vi.fn(async () => {}) }
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const { openapi } = await import("../src/capabilities.ts")
+    const capability = openapi({ connection: " portal ", operations: ["listCustomers"], spec: portalSpec() })
+    expect(capability.metadata).toMatchObject({ connection: "portal" })
+    const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, { ...runtime(), capabilities: { connections: { runtime: () => connections } } }, { prompt: "list" })
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    await (resolved.tools as AgentToolSet).listCustomers.execute?.({})
+    expect(connections.fetch.mock.calls[0]?.[0]).toBe("portal")
+    await resolved.close()
+  })
+
   it("rejects an empty Connection name", async () => {
     const { openapi } = await import("../src/capabilities.ts")
     expect(() => openapi({ connection: " ", operations: ["listCustomers"], spec: portalSpec() })).toThrow("openapi({ connection })")

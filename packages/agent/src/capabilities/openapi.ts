@@ -182,6 +182,8 @@ export function openapi<
   Name extends WorkspaceName = WorkspaceName,
 >(options: OpenAPICapabilityOptions<TRuntimeConfig, Name>): AgentCapabilityDefinition<TRuntimeConfig, Name> {
   assertOpenAPIOptions(options)
+  // The schema trims the name, so lookup and metadata use the parsed value.
+  const connectionName = options.connection === undefined ? undefined : v.parse(connectionNameSchema, options.connection)
   let operations: Promise<{ baseUrl: URL, tools: OpenAPIOperationTool[] }> | undefined
   const dynamicOperations = typeof options.spec === "function" || typeof options.server === "function"
   const loadOperations = (context: AgentCapabilityContext<TRuntimeConfig, Name>) => {
@@ -195,14 +197,14 @@ export function openapi<
     return pending
   }
 
-  const connection = (context: AgentCapabilityContext<TRuntimeConfig, Name>) => options.connection
-    ? useAgentConnection(context, options.connection, "openapi")
+  const connection = (context: AgentCapabilityContext<TRuntimeConfig, Name>) => connectionName
+    ? useAgentConnection(context, connectionName, "openapi")
     : undefined
 
   return defineCapability({
     id: "openapi",
     metadata: {
-      ...(options.connection ? { connection: options.connection } : {}),
+      ...(connectionName ? { connection: connectionName } : {}),
       operations: [...options.operations],
       spec: dynamicOperations
         ? "dynamic"
@@ -226,7 +228,7 @@ export function openapi<
         createOpenAPITool(operation, resolved.baseUrl, options, context, bound),
       ])) as AgentToolSet
     },
-    ...(options.connection ? { requires: [{ primitive: "connections" }] } : {}),
+    ...(connectionName ? { requires: [{ primitive: "connections" }] } : {}),
   })
 }
 

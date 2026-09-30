@@ -38,6 +38,7 @@ function connections(options: { decisions?: Record<string, Decision>, record?: (
   const primitive = {
     operations: {
       gmail: {
+        attachmentsGet: operation("gmail.messages.attachments.get", "read"),
         draftsCreate: operation("gmail.drafts.create", "write"),
         messagesGet: operation("gmail.messages.get", "read"),
         messagesList: operation("gmail.messages.list", "read"),
@@ -190,6 +191,24 @@ describe("gmail capability", () => {
     await expect(run(readTools.gmail_read, { id: "a\nb" })).rejects.toThrow("one line")
   })
 
+  it("fetches body parts that Gmail stores as attachments", async () => {
+    const large = { ...message, payload: { mimeType: "multipart/alternative", parts: [{ body: { attachmentId: "body-1", size: 90_000 }, mimeType: "text/plain" }] } }
+    const { primitive, runtime } = connections({
+      responses: {
+        "gmail.messages.attachments.get": () => ({ data: base64Url("Large plain body"), size: 16 }),
+        "gmail.messages.get": () => large,
+      },
+    })
+    const readTools = await tools(gmail(), primitive)
+    expect(await run(readTools.gmail_read, { id: "m1" })).toMatchObject({ attachments: [], text: "Large plain body" })
+    expect(runtime.call.mock.calls.map(([, op, input]) => [op.id, input])).toEqual([
+      ["gmail.messages.get", { format: "full", id: "m1" }],
+      ["gmail.messages.attachments.get", { id: "body-1", messageId: "m1" }],
+    ])
+    await decide(readTools.gmail_read)
+    expect(runtime.decide.mock.calls.map(([, , op]) => op.id)).toEqual(["gmail.messages.get", "gmail.messages.attachments.get"])
+  })
+
   it("rejects an unexpected Gmail response", async () => {
     const { primitive } = connections({ responses: { "gmail.messages.get": () => ({ id: 1 }) } })
     await expect(run((await tools(gmail(), primitive)).gmail_read, { id: "m1" })).rejects.toThrow("unexpected Gmail response")
@@ -205,12 +224,11 @@ describe("gmail capability", () => {
       body,
       cc: ["carol@example.com"],
       subject: "Grüße",
-      threadId: "t1",
       to: ["bob@example.com"],
     })).toEqual({ draftId: "d1", messageId: "m2", sent: false, threadId: "t1" })
 
     const input = runtime.call.mock.calls[0]?.[2]
-    expect(input?.threadId).toBe("t1")
+    expect(input?.threadId).toBeUndefined()
     const raw = decodeBase64Url(String(input?.raw))
     const [head = "", encoded = ""] = raw.split("\r\n\r\n")
     expect(head.split("\r\n")).toEqual([
@@ -227,6 +245,48 @@ describe("gmail capability", () => {
     await expect(run(draftTools.gmail_draft, { body: "x", subject: "Hi\nBcc: evil@example.com", to: ["bob@example.com"] })).rejects.toThrow("one line")
     await expect(run(draftTools.gmail_draft, { body: "x", subject: "Hi", to: ["bob@example.com\r\nBcc: evil@example.com"] })).rejects.toThrow("valid email")
     await expect(run(draftTools.gmail_draft, { body: "x", subject: "Hi", to: [] })).rejects.toThrow("at least one email")
+    await expect(run(draftTools.gmail_draft, { body: "x", to: ["bob@example.com"] })).rejects.toThrow("subject must be one line")
+    expect(runtime.call).toHaveBeenCalledTimes(1)
+  })
+
+  it("creates a reply draft with the thread, reply headers, and original subject", async () => {
+    const original = {
+      id: "m1",
+      payload: { headers: [
+        { name: "Subject", value: "Re: Quarterly report" },
+        { name: "Message-ID", value: "<b@mail.example.com>" },
+        { name: "References", value: "<a@mail.example.com>" },
+      ] },
+      threadId: "t9",
+    }
+    const { primitive, runtime } = connections({
+      responses: {
+        "gmail.drafts.create": () => ({ id: "d2", message: { id: "m3", threadId: "t9" } }),
+        "gmail.messages.get": () => original,
+      },
+    })
+    const draftTools = await tools(gmail({ operations: ["draft"] }), primitive)
+    expect(await run(draftTools.gmail_draft, { body: "Thanks", replyTo: "m1", to: ["alice@example.com"] }))
+      .toEqual({ draftId: "d2", messageId: "m3", sent: false, threadId: "t9" })
+
+    expect(runtime.call.mock.calls[0]?.[2]).toEqual({ format: "metadata", id: "m1", metadataHeaders: ["Message-ID", "References", "Subject"] })
+    const draft = runtime.call.mock.calls[1]?.[2]
+    expect(draft?.threadId).toBe("t9")
+    const head = decodeBase64Url(String(draft?.raw)).split("\r\n\r\n")[0]!.split("\r\n")
+    expect(head).toContain("Subject: Re: Quarterly report")
+    expect(head).toContain("In-Reply-To: <b@mail.example.com>")
+    expect(head).toContain("References: <a@mail.example.com> <b@mail.example.com>")
+
+    await expect(run(draftTools.gmail_draft, { body: "x", replyTo: "m1", subject: "Other topic", to: ["alice@example.com"] })).rejects.toThrow("must match the original subject")
+    await expect(run(draftTools.gmail_draft, { body: "x", replyTo: "m1", subject: "RE: Quarterly report", to: ["alice@example.com"] })).resolves.toMatchObject({ draftId: "d2" })
+  })
+
+  it("rejects a reply when the original message has no Message-ID", async () => {
+    const { primitive, runtime } = connections({
+      responses: { "gmail.messages.get": () => ({ id: "m1", payload: { headers: [{ name: "Subject", value: "Hi" }] }, threadId: "t1" }) },
+    })
+    const draftTools = await tools(gmail({ operations: ["draft"] }), primitive)
+    await expect(run(draftTools.gmail_draft, { body: "x", replyTo: "m1", to: ["alice@example.com"] })).rejects.toThrow("no valid Message-ID")
     expect(runtime.call).toHaveBeenCalledTimes(1)
   })
 
