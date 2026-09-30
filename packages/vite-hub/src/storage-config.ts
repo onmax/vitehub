@@ -51,7 +51,7 @@ export type ConsoleJournal = { databaseUrl: string } | { d1Binding: string }
 
 /**
  * The D1 binding of the Database primitive on Cloudflare.
- * Without `driver: "d1"`, read the `cloudflare` binding of the default or only Database Definition.
+ * Read the binding of the default or only Database Definition before integration defaults.
  */
 export function consoleD1Binding(
   preset: string,
@@ -59,22 +59,15 @@ export function consoleD1Binding(
   definitions?: { root: string, serverDirs?: string[] },
 ): string | undefined {
   if (preset !== "cloudflare" || !database) return
-  if (database !== true && database.driver === "d1") {
-    if (!definitions) return
-    const options = database
-    const root = resolve(definitions.root, options.projectRoot ?? ".")
-    const serverDirs = options.projectRoot !== undefined ? [resolve(root, "server")] : definitions.serverDirs
-    const config = resolveDBViteConfig(options, root, { serverDirs })
-    if (!config?.databaseNames.length) return
-    return database.binding?.trim() || "DB"
-  }
   if (!definitions) return
   const options = database === true ? undefined : database
   const root = resolve(definitions.root, options?.projectRoot ?? ".")
   const serverDirs = options?.projectRoot !== undefined ? [resolve(root, "server")] : definitions.serverDirs
   const config = resolveDBViteConfig(options, root, { serverDirs })
   const name = config?.databases.default ? "default" : config?.databaseNames.length === 1 ? config.databaseNames[0] : undefined
-  return name ? config?.databases[name]?.cloudflare?.binding : undefined
+  if (!name) return
+  return config?.databases[name]?.cloudflare?.binding
+    ?? (options?.driver === "d1" ? options.binding?.trim() || "DB" : undefined)
 }
 
 /** An explicit libSQL URL wins. Production builds use the D1 binding. Development keeps the local libSQL file. */

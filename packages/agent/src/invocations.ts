@@ -1989,7 +1989,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         configuration: options.configuration,
         get traceId() { return traceId },
         async ready() {
-          if (creationTask) await creationTask
+          if (creationTask) await boundedStoreOperation(() => creationTask!)
         },
         context: {
           ...context,

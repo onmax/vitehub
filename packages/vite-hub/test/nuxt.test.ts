@@ -573,7 +573,9 @@ describe("ViteHub Nuxt integration", () => {
     await application.runCloseHook()
   })
 
-  it("uses an explicitly selected Nuxt D1 Database binding", async () => {
+  it.each(["", 'cloudflare: { binding: "APP_DB", databaseName: "app" },'])("uses the effective Nuxt D1 Database binding with Definition config %s", async (config) => {
+    await mkdir("/tmp/vitehub-nuxt/custom-server/databases", { recursive: true })
+    await writeFile("/tmp/vitehub-nuxt/custom-server/databases/config.ts", `export default defineDatabase({ ${config} schema: {} })\n`)
     const application = createNuxt(false)
     await viteHubNuxtModule({
       preset: "cloudflare",
@@ -582,11 +584,13 @@ describe("ViteHub Nuxt integration", () => {
       database: { driver: "d1" },
     }, application.nuxt)
     const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
-    expect(generated).toContain('d1: { binding: "DB",')
+    expect(generated).toContain(`d1: { binding: "${config ? "APP_DB" : "DB"}",`)
     await application.runCloseHook()
   })
 
   it("uses the resolved top-level Nuxt D1 Database configuration for the Console journal", async () => {
+    await mkdir("/tmp/vitehub-nuxt/custom-server/databases", { recursive: true })
+    await writeFile("/tmp/vitehub-nuxt/custom-server/databases/config.ts", 'export default defineDatabase({ schema: {} })\n')
     const application = createNuxt(false)
     Object.assign(application.nuxt.options, {
       database: { binding: "TOP_LEVEL_DB", driver: "d1" },
@@ -603,6 +607,8 @@ describe("ViteHub Nuxt integration", () => {
   })
 
   it.each([false, { binding: "REPLAY_DB", databaseId: "replay-id", databaseName: "replayed", driver: "d1" as const }])("uses replayed Database configuration for the Cloudflare journal: %j", async (database) => {
+    await mkdir("/tmp/vitehub-nuxt/custom-server/databases", { recursive: true })
+    await writeFile("/tmp/vitehub-nuxt/custom-server/databases/config.ts", 'export default defineDatabase({ schema: {} })\n')
     const application = createNuxt(false, [{
       name: "vite-hub/database-replay",
       config: (): UserConfig & { database: typeof database } => ({ database }),

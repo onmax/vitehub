@@ -132,6 +132,17 @@ describe("Console journal host defaults", () => {
     expect(plugin).not.toContain('d1: { binding: "APP_DB",')
   })
 
+  it.each([
+    ['cloudflare: { binding: "APP_DB", databaseName: "app" },', "APP_DB"],
+    ['cloudflare: { databaseName: "app" },', "DB"],
+    ["", "JOURNAL_DB"],
+  ])("selects the effective D1 binding with Definition config %s", async (config, binding) => {
+    const { plugin } = await generatedConsolePlugin({ ...cloudflare, database: { driver: "d1", binding: "JOURNAL_DB" } }, "build", {
+      "server/databases/config.ts": `export default defineDatabase({ ${config} schema: {} })\n`,
+    })
+    expect(plugin).toContain(`d1: { binding: "${binding}",`)
+  })
+
   it("keeps the local libSQL journal during Cloudflare development", async () => {
     const { info, plugin } = await generatedConsolePlugin(cloudflare, "serve")
     expect(plugin).toContain("installConsoleAgentDefinitions(")

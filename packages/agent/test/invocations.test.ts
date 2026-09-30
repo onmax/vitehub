@@ -974,6 +974,30 @@ describe("Agent Invocations", () => {
     await expect(invocations.getByRunId("stalled-store")).resolves.toBeUndefined()
   }, 10_000)
 
+  it.each([false, true])("bounds journal readiness before lifecycle hooks, failure: %s", async (fail) => {
+    const memory = createMemoryAgentInvocationStore()
+    const invocations = defineAgentInvocations({ store: {
+      ...memory,
+      create: () => new Promise(() => {}),
+    } })
+    const finish = vi.fn()
+    const error = vi.fn()
+    const failure = new Error("driver failed")
+    const agent = defineAgent({
+      driver: { run: () => { if (fail) throw failure; return "done" } },
+      hooks: { "agent:error": error, "agent:finish": finish },
+      invocations,
+      runtime: false,
+    })
+
+    const invocation = runAgent(agent, runtime(`stalled-store-hook-${fail}`), {})
+    if (fail) await expect(invocation).rejects.toBe(failure)
+    else await expect(invocation).resolves.toBe("done")
+    const hook = fail ? error : finish
+    expect(hook).toHaveBeenCalledOnce()
+    expect(hook.mock.calls[0]?.[0].invocation.traceId).toMatch(/^sha256_/)
+  }, 5_000)
+
   it("does not block trace appends on stalled observation writes", async () => {
     const memory = createMemoryAgentInvocationStore()
     const invocations = defineAgentInvocations({
@@ -1156,7 +1180,8 @@ describe("Agent Invocations", () => {
     expect(retry.traceId).not.toBe(first.traceId)
 
     releaseCreate()
-    await vi.waitFor(() => expect(retry.traceId).toBe(first.traceId))
+    await retry.ready()
+    expect(retry.traceId).toBe(first.traceId)
     await retry.running()
     await retry.context.traceLog?.append({ name: "agent.tool.call", trace: { id: "retry-trace" }, type: "run" })
     await retry.finish("completed")

@@ -349,7 +349,7 @@ When no Agent Definition configures a journal, the Console falls back to local S
 
 ### Cloudflare journal
 
-A Cloudflare build that uses the Database primitive stores the fallback journal in its D1 binding. ViteHub uses the `binding` of `database: { driver: 'd1' }`, which defaults to `DB`. Set this driver explicitly in Nuxt too. Otherwise it uses the `cloudflare.binding` of the default Database Definition, or of the only Definition:
+A Cloudflare build that uses the Database primitive stores the fallback journal in its D1 binding. ViteHub selects the default Database Definition, or the only Definition. Its `cloudflare.binding` takes precedence over the integration binding. When the Definition has no Cloudflare config, `database: { driver: 'd1' }` supplies the binding, which defaults to `DB`. Set this driver explicitly in Nuxt too. Without a discovered Definition, the Console keeps libSQL:
 
 ```ts [vite.config.ts]
 vitehub({
