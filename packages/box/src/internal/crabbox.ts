@@ -566,6 +566,10 @@ async function acquireRemoteState(
   const releaseCommands = locks.toReversed().map((lock) => {
     return `if [ "$(sed -n '2p' ${shellQuote(lock)} 2>/dev/null || true)" = ${shellQuote(token)} ]; then rm -f -- ${shellQuote(lock)}; fi`;
   });
+  const releaseScript = [
+    ...releaseCommands,
+    `rm -f -- ${shellQuote(owner)}`,
+  ].join("\n");
   const script = [
     "set -eu",
     "umask 077",
@@ -669,20 +673,32 @@ async function acquireRemoteState(
   }
 
   let released = false;
+  let releasePromise: Promise<void> | undefined;
   return {
     assertActive() {
       if (failure) throw failure;
     },
     async release() {
-      if (!released) {
-        released = true;
-        releasing = true;
-        if (!child.stdin.destroyed) child.stdin.end();
+      if (!releasePromise) {
+        releasePromise = (async () => {
+          if (!released) {
+            released = true;
+            releasing = true;
+            if (!child.stdin.destroyed) child.stdin.end();
+          }
+          const exitCode = await completion;
+          if (failure) throw failure;
+          if (exitCode !== 0) {
+            const retry = await runCrabbox(options, leaseId, { command: releaseScript });
+            if (retry.exitCode !== 0)
+              throw boxErrorDiagnostics.BOX_R0106({ message: `[vitehub] Failed to release Crabbox state lease (exit ${retry.exitCode}).` });
+          }
+        })().catch((error) => {
+          releasePromise = undefined;
+          throw error;
+        });
       }
-      const exitCode = await completion;
-      if (failure) throw failure;
-      if (exitCode !== 0)
-        throw boxErrorDiagnostics.BOX_R0106({ message: `[vitehub] Failed to release Crabbox state lease (exit ${exitCode}).` });
+      return releasePromise;
     },
     signal: controller.signal,
   };
@@ -720,8 +736,8 @@ function createCrabboxSession(state: CrabboxSessionState, sessionId: string | un
           if (!cleanupFailure && result && result.exitCode !== 0) cleanupFailure = crabboxError("remove disposable Box cache", result)
           if (!cleanupFailure) {
             await state.stateLease.release().catch((error) => (cleanupFailure ||= error));
-            if (!cleanupFailure) await rm(state.options.stateHome, { force: true, recursive: true }).catch(error => cleanupFailure ||= error)
-            if (!cleanupFailure) state.releaseWorkspace()
+            await rm(state.options.stateHome, { force: true, recursive: true }).catch(error => cleanupFailure ||= error)
+            try { state.releaseWorkspace() } catch (error) { cleanupFailure ||= error }
           }
           retryDestroy = Boolean(cleanupFailure)
           if (!failure) failure = cleanupFailure
