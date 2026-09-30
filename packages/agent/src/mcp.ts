@@ -145,7 +145,16 @@ export async function callMcpTool(
       invalidServerMessage,
       async (config) => {
         const { createMCPClient } = await import("@ai-sdk/mcp")
-        return await createMCPClient(config)
+        if (!options.signal) return await createMCPClient(config)
+        const initializationSignal = config.initializationOptions?.signal
+        const signal = initializationSignal
+          ? AbortSignal.any([options.signal, initializationSignal])
+          : options.signal
+        signal.throwIfAborted()
+        return await createMCPClient({
+          ...config,
+          initializationOptions: { ...config.initializationOptions, signal },
+        })
       },
     )
     client = resolved.client

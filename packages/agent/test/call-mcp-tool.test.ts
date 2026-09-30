@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { callMcpTool } from "../src/mcp.ts"
+import type { MCPTransport } from "../src/mcp.ts"
 
 type ToolCallResult = Record<string, unknown>
 
@@ -167,6 +168,43 @@ describe("callMcpTool", () => {
     expect(error?.message).toBe("Cancelled by caller")
     expect(value).toBeNull()
     expect(client.close).not.toHaveBeenCalled()
+  })
+
+  it.each(["caller", "configuration"] as const)("honors %s cancellation during MCP initialization", async (source) => {
+    const caller = new AbortController()
+    const configuration = new AbortController()
+    const transport: MCPTransport = {
+      close: vi.fn(async () => undefined),
+      send: vi.fn(async () => undefined),
+      start: vi.fn(async () => await new Promise<void>(() => {})),
+    }
+    const connecting = callMcpTool({
+      initializationOptions: { signal: configuration.signal, timeout: 1_000 },
+      transport,
+    }, "lookup", {}, { signal: caller.signal })
+
+    await vi.waitFor(() => expect(transport.start).toHaveBeenCalledOnce())
+    const controller = source === "caller" ? caller : configuration
+    controller.abort(new Error("Connection cancelled"))
+    const [error, value] = await connecting
+
+    expect(error?.message).toContain("initialization was aborted")
+    expect(value).toBeNull()
+    expect(transport.close).toHaveBeenCalledOnce()
+  })
+
+  it("does not open a connection when the caller has already cancelled", async () => {
+    const controller = new AbortController()
+    const reason = new Error("Already cancelled")
+    controller.abort(reason)
+    const transport: MCPTransport = {
+      close: vi.fn(async () => undefined),
+      send: vi.fn(async () => undefined),
+      start: vi.fn(async () => undefined),
+    }
+
+    await expect(callMcpTool({ transport }, "lookup", {}, { signal: controller.signal })).resolves.toEqual([reason, null])
+    expect(transport.start).not.toHaveBeenCalled()
   })
 
   it("returns structured content before text content", async () => {
