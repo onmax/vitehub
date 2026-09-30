@@ -375,7 +375,7 @@ describe("agent output helpers", () => {
     expect(toAgentStreamEvent({ toolCallId: "call-1", toolName: "search_meals", type: "tool-input-start" }, toolNames, undefined, defaults)).toMatchObject({ title: "Searched meals" })
     expect(toAgentStreamEvent({ toolCallId: "call-1", toolName: "search_meals", type: "tool-call" }, toolNames, undefined, defaults)).toMatchObject({ title: "Searched meals" })
     expect(toAgentStreamEvent({ output: "ok", toolCallId: "call-1", type: "tool-result" }, toolNames, undefined, defaults)).toMatchObject({ title: "Searched meals" })
-    expect(toAgentStreamEvent({ error: "failed", toolCallId: "call-1", type: "tool-error" }, toolNames, undefined, defaults)).toMatchObject({ title: "Searched meals" })
+    expect(toAgentStreamEvent({ error: "failed", toolCallId: "call-1", toolName: "search_meals", type: "tool-error" }, toolNames, undefined, defaults)).toMatchObject({ title: "Searched meals" })
     expect(toAgentStreamEvent({ title: "MCP search", toolCallId: "call-2", toolName: "search_meals", type: "tool-call" }, toolNames, undefined, defaults)).toMatchObject({ title: "MCP search" })
     expect(toAgentStreamEvent({ title: " ", toolCallId: "call-3", toolName: "search_meals", type: "tool-call" }, toolNames, undefined, defaults)).toMatchObject({ title: "Searched meals" })
   })
@@ -412,6 +412,14 @@ describe("agent output helpers", () => {
       }
       expect(normalize({ title: "Found lunch", toolCallId: "call-1", toolName, type })).toMatchObject({ title: "Found lunch" })
       expect(toolTitles.has("call-1")).toBe(false)
+    }
+    for (const nextType of ["tool-input-start", "tool-call"]) {
+      normalize({ title: "Search breakfast", toolCallId: "call-1", toolName: "search", type: "tool-call" })
+      expect(normalize({ toolCallId: "call-1", type })).toMatchObject({ name: "search", title: "Search breakfast" })
+      expect(toolNames.has("call-1")).toBe(false)
+      const reused = normalize({ toolCallId: "call-1", type: nextType })
+      expect(reused).toMatchObject({ name: "tool" })
+      expect(reused).not.toHaveProperty("title")
     }
   })
 
