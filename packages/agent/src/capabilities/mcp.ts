@@ -1,10 +1,10 @@
-import { defineMcpToolCapability, sanitizeMcpMetadata } from "../internal/mcp-tool-capability.ts"
+import { defineMcpToolCapability, mcpWarningsContextKey, sanitizeMcpMetadata } from "../internal/mcp-tool-capability.ts"
 
 import type {
   AgentCapabilityDefinition,
   AgentRuntimeConfig,
 } from "../types.ts"
-import type { McpCapabilityOptions, McpClient, McpClientConfig } from "../mcp/types.ts"
+import type { McpAvailabilityWarning, McpCapabilityOptions, McpClient, McpClientConfig } from "../mcp/types.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
@@ -45,6 +45,21 @@ function assertMcpIntegrityOptions(options: McpCapabilityOptions) {
   }
 }
 
+function defaultMcpUnavailableNotice(servers: string[]): string {
+  return `> ⚠️ ${servers.join(", ")} tools were temporarily unavailable. I answered with the remaining context.`
+}
+
+/** Read the MCP servers that were unavailable during one Invocation, for example `getMcpWarnings(event.input)`. */
+export function getMcpWarnings(input: { context?: unknown } | undefined): McpAvailabilityWarning[] {
+  const context = input?.context
+  const warnings = isRecord(context) ? context[mcpWarningsContextKey] : undefined
+  return Array.isArray(warnings)
+    ? warnings.filter((warning): warning is McpAvailabilityWarning => isRecord(warning)
+        && typeof warning.server === "string"
+        && (warning.phase === "resolve" || warning.phase === "discovery"))
+    : []
+}
+
 export function mcp<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   Name extends WorkspaceName = WorkspaceName,
@@ -53,8 +68,12 @@ export function mcp<
     throw agentDiagnostics.AGENT_R0117({ message: "[vitehub] mcp({ servers }) requires a server map." })
   }
   assertMcpIntegrityOptions(options)
+  const unavailableNotice = options.unavailableNotice === true
+    ? defaultMcpUnavailableNotice
+    : typeof options.unavailableNotice === "function" ? options.unavailableNotice : undefined
   return defineMcpToolCapability({
     degradeUnavailable: true,
+    ...(unavailableNotice ? { unavailableNotice } : {}),
     id: "mcp",
     inspection: {
       label: "MCP",
@@ -98,6 +117,7 @@ export function mcp<
 }
 
 export type {
+  McpAvailabilityWarning,
   McpCapabilityOptions,
   McpClient,
   McpClientConfig,

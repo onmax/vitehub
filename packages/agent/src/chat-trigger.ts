@@ -3,7 +3,7 @@ import { defineCapability } from "./capability-runtime.ts"
 import { createChatMessageTriggerInput } from "./chat-message-input.ts"
 import { readAgentErrorProperty, toAgentPublicError } from "./agent-error.ts"
 import { createReplyDeliveryEffectIntent, defineFinishEffect } from "./delivery-effects.ts"
-import { chatFinalReplyIntent, chatFinalReplyMode, setChatFinalReplyText } from "./internal/chat-finish-delivery.ts"
+import { chatFinalReplyIntent, chatFinalReplyMode, chatFinalReplyNotices, setChatFinalReplyText } from "./internal/chat-finish-delivery.ts"
 import { agentWorkflowExecutionContextKey } from "./internal/workflow-execution.ts"
 import { agentInvokerLabel } from "./invoker.ts"
 
@@ -235,10 +235,13 @@ function durableChatErrorFallback<TRuntimeConfig extends AgentRuntimeConfig>(
 function chatFinalReply<TRuntimeConfig extends AgentRuntimeConfig>() {
   const effect = defineFinishEffect<TRuntimeConfig>((context) => {
     const text = context.text?.trim()
-    if (!text) return
-    setChatFinalReplyText(context.context, text)
-    if (chatFinalReplyMode(context.input) !== "pending") return
-    return context.reply(text, { intent: chatFinalReplyIntent })
+    if (text) setChatFinalReplyText(context.context, text)
+    // Notices follow the final text. When the route already posted that text, they post alone.
+    const reply = [chatFinalReplyMode(context.input) === "pending" ? text : undefined, ...chatFinalReplyNotices(context.input)]
+      .filter(Boolean)
+      .join("\n\n")
+    if (!reply) return
+    return context.reply(reply, { intent: chatFinalReplyIntent })
   })
   effect.active = context => context.error === undefined && chatFinalReplyMode(context.input) !== undefined
   effect.kind = chatFinalReplyIntent

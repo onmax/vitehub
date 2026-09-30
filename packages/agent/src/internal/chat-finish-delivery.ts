@@ -79,6 +79,16 @@ export function chatFinalReplyMode(input: { context?: unknown } | undefined): Ch
   return mode === "pending" || mode === "posted" ? mode : undefined
 }
 
+/** Input context key where Capabilities add notices for the final chat reply. */
+export const chatFinalReplyNoticesContextKey = "vitehub.chat.final-reply.notices"
+
+export function chatFinalReplyNotices(input: { context?: unknown } | undefined): string[] {
+  const context = input?.context
+  if (!context || typeof context !== "object") return []
+  const notices = (context as Record<string, unknown>)[chatFinalReplyNoticesContextKey]
+  return Array.isArray(notices) ? notices.filter((notice): notice is string => typeof notice === "string" && notice.trim() !== "") : []
+}
+
 const chatFinalReplyTexts = new WeakMap<object, string>()
 
 /** Remember the final text of one Invocation so a finish hook reply with the same text is not posted twice. */
