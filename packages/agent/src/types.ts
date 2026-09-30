@@ -1683,7 +1683,7 @@ export interface AgentDefinition<
   TDataInput = unknown,
   TDriverOutput = TOutput,
   TData = unknown,
-  TInterceptOutput = unknown,
+  TInterceptOutput = never,
 > extends AgentDataCarrier<TDataInput>, AgentDataOutputCarrier<TData>, AgentDriverOutputCarrier<TDriverOutput>, AgentInterceptOutputCarrier<TInterceptOutput> {
   [agentOutputType]?: TOutput
   box?: AgentBoxInput<TRuntimeConfig>
@@ -1718,7 +1718,7 @@ export type AgentInput<
   TOutput = unknown,
   CALL_OPTIONS = any,
   TInvokerProfile extends AgentInvokerProfile = any,
-> = AgentDefinition<TContext extends AgentRuntimeContext<infer TRuntimeConfig> ? TRuntimeConfig : AgentRuntimeConfig, CALL_OPTIONS, TInvokerProfile, any, TOutput>
+> = AgentDefinition<TContext extends AgentRuntimeContext<infer TRuntimeConfig> ? TRuntimeConfig : AgentRuntimeConfig, CALL_OPTIONS, TInvokerProfile, any, TOutput, unknown, TOutput, unknown, unknown>
 
 export type AgentRegistryModule<TContext extends AgentRuntimeContext<any> = AgentRuntimeContext> =
   | { default?: AgentInput<TContext> }

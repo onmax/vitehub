@@ -1,7 +1,9 @@
 import { registeredWorkspaceAgentNames } from "./internal/workspace-agent-registration.ts"
 import { hasRuntimeType } from "./internal/runtime-type.ts"
 import { resolveNamedAgentPresetOptions } from "./agent-presets.ts"
-import type { AgentDefinition, AgentSettings } from "./types.ts"
+import type { AgentDefinition, AgentInterceptOutputCarrier, AgentSettings } from "./types.ts"
+
+type LayerAgentDefinition = Omit<AgentDefinition, keyof AgentInterceptOutputCarrier> & AgentInterceptOutputCarrier
 
 interface ConfiguredLayer {
   options: Record<string, unknown>
@@ -187,7 +189,7 @@ export function copyDefinitionDecorations(source: DefinitionDecorationCarrier, t
   }
 }
 
-export function rememberAgentLayerOptions<T extends AgentDefinition>(definition: T, options: AgentSettings, source: AgentSettings = options): T {
+export function rememberAgentLayerOptions<T extends LayerAgentDefinition>(definition: T, options: AgentSettings, source: AgentSettings = options): T {
   const inherited = layerMetadata(source)
   // SAFETY: Agent definitions are mutable metadata carriers owned by this package.
   const metadataTarget = asMetadataTarget(definition)
@@ -199,7 +201,7 @@ export function rememberAgentLayerOptions<T extends AgentDefinition>(definition:
   return definition
 }
 
-function assertLayerDefinition(value: unknown): asserts value is AgentDefinition {
+function assertLayerDefinition(value: unknown): asserts value is LayerAgentDefinition {
   if (!value || !hasRuntimeType(value, "object") || !layerMetadata(value)) {
     throw new TypeError("[vitehub] Agent configure must return an Agent Definition created by defineAgent().")
   }
@@ -399,7 +401,7 @@ function clonePresetOption(value: unknown, memo = new WeakMap<object, unknown>()
   return value
 }
 
-export function createConfiguredAgentDefinition(input: unknown, create: (options: AgentSettings) => AgentDefinition): AgentDefinition | undefined {
+export function createConfiguredAgentDefinition(input: unknown, create: (options: AgentSettings) => LayerAgentDefinition): LayerAgentDefinition | undefined {
   if (!record(input) || !("configure" in input)) return undefined
   if (!record(input.options) || !hasRuntimeType(input.configure, "function")
     || Object.keys(input).some(key => key !== "options" && key !== "configure")) {
@@ -424,7 +426,7 @@ export function asMetadataTarget(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function rememberConfiguredLayer(definition: AgentDefinition, configured: ConfiguredLayer): void {
+function rememberConfiguredLayer(definition: LayerAgentDefinition, configured: ConfiguredLayer): void {
   // SAFETY: Agent definitions are mutable metadata carriers owned by this package.
   const metadataTarget = asMetadataTarget(definition)
   rememberLayerMetadata(metadataTarget, { ...layerMetadata(definition)!, configured })
@@ -436,7 +438,7 @@ function rememberConfiguredLayer(definition: AgentDefinition, configured: Config
 }
 
 /** Read resolved settings for package-owned workflows without depending on runtime markers. */
-export function getAgentLayerOptions(definition: AgentDefinition): AgentSettings | undefined {
+export function getAgentLayerOptions(definition: LayerAgentDefinition): AgentSettings | undefined {
   const options = layerMetadata(definition)?.options
   return options ? { ...options } : undefined
 }

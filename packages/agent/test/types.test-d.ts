@@ -10,12 +10,14 @@ import { remoteMcpServer } from "../src/mcp.ts"
 import { stdioMcpServer } from "../src/mcp/stdio.ts"
 import { streamAgentOutputToEvents, toAgentRunResult } from "../src/output.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations, defineAgentRunEvents, type AgentRunEventPublisher } from "../src/server.ts"
+import { registerWorkspaceAgent } from "../src/server/workspace.ts"
 import type { AgentInvocationSummary, AgentInvocationContextStore, AgentInvokerProfile, AgentOutputExtensionProvider, AgentPublicError, AgentToolDefinition, AgentToolSchema, StreamEvent } from "../src/index.ts"
-import type { AgentCapabilitiesInput } from "../src/types.ts"
+import type { AgentCapabilitiesInput, AgentDefinition, AgentInvocationContextValues } from "../src/types.ts"
+import type { WorkspaceAgentDefinition } from "../src/workspace-agent.ts"
 import type { MCPClient } from "@ai-sdk/mcp"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import githubExtension from "@github-tools/eve-extension"
-import { file, github as githubSource, type ReadonlyWorkspaceFacade } from "@vite-hub/workspace"
+import { file, github as githubSource, type ReadonlyWorkspaceFacade, type WorkspaceName } from "@vite-hub/workspace"
 import type { AccessChatOptions, AccessInvocationContextValue, AccessWorkspaceOptionsFor, AgentChatRunContext, FetchCapabilityToolOptions, TranscriptionResult } from "../src/capabilities.ts"
 
 declare global {
@@ -752,6 +754,54 @@ describe("agent public types", () => {
     })
     const subtypeChild = defineAgent({ extends: subtypeParent, driver })
     expectTypeOf(runAgentInline(subtypeChild, runtime, {})).toMatchTypeOf<Promise<Response | ChildOutput | (ParentOutput & { matched: true }) | undefined>>()
+  })
+
+  it("preserves output types when public definition aliases are extended", () => {
+    interface DriverOutput { value: string }
+    interface InterceptOutput { matched: true }
+    const schema: StandardSchemaV1<unknown, DriverOutput> = {
+      "~standard": { validate: () => ({ value: { value: "driver" } }), vendor: "test", version: 1 },
+    }
+    const definition: AgentDefinition<AgentRuntimeConfig, unknown, AgentInvokerProfile, AgentInvocationContextValues, DriverOutput> = defineAgent({
+      driver: { output: { schema }, run: () => "{}" },
+      runtime: false,
+    })
+    const workspaceDefinition: WorkspaceAgentDefinition<AgentRuntimeConfig, WorkspaceName, unknown, AgentInvokerProfile, AgentInvocationContextValues, AgentCapabilitiesInput<AgentRuntimeConfig>, DriverOutput> = defineAgent({
+      driver: { output: { schema }, run: () => "{}" },
+      runtime: false,
+      workspace: {},
+    })
+    const runtime = {} as AgentRuntimeContext
+    const inherited = defineAgent({ extends: definition })
+    const workspaceInherited = defineAgent({ extends: workspaceDefinition })
+    const presetInherited = defineAgent({ preset: "base", presets: { base: definition } })
+    expectTypeOf(runAgentInline(inherited, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput>>()
+    expectTypeOf(runAgentInline(workspaceInherited, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput>>()
+    expectTypeOf(runAgentInline(presetInherited, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput>>()
+
+    const interceptedWorkspaceDefinition: WorkspaceAgentDefinition<AgentRuntimeConfig, WorkspaceName, unknown, AgentInvokerProfile, AgentInvocationContextValues, AgentCapabilitiesInput<AgentRuntimeConfig>, DriverOutput | InterceptOutput, unknown, unknown, DriverOutput, InterceptOutput> = defineAgent({
+      driver: { output: { schema }, run: () => "{}" },
+      intercept: (): InterceptOutput => ({ matched: true }),
+      runtime: false,
+      workspace: {},
+    })
+    const workspaceIntercepted = defineAgent({ extends: interceptedWorkspaceDefinition })
+    const workspaceFallthrough = defineAgent({ extends: interceptedWorkspaceDefinition, intercept: () => undefined })
+    const registeredWorkspace = registerWorkspaceAgent(interceptedWorkspaceDefinition)
+    const registeredFallthrough = defineAgent({ extends: registeredWorkspace, intercept: () => undefined })
+    expectTypeOf(registeredWorkspace).toEqualTypeOf<typeof interceptedWorkspaceDefinition>()
+    expectTypeOf(runAgentInline(registeredFallthrough, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput>>()
+    const interceptedDefinition: AgentDefinition<AgentRuntimeConfig, unknown, AgentInvokerProfile, AgentInvocationContextValues, DriverOutput | InterceptOutput, unknown, DriverOutput, unknown, InterceptOutput> = interceptedWorkspaceDefinition
+    const intercepted = defineAgent({ extends: interceptedDefinition })
+    const fallthrough = defineAgent({ extends: interceptedDefinition, intercept: () => undefined })
+    expectTypeOf(runAgentInline(workspaceIntercepted, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput | InterceptOutput>>()
+    expectTypeOf(runAgentInline(workspaceFallthrough, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput>>()
+    expectTypeOf(runAgentInline(intercepted, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput | InterceptOutput>>()
+    expectTypeOf(runAgentInline(fallthrough, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput>>()
+    function registerWithCallOptions(agent: WorkspaceAgentDefinition<AgentRuntimeConfig, WorkspaceName, { count: number }>) {
+      return registerWorkspaceAgent(agent)
+    }
+    expectTypeOf<ReturnType<typeof registerWithCallOptions>>().toEqualTypeOf<Parameters<typeof registerWithCallOptions>[0]>()
   })
 
   it("scopes output correction attempts to Model Drivers", () => {
