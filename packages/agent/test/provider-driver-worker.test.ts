@@ -74,6 +74,42 @@ describe("provider Agent Drivers in Worker builds", () => {
 
   it.each([
     ["codexDriver", `codexDriver()`],
+    ["makeDriver", `makeDriver()`],
+    ["defineAgent", `defineAgent({ driver: "codex" })`],
+    ["agent", `agent.codexDriver()`],
+    ["title", `defineAgent({ capabilities: [title({ driver: "codex" })] })`],
+    ["progressSummary", `defineAgent({ capabilities: [progressSummary({ driver: "codex" })] })`],
+    ["capabilities", `defineAgent({ capabilities: [capabilities.title({ driver: "codex" })] })`],
+  ])("respects the named function expression binding %s", async (binding, call) => {
+    const imports = `import { codexDriver, codexDriver as makeDriver, defineAgent } from "@vite-hub/agent"; import * as agent from "@vite-hub/agent"; import { title, progressSummary } from "@vite-hub/agent/capabilities"; import * as capabilities from "@vite-hub/agent/capabilities";`
+    const source = `${imports} const walk = function ${binding}() { return ${call} }`
+    expect(usesProviderAgentDriver(source)).toBe(false)
+    await expect(transformServerModule(source, ["workerd", "worker"])).resolves.toBeUndefined()
+    expect(usesProviderAgentDriver(`${source}; ${call}`)).toBe(true)
+  })
+
+  it.each([
+    ["codexDriver", `codexDriver()`],
+    ["defineAgent", `defineAgent({ driver: "codex" })`],
+    ["agent", `agent.codexDriver()`],
+    ["capabilities", `defineAgent({ capabilities: [capabilities.title({ driver: "codex" })] })`],
+  ])("respects hoisted var declarations for %s", async (binding, call) => {
+    const imports = `import { codexDriver, defineAgent } from "@vite-hub/agent"; import * as agent from "@vite-hub/agent"; import * as capabilities from "@vite-hub/agent/capabilities";`
+    const body = `switch (${call}) { case 0: var ${binding}; } return ${call}`
+    const source = `${imports} function make() { ${body} }`
+    expect(usesProviderAgentDriver(source)).toBe(false)
+    await expect(transformServerModule(source, ["workerd", "worker"])).resolves.toBeUndefined()
+    expect(usesProviderAgentDriver(`${source}; ${call}`)).toBe(true)
+    expect(usesProviderAgentDriver(`${imports} function make() { ${call}; { var ${binding}; } }`)).toBe(false)
+    expect(usesProviderAgentDriver(`${imports} function make() { ${call}; for (var ${binding} of []) {} }`)).toBe(false)
+    expect(usesProviderAgentDriver(`${imports} function make() { ${call}; function nested() { var ${binding}; } }`)).toBe(true)
+    expect(usesProviderAgentDriver(`${imports} function make() { ${call}; const nested = () => { var ${binding}; } }`)).toBe(true)
+    expect(usesProviderAgentDriver(`${imports} function make(value = ${call}) { var ${binding}; }`)).toBe(true)
+    expect(usesProviderAgentDriver(`${imports} function make() { switch (${call}) { case 0: let ${binding}; } }`)).toBe(true)
+  })
+
+  it.each([
+    ["codexDriver", `codexDriver()`],
     ["defineAgent", `defineAgent({ driver: "codex" })`],
     ["agent", `agent.codexDriver()`],
     ["capabilities", `defineAgent({ capabilities: [capabilities.title({ driver: "codex" })], driver: { model: "openai/gpt-5" } })`],

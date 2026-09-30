@@ -107,7 +107,7 @@ function patternIdentifiers(node: unknown): string[] {
   return []
 }
 
-function isShadowedByFunctionParameter(
+function isShadowedByFunctionBinding(
   node: PositionedNode,
   binding: string,
   ancestors: Map<PositionedNode, PositionedNode[]>,
@@ -118,6 +118,7 @@ function isShadowedByFunctionParameter(
       && ancestor.type !== "FunctionExpression"
       && ancestor.type !== "ArrowFunctionExpression"
     ) continue
+    if (ancestor.type === "FunctionExpression" && identifierName(ancestor.id) === binding) return true
     const params = Array.isArray(ancestor.params) ? ancestor.params : []
     if (params.some(parameter => patternIdentifiers(parameter).includes(binding))) return true
   }
@@ -137,12 +138,37 @@ function declaredNames(node: PositionedNode): string[] {
   return []
 }
 
+function hasHoistedVariable(node: PositionedNode, binding: string): boolean {
+  if (
+    node.type === "FunctionDeclaration"
+    || node.type === "FunctionExpression"
+    || node.type === "ArrowFunctionExpression"
+    || node.type === "ClassDeclaration"
+    || node.type === "ClassExpression"
+  ) return false
+  if (node.type === "VariableDeclaration" && node.kind === "var" && declaredNames(node).includes(binding)) return true
+  for (const value of Object.values(node)) {
+    if (isPositionedNode(value) && hasHoistedVariable(value, binding)) return true
+    if (Array.isArray(value) && value.some(item => isPositionedNode(item) && hasHoistedVariable(item, binding))) return true
+  }
+  return false
+}
+
 function isShadowedByLexicalDeclaration(
   node: PositionedNode,
   binding: string,
   ancestors: Map<PositionedNode, PositionedNode[]>,
 ): boolean {
   for (const ancestor of ancestors.get(node) ?? []) {
+    if (ancestor.type === "Program" && hasHoistedVariable(ancestor, binding)) return true
+    if (
+      ancestor.type === "FunctionDeclaration"
+      || ancestor.type === "FunctionExpression"
+      || ancestor.type === "ArrowFunctionExpression"
+    ) {
+      const body = ancestor.body
+      if (isPositionedNode(body) && body.start <= node.start && node.end <= body.end && hasHoistedVariable(body, binding)) return true
+    }
     if (ancestor.type === "BlockStatement" || ancestor.type === "Program") {
       const statements = Array.isArray(ancestor.body) ? ancestor.body : []
       if (statements.some(statement => isPositionedNode(statement) && declaredNames(statement).includes(binding))) return true
@@ -175,14 +201,14 @@ function isProviderFactoryCall(
   if (node.callee.type === "Identifier") {
     const name = identifierName(node.callee) ?? ""
     return factoryBindings.has(name)
-      && !isShadowedByFunctionParameter(node, name, ancestors)
+      && !isShadowedByFunctionBinding(node, name, ancestors)
       && !isShadowedByLexicalDeclaration(node, name, ancestors)
   }
   if (node.callee.type !== "MemberExpression" || node.callee.computed === true) return false
   const namespace = identifierName(node.callee.object) ?? ""
   return namespaces.has(namespace)
     && providerFactoryNames.has(identifierName(node.callee.property) ?? "")
-    && !isShadowedByFunctionParameter(node, namespace, ancestors)
+    && !isShadowedByFunctionBinding(node, namespace, ancestors)
     && !isShadowedByLexicalDeclaration(node, namespace, ancestors)
 }
 
@@ -219,14 +245,14 @@ function isProviderCapabilityCall(
   if (node.callee.type === "Identifier") {
     const name = identifierName(node.callee) ?? ""
     return capabilityBindings.has(name)
-      && !isShadowedByFunctionParameter(node, name, ancestors)
+      && !isShadowedByFunctionBinding(node, name, ancestors)
       && !isShadowedByLexicalDeclaration(node, name, ancestors)
   }
   if (node.callee.type !== "MemberExpression" || node.callee.computed === true) return false
   const namespace = identifierName(node.callee.object) ?? ""
   return namespaces.has(namespace)
     && providerCapabilityNames.has(identifierName(node.callee.property) ?? "")
-    && !isShadowedByFunctionParameter(node, namespace, ancestors)
+    && !isShadowedByFunctionBinding(node, namespace, ancestors)
     && !isShadowedByLexicalDeclaration(node, namespace, ancestors)
 }
 
@@ -260,12 +286,12 @@ function hasProviderDriverDefinition(
   const callee = node.callee
   const isDefineAgent = callee.type === "Identifier"
     ? defineAgentBindings.has(identifierName(callee) ?? "")
-      && !isShadowedByFunctionParameter(node, identifierName(callee) ?? "", ancestors)
+      && !isShadowedByFunctionBinding(node, identifierName(callee) ?? "", ancestors)
       && !isShadowedByLexicalDeclaration(node, identifierName(callee) ?? "", ancestors)
     : callee.type === "MemberExpression" && callee.computed !== true
       && namespaces.has(identifierName(callee.object) ?? "")
       && identifierName(callee.property) === "defineAgent"
-      && !isShadowedByFunctionParameter(node, identifierName(callee.object) ?? "", ancestors)
+      && !isShadowedByFunctionBinding(node, identifierName(callee.object) ?? "", ancestors)
       && !isShadowedByLexicalDeclaration(node, identifierName(callee.object) ?? "", ancestors)
   if (!isDefineAgent) return false
   const options = Array.isArray(node.arguments) && isPositionedNode(node.arguments[0])
