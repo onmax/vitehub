@@ -44,6 +44,17 @@ describe("Node storage defaults", () => {
     })
   })
 
+  it("puts the inline Console Auth database under the explicit directory", () => {
+    const dataDir = "/var/lib/app data"
+    const auth = { provider: "github" as const, org: "acme" }
+    expect(withDataDir({ preset: "node", dataDir, console: { access: "auth", auth } }).console).toMatchObject({
+      auth: { ...auth, databasePath: join(dataDir, "console-auth.sqlite") },
+    })
+    expect(withDataDir({ preset: "node", dataDir, console: { access: "auth", auth: { ...auth, databasePath: "/data/auth.sqlite" } } }).console)
+      .toMatchObject({ auth: { databasePath: "/data/auth.sqlite" } })
+    expect(withDataDir({ preset: "node", dataDir, console: { access: "auth", auth: {} } }).console).toMatchObject({ auth: {} })
+  })
+
   it.each(["serve", "build"] as const)("preserves Vite Console shorthand with dataDir during %s", async (command) => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-storage-console-"))
     try {

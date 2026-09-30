@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { build } from "esbuild"
 import { consoleAuthMountBase, consoleAuthPath } from "./auth-path.ts"
-import type { InlineConsoleAuth } from "./auth-inline.ts"
+import { resolveInlineConsoleAuthGates, type InlineConsoleAuth } from "./auth-inline-config.ts"
 
 export interface ConsoleAuthFiles {
   server?: string
@@ -56,9 +56,7 @@ export function resolveConsoleAuthConfig(root: string, config: ConsoleAuthConfig
     if (discoverFile(root, "server")) {
       throw new TypeError("[vitehub] Inline Console Auth conflicts with vitehub/console/auth/server.")
     }
-    if (config.provider !== "github" || !config.allowedEmails?.length || !config.databasePath || config.databasePath === ":memory:") {
-      throw new TypeError("[vitehub] Inline Console Auth requires provider: 'github', allowedEmails, and a persistent databasePath.")
-    }
+    resolveInlineConsoleAuthGates(config)
     if (config.client && discoverFile(root, "client")) {
       throw new TypeError("[vitehub] Console Auth client is configured both by path and by vitehub/console/auth/client.")
     }

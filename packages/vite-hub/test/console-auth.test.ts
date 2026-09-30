@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises"
+import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -12,6 +12,7 @@ import { build } from "esbuild"
 
 import { consoleAuthPageResponse, consoleAuthSignInPage, createConsoleAuthDefinition, defineConsoleAuth, prepareConsoleAuth } from "../src/console/auth.ts"
 import { resolveConsoleAuthConfig, writeConsoleAuthHandlers } from "../src/console/auth-build.ts"
+import { createInlineConsoleAuth } from "../src/console/auth-inline.ts"
 import { consoleVitePlugin } from "../src/console/vite.ts"
 import { installConsoleProjectNameScope, installConsoleSectionScope, resolveConsoleAuth } from "../src/console/internal.ts"
 
@@ -420,6 +421,76 @@ describe("independent Console Auth", () => {
     expect(await consoleAuthSignInPage("google", new Request("https://example.com/portal/_vitehub/sign-in"), "/portal/").text()).toContain("Sign in with google")
     const denied = consoleAuthSignInPage("github", new Request("https://example.com/portal/_vitehub/sign-in?denied=1"), "/portal/")
     expect(await denied.text()).toContain("Choose a different account with your sign-in provider")
+  })
+
+  it("admits only active GitHub organization members with a verified email", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-auth-org-"))
+    vi.stubEnv("GITHUB_CLIENT_ID", "client-id")
+    vi.stubEnv("GITHUB_CLIENT_SECRET", "client-secret")
+    vi.stubEnv("BETTER_AUTH_SECRET", "test-secret-at-least-32-bytes-long")
+    const github: Record<string, unknown> = {
+      "/user": { id: 1, login: "octocat", name: null, avatar_url: "https://avatars.example/octocat" },
+      "/user/memberships/orgs/acme": { state: "active" },
+      "/user/emails": [
+        { email: "secondary@example.com", verified: true },
+        { email: "primary@example.com", primary: true, verified: true },
+      ],
+    }
+    const requests: string[] = []
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      const url = new URL(input)
+      requests.push(`${url.pathname} ${new Headers(init?.headers).get("authorization")}`)
+      return url.pathname in github ? Response.json(github[url.pathname]) : new Response("{}", { status: 404 })
+    })
+    try {
+      const databasePath = join(root, "nested", "console-auth.sqlite")
+      const input = createInlineConsoleAuth({ provider: "github", org: ["other", "acme"], databasePath, session: { expiresIn: 43_200 } })
+      expect((await stat(databasePath)).mode & 0o777).toBe(0o600)
+      expect(input.signIn.scopes).toEqual(["read:org", "user:email"])
+      const options = input.auth.options
+      if (typeof options !== "function") throw new TypeError("Expected resolved Console Auth options.")
+      const resolved = options({ env: {}, requestOrigin: "https://example.com" })
+      expect(resolved.session).toEqual({ expiresIn: 43_200 })
+      const githubOptions = resolved.socialProviders?.github
+      const getUserInfo = githubOptions && typeof githubOptions !== "function" ? githubOptions.getUserInfo : undefined
+      if (!getUserInfo) throw new TypeError("Expected a GitHub organization check.")
+
+      expect(await getUserInfo({ accessToken: "token" })).toEqual({
+        data: github["/user"],
+        user: { email: "primary@example.com", emailVerified: true, image: "https://avatars.example/octocat", name: "octocat" },
+      })
+      expect(requests).toContain("/user/memberships/orgs/acme Bearer token")
+      github["/user/emails"] = [{ email: "primary@example.com", primary: true, verified: false }, { email: "other@example.com", verified: true }]
+      expect((await getUserInfo({ accessToken: "token" }))?.user.email).toBe("other@example.com")
+      github["/user/emails"] = [{ email: "primary@example.com", primary: true, verified: false }]
+      expect(await getUserInfo({ accessToken: "token" })).toBeNull()
+      github["/user/emails"] = [{ email: "primary@example.com", primary: true, verified: true }]
+      github["/user/memberships/orgs/acme"] = { state: "pending" }
+      expect(await getUserInfo({ accessToken: "token" })).toBeNull()
+      expect(await getUserInfo({})).toBeNull()
+
+      expect(await input.authorize({ user: { email: "primary@example.com", emailVerified: true } } as never)).toBe(true)
+      expect(await input.authorize({ user: { email: "primary@example.com", emailVerified: false } } as never)).toBe(false)
+
+      const both = createInlineConsoleAuth({ provider: "github", org: "acme", allowedEmails: ["Primary@example.com"], databasePath })
+      expect(await both.authorize({ user: { email: "primary@example.com", emailVerified: true } } as never)).toBe(true)
+      expect(await both.authorize({ user: { email: "other@example.com", emailVerified: true } } as never)).toBe(false)
+
+      const emailsOnly = createInlineConsoleAuth({ provider: "github", allowedEmails: ["primary@example.com"], databasePath })
+      const emailsOnlyOptions = emailsOnly.auth.options
+      if (typeof emailsOnlyOptions !== "function") throw new TypeError("Expected resolved Console Auth options.")
+      expect(emailsOnly.signIn.scopes).toEqual(["user:email"])
+      expect(emailsOnlyOptions({ env: {}, requestOrigin: "https://example.com" }).socialProviders?.github).not.toHaveProperty("getUserInfo")
+
+      expect(() => createInlineConsoleAuth({ provider: "github", org: "../admin", databasePath })).toThrow("GitHub organization login")
+      expect(() => createInlineConsoleAuth({ provider: "github", databasePath })).toThrow("allowedEmails, org, or both")
+      expect(() => resolveConsoleAuthConfig(root, { provider: "github", org: "acme" })).toThrow("Set databasePath or dataDir")
+    }
+    finally {
+      vi.unstubAllEnvs()
+      vi.unstubAllGlobals()
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it("rejects inline SQLite auth on Cloudflare while allowing file-based auth", async () => {
