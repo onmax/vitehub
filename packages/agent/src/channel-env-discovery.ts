@@ -66,8 +66,9 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
   return false
 }
 
-// Keys set to `undefined` count as omitted, as they do at runtime.
+// Keys set to `undefined` or `void 0` count as omitted, as they do at runtime.
 function staticOptionKeys(tokens: string[], start: number, empty: string): ReadonlySet<string> | undefined {
+  if (isUndefinedValue(tokens, start, new Set([",", ")", "}"]))) return new Set()
   while (tokens[start] === "(") {
     const close = closingDelimiter(tokens, start)
     const valueEnd = ["{", "("].includes(tokens[start + 1]!) ? closingDelimiter(tokens, start + 1) : start + 1
@@ -76,7 +77,6 @@ function staticOptionKeys(tokens: string[], start: number, empty: string): Reado
     start++
   }
   if (tokens[start] === empty) return new Set()
-  if (isUndefinedValue(tokens, start, new Set([",", ")", "}"]))) return new Set()
   if (tokens[start] !== "{") return undefined
   const keys = new Set<string>()
   return visitObjectProperties(tokens, start, (key, value) => {
@@ -114,7 +114,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
       else if (!channelModule && clause[b] === "defineAgent") agentFactories.add(local)
     }
   }
-  const declarations = moduleObjectDeclarations(tokens)
+  const declarations = moduleObjectDeclarations(tokens, lineBreaks)
   const shadowBindings = new Map([...bindings, ...[...namespaces].map(name => [name, name] as const)])
   const agentBindings = new Map([...agentFactories].map(name => [name, "defineAgent"]))
   const agentShadowBindings = new Map([...agentBindings, ...[...agentNamespaces].map(name => [name, name] as const)])
@@ -257,15 +257,15 @@ function isUndefinedValue(tokens: string[], start: number, terminators: Readonly
     const close = closingDelimiter(tokens, start)
     return terminators.has(tokens[close + 1]!) && isUndefinedValue(tokens, start + 1, new Set([")"]))
   }
-  if (tokens[start] !== "undefined") return false
-  return isValueEnd(tokens, start + 1, terminators)
+  if (tokens[start] === "undefined") return isValueEnd(tokens, start + 1, terminators)
+  return tokens[start] === "void" && tokens[start + 1] === "0" && isValueEnd(tokens, start + 2, terminators)
 }
 
 // Non-null and type assertions preserve a value. Reject runtime expressions
 // after an assertion before treating it as the end of the original value.
-function isValueEnd(tokens: string[], after: number, terminators: ReadonlySet<string>): boolean {
+function isValueEnd(tokens: string[], after: number, terminators: ReadonlySet<string>, statementEnd?: (index: number) => boolean): boolean {
   while (tokens[after] === "!" && tokens[after + 1] !== "=") after++
-  if (terminators.has(tokens[after]!)) return true
+  if (terminators.has(tokens[after]!) || statementEnd?.(after)) return true
   if (!["as", "satisfies"].includes(tokens[after]!)) return false
   let depth = 0
   for (let i = after + 1; i < tokens.length; i++) {
@@ -278,9 +278,9 @@ function isValueEnd(tokens: string[], after: number, terminators: ReadonlySet<st
       if (depth === 0) return terminators.has(token)
       depth--
     }
-    else if (depth === 0 && terminators.has(token)) return true
+    else if (depth === 0 && (terminators.has(token) || (i > after + 1 && statementEnd?.(i)))) return true
   }
-  return false
+  return statementEnd?.(tokens.length) ?? false
 }
 
 // Resolve an object literal, or a module-level `const name = { ... }` reference to one.
@@ -574,8 +574,12 @@ function bindingPatternHasName(tokens: string[], start: number, name: string, cl
 }
 
 // Map module-level const object initializers to the index of their opening brace.
-function moduleObjectDeclarations(tokens: string[]): Map<string, number> {
+function moduleObjectDeclarations(tokens: string[], lineBreaks: ReadonlySet<number>): Map<string, number> {
   const declarations = new Map<string, number>()
+  // A newline before an identifier ends the initializer unless it continues
+  // an assertion or a binary expression. Operators can continue across lines.
+  const statementEnd = (index: number) => index === tokens.length || (lineBreaks.has(index)
+    && /^[A-Za-z_$][\w$]*$/.test(tokens[index]!) && !["as", "satisfies", "in", "instanceof"].includes(tokens[index]!))
   let depth = 0
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!
@@ -583,8 +587,10 @@ function moduleObjectDeclarations(tokens: string[]): Map<string, number> {
       let equals = i + 2
       while (tokens[equals] && tokens[equals] !== "=" && tokens[equals] !== ";") equals++
       if (tokens[equals] === "=") {
-        const object = localObject(tokens, equals + 1, declarations)
-        if (object !== undefined) declarations.set(tokens[i + 1]!, object)
+        const start = equals + 1
+        const object = localObject(tokens, start, declarations)
+        const end = ["{", "("].includes(tokens[start]!) ? closingDelimiter(tokens, start) + 1 : start + 1
+        if (object !== undefined && isValueEnd(tokens, end, new Set([",", ";"]), statementEnd)) declarations.set(tokens[i + 1]!, object)
       }
     }
     if (["{", "(", "["].includes(token)) depth++

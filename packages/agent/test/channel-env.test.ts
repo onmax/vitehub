@@ -353,6 +353,25 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it("treats void zero options as omitted without accepting operations on them", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { telegram } from "vite-hub/agent/channels"
+      telegram({ botToken: void 0, adapter: (void 0) })
+      telegram({ botToken: ((void 0)) })
+      telegram(void 0)
+      telegram((void 0))
+      defineAgent({ channels: { telegram: { botToken: void 0 } } })
+      defineAgent({ channels: { telegram: void 0 } })
+      telegram({ botToken: void 0 ?? token })
+      telegram({ botToken: (void 0, token) })
+    `)).toEqual([
+      ...Array.from({ length: 6 }, () => ({ kind: "telegram", keys: [] })),
+      { kind: "telegram", keys: ["botToken"] },
+      { kind: "telegram", keys: ["botToken"] },
+    ])
+  })
+
   it("keeps calls in labeled and case statement blocks", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
@@ -397,13 +416,33 @@ describe("built-in Channel discovery", () => {
       import { defineAgent } from "vite-hub/agent"
       const first = ({ telegram: {} })
       const second = (({ telegram: {} } satisfies AgentChannels))
+      const third = ({ telegram: {} }) as
+        AgentChannels
       const comma = ({ telegram: {} }, custom)
       const operation = ({ telegram: {} } || custom)
       defineAgent({ channels: first })
       defineAgent({ channels: second })
+      defineAgent({ channels: third })
       defineAgent({ channels: comma })
       defineAgent({ channels: operation })
-    `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: [] }])
+    `)).toEqual(Array.from({ length: 3 }, () => ({ kind: "telegram", keys: [] })))
+  })
+
+  it.each([
+    `({ telegram: {} }) && custom`,
+    `(({ telegram: {} })) || custom`,
+    `({ telegram: {} }) ? custom : other`,
+    `({ telegram: {} })["custom"]`,
+    `({ telegram: {} }) as AgentChannels && custom`,
+    `({ telegram: {} }) as\nAgentChannels && custom`,
+    `{ telegram: {} } && custom`,
+    `({ telegram: {} })\n&& custom`,
+  ])("rejects operations after module-level map initializers: %s", (expression) => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      const channels = ${expression}
+      defineAgent({ channels })
+    `)).toEqual([])
   })
 
   it("follows typed maps and explicit properties after spreads", () => {
