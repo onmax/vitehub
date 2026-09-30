@@ -163,6 +163,65 @@ describe("local workspace store", () => {
     await expect(store.rm("docs", { recursive: true })).resolves.toBeUndefined()
   })
 
+  it("yields a slow listing batch before a queued parent writer times out", async () => {
+    const store = await createStore()
+    const root = tempDirs.at(-1)!
+    await mkdir(`${root}/docs`)
+    await writeFile(`${root}/docs/a.txt`, "a")
+    await writeFile(`${root}/docs/b.txt`, "b")
+    const actualStat = vi.mocked(stat).getMockImplementation()!
+    const actualReaddir = vi.mocked(readdir).getMockImplementation()!
+    const startedAt = Date.now()
+    let now = startedAt
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now)
+    let release!: () => void, observed!: () => void, queued!: () => void
+    const paused = new Promise<void>(resolve => { release = resolve })
+    const reached = new Promise<void>(resolve => { observed = resolve })
+    const parentQueued = new Promise<void>(resolve => { queued = resolve })
+    const readers = `${root}/.vitehub/locks/${createHash("sha256").update("docs").digest("hex")}.readers`
+    let firstReads = 0, secondReads = 0, removed = false
+    let removing: Promise<{ error?: unknown }> | undefined
+    vi.mocked(stat).mockImplementation(async (...args) => {
+      if (String(args[0]) === `${root}/docs/a.txt` && ++firstReads === 2) {
+        observed()
+        await paused
+      }
+      if (String(args[0]) === `${root}/docs/b.txt` && ++secondReads === 2 && !removed) {
+        // A second slow entry would exhaust the writer's fixed ten-second
+        // deadline if the batch retained its common ancestor lease.
+        now = startedAt + 10_001
+        await removing
+      }
+      return await actualStat(...args)
+    })
+    vi.mocked(readdir).mockImplementation(async (...args) => {
+      const entries = await actualReaddir(...args)
+      if (String(args[0]) === readers) queued()
+      return entries
+    })
+    const listing = store.list("docs", { recursive: true })
+    try {
+      await reached
+      removing = store.rm("docs", { recursive: true }).then(() => {
+        removed = true
+        return {}
+      }, error => ({ error }))
+      await parentQueued
+      now = startedAt + 9_500
+      release()
+      await listing
+      expect((await removing).error).toBeUndefined()
+      expect(removed).toBe(true)
+    }
+    finally {
+      release()
+      await Promise.allSettled([listing, removing])
+      clock.mockRestore()
+      vi.mocked(stat).mockImplementation(actualStat)
+      vi.mocked(readdir).mockImplementation(actualReaddir)
+    }
+  })
+
   it.each(["", "docs"])("finishes listing %j while a parent removal waits", async (prefix) => {
     const store = await createStore()
     const root = tempDirs.at(-1)!

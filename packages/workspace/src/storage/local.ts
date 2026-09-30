@@ -749,8 +749,10 @@ class LocalWorkspaceStore implements WorkspaceStore {
         return options.recursive || !entry.path.slice(normalizedPrefix.length + 1).includes("/")
       })
     const entries: WorkspaceEntry[] = []
-    // Keep each group's common ancestors leased across the batch. Individual
-    // entries still acquire their own leases, while other groups run concurrently.
+    // Keep common ancestors leased for short batches. Yield between entries
+    // before accumulated reads consume a queued writer's ten-second deadline.
+    // Individual entries retain their own leases until their I/O settles.
+    const readBatchDurationMs = 1_000
     const groups = new Map<string, WorkspaceEntry[]>()
     for (const entry of filtered) {
       const key = entry.path.split("/")[0]!
@@ -762,12 +764,17 @@ class LocalWorkspaceStore implements WorkspaceStore {
     for (let index = 0; index < independent.length; index += 64) {
       await Promise.all(independent.slice(index, index + 64).map(async (group) => {
         const heldReadPrefix = normalizedPrefix || group[0]!.path.split("/")[0]!
-        await withWorkspacePathLock(this.root, heldReadPrefix, async () => {
-          for (const entry of group) {
-            const info = await withWorkspacePathLock(this.root, entry.path, () => this.#stat(entry.path, includeDigest), true, heldReadPrefix)
-            if (info) entries.push(info)
-          }
-        }, true)
+        let offset = 0
+        while (offset < group.length) {
+          await withWorkspacePathLock(this.root, heldReadPrefix, async () => {
+            const startedAt = Date.now()
+            do {
+              const entry = group[offset++]!
+              const info = await withWorkspacePathLock(this.root, entry.path, () => this.#stat(entry.path, includeDigest), true, heldReadPrefix)
+              if (info) entries.push(info)
+            } while (offset < group.length && Date.now() - startedAt < readBatchDurationMs)
+          }, true)
+        }
       }))
     }
     return entries.sort((a, b) => a.path.localeCompare(b.path))
