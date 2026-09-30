@@ -67,17 +67,21 @@ export function channelDelivery<TOptions>(options: ChannelDeliveryOptions<TOptio
       // Each invocation resolves its own counters.
       let calls = 0
       let sent = 0
+      const checkLimit = () => {
+        if (calls >= maxCalls) {
+          throw new ViteHubError("CHANNEL_DELIVERY_LIMIT", `[vitehub] ${name} was already called ${calls} ${calls === 1 ? "time" : "times"}. Do not call it again.`, { details: { maxCalls, tool: name } })
+        }
+      }
       context.tools.add({
         [name]: defineInternalTool({
           description,
           async execute(input) {
+            checkLimit()
             const message = isRuntimeRecord(input) && hasRuntimeType(input.message, "string") ? input.message.trim() : ""
             if (!message) throw new TypeError(`[vitehub] ${name} requires a non-empty message.`)
             await options.validate?.(message)
             const text = options.format ? await options.format(message, context) : message
-            if (calls >= maxCalls) {
-              throw new ViteHubError("CHANNEL_DELIVERY_LIMIT", `[vitehub] ${name} was already called ${calls} ${calls === 1 ? "time" : "times"}. Do not call it again.`, { details: { maxCalls, tool: name } })
-            }
+            checkLimit()
             // Count the attempt before sending. A failed send can still have reached the recipient.
             calls++
             const [error, receipt] = await options.channel.send(text, options.options)
@@ -91,7 +95,7 @@ export function channelDelivery<TOptions>(options: ChannelDeliveryOptions<TOptio
       })
       if (options.required) {
         context.delivery.finishEffect(({ event }) => {
-          if (!Object.hasOwn(event, "error") && !sent) {
+          if (!Object.hasOwn(event, "error") && !event.invocation.cancelled && !sent) {
             throw new ViteHubError("CHANNEL_DELIVERY_REQUIRED", `[vitehub] The Agent finished without a successful ${name} call.`, { details: { attempts: calls, tool: name } })
           }
         })

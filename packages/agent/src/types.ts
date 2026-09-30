@@ -759,6 +759,8 @@ export interface AgentFinishEvent<
   input: AgentRunInput<CALL_OPTIONS>
   invoker: AgentInvoker
   invocation: {
+    /** True when output consumption was cancelled instead of completed. */
+    cancelled?: boolean
     durationMs: number
     resultKind?: string
     run?: AgentRunMetadata
