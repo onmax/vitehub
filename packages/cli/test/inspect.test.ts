@@ -61,13 +61,13 @@ function inspectPlugins(rootDir: string) {
   ]
 }
 
-async function run(rootDir: string, args: string[]) {
+async function run(rootDir: string, args: string[], plugins: readonly unknown[] = inspectPlugins(rootDir)) {
   const stdout = stream()
   const stderr = stream()
   const exitCode = await runViteHubCli({
     args,
     cwd: rootDir,
-    loadConfig: async () => ({ plugins: inspectPlugins(rootDir), root: rootDir }),
+    loadConfig: async () => ({ plugins, root: rootDir }),
     loadNuxtViteConfig: async () => undefined,
     stderr,
     stdout,
@@ -76,6 +76,42 @@ async function run(rootDir: string, args: string[]) {
 }
 
 describe("vitehub inspect", () => {
+  it("reserves inspect for the built-in namespace when a plugin contributes the same name", async () => {
+    const rootDir = await createTempDir()
+    const plugins = [...inspectPlugins(rootDir), {
+      vitehub: {
+        cli: {
+          namespaces: [{
+            name: "inspect",
+            description: "Custom inspection",
+            features: ["definitions", "provider-output", "legacy"].map(name => ({
+              name,
+              run: () => { throw new Error("Contributed inspect command must not run") },
+            })),
+          }],
+        },
+      },
+    }]
+    const help = await run(rootDir, ["--help"], plugins)
+    expect(help.exitCode).toBe(0)
+    expect(help.stdout.match(/^  inspect\s/gm)).toHaveLength(1)
+    expect(help.stdout).not.toContain("Custom inspection")
+
+    const definitions = await run(rootDir, ["inspect", "definitions", "--json"], plugins)
+    expect(definitions.exitCode).toBe(0)
+    expect(definitions.stderr).toBe("")
+    expect(JSON.parse(definitions.stdout).definitions).toHaveLength(2)
+
+    const providerOutput = await run(rootDir, ["inspect", "provider-output", "--json"], plugins)
+    expect(providerOutput.exitCode).toBe(0)
+    expect(providerOutput.stderr).toBe("")
+    expect(JSON.parse(providerOutput.stdout).providerOutput).toHaveLength(3)
+
+    const legacy = await run(rootDir, ["inspect", "legacy"], plugins)
+    expect(legacy.exitCode).toBe(1)
+    expect(legacy.stderr).toContain("Unknown ViteHub CLI feature: inspect legacy")
+  })
+
   it("lists the inspect namespace in root help", async () => {
     const rootDir = await createTempDir()
     const result = await run(rootDir, ["--help"])

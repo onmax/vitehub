@@ -37,6 +37,7 @@ pnpm vitehub --help
 ```
 
 Every project includes `inspect` and `provision`. Other namespaces appear when their Vite integrations are active.
+The CLI owns the `inspect` namespace. Plugin command contributions with that name are ignored.
 
 ```txt
 Usage: vitehub <namespace> <feature> [args...]

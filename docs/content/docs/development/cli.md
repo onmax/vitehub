@@ -26,6 +26,7 @@ can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
 The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
+The CLI owns the `inspect` namespace. Plugin command contributions with that name are ignored.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
