@@ -55,12 +55,29 @@ function fallbackMessage(status: number): string {
   return "Could not complete the request. Try again."
 }
 
+const locationSchema = v.looseObject({ href: v.string() })
+
+/** URL of the Console page, which resolves a relative management endpoint. */
+function pageUrl(): string | undefined {
+  const location = v.safeParse(locationSchema, Reflect.get(globalThis, "location"))
+  return location.success ? location.output.href : undefined
+}
+
+/** The Console sends an API key only over HTTPS or to a loopback host, like `vitehub connections set-key`. */
+export function assertSecureKeyEndpoint(url: URL): void {
+  const host = url.hostname
+  const loopback = host === "localhost" || host.endsWith(".localhost") || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host)
+  if (url.protocol === "https:" || (url.protocol === "http:" && loopback)) return
+  throw new ConsoleRequestError(400, "The Console sends API keys only over HTTPS or on localhost. Open the Console over HTTPS to set a key.")
+}
+
 export async function requestConnectionsManagement<T extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>>(
   endpoint: string,
   action: "activity" | "disconnect" | "inspect" | "list" | "refresh" | "set-key" | "start",
   schema: T,
   input: Record<string, unknown> = {},
 ): Promise<v.InferOutput<T>> {
+  if (action === "set-key") assertSecureKeyEndpoint(new URL(endpoint, pageUrl()))
   const response = await fetch(endpoint, {
     method: "POST",
     credentials: "same-origin",

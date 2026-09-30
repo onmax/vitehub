@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest"
 
 import { consoleConnectionsKey, consoleConnectionsRegistryKey, consoleConnectionsRootKey, consoleSectionsKey, consoleSectionsRegistryKey, consoleSectionsRootKey, installConsoleConnectionsScope, resolveConsoleConnections } from "../src/console/internal.ts"
 import { addConsoleDevframeHandler } from "../src/console/nitro.ts"
+import { assertSecureKeyEndpoint } from "../src/console/runtime/client/connections-management.ts"
 import { writeConsoleNitroPlugin } from "../src/console/plugin.ts"
 import { consoleConnectionsReturnTo, handleConsoleConnections, installConsoleConnections } from "../src/console/runtime/server/connections.ts"
 import connectionsRoute from "../src/console/runtime/server/connections-route.ts"
@@ -135,6 +136,13 @@ describe("Console Connections", () => {
     // The OAuth routes change a Connection too, so they stay closed.
     expect((await handleConsoleConnections(new Request(`${origin}/_vitehub/connections/example/connect?ticket=t`))).status).toBe(403)
     expect((await handleConsoleConnections(new Request(`${origin}/_vitehub/connections/example/callback?code=c&state=s`))).status).toBe(403)
+  })
+
+  it("sends an API key from the Console only over HTTPS or to a loopback host", () => {
+    for (const url of ["https://app.example/_vitehub/connections/manage", "http://localhost:5173/x", "http://127.0.0.1:3000/x", "http://[::1]:5173/x"]) {
+      expect(() => assertSecureKeyEndpoint(new URL(url))).not.toThrow()
+    }
+    expect(() => assertSecureKeyEndpoint(new URL("http://app.example/_vitehub/connections/manage"))).toThrow("only over HTTPS or on localhost")
   })
 
   it("rejects cross-origin management requests", async () => {
