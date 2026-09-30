@@ -5700,6 +5700,7 @@ async function finishAgentInvocation<
       usage = invocationUsageWithAuxiliaryCalls(context.context, usage)
     }
     if (hasFinishWork(context)) {
+      await context.invocationJournal?.ready()
       const details = failed ? agentErrorDetails(error) : undefined
       const eventBase = {
         ...(failed ? { error } : {}),
@@ -5711,6 +5712,7 @@ async function finishAgentInvocation<
           durationMs,
           ...(resultKind !== undefined ? { resultKind } : {}),
           ...(context.run ? { run: context.run } : {}),
+          ...(context.invocationJournal?.traceId !== undefined ? { traceId: context.invocationJournal.traceId } : {}),
           ...(usage ? { usage } : {}),
         },
         ...(result !== undefined ? { result } : {}),
