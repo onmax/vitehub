@@ -196,6 +196,20 @@ describe("vitehub agent invocations delete and prune", () => {
     expect(missing.chunks.stderr).toContain(`No Agent Invocation journal exists at ${join(elsewhere, ".vitehub/data/console.sqlite")}`)
   })
 
+  it("resolves the default journal from the ViteHub project root", async () => {
+    const projectRoot = await temporaryDirectory()
+    const appRoot = join(projectRoot, "app")
+    await mkdir(join(projectRoot, "server", "agents"), { recursive: true })
+    await mkdir(appRoot)
+    await mkdir(join(projectRoot, ".vitehub/data"), { recursive: true })
+    const url = `file:${join(projectRoot, ".vitehub/data/console.sqlite")}`
+    await seed(createLibsqlAgentInvocationStore({ maxAgeMs: false, maxRecords: false, url }))
+    const io = output()
+
+    await expect(runAgentInvocationsCli(["delete", "old-completed"], { env: {}, rootDir: appRoot, ...io })).resolves.toBe(0)
+    expect(io.chunks.stdout).toBe("Deleted old-completed.\n")
+  })
+
   it("rejects invalid durations and extra arguments", async () => {
     const duration = output()
     await expect(runAgentInvocationsCli(["prune", "--older-than", "soon"], { env: {}, ...duration })).resolves.toBe(1)
@@ -208,6 +222,13 @@ describe("vitehub agent invocations delete and prune", () => {
     const id = output()
     await expect(runAgentInvocationsCli(["delete"], { env: {}, ...id })).resolves.toBe(1)
     expect(id.chunks.stderr).toContain("delete requires an invocation id.")
+  })
+
+  it("redacts credentialed URLs in parse errors", async () => {
+    const io = output()
+    await expect(runAgentInvocationsCli(["prune", "--database-url=libsql://user:password@host/db?authToken=secret"], { env: {}, ...io })).resolves.toBe(1)
+    expect(io.chunks.stderr).toContain("Unknown option: --database-url=libsql://host/db.")
+    expect(io.chunks.stderr).not.toMatch(/password|secret/)
   })
 
   it("does not print the remote database credentials", async () => {
