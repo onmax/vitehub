@@ -2153,6 +2153,7 @@ export interface AgentInspectionProviderMetadata {
   permissions: AgentProviderPermissions
   provider?: string
   providerSettings?: string[]
+  requirements?: readonly string[]
   reasoningEffort?: CodexReasoningEffort
   reasoningSummary?: CodexReasoningSummary
   sessionStore?: "sqlite"

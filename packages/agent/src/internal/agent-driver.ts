@@ -231,6 +231,9 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
   if (value.requirements !== undefined && (!Array.isArray(value.requirements) || !value.requirements.every(item => isRuntimeString(item) && /^[A-Za-z0-9._+-]+$/.test(item)))) {
     throw agentDiagnostics.AGENT_R0970({ message: "[vitehub] defineAgent({ driver.requirements }) must be a list of command names, such as [\"git\", \"gh\"]." })
   }
+  if (value.requirements !== undefined && value.launch !== undefined && !isResolver(value.launch)) {
+    throw agentDiagnostics.AGENT_R0970({ message: "[vitehub] defineAgent({ driver.requirements }) requires a launch resolver when driver.launch is set." })
+  }
   const codexOptions = ["credentialProfile", "credentials", "reasoningEffort", "reasoningSummary"].filter(key => value[key] !== undefined)
   if (provider !== "codex" && codexOptions.length) {
     throw agentDiagnostics.AGENT_R0477({ message: `[vitehub] defineAgent({ driver: { kind: "${provider}" } }) does not support Codex option${codexOptions.length === 1 ? "" : "s"}: ${codexOptions.join(", ")}.` })

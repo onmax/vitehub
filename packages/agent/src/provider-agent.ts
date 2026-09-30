@@ -1167,21 +1167,22 @@ async function missingProviderCommands<TRuntimeConfig extends AgentRuntimeConfig
   if (!requirements.length) return []
   const args = ["-c", providerRequirementScript, "sh", ...requirements]
   const launch = options.launch === undefined
-    ? { args, command: "sh" }
+    ? undefined
     : normalizedProviderLaunch(await waitForProviderOperation(resolveRuntimeValue(options.launch, {
         ...context, command: "sh", cwd, environment: Object.freeze({ ...environment }), requiredEnvironment: [],
       }), signal))
-  const argv = options.launch === undefined ? args : [...launch.args || [], ...args]
+  const command = launch?.command ?? (process.platform === "win32" ? "where.exe" : "sh")
+  const argv = launch ? [...launch.args || [], ...args] : process.platform === "win32" ? requirements : args
   return await new Promise((resolve, reject) => {
-    const child = spawn(launch.command, argv, { cwd, env: environment, signal, stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn(command, argv, { cwd, env: environment, signal, stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""
     let stderr = ""
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = `${stderr}${chunk}`.slice(-4_096) })
     child.once("error", reject)
     child.once("close", (code) => {
-      if (code === 0) return resolve(stdout.split("\n").map(line => line.trim()).filter(line => requirements.includes(line)))
-      reject(new Error(`[vitehub] The Driver requirement check exited with ${code ?? "a signal"}. ${redactCredentialText(stderr.trim())}`.trim()))
+      if (code === 0) return resolve(launch || process.platform !== "win32" ? stdout.split("\n").map(line => line.trim()).filter(line => requirements.includes(line)) : [])
+      reject(new Error(`[vitehub] The Driver requirement check exited with ${code ?? "a signal"}. ${redactProviderDiagnostic(stderr.trim(), environment, Object.keys(environment))}`.trim()))
     })
   })
 }

@@ -21,6 +21,12 @@ describe("built-in Agent Driver selection", () => {
     });
     // SAFETY: This fixture supplies a shell expression to test runtime validation.
     expect(() => defineAgent({ driver: { kind: "codex", requirements: ["git; rm -rf /"] } } as never)).toThrow("driver.requirements");
+    expect(() => defineAgent({ driver: { kind: "codex", launch: { command: "ssh", args: ["host", "codex"] }, requirements: ["git"] } } as never)).toThrow("launch resolver");
+  });
+
+  it("exposes provider requirements in inspection metadata", () => {
+    const agent = defineAgent({ driver: { kind: "codex", requirements: ["git", "gh"] } });
+    expect(createAgentInspectionMetadata(agent).config?.driver.provider).toMatchObject({ requirements: ["git", "gh"] });
   });
 
   it("normalizes the common retry setting into AI SDK call settings", () => {
