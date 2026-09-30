@@ -23,10 +23,10 @@ it("registers one production Usage GET endpoint when configuration is reapplied"
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
-it("does not register the Usage endpoint without the Agents section", async () => {
+it.each([["env", "kv"], ["usage"]] as const)("does not register the Usage endpoint without the Agents section (%j)", async (...sections) => {
   const root = await mkdtemp(join(tmpdir(), "vitehub-usage-route-"))
   try {
-    const plugin = consoleVitePlugin({ console: { exposure: "host-managed" }, preset: "node", sections: ["env", "kv"] })
+    const plugin = consoleVitePlugin({ console: { exposure: "host-managed" }, preset: "node", sections: [...sections] })
     const hook = plugin.config
     if (!hook) throw new Error("Missing Console config hook")
     const handler = "handler" in hook ? hook.handler : hook
