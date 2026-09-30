@@ -210,7 +210,7 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
                 ? {
                     description: "Generated Cloudflare Queue provider config",
                     owner: "queue",
-                    path: resolve(queueOutputRoot(), "wrangler.json"),
+                    path: resolve(queueOutputRoot(), nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker ? "server/wrangler.json" : "wrangler.json"),
                   }
                 : {
                     description: "Generated Vercel Queue provider config",

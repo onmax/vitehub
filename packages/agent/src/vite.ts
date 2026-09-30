@@ -2936,6 +2936,9 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       },
       inspect: () => {
         if (agent === false) return
+        const rootDir = resolve(resolved?.root ?? process.cwd())
+        const normalized = normalizeAgentOptions(agent)
+        const hostedAgents = Boolean(normalized && hasHostedAgentDefinitions(rootDir, serverDirs))
         return {
           definitions: [{
             kind: "agent",
@@ -2945,6 +2948,13 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
               return inspectAgentDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
             },
           }],
+          providerOutput: hostedAgents && resolveAgentHosting(resolved) === "netlify"
+            ? [{
+                description: "Generated Netlify Agent function",
+                owner: "agent",
+                path: resolve(createDefaultNetlifyOutputRoot(rootDir), "functions", `${netlifyAgentFunctionName}.mjs`),
+              }]
+            : [],
         }
       },
     },
