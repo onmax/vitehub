@@ -186,7 +186,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     return await writeWorkflowDevRegistryFiles({
       definitions: discoverWorkflowDevDefinitions(rootDir, serverDirs),
       importBase: internalOptions.importBase,
-      projectRoot: resolveViteHubProjectRoot(rootDir),
+      projectRoot: rootDir,
     })
   }
 
@@ -197,13 +197,14 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       order: "pre",
       async handler(config, env) {
         workflow = config.workflow ?? workflow
+        // SAFETY: ViteHub supplies this optional string-array extension during framework configuration.
         serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
         if (env.command !== "serve" || !isWorkflowEnabled()) return
-        devRootDir = resolve(config.root || process.cwd())
+        devRootDir = resolveViteHubProjectRoot(resolve(config.root || process.cwd()))
         const { plugin } = await writeDevRegistry(devRootDir)
-        const kit = createNitroServerKit((config as { nitro?: unknown }).nitro)
+        const kit = createNitroServerKit(Reflect.get(config, "nitro"))
         kit.addPlugin(plugin, "start")
-        ;(config as { nitro?: unknown }).nitro = kit.config
+        Reflect.set(config, "nitro", kit.config)
       },
     },
     configureServer(server) {
@@ -215,10 +216,19 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         if (file.includes(`/${workflowDevGeneratedDir}/`)) return
         if (!/\.(?:c|m)?[jt]s$/i.test(file) || !/(?:\/workflows\/|\.workflow\.)/i.test(file)) return
         const { changed } = await writeDevRegistry(rootDir)
-        const nitro = server.environments.nitro
-        for (const changedFile of changed) {
-          for (const module of nitro?.moduleGraph.getModulesByFile(changedFile) ?? []) nitro?.moduleGraph.invalidateModule(module)
+        const environment = server.environments.nitro ?? server.environments.ssr
+        const filesToInvalidate = new Set([
+          ...changed,
+          resolve(rootDir, workflowDevGeneratedDir, "dev-registry.mjs"),
+        ])
+        let invalidated = false
+        for (const changedFile of filesToInvalidate) {
+          for (const module of environment?.moduleGraph.getModulesByFile(changedFile) ?? []) {
+            environment.moduleGraph.invalidateModule(module)
+            invalidated = true
+          }
         }
+        if (invalidated) environment?.hot.send({ type: "full-reload", triggeredBy: path })
       }
       for (const event of ["add", "change", "unlink"] as const) {
         server.watcher.on(event, path => void refresh(path).catch(error => server.config.logger.error(`[vitehub] Workflow dev registry update failed: ${error instanceof Error ? error.message : String(error)}`)))

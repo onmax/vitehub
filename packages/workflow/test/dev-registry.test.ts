@@ -74,6 +74,34 @@ describe("Workflow dev registry", () => {
     expect(registry).toContain("server/workflows/welcome.ts")
   })
 
+  it("discovers Workflows from the resolved project root for a nested Vite root", async () => {
+    const projectRoot = await createApp()
+    const appRoot = join(projectRoot, "app")
+    await mkdir(appRoot)
+    const config: Record<string, unknown> = { root: appRoot }
+    await configHook({ provider: "vercel" })(config, { command: "serve", mode: "development" })
+
+    const registry = await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs"), "utf8")
+    expect(registry).toContain("server/workflows/welcome.ts")
+  })
+
+  it("preserves explicit server directories with a nested Vite root", async () => {
+    const projectRoot = await createApp()
+    const appRoot = join(projectRoot, "app")
+    const serverRoot = join(projectRoot, "custom-server")
+    await mkdir(appRoot)
+    await mkdir(join(serverRoot, "workflows"), { recursive: true })
+    await writeFile(join(serverRoot, "workflows/custom.ts"), workflowModule("custom"))
+    await configHook({ provider: "vercel" })({
+      root: appRoot,
+      __vitehubServerDirs: [serverRoot],
+    }, { command: "serve", mode: "development" })
+
+    const registry = await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs"), "utf8")
+    expect(registry).toContain("custom-server/workflows/custom.ts")
+    expect(registry).not.toContain("server/workflows/welcome.ts")
+  })
+
   it("does not add the registry plugin to build output or to disabled Workflows", async () => {
     const projectRoot = await createApp()
     const build: Record<string, unknown> = { root: projectRoot }
@@ -86,7 +114,7 @@ describe("Workflow dev registry", () => {
     expect(existsSync(join(projectRoot, workflowDevGeneratedDir))).toBe(false)
   })
 
-  it("rewrites the registry and invalidates it in the Nitro dev runtime when a Workflow file is added", async () => {
+  it.each(["nitro", "ssr"])("refreshes the registry in the %s dev runtime on Workflow add, unlink, and change", async (environmentName) => {
     const projectRoot = await createApp()
     const plugin = hubWorkflow({ provider: "vercel" })
     const hook = plugin.config
@@ -96,12 +124,14 @@ describe("Workflow dev registry", () => {
     const registryFile = join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs")
     const registryModule = { file: registryFile }
     const invalidated: unknown[] = []
+    const reloads: unknown[] = []
     const errors: string[] = []
     const watcher = new EventEmitter()
     const server = {
       config: { logger: { error: (message: string) => errors.push(message) } },
       environments: {
-        nitro: {
+        [environmentName]: {
+          hot: { send: (message: unknown) => reloads.push(message) },
           moduleGraph: {
             getModulesByFile: (file: string) => file === registryFile ? new Set([registryModule]) : undefined,
             invalidateModule: (module: unknown) => invalidated.push(module),
@@ -112,7 +142,7 @@ describe("Workflow dev registry", () => {
     }
     const configureServer = plugin.configureServer
     if (typeof configureServer !== "function") throw new TypeError("Expected the hubWorkflow configureServer hook.")
-    // SAFETY: The hook reads only `config.logger`, `environments.nitro.moduleGraph`, and `watcher`.
+    // SAFETY: The hook reads only `config.logger`, the active server environment module graph and hot channel, and `watcher`.
     await configureServer.call({} as never, server as never)
 
     const report = join(projectRoot, "server/workflows/report.ts")
@@ -130,6 +160,15 @@ describe("Workflow dev registry", () => {
     await waitFor(async () => invalidated.length > 1)
     expect(await readFile(registryFile, "utf8")).not.toContain("\"report\"")
     expect(invalidated).toEqual([registryModule, registryModule])
+    await writeFile(join(projectRoot, "server/workflows/welcome.ts"), workflowModule("updated"))
+    watcher.emit("change", join(projectRoot, "server/workflows/welcome.ts"))
+    await waitFor(async () => invalidated.length > 2)
+    expect(invalidated).toEqual([registryModule, registryModule, registryModule])
+    expect(reloads).toEqual([
+      { type: "full-reload", triggeredBy: report },
+      { type: "full-reload", triggeredBy: report },
+      { type: "full-reload", triggeredBy: join(projectRoot, "server/workflows/welcome.ts") },
+    ])
     expect(errors).toEqual([])
   })
 })
