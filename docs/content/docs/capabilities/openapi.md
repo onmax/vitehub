@@ -128,7 +128,7 @@ access: {
 },
 ```
 
-ViteHub checks access before a tool runs. A denied tool fails with `CAPABILITY_DENIED`. A tool that matches `approve` fails with `APPROVAL_REQUIRED`. A generated CLI command fails with `CONNECTIONS_DENIED` or `CONNECTIONS_APPROVAL_REQUIRED` before the request. Each call is recorded as Connection activity with the Agent name, run id, Invocation trace id, and operation id.
+ViteHub checks access before a tool runs. A denied tool fails with `CAPABILITY_DENIED`. A tool that matches `approve` asks for tool approval: in a provider Agent session, an approved call runs. Otherwise it fails with `APPROVAL_REQUIRED`. A generated CLI command fails with `CONNECTIONS_DENIED` or `CONNECTIONS_APPROVAL_REQUIRED` before the request. Each call is recorded as Connection activity with the Agent name, run id, Invocation trace id, and operation id.
 
 ## Override the request server
 

@@ -144,7 +144,7 @@ ViteHub checks `deny` first, then `approve`, then `allow`. When no pattern match
 | Decision | Result |
 | --- | --- |
 | `allow` | The call runs. |
-| `require-approval` | The call fails with `CONNECTIONS_APPROVAL_REQUIRED`. Agent tools report it to the model. |
+| `require-approval` | Server code fails with `CONNECTIONS_APPROVAL_REQUIRED`. An Agent tool asks for tool approval. When a user approves it in a provider Agent session, the call runs. `deny` rules still apply. |
 | `deny` | The call fails with `CONNECTIONS_DENIED`. |
 
 ## Use from Agents

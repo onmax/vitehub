@@ -28,6 +28,8 @@ interface AgentConnectionTrace {
 
 interface AgentConnectionCallOptions {
   actor: AgentConnectionActor
+  /** Set only for Operations that the tool policy checked, after tool approval. `deny` rules still apply. */
+  approved?: boolean
   audit: "all" | "changes"
   effect?: AgentConnectionEffect
   event?: unknown
@@ -64,14 +66,24 @@ export interface AgentConnectionFetchOptions {
   tool?: string
 }
 
+type AgentConnectionPolicyOperation = { effect: AgentConnectionEffect, id: string }
+export type AgentConnectionPolicyOperations = ReadonlyArray<AgentConnectionPolicyOperation> | ((input: unknown) => ReadonlyArray<AgentConnectionPolicyOperation>)
+
+function isOperationList(value: AgentConnectionPolicyOperations): value is ReadonlyArray<AgentConnectionPolicyOperation> {
+  return Array.isArray(value)
+}
+
 /** A Connection bound to one Agent Invocation. Every call records activity for the Agent actor. */
 export interface AgentConnection {
   call: <TInput>(tool: string, operation: AgentConnectionOperation<TInput>, input: TInput) => Promise<unknown>
   /** Authenticated fetch. `audit: "changes"` records only writes, denials, and failures. Default: `"all"`. */
   fetch: (request: AgentConnectionFetchOptions, url: string | URL, init?: RequestInit) => Promise<Response>
   readonly name: string
-  /** Tool policy that checks every Operation before the tool runs. Denials and approvals are recorded. */
-  policy: (tool: string, operations: ReadonlyArray<{ effect: AgentConnectionEffect, id: string }>) => () => Promise<AgentToolPolicyDecision>
+  /**
+   * Tool policy that checks every Operation before the tool runs. Denials and approvals are recorded.
+   * Pass a function when the Operations depend on the tool input.
+   */
+  policy: (tool: string, operations: AgentConnectionPolicyOperations) => (context: { input?: unknown }) => Promise<AgentToolPolicyDecision>
   readonly primitive: AgentConnectionsPrimitive
 }
 
@@ -98,15 +110,26 @@ export function useAgentConnection(context: AgentCapabilityContext, name: string
   const primitive = parsed.output
   const runtime = primitive.runtime()
   const actor: AgentConnectionActor = { id: context.agentIdentity?.name ?? "agent", kind: "agent" }
+  // Operations that a tool policy allowed or sent to approval, by tool. The tool runs only after that policy passed,
+  // so a later `require-approval` for the same Operation comes from the approval that the tool flow already granted.
+  const checked = new Map<string, Set<string>>()
+  const approved = (tool: string | undefined, operation: string) => tool !== undefined && checked.get(tool)?.has(operation) === true
   const trace = (tool: string | undefined): AgentConnectionTrace => ({
     invocationId: optionalString(context.context.get(agentInvocationTraceIdContextKey)),
     runId: optionalString(context.run?.runId),
     ...(tool ? { tool } : {}),
   })
   return {
-    call: (tool, operation, input) => runtime.call(name, operation, input, { actor, audit: "all", event: context.event, trace: trace(tool) }),
+    call: (tool, operation, input) => runtime.call(name, operation, input, {
+      actor,
+      ...(approved(tool, operation.id) ? { approved: true } : {}),
+      audit: "all",
+      event: context.event,
+      trace: trace(tool),
+    }),
     fetch: (request, url, init) => runtime.fetch(name, url, init, {
       actor,
+      ...(approved(request.tool, request.operation) ? { approved: true } : {}),
       audit: request.audit ?? "all",
       ...(request.effect ? { effect: request.effect } : {}),
       event: context.event,
@@ -114,7 +137,8 @@ export function useAgentConnection(context: AgentCapabilityContext, name: string
       trace: trace(request.tool),
     }),
     name,
-    policy: (tool, operations) => async () => {
+    policy: (tool, declared) => async ({ input }) => {
+      const operations = isOperationList(declared) ? declared : declared(input)
       let pending: { effect: AgentConnectionEffect, id: string } | undefined
       for (const operation of operations) {
         const decision = await runtime.decide(name, actor, operation)
@@ -124,6 +148,9 @@ export function useAgentConnection(context: AgentCapabilityContext, name: string
         }
         if (decision === "require-approval") pending ??= operation
       }
+      const passed = checked.get(tool) ?? new Set<string>()
+      for (const operation of operations) passed.add(operation.id)
+      checked.set(tool, passed)
       if (!pending) return "allow"
       await record(runtime, context, { ...trace(tool), action: "call", actor, connection: name, effect: pending.effect, operation: pending.id, outcome: "approval-required" })
       return "require-approval"
