@@ -35,6 +35,7 @@ describe("built-in Channel discovery", () => {
 
   it("finds namespace calls and object shorthands", () => {
     expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
       import * as channels from "@vite-hub/agent/channels"
       export default defineAgent({
         channels: {
@@ -48,6 +49,74 @@ describe("built-in Channel discovery", () => {
       { kind: "discord", keys: ["adapter"] },
       { kind: "telegram", keys: ["botToken", "webhookSecret"] },
       { kind: "github", keys: undefined },
+    ])
+  })
+
+  it("ignores method declarations while keeping calls inside method bodies", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      interface Tools { telegram(): void; telegram<T>(options: T): void }
+      interface MoreTools {
+        other(): void
+        telegram(): void
+      }
+      type Helpers = { telegram(): void }
+      const helpers = {
+        telegram() {},
+        async telegram() {},
+        *telegram() {},
+        run() { return telegram({ botToken: token }) },
+      }
+      class ToolsImpl {
+        telegram() {}
+        static telegram<T>(): void {}
+        run() { telegram() }
+      }
+      const selected = enabled ? await
+        telegram({ adapter }) : fallback
+    `)).toEqual([
+      { kind: "telegram", keys: ["botToken"] },
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: ["adapter"] },
+    ])
+  })
+
+  it("requires imported, unshadowed Agent factories for shorthand discovery", () => {
+    expect(uses(`
+      const defineAgent = (options) => options
+      export default defineAgent({ channels: { telegram: {} } })
+    `)).toEqual([])
+    expect(uses(`
+      import { defineAgent as agent } from "vite-hub/agent"
+      import * as agents from "@vite-hub/agent"
+      function local(agent) { agent({ channels: { telegram: {} } }) }
+      const callback = (agent) => agent({ channels: { telegram: {} } })
+      function shadowed() {
+        const agents = custom
+        agents.defineAgent({ channels: { telegram: {} } })
+      }
+      agent({ channels: { telegram: {} } })
+      agents.defineAgent({ channels: { discord: {} } })
+    `)).toEqual([
+      { kind: "telegram", keys: [] },
+      { kind: "discord", keys: [] },
+    ])
+  })
+
+  it("reads parenthesized static options without treating comma expressions as literals", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram(({}))
+      telegram((({ botToken: token })))
+      telegram((undefined))
+      telegram(({}, options))
+      telegram(({} || options))
+    `)).toEqual([
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: ["botToken"] },
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: undefined },
+      { kind: "telegram", keys: undefined },
     ])
   })
 
@@ -167,6 +236,7 @@ describe("built-in Channel discovery", () => {
 
   it("respects shadowed namespace and bare factory references", () => {
     expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
       import { telegram } from "vite-hub/agent/channels"
       import * as channels from "vite-hub/agent/channels"
       function local() {
@@ -192,6 +262,7 @@ describe("built-in Channel discovery", () => {
 
   it("treats undefined Channel inputs as empty options", () => {
     expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
       import { telegram } from "vite-hub/agent/channels"
       telegram(undefined)
       export default defineAgent({ channels: { telegram: undefined } })
@@ -200,6 +271,7 @@ describe("built-in Channel discovery", () => {
 
   it("recognizes async option methods and asserted local maps", () => {
     expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
       import { telegram } from "vite-hub/agent/channels"
       const channels = { telegram: { async botToken() { return token } } }
       export const first = defineAgent({ channels: channels satisfies AgentChannelInputs })
@@ -273,12 +345,19 @@ describe("built-in Channel discovery", () => {
       await writeFile(join(root, "server", "agents", "support.ts"), [
         `import { defineAgent } from "vite-hub/agent"`,
         `import { telegram } from "vite-hub/agent/channels"`,
-        `export default defineAgent({ channels: { telegram: telegram() } })`,
+        `export default defineAgent({ channels: { telegram: telegram(({})) } })`,
       ].join("\n"))
       await writeFile(join(root, "server", "agents", "calories.ts"), [
         `import { defineAgent } from "vite-hub/agent"`,
         `import { telegram } from "vite-hub/agent/channels"`,
+        `interface Helpers { telegram(): void }`,
+        `const helpers = { telegram() {} }`,
+        `class Tools { telegram() {} }`,
         `export default defineAgent({ channels: { telegram: telegram({ botToken: () => "token" }) } })`,
+      ].join("\n"))
+      await writeFile(join(root, "server", "agents", "unrelated.ts"), [
+        `const defineAgent = (options) => options`,
+        `export default defineAgent({ channels: { discord: {}, telegram: {} } })`,
       ].join("\n"))
 
       expect(discoverAgentChannelEnv({ rootDir: root })).toEqual({

@@ -224,6 +224,9 @@ describe("built-in deployment preset integration", () => {
       await writeFile(join(root, "server", "agents", "support.ts"), [
         `import { defineAgent } from "vite-hub/agent"`,
         `import { telegram } from "vite-hub/agent/channels"`,
+        `interface Helpers { telegram(): void }`,
+        `const helpers = { telegram() {} }`,
+        `class Tools { telegram() {} }`,
         `function format() { const telegram = () => ({}); return telegram() }`,
         `const base = {}`,
         `export default defineAgent({ channels: { telegram: { ...base, kind: "custom" } } })`,
@@ -235,6 +238,8 @@ describe("built-in deployment preset integration", () => {
       for (const { source, required } of [
         { source: `defineAgent({ channels: { telegram: undefined } })`, required: true },
         { source: `defineAgent({ channels: { telegram: telegram(undefined) } })`, required: true },
+        { source: `defineAgent({ channels: { telegram: telegram(({})) } })`, required: true },
+        { source: `defineAgent({ channels: { telegram: telegram((({ botToken: "token" }))) } })`, required: false },
         { source: `const channels = { telegram: {} }; defineAgent({ channels: channels satisfies AgentChannelInputs })`, required: true },
         { source: `defineAgent({ channels: { telegram: { async botToken() { return "token" } } } })`, required: false },
       ]) {
@@ -245,6 +250,13 @@ describe("built-in deployment preset integration", () => {
         ].join("\n"))
         expect((requiredSecrets(await resolve()) ?? []).includes("TELEGRAM_BOT_TOKEN")).toBe(required)
       }
+
+      await writeFile(join(root, "server", "agents", "support.ts"), [
+        `const defineAgent = (options) => options`,
+        `export default defineAgent({ channels: { telegram: {} } })`,
+      ].join("\n"))
+      expect(requiredSecrets(await resolve()) ?? []).not.toContain("TELEGRAM_BOT_TOKEN")
+      expect(await readFile(join(root, ".vitehub", "types", "env.d.ts"), "utf8")).not.toContain("\"telegram\": {")
     }
     finally {
       await rm(root, { force: true, recursive: true })

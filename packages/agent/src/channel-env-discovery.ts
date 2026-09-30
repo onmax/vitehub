@@ -22,6 +22,15 @@ function isStringToken(token: string | undefined): boolean {
   return /^["'`]/.test(token ?? "")
 }
 
+function closingDelimiter(tokens: string[], start: number): number {
+  let depth = 0
+  for (let i = start; i < tokens.length; i++) {
+    if (["{", "(", "["].includes(tokens[i]!)) depth++
+    else if (["}", ")", "]"].includes(tokens[i]!) && --depth === 0) return i
+  }
+  return tokens.length
+}
+
 // Visit the top-level properties of the object literal that opens at `start`.
 // `value` is the index of the first value token, or undefined for a method.
 // Returns false when a spread or computed key makes the property list unknown.
@@ -59,6 +68,13 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
 
 // Keys set to `undefined` count as omitted, as they do at runtime.
 function staticOptionKeys(tokens: string[], start: number, empty: string): ReadonlySet<string> | undefined {
+  while (tokens[start] === "(") {
+    const close = closingDelimiter(tokens, start)
+    const valueEnd = ["{", "("].includes(tokens[start + 1]!) ? closingDelimiter(tokens, start + 1) : start + 1
+    // Only unwrap a single expression, not a comma expression or an operation on a literal.
+    if (valueEnd !== close - 1) return undefined
+    start++
+  }
   if (tokens[start] === empty) return new Set()
   if (tokens[start] === "undefined" && [",", ")", "}"].includes(tokens[start + 1]!)) return new Set()
   if (tokens[start] !== "{") return undefined
@@ -78,7 +94,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
   const known = new Set(kinds)
   const bindings = new Map<string, string>()
   const namespaces = new Set<string>()
-  const agentFactories = new Set(["defineAgent"])
+  const agentFactories = new Set<string>()
   const agentNamespaces = new Set<string>()
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i] !== "import" || tokens[i + 1] === "(" || tokens[i + 1] === "type" || tokens[i - 1] === ".") continue
@@ -99,14 +115,15 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
   const declarations = moduleObjectDeclarations(tokens)
   const shadowBindings = new Map([...bindings, ...[...namespaces].map(name => [name, name] as const)])
   const agentBindings = new Map([...agentFactories].map(name => [name, "defineAgent"]))
+  const agentShadowBindings = new Map([...agentBindings, ...[...agentNamespaces].map(name => [name, name] as const)])
   const agentNames = new Set(["defineAgent"])
   const uses: Array<DiscoveredChannelUse & { index: number }> = []
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i - 1] === "." || tokens[i - 1] === "as") continue
-    const factory = !isShadowedAt(tokens, i, tokens[i]!, shadowBindings, lineBreaks) && factoryCall(tokens, i, bindings, namespaces, known)
+    const factory = !isShadowedAt(tokens, i, tokens[i]!, shadowBindings, lineBreaks) && factoryCall(tokens, i, bindings, namespaces, known, lineBreaks)
     if (factory) uses.push({ index: i, kind: factory.name, optionKeys: staticOptionKeys(tokens, factory.open + 1, ")") })
     // Shorthands count only in the top-level `channels` option of defineAgent(), not in types or other objects.
-    const agent = factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames)
+    const agent = !isShadowedAt(tokens, i, tokens[i]!, agentShadowBindings, lineBreaks) && factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames, lineBreaks)
     if (!agent || tokens[agent.open + 1] !== "{") continue
     visitObjectProperties(tokens, agent.open + 1, (option, channelsValue) => {
       const channels = channelsValue === undefined ? undefined : localObject(tokens, channelsValue, declarations)
@@ -365,6 +382,7 @@ function factoryCall(
   bindings: ReadonlyMap<string, string>,
   namespaces: ReadonlySet<string>,
   names: ReadonlySet<string>,
+  lineBreaks: ReadonlySet<number>,
 ): { name: string, open: number } | undefined {
   let name = bindings.get(tokens[index]!)
   let next = index + 1
@@ -374,7 +392,15 @@ function factoryCall(
   }
   if (!name) return undefined
   if (tokens[next] === "<") next = skipTypeArguments(tokens, next)
-  return tokens[next] === "(" ? { name, open: next } : undefined
+  if (tokens[next] !== "(") return undefined
+  const after = tokens[closingDelimiter(tokens, next) + 1]
+  const previous = tokens[index - 1]!
+  const afterType = lineBreaks.has(index) && (/^[A-Za-z_$][\w$]*$/.test(previous) || [">", "]"].includes(previous))
+    && (!["await", "yield", "return", "throw", "new", "typeof", "void", "delete", "in", "instanceof"].includes(previous) || (previous === "void" && tokens[index - 2] === ":"))
+  // Method keys are declarations. A call can precede a ternary colon, so also
+  // require the key to follow a property boundary or a method modifier.
+  if (["{", ":"].includes(after!) && (afterType || ["{", "}", ",", ";", "async", "get", "set", "*", "static", "public", "private", "protected", "abstract", "declare"].includes(previous))) return undefined
+  return { name, open: next }
 }
 
 function skipTypeArguments(tokens: string[], start: number): number {
