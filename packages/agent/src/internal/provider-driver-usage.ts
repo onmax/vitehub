@@ -1,7 +1,9 @@
 import { parseAst } from "vite"
 
 const providerPackageNames = new Set(["@vite-hub/agent", "vite-hub/agent"])
+const capabilityPackageNames = new Set(["@vite-hub/agent/capabilities", "vite-hub/agent/capabilities"])
 const providerFactoryNames = new Set(["codexDriver", "claudeCodeDriver"])
+const providerCapabilityNames = new Set(["title", "progressSummary"])
 const providerPresetPattern = /^(?:@vite-hub\/agent|vite-hub\/agent)\/presets\/(?:workspace|babysitter(?:\/server)?)$/
 const providerKinds = new Set(["codex", "claude-code"])
 
@@ -92,7 +94,42 @@ function hasProviderDriverValue(node: PositionedNode): boolean {
   })
 }
 
-function hasProviderDriverDefinition(node: PositionedNode, defineAgentBindings: Set<string>, namespaces: Set<string>): boolean {
+function objectProperty(node: PositionedNode, name: string): PositionedNode | undefined {
+  if (node.type !== "ObjectExpression" || !Array.isArray(node.properties)) return
+  const property = node.properties.find((candidate) => {
+    return isPositionedNode(candidate) && candidate.type === "Property" && propertyName(candidate) === name
+  })
+  return isPositionedNode(property) && isPositionedNode(property.value) ? property.value : undefined
+}
+
+function isProviderCapabilityCall(node: PositionedNode, capabilityBindings: Set<string>, namespaces: Set<string>): boolean {
+  if (node.type !== "CallExpression" || !isPositionedNode(node.callee)) return false
+  if (node.callee.type === "Identifier") return capabilityBindings.has(node.callee.name as string)
+  if (node.callee.type !== "MemberExpression" || node.callee.computed === true) return false
+  return namespaces.has(identifierName(node.callee.object) ?? "")
+    && providerCapabilityNames.has(identifierName(node.callee.property) ?? "")
+}
+
+function hasProviderCapabilityDriver(node: PositionedNode, capabilityBindings: Set<string>, namespaces: Set<string>): boolean {
+  let found = false
+  visitNodes(node, (descendant) => {
+    if (found || !isProviderCapabilityCall(descendant, capabilityBindings, namespaces)) return
+    const options = Array.isArray(descendant.arguments) && isPositionedNode(descendant.arguments[0])
+      ? unwrapTypeScriptExpression(descendant.arguments[0])
+      : undefined
+    const driver = options ? objectProperty(options, "driver") : undefined
+    if (driver) found = hasProviderDriverValue(driver)
+  })
+  return found
+}
+
+function hasProviderDriverDefinition(
+  node: PositionedNode,
+  defineAgentBindings: Set<string>,
+  namespaces: Set<string>,
+  capabilityBindings: Set<string>,
+  capabilityNamespaces: Set<string>,
+): boolean {
   if (node.type !== "CallExpression" || !isPositionedNode(node.callee)) return false
   const callee = node.callee
   const isDefineAgent = callee.type === "Identifier"
@@ -105,12 +142,10 @@ function hasProviderDriverDefinition(node: PositionedNode, defineAgentBindings: 
     ? unwrapTypeScriptExpression(node.arguments[0])
     : undefined
   if (!options || options.type !== "ObjectExpression") return false
-  let found = false
-  visitNodes(options, (descendant) => {
-    if (found || descendant.type !== "Property" || propertyName(descendant) !== "driver") return
-    if (isPositionedNode(descendant.value)) found = hasProviderDriverValue(descendant.value)
-  })
-  return found
+  const driver = objectProperty(options, "driver")
+  if (driver && hasProviderDriverValue(driver)) return true
+  const capabilities = objectProperty(options, "capabilities")
+  return capabilities ? hasProviderCapabilityDriver(capabilities, capabilityBindings, capabilityNamespaces) : false
 }
 
 /** Reports whether a server module selects a provider Agent Driver from statically recognizable syntax. */
@@ -120,6 +155,8 @@ export function usesProviderAgentDriver(source: string): boolean {
   const factoryBindings = new Set<string>()
   const defineAgentBindings = new Set<string>()
   const namespaces = new Set<string>()
+  const capabilityBindings = new Set(providerCapabilityNames)
+  const capabilityNamespaces = new Set<string>()
   let hasProviderPreset = false
 
   visitNodes(program, (node) => {
@@ -132,6 +169,17 @@ export function usesProviderAgentDriver(source: string): boolean {
       return
     }
     if (!providerPackageNames.has(importedSource)) {
+      if (!capabilityPackageNames.has(importedSource)) return
+      for (const rawSpecifier of specifiers) {
+        if (!isPositionedNode(rawSpecifier) || rawSpecifier.importKind === "type") continue
+        if (rawSpecifier.type === "ImportNamespaceSpecifier") {
+          const local = identifierName(rawSpecifier.local)
+          if (local) capabilityNamespaces.add(local)
+          continue
+        }
+        const binding = importedBinding(rawSpecifier)
+        if (binding && providerCapabilityNames.has(binding.imported)) capabilityBindings.add(binding.local)
+      }
       return
     }
     for (const rawSpecifier of specifiers) {
@@ -153,7 +201,7 @@ export function usesProviderAgentDriver(source: string): boolean {
   visitNodes(program, (node) => {
     if (found) return
     found = isProviderFactoryCall(node, factoryBindings, namespaces)
-      || hasProviderDriverDefinition(node, defineAgentBindings, namespaces)
+      || hasProviderDriverDefinition(node, defineAgentBindings, namespaces, capabilityBindings, capabilityNamespaces)
   })
   return found
 }
