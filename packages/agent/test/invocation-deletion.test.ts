@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createClient } from "@libsql/client"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { runAgentInvocationsCli } from "../src/internal/agent-invocations-cli.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/invocations.ts"
@@ -23,6 +23,7 @@ const invocation = (id: string, status: AgentInvocationStoreCreateInput["status"
 
 const directories: string[] = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(directories.splice(0).map(directory => rm(directory, { force: true, recursive: true })))
 })
 
@@ -81,10 +82,25 @@ describe.each(Object.entries(stores))("%s Agent Invocation deletion", (_name, cr
     const invocations = defineAgentInvocations({ store: await createStore() })
     await expect(invocations.prune({ olderThanMs: -1 })).rejects.toThrow("olderThanMs must be a non-negative safe integer")
     await expect(invocations.prune({ olderThanMs: 1.5 })).rejects.toThrow("olderThanMs must be a non-negative safe integer")
+    await expect(invocations.prune({ olderThanMs: 8_700_000_000_000_000 })).rejects.toMatchObject({ code: "AGENT_R0929" })
   })
 })
 
 describe("Agent Invocation retention", () => {
+  it("accepts the earliest representable cutoff and rejects ages beyond it without pruning", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(0)
+    const store = createMemoryAgentInvocationStore()
+    const prune = vi.spyOn(store, "prune")
+    const invocations = defineAgentInvocations({ store })
+
+    await expect(invocations.prune({ olderThanMs: 8_640_000_000_000_000 })).resolves.toEqual({ dryRun: false, ids: [] })
+    expect(prune).toHaveBeenCalledWith({ updatedBefore: "-271821-04-20T00:00:00.000Z" })
+    prune.mockClear()
+
+    await expect(invocations.prune({ olderThanMs: 8_640_000_000_000_001 })).rejects.toMatchObject({ code: "AGENT_R0929" })
+    expect(prune).not.toHaveBeenCalled()
+  })
+
   it("keeps every record when the memory store prunes without a cutoff", async () => {
     const store = createMemoryAgentInvocationStore()
     await seed(store)
@@ -222,6 +238,17 @@ describe("vitehub agent invocations delete and prune", () => {
     const id = output()
     await expect(runAgentInvocationsCli(["delete"], { env: {}, ...id })).resolves.toBe(1)
     expect(id.chunks.stderr).toContain("delete requires an invocation id.")
+  })
+
+  it("rejects prune durations outside the Date range without changing the journal", async () => {
+    const { read, rootDir } = await consoleJournal()
+    const io = output()
+
+    await expect(runAgentInvocationsCli(["prune", "--older-than", "8700000000000000ms"], { env: {}, rootDir, ...io })).resolves.toBe(1)
+    expect(io.chunks.stderr).toContain("--older-than must produce a cutoff within JavaScript's Date range.")
+    expect(io.chunks.stderr).not.toContain("Invalid time value")
+    expect(io.chunks.stdout).toBe("")
+    expect((await read.list()).invocations).toHaveLength(4)
   })
 
   it("redacts credentialed URLs in parse errors", async () => {

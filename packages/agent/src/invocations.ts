@@ -2191,9 +2191,13 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       if (olderThanMs !== undefined && (!Number.isSafeInteger(olderThanMs) || olderThanMs < 0)) {
         throw agentDiagnostics.AGENT_R0929({ message: "[vitehub] Agent Invocation prune olderThanMs must be a non-negative safe integer." })
       }
+      const cutoff = olderThanMs === undefined ? undefined : new Date(Date.now() - olderThanMs)
+      if (cutoff && Number.isNaN(cutoff.getTime())) {
+        throw agentDiagnostics.AGENT_R0929({ message: "[vitehub] Agent Invocation prune olderThanMs must produce a cutoff within JavaScript's Date range." })
+      }
       return await store.prune({
         ...(dryRun ? { dryRun: true } : {}),
-        ...(olderThanMs === undefined ? {} : { updatedBefore: new Date(Date.now() - olderThanMs).toISOString() }),
+        ...(cutoff === undefined ? {} : { updatedBefore: cutoff.toISOString() }),
       })
     },
     async get(id, options) {

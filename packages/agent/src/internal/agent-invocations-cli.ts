@@ -349,7 +349,11 @@ async function deleteInvocation(parsed: ParsedArgs, context: AgentInvocationsCli
 
 async function pruneInvocations(parsed: ParsedArgs, context: AgentInvocationsCliContext): Promise<number> {
   const olderThanMs = parsed.olderThanMs ?? defaultPruneAgeMs
-  const updatedBefore = new Date(Date.now() - olderThanMs).toISOString()
+  const cutoff = new Date(Date.now() - olderThanMs)
+  if (Number.isNaN(cutoff.getTime())) {
+    throw agentDiagnostics.AGENT_R0930({ message: "--older-than must produce a cutoff within JavaScript's Date range." })
+  }
+  const updatedBefore = cutoff.toISOString()
   const result = await withJournalStore(parsed, context, async store => await store.prune!({ ...(parsed.dryRun ? { dryRun: true } : {}), updatedBefore }))
   if (parsed.json) {
     context.stdout.write(`${JSON.stringify({ dryRun: result.dryRun, ids: result.ids, olderThanMs, updatedBefore }, null, 2)}\n`)
