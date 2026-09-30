@@ -461,8 +461,21 @@ describe("Connections runtime lifecycle", () => {
       await store.write({ name, provider: "fake", tokens: tokenSet({ accessToken: "reconnected" }) })
     })
 
-    await runtime.disconnect(name, { actor: server })
+    // The summary shows the grant that survived, not a disconnected Connection.
+    await expect(runtime.disconnect(name, { actor: server })).resolves.toMatchObject({ status: "active" })
     expect((await store.tokens(name))?.tokens.accessToken).toBe("reconnected")
+  })
+
+  it("reports a completed disconnect when the activity insert fails", async () => {
+    const { db, name, runtime, store } = setupRuntime()
+    await store.write({ name, provider: "fake", tokens: tokenSet() })
+    const originalRun = db.run.bind(db)
+    // SAFETY: The spy keeps the database contract and only fails activity inserts.
+    vi.spyOn(db, "run").mockImplementation(((query: Parameters<typeof db.run>[0]) =>
+      JSON.stringify(query).includes("INSERT INTO vitehub_connection_activity") ? Promise.reject(new Error("activity store down")) : originalRun(query)) as typeof db.run)
+
+    await expect(runtime.disconnect(name, { actor: server })).resolves.toMatchObject({ status: "disconnected" })
+    expect(await store.grant(name)).toBeUndefined()
   })
 
   it("revokes and deletes the grant on disconnect", async () => {
