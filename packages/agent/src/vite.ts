@@ -995,10 +995,19 @@ function transformDiscoveredAgentSkills(
         applyCodeReplacements(code, [{ start: declaration.start, end: declaration.end, value: decorate(code.slice(declaration.start, declaration.end)) }]),
       ].join("\n")
     }
-    if (statement.type !== "ExportNamedDeclaration" || statement.source || !Array.isArray(statement.specifiers)) continue
+    if (statement.type !== "ExportNamedDeclaration" || !Array.isArray(statement.specifiers)) continue
     for (const specifier of statement.specifiers) {
       if (!isPositionedNode(specifier) || !isPositionedNode(specifier.exported) || !isPositionedNode(specifier.local)) continue
       if (specifier.exported.name !== "default" || !hasRuntimeType(specifier.local.name, "string")) continue
+      if (isPositionedNode(statement.source)) {
+        const source = code.slice(statement.source.start, statement.source.end)
+        return [
+          `import { decodeColocatedAgentSkills as vitehubDecodeColocatedAgentSkills, withColocatedAgentSkills as vitehubWithColocatedAgentSkills } from ${JSON.stringify(subpath(agentImportBase, "server/internal"))}`,
+          `import { ${specifier.local.name} as vitehubReexportedAgent } from ${source}`,
+          code,
+          `${decorate("vitehubReexportedAgent")}`,
+        ].join("\n")
+      }
       return [
         `import { decodeColocatedAgentSkills as vitehubDecodeColocatedAgentSkills, withColocatedAgentSkills as vitehubWithColocatedAgentSkills } from ${JSON.stringify(subpath(agentImportBase, "server/internal"))}`,
         code,
