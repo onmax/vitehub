@@ -289,7 +289,7 @@ async function withFilesystemWriteLock<T>(lock: string, permissions: Pick<import
   })
 }
 
-async function withWorkspacePathLock<T>(root: string, path: string, operation: () => Promise<T>, readOnly = false): Promise<T> {
+async function withWorkspacePathLock<T>(root: string, path: string, operation: () => Promise<T>, readOnly = false, heldReadPrefix?: string): Promise<T> {
   const normalized = normalizeWorkspacePath(path)
   const parts = normalized.split("/").filter(Boolean)
   const paths = parts.map((_, index) => parts.slice(0, index + 1).join("/"))
@@ -308,6 +308,9 @@ async function withWorkspacePathLock<T>(root: string, path: string, operation: (
   const lock = async (index: number): Promise<T> => {
     if (index === paths.length) return await operation()
     const lockedPath = paths[index]!
+    // A listing batch already holds these ancestors in this lexical scope.
+    // Descendants still need their own leases to exclude same-path writers.
+    if (readOnly && heldReadPrefix && (heldReadPrefix === lockedPath || heldReadPrefix.startsWith(`${lockedPath}/`))) return await lock(index + 1)
     const key = createHash("sha256").update(lockedPath).digest("hex")
     const lockPath = `${root}/.vitehub/locks/${key}`
     const next = () => lock(index + 1)
@@ -746,8 +749,8 @@ class LocalWorkspaceStore implements WorkspaceStore {
         return options.recursive || !entry.path.slice(normalizedPrefix.length + 1).includes("/")
       })
     const entries: WorkspaceEntry[] = []
-    // Entries under one top-level path share reader gates. Visit each group
-    // sequentially, while independent groups can still read concurrently.
+    // Keep each group's common ancestors leased across the batch. Individual
+    // entries still acquire their own leases, while other groups run concurrently.
     const groups = new Map<string, WorkspaceEntry[]>()
     for (const entry of filtered) {
       const key = entry.path.split("/")[0]!
@@ -758,10 +761,13 @@ class LocalWorkspaceStore implements WorkspaceStore {
     const independent = [...groups.values()]
     for (let index = 0; index < independent.length; index += 64) {
       await Promise.all(independent.slice(index, index + 64).map(async (group) => {
-        for (const entry of group) {
-          const info = await withWorkspacePathLock(this.root, entry.path, () => this.#stat(entry.path, includeDigest), true)
-          if (info) entries.push(info)
-        }
+        const heldReadPrefix = normalizedPrefix || group[0]!.path.split("/")[0]!
+        await withWorkspacePathLock(this.root, heldReadPrefix, async () => {
+          for (const entry of group) {
+            const info = await withWorkspacePathLock(this.root, entry.path, () => this.#stat(entry.path, includeDigest), true, heldReadPrefix)
+            if (info) entries.push(info)
+          }
+        }, true)
       }))
     }
     return entries.sort((a, b) => a.path.localeCompare(b.path))
