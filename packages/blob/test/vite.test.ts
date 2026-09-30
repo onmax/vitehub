@@ -1002,21 +1002,25 @@ describe("hubBlob", () => {
       }
     })
 
-    it.each([".ts", ".cts", ".cjs"])("runs the authorize export from server/blob%s", async (extension) => {
+    it.each([
+      { extension: ".ts", policy: "export const authorize = ({ request, user }) => new URL(request.url).pathname.startsWith(`/photos/${user.id}/`)" },
+      ...[".cts", ".cjs"].flatMap(extension => {
+        const callback = extension === ".cts"
+          ? "({ request, user }: { request: Request, user: { id: string } }) => new URL(request.url).pathname.startsWith(`/photos/${user.id}/`)"
+          : "({ request, user }) => new URL(request.url).pathname.startsWith(`/photos/${user.id}/`)"
+        return [
+          { extension, policy: `exports.authorize = ${callback}` },
+          { extension, policy: `exports["authorize"] = ${callback}` },
+          { extension, policy: `Object.defineProperty(exports, "authorize", { enumerable: true, value: ${callback} })` },
+        ]
+      }),
+    ])("runs the authorize export from server/blob$extension: $policy", async ({ extension, policy }) => {
       const root = await mkdtemp(join(tmpdir(), "vitehub-blob-authorize-module-"))
       const calls: string[] = []
       Reflect.set(globalThis, "__vitehubBlobServeCalls", calls)
       try {
         await mkdir(join(root, "server"), { recursive: true })
-        await writeFile(join(root, "server", `blob${extension}`), [
-          extension === ".ts"
-            ? "export const authorize = ({ request, user }) =>"
-            : extension === ".cts"
-              ? "exports.authorize = ({ request, user }: { request: Request, user: { id: string } }) =>"
-              : "exports.authorize = ({ request, user }) =>",
-          "  new URL(request.url).pathname.startsWith(`/photos/${user.id}/`)",
-          "",
-        ].join("\n"))
+        await writeFile(join(root, "server", `blob${extension}`), `${policy}\n`)
         const plugin = hubBlob({
           driver: "fs",
           serve: { authorize: true, headers: { "Cache-Control": "private, max-age=60" }, route: "/photos" },

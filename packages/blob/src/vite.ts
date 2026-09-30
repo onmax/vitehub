@@ -286,7 +286,7 @@ async function discoverBlobAuthorizeModule(rootDir: string, serverDirs: string[]
   if (!file) return
   const source = await readFile(file, "utf8")
   if (findExportNames(source).includes("authorize")) return file
-  if (!hasCJSSyntax(source)) return
+  if (!file.endsWith(".cts") && !file.endsWith(".cjs") && !hasCJSSyntax(source)) return
   const commonJS = file.endsWith(".cts") ? (await transform(source, { loader: "ts" })).code : source
   await initCommonJS()
   return parseCommonJS(commonJS, file).exports.includes("authorize") ? file : undefined

@@ -195,7 +195,8 @@ requires a signed-in `@vite-hub/auth` session, and a callback receives
 `Response`. The route checks access before it parses the query. Without a session
 it returns `401`, and `useCollection()` sets `error` to a `CollectionAccessError`
 with that `status`. Generated routes pass Auth's `authorizeRequest` when the host
-enables Auth (`hubSource({ auth: true })` outside `vite-hub`); otherwise a
+enables Auth with a discovered Auth Definition (`hubSource({ auth: true })`
+alongside `hubAuth()` outside `vite-hub`); otherwise a
 Collection with `authorize` fails closed. Do not repeat the route under
 `server/api`. Restart Nuxt after
 adding, removing, or renaming a Collection module so Nitro rebuilds its handler
