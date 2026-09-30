@@ -9,7 +9,9 @@ import { removeProviderOutputArtifactDir } from "@vite-hub/internal/build/provid
 import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
-import { findExportNames } from "mlly"
+import { init as initCommonJS, parse as parseCommonJS } from "cjs-module-lexer"
+import { transform } from "esbuild"
+import { findExportNames, hasCJSSyntax } from "mlly"
 import { relative, resolve } from "pathe"
 
 import { createCloudflareR2Bindings, generateProviderOutputs, prepareProviderOutputs, registerSupportedProviderRuntimeModules, renderBlobRuntimeModule, blobPackageName } from "./internal/vite-build.ts"
@@ -32,7 +34,7 @@ const generatedNitroBlobPlugin = ".vitehub/nitro/blob/plugin.ts"
 const generatedNitroBlobRuntime = ".vitehub/nitro/blob/runtime.mjs"
 const generatedNitroBlobMiddleware = ".vitehub/nitro/blob/middleware.ts"
 const generatedBlobServeRouteHandler = ".vitehub/blob/serve-route.ts"
-const blobServeModuleExtensions = [".ts", ".mts", ".js", ".mjs"]
+const blobServeModuleExtensions = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"]
 // Auth owns these names. Blob reads them without importing Auth, so apps without Auth do not load it.
 const AUTH_SERVER_ID = "#vitehub/auth/server"
 const AUTH_VITE_PLUGIN_NAME = "@vite-hub/auth/vite"
@@ -282,7 +284,12 @@ async function discoverBlobAuthorizeModule(rootDir: string, serverDirs: string[]
   }
   const file = files[0]
   if (!file) return
-  return findExportNames(await readFile(file, "utf8")).includes("authorize") ? file : undefined
+  const source = await readFile(file, "utf8")
+  if (findExportNames(source).includes("authorize")) return file
+  if (!hasCJSSyntax(source)) return
+  const commonJS = file.endsWith(".cts") ? (await transform(source, { loader: "ts" })).code : source
+  await initCommonJS()
+  return parseCommonJS(commonJS, file).exports.includes("authorize") ? file : undefined
 }
 
 async function resolveBlobServeAuthorizeModule(
@@ -401,6 +408,8 @@ export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBl
       )
     },
     configureServer(server) {
+      if (!runtimeConfig?.blob || !runtimeConfig.blob.serve?.authorize) return
+      // SAFETY: ViteHub hosts add the optional shared server directories to the resolved Vite config.
       const serverDirs = (server.config as ResolvedConfig & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
       const watchedDirectories = (serverDirs ?? [resolve(rootDir, "server")]).map(directory => resolve(rootDir, directory))
       server.watcher.add([...watchedDirectories, rootDir])
@@ -409,7 +418,6 @@ export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBl
         void server.restart()
       }
       server.watcher.on("add", restartForAuthChange)
-      server.watcher.on("change", restartForAuthChange)
       server.watcher.on("unlink", restartForAuthChange)
     },
     configEnvironment(name, config) {

@@ -948,6 +948,9 @@ importers:
       box-typescript-sdk-gen:
         specifier: catalog:storage
         version: 1.19.1
+      cjs-module-lexer:
+        specifier: 2.2.1
+        version: 2.2.1
       defu:
         specifier: catalog:unjs
         version: 6.1.7

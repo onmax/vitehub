@@ -29,6 +29,37 @@ async function runProviderOutputHooks(plugin: ReturnType<typeof hubBlob>) {
 }
 
 describe("hubBlob", () => {
+  it.each([undefined, { authorize: false }, { authorize: true }])("only restarts authorized Blob serving for Auth discovery changes (%j)", async (serve) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-blob-auth-watcher-"))
+    try {
+      const plugin = hubBlob({ driver: "fs", serve })
+      await (plugin.configResolved as (config: unknown) => void | Promise<void>)({
+        build: { outDir: "dist" },
+        plugins: [{ name: "@vite-hub/auth/vite", api: { getConfig: () => ({ definitionPath: join(root, "server.auth.ts") }) } }],
+        root,
+      } as never)
+      const listeners = new Map<string, (file: string) => void>()
+      const restart = vi.fn()
+      const add = vi.fn()
+      await (plugin.configureServer as (server: unknown) => void)({
+        config: {},
+        restart,
+        watcher: { add, on: (event: string, listener: (file: string) => void) => listeners.set(event, listener) },
+      })
+      expect(listeners.has("change")).toBe(false)
+      for (const event of ["add", "unlink"]) {
+        listeners.get(event)?.(join(root, "server.auth.ts"))
+        listeners.get(event)?.(join(root, "server", "auth.ts"))
+        listeners.get(event)?.(join(root, "server", "other.ts"))
+      }
+      expect(restart).toHaveBeenCalledTimes(serve?.authorize ? 4 : 0)
+      expect(add).toHaveBeenCalledTimes(serve?.authorize ? 1 : 0)
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
   it("serializes shared Provider Output finalization", () => {
     expect(hubBlob().closeBundle).toMatchObject({ order: "post", sequential: true })
   })
@@ -971,14 +1002,18 @@ describe("hubBlob", () => {
       }
     })
 
-    it("runs the authorize export from server/blob.ts", async () => {
+    it.each([".ts", ".cts", ".cjs"])("runs the authorize export from server/blob%s", async (extension) => {
       const root = await mkdtemp(join(tmpdir(), "vitehub-blob-authorize-module-"))
       const calls: string[] = []
       Reflect.set(globalThis, "__vitehubBlobServeCalls", calls)
       try {
         await mkdir(join(root, "server"), { recursive: true })
-        await writeFile(join(root, "server", "blob.ts"), [
-          "export const authorize = ({ request, user }: { request: Request, user: { id: string } }) =>",
+        await writeFile(join(root, "server", `blob${extension}`), [
+          extension === ".ts"
+            ? "export const authorize = ({ request, user }) =>"
+            : extension === ".cts"
+              ? "exports.authorize = ({ request, user }: { request: Request, user: { id: string } }) =>"
+              : "exports.authorize = ({ request, user }) =>",
           "  new URL(request.url).pathname.startsWith(`/photos/${user.id}/`)",
           "",
         ].join("\n"))
@@ -992,7 +1027,7 @@ describe("hubBlob", () => {
           root,
         } as never)
         const handler = await readFile(join(root, ".vitehub", "blob", "serve-route.ts"), "utf8")
-        expect(handler).toContain(`import { authorize } from ${JSON.stringify(join(root, "server", "blob.ts"))}`)
+        expect(handler).toContain(`import { authorize } from ${JSON.stringify(join(root, "server", `blob${extension}`))}`)
         expect(handler).toContain("authorizeRequest(event, authorize)")
 
         const request = await bundleServeRoute(root)
