@@ -76,7 +76,7 @@ function hasValueImport(specifier: unknown): boolean {
 
 function isProviderFactoryCall(node: PositionedNode, factoryBindings: Set<string>, namespaces: Set<string>): boolean {
   if (node.type !== "CallExpression" || !isPositionedNode(node.callee)) return false
-  if (node.callee.type === "Identifier") return factoryBindings.has(node.callee.name as string)
+  if (node.callee.type === "Identifier") return factoryBindings.has(identifierName(node.callee) ?? "")
   if (node.callee.type !== "MemberExpression" || node.callee.computed === true) return false
   return namespaces.has(identifierName(node.callee.object) ?? "")
     && providerFactoryNames.has(identifierName(node.callee.property) ?? "")
@@ -84,7 +84,10 @@ function isProviderFactoryCall(node: PositionedNode, factoryBindings: Set<string
 
 function hasProviderDriverValue(node: PositionedNode): boolean {
   const value = unwrapTypeScriptExpression(node)
-  if (value.type === "Literal") return providerKinds.has(value.value as string)
+  if (value.type === "Literal") {
+    const kind = literalString(value)
+    return kind !== undefined && providerKinds.has(kind)
+  }
   if (value.type !== "ObjectExpression") return false
   const properties = Array.isArray(value.properties) ? value.properties : []
   return properties.some((property) => {
@@ -104,7 +107,7 @@ function objectProperty(node: PositionedNode, name: string): PositionedNode | un
 
 function isProviderCapabilityCall(node: PositionedNode, capabilityBindings: Set<string>, namespaces: Set<string>): boolean {
   if (node.type !== "CallExpression" || !isPositionedNode(node.callee)) return false
-  if (node.callee.type === "Identifier") return capabilityBindings.has(node.callee.name as string)
+  if (node.callee.type === "Identifier") return capabilityBindings.has(identifierName(node.callee) ?? "")
   if (node.callee.type !== "MemberExpression" || node.callee.computed === true) return false
   return namespaces.has(identifierName(node.callee.object) ?? "")
     && providerCapabilityNames.has(identifierName(node.callee.property) ?? "")
@@ -133,7 +136,7 @@ function hasProviderDriverDefinition(
   if (node.type !== "CallExpression" || !isPositionedNode(node.callee)) return false
   const callee = node.callee
   const isDefineAgent = callee.type === "Identifier"
-    ? defineAgentBindings.has(callee.name as string)
+    ? defineAgentBindings.has(identifierName(callee) ?? "")
     : callee.type === "MemberExpression" && callee.computed !== true
       && namespaces.has(identifierName(callee.object) ?? "")
       && identifierName(callee.property) === "defineAgent"
@@ -150,12 +153,14 @@ function hasProviderDriverDefinition(
 
 /** Reports whether a server module selects a provider Agent Driver from statically recognizable syntax. */
 export function usesProviderAgentDriver(source: string): boolean {
-  const program = parseAst(source, { lang: "ts" }) as unknown as PositionedNode
+  const parsed = parseAst(source, { lang: "ts" })
+  if (!isPositionedNode(parsed)) return false
+  const program = parsed
 
   const factoryBindings = new Set<string>()
   const defineAgentBindings = new Set<string>()
   const namespaces = new Set<string>()
-  const capabilityBindings = new Set(providerCapabilityNames)
+  const capabilityBindings = new Set<string>()
   const capabilityNamespaces = new Set<string>()
   let hasProviderPreset = false
 
