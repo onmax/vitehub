@@ -136,6 +136,9 @@ function grantProvider(provider: ConnectionProvider): string {
   return provider.kind === "api-key" ? `api-key:${provider.id}` : provider.id
 }
 
+const redirectStatuses = new Set([301, 302, 303, 307, 308])
+const maxRedirects = 5
+
 function authorization(provider: ConnectionProvider, token: ConnectionTokenSet): [header: string, value: string] {
   if (provider.kind === "api-key") return [provider.header, provider.scheme ? `${provider.scheme} ${token.accessToken}` : token.accessToken]
   return ["authorization", `${token.tokenType.toLowerCase() === "bearer" ? "Bearer" : token.tokenType} ${token.accessToken}`]
@@ -293,12 +296,41 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     }
   }
 
-  async function send(name: string, value: ConnectionDefinition, url: URL, init: RequestInit, event: unknown, actor: ConnectionActor): Promise<Response> {
-    const authorize = (token: ConnectionTokenSet) => {
-      const headers = new Headers(init.headers)
-      headers.set(...authorization(value.provider, token))
-      return fetcher(url, { ...init, headers })
+  /**
+   * Sends the credential only to the origin of the first request. Fetch keeps custom headers on a
+   * cross-origin redirect, so ViteHub follows redirects itself and drops the credential header there.
+   */
+  async function withCredential(url: URL, init: RequestInit, credential: [header: string, value: string]): Promise<Response> {
+    const withHeaders = (target: URL, request: RequestInit) => {
+      const headers = new Headers(request.headers)
+      if (target.origin === url.origin) headers.set(...credential)
+      else headers.delete(credential[0])
+      return headers
     }
+    // The caller handles redirects, so ViteHub sends one request.
+    if (init.redirect && init.redirect !== "follow") return fetcher(url, { ...init, headers: withHeaders(url, init) })
+    let target = url
+    let request = init
+    for (let hop = 0; ; hop += 1) {
+      const response = await fetcher(target, { ...request, headers: withHeaders(target, request), redirect: "manual" })
+      const location = response.headers.get("location")
+      if (!redirectStatuses.has(response.status) || !location || hop === maxRedirects) return response
+      const keepMethod = response.status === 307 || response.status === 308
+      // A stream body was read by the first request and cannot be sent again.
+      if (keepMethod && request.body instanceof ReadableStream) return response
+      await response.body?.cancel().catch(() => undefined)
+      const method = (request.method ?? "GET").toUpperCase()
+      if (!keepMethod && (response.status === 303 || method === "POST") && method !== "GET" && method !== "HEAD") {
+        const headers = new Headers(request.headers)
+        headers.delete("content-type")
+        request = { ...request, body: undefined, headers, method: "GET" }
+      }
+      target = new URL(location, target)
+    }
+  }
+
+  async function send(name: string, value: ConnectionDefinition, url: URL, init: RequestInit, event: unknown, actor: ConnectionActor): Promise<Response> {
+    const authorize = (token: ConnectionTokenSet) => withCredential(url, init, authorization(value.provider, token))
     const token = await tokens(name, value, event, actor)
     const response = await authorize(token)
     // A stream body was read by the first request and cannot be sent again.

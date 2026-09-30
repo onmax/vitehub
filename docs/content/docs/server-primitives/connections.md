@@ -121,6 +121,10 @@ printf %s "$EXECUTOR_API_KEY" | vitehub connections set-key executor
 | `id` | `'api-key'` | Provider label in the Console. |
 | `verify` | None | `(key, { fetch, event }) => Promise<false \| { account? }>`. Checks a new key before ViteHub stores it. Return `false` to reject the key. `account` is shown in the Console. |
 
+ViteHub sends the credential only to the origin of the request. It follows redirects itself and drops the credential header when a redirect goes to another origin. Pass `redirect: 'manual'` to `fetch` to handle redirects yourself.
+
+`set-key` sends the key only over HTTPS or to a loopback server such as `http://localhost:5173`.
+
 A key must be visible ASCII without spaces, up to 8192 characters. An API key does not expire, so there is no refresh. When the provider returns `401`, ViteHub does not retry. The failed call is in the activity with status `401`. Replace the key to fix it.
 
 ## Calls

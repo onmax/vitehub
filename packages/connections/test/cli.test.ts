@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { Readable } from "node:stream"
 
-import { createConnectionsCliContributor, readPipedKey } from "../src/cli.ts"
+import { assertKeyTarget, createConnectionsCliContributor, readPipedKey } from "../src/cli.ts"
 
 import type { ViteHubCliContext } from "@vite-hub/internal/cli"
 import type { ConnectionActivity, ConnectionSummary } from "../src/types.ts"
@@ -175,6 +175,21 @@ describe("connections CLI", () => {
     expect(request(fetch).body).toEqual({ action: "set-key", key: "sk_cli_marker", name: "executor" })
     expect(io.stdout.join("")).toMatch(/^executor\s+api-key\s+active/)
     expect(io.stdout.join("") + io.stderr.join("")).not.toContain("sk_cli_marker")
+  })
+
+  it("sends a key only over HTTPS or to a loopback server", async () => {
+    for (const url of ["https://app.example", "http://localhost:5173", "http://app.localhost:3000", "http://127.0.0.1:4000", "http://[::1]:5173"]) {
+      expect(() => assertKeyTarget(url)).not.toThrow()
+    }
+    for (const url of ["http://remote-host:5173", "http://10.0.0.2:5173", "http://localhost.example.com"]) {
+      expect(() => assertKeyTarget(url)).toThrow("only over HTTPS or to a loopback server")
+    }
+    const fetch = stubFetch(() => Response.json({}))
+    const readKey = vi.fn(async () => "sk_never_sent")
+    const io = context()
+    expect(await feature("set-key", readKey).run(["executor", "--url", "http://remote-host:5173"], io.context)).toBe(1)
+    expect(readKey).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it("reads a piped key and rejects a terminal or an empty pipe", async () => {

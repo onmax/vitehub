@@ -62,6 +62,14 @@ async function manage(url: string, body: Record<string, unknown>): Promise<Recor
   return v.parse(resultBody, value)
 }
 
+/** `set-key` sends the key only over HTTPS or to a loopback development server. */
+export function assertKeyTarget(url: string): void {
+  const target = new URL(url)
+  const loopback = target.hostname === "localhost" || target.hostname.endsWith(".localhost") || target.hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(target.hostname)
+  if (target.protocol === "https:" || (target.protocol === "http:" && loopback)) return
+  throw new TypeError(`vitehub connections set-key sends the key only over HTTPS or to a loopback server. Refusing ${target.origin}.`)
+}
+
 /** Reads a piped key. A key in an argument would stay in the shell history. */
 export async function readPipedKey(stdin: NodeJS.ReadStream = process.stdin): Promise<string> {
   if (stdin.isTTY) throw new TypeError("Pipe the key on stdin, for example: printf %s \"$KEY\" | vitehub connections set-key <name>")
@@ -160,6 +168,7 @@ export function createConnectionsCliContributor(options: { readKey?: () => Promi
           context.stdout.write(`${line(result.connection as ConnectionSummary)}\n`)
         }),
         command("set-key", "Set the key of an API key Connection from stdin.", async ({ name, url }, context) => {
+          assertKeyTarget(url)
           const result = await manage(url, { action: "set-key", key: await readKey(), name })
           // SAFETY: The management route returns a ConnectionSummary for the set-key action.
           context.stdout.write(`${line(result.connection as ConnectionSummary)}\n`)

@@ -40,6 +40,21 @@ describe("apiKey()", () => {
   it("is a valid Connection provider", () => {
     expect(defineConnection({ provider: apiKey() }).provider.kind).toBe("api-key")
   })
+
+  it("rejects malformed API key providers from JavaScript definitions", () => {
+    // SAFETY: JavaScript definitions are not type-checked; these shapes stand in for them.
+    const untyped = (provider: unknown) => ({ provider }) as unknown as ConnectionDefinition
+    for (const provider of [
+      { id: "custom", kind: "api-key", scopes: [] },
+      { header: "x-api-key\r\nx", id: "custom", kind: "api-key", scopes: [] },
+      { header: "X-Api-Key", id: "custom", kind: "api-key", scopes: [] },
+      { header: "x-api-key", id: "", kind: "api-key", scopes: [] },
+      { header: "authorization", id: "custom", kind: "api-key", scheme: "Bearer token", scopes: [] },
+      { header: "authorization", id: "custom", kind: "api-key", scopes: [], verify: "yes" },
+    ]) {
+      expect(() => defineConnection(untyped(provider))).toThrow("Invalid Connection request.")
+    }
+  })
 })
 
 describe("API key Connections", () => {
@@ -116,6 +131,59 @@ describe("API key Connections", () => {
     await runtime.setKey(name, secretKey, { actor: owner })
     await expect(runtime.disconnect(name, { actor: owner })).resolves.toMatchObject({ status: "disconnected" })
     expect(await store.grant(name)).toBeUndefined()
+  })
+})
+
+describe("API key credentials", () => {
+  function redirecting(location: string, status = 302) {
+    return mockFetch((url, _init, index) => index === 0 ? new Response(null, { headers: { location }, status }) : Response.json({ id: url.pathname.split("/").pop(), ok: true }))
+  }
+
+  it("drops the key on a cross-origin redirect", async () => {
+    const upstream = redirecting("https://elsewhere.example/items/7")
+    const { name, runtime } = setupRuntime({ definition: { provider: apiKey({ header: "x-api-key" }) }, fetch: upstream.fetch })
+    await runtime.setKey(name, secretKey, { actor: owner })
+
+    await expect(runtime.call(name, readOperation, { id: "7" }, { actor: server })).resolves.toEqual({ id: "7", ok: true })
+    expect(upstream.mock.mock.calls.map(([input, init]) => [String(input), new Headers(init?.headers).get("x-api-key"), init?.redirect])).toEqual([
+      ["https://api.example/items/7?secret=query-value", secretKey, "manual"],
+      ["https://elsewhere.example/items/7", null, "manual"],
+    ])
+  })
+
+  it("keeps the key on a same-origin redirect and turns a 303 into GET", async () => {
+    const upstream = redirecting("/items/created", 303)
+    const definition: ConnectionDefinition = { access: { server: { allow: ["*"] } }, provider: apiKey() }
+    const { name, runtime } = setupRuntime({ definition, fetch: upstream.fetch })
+    await runtime.setKey(name, secretKey, { actor: owner })
+
+    await runtime.call(name, writeOperation, { name: "x" }, { actor: server })
+    expect(upstream.calls.map(call => [call.method, call.url, call.authorization, call.body])).toEqual([
+      ["POST", "https://api.example/items", `Bearer ${secretKey}`, JSON.stringify({ name: "x" })],
+      ["GET", "https://api.example/items/created", `Bearer ${secretKey}`, undefined],
+    ])
+  })
+
+  it("sends one request when the caller handles redirects", async () => {
+    const upstream = redirecting("https://elsewhere.example/")
+    const { name, runtime } = setupRuntime({ definition: { provider: apiKey() }, fetch: upstream.fetch })
+    await runtime.setKey(name, secretKey, { actor: owner })
+
+    const response = await runtime.fetch(name, "https://api.example/items", { redirect: "manual" }, { actor: server })
+    expect(response.status).toBe(302)
+    expect(upstream.calls).toHaveLength(1)
+  })
+
+  it("does not use an OAuth grant for an API key Connection with the same provider id", async () => {
+    const upstream = api()
+    const { name, runtime, store } = setupRuntime({ definition: { provider: apiKey({ id: "fake" }) }, fetch: upstream.fetch })
+    await store.write({ name, provider: "fake", tokens: { accessToken: "oauth-access-marker", scopes: [], tokenType: "Bearer" } })
+
+    expect(await runtime.inspect(name)).toMatchObject({ lastError: "CONNECTIONS_PROVIDER_CHANGED", status: "needs-reconnect" })
+    await expectCode(runtime.call(name, readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_NEEDS_RECONNECT")
+    expect(upstream.calls).toEqual([])
+    await runtime.setKey(name, secretKey, { actor: owner })
+    expect(await runtime.inspect(name)).toMatchObject({ status: "active" })
   })
 })
 
