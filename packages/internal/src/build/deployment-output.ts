@@ -35,6 +35,7 @@ export { shouldSkipViteProviderBuild } from "./vite.ts"
 type BundleOptions = NonNullable<Parameters<typeof bundleEsmEntry>[2]>
 
 interface SharedDeploymentOptions {
+  bundleDefines?: Record<string, string>
   clientOutDir: string
   rootDir: string
   sourceRootDir?: string
@@ -429,7 +430,7 @@ async function writeCloudflareDeploymentOutput(options: CloudflareDeploymentOutp
       writes.push((async () => {
         try {
           await rm(stagedWorkerOutfile, { force: true, recursive: true })
-          await bundleEsmEntry(options.bundleEntry!, stagedWorkerOutfile, { ...options.bundleOptions, rootDir: options.sourceRootDir ?? options.rootDir, signal })
+          await bundleEsmEntry(options.bundleEntry!, stagedWorkerOutfile, { ...options.bundleOptions, define: { ...options.bundleDefines, ...options.bundleOptions?.define }, rootDir: options.sourceRootDir ?? options.rootDir, signal })
           signal?.throwIfAborted()
           await rename(stagedWorkerOutfile, workerOutfile)
         }
@@ -538,7 +539,7 @@ async function writeVercelDeploymentOutput(options: VercelDeploymentOutputOption
     catch (error) {
       if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error
     }
-    await bundleEsmEntry(options.bundleEntry, serverEntry, { ...options.bundleOptions, rootDir: options.sourceRootDir ?? options.rootDir, signal })
+    await bundleEsmEntry(options.bundleEntry, serverEntry, { ...options.bundleOptions, define: { ...options.bundleDefines, ...options.bundleOptions?.define }, rootDir: options.sourceRootDir ?? options.rootDir, signal })
     await writeFile(
       resolve(serverDir, ".vc-config.json"),
       `${stringifyProviderOutputConfig(options.functionConfig ?? createNodeFunctionConfig())}\n`,
@@ -636,6 +637,7 @@ async function writeNetlifyDeploymentOutput(options: NetlifyDeploymentOutputOpti
     await mkdir(dirname(outfile), { recursive: true })
     await bundleEsmEntry(func.bundleEntry, outfile, {
       ...func.bundleOptions,
+      define: { ...options.bundleDefines, ...func.bundleOptions.define },
       minifyIdentifiers: func.config ? true : func.bundleOptions.minifyIdentifiers,
       rootDir: options.sourceRootDir ?? options.rootDir,
       signal,
@@ -742,6 +744,7 @@ async function writeProviderDeploymentOutputsNow(
       clientOutDir: options.clientOutDir,
       rootDir: options.rootDir,
       sourceRootDir: options.sourceRootDir,
+      bundleDefines: options.bundleDefines,
     }, signal))
   }
   if (options.netlify) {
@@ -750,6 +753,7 @@ async function writeProviderDeploymentOutputsNow(
       clientOutDir: options.clientOutDir,
       rootDir: options.rootDir,
       sourceRootDir: options.sourceRootDir,
+      bundleDefines: options.bundleDefines,
     }, signal))
   }
   if (options.vercel) {
@@ -758,6 +762,7 @@ async function writeProviderDeploymentOutputsNow(
       clientOutDir: options.clientOutDir,
       rootDir: options.rootDir,
       sourceRootDir: options.sourceRootDir,
+      bundleDefines: options.bundleDefines,
     }, signal))
   }
   await settleWrites(writes)
@@ -1142,6 +1147,7 @@ export async function finalizeProviderDeploymentOutputs(
     return
   }
 
+  const bundleDefines = { ...catalog.bundleDefines }
   const controller = new AbortController()
   const state = {
     generations: new Set<ProviderDeploymentOutputGeneration>(),
@@ -1204,7 +1210,7 @@ export async function finalizeProviderDeploymentOutputs(
                       signal: controller.signal,
                       write: async (writeOptions) => {
                         throwIfProviderOutputAborted(controller.signal)
-                        await writeProviderDeploymentOutputsNow(writeOptions, controller.signal, transaction)
+                        await writeProviderDeploymentOutputsNow({ ...writeOptions, bundleDefines: { ...bundleDefines, ...writeOptions.bundleDefines } }, controller.signal, transaction)
                       },
                     })
                     throwIfProviderOutputAborted(controller.signal)

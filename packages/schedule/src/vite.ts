@@ -1,3 +1,4 @@
+import { resolveViteHubBundleDefines } from "@vite-hub/internal/build/esbuild"
 import { writeScheduleTypes } from "./registry-types.ts"
 import { randomUUID } from "node:crypto"
 import { mkdir, rm, writeFile } from "node:fs/promises"
@@ -705,6 +706,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
             signal.throwIfAborted()
             const artifacts = await generateProviderOutputsWithinLock({
               bundleAlias: retainedAliases,
+              bundleDefines: resolveViteHubBundleDefines(config),
               bundleExternal,
               clientOutDir: resolve(config.root, config.build.outDir),
               definitions: retainedDefinitions,

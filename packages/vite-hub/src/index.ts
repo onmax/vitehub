@@ -45,7 +45,7 @@ import type { EmailVitePluginOptions } from "@vite-hub/email/vite"
 import type { EnvIntegrationOptions, EnvRuntimeRegistry } from "@vite-hub/env"
 import type { EnvVitePlugin } from "@vite-hub/env/vite"
 import type { KVModuleOptions } from "@vite-hub/kv"
-import { setViteHubBundleDefine, type ViteAlias } from "@vite-hub/internal/build/esbuild"
+import { resolveViteHubBundleDefines, type ViteAlias } from "@vite-hub/internal/build/esbuild"
 import type { DeploymentPlan, DeploymentService } from "@vite-hub/internal/deployment"
 import type { QueueModuleOptions } from "@vite-hub/queue"
 import type { RateLimitModuleOptions } from "@vite-hub/rate-limit"
@@ -425,7 +425,7 @@ function deploymentNitroModule(
   identity: DeploymentIdentity,
   sandboxRequested: boolean,
   isDeployCommandOwned: () => boolean,
-  resolvedBuildConfig: () => { alias: ViteAlias[], conditions: string[], extensions: string[], hasScheduleIntegration: boolean, mainFields: string[], preserveSymlinks: boolean },
+  resolvedBuildConfig: () => { alias: ViteAlias[], conditions: string[], define: Record<string, string>, extensions: string[], hasScheduleIntegration: boolean, mainFields: string[], preserveSymlinks: boolean },
 ) {
   return (nitro: {
     hooks: { hook: (name: "compiled", callback: () => Promise<void>) => void }
@@ -459,9 +459,10 @@ function deploymentPlugins(
   envPlugin: EnvVitePlugin | undefined,
 ): Plugin[] {
   let deployCommandOwned = false
-  let resolvedBuildConfig: { alias: ViteAlias[], conditions: string[], extensions: string[], hasScheduleIntegration: boolean, mainFields: string[], preserveSymlinks: boolean } = {
+  let resolvedBuildConfig: { alias: ViteAlias[], conditions: string[], define: Record<string, string>, extensions: string[], hasScheduleIntegration: boolean, mainFields: string[], preserveSymlinks: boolean } = {
     alias: [],
     conditions: [],
+    define: {},
     extensions: [],
     hasScheduleIntegration: false,
     mainFields: [],
@@ -651,6 +652,7 @@ function deploymentPlugins(
             replacement: alias.replacement,
           })),
           conditions: serverResolve.conditions,
+          define: resolveViteHubBundleDefines(config),
           extensions: serverResolve.extensions,
           hasScheduleIntegration: config.plugins?.some(plugin => plugin.name === "@vite-hub/schedule/vite") ?? false,
           mainFields: serverResolve.mainFields,
@@ -727,8 +729,6 @@ function publicUrlPlugin(publicUrl: ViteHubOptions["publicUrl"]): Plugin {
   return {
     name: "vite-hub/public-url",
     config(config, { command }) {
-      // Provider bundles built outside Vite read the same value, and a dev run must not reuse a build value.
-      setViteHubBundleDefine("__VITEHUB_PUBLIC_URL__", undefined)
       if (publicUrl === undefined || command !== "build") return
       let resolved: PublicUrlConfig
       // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The option is a string or a callback; typeof also accepts callbacks from another realm.
@@ -740,7 +740,6 @@ function publicUrlPlugin(publicUrl: ViteHubOptions["publicUrl"]): Plugin {
       }
       else resolved = { url: normalizePublicUrl(publicUrl) }
       const define = JSON.stringify(resolved)
-      setViteHubBundleDefine("__VITEHUB_PUBLIC_URL__", define)
       return { define: { __VITEHUB_PUBLIC_URL__: define } }
     },
     configEnvironment(name, config) {

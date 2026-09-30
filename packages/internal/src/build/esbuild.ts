@@ -10,6 +10,7 @@ interface BundleEsmEntryOptions {
   alias?: Record<string, string> | ViteAlias[]
   banner?: string
   conditions?: string[]
+  define?: Record<string, string>
   extensions?: string[]
   external?: string[]
   format?: "esm" | "cjs"
@@ -481,19 +482,15 @@ function createViteRawPlugin(rootDir: string | undefined, frameworkRuntime: bool
   }
 }
 
-const bundleDefinesKey = Symbol.for("vitehub.build.bundle-defines")
-type BundleDefinesScope = typeof globalThis & { [bundleDefinesKey]?: Record<string, string> }
-// SAFETY: Only setViteHubBundleDefine() writes this well-known slot, with string values.
-const bundleDefinesScope = globalThis as BundleDefinesScope
-
-/**
- * Set a build-time constant for provider bundles that esbuild creates outside the Vite pipeline.
- * Each owner package bundles its own copy of this module, so the values live on a global slot.
- */
-export function setViteHubBundleDefine(name: string, value: string | undefined): void {
-  const defines = bundleDefinesScope[bundleDefinesKey] ??= {}
-  if (value === undefined) delete defines[name]
-  else defines[name] = value
+/** Select the runtime constants from one resolved Vite configuration. */
+export function resolveViteHubBundleDefines(config: { define?: Record<string, unknown> }): Record<string, string> {
+  const defines: Record<string, string> = {}
+  for (const name of ["__VITEHUB_PUBLIC_URL__", "__VITEHUB_APP_BASE_URL__"]) {
+    const value = config.define?.[name]
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vite accepts untagged define values; esbuild requires source strings.
+    if (typeof value === "string") defines[name] = value
+  }
+  return defines
 }
 
 function createFileUrlPlugin(): Plugin {
@@ -547,7 +544,7 @@ export async function bundleEsmEntry(
       : undefined,
     bundle: true,
     conditions: options.conditions ?? (platform === "node" ? ["node"] : undefined),
-    define: { ...bundleDefinesScope[bundleDefinesKey] },
+    define: options.define,
     entryPoints: [entryFile],
     external: options.external,
     format,

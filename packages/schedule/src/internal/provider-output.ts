@@ -59,6 +59,7 @@ interface GeneratedScheduleArtifacts {
 }
 
 interface GenerateProviderOutputsOptions {
+  bundleDefines?: Record<string, string>
   bundleAlias?: Record<string, string>
   bundleExternal?: string[]
   clientOutDir: string
@@ -391,6 +392,7 @@ export async function readRuntimeDefinitionCrons(definitions: DiscoveredSchedule
 }
 
 export async function writeVercelScheduleFunctions(options: {
+  bundleDefines?: Record<string, string>
   bundleAlias?: Record<string, string>
   bundleExternal?: string[]
   definitions: DiscoveredScheduleDefinition[]
@@ -429,6 +431,7 @@ export async function writeVercelScheduleFunctions(options: {
     await writeFile(wrapperFile, renderProviderEntry(wrapperFile, options.registryFile, "vercel", definition.name, options.workflow), "utf8")
     await bundleEsmEntry(wrapperFile, functionFile, {
       alias: options.bundleAlias,
+      define: options.bundleDefines,
       external: options.bundleExternal,
       format: "esm",
       platform: "node",
@@ -654,6 +657,7 @@ async function writeNetlifyScheduleFunctions(options: {
 }
 
 async function writeCloudflareScheduleOutput(options: {
+  bundleDefines?: Record<string, string>
   bundleAlias?: Record<string, string>
   bundleEntry: string
   crons: string[]
@@ -701,6 +705,7 @@ async function writeCloudflareScheduleOutput(options: {
   await Promise.all([
     bundleEsmEntry(options.bundleEntry, resolve(outputRoot, main), {
       alias: options.bundleAlias,
+      define: options.bundleDefines,
       banner: `// ${cloudflareScheduleWorkerMarker}`,
       conditions: ["workerd", "worker", "browser", "default"],
       external: [cloudflareRuntimeExternal, "node:*"],
@@ -818,6 +823,7 @@ export async function generateProviderOutputsWithinLock(options: GenerateProvide
         await writeFile(stagedDenoCronInputFile, renderDenoCronEntry(artifacts.denoCronFile, artifacts.registryFile, crons, options.runtimeImport), "utf8")
         await bundleEsmEntry(stagedDenoCronInputFile, stagedDenoCronFile, {
           alias: options.bundleAlias,
+          define: options.bundleDefines,
           external: [...builtinModules, ...builtinModules.map(name => `node:${name}`), ...(options.bundleExternal ?? [])],
           format: "esm",
           packages: "external",
@@ -837,6 +843,7 @@ export async function generateProviderOutputsWithinLock(options: GenerateProvide
       options.signal?.throwIfAborted()
       await writeCloudflareScheduleOutput({
         bundleAlias: options.bundleAlias,
+        bundleDefines: options.bundleDefines,
         bundleEntry: artifacts.cloudflareWorkerFile,
         crons: [...new Set(crons.values())],
         rootDir: options.rootDir,
@@ -859,6 +866,7 @@ export async function generateProviderOutputsWithinLock(options: GenerateProvide
     options.signal?.throwIfAborted()
     await writeVercelScheduleFunctions({
       bundleAlias: options.bundleAlias,
+      bundleDefines: options.bundleDefines,
       bundleExternal: options.bundleExternal,
       definitions: artifacts.definitions,
       outputRoot: createDefaultVercelOutputRoot(options.rootDir),

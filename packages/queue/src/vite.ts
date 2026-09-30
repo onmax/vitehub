@@ -1,3 +1,4 @@
+import { resolveViteHubBundleDefines } from "@vite-hub/internal/build/esbuild"
 import { randomUUID } from "node:crypto"
 
 import { getViteMode } from "@vite-hub/internal/build/mode"
@@ -323,6 +324,7 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
             // SAFETY: The outer entries preserve provider keys and each inner entry preserves string alias targets.
             const typedRetainedRuntimeAliases = retainedRuntimeAliases as QueueProviderRuntimeInputs["aliases"]
             await generateProviderOutputs({
+              bundleDefines: resolveViteHubBundleDefines(config),
               artifactDir: resolve(contributionArtifactDir, "output"),
               clientOutDir: config.build.outDir,
               cloudflareOwnedByNitro: nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker,
