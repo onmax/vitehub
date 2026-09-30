@@ -21,8 +21,9 @@ import { serializeConsoleRefresh } from "./refresh.ts"
 import { createConsoleCliNamespace } from "./cli.ts"
 import { consoleFixtureEnvironmentVariable, consoleFixtureRevision, readConsoleFixture } from "./fixture.ts"
 import { bindConsoleInvocationsIdentity, createConsoleInvocationsIdentity, releaseConsoleInvocationsBinding } from "./internal.ts"
-import { addConsoleDevframeHandler } from "./nitro.ts"
+import { addConsoleRpcHandler } from "./nitro.ts"
 import { viteHubErrorDiagnostics } from "../error-diagnostics.ts"
+import { resolveConsoleJournal, type ConsoleJournal } from "../storage-config.ts"
 
 const frameworkAgentSpecifier = "vite-hub/agent"
 function resolveConsoleRuntimeRoot(): string {
@@ -63,6 +64,8 @@ export type ConsoleOptions = (
 interface ConsoleVitePluginOptions {
   blobStores?: readonly string[]
   console?: true | ConsoleOptions
+  /** D1 binding that stores the journal in production Cloudflare builds. */
+  resolveD1Binding?: (root: string, serverDirs: string[] | undefined) => string | undefined
   databaseUrl?: string
   databaseDiscoveryRoot?: string
   kvStores?: readonly string[]
@@ -183,6 +186,10 @@ export function generatedConsolePluginRegistration(value: string): boolean {
     || /\/\.vitehub\/nitro\/console\/plugin(?:-[^/]+)?\.mjs$/.test(normalized)
 }
 
+function consoleD1JournalMessage(binding: string): string {
+  return `[vitehub] Console journal: D1 binding ${binding}, table vitehub_agent_invocations. The journal creates the table on first use.`
+}
+
 export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugin {
   let sections = options.sections ?? []
   let kvStores = options.kvStores ?? []
@@ -199,7 +206,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   let fixture: string | undefined
   let cliDiscovery = false
   let invoke = false
-  let databaseUrl: string | undefined
+  let journal: ConsoleJournal | undefined
   let observations: AgentInvocationsOptions["observations"]
   let consoleAuthHandlers: ConsoleAuthHandlers | undefined
   let refreshConsoleAuthClient: (() => Promise<void>) | undefined
@@ -209,7 +216,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   const refreshConsoleCatalog = serializeConsoleRefresh(async () => {
     if (!generatedPlugin || !projectRoot || !root) return
     const catalog = await discoverConsoleBuildCatalog({ databaseDiscoveryRoot, discoveryRoot: root, projectRoot, rateLimitDiscoveryRoot, rateLimitScanDirs, sandboxDiscoveryRoot: root, scheduleDiscoveryRoot, sections, serverDirs, workspaceDiscoveryRoot })
-    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, databaseUrl, consoleAuthHandlers?.auth ?? false)
+    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, journal, consoleAuthHandlers?.auth ?? false)
     if (options.invocationRootState) updateConsoleInvocationRootState(options.invocationRootState, projectRoot, identity)
   })
 
@@ -319,7 +326,9 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         fixture = resolve(projectRoot, configuredFixture)
         readConsoleFixture(fixture)
       }
-      databaseUrl = (configured === true ? undefined : configured.databaseUrl) ?? options.databaseUrl
+      const build = environment.command === "build"
+      const configuredDatabaseUrl = (configured === true ? undefined : configured.databaseUrl) ?? options.databaseUrl
+      journal = resolveConsoleJournal(configuredDatabaseUrl, build && !configuredDatabaseUrl ? options.resolveD1Binding?.(root, serverDirs) : undefined, build)
       observations = configured === true ? undefined : configured.observations
       invoke = !fixture && (configured === true || configured.invoke === true)
       generatedPlugin = resolveGeneratedConsolePlugin(root, fixture, options.invocationRootState)
@@ -343,7 +352,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
           invoke,
           observations,
           undefined,
-          databaseUrl,
+          journal,
           consoleAuthHandlers?.auth ?? false,
         )
       }
@@ -386,7 +395,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       })
       if (consoleAuthHandlers?.route) kit.addHandler({ handler: consoleAuthHandlers.route, route: "/api/_vitehub/console/auth/**" })
       if (consoleAuthHandlers) kit.addHandler({ handler: consoleAuthHandlers.middleware, middleware: true, route: "/**" })
-      addConsoleDevframeHandler(kit.config, consoleRuntimeRoot)
+      addConsoleRpcHandler(kit.config, consoleRuntimeRoot)
       if (Array.isArray(kit.config.plugins)) {
         const plugins = kit.config.plugins.filter(candidate => !generatedConsolePluginRegistration(candidate))
         kit.config.plugins.splice(0, kit.config.plugins.length, ...plugins)
@@ -405,6 +414,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       if (hostManagedCloudflareBuild) {
         config.logger.warn(consoleHostManagedCloudflareWarning)
       }
+      if (journal && "d1Binding" in journal && sections.includes("agents")) config.logger.info(consoleD1JournalMessage(journal.d1Binding))
       root = config.root
       baseURL = config.base
       projectRoot ||= resolveViteHubProjectRoot(config.root)
@@ -451,7 +461,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         if (viteConfig.workspace) sections = [...sections, "workspaces"]
       }
       const nitro = viteConfig.nitro ??= {}
-      addConsoleDevframeHandler(nitro, consoleRuntimeRoot)
+      addConsoleRpcHandler(nitro, consoleRuntimeRoot)
       generatedPlugin ||= resolveGeneratedConsolePlugin(config.root, fixture, options.invocationRootState)
       // SAFETY: VITEHUB_SERVER_DIRS is ViteHub-owned config state populated with string paths.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
