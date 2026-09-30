@@ -81,6 +81,19 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it("treats method and constructor parameters as shadowing imports", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      const helpers = {
+        run(telegram: () => void) { telegram() },
+      }
+      class Runner {
+        constructor(telegram: () => void) { telegram() }
+        run() { return telegram() }
+      }
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
   it("requires imported, unshadowed Agent factories for shorthand discovery", () => {
     expect(uses(`
       const defineAgent = (options) => options

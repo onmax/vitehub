@@ -281,6 +281,19 @@ function isShadowedAt(tokens: string[], index: number, name: string, bindings: R
     }
     if (index > close && index < end) return true
   }
+  // Object and class methods, including constructors, have parameter scopes
+  // without the `function` keyword.
+  for (let open = 0; open < tokens.length; open++) {
+    if (tokens[open] !== "(") continue
+    const previous = tokens[open - 1]
+    if (["if", "while", "for", "switch", "catch", "with", "function"].includes(previous!)) continue
+    const close = closes.get(open)
+    const body = close === undefined ? undefined : close + 1
+    if (close === undefined || tokens[body!] !== "{") continue
+    if (!parameterListHasName(tokens, open + 1, close, name, closes)) continue
+    const end = closes.get(body!) ?? body!
+    if (index > close && index < end) return true
+  }
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i] !== "(") continue
     let depth = 1
