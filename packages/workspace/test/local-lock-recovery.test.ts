@@ -19,7 +19,7 @@ it("unblocks a local store after offline recovery and preserves its files", asyn
     await mkdir(join(locks, `${hash}.readers`))
     await writeFile(join(locks, `${hash}.readers/reader`), "")
     await writeFile(join(locks, "unrelated"), "keep")
-    await expect(store.readFile(path)).rejects.toThrow("Timed out waiting to write Workspace")
+    await expect(store.readFile(path)).rejects.toThrow(`Timed out waiting to read Workspace path: ${path}.`)
     await expect(recoverLocalWorkspaceLocks({ root, offline: true })).resolves.toEqual({
       removed: 2,
     })
