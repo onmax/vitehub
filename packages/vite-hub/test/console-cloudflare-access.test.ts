@@ -149,7 +149,7 @@ describe("Cloudflare Access Console Auth", () => {
       .setExpirationTime("5m")
       .sign(privateKey)))
 
-    for (const token of tokens) await expect(verify(token, { audience, issuer })).resolves.toBeUndefined()
+    await Promise.all(tokens.map(async (token) => expect(verify(token, { audience, issuer })).resolves.toBeUndefined()))
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 

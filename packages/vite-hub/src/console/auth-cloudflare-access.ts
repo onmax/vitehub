@@ -41,12 +41,25 @@ const cloudflareAccessJwksCooldown = 1_000
  */
 export function createCloudflareAccessVerifier(options: CloudflareAccessVerifierOptions = {}): CloudflareAccessVerifier {
   const keySets = new Map<string, ReturnType<typeof createRemoteJWKSet>>()
+  const pendingFetches = new Map<string, Promise<Response>>()
+  const fetchImpl = options.fetch ?? globalThis.fetch
+  const fetchKeys: typeof fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : input instanceof URL ? input.href : input
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET")
+    const key = `${method}:${url}`
+    let pending = pendingFetches.get(key)
+    if (!pending) {
+      pending = fetchImpl(input, init).finally(() => pendingFetches.delete(key))
+      pendingFetches.set(key, pending)
+    }
+    return (await pending).clone()
+  }
   return async (token, { audience, issuer }) => {
     let keys = keySets.get(issuer)
     if (!keys) {
       keys = createRemoteJWKSet(new URL("/cdn-cgi/access/certs", issuer), {
         cooldownDuration: cloudflareAccessJwksCooldown,
-        ...(options.fetch ? { [customFetch]: options.fetch } : {}),
+        [customFetch]: fetchKeys,
       })
       keySets.set(issuer, keys)
     }
