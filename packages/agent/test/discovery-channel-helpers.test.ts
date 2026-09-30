@@ -186,9 +186,21 @@ it.each([
   ["[portal]", "aliases[0]"],
   ["{ portal }", "aliases.portal"],
   ["{ channel: portal }", "aliases.channel"],
+  ['{ ["channel"]: portal }', "aliases.channel"],
+  ['{ ["chan" + "nel"]: portal }', "aliases.channel"],
+  ["Object.freeze({ channel: portal })", "aliases.channel"],
+  ["Object.freeze([portal])", "aliases[0]"],
+  ["[{ channel: portal }]", "aliases[0].channel"],
+  ["{ nested: [portal] }", "aliases.nested[0]"],
+  ["({ channel: (portal as Channel) })", "aliases.channel"],
+  ["[flag ? portal : portal]", "aliases[0]"],
+  ["[portal || portal]", "aliases[0]"],
+  ["{ channel: flag ? portal : portal }", "aliases.channel"],
+  ["[...single]", "aliases[0]"],
+  ["{ ...singleObject }", "aliases.channel"],
 ])("rejects a relative Channel mutated through a container alias: %s", async (container, member) => {
   const definition = 'import { portal } from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })'
-  const portal = `${imports} const storage = defineCapability({ workspace: {} }); export const portal = github({ pullRequest: false }); const aliases = ${container};`
+  const portal = `${imports} const storage = defineCapability({ workspace: {} }); export const portal = github({ pullRequest: false }); const flag = false; const single = [portal]; const singleObject = { channel: portal }; const aliases = ${container};`
   const unchanged = await discover(definition, { "portal.ts": portal })
   expect(unchanged?.workspace).toBeUndefined()
   for (const mutation of [`${member}.capabilities = [storage]`, `const other = aliases; ${member.replace("aliases", "other")}.capabilities = [storage]`]) {
@@ -197,6 +209,45 @@ it.each([
     const explicit = await discover(definition.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
     expect(explicit?.workspace).toBe("review")
   }
+})
+
+it.each([
+  ["Object.freeze({ options })", "wrapper.options"],
+  ["Object.freeze([options])", "wrapper[0]"],
+  ['{ ["options"]: options }', "wrapper.options"],
+  ["[{ options }]", "wrapper[0].options"],
+])("rejects Channel option mutations through wrapped containers: %s", async (container, member) => {
+  const setup = `${imports} const options = { pullRequest: false }; const wrapper = ${container};`
+  const definition = 'export default defineAgent({ channels: { github: github(options) } })'
+  const unchanged = await discover(`${setup} ${definition}`)
+  expect(unchanged?.workspace).toBeUndefined()
+  const source = `${setup} ${member}.pullRequest = true; ${definition}`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+  const explicit = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
+  expect(explicit?.workspace).toBe("review")
+})
+
+it.each([
+  "webChat({ capabilities: [storage] })",
+  "github({ pullRequest: false, capabilities: [storage] })",
+  '{ kind: "custom", capabilities: [storage] }',
+])("rejects reassigned Capability bindings in Channel options: %s", async channel => {
+  const setup = `${imports} let storage = defineCapability({}); storage = defineCapability({ workspace: {} });`
+  const definition = `export default defineAgent({ channels: { custom: ${channel} } })`
+  const source = `${setup} ${definition}`
+  await expect(discover(source)).rejects.toThrow("mutable Capability")
+  await expect(discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": `${setup} export default ${channel}`,
+  })).rejects.toThrow("mutable Capability")
+  const explicit = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
+  expect(explicit?.workspace).toBe("review")
+})
+
+it("rejects a Channel Capability list changed by a receiver call", async () => {
+  const source = `${imports} const capabilities = []; capabilities.push(defineCapability({ workspace: {} })); export default defineAgent({ channels: { custom: webChat({ capabilities }) } })`
+  await expect(discover(source)).rejects.toThrow("mutable Capability")
+  const explicit = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
+  expect(explicit?.workspace).toBe("review")
 })
 
 it.each(['"review-channel"', "'review-channel'", '""', '"review-\\u0063hannel"'])("resolves string-named relative Channel imports: %s", async exportedName => {

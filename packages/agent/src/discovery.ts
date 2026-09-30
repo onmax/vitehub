@@ -377,16 +377,27 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
 
-  function containerAliasTargets(index: number): string[] {
-    const opening = tokens[index]
-    if (opening !== "[" && opening !== "{") return []
+  function containerAliasTargets(index: number, containerTokens = tokens, inspectReference = false): string[] {
+    for (;;) {
+      while (containerTokens[index] === "(") index++
+      if (containerTokens[index] !== "Object" || containerTokens[index + 1] !== "."
+        || containerTokens[index + 2] !== "freeze" || containerTokens[index + 3] !== "(") break
+      index += 4
+    }
+    const opening = containerTokens[index]
+    if (opening !== "[" && opening !== "{") {
+      if (!inspectReference) return []
+      return containerTokens.slice(index).filter((reference, offset) =>
+        /^[A-Za-z_$][\w$]*$/.test(reference) && containerTokens[index + offset - 1] !== ".",
+      )
+    }
     const closing = opening === "[" ? "]" : "}"
     const targets: string[] = []
     const elements: string[][] = []
     let element: string[] = []
     let depth = 0
-    for (let cursor = index + 1; cursor < tokens.length; cursor++) {
-      const token = tokens[cursor]
+    for (let cursor = index + 1; cursor < containerTokens.length; cursor++) {
+      const token = containerTokens[cursor]
       if (depth === 0 && token === closing) {
         if (element.length) elements.push(element)
         break
@@ -400,12 +411,22 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (["{", "[", "("].includes(token)) depth++
       else if (["}", "]", ")"].includes(token)) depth--
     }
-    for (const value of elements) {
+    for (let value of elements) {
       if (value.length === 0) continue
-      const candidate = opening === "{" && value[1] === ":" ? value[2] : value[0]
-      if (value.length === 1 || (opening === "{" && value[1] === ":" && value.length === 3)) {
-        if (candidate && /^[A-Za-z_$][\w$]*$/.test(candidate)) targets.push(candidate)
+      if (value[0] === "." && value[1] === "." && value[2] === ".") value = value.slice(3)
+      else if (opening === "{") {
+        let separator = -1
+        let nesting = 0
+        for (let cursor = 0; cursor < value.length; cursor++) {
+          const token = value[cursor]
+          if (nesting === 0 && token === ":") { separator = cursor; break }
+          if (["{", "[", "("].includes(token)) nesting++
+          else if (["}", "]", ")"].includes(token)) nesting--
+        }
+        if (separator !== -1) value = value.slice(separator + 1)
+        else if (value.length !== 1) continue
       }
+      targets.push(...containerAliasTargets(0, value, true))
     }
     return targets
   }
@@ -426,7 +447,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion) mutatedBindings.add(name)
 
     const initializer = declaratorInitializers.get(i) ?? (tokens[i + 1] === "=" ? i + 2 : undefined)
-    if (initializer !== undefined && ["[", "{"].includes(tokens[initializer]!)) {
+    if (initializer !== undefined) {
       const targets = containerAliasTargets(initializer)
       const aliases = assignedAliases.get(name) ?? new Set<string>()
       for (const target of targets) aliases.add(target)
@@ -600,6 +621,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const call = memberCallEnd(index)
     if (tokens[call] !== "(" || ["if", "for", "while", "switch", "catch", "with", "default", "return", "throw", "yield", "await", "new", "typeof", "void", "delete", "function"].includes(tokens[index])) continue
     opaqueCalls.add(call)
+    if (call > index + 1 && visibleDeclaration(index) !== undefined) mutatedBindings.add(tokens[index])
     if (tokens[index] === "Object" && tokens[index + 1] === "." && tokens[index + 2] === "freeze"
       && visibleDeclaration(index) === undefined) trustedCalls.add(call)
     if (tokens[index - 1] !== "." && factories.some(name => factoryCall(index, name) === call)) trustedCalls.add(call)
@@ -772,6 +794,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
       // Later declarations shadow outer bindings before their initializer runs.
       if (binding > index) return false
+      if (mutatedBindings.has(tokens[index])) {
+        throw new Error("[vitehub] Agent Workspace discovery cannot inspect a mutable Capability binding. Use an unchanged local Capability binding, or add workspace: {} to the Agent definition when the Capability owns a Workspace.")
+      }
       let initializer = binding + 2
       while (initializer < index && !["=", ";", ","].includes(tokens[initializer])) initializer++
       return tokens[initializer] === "=" && capabilityOwnsWorkspace(initializer + 1, seen)
