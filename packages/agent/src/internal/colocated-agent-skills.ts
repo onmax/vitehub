@@ -41,3 +41,31 @@ export function withColocatedAgentSkills<Agent>(agent: Agent, skills: ColocatedA
   Object.defineProperty(resolved, colocatedAgentSkillsSymbol, descriptor)
   return resolved
 }
+
+/**
+ * Add Skills to an Agent Definition without changing the original.
+ * Each key is a Skill name, and each value is its `SKILL.md` content.
+ * The result keeps the Skills of the original definition, including Skills that discovery adds later.
+ * A Skill with the same name replaces the original one.
+ */
+export function agentWithSkills<Agent extends object>(agent: Agent, skills: Record<string, string | Uint8Array>): Agent {
+  const added: Record<string, { content: string | Uint8Array, materialize: "startup", mount: "", workspacePath: string }> = {}
+  for (const [name, content] of Object.entries(skills)) {
+    if (!/^[\w.-]+$/.test(name) || name === "." || name === "..") {
+      throw new TypeError(`[vitehub] Invalid Skill name "${name}". Use letters, digits, ".", "_", or "-".`)
+    }
+    const workspacePath = `.agents/skills/${name}/SKILL.md`
+    added[`__vitehubAgentSkill:${workspacePath}`] = { content, materialize: "startup", mount: "", workspacePath }
+  }
+  // SAFETY: The copy keeps the prototype and every own property descriptor of the Agent Definition.
+  const resolved = Object.create(Object.getPrototypeOf(agent), Object.getOwnPropertyDescriptors(agent)) as Agent
+  Object.defineProperty(resolved, colocatedAgentSkillsSymbol, {
+    configurable: true,
+    enumerable: true,
+    get: () => {
+      const inherited: unknown = Reflect.get(agent, colocatedAgentSkillsSymbol)
+      return { ...(hasRuntimeType(inherited, "object") ? inherited : undefined), ...added }
+    },
+  })
+  return resolved
+}

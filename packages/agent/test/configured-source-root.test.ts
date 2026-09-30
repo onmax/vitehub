@@ -101,7 +101,7 @@ it("keeps generated colocated skills available to derived definitions", async ()
     expect(Object.getOwnPropertyDescriptor(discovered, colocatedAgentSkillsSymbol)?.value).toMatchObject({
       review: { content: new TextEncoder().encode("Review.") },
     })
-    expect(Object.getOwnPropertyDescriptor(child, colocatedAgentSkillsSymbol)?.value).toEqual(
+    expect(Reflect.get(child, colocatedAgentSkillsSymbol)).toEqual(
       Object.getOwnPropertyDescriptor(discovered, colocatedAgentSkillsSymbol)?.value,
     )
     const cleared = decorate(base, "/discovered", undefined, undefined)

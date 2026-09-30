@@ -29,11 +29,16 @@ function rememberLayerMetadata(value: Record<string, unknown>, metadata: AgentLa
   Object.defineProperty(value, agentLayerMetadata, { configurable: true, value: metadata })
 }
 
+// Discovery attaches colocated Skills after modules that extend a definition have run.
+// Read them from the parent when the child resolves instead of copying them now.
 function inheritColocatedSkills(parent: Record<string, unknown>, child: Record<string, unknown>): void {
-  const skills = Object.getOwnPropertyDescriptor(parent, colocatedSkills)
-  if (skills) Object.defineProperty(child, colocatedSkills, skills)
+  if (parent === child) return
+  Object.defineProperty(child, colocatedSkills, {
+    configurable: true,
+    enumerable: true,
+    get: () => Reflect.get(parent, colocatedSkills),
+  })
 }
-
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && hasRuntimeType(value, "object")

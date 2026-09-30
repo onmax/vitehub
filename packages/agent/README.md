@@ -359,6 +359,21 @@ Child configuration overrides parent defaults. Channels, Sources, Skills, and ho
 
 `extends` accepts one definition created by `defineAgent()` in the same package instance. It does not discover files in the parent's directory. Compose shared instruction strings in TypeScript, or import Markdown with `?raw` and assign the composed string to `driver.instructions`. References such as `@../bot/instructions.md` remain literal text. Share Skills through explicit Sources or a directory link.
 
+A definition that is not discovered, such as one created in a Schedule, uses the colocated Skills of the discovered Agent it extends. It reads them when it runs, so module import order does not matter. Use `agentWithSkills()` to add Skills to such a definition without an Agent folder:
+
+```ts [server/schedules/changelog.ts]
+import { agentWithSkills, defineAgent } from 'vite-hub/agent'
+import botDev from '../agents/bot-dev/agent'
+import changelogSkill from './changelog-skill.md?raw'
+
+const changelogAgent = agentWithSkills(
+  defineAgent({ extends: botDev, name: 'changelog' }),
+  { 'changelog-writing': changelogSkill },
+)
+```
+
+Each key is a Skill name, and each value is its `SKILL.md` content. The result keeps the inherited Skills. A Skill with the same name replaces the inherited one.
+
 ### Named presets
 
 Export ordinary `defineAgent()` definitions from a preset package. Consumers import them and select a local name:
