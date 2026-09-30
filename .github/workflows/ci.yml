@@ -101,8 +101,9 @@ jobs:
       - run: vp run test:contracts
 
   # Package tests were one 22-minute job. Agent and Workspace each take about
-  # 9 minutes, so they run alone. The last shard excludes the named packages,
-  # so a new package always runs somewhere.
+  # 9 minutes, so they run alone. The Agent shard includes vite-hub because
+  # Agent's tutorial fixture builds against it. The last shard excludes the
+  # named packages, so a new package always runs somewhere.
   package-tests:
     name: package tests (${{ matrix.shard.name }})
     runs-on: ubuntu-latest
@@ -111,13 +112,15 @@ jobs:
       matrix:
         shard:
           - name: agent
-            args: --packages @vite-hub/agent
+            args: --packages @vite-hub/agent,vite-hub
           - name: workspace
             args: --packages @vite-hub/workspace
           - name: content and workflow
             args: --packages @vite-hub/content,@vite-hub/workflow
+          - name: storage and delivery
+            args: --packages @vite-hub/blob,@vite-hub/box,@vite-hub/database,@vite-hub/email,@vite-hub/kv,@vite-hub/markdown-template,@vite-hub/queue
           - name: other packages
-            args: --exclude @vite-hub/agent,@vite-hub/workspace,@vite-hub/content,@vite-hub/workflow
+            args: --exclude @vite-hub/agent,vite-hub,@vite-hub/workspace,@vite-hub/content,@vite-hub/workflow,@vite-hub/blob,@vite-hub/box,@vite-hub/database,@vite-hub/email,@vite-hub/kv,@vite-hub/markdown-template,@vite-hub/queue
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
