@@ -997,9 +997,20 @@ it.each([
   'Object.defineProperty(Object, "freeze", { value: value => value });',
   'globalThis.Object.freeze = value => value;',
   'globalThis["Object"].freeze = value => value;',
+  'globalThis.Object.defineProperty(globalThis.Object, "freeze", { value: value => ({ pullRequest: true }) });',
+  'globalThis["Object"]["defineProperty"](globalThis["Object"], "freeze", { value: value => ({ pullRequest: true }) });',
+  'Object.defineProperty(globalThis.Object, "freeze", { value: value => ({ pullRequest: true }) });',
+  'globalThis.Object.defineProperty(Object, "freeze", { value: value => ({ pullRequest: true }) });',
 ])("rejects reassigned global Object.freeze: %s", async mutation => {
   const source = `${imports} const value = (input: unknown) => input; ${mutation} export default defineAgent({ channels: { custom: github(Object.freeze({ pullRequest: false })) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
+it.each([
+  'const globalThis = { Object: { defineProperty() {} } }; globalThis.Object.defineProperty(globalThis.Object, "freeze", {});',
+  'function configure(globalThis) { globalThis.Object.defineProperty(globalThis.Object, "freeze", {}); }',
+])("preserves intrinsic freeze after writes to a shadowed globalThis: %s", async setup => {
+  expect((await discover(`${imports} ${setup} export default defineAgent({ channels: { custom: github(Object.freeze({ pullRequest: false })) } })`))?.workspace).toBeUndefined()
 })
 
 it.each(["of", "in"])("rejects member-expression for-%s Channel option targets", async operator => {
@@ -1093,6 +1104,17 @@ it.each(["channels[\"github\"]", "channels['github']"])("recognizes statically c
   const source = `${setup} export default defineAgent({ channels: { custom: ${helper}({ pullRequest: true }) } })`
   const definition = await discover(source)
   expect(definition?.workspace).toBe("review")
+})
+
+it.each(["channels.github", 'channels["github"]', "channels['github']"])("recognizes local aliases of namespace Channel helpers: %s", async helper => {
+  for (const enabled of [false, true]) {
+    const setup = `import * as channels from "vite-hub/agent/channels"; const gh = ${helper}; const alias = gh;`
+    const channel = `alias({ pullRequest: ${enabled} })`
+    expect((await discover(`${setup} export default defineAgent({ channels: { custom: ${channel} } })`))?.workspace).toBe(enabled ? "review" : undefined)
+    expect((await discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+      "portal.ts": `${setup} export default ${channel}`,
+    }))?.workspace).toBe(enabled ? "review" : undefined)
+  }
 })
 
 it.each(["channels?.github", "channels.github?.", "channels?.github?."])("recognizes optional namespace Channel calls: %s", async helper => {

@@ -1026,15 +1026,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // Record direct, computed, and defineProperty writes before recognizing any
   // Object.freeze call as value-preserving.
   for (let index = 0; index < tokens.length; index++) {
-    if (!globalObjectReference(index)) continue
-    const memberEnd = memberCallEnd(index)
-    const directFreeze = (tokens[index + 1] === "." && tokens[index + 2] === "freeze")
-      || (tokens[index + 1] === "[" && propertyName(tokens[index + 2] ?? "") === "freeze")
-    if (directFreeze && assignmentOperator(memberEnd)) mutatedBindings.add("Object")
-    if (tokens[index + 1] === "." && tokens[index + 2] === "defineProperty" && tokens[index + 3] === "(") {
-      const target = resolveReference(index + 4)
-      const property = resolveReference(index + 6)
-      if (globalObjectReference(target) && propertyName(tokens[property] ?? "") === "freeze") mutatedBindings.add("Object")
+    const objectEnd = intrinsicObjectEnd(index)
+    if (objectEnd === undefined) continue
+    const member = memberAccess(objectEnd - 1)
+    if (member?.name === "freeze" && assignmentOperator(member.end)) mutatedBindings.add("Object")
+    if (member?.name === "defineProperty" && tokens[member.end] === "(") {
+      const target = resolveReference(member.end + 1, new Set(), true)
+      const targetEnd = intrinsicObjectEnd(target)
+      if (targetEnd === undefined || tokens[targetEnd] !== ",") continue
+      const property = resolveReference(targetEnd + 1)
+      if (propertyName(tokens[property] ?? "") === "freeze") mutatedBindings.add("Object")
     }
   }
   const opaqueCalls = new Set<number>()
@@ -1210,11 +1211,22 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function globalObjectReference(index: number): boolean {
-    if (tokens[index] !== "Object" || imported.has("Object") || mutatedBindings.has("Object") || visibleDeclaration(index) !== undefined
-      || callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has("Object"))) return false
+    return globalBindingReference(index, "Object")
+  }
+
+  function intrinsicObjectEnd(index: number): number | undefined {
+    if (globalObjectReference(index)) return index + 1
+    if (!globalBindingReference(index, "globalThis")) return
+    const member = memberAccess(index)
+    if (member?.name === "Object") return member.end
+  }
+
+  function globalBindingReference(index: number, name: string): boolean {
+    if (tokens[index] !== name || tokens[index - 1] === "." || imported.has(name) || mutatedBindings.has(name) || visibleDeclaration(index) !== undefined || isFunctionParameter(index)
+      || callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(name))) return false
     for (let scope = tokenScopes[index]; ; scope = scopeParents.get(scope!)) {
       if (tokens.some((token, declaration) => ["function", "class"].includes(token)
-        && tokens[declaration + 1] === "Object" && tokenScopes[declaration] === scope)) return false
+        && tokens[declaration + 1] === name && tokenScopes[declaration] === scope)) return false
       if (scope === undefined) return true
     }
   }
