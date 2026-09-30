@@ -56,11 +56,19 @@ async function createRuntimeDriver(store: ResolvedKVStoreConfig): Promise<KVRunt
 export function createLazyKVRuntimeDriver(config: ResolvedKVModuleOptions): KVRuntimeDriver {
   let driverPromise: Promise<Driver> | undefined
 
-  const resolve = () => driverPromise ||= (async () => {
-    const runtime = resolveRuntimeKVOptions(config)
-    if (!runtime) throw kvErrorDiagnostics.KV_R0002({ message: "KV runtime is disabled." })
-    return createRuntimeDriver(runtime.store)
-  })()
+  function resolve(): Promise<Driver> {
+    if (driverPromise) return driverPromise
+    const pending = (async () => {
+      const runtime = resolveRuntimeKVOptions(config)
+      if (!runtime) throw kvErrorDiagnostics.KV_R0002({ message: "KV runtime is disabled." })
+      return createRuntimeDriver(runtime.store)
+    })()
+    driverPromise = pending
+    void pending.catch(() => {
+      if (driverPromise === pending) driverPromise = undefined
+    })
+    return pending
+  }
 
   // SAFETY: The proxy below supplies driver methods lazily and preserves these two concrete own properties.
   const target = { name: `lazy:${config.store.driver}`, options: config.store } as AnyRecord
