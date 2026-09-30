@@ -33,6 +33,7 @@ export type CloudflareAccessVerifier = (
 export const cloudflareAccessAssertionHeader = "cf-access-jwt-assertion"
 export const cloudflareAccessSignOutPath = "/cdn-cgi/access/logout"
 export const cloudflareAccessIdentityPath = "/api/_vitehub/console/auth/identity"
+const cloudflareAccessJwksCooldown = 1_000
 
 /**
  * Create a verifier for Cloudflare Access application tokens. Each verifier keeps one remote key set per issuer,
@@ -44,7 +45,7 @@ export function createCloudflareAccessVerifier(options: CloudflareAccessVerifier
     let keys = keySets.get(issuer)
     if (!keys) {
       keys = createRemoteJWKSet(new URL("/cdn-cgi/access/certs", issuer), {
-        cooldownDuration: 0,
+        cooldownDuration: cloudflareAccessJwksCooldown,
         ...(options.fetch ? { [customFetch]: options.fetch } : {}),
       })
       keySets.set(issuer, keys)

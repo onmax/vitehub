@@ -129,12 +129,28 @@ describe("Cloudflare Access Console Auth", () => {
       .sign(rotated.privateKey)
 
     try {
+      await new Promise((resolve) => setTimeout(resolve, 1_100))
       await expect(verify(rotatedToken, { audience, issuer })).resolves.toEqual({ email: "maintainer@example.com" })
       expect(fetch).toHaveBeenCalledTimes(2)
     }
     finally {
       jwks = originalJwks
     }
+  })
+
+  it("bounds refreshes for repeated unknown signing keys", async () => {
+    const fetch = certsFetch()
+    const verify = createCloudflareAccessVerifier({ fetch })
+    const tokens = await Promise.all(Array.from({ length: 3 }, async (_, index) => new SignJWT({ email: "attacker@example.com" })
+      .setProtectedHeader({ alg: "RS256", kid: `unknown-key-${index}` })
+      .setIssuer(issuer)
+      .setAudience(audience)
+      .setIssuedAt()
+      .setExpirationTime("5m")
+      .sign(privateKey)))
+
+    for (const token of tokens) await expect(verify(token, { audience, issuer })).resolves.toBeUndefined()
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 
   it("guards only Console routes and serves the Access identity", async () => {
