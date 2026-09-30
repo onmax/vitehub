@@ -54,10 +54,10 @@ type ConsoleInvocationsTable = SQLiteTableWithColumns<{
     agentName: ConsoleInvocationColumn<string, true>
     id: ConsoleInvocationColumn<string, true>
     record: ConsoleInvocationColumn<Omit<AgentInvocationRecord, "cursor">, true>
-    search: ConsoleInvocationColumn<string, false>
+    search: ConsoleInvocationColumn<string, true>
     sequence: ConsoleInvocationColumn<number, true>
     status: ConsoleInvocationColumn<string, true>
-    summary: ConsoleInvocationColumn<AgentInvocationSummary, false>
+    summary: ConsoleInvocationColumn<AgentInvocationSummary, true>
     updatedAt: ConsoleInvocationColumn<string, true>
   }
   dialect: "sqlite"
@@ -72,8 +72,8 @@ const consoleInvocationsTable = sqliteTable("vitehub_agent_invocations", {
   id: text().notNull().unique(),
   status: text().notNull(),
   agentName: text("agent_name").notNull().default(""),
-  search: text(),
-  summary: text({ mode: "json" }).$type<AgentInvocationSummary>(),
+  search: text().notNull(),
+  summary: text({ mode: "json" }).$type<AgentInvocationSummary>().notNull(),
   updatedAt: text("updated_at").notNull().default(""),
   record: text({ mode: "json" }).$type<Omit<AgentInvocationRecord, "cursor">>().notNull(),
 }) as unknown as ConsoleInvocationsTable
