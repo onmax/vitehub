@@ -1689,7 +1689,7 @@ export interface AgentDefinition<
   chat?: AgentChatOptions<TRuntimeConfig>
   cli?: AgentDefinitionCliOptions
   description?: string
-  hooks?: AgentCapabilityHooks<TRuntimeConfig, WorkspaceName> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>
+  hooks?: AgentCapabilityHooks<TRuntimeConfig, WorkspaceName> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput, TData>
   invoker?: AgentInvokerOptions<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues>
   invocations?: AgentInvocations
   messages?: AgentMessageChannelSettings<TRuntimeConfig>

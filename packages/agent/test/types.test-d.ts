@@ -471,8 +471,20 @@ describe("agent public types", () => {
         expectTypeOf(data).toEqualTypeOf<{ count: number }>()
         return undefined
       },
+      hooks: {
+        "agent:input"({ input }) {
+          expectTypeOf(input.data).toEqualTypeOf<{ count: number } | undefined>()
+        },
+        "agent:finish"({ input }) {
+          expectTypeOf(input.data).toEqualTypeOf<{ count: number } | undefined>()
+        },
+      },
       runtime: false,
     })
+    type TransformedInputHook = NonNullable<typeof transformed.hooks>["agent:input"]
+    type TransformedFinishHook = NonNullable<typeof transformed.hooks>["agent:finish"]
+    expectTypeOf<Parameters<NonNullable<TransformedInputHook>>[0]["input"]["data"]>().toEqualTypeOf<{ count: number } | undefined>()
+    expectTypeOf<Parameters<NonNullable<TransformedFinishHook>>[0]["input"]["data"]>().toEqualTypeOf<{ count: number } | undefined>()
     // Call sites pass the schema input type.
     void runAgent(transformed, { data: { count: "2" } })
     // @ts-expect-error Call sites do not pass the schema output type.
