@@ -191,14 +191,17 @@ function hasProviderDriverDefinition(
   namespaces: Set<string>,
   capabilityBindings: Set<string>,
   capabilityNamespaces: Set<string>,
+  ancestors: Map<PositionedNode, PositionedNode[]>,
 ): boolean {
   if (node.type !== "CallExpression" || !isPositionedNode(node.callee)) return false
   const callee = node.callee
   const isDefineAgent = callee.type === "Identifier"
     ? defineAgentBindings.has(identifierName(callee) ?? "")
+      && !isShadowedByFunctionParameter(node, identifierName(callee) ?? "", ancestors)
     : callee.type === "MemberExpression" && callee.computed !== true
       && namespaces.has(identifierName(callee.object) ?? "")
       && identifierName(callee.property) === "defineAgent"
+      && !isShadowedByFunctionParameter(node, identifierName(callee.object) ?? "", ancestors)
   if (!isDefineAgent) return false
   const options = Array.isArray(node.arguments) && isPositionedNode(node.arguments[0])
     ? unwrapTypeScriptExpression(node.arguments[0])
@@ -266,7 +269,7 @@ export function usesProviderAgentDriver(source: string): boolean {
   visitNodes(program, (node) => {
     if (found) return
     found = isProviderFactoryCall(node, factoryBindings, namespaces, ancestors)
-      || hasProviderDriverDefinition(node, defineAgentBindings, namespaces, capabilityBindings, capabilityNamespaces)
+      || hasProviderDriverDefinition(node, defineAgentBindings, namespaces, capabilityBindings, capabilityNamespaces, ancestors)
   })
   return found
 }
