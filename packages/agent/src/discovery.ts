@@ -832,6 +832,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
   const opaqueCalls = new Set<number>()
   const trustedCalls = new Set<number>()
+  const directEvalCalls = new Set<number>()
   const parameterLists = new Set([...functionScopes].map(scope => openingDelimiters.get(scope - 1)))
   const factories = ["defineAgent", "defineChannel", "defineCapability", "channelHelper"] as const
   for (let index = 0; index < tokens.length; index++) {
@@ -840,6 +841,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const call = memberCallEnd(index)
     if (tokens[call] !== "(" || ["if", "for", "while", "switch", "catch", "with", "default", "return", "throw", "yield", "await", "new", "typeof", "void", "delete", "function"].includes(tokens[index])) continue
     opaqueCalls.add(call)
+    if (tokens[index] === "eval" && tokens[index - 1] !== ".") directEvalCalls.add(call)
     if (call > index + 1 && visibleDeclaration(index) !== undefined) mutatedBindings.add(tokens[index])
     if (tokens[index] === "Object" && tokens[index + 1] === "." && tokens[index + 2] === "freeze"
       && visibleDeclaration(index) === undefined) trustedCalls.add(call)
@@ -859,6 +861,18 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     for (const name of declarations.keys()) mutatedBindings.add(name)
     for (const binding of variableDeclarations.keys()) {
       for (const name of destructuredBindings.get(binding) ?? [tokens[binding + 1]!]) mutatedBindings.add(name)
+    }
+  }
+  // Direct eval executes in this module's lexical scope and can mutate any
+  // captured Channel options without leaving a statically visible write.
+  if (directEvalCalls.size > 0) invalidateCapturedBindings()
+  // Invoking an extracted member of an opaque result may mutate captured
+  // options even though the invocation has no receiver or arguments.
+  const invokedBindings = new Set<string>()
+  for (let index = 0; index < tokens.length; index++) {
+    const call = memberCallEnd(index)
+    if (visibleDeclaration(index) !== undefined && opaqueCalls.has(call) && !trustedCalls.has(call)) {
+      invokedBindings.add(tokens[index]!)
     }
   }
   for (const call of opaqueCalls) {
@@ -890,6 +904,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   for (let changed = true; changed;) {
     changed = false
     for (const [alias, targets] of assignedAliases) {
+      if (invokedBindings.has(alias)) {
+        for (const target of targets) {
+          if (invokedBindings.has(target)) continue
+          invokedBindings.add(target)
+          changed = true
+        }
+      }
       if (!mutatedBindings.has(alias)) continue
       for (const target of targets) {
         if (mutatedBindings.has(target)) continue
@@ -898,7 +919,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
     }
   }
-  if ([...opaqueResultBindings].some(name => mutatedBindings.has(name))) invalidateCapturedBindings()
+  if ([...opaqueResultBindings].some(name => mutatedBindings.has(name) || invokedBindings.has(name))) invalidateCapturedBindings()
   for (const name of new Set([...namedExports.keys(), ...pendingExports.keys()])) {
     const local = pendingExports.get(name) ?? name
     if (mutatedBindings.has(local)) opaqueExports.add(name)

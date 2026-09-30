@@ -851,8 +851,11 @@ it.each([
   })).rejects.toThrow(/opaque Channel/)
 })
 
-it("keeps read-only aliases of opaque call results from invalidating Channel options", async () => {
-  const source = `${imports} const options = { pullRequest: false }; const getOptions = () => options; const alias = getOptions(); const enabled = alias.pullRequest; export default defineAgent({ channels: { custom: github(options) } })`
+it.each([
+  'const alias = getOptions(); const enabled = alias.pullRequest',
+  'const enabled = getOptions().pullRequest',
+])("keeps read-only aliases of opaque call results from invalidating Channel options: %s", async read => {
+  const source = `${imports} const options = { pullRequest: false }; const getOptions = () => options; ${read}; export default defineAgent({ channels: { custom: github(options) } })`
   expect((await discover(source))?.workspace).toBeUndefined()
 })
 
@@ -860,8 +863,19 @@ it.each([
   'getOptions().enable()',
   'getOptions()["enable"]()',
   'const alias = getOptions(); alias.enable()',
+  'const method = getOptions().enable; method()',
+  'const method = getOptions()["enable"]; method()',
+  'const method = getOptions().enable; const alias = method; alias()',
 ])("rejects mutating method calls through opaque results: %s", async mutation => {
   const setup = `${imports} const options = { pullRequest: false, enable() { this.pullRequest = true } }; const getOptions = () => options; ${mutation};`
+  await expect(discover(`${setup} export default defineAgent({ channels: { custom: github(options) } })`)).rejects.toThrow(/opaque Channel/)
+  await expect(discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": `${setup} export default github(options)`,
+  })).rejects.toThrow(/opaque Channel/)
+})
+
+it("rejects direct eval that may mutate captured Channel options", async () => {
+  const setup = `${imports} const options = { pullRequest: false }; eval("options.pullRequest = true");`
   await expect(discover(`${setup} export default defineAgent({ channels: { custom: github(options) } })`)).rejects.toThrow(/opaque Channel/)
   await expect(discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
     "portal.ts": `${setup} export default github(options)`,
