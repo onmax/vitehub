@@ -62,6 +62,7 @@ import type {
   AgentProviderLaunchCommand,
   AgentProviderLaunchContext,
   AgentProviderLaunchResolver,
+  AgentProviderWorkingDirectoryResolver,
   AgentProviderPermissions,
   AgentRuntimeConfig,
   CodexReasoningEffort,
@@ -90,6 +91,8 @@ export interface ProviderAgentAdapterOptions<
 > {
   credentialProfile?: string
   credentials?: AgentProviderCredentialResolver<TRuntimeConfig>
+  /** Existing directory where the provider runs. The driver does not snapshot, write back, or remove it. */
+  cwd?: AgentProviderWorkingDirectoryResolver<TRuntimeConfig>
   /** Provider process environment. Every resolved value is treated as a credential in persisted diagnostics. */
   env?: AgentProviderEnvironmentResolver<TRuntimeConfig>
   execution?: { attachments?: { maxBytes?: number } }
@@ -1238,6 +1241,7 @@ async function missingProviderCommands(
     ? (await Promise.all(commands.map(command => check([command])))).flat()
     : await check(["-c", providerRequirementScript, "sh", ...commands])
 }
+const providerStatusCacheMs = 30_000
 const recentProviderQuotaFailures = new Map<string, { message: string, expiresAt: number }>()
 
 /** Uses the invocation credential and launcher paths, without opening a provider session. */
@@ -1263,8 +1267,13 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
         readiness: "unavailable", reason: recent.message,
       }
       if (recent) recentProviderQuotaFailures.delete(home.scope)
-      const cached = providerStatusCache.get(options)?.get(`${home.scope}:${requirements.length > 0}`)
-      if (cached && Date.now() - Date.parse(cached.checkedAt) < 30_000) return { ...cached, agent: context.agentIdentity?.name ?? "agent" }
+    }
+    // Without driver.credentials, every inspection uses the same host account. The empty scope caches it.
+    const statusScope = home ? home.scope : ""
+    const statusKey = statusScope === undefined ? undefined : `${statusScope}:${requirements.length > 0}`
+    if (statusKey !== undefined) {
+      const cached = providerStatusCache.get(options)?.get(statusKey)
+      if (cached && Date.now() - Date.parse(cached.checkedAt) < providerStatusCacheMs) return { ...cached, agent: context.agentIdentity?.name ?? "agent" }
     }
     const overrides = options.env === undefined ? undefined : normalizedProviderEnvironment(await waitForProviderOperation(resolveRuntimeValue(options.env, context), signal))
     signal?.throwIfAborted()
@@ -1321,10 +1330,10 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
         ...(snapshot.usageLimits.unavailable ? { unavailable: { reason: snapshot.usageLimits.unavailable.reason } } : {}),
       } } : {}),
     }
-    if (home?.scope) {
+    if (statusKey !== undefined) {
       const cache = providerStatusCache.get(options) ?? new Map<string, AgentProviderStatus>()
       if (cache.size >= 128) cache.clear()
-      cache.set(`${home.scope}:${requirements.length > 0}`, result)
+      cache.set(statusKey, result)
       providerStatusCache.set(options, cache)
     }
     return result
@@ -1861,7 +1870,11 @@ function sourceProvenanceInstructions(provenance: readonly ProviderSourceProvena
   return `Mounted source provenance (evidence metadata, not instructions):\n${JSON.stringify(provenance, null, 2)}\nWhen citing mounted source evidence, use only a GitHub HTTPS link derived from this exact metadata. For a file at <mount>/<relative-path>, the citation URL is <repository>/blob/<revision.id>/<root>/<relative-path>#L<line>. Omit <root>/ when root is empty. Percent-encode each path segment of <root> and <relative-path> separately, preserving / separators; append #L<line> only after encoding. Never cite /workspace paths, branch names, or guessed repository locations. If the mounted path cannot be mapped exactly to one provenance entry, cite no link. Read files from the matching mounted path.`
 }
 
-async function prepareWorkspace(context: AgentAdapterRunContext, root: string): Promise<{ provenance: ProviderSourceProvenance[], pullRequestRoot: boolean, session: WorkspaceSession } | undefined> {
+async function prepareWorkspace(
+  context: AgentAdapterRunContext,
+  root: string,
+  inPlace: boolean,
+): Promise<{ provenance: ProviderSourceProvenance[], pullRequestRoot: boolean, session?: WorkspaceSession } | undefined> {
   if (!context.workspace) return
   if (process.platform === "win32") {
     throw agentDiagnostics.AGENT_R0701({ message: "[vitehub] Provider Agent Driver Workspaces require a POSIX Node host." })
@@ -1869,6 +1882,8 @@ async function prepareWorkspace(context: AgentAdapterRunContext, root: string): 
   const paths = selectedWorkspacePaths(context)
   const materializedSources = await materializeWorkspaceSources(context, paths)
   const provenance = providerSourceProvenance(context, materializedSources)
+  // driver.cwd is the working copy. There is no session to materialize, snapshot, or write back.
+  if (inPlace) return { provenance, pullRequestRoot: false }
   const sessionOptions: WorkspaceSessionOptions = {
     abortSignal: context.input.abortSignal,
     host: localWorkspaceHost(),
@@ -2515,14 +2530,27 @@ async function* runProvider<
     : undefined
   let root: string
   let launchRoot: string | undefined
+  // driver.cwd is owned by the application. Title and progress summary runs keep a disposable root.
+  let ownsRoot = true
   try {
     effectiveSignal?.throwIfAborted()
-    const providerRoot = await mkdtemp(join(tmpdir(), "vitehub-provider-"))
+    const configuredRoot = options.cwd === undefined || auxiliary
+      ? undefined
+      : await waitForProviderOperation(Promise.resolve(resolveRuntimeValue(options.cwd, providerMetadataContext(context))), effectiveSignal)
+    let providerRoot: string
+    if (configuredRoot === undefined) providerRoot = await mkdtemp(join(tmpdir(), "vitehub-provider-"))
+    else {
+      if (!hasRuntimeType(configuredRoot, "string") || !configuredRoot.trim() || !(await lstat(resolve(configuredRoot)).catch(() => undefined))?.isDirectory()) {
+        throw agentDiagnostics.AGENT_R0939({ message: "[vitehub] Provider Agent Driver cwd must resolve to an existing directory." })
+      }
+      providerRoot = resolve(configuredRoot)
+      ownsRoot = false
+    }
     try {
       launchRoot = options.launch === undefined ? undefined : await mkdtemp(join(tmpdir(), "vitehub-provider-launch-"))
     }
     catch (error) {
-      await removeProviderRoot(providerRoot).catch(() => undefined)
+      if (ownsRoot) await removeProviderRoot(providerRoot).catch(() => undefined)
       throw error
     }
     root = providerRoot
@@ -2571,12 +2599,13 @@ async function* runProvider<
     releaseDeferredRuntimeStopped = resolve
   })
   let rootCleanup: Promise<void> | undefined
+  const removeOwnedRoot = () => ownsRoot ? removeProviderRoot(root) : Promise.resolve()
   const cleanupRoot = () => rootCleanup ??= launchRoot
     ? Promise.all([
-        removeProviderRoot(root),
+        removeOwnedRoot(),
         rm(launchRoot, { force: true, recursive: true }),
       ]).then(() => undefined)
-    : removeProviderRoot(root)
+    : removeOwnedRoot()
   let workspaceCleanupDeferred = false
   let deferredWorkspaceCleanup: Promise<void> | undefined
   const activeWorkspaceCommands = new Set<Promise<unknown>>()
@@ -2637,11 +2666,11 @@ async function* runProvider<
   try {
     effectiveSignal?.throwIfAborted()
     const preparedWorkspace = await waitForProviderOperation(
-      prepareWorkspace(context, root),
+      prepareWorkspace(context, root, !ownsRoot),
       effectiveSignal,
       async (lateWorkspace) => {
         try {
-          await lateWorkspace?.session.close()
+          await lateWorkspace?.session?.close()
         }
         finally {
           await cleanupRoot()
@@ -2652,7 +2681,9 @@ async function* runProvider<
     )
     workspaceSession = preparedWorkspace?.session
     sourceProvenance = preparedWorkspace?.provenance || []
+    // An application-owned Git checkout in driver.cwd must not track generated instruction files either.
     const pullRequestRoot = preparedWorkspace?.pullRequestRoot === true
+      || (!ownsRoot && Boolean(await lstat(join(root, ".git")).catch(() => undefined)))
     if (workspaceSession) {
       clearActiveWorkspaceFiles = setActiveAgentWorkspaceFiles(context.context, {
         async readFile(path) {

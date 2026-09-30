@@ -4580,6 +4580,83 @@ cli_auth_credentials_store = "keyring"
     }) as never)
   })
 
+  it("runs in driver.cwd without a temporary root or Workspace session and keeps the directory", async () => {
+    const threadId = "thread-provider-cwd"
+    const cwd = await mkdtemp(join(tmpdir(), "vitehub-cwd-test-"))
+    await writeFile(join(cwd, "checkout.txt"), "local checkout")
+    let launchCwd = ""
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+      async onStartSession() {
+        expect(await readFile(join(cwd, "checkout.txt"), "utf8")).toBe("local checkout")
+      },
+    })
+    const session = {
+      close: vi.fn(async () => undefined),
+      commit: vi.fn(async () => undefined),
+      diff: vi.fn(async () => ({ entries: [] })),
+      exec: vi.fn(async () => ({ code: 0, stderr: "", stdout: "" })),
+      readFile: vi.fn(async () => new Uint8Array()),
+    }
+    const materializeSources = vi.fn(async () => ({ bytes: 0, directories: 0, durationMs: 0, files: 0, path: "", sources: [] }))
+    const workspace = { fs: {}, materializeSources, startSession: vi.fn(async () => session), tools: {} }
+    const resolveCwd = vi.fn(() => cwd)
+    const launch = vi.fn((launchContext: { cwd: string }) => {
+      launchCwd = launchContext.cwd
+      return { command: process.execPath }
+    })
+    try {
+      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+      await createProviderAgentAdapter({ cwd: resolveCwd, launch, provider: "codex" }).generate(context(threadId, {
+        workspace,
+        workspaceAutoCommit: true,
+        workspaceDefinition: { commit: "chore: save provider work", name: "docs" },
+        workspaceMode: "write",
+      }) as never)
+
+      expect(resolveCwd).toHaveBeenCalledOnce()
+      // SAFETY: The mocked provider runtime receives the provider root as cwd.
+      expect((createProviderRuntime.mock.lastCall![0] as { cwd: string }).cwd).toBe(cwd)
+      expect(launchCwd).toBe(cwd)
+      expect(materializeSources).toHaveBeenCalledOnce()
+      expect(workspace.startSession).not.toHaveBeenCalled()
+      expect(session.exec).not.toHaveBeenCalled()
+      expect(session.commit).not.toHaveBeenCalled()
+      expect(await readFile(join(cwd, "checkout.txt"), "utf8")).toBe("local checkout")
+    }
+    finally {
+      await rm(cwd, { force: true, recursive: true })
+    }
+  })
+
+  it("rejects a driver.cwd that is not an existing directory before the provider starts", async () => {
+    const missing = join(tmpdir(), `vitehub-cwd-missing-${crypto.randomUUID()}`)
+    const calls = createProviderRuntime.mock.calls.length
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    await expect(createProviderAgentAdapter({ cwd: missing, provider: "codex" }).generate(context("thread-provider-cwd-missing") as never))
+      .rejects.toMatchObject({ code: "AGENT_R0939" })
+    expect(createProviderRuntime.mock.calls.length).toBe(calls)
+    await expect(access(missing)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("keeps a disposable root for auxiliary runs when driver.cwd is set", async () => {
+    const threadId = "thread-provider-cwd-auxiliary"
+    const cwd = await mkdtemp(join(tmpdir(), "vitehub-cwd-test-"))
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    try {
+      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+      await createProviderAgentAdapter({ cwd, provider: "codex" }).generate(markAuxiliaryMessageChannelInstructionContext(context(threadId)) as never)
+      // SAFETY: The mocked provider runtime receives the provider root as cwd.
+      const root = (createProviderRuntime.mock.lastCall![0] as { cwd: string }).cwd
+      expect(root).not.toBe(cwd)
+      expect(root).toContain("vitehub-provider-")
+      await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" })
+      await access(cwd)
+    }
+    finally {
+      await rm(cwd, { force: true, recursive: true })
+    }
+  })
+
   it("writes successful workspace sessions back before cleanup", async () => {
     const threadId = "thread-workspace"
     runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])

@@ -542,6 +542,7 @@ export type {
   AgentProviderLaunchContext,
   AgentProviderLaunchResolver,
   AgentProviderSealedCredential,
+  AgentProviderWorkingDirectoryResolver,
   ClaudeCodeDriverOptions,
   CodexDriverOptions,
   CodexReasoningEffort,
@@ -2089,6 +2090,7 @@ function defineBaseAgent<
           ? await (providerAdapter ??= import("#vitehub/agent/provider-agent").then(module => module.createProviderAgentAdapter<CALL_OPTIONS, TRuntimeConfig>({
             credentialProfile: driver.credentialProfile,
             credentials: driver.credentials,
+            cwd: driver.cwd,
             env: driver.env,
             execution: driver.execution,
             instructions: driver.instructions,
