@@ -635,13 +635,15 @@ const activityIconPaths: Record<ActivityIcon, readonly string[]> = {
 };
 
 function renderActivityIcon(activity: InvocationActivity) {
+  const declaredIcon = activity.toolDisplay?.icon;
+  const Icon = declaredIcon ? getCurrentInstance()?.appContext.components.UIcon : undefined;
   return h("span", {
     class: "vh-invocation-event__icon",
     "data-failed": activity.status === "failed" ? "true" : undefined,
-    "data-icon": activityIcon(activity),
+    "data-icon": Icon ? declaredIcon : activityIcon(activity),
     "aria-hidden": "true",
   }, [
-    renderActivityIconSvg(activityIcon(activity)),
+    Icon ? h(Icon, { name: declaredIcon }) : renderActivityIconSvg(activityIcon(activity)),
     activity.status === "failed"
       ? h("svg", {
           class: "vh-invocation-event__failure-icon",
