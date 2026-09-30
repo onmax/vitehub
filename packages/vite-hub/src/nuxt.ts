@@ -756,10 +756,10 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     env: envOptions,
   } as Parameters<typeof vitehub>[0])
   const plan = resolveDeploymentPlan(options.preset)
-  // Nuxt defaults the Database driver to D1 on Cloudflare, so the Console journal follows the same binding.
+  const rootDir = nuxt.options.rootDir || process.cwd()
   const consoleJournal = resolveConsoleJournal(
     consoleDatabaseUrl(options),
-    consoleD1Binding(plan.preset, options.database && { ...(options.preset === "cloudflare" ? { driver: "d1" as const } : {}), ...(options.database === true ? {} : options.database) }),
+    consoleD1Binding(plan.preset, options.database, { root: rootDir, serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined }),
     !nuxt.options.dev,
   )
   const nitro = (nuxt.options.nitro ??= {})
@@ -774,7 +774,6 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     const wasm = (nitro.wasm ??= {}) as Record<string, unknown>
     wasm.lazy ??= true
   }
-  const rootDir = nuxt.options.rootDir || process.cwd()
   nuxt.options.vite ??= {}
   nuxt.options.vite.root ??= rootDir
   const viteRoot = resolve(rootDir, typeof nuxt.options.vite?.root === "string" ? nuxt.options.vite.root : rootDir)

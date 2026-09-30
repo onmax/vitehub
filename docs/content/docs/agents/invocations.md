@@ -341,7 +341,7 @@ export const invocations = defineAgentInvocations({
 })
 ```
 
-The store creates its table and indexes on first use in each Worker isolate. The statements use `CREATE ... IF NOT EXISTS`, so concurrent isolates and existing tables are safe. A failed creation is retried on the next operation.
+The store creates its table and indexes on first use of each binding in a Worker isolate. The statements use `CREATE ... IF NOT EXISTS`, so concurrent isolates and existing tables are safe. A failed creation is retried on the next operation.
 
 To manage the schema with your own migrations, set `migrate: false` and apply `d1AgentInvocationSchema()` before the first request:
 

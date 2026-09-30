@@ -36,7 +36,7 @@ describe("D1 Agent Invocation store", () => {
   beforeAll(async () => {
     miniflare = new Miniflare({
       compatibilityDate: "2026-07-14",
-      d1Databases: ["DB"],
+      d1Databases: ["DB", "SECOND_DB"],
       modules: true,
       script: "export default { fetch() { return new Response('test') } }",
     })
@@ -80,6 +80,22 @@ describe("D1 Agent Invocation store", () => {
     const tables = await database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'first_use_invocations'").all()
     expect(tables.results).toHaveLength(1)
     await expect(createD1AgentInvocationStore({ database, tablePrefix: "first_use_" }).get("one")).resolves.toMatchObject({ id: "one" })
+  })
+
+  it("initializes each request-resolved binding independently", async () => {
+    const second = await miniflare.getD1Database("SECOND_DB")
+    const bindings = [database, second]
+    let next = 0
+    const journal = createD1AgentInvocationStore({
+      database: () => bindings[next++ % bindings.length]!,
+      tablePrefix: "per_binding_",
+    })
+    await journal.get("first")
+    await journal.get("second")
+    await journal.create(invocation("first"))
+    await journal.create(invocation("second"))
+    expect(await journal.get("first")).toMatchObject({ id: "first" })
+    expect(await journal.get("second")).toMatchObject({ id: "second" })
   })
 
   it("runs the Agent journal lifecycle through a request-resolved D1 store", async () => {

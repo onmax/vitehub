@@ -31,7 +31,7 @@ export interface D1AgentInvocationStoreOptions {
   maxAgeMs?: false | number
   /** Maximum count of terminal records. Defaults to 10,000; false disables this limit. */
   maxRecords?: false | number
-  /** Create the table and indexes on first use in each isolate. Defaults to true. Set false when your own migrations apply `d1AgentInvocationSchema()`. */
+  /** Create the table and indexes on first use of each binding in an isolate. Defaults to true. Set false when your own migrations apply `d1AgentInvocationSchema()`. */
   migrate?: boolean
   tablePrefix?: string
 }
@@ -145,14 +145,14 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
   const schema = d1AgentInvocationSchema(options)
   const maxAgeMs = retention(options.maxAgeMs, 30 * 24 * 60 * 60 * 1000, 8_640_000_000_000_000)
   const maxRecords = retention(options.maxRecords, 10_000)
-  // Workers cannot share pending I/O between requests, so keep only the completed state.
-  let migrated = options.migrate === false
+  // Workers cannot share pending I/O between requests, so keep only completed bindings.
+  const migrated = new WeakSet<AgentInvocationD1Database>()
   const database = async () => {
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The public option accepts a D1 binding or a request-scoped factory; callability selects the factory member.
     const db = typeof options.database === "function" ? await options.database() : options.database
-    if (!migrated) {
+    if (options.migrate !== false && !migrated.has(db)) {
       await db.batch(schema.map(statement => db.prepare(statement)))
-      migrated = true
+      migrated.add(db)
     }
     return db
   }

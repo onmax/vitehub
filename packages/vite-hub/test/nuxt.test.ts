@@ -555,7 +555,9 @@ describe("ViteHub Nuxt integration", () => {
     await application.runCloseHook()
   })
 
-  it.each([true, false])("stores the Cloudflare Console journal in the default D1 Database binding (dev: %s)", async (dev) => {
+  it.each([true, false])("stores the Cloudflare Console journal in a discovered D1 Database binding (dev: %s)", async (dev) => {
+    await mkdir("/tmp/vitehub-nuxt/custom-server/databases", { recursive: true })
+    await writeFile("/tmp/vitehub-nuxt/custom-server/databases/config.ts", 'export default defineDatabase({ cloudflare: { binding: "APP_DB", databaseName: "app" }, schema: {} })\n')
     const application = createNuxt(dev)
     await viteHubNuxtModule({
       preset: "cloudflare",
@@ -566,7 +568,35 @@ describe("ViteHub Nuxt integration", () => {
 
     const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
     if (dev) expect(generated).not.toContain("cloudflare:workers")
-    else expect(generated).toContain(`d1: { binding: "DB", env: async () => (await import("cloudflare:workers")).env }`)
+    else expect(generated).toContain(`d1: { binding: "APP_DB", env: async () => (await import("cloudflare:workers")).env }`)
+    await application.runCloseHook()
+  })
+
+  it("uses an explicitly selected Nuxt D1 Database binding", async () => {
+    const application = createNuxt(false)
+    await viteHubNuxtModule({
+      preset: "cloudflare",
+      agent: true,
+      console: { exposure: "host-managed" },
+      database: { driver: "d1" },
+    }, application.nuxt)
+    const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
+    expect(generated).toContain('d1: { binding: "DB",')
+    await application.runCloseHook()
+  })
+
+  it("preserves an explicit Nuxt libSQL Console journal on Cloudflare", async () => {
+    const application = createNuxt(false)
+    await viteHubNuxtModule({
+      preset: "cloudflare",
+      agent: true,
+      console: { exposure: "host-managed" },
+      database: { connection: { url: "libsql://journal.example.com" } },
+    }, application.nuxt)
+
+    const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
+    expect(generated).toContain("installConsoleAgentDefinitions(")
+    expect(generated).not.toContain("cloudflare:workers")
     await application.runCloseHook()
   })
 

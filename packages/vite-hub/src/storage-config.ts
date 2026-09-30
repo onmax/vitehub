@@ -50,8 +50,8 @@ export function withDataDir(options: ViteHubOptions): ViteHubOptions {
 export type ConsoleJournal = { databaseUrl: string } | { d1Binding: string }
 
 /**
- * The D1 binding of the Database primitive on Cloudflare. Nuxt passes its D1 driver default as `database`.
- * Without `driver: "d1"`, Vite reads the `cloudflare` binding of the default or only Database Definition.
+ * The D1 binding of the Database primitive on Cloudflare.
+ * Without `driver: "d1"`, read the `cloudflare` binding of the default or only Database Definition.
  */
 export function consoleD1Binding(
   preset: string,
