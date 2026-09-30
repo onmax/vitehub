@@ -131,7 +131,7 @@ describe("gmail capability", () => {
     expect(() => gmail({ operations: ["send" as never] })).toThrow("gmail() requires")
     expect(() => gmail({ operations: [] })).toThrow("gmail() requires")
     expect(() => gmail({ connection: " " })).toThrow("gmail() requires")
-    await expect(tools(gmail(), undefined)).rejects.toThrow("requires the connections primitive")
+    await expect(tools(gmail(), undefined)).rejects.toThrow("gmail() uses Connection \"google\", so it requires Connections")
     await expect(tools(gmail(), { runtime: "nope" })).rejects.toThrow("requires the connections primitive to expose runtime()")
     await expect(tools(gmail(), { runtime: () => ({}) })).rejects.toThrow("expose the Gmail Operations")
   })

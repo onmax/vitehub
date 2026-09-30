@@ -1,7 +1,7 @@
 import * as v from "valibot"
 
 import { agentInvocationTraceIdContextKey } from "../trace.ts"
-import { requirePrimitive } from "./internal.ts"
+import { primitiveHandle } from "./internal.ts"
 
 import type { AgentCapabilityContext, AgentToolPolicyDecision } from "../types.ts"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
@@ -87,7 +87,11 @@ function optionalString(value: unknown): string | undefined {
 }
 
 export function useAgentConnection(context: AgentCapabilityContext, name: string, capability: string): AgentConnection {
-  const parsed = v.safeParse(primitiveSchema, requirePrimitive(context, "connections"))
+  const handle = primitiveHandle(context, "connections")
+  if (!handle) {
+    throw agentDiagnostics.AGENT_R0080({ message: `[vitehub] ${capability}() uses Connection "${name}", so it requires Connections. Set vitehub({ connections: true }).` })
+  }
+  const parsed = v.safeParse(primitiveSchema, handle)
   if (!parsed.success) {
     throw agentDiagnostics.AGENT_R0080({ message: `[vitehub] ${capability}() requires the connections primitive to expose runtime().` })
   }

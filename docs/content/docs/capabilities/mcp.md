@@ -81,7 +81,7 @@ mcp({
 })
 ```
 
-`connection` requires an `http` or `sse` transport config without `authProvider`. The Connection replaces `transport.fetch`. Set `connection` on a static client config in the server map.
+`connection` requires an `http` or `sse` transport config without `authProvider`. The Connection replaces `transport.fetch`. A resolver can also return a config with `connection`, for example to select the URL for each Invocation. Without `vitehub({ connections: true })`, resolution fails with an error that names the Connection.
 
 Each request maps to a Connection Operation id:
 

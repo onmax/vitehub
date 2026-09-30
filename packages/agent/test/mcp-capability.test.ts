@@ -296,6 +296,39 @@ describe("mcp capability", () => {
     }
   })
 
+  it("authorizes a resolved server config through a Connection", async () => {
+    const createMCPClient = vi.fn(async (_config: Record<string, unknown>) => createClient({ search: { execute: vi.fn(async () => "ok") } }))
+    vi.doMock("@ai-sdk/mcp", () => ({ createMCPClient }))
+    const connections = {
+      decide: vi.fn(async () => "allow" as const),
+      fetch: vi.fn(async (_name: string, _url: string | URL, _init: RequestInit | undefined, _options: unknown) => new Response("{}")),
+      record: vi.fn(async () => {}),
+    }
+
+    try {
+      const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+      const { mcp } = await import("../src/capabilities.ts")
+      const capability = mcp({
+        servers: { executor: () => ({ connection: "executor", transport: { type: "http", url: "https://executor.test/tenant/mcp" } }) },
+      })
+      await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), {}))
+        .rejects.toThrow("mcp() uses Connection \"executor\", so it requires Connections")
+
+      const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, {
+        ...runtime(),
+        capabilities: { connections: { runtime: () => connections } },
+      }, {})
+      const transport = createMCPClient.mock.calls.at(-1)?.[0]?.transport as { fetch: typeof globalThis.fetch }
+      await transport.fetch("https://executor.test/tenant/mcp", { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { name: "search" } }), method: "POST" })
+      expect(connections.fetch).toHaveBeenCalledWith("executor", "https://executor.test/tenant/mcp", expect.anything(), expect.objectContaining({ operation: "mcp.executor.tools.search" }))
+      expect(resolved.tools?.mcp_executor_search?.metadata).toMatchObject({ connection: { name: "executor", operation: "mcp.executor.tools.search" } })
+      await resolved.close()
+    }
+    finally {
+      vi.doUnmock("@ai-sdk/mcp")
+    }
+  })
+
   it("rejects a Connection on a transport it cannot authorize", async () => {
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
     const { mcp } = await import("../src/capabilities.ts")

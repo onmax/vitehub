@@ -42,7 +42,7 @@ function isHttpTransportConfig(transport: McpClientConfig["transport"]): transpo
   return "type" in transport && (transport.type === "http" || transport.type === "sse") && "url" in transport
 }
 
-/** A static server config that names a Connection. Resolvers are checked when they run. */
+/** A static server config that names a Connection. A resolver can also return `connection`; `useAgentConnection()` checks the primitive when it runs. */
 const connectionConfigSchema = v.looseObject({ connection: v.string(), transport: v.looseObject({}) })
 
 const jsonRpcRequestSchema = v.object({
