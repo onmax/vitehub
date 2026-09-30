@@ -33,7 +33,7 @@ it.each([
 ])("rejects relative Channel-map imports: %s", async (binding, declaration) => {
   const source = `${imports} import ${binding} from "../../channels"; export default defineAgent({ channels })`
   const files = { "channels.ts": `import { github } from "vite-hub/agent/channels"; ${declaration}` }
-  await expect(discover(source, files)).rejects.toThrow("cannot inspect an imported Channel")
+  await expect(discover(source, files)).rejects.toThrow(/opaque Channel|cannot inspect an imported Channel/)
   await expect(discover(source.replace("defineAgent({ channels })", "defineAgent({ channels: { ...channels } })"), files)).rejects.toThrow("cannot inspect an imported Channel")
   const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
   expect(definition?.workspace).toBe("review")
@@ -355,6 +355,7 @@ it.each([
   'options.pullRequest.workspace = true',
   'options["pullRequest"]["workspace"] = true',
   'const alias = options; alias["pullRequest"] = true',
+  'for (const alias of [options]) alias.pullRequest = true',
   'options.pullRequest ||= true',
   'options.pullRequest.workspace ||= true',
   'options.pullRequest ??= { workspace: true }',
@@ -413,7 +414,15 @@ it.each([
 it("rejects a reassigned relative Channel export", async () => {
   const source = 'import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })'
   const files = { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export let portal = github({ pullRequest: false }); portal = github({ pullRequest: true })' }
-  await expect(discover(source, files)).rejects.toThrow("cannot inspect an imported Channel")
+  await expect(discover(source, files)).rejects.toThrow(/opaque Channel|cannot inspect an imported Channel/)
+  const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
+  expect(definition?.workspace).toBe("review")
+})
+
+it("rejects a mutated loop alias in a relative Channel export", async () => {
+  const source = 'import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })'
+  const files = { "portal.ts": 'import { github } from "vite-hub/agent/channels"; const options = { pullRequest: false }; const portal = github(options); for (const alias of [portal]) alias.capabilities = []; export default portal' }
+  await expect(discover(source, files)).rejects.toThrow(/opaque Channel|cannot inspect an imported Channel/)
   const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
   expect(definition?.workspace).toBe("review")
 })

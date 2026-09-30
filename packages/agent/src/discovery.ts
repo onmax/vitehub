@@ -611,6 +611,19 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
     }
   }
+  for (let index = 0; index < tokens.length; index++) {
+    if (tokens[index] !== "of" || !/^[A-Za-z_$][\w$]*$/.test(tokens[index - 1] ?? "")) continue
+    let declaration = index - 2
+    while (declaration >= 0 && !["const", "let", "var", "for"].includes(tokens[declaration]!)) declaration--
+    if (!["const", "let", "var"].includes(tokens[declaration]!)) continue
+    const alias = tokens[index - 1]!
+    const targets = containerAliasTargets(index + 1)
+    if (targets.length) {
+      const aliases = assignedAliases.get(alias) ?? new Set<string>()
+      for (const target of targets) aliases.add(target)
+      assignedAliases.set(alias, aliases)
+    }
+  }
   const opaqueCalls = new Set<number>()
   const trustedCalls = new Set<number>()
   const parameterLists = new Set([...functionScopes].map(scope => openingDelimiters.get(scope - 1)))
