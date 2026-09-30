@@ -620,6 +620,33 @@ describe("ViteHub Nuxt integration", () => {
     await application.runCloseHook()
   })
 
+  it.each([undefined, "data"])("discovers the Nuxt Console D1 journal above an app root with Database projectRoot %s", async (databaseProjectRoot) => {
+    const directory = await mkdtemp("/tmp/vitehub-nuxt-journal-root-")
+    try {
+      const appRoot = resolve(directory, "app")
+      const databaseRoot = databaseProjectRoot ? resolve(appRoot, databaseProjectRoot) : directory
+      await mkdir(appRoot, { recursive: true })
+      await writeFile(resolve(directory, "package.json"), '{"name":"journal-root"}\n')
+      await mkdir(resolve(databaseRoot, "src"), { recursive: true })
+      await writeFile(resolve(databaseRoot, "src/database.ts"), 'export default defineDatabase({ cloudflare: { binding: "PROJECT_DB", databaseName: "project" }, schema: {} })\n')
+      const application = createNuxt(false)
+      application.nuxt.options.rootDir = appRoot
+      application.nuxt.options.serverDir = resolve(appRoot, "server")
+      await viteHubNuxtModule({
+        preset: "cloudflare",
+        agent: true,
+        console: { exposure: "host-managed" },
+        database: databaseProjectRoot ? { projectRoot: databaseProjectRoot } : true,
+      }, application.nuxt)
+      const generated = await readFile(resolve(directory, ".vitehub/nitro/console/plugin.mjs"), "utf8")
+      expect(generated).toContain('d1: { binding: "PROJECT_DB",')
+      await application.runCloseHook()
+    }
+    finally {
+      await rm(directory, { force: true, recursive: true })
+    }
+  })
+
   it("preserves an explicit Nuxt libSQL Console journal on Cloudflare", async () => {
     const application = createNuxt(false)
     await viteHubNuxtModule({

@@ -757,6 +757,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   } as Parameters<typeof vitehub>[0])
   const plan = resolveDeploymentPlan(options.preset)
   const rootDir = nuxt.options.rootDir || process.cwd()
+  const projectRoot = resolveViteHubProjectRoot(rootDir)
   const configuredOptions = options.database && nuxt.options.database && typeof nuxt.options.database === "object"
     ? {
         ...options,
@@ -766,9 +767,13 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         },
       }
     : options
+  // Explicit Database roots are relative to Nuxt's rootDir; automatic discovery uses the ViteHub project root.
+  const consoleDatabaseRoot = configuredOptions.database && configuredOptions.database !== true && configuredOptions.database.projectRoot !== undefined
+    ? rootDir
+    : projectRoot
   const consoleJournal = resolveConsoleJournal(
     consoleDatabaseUrl(options),
-    consoleD1Binding(plan.preset, configuredOptions.database, { root: rootDir, serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined }),
+    consoleD1Binding(plan.preset, configuredOptions.database, { root: consoleDatabaseRoot, serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined }),
     !nuxt.options.dev,
   )
   const nitro = (nuxt.options.nitro ??= {})
@@ -786,7 +791,6 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   nuxt.options.vite ??= {}
   nuxt.options.vite.root ??= rootDir
   const viteRoot = resolve(rootDir, typeof nuxt.options.vite?.root === "string" ? nuxt.options.vite.root : rootDir)
-  const projectRoot = resolveViteHubProjectRoot(rootDir)
   const configuredDatabaseDiscoveryRoot = configuredProjectRoot(viteRoot, nuxt.options.vite?.database)
     ?? configuredProjectRoot(rootDir, options.database)
   // SAFETY: ViteHub Blob extends Vite's open user config with the documented top-level `blob` key.
