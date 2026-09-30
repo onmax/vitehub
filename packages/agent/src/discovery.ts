@@ -863,9 +863,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // no literal property to inspect. Invalidate direct local RHS bindings so a
   // later mutation through that property cannot use a stale initializer.
   for (let index = 0; index + 4 < tokens.length; index++) {
-    if (tokens[index + 1] !== "." || !assignmentOperator(index + 3)) continue
-    const target = tokens[index + 4]
-    if (target && isIdentifier(target) && visibleDeclaration(index + 4) !== undefined) {
+    if (![".", "["].includes(tokens[index + 1]!)) continue
+    let assignment = memberCallEnd(index)
+    if (!assignmentOperator(assignment)) continue
+    while (tokens[assignment] !== "=") assignment++
+    const target = tokens[assignment + 1]
+    if (target && isIdentifier(target) && visibleDeclaration(assignment + 1) !== undefined) {
       mutatedBindings.add(target)
     }
   }

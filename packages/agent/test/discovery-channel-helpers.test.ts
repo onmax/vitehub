@@ -634,6 +634,20 @@ it("records every local declarator", async () => {
 })
 
 it.each([
+  'holder.options = options; holder.options.pullRequest = true',
+  'holder["options"] = options; holder["options"].pullRequest = true',
+  'holder[key] = options; holder[key].pullRequest = true',
+  'holder[0] = options; holder[0].pullRequest = true',
+  'holder.nested["options"] = options; holder.nested["options"].pullRequest = true',
+  'holder["options"] ||= options; holder["options"].pullRequest = true',
+])("rejects Channel options stored through property assignments: %s", async mutation => {
+  const source = `${imports} const options = { pullRequest: false }; const holder = { nested: {} }; const key = "options"; ${mutation}; export default defineAgent({ channels: { github: github(options) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+  const explicit = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
+  expect(explicit?.workspace).toBe("review")
+})
+
+it.each([
   'options.pullRequest = true',
   'opt\\u0069ons.pullRequest = true',
   'const \\u03c0 = options; π.pullRequest = true',
