@@ -74,6 +74,12 @@ Use `runAgent(agent, input)` in a script to get `[null, result]` or `[Error, nul
 
 `runAgent(agent, runtimeContext, input)` keeps the host context, returns the result directly, and throws failures. Use this form for request metadata, runtime configuration, and streams that require a host background lifetime. Errors during later stream or Response-body consumption are outside the two-argument tuple. See the [invocation guide](https://vitehub.dev/docs/agents/invocations).
 
+## Structured data and interception
+
+Set `defineAgent({ data })` to a Standard Schema to validate `input.data` before Capabilities, hooks, and the Driver run. Invalid data fails the Invocation. Call sites use the schema input type; hooks and `intercept` receive the schema output type. Model and provider Drivers do not read `data`, so pass model text in `prompt` or `messages`.
+
+Set `defineAgent({ intercept })` to finish an Invocation before the Driver runs. Return `undefined` to continue, or a value to use as the Invocation output. `runAgent()` types its output as the union of the `intercept` return type and the `driver.output` schema output. `agent:finish` hooks receive the intercepted value, and the finish trace event records `agent.intercepted: true`. See [Agent Definitions](https://vitehub.dev/docs/agents/agent-definitions#finish-before-the-driver).
+
 ## Custom Capability tools
 
 Custom Capability tools infer their handler input from inline Standard Schema validators. Schema transforms and optional outputs keep their types. A mismatched handler is a type error. Raw JSON Schema needs an explicit handler input type. Use `defineCapability<Config>()({...})` when you set the runtime config type. See the [custom Capability guide](https://vitehub.dev/docs/capabilities/custom-capabilities).
@@ -292,6 +298,8 @@ export default defineConfig({
 ```
 
 `provider: "sqlite"` uses the built-in libSQL-compatible state backend, so `file:` URLs work for local or explicitly persistent Node deployments and hosted libSQL URLs work remotely. Cloudflare, Vercel, and Netlify production output rejects `file:` Agent state before it can write to an ephemeral filesystem.
+
+Queued webhook deliveries in this state survive a restart. A persistent Nitro server resumes them when it starts, without an inbound request. Before the queue resumes, the server fails each Agent's pending or running invocations that started before this process. An invocation that a persisted queued delivery runs again under the same run ID stays active and continues with that delivery. Agents with a durable Workflow runtime are skipped. Vercel and Netlify output resumes the queue on the first webhook request and does not recover invocations.
 
 You can also wire the adapter manually when `chat({ state })` should own the state provider:
 
