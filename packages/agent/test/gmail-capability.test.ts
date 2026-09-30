@@ -325,21 +325,25 @@ describe("gmail capability", () => {
     expect(runtime.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "gmail.messages.get", outcome: "denied", tool: "gmail_draft" }), event)
   })
 
-  it("marks only the Operations that the tool policy checked as approved", async () => {
+  it("passes approval only to the run of the approved input, once", async () => {
     const { primitive, runtime } = connections({
       decisions: { "gmail.drafts.create": "require-approval" },
       responses: { "gmail.drafts.create": () => ({ id: "d1", message: { id: "m2", threadId: "t1" } }) },
     })
     const draftTools = await tools(gmail({ operations: ["search", "draft"] }), primitive)
     const input = { body: "x", subject: "Hi", to: ["a@example.com"] }
-    // Before the policy ran, the Connection guard alone decides.
-    await run(draftTools.gmail_draft, input)
-    expect(runtime.call.mock.calls[0]?.[3]).not.toHaveProperty("approved")
-
-    // The tool flow asks for approval, then runs the approved tool without the policy.
+    // The tool flow asks for approval, then runs the approved tool with the same input object.
     expect(await decide(draftTools.gmail_draft, input)).toBe("require-approval")
     await run(draftTools.gmail_draft, input)
-    expect(runtime.call.mock.calls[1]?.[3]).toMatchObject({ approved: true, trace: { tool: "gmail_draft" } })
+    expect(runtime.call.mock.calls[0]?.[3]).toMatchObject({ approved: true, trace: { tool: "gmail_draft" } })
+
+    // Another run, even with equal content or the same object again, is not approved.
+    await run(draftTools.gmail_draft, { ...input })
+    await run(draftTools.gmail_draft, input)
+    expect(runtime.call.mock.calls.slice(1).map(([, , , options]) => options)).toEqual([
+      expect.not.objectContaining({ approved: true }),
+      expect.not.objectContaining({ approved: true }),
+    ])
   })
 
   it("keeps a denial when the activity store fails", async () => {

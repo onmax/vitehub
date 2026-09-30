@@ -60,6 +60,8 @@ export interface AgentConnectionsPrimitive {
 }
 
 export interface AgentConnectionFetchOptions {
+  /** True only for a tool run that `approval()` granted this Operation. */
+  approved?: boolean
   audit?: "all" | "changes"
   effect?: AgentConnectionEffect
   operation: string
@@ -69,13 +71,22 @@ export interface AgentConnectionFetchOptions {
 type AgentConnectionPolicyOperation = { effect: AgentConnectionEffect, id: string }
 export type AgentConnectionPolicyOperations = ReadonlyArray<AgentConnectionPolicyOperation> | ((input: unknown) => ReadonlyArray<AgentConnectionPolicyOperation>)
 
+function isObject(value: unknown): value is object {
+  return v.is(v.union([v.looseObject({}), v.array(v.unknown())]), value)
+}
+
 function isOperationList(value: AgentConnectionPolicyOperations): value is ReadonlyArray<AgentConnectionPolicyOperation> {
   return Array.isArray(value)
 }
 
 /** A Connection bound to one Agent Invocation. Every call records activity for the Agent actor. */
 export interface AgentConnection {
-  call: <TInput>(tool: string, operation: AgentConnectionOperation<TInput>, input: TInput) => Promise<unknown>
+  /**
+   * Operations that the user approved for this exact tool input. It returns them once, so only the approved
+   * run can pass them to `call` or `fetch`. Other runs get an empty set.
+   */
+  approval: (input: unknown) => ReadonlySet<string>
+  call: <TInput>(tool: string, operation: AgentConnectionOperation<TInput>, input: TInput, approved?: ReadonlySet<string>) => Promise<unknown>
   /** Authenticated fetch. `audit: "changes"` records only writes, denials, and failures. Default: `"all"`. */
   fetch: (request: AgentConnectionFetchOptions, url: string | URL, init?: RequestInit) => Promise<Response>
   readonly name: string
@@ -110,26 +121,31 @@ export function useAgentConnection(context: AgentCapabilityContext, name: string
   const primitive = parsed.output
   const runtime = primitive.runtime()
   const actor: AgentConnectionActor = { id: context.agentIdentity?.name ?? "agent", kind: "agent" }
-  // Operations that a tool policy allowed or sent to approval, by tool. The tool runs only after that policy passed,
-  // so a later `require-approval` for the same Operation comes from the approval that the tool flow already granted.
-  const checked = new Map<string, Set<string>>()
-  const approved = (tool: string | undefined, operation: string) => tool !== undefined && checked.get(tool)?.has(operation) === true
+  // Operations that wait for approval, keyed by the tool input object. The tool approval flow runs the approved
+  // tool with the same input object, and `approval()` consumes the entry, so no other run inherits it.
+  const awaiting = new WeakMap<object, ReadonlySet<string>>()
   const trace = (tool: string | undefined): AgentConnectionTrace => ({
     invocationId: optionalString(context.context.get(agentInvocationTraceIdContextKey)),
     runId: optionalString(context.run?.runId),
     ...(tool ? { tool } : {}),
   })
   return {
-    call: (tool, operation, input) => runtime.call(name, operation, input, {
+    approval: (input) => {
+      if (!isObject(input)) return new Set()
+      const operations = awaiting.get(input) ?? new Set<string>()
+      awaiting.delete(input)
+      return operations
+    },
+    call: (tool, operation, input, approved) => runtime.call(name, operation, input, {
       actor,
-      ...(approved(tool, operation.id) ? { approved: true } : {}),
+      ...(approved?.has(operation.id) ? { approved: true } : {}),
       audit: "all",
       event: context.event,
       trace: trace(tool),
     }),
     fetch: (request, url, init) => runtime.fetch(name, url, init, {
       actor,
-      ...(approved(request.tool, request.operation) ? { approved: true } : {}),
+      ...(request.approved ? { approved: true } : {}),
       audit: request.audit ?? "all",
       ...(request.effect ? { effect: request.effect } : {}),
       event: context.event,
@@ -148,10 +164,9 @@ export function useAgentConnection(context: AgentCapabilityContext, name: string
         }
         if (decision === "require-approval") pending ??= operation
       }
-      const passed = checked.get(tool) ?? new Set<string>()
-      for (const operation of operations) passed.add(operation.id)
-      checked.set(tool, passed)
       if (!pending) return "allow"
+      // Inputs that are not objects cannot be matched to their approved run, so they stay unapproved.
+      if (isObject(input)) awaiting.set(input, new Set(operations.map(operation => operation.id)))
       await record(runtime, context, { ...trace(tool), action: "call", actor, connection: name, effect: pending.effect, operation: pending.id, outcome: "approval-required" })
       return "require-approval"
     },

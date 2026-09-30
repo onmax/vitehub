@@ -303,6 +303,44 @@ describe("mcp capability", () => {
     }
   })
 
+  it("passes an approved MCP tool run to its tools/call request only", async () => {
+    let transportFetch: typeof globalThis.fetch | undefined
+    const callTool = async (id: number) => transportFetch?.("https://executor.test/mcp", { body: JSON.stringify({ id, jsonrpc: "2.0", method: "tools/call", params: { name: "execute" } }), method: "POST" })
+    const createMCPClient = vi.fn(async (config: { transport: { fetch: typeof globalThis.fetch } }) => {
+      transportFetch = config.transport.fetch
+      return createClient({ execute: { execute: vi.fn(async () => { await callTool(1); return "ok" }) } })
+    })
+    vi.doMock("@ai-sdk/mcp", () => ({ createMCPClient }))
+    const connections = {
+      decide: vi.fn(async () => "require-approval" as const),
+      fetch: vi.fn(async (_name: string, _url: string | URL, _init: RequestInit | undefined, _options: unknown) => new Response("{}")),
+      record: vi.fn(async () => {}),
+    }
+    try {
+      const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+      const { mcp } = await import("../src/capabilities.ts")
+      const resolved = await resolveAgentCapabilities({ capabilities: [mcp({ servers: { executor: { connection: "executor", transport: { type: "http", url: "https://executor.test/mcp" } } } })] }, {
+        ...runtime(),
+        capabilities: { connections: { runtime: () => connections } },
+      }, {})
+      const tool = resolved.tools?.mcp_executor_execute
+      if (typeof tool?.policy !== "function" || !tool.execute) throw new Error("expected a Connection tool")
+      const input = { code: "1 + 1" }
+      await expect(tool.policy({ input, name: "mcp_executor_execute" })).resolves.toBe("require-approval")
+      // SAFETY: The MCP tool wrapper does not read the execution options.
+      await tool.execute(input, {} as never)
+      // A request outside an approved run, and a second run, are not approved.
+      await callTool(2)
+      // SAFETY: The MCP tool wrapper does not read the execution options.
+      await tool.execute({ ...input }, {} as never)
+      expect(connections.fetch.mock.calls.map(([, , , options]) => (options as { approved?: boolean }).approved === true)).toEqual([true, false, false])
+      await resolved.close()
+    }
+    finally {
+      vi.doUnmock("@ai-sdk/mcp")
+    }
+  })
+
   it("authorizes a resolved server config through a Connection", async () => {
     const createMCPClient = vi.fn(async (_config: Record<string, unknown>) => createClient({ search: { execute: vi.fn(async () => "ok") } }))
     vi.doMock("@ai-sdk/mcp", () => ({ createMCPClient }))
