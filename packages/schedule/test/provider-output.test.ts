@@ -4,8 +4,9 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
 import { createDefaultCloudflareOutputRoot, createDefaultNetlifyOutputRoot, withProviderDeploymentOutputLock } from "@vite-hub/internal/build/deployment-output"
+import * as esbuild from "@vite-hub/internal/build/esbuild"
 import { createVercelConfigJson } from "@vite-hub/internal/build/vercel-config"
 
 import { createNetlifyScheduleFunctionOutputs, generateProviderOutputs, generateProviderOutputsWithinLock, resolveScheduleDefinitionEntry, resolveScheduleRuntimeEntry, validateProviderCron, writeVercelScheduleFunctions } from "../src/internal/provider-output.ts"
@@ -67,6 +68,77 @@ describe("schedule provider output", () => {
       expect(Reflect.get(globalThis, "scheduleUrl")).toBe(origin ? `${origin}${base}_vitehub/agents/worker/invocations/invocation` : undefined)
     }
     Reflect.deleteProperty(globalThis, "scheduleUrl")
+  })
+
+  it("waits for sibling Netlify bundles before releasing the lock after failure", async () => {
+    const rootDir = await createTempProject("vitehub-schedule-netlify-failure-")
+    await generateProviderOutputs({ clientOutDir: "dist/client", rootDir })
+    const functionRoot = join(createDefaultNetlifyOutputRoot(rootDir), "functions")
+    const previousFunction = join(functionRoot, "vitehub-schedule-cleanup.mjs")
+    const previousOutput = await readFile(previousFunction, "utf8")
+    await writeFile(join(rootDir, "src", "sibling.schedule.ts"), [
+      "import { defineSchedule } from '@vite-hub/schedule'",
+      "export default defineSchedule({ cron: '0 0 * * *', handler: () => 'sibling' })",
+    ].join("\n"))
+
+    let markSiblingStarted!: () => void
+    let releaseSibling!: () => void
+    let markFailureStarted!: () => void
+    let markSiblingFinished!: () => void
+    const siblingStarted = new Promise<void>(resolve => { markSiblingStarted = resolve })
+    const siblingGate = new Promise<void>(resolve => { releaseSibling = resolve })
+    const failureStarted = new Promise<void>(resolve => { markFailureStarted = resolve })
+    const siblingFinished = new Promise<void>(resolve => { markSiblingFinished = resolve })
+    const originalBundle = esbuild.bundleEsmEntry
+    const bundle = vi.spyOn(esbuild, "bundleEsmEntry").mockImplementation(async (entry, output, options) => {
+      if (!output.startsWith(`${functionRoot}.pending/`)) return await originalBundle(entry, output, options)
+      if (output.endsWith("vitehub-schedule-cleanup.mjs")) {
+        await siblingStarted
+        markFailureStarted()
+        throw new Error("Netlify bundle failed")
+      }
+      markSiblingStarted()
+      await siblingGate
+      try {
+        await originalBundle(entry, output, options)
+      }
+      finally {
+        markSiblingFinished()
+      }
+    })
+    let settled = false
+    let lockReleased = false
+    const generation = generateProviderOutputs({ clientOutDir: "dist/client", rootDir }).then(
+      () => { settled = true; return undefined },
+      (error: unknown) => { settled = true; return error },
+    )
+    let nextWriter: Promise<void> | undefined
+    try {
+      await failureStarted
+      nextWriter = withProviderDeploymentOutputLock(rootDir, async () => { lockReleased = true })
+      await new Promise(resolve => setTimeout(resolve, 200))
+      expect(settled).toBe(false)
+      expect(lockReleased).toBe(false)
+      expect(existsSync(`${functionRoot}.pending`)).toBe(true)
+      await expect(readFile(previousFunction, "utf8")).resolves.toBe(previousOutput)
+
+      releaseSibling()
+      expect(await generation).toEqual(new Error("Netlify bundle failed"))
+      await nextWriter
+      expect(lockReleased).toBe(true)
+      expect(existsSync(`${functionRoot}.pending`)).toBe(false)
+      await expect(readFile(previousFunction, "utf8")).resolves.toBe(previousOutput)
+      expect(existsSync(join(functionRoot, "vitehub-schedule-sibling.mjs"))).toBe(false)
+    }
+    finally {
+      releaseSibling()
+      await generation
+      await siblingFinished
+      await nextWriter
+      bundle.mockRestore()
+    }
+    await generateProviderOutputs({ clientOutDir: "dist/client", rootDir })
+    expect(existsSync(join(functionRoot, "vitehub-schedule-sibling.mjs"))).toBe(true)
   })
 
   it("does not publish Schedule output after finalization is canceled", async () => {

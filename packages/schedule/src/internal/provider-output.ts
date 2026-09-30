@@ -610,73 +610,80 @@ async function writeNetlifyScheduleFunctions(options: {
   const includedSourcesDir = relative(functionRoot, netlifySourcesDir).replace(/\\/g, "/")
   const stagedFunctionRoot = `${functionRoot}.pending`
   const backupFunctionRoot = `${functionRoot}.previous`
-  await rm(stagedFunctionRoot, { force: true, recursive: true })
-  await cp(functionRoot, stagedFunctionRoot, { force: true, recursive: true }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== "ENOENT") throw error
-  })
-  const existingFiles = await readdir(stagedFunctionRoot).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? [] : Promise.reject(error))
-  await Promise.all(existingFiles.filter(file => /^vitehub-schedule-.+\.mjs$/.test(file)).map(file => rm(resolve(stagedFunctionRoot, file), { force: true, recursive: true })))
+  try {
+    await rm(stagedFunctionRoot, { force: true, recursive: true })
+    await cp(functionRoot, stagedFunctionRoot, { force: true, recursive: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error
+    })
+    const existingFiles = await readdir(stagedFunctionRoot).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? [] : Promise.reject(error))
+    await Promise.all(existingFiles.filter(file => /^vitehub-schedule-.+\.mjs$/.test(file)).map(file => rm(resolve(stagedFunctionRoot, file), { force: true, recursive: true })))
 
-  const outputs = await createNetlifyScheduleFunctionOutputs({
-    definitions: options.definitions,
-    functionRoot: stagedFunctionRoot,
-    includedSourcesDir: existsSync(publishedSourcesDir) ? includedSourcesDir : undefined,
-    registryFile: options.registryFile,
-  })
-  options.signal?.throwIfAborted()
-  if (outputs.length === 0) {
-    await mkdir(stagedFunctionRoot, { recursive: true })
-  }
-  else {
-    await mkdir(stagedFunctionRoot, { recursive: true })
+    const outputs = await createNetlifyScheduleFunctionOutputs({
+      definitions: options.definitions,
+      functionRoot: stagedFunctionRoot,
+      includedSourcesDir: existsSync(publishedSourcesDir) ? includedSourcesDir : undefined,
+      registryFile: options.registryFile,
+    })
     options.signal?.throwIfAborted()
-    await Promise.all(outputs.map(async (output) => {
-      const wrapperFile = `${output.file}.source.mjs`
-      await writeFile(wrapperFile, output.source, { encoding: "utf8", signal: options.signal })
-      try {
-        await bundleEsmEntry(wrapperFile, output.file, {
-          alias: options.bundleAlias,
-          define: options.bundleDefines,
-          external: options.bundleExternal,
-          format: "esm",
-          platform: "node",
-          plugins: [createScheduleDefinitionAliasPlugin()],
-          rootDir: options.sourceRootDir ?? options.rootDir,
-          signal: options.signal,
-          workingDir: options.sourceRootDir ?? options.rootDir,
-        })
-      }
-      finally {
-        await rm(wrapperFile, { force: true })
-      }
-    }))
-  }
-  await publishProviderSourcesToDeploymentOutputs({
-    destinations: [{
-      files: outputs.map(output => output.file),
-      runtimeSourcesDir: relative(options.rootDir, netlifySourcesDir).replace(/\\/g, "/"),
-      sourcesDir: netlifySourcesDir,
-    }],
-    publishedSourcesDir,
-    signal: options.signal,
-  })
-  options.signal?.throwIfAborted()
-  rmSync(backupFunctionRoot, { force: true, recursive: true })
-  try {
-    renameSync(functionRoot, backupFunctionRoot)
-  }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-  }
-  try {
-    renameSync(stagedFunctionRoot, functionRoot)
+    if (outputs.length === 0) {
+      await mkdir(stagedFunctionRoot, { recursive: true })
+    }
+    else {
+      await mkdir(stagedFunctionRoot, { recursive: true })
+      options.signal?.throwIfAborted()
+      const results = await Promise.allSettled(outputs.map(async (output) => {
+        const wrapperFile = `${output.file}.source.mjs`
+        await writeFile(wrapperFile, output.source, { encoding: "utf8", signal: options.signal })
+        try {
+          await bundleEsmEntry(wrapperFile, output.file, {
+            alias: options.bundleAlias,
+            define: options.bundleDefines,
+            external: options.bundleExternal,
+            format: "esm",
+            platform: "node",
+            plugins: [createScheduleDefinitionAliasPlugin()],
+            rootDir: options.sourceRootDir ?? options.rootDir,
+            signal: options.signal,
+            workingDir: options.sourceRootDir ?? options.rootDir,
+          })
+        }
+        finally {
+          await rm(wrapperFile, { force: true })
+        }
+      }))
+      const failure = results.find(result => result.status === "rejected")
+      if (failure) throw failure.reason
+    }
+    await publishProviderSourcesToDeploymentOutputs({
+      destinations: [{
+        files: outputs.map(output => output.file),
+        runtimeSourcesDir: relative(options.rootDir, netlifySourcesDir).replace(/\\/g, "/"),
+        sourcesDir: netlifySourcesDir,
+      }],
+      publishedSourcesDir,
+      signal: options.signal,
+    })
+    options.signal?.throwIfAborted()
     rmSync(backupFunctionRoot, { force: true, recursive: true })
+    try {
+      renameSync(functionRoot, backupFunctionRoot)
+    }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    }
+    try {
+      renameSync(stagedFunctionRoot, functionRoot)
+      rmSync(backupFunctionRoot, { force: true, recursive: true })
+    }
+    catch (error) {
+      if (existsSync(backupFunctionRoot)) renameSync(backupFunctionRoot, functionRoot)
+      throw error
+    }
+    if (outputs.length === 0) await removeEmptyDirectories(functionRoot, options.rootDir)
   }
-  catch (error) {
-    if (existsSync(backupFunctionRoot)) renameSync(backupFunctionRoot, functionRoot)
-    throw error
+  finally {
+    await rm(stagedFunctionRoot, { force: true, recursive: true })
   }
-  if (outputs.length === 0) await removeEmptyDirectories(functionRoot, options.rootDir)
 }
 
 async function writeCloudflareScheduleOutput(options: {
