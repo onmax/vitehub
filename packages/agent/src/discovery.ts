@@ -1003,6 +1003,30 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return undefined
   }
 
+  function staticConditionalBranch(index: number): number | undefined {
+    if ((tokens[index] !== "true" && tokens[index] !== "false") || tokens[index + 1] !== "?") return
+    let depth = 0
+    for (let i = index; i < tokens.length; i++) {
+      const token = tokens[i]
+      if (depth === 0 && token === "?") {
+        const consequent = i + 1
+        let branchDepth = 0
+        for (let j = consequent; j < tokens.length; j++) {
+          const branchToken = tokens[j]
+          if (["(", "[", "{"].includes(branchToken)) branchDepth++
+          else if ([")", "]", "}"].includes(branchToken)) branchDepth--
+          else if (branchToken === ":" && branchDepth === 0) {
+            return tokens[index] === "true" ? consequent : j + 1
+          }
+        }
+        return
+      }
+      if (["(", "[", "{"].includes(token)) depth++
+      else if ([")", "]", "}"].includes(token)) depth--
+      else if (depth === 0 && [";", ",", ")", "]", "}"].includes(token)) return
+    }
+  }
+
   function hasLogicalOperator(index: number): boolean {
     let depth = 0
     for (let i = index; i < tokens.length; i++) {
@@ -1618,6 +1642,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   function pullRequestOwnsWorkspace(index: number, seen = new Set<number>()): boolean {
     if (seen.has(index)) throw pullRequestError()
     seen.add(index)
+    const staticBranch = staticConditionalBranch(index)
+    if (staticBranch !== undefined) return pullRequestOwnsWorkspace(staticBranch, new Set(seen))
     const branches = conditionalBranches(index)
     if (branches) return branches.some(branch => pullRequestOwnsWorkspace(branch, new Set(seen)))
     if (hasLogicalOperator(index)) throw pullRequestError()
@@ -1640,6 +1666,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   function pullRequestWorkspaceEnabled(index: number, seen = new Set<number>()): boolean {
     if (seen.has(index)) throw pullRequestError()
     seen.add(index)
+    const staticBranch = staticConditionalBranch(index)
+    if (staticBranch !== undefined) return pullRequestWorkspaceEnabled(staticBranch, new Set(seen))
     const branches = conditionalBranches(index)
     if (branches) return branches.some(branch => pullRequestWorkspaceEnabled(branch, new Set(seen)))
     if (hasLogicalOperator(index)) throw pullRequestError()
