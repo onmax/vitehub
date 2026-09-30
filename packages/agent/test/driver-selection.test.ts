@@ -15,6 +15,14 @@ describe("built-in Agent Driver selection", () => {
     expect(() => defineAgent({ driver: { kind: "codex", launch: { command: "codex", onExit: "invalid" } } } as never)).toThrow("driver.launch.onExit");
   });
 
+  it("keeps and validates provider Driver requirements", () => {
+    expect(normalizeAgentDriver({ driver: { kind: "codex", requirements: ["git", "gh", "apply_patch"] } })).toMatchObject({
+      requirements: ["git", "gh", "apply_patch"],
+    });
+    // SAFETY: This fixture supplies a shell expression to test runtime validation.
+    expect(() => defineAgent({ driver: { kind: "codex", requirements: ["git; rm -rf /"] } } as never)).toThrow("driver.requirements");
+  });
+
   it("normalizes the common retry setting into AI SDK call settings", () => {
     // SAFETY: This test needs only the resolver's presence; provider execution is not invoked.
     expect(normalizeAgentDriver({

@@ -99,6 +99,7 @@ export interface ProviderAgentAdapterOptions<
   providerSettings?: Record<string, unknown>
   reasoningEffort?: CodexReasoningEffort
   reasoningSummary?: CodexReasoningSummary
+  requirements?: readonly string[]
   sessionStorePath?: string
 }
 
@@ -1152,6 +1153,38 @@ async function prepareCodexCredentials<TRuntimeConfig extends AgentRuntimeConfig
 }
 
 const providerStatusCache = new WeakMap<object, Map<string, AgentProviderStatus>>()
+const providerRequirementScript = 'for command do command -v "$command" >/dev/null 2>&1 || printf "%s\\n" "$command"; done'
+
+/** Return the required commands that the Driver shell cannot find, checked where the Driver runs. */
+async function missingProviderCommands<TRuntimeConfig extends AgentRuntimeConfig>(
+  options: ProviderAgentAdapterOptions<TRuntimeConfig>,
+  context: AgentProviderCredentialContext<TRuntimeConfig>,
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+  signal: AbortSignal | undefined,
+): Promise<string[]> {
+  const requirements = [...new Set(options.requirements || [])]
+  if (!requirements.length) return []
+  const args = ["-c", providerRequirementScript, "sh", ...requirements]
+  const launch = options.launch === undefined
+    ? { args, command: "sh" }
+    : normalizedProviderLaunch(await waitForProviderOperation(resolveRuntimeValue(options.launch, {
+        ...context, command: "sh", cwd, environment: Object.freeze({ ...environment }), requiredEnvironment: [],
+      }), signal))
+  const argv = options.launch === undefined ? args : [...launch.args || [], ...args]
+  return await new Promise((resolve, reject) => {
+    const child = spawn(launch.command, argv, { cwd, env: environment, signal, stdio: ["ignore", "pipe", "pipe"] })
+    let stdout = ""
+    let stderr = ""
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = `${stderr}${chunk}`.slice(-4_096) })
+    child.once("error", reject)
+    child.once("close", (code) => {
+      if (code === 0) return resolve(stdout.split("\n").map(line => line.trim()).filter(line => requirements.includes(line)))
+      reject(new Error(`[vitehub] The Driver requirement check exited with ${code ?? "a signal"}. ${redactCredentialText(stderr.trim())}`.trim()))
+    })
+  })
+}
 const recentProviderQuotaFailures = new Map<string, { message: string, expiresAt: number }>()
 
 /** Uses the invocation credential and launcher paths, without opening a provider session. */
@@ -1197,19 +1230,22 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
     }
     const launchArgs = [options.providerSettings?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
     signal?.throwIfAborted()
+    const missingCommands = await missingProviderCommands(options, context, environment, root || process.cwd(), signal)
+    signal?.throwIfAborted()
     const snapshot = await inspectProvider({
       provider: options.provider, environment, signal,
       settings: { ...options.providerSettings, ...(binaryPath ? { binaryPath } : {}), ...(home ? { homePath: home.homePath } : {}), ...(launchArgs ? { launchArgs } : {}) },
     })
     const authenticated = snapshot.auth.status === "unknown" ? undefined : snapshot.auth.status === "authenticated"
     const exhausted = snapshot.usageLimits?.windows.some(window => window.usedPercent >= 100)
-    const unavailable = !snapshot.enabled || !snapshot.installed || authenticated === false || snapshot.status === "error" || exhausted
+    const unavailable = !snapshot.enabled || !snapshot.installed || authenticated === false || snapshot.status === "error" || exhausted || missingCommands.length > 0
     const readiness = unavailable ? "unavailable" : authenticated === true && snapshot.status === "ready" && snapshot.usageLimits && !snapshot.usageLimits.unavailable ? "ready" : "unknown"
     const result: AgentProviderStatus = {
       agent: context.agentIdentity?.name ?? "agent", provider: options.provider,
       ...(home?.scope ? { account: { id: home.scope, kind: "credential" as const } } : {}),
       checkedAt: snapshot.checkedAt, stale: false, installed: snapshot.installed, authenticated, readiness,
-      reason: exhausted ? "Subscription quota is exhausted." : !snapshot.installed ? "Provider executable is unavailable." : authenticated === false ? "Provider is signed out." : readiness === "unknown" ? "Provider readiness could not be fully verified." : "Reported subscription quota is available. Workspace spending limits are not reported by this provider probe.",
+      ...(options.requirements?.length ? { missingCommands } : {}),
+      reason: missingCommands.length ? `Driver commands are missing: ${missingCommands.join(", ")}.` : exhausted ? "Subscription quota is exhausted." : !snapshot.installed ? "Provider executable is unavailable." : authenticated === false ? "Provider is signed out." : readiness === "unknown" ? "Provider readiness could not be fully verified." : "Reported subscription quota is available. Workspace spending limits are not reported by this provider probe.",
       ...(snapshot.usageLimits ? { usageLimits: {
         checkedAt: snapshot.usageLimits.checkedAt,
         windows: snapshot.usageLimits.windows,

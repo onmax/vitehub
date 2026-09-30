@@ -70,6 +70,27 @@ describe("provider inspection", () => {
     expect(JSON.stringify(result)).not.toContain("secret diagnostic")
   })
 
+  it("reports Driver commands that are missing where the Driver runs", async () => {
+    inspectProvider.mockResolvedValue(ready())
+    const requirements = ["sh", "vitehub-missing-command-a", "vitehub-missing-command-b"]
+
+    const local = await inspectAgentProvider({ provider: "codex", requirements }, context())
+    expect(local).toMatchObject({
+      missingCommands: ["vitehub-missing-command-a", "vitehub-missing-command-b"],
+      readiness: "unavailable",
+      reason: "Driver commands are missing: vitehub-missing-command-a, vitehub-missing-command-b.",
+    })
+
+    // The launcher receives the check command, as it would for an SSH runner.
+    const launch = vi.fn(({ command }: { command: string }) => ({ command, args: [] }))
+    const launched = await inspectAgentProvider({ provider: "codex", launch, requirements: ["sh"] }, context())
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ command: "sh" }))
+    expect(launched).toMatchObject({ missingCommands: [], readiness: "ready" })
+
+    const unchecked = await inspectAgentProvider({ provider: "codex" }, context())
+    expect(unchecked).not.toHaveProperty("missingCommands")
+  })
+
   it("uses the configured launcher from its resolved working directory, then cleans it", async () => {
     let launcher = ""
     let cwd = ""

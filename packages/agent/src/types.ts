@@ -1364,6 +1364,8 @@ export interface AgentProviderStatus {
   stale: boolean
   installed?: boolean
   authenticated?: boolean
+  /** Commands from `driver.requirements` that the Driver shell cannot find. Present when requirements are set. */
+  missingCommands?: string[]
   reason?: string
   usageLimits?: AgentProviderUsageLimits
 }
@@ -1385,6 +1387,11 @@ export interface AgentProviderDriverOptions<
   /** Provider approval policy. Defaults to `"ask"`; `"allow-all"` requires an explicit opt-in. */
   permissions?: AgentProviderPermissions
   providerSettings?: Record<string, unknown>
+  /**
+   * Commands the Driver shell needs, such as `git`, `gh`, or `unzip`.
+   * `status()` checks them where the Driver runs, through `driver.launch` when it is set.
+   */
+  requirements?: readonly string[]
   /** SQLite file used to persist provider session cursors across process restarts. */
   sessionStorePath?: string
 }

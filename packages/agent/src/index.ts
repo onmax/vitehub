@@ -1822,6 +1822,7 @@ function defineBaseAgent<
             providerSettings: driver.providerSettings,
             reasoningEffort: driver.reasoningEffort,
             reasoningSummary: driver.reasoningSummary,
+            requirements: driver.requirements,
             sessionStorePath: driver.sessionStorePath,
           })))
         : undefined

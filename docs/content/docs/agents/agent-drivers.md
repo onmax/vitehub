@@ -128,6 +128,8 @@ ViteHub resolves `env` once, then gives `launch` the selected environment, provi
 
 Agent inspection reports whether `env` and `launch` are static or dynamic without resolving either value.
 
+Set `requirements` to the commands that the provider's own shell needs, for example `['git', 'gh', 'unzip', 'apply_patch']`. `agent.status()` checks each command with `command -v` where the Driver runs. With `launch`, the check starts through the same wrapper, so an SSH runner is checked on the runner. Missing commands make the status `unavailable` and appear in `status.missingCommands` and `status.reason`. Invocations do not repeat the check.
+
 Threads resume with the provider's opaque cursor. ViteHub normalizes assistant text, reasoning, native and Capability tool activity, approvals, provider questions, usage, warnings, errors, and terminal state into Agent Invocation events.
 
 | Option | Purpose |
@@ -144,6 +146,7 @@ Threads resume with the provider's opaque cursor. ViteHub normalizes assistant t
 | `launch` | Provider command wrapper or invocation-time resolver. Receives the provider executable, working directory, selected environment, and abort signal. |
 | `permissions` | `"ask"`, `"allow-edits"`, or `"allow-all"`; defaults to `"ask"`. Set `"allow-all"` explicitly to run provider actions without approval. |
 | `providerSettings` | Advanced settings passed to the embedded provider runtime. Explicit settings override the installed Codex executable fallback. |
+| `requirements` | Command names that `status()` checks where the Driver runs. Missing commands are reported in `missingCommands`. |
 | `sessionStorePath` | Optional SQLite file for provider session cursors. Enables thread continuation after a process restart on the same persistent host volume. |
 | `output` | Optional structured Agent output contract. |
 | `capacity` | Optional process-local static or adaptive concurrency and queue limits. |
