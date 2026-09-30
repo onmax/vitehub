@@ -2,7 +2,7 @@ import { createRequire } from "node:module"
 import { dirname, resolve } from "node:path"
 
 import { createRuntimeEnvRegistry, env } from "@vite-hub/env/vite"
-import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 
 import { createConnectionsCliContributor } from "./cli.ts"
@@ -18,7 +18,7 @@ export const CONNECTIONS_RUNTIME_ID = "#vitehub/connections/runtime"
 export const CONNECTIONS_VITE_PLUGIN_NAME = "@vite-hub/connections/vite"
 
 const resolvedConnectionsRuntimeId = `\0${CONNECTIONS_RUNTIME_ID}`
-const mergeNoExternal = createNoExternalMerger("@vite-hub/connections")
+const addNoExternal = createNoExternalAddition("@vite-hub/connections")
 
 export interface ConnectionsVitePluginOptions {
   /** Database that stores grants and activity. Default: `"default"`. */
@@ -170,14 +170,14 @@ export function hubConnections(options: ConnectionsVitePluginOptions & InternalC
       // SAFETY: The vite-hub distribution sets VITEHUB_SERVER_DIRS to a string array before this plugin runs.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       const nextConfig: Record<string, unknown> = {
-        ssr: { noExternal: mergeNoExternal(config.ssr?.noExternal) },
+        ssr: { noExternal: addNoExternal(config.ssr?.noExternal) },
       }
       if (hasNitroConfigContext(config)) {
         const root = resolveViteHubProjectRoot(resolve(config.root || process.cwd()), { projectRoot: options.projectRoot })
         nitroRuntimeFile = resolve(root, ".vitehub", "nitro", "connections", "runtime.ts")
         await writeFileIfChanged(nitroRuntimeFile, renderRuntime(discoverConnectionDefinitions({ rootDir: root, serverDirs }), renderOptions))
         // SAFETY: hasNitroConfigContext checked that config is an object with Nitro settings.
-        nextConfig.nitro = configureNitroConnections(config as Record<string, unknown>, nitroRuntimeFile)
+        ;(config as { nitro?: Record<string, unknown> }).nitro = configureNitroConnections(config as Record<string, unknown>, nitroRuntimeFile)
       }
       return nextConfig
     },
@@ -189,7 +189,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions & InternalC
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) return
       return {
-        resolve: { noExternal: mergeNoExternal(config.resolve?.noExternal) },
+        resolve: { noExternal: addNoExternal(config.resolve?.noExternal) },
       }
     },
     async handleHotUpdate(context) {
