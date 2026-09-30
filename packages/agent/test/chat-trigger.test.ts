@@ -85,6 +85,28 @@ describe("chat error fallback", () => {
     })
   })
 
+  it.each([
+    ["PST", "2026-09-15T21:23:00.000Z"],
+    ["EST", "2026-09-15T18:23:00.000Z"],
+  ])("preserves %s after dotted meridiems", (zone, resetAt) => {
+    const error = {
+      data: { error: { code: "insufficient_quota", message: `Try again at Sep. 15, 2026 1:23 p.m. ${zone}. Please upgrade.` } },
+      name: "AI_APICallError",
+      statusCode: 429,
+    }
+
+    expect(toAgentPublicError(error, "http").details).toEqual({
+      resetText: `Sep. 15, 2026 1:23 p.m. ${zone}`,
+      resetAt,
+    })
+  })
+
+  it("stops reset text before a following numeric sentence", () => {
+    const error = agentDiagnostics.AGENT_R0726({ message: "Usage limit reached. Try again at tomorrow. 2 attempts remain." })
+
+    expect(toAgentPublicError(error, "http").details).toEqual({ resetText: "tomorrow" })
+  })
+
   it("reads reset times from AI SDK quota errors", () => {
     const error = {
       data: { error: { code: "insufficient_quota", message: "You exceeded your quota. Try again at 2026-09-15T01:23:00Z." } },

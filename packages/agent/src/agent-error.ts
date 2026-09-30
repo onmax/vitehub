@@ -167,11 +167,17 @@ function publicError(
 // Codex and similar providers report "... try again at Sep 15th, 2026 1:23 AM." in the failure text.
 // A date without a zone is read in the server's local time zone, the same clock the provider process used.
 function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefined {
-  // A month abbreviation before the day, or a meridiem before its zone, has an internal period.
-  const resetText = hasRuntimeType(message, "string")
-    ? message.match(/try again at ([A-Za-z0-9 ,:/+.-]{1,64}?)(?=\.(?:\s|$))(?!\.\s+(?:\d|UTC\b|GMT\b))/i)?.[1]?.trim()
-    : undefined
-  if (!resetText) return
+  if (!hasRuntimeType(message, "string")) return
+  const afterPrompt = message.match(/try again at\s+(.+)/i)?.[1]
+  if (!afterPrompt) return
+
+  // Match timestamps first to keep periods in abbreviations and explicit zones.
+  const timestamp = afterPrompt.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})|[A-Za-z]{3,9}\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\s+\d{1,2}:\d{2}\s+[ap]\.?m\.?(?:\s+(?:UTC|GMT|UT|[ECMP][DS]T|CET|CEST|EET|EEST|BST|IST|JST|AEST|AEDT|[+-]\d{2}:?\d{2}))?)(?=\.|\s*$)/i)?.[1]
+  // Provider-specific wording ends at the first sentence boundary, including
+  // when the next sentence starts with a digit.
+  const resetText = timestamp?.replace(/\.$/, "")
+    ?? afterPrompt.match(/^([A-Za-z0-9 ,:/+.-]{1,64}?)(?=\.(?:\s|$))/)?.[1]?.trim()
+  if (!resetText || resetText.length > 64) return
   const time = Date.parse(resetText
     .replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, "$1")
     .replace(/\b([ap])\.m\.?/gi, "$1m"))
