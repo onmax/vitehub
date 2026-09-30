@@ -490,6 +490,32 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it.each([
+    "(channels as AgentChannelInputs)",
+    "(channels satisfies AgentChannelInputs)",
+    "((channels as Record<string, { botToken?: string }>))",
+    "(channels! as AgentChannelInputs)",
+    "((channels) satisfies AgentChannelInputs)",
+  ])("resolves assertions inside parenthesized Channel maps: %s", (expression) => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      const channels = { telegram: {} }
+      export default defineAgent({ channels: ${expression} })
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
+  it.each([
+    "(channels as AgentChannelInputs, other)",
+    "(channels as AgentChannelInputs || other)",
+    "(channels as AgentChannelInputs && other)",
+  ])("ignores asserted map expressions with a different runtime value: %s", (expression) => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      const channels = { telegram: {} }
+      export default defineAgent({ channels: ${expression} })
+    `)).toEqual([])
+  })
+
   it("distinguishes destructuring keys and defaults from binding names", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"

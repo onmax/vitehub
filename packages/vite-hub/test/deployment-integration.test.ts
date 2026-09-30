@@ -251,6 +251,8 @@ describe("built-in deployment preset integration", () => {
         { source: `defineAgent({ channels: { telegram: telegram({ botToken: undefined as string | undefined }) } })`, required: true },
         { source: `const present = "telegram" in { telegram() {} }; type Conditional<T> = T extends { telegram(): void } ? true : false; defineAgent({ channels: {} })`, required: false },
         { source: `const channels = { telegram: {} }; defineAgent({ channels: channels satisfies AgentChannelInputs })`, required: true },
+        { source: `const channels = { telegram: {} }; defineAgent({ channels: (channels as AgentChannelInputs) })`, required: true },
+        { source: `const channels = { telegram: {} }; defineAgent({ channels: ((channels satisfies AgentChannelInputs)) })`, required: true },
         { source: `defineAgent({ channels: { telegram: { async botToken() { return "token" } } } })`, required: false },
       ]) {
         await writeFile(join(root, "server", "agents", "support.ts"), [

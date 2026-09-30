@@ -245,13 +245,19 @@ function isUndefinedValue(tokens: string[], start: number, terminators: Readonly
     return terminators.has(tokens[close + 1]!) && isUndefinedValue(tokens, start + 1, new Set([")"]))
   }
   if (tokens[start] !== "undefined") return false
-  let after = start + 1
+  return isValueEnd(tokens, start + 1, terminators)
+}
+
+// Non-null and type assertions preserve a value. Reject runtime expressions
+// after an assertion before treating it as the end of the original value.
+function isValueEnd(tokens: string[], after: number, terminators: ReadonlySet<string>): boolean {
   while (tokens[after] === "!" && tokens[after + 1] !== "=") after++
   if (terminators.has(tokens[after]!)) return true
   if (!["as", "satisfies"].includes(tokens[after]!)) return false
   let depth = 0
   for (let i = after + 1; i < tokens.length; i++) {
     const token = tokens[i]!
+    if (depth === 0 && token === "," && !terminators.has(token)) return false
     if (["+", "*", "/", "%"].includes(token) || (["|", "&", "?"].includes(token) && tokens[i + 1] === token)) return false
     if (token === "<") { i = skipTypeArguments(tokens, i) - 1; continue }
     if (["(", "[", "{"].includes(token)) depth++
@@ -267,9 +273,8 @@ function isUndefinedValue(tokens: string[], start: number, terminators: Readonly
 // Resolve an object literal, or a module-level `const name = { ... }` reference to one.
 function localObject(tokens: string[], index: number, declarations: ReadonlyMap<string, number>): number | undefined {
   while (tokens[index] === "(") {
-    const close = closingDelimiter(tokens, index)
     const valueEnd = ["{", "("].includes(tokens[index + 1]!) ? closingDelimiter(tokens, index + 1) : index + 1
-    if (valueEnd !== close - 1) return undefined
+    if (!isValueEnd(tokens, valueEnd + 1, new Set([")"]))) return undefined
     index++
   }
   if (tokens[index] === "{") return index
