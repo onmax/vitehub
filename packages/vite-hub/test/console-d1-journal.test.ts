@@ -6,7 +6,9 @@ import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from "vit
 import { defineAgent } from "../src/agent.ts"
 import { installConsoleAgentDefinitions } from "../src/console/runtime/server/agents.ts"
 import { console as consoleRuntime } from "../src/console/server.ts"
-import { createConsoleD1Invocations, installConsoleInvocations } from "../src/console/runtime/server/invocations.ts"
+import { createConsoleD1Invocations, getConsoleUsageIndex, installConsoleInvocations } from "../src/console/runtime/server/invocations.ts"
+
+import usageHandler from "../src/console/runtime/server/usage.get.ts"
 
 import type { AgentInvocationD1Database, AgentInvocationD1Statement } from "@vite-hub/agent/invocations/d1"
 
@@ -17,7 +19,7 @@ describe("Console D1 journal", () => {
   beforeAll(async () => {
     miniflare = new Miniflare({
       compatibilityDate: "2026-07-14",
-      d1Databases: ["DB", "OTHER"],
+      d1Databases: ["DB", "OTHER", "USAGE", "USAGE_OTHER"],
       modules: true,
       script: "export default { fetch() { return new Response('test') } }",
     })
@@ -94,6 +96,123 @@ describe("Console D1 journal", () => {
     await expect(query.all()).resolves.toEqual([])
     active = await miniflare.getD1Database("OTHER")
     await expect(query.all()).resolves.toMatchObject([{ record }])
+  })
+
+  it(
+    "projects D1 usage in bounded pages without fetching transcripts and tracks writes and binding changes",
+    { timeout: 30_000 },
+    async () => {
+      const usageDatabase = await miniflare.getD1Database("USAGE")
+      let active = usageDatabase
+      const invocations = createConsoleD1Invocations({
+        binding: "DB",
+        env: () => ({ DB: active }),
+      })
+      await invocations.list()
+      const index = getConsoleUsageIndex(invocations)
+      if (!index) throw new Error("Expected a D1 usage index.")
+      const get = vi
+        .spyOn(invocations, "get")
+        .mockRejectedValue(new Error("Usage must not load transcripts."))
+      const now = "2026-09-30T00:00:00.000Z"
+      const record = (id: string, usd = "0.1") => ({
+        id,
+        agentName: "usage-test",
+        traceId: id,
+        status: "completed",
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        annotations: { "agent.model.id": "model" },
+        observations: [
+          {
+            name: "agent.invocation.finish",
+            attributes: {
+              "usage.record": {
+                cost: { usd },
+                usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+              },
+            },
+          },
+        ],
+      })
+      await active.batch(
+        Array.from({ length: 251 }, (_, i) => {
+          const value = record(`usage-${i}`)
+          return active
+            .prepare(
+              `INSERT INTO vitehub_agent_invocations(id,status,agent_name,search,summary,updated_at,record) VALUES (?,?,?,?,?,?,?)`,
+            )
+            .bind(
+              value.id,
+              value.status,
+              value.agentName,
+              "",
+              JSON.stringify(value),
+              now,
+              JSON.stringify(value),
+            )
+        }),
+      )
+      expect(await index.query({ now })).toMatchObject({
+        projection: { complete: false, pending: 1 },
+        partial: true,
+        totals: { invocations: 250, costUsd: "25" },
+        sessions: expect.any(Array),
+      })
+      const complete = await index.query({ now })
+      expect(complete).toMatchObject({
+        projection: { complete: true, pending: 0 },
+        totals: { invocations: 251, costUsd: "25.1", totalTokens: 1255 },
+      })
+      expect(complete.sessions).toHaveLength(50)
+      expect(complete.cursor).toEqual(expect.any(String))
+      await active
+        .prepare("UPDATE vitehub_agent_invocations SET record = ?, updated_at = ? WHERE id = ?")
+        .bind(JSON.stringify(record("usage-0", "0.2")), now, "usage-0")
+        .all()
+      expect(await index.query({ now })).toMatchObject({
+        totals: { invocations: 251, costUsd: "25.2" },
+      })
+      await active
+        .prepare("DELETE FROM vitehub_agent_invocations WHERE id = ?")
+        .bind("usage-0")
+        .all()
+      expect(await index.query({ now })).toMatchObject({
+        totals: { invocations: 250, costUsd: "25" },
+      })
+      active = await miniflare.getD1Database("USAGE_OTHER")
+      expect(await index.query({ now })).toMatchObject({
+        projection: { complete: true, pending: 0 },
+        totals: { invocations: 0 },
+      })
+      active = usageDatabase
+      expect(await index.query({ now })).toMatchObject({
+        totals: { invocations: 250, costUsd: "25" },
+      })
+      expect(get).not.toHaveBeenCalled()
+    },
+  )
+
+  it("does not share pending D1 usage reads across requests", async () => {
+    let release: (() => void) | undefined
+    const ready = new Promise<void>(resolve => { release = resolve })
+    const env = vi.fn(async () => {
+      await ready
+      return { DB: database }
+    })
+    installConsoleInvocations("/console-d1-usage-cache", undefined, undefined, undefined, { binding: "DB", env })
+    const request = () => usageHandler({ method: "GET", req: { url: "http://localhost/api/_vitehub/console/usage" } })
+    const requests = [request(), request()]
+    try {
+      await vi.waitFor(() => expect(env).toHaveBeenCalledTimes(2))
+    } finally {
+      release?.()
+      await Promise.all(requests)
+    }
+    const calls = env.mock.calls.length
+    await request()
+    expect(env).toHaveBeenCalledTimes(calls)
   })
 
   it("reports a missing D1 binding", async () => {

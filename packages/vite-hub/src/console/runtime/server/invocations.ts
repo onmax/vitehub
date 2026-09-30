@@ -22,6 +22,8 @@ import {
 } from "../../internal.ts"
 import { consoleFixtureRevision, readConsoleFixture } from "../../fixture.ts"
 
+import type { Value } from "@libsql/client"
+import type { ConsoleUsageClient } from "./usage-index.ts"
 import type { AgentInvocationRecord, AgentInvocationSummary, AgentInvocations } from "@vite-hub/agent"
 import type { AgentInvocationD1Database, AgentInvocationD1Statement } from "@vite-hub/agent/invocations/d1"
 import type { AgentInvocationsOptions } from "@vite-hub/agent/server"
@@ -237,6 +239,36 @@ export function createConsoleD1Invocations(d1: ConsoleD1Journal, observations?: 
     driver: "d1",
     db,
     schema: consoleD1InvocationSchema,
+  })
+  const indexes = new WeakMap<ConsoleD1Database, ReturnType<typeof createConsoleUsageIndex>>()
+  const usageIndex = async () => {
+    const binding = await database()
+    let index = indexes.get(binding)
+    if (!index) {
+      const prepare = (statement: Parameters<ConsoleUsageClient["execute"]>[0]) =>
+        binding.prepare(statement.sql).bind(...(statement.args ?? []))
+      const client: ConsoleUsageClient = {
+        async execute(statement) {
+          const result = await prepare(statement).all<Record<string, Value>>()
+          return { rows: result.results ?? [] }
+        },
+        async batch(statements) {
+          const results = await binding.batch<Record<string, Value>>(statements.map(prepare))
+          return results.map((result) => ({ rows: result.results ?? [] }))
+        },
+      }
+      index = createConsoleUsageIndex(client, { requestScoped: true })
+      indexes.set(binding, index)
+    }
+    return index
+  }
+  consoleUsageIndexes.set(invocations, {
+    async query(options) {
+      return (await usageIndex()).query(options)
+    },
+    async rebuild() {
+      await (await usageIndex()).rebuild()
+    },
   })
   consoleDatabaseConfigurations.set(invocations, `d1:${d1.binding}`)
   consoleObservationConfigurations.set(invocations, observationConfiguration(observations))
