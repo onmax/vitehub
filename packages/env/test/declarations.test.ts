@@ -34,6 +34,21 @@ describe("env declarations", () => {
     expect(() => env.number(proxy as never)).toThrow("env() only accepts a single options object.")
   })
 
+  it("reports the declaration diagnostic when any option read throws", () => {
+    for (const property of ["optional", "required", "schema", "default", "source", "mode", "secret", "type"]) {
+      const options = new Proxy({}, {
+        ownKeys: () => [],
+        get: (_, key) => {
+          if (key === property) throw new Error("boom")
+          return undefined
+        },
+      })
+      for (const declare of [() => env(options), () => env.boolean(options), () => env.number(options), () => env.enum(["draft"], options)]) {
+        expect(declare).toThrow("env() only accepts a single options object.")
+      }
+    }
+  })
+
   it("rejects revoked Proxy schemas as invalid declarations", () => {
     const { proxy, revoke } = Proxy.revocable(() => undefined, {})
     revoke()

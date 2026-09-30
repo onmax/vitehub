@@ -73,6 +73,26 @@ describe("Vite plugin", () => {
     await expect(readFile(join(root, ".vitehub", "env", "server.d.ts"), "utf8")).resolves.toContain("export interface ServerEnv")
   })
 
+  it("rejects unparsed typed defaults in public and nested define config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-env-defaults-"))
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "typed-defaults" }), "utf8")
+    for (const section of ["public", "define"] as const) {
+      for (const hostValue of [undefined, "1"]) {
+        for (const declaration of [
+          env.boolean({ default: "false" as never, mode: "build", source: env.custom("test", () => hostValue) }),
+          env.number({ default: "0.6" as never, mode: "build", source: env.custom("test", () => hostValue) }),
+        ]) {
+          const plugin = hubEnv()
+          const configHook = plugin.config as (config: Record<string, unknown>, env: { command: "build", mode: string }) => Promise<unknown>
+          await expect(configHook({
+            root,
+            env: { [section]: section === "define" ? { settings: { value: declaration } } : { value: declaration } },
+          }, { command: "build", mode: "production" })).rejects.toThrow(`Invalid default for env.${section}.${section === "define" ? "settings." : ""}value: Expected a ${declaration.type} default.`)
+        }
+      }
+    }
+  })
+
   it("loads Vite env, validates build values, injects define, and serves virtual config", async () => {
     vi.stubEnv("GITHUB_REF_TYPE", "")
 

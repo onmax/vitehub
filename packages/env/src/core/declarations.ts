@@ -152,12 +152,12 @@ function provider(provider: string, key: string): EnvSource {
 }
 
 function variable(options: EnvVariableOptions = {}): EnvVariableDeclaration {
-  assertDeclarationOptions(options)
+  options = readDeclarationOptions(options)
   return createDeclaration(options, options.schema ?? defaultStringSchema, options.type)
 }
 
 function typedVariable(schema: RuntimeValueSchema, options: EnvVariableOptions): EnvVariableDeclaration {
-  assertDeclarationOptions(options)
+  options = readDeclarationOptions(options)
   const valueSchema = runtimeSchemaParsers.get(schema.safeParse)
   return createDeclaration(options, schema, valueSchema && envValueTypeName(valueSchema))
 }
@@ -180,11 +180,9 @@ function enumVariable<const TValues extends readonly [string, ...string[]]>(
   return typedVariable(createRuntimeValueSchema(Object.freeze({ kind: "enum", values: Object.freeze([...values]) })), options)
 }
 
-// Validate JavaScript callers before reading any option.
 function isInspectableRecord(value: unknown): boolean {
   try {
     if (!isRuntimeRecord(value)) return false
-    // A revoked Proxy passes the record check but throws on reflection.
     Reflect.ownKeys(value)
     return true
   }
@@ -193,13 +191,31 @@ function isInspectableRecord(value: unknown): boolean {
   }
 }
 
-function assertDeclarationOptions(options: EnvVariableOptions): void {
+// Read options once so Proxy traps cannot bypass the declaration diagnostic.
+function readDeclarationOptions(options: EnvVariableOptions): EnvVariableOptions {
   if (!isInspectableRecord(options)) {
     throw envErrorDiagnostics.ENV_R0005({ message: "env() only accepts a single options object." })
   }
-  if (options.optional && options.required !== undefined) {
+  let snapshot: EnvVariableOptions
+  try {
+    snapshot = {
+      default: options.default,
+      mode: options.mode,
+      optional: options.optional,
+      required: options.required,
+      schema: options.schema,
+      secret: options.secret,
+      source: options.source,
+      type: options.type,
+    }
+  }
+  catch {
+    throw envErrorDiagnostics.ENV_R0005({ message: "env() only accepts a single options object." })
+  }
+  if (snapshot.optional && snapshot.required !== undefined) {
     throw envErrorDiagnostics.ENV_R0006({ message: "env() cannot use both optional and required." })
   }
+  return snapshot
 }
 
 function createDeclaration(options: EnvVariableOptions, schema: unknown, type: string | undefined): EnvVariableDeclaration {

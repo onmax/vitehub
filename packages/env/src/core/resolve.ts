@@ -132,10 +132,11 @@ export async function resolveEnvEntries(
   const diagnostics: EnvDiagnosticEntry[] = []
 
   for (const [key, declaration] of Object.entries(declarations || {})) {
+    const defaultValue = parseDeclarationDefault(declaration, `${input.section}.${key}`)
     const source = resolveEnvSource(declaration, `${input.section}.${key}`, input.prefix)
     const resolvedSource = await resolveSourceValue(source, input.context)
     const defaulted = typeof resolvedSource.value === "undefined"
-    const valueForSchema = defaulted ? declaration.default : resolvedSource.value
+    const valueForSchema = defaulted ? defaultValue : resolvedSource.value
     if (typeof valueForSchema === "undefined") {
       if (declaration.required) {
         const path = `${input.section}.${key}`
@@ -200,10 +201,11 @@ async function resolveBuildConfigValue(
   },
 ): Promise<{ diagnostics: EnvDiagnosticEntry[], value: unknown }> {
   if (isEnvVariableDeclaration(declaration)) {
+    const defaultValue = parseDeclarationDefault(declaration, path)
     const source = resolveEnvSource(declaration, path, input.prefix)
     const resolvedSource = await resolveSourceValue(source, input.context)
     const defaulted = typeof resolvedSource.value === "undefined"
-    const valueForSchema = defaulted ? declaration.default : resolvedSource.value
+    const valueForSchema = defaulted ? defaultValue : resolvedSource.value
     if (typeof valueForSchema === "undefined") {
       if (declaration.required) {
         throw missingRequiredEnv(source.kind === "custom" ? "custom" : source.label, `Missing ${path} from ${source.label}.`, path)
@@ -257,6 +259,13 @@ async function resolveBuildConfigValue(
   }
 
   return { diagnostics, value }
+}
+
+function parseDeclarationDefault(declaration: EnvVariableDeclaration, path: string): unknown {
+  const schema = runtimeValueSchema(declaration)
+  return schema && declaration.default !== undefined
+    ? parseRuntimeDefault(schema, declaration.default, path)
+    : declaration.default
 }
 
 function buildRegistry(declarations: EnvRuntimeConfigOptions | undefined, path: string, prefix?: string): EnvRuntimeRegistry {
