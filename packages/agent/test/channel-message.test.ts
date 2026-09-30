@@ -2,11 +2,12 @@ import { describe, expect, it, vi } from "vitest"
 import * as v from "valibot"
 
 import { createTraceEventLog } from "@vite-hub/runtime"
-import { defineChannel, slack, telegram } from "../src/channels.ts"
+import { defineChannel, slack, telegram, webChat } from "../src/channels.ts"
 import { withAgentChannelDeliveryOwnershipVerifier } from "../src/internal/channel-delivery.ts"
 import { channelMessageContextKey } from "../src/internal/channel-delivery-handlers.ts"
 import { defineAgent, runAgent, runAgentTrigger } from "../src/index.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
+import { createChannelChatRouteHandler } from "../src/server/internal.ts"
 import type { AgentChannelMessage } from "../src/index.ts"
 import type { AgentRuntimeContext } from "../src/types.ts"
 
@@ -59,6 +60,54 @@ function mailChannel(provider: { label: (id: string, add: string[]) => void, sub
 }
 
 describe("Channel message handle", () => {
+  it.each([false, true])("supplies generated webChat message data to hooks (error: %s)", async (fail) => {
+    const label = vi.fn()
+    const seen: unknown[] = []
+    const agent = defineAgent({
+      channels: {
+        portal: webChat({
+          message: {
+            data: v.object({ id: v.string(), text: v.string(), metadata: v.object({ category: v.string() }) }),
+            methods: {
+              label: (context, value: string) => label(context.message.id, value),
+            },
+          },
+        }),
+      },
+      driver: { run: () => {
+        if (fail) throw new Error("driver failed")
+        return "ok"
+      } },
+      hooks: {
+        async "agent:finish"(event) {
+          if (!event.message) throw new Error("expected a Channel message")
+          seen.push("finish", event.message.channel, event.message.data)
+          await event.message.label("finished")
+        },
+        async "agent:error"(event) {
+          if (!event.message) throw new Error("expected a Channel message")
+          seen.push("error", event.message.channel, event.message.data)
+          await event.message.label("failed")
+        },
+      },
+    })
+    // SAFETY: The generated route accepts this host-independent Agent through its internal host boundary.
+    const handler = createChannelChatRouteHandler(agent as never)
+    const response = await handler(new Request("https://example.com/api/_vitehub/agents/support/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: `thread-${fail}`,
+        messages: [{ id: "message-1", role: "user", parts: [{ type: "text", text: "hello" }], metadata: { category: "support" } }],
+      }),
+    }), { agentName: "support" })
+    expect(response.status).toBe(fail ? 500 : 200)
+    const output = await response.text()
+    expect(output).toContain(fail ? "driver failed" : "ok")
+    expect(seen).toEqual([fail ? "error" : "finish", "portal", { id: "message-1", text: "hello", metadata: { category: "support" } }])
+    expect(label).toHaveBeenCalledWith("message-1", fail ? "failed" : "finished")
+  })
+
   it.each([false, true])("retains custom message methods on a Telegram helper with dryRun=%s", async dryRun => {
     const label = vi.fn((id: string, value: string) => `${id}:${value}`)
     const subject = vi.fn((id: string) => `subject:${id}`)

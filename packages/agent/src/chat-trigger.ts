@@ -443,6 +443,11 @@ function createChatMessageTrigger<TRuntimeConfig extends AgentRuntimeConfig>(
       const thinkingFallback = await resolveChatThinkingFallback(options, hookArgs)
       return {
         input,
+        message: {
+          ...(hookArgs.message.id !== undefined ? { id: hookArgs.message.id } : {}),
+          ...(hookArgs.message.metadata !== undefined ? { metadata: hookArgs.message.metadata } : {}),
+          text: hookArgs.message.text,
+        },
         ...(thinkingFallback !== undefined ? { metadata: { thinkingFallback } } : {}),
         run: resolveChatMessageRunMetadata(triggerInput.run, input.context?.invoker, input.messages || []),
       }

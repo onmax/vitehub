@@ -96,6 +96,8 @@ Built-in Channels add the methods that their provider adapter supports. `discord
 
 The built-in helpers also accept `message: { data, methods }`. Use this option on `discord()`, `github()`, `http()`, `slack()`, `teams()`, `telegram()`, or `webChat()` to add typed methods while keeping the provider configuration. A declared method replaces a built-in method with the same name.
 
+The generated `webChat()` route supplies the current inbound message as `{ id?, text, metadata? }`. Use a `message.data` schema that accepts this shape. Application-owned Triggers supply their own `message` data.
+
 ### Dry run
 
 Set `dryRun: true` in the Invocation input to run an Agent against real messages without changing them. A Trigger can set it in its returned `input`; a direct caller passes it to `runAgent()`.

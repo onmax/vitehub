@@ -260,8 +260,8 @@ function withSiblingWorkspaceSourceRoot<TRuntimeConfig extends AgentRuntimeConfi
   if ("name" in options.workspace) return agent
   if (options.workspace.sourceRootDir) return agent
 
-  // These options came from an already validated Agent Definition; this pass
-  // only fills the inferred workspace source root.
+  // SAFETY: These options came from a validated Workspace Agent Definition with the same
+  // runtime config; only sourceRootDir changes, so its Channel and Workspace contracts remain valid.
   return defineAgent<TRuntimeConfig>({
     ...options,
     workspace: {
