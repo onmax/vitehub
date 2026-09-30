@@ -9,7 +9,7 @@ function options(overrides: Partial<OAuth2ProviderOptions> = {}): OAuth2Provider
   return {
     authorizationUrl: "https://auth.example/authorize?existing=1",
     client: () => ({ clientId: "client id", clientSecret: { unseal: () => "secret:value" } }),
-    origins: ["https://api.example"],
+    origins: ["https://api.example", "https://auth.example"],
     scopes: ["read", "write"],
     tokenUrl: "https://auth.example/token",
     ...overrides,
@@ -110,8 +110,21 @@ describe("oauth2", () => {
     expect(await custom.exchange(input, { fetch: upstream.fetch })).toMatchObject({ account: "octo" })
   })
 
-  it("revokes the refresh token and accepts 400 responses", async () => {
-    const upstream = mockFetch(() => new Response(null, { status: 400 }))
+  it("rejects a user info URL outside the provider origins", () => {
+    expect(() => oauth2(options({ origins: ["https://api.example"], userInfoUrl: "https://auth.example/userinfo" })))
+      .toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: "provider.userInfoUrl" } }))
+  })
+
+  it("accepts a 400 invalid_token revocation but fails other 400 errors", async () => {
+    const upstream = mockFetch(() => Response.json({ error: "invalid_client" }, { status: 400 }))
+    const provider = oauth2(options({ revokeUrl: "https://auth.example/revoke" }))
+    await expectCode(provider.revoke!(tokenSet(), { fetch: upstream.fetch }), "CONNECTIONS_PROVIDER_FAILED")
+    upstream.mock.mockImplementation(async () => Response.json({ error: "invalid_token" }, { status: 400 }))
+    await expect(provider.revoke!(tokenSet(), { fetch: upstream.fetch })).resolves.toBeUndefined()
+  })
+
+  it("revokes the refresh token and accepts an already invalid token", async () => {
+    const upstream = mockFetch(() => Response.json({ error: "invalid_token" }, { status: 400 }))
     const provider = oauth2(options({ revokeUrl: "https://auth.example/revoke" }))
 
     await provider.revoke!(tokenSet(), { fetch: upstream.fetch })

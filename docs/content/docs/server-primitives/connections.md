@@ -169,7 +169,7 @@ export default defineConnection({
 })
 ```
 
-An origin is `https://host`, `https://host:port`, or `https://*.host` for subdomains. `http` is accepted for local servers.
+An origin is `https://host`, `https://host:port`, or `https://*.host` for subdomains. `http` is accepted for local servers. The `userInfoUrl` of `oauth2()` receives the access token, so its origin must be in `origins` too.
 
 ## Access rules
 

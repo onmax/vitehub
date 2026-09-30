@@ -90,16 +90,33 @@ function withMcpConnection(context: AgentCapabilityContext, server: string, conf
     throw agentDiagnostics.AGENT_R0082({ message: `[vitehub] mcp({ servers }) server "${server}" uses a connection, so it requires an http or sse transport config without authProvider.` })
   }
   const connection = useAgentConnection(context, name.output, "mcp")
+  // Approved tool runs that have not sent their `tools/call` yet, by Operation. Each request uses one grant.
+  const approvals = new Map<string, Array<{ used: boolean }>>()
+  const request = (init: RequestInit | undefined): AgentConnectionFetchOptions => {
+    const options = mcpConnectionRequest(server, init)
+    const grant = options.tool ? approvals.get(options.operation)?.find(entry => !entry.used) : undefined
+    if (!grant) return options
+    grant.used = true
+    return { ...options, approved: true }
+  }
   const fetch: typeof globalThis.fetch = async (input, init) => {
-    if (!(input instanceof Request)) return connection.fetch(mcpConnectionRequest(server, init), input, init)
+    if (!(input instanceof Request)) return connection.fetch(request(init), input, init)
     // A Request carries its own method, headers, body, and signal. `init` overrides them, as in `new Request(input, init)`.
-    const request = new Request(input, init)
-    const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text()
-    const merged: RequestInit = { body, headers: request.headers, method: request.method, signal: request.signal }
-    return connection.fetch(mcpConnectionRequest(server, merged), request.url, merged)
+    const target = new Request(input, init)
+    const body = target.method === "GET" || target.method === "HEAD" ? undefined : await target.text()
+    const merged: RequestInit = { body, headers: target.headers, method: target.method, signal: target.signal }
+    return connection.fetch(request(merged), target.url, merged)
   }
   return {
-    binding: { connection, operation: tool => mcpToolOperation(server, tool) },
+    binding: {
+      approve: (operation) => {
+        const grant = { used: false }
+        approvals.set(operation, [...(approvals.get(operation) ?? []), grant])
+        return () => approvals.set(operation, (approvals.get(operation) ?? []).filter(entry => entry !== grant))
+      },
+      connection,
+      operation: tool => mcpToolOperation(server, tool),
+    },
     config: { ...rest, transport: { ...transport, fetch } },
   }
 }

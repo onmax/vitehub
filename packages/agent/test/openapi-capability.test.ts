@@ -496,9 +496,13 @@ describe("openapi capability", () => {
     // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
     const tool = (resolved.tools as AgentToolSet).createOrder
     if (typeof tool.policy !== "function") throw new Error("expected a Connection tool policy")
-    await expect(tool.policy({ name: "createOrder" })).resolves.toBe("require-approval")
-    await tool.execute?.({ body: { cubeToken: "c", sku: "s" }, path: { tenantId: "t1" } })
+    const input = { body: { cubeToken: "c", sku: "s" }, path: { tenantId: "t1" } }
+    await expect(tool.policy({ input, name: "createOrder" })).resolves.toBe("require-approval")
+    await tool.execute?.(input)
     expect(connections.fetch.mock.calls[0]?.[3]).toMatchObject({ approved: true, operation: "openapi.createOrder" })
+    // A later run was not approved.
+    await tool.execute?.({ ...input })
+    expect(connections.fetch.mock.calls[1]?.[3]).not.toHaveProperty("approved")
     await resolved.close()
   })
 

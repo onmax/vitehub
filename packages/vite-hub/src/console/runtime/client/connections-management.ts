@@ -61,7 +61,14 @@ export async function requestConnectionsManagement<T extends v.BaseSchema<unknow
   schema: T,
   input: Record<string, unknown> = {},
 ): Promise<v.InferOutput<T>> {
-  const response = await fetch(endpoint, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...input, action }) })
+  const response = await fetch(endpoint, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...input, action }),
+    // A redirect would resend the body. For set-key, the body holds the API key.
+    redirect: action === "set-key" ? "error" : "follow",
+  })
   if (!response.ok) {
     // Connections errors carry safe messages, for example a missing encryption key.
     const body = v.safeParse(errorBodySchema, await response.json().catch(() => undefined))

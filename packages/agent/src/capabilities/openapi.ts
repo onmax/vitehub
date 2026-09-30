@@ -376,7 +376,8 @@ function createOpenAPITool<
   return defineInternalTool({
     description: [options.description, operation.description].filter(Boolean).join(" "),
     async execute(input, execution) {
-      return executeOpenAPIOperation(operation, baseUrl, options, context, input, execution?.abortSignal, connection)
+      const approved = connection?.approval(input).has(connectionOperation.id) === true
+      return executeOpenAPIOperation(operation, baseUrl, options, context, input, execution?.abortSignal, connection, approved)
     },
     inputSchema: operationInputSchema(operation, openAPIRequestProvidedInput(options)),
     metadata: {
@@ -470,6 +471,7 @@ async function executeOpenAPIOperation<
   input: unknown,
   abortSignal?: AbortSignal,
   connection?: AgentConnection,
+  approved = false,
 ): Promise<unknown> {
   const rawInput = applyOpenAPIProvidedInput(normalizeRawToolInput(operation, input), openAPIRequestProvidedInput(options))
   const rawUrl = operationTemplateUrl(baseUrl, operation.path)
@@ -500,7 +502,7 @@ async function executeOpenAPIOperation<
     url,
   }, {
     // The Connection adds credentials after the request hook, so hooks never see the token.
-    ...(connection ? { fetch: (target: string, init: RequestInit) => connection.fetch({ effect: connectionOperation.effect, operation: connectionOperation.id, tool: operation.operationId }, target, init) } : {}),
+    ...(connection ? { fetch: (target: string, init: RequestInit) => connection.fetch({ ...(approved ? { approved } : {}), effect: connectionOperation.effect, operation: connectionOperation.id, tool: operation.operationId }, target, init) } : {}),
     responseType: options.responseType || "json",
     signal: abortSignal ?? context.abortSignal,
   })

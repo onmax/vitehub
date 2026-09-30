@@ -33,7 +33,7 @@ function setup(access: ConnectionsAccess | null = admin) {
       authorizationUrl: "https://auth.example/authorize",
       client: () => ({ clientId: "client-id", clientSecret }),
       id: "example",
-      origins: ["https://api.example"],
+      origins: ["https://api.example", "https://auth.example"],
       revokeUrl: "https://auth.example/revoke",
       scopes: ["openid", "email", "test.read"],
       tokenUrl: "https://auth.example/token",

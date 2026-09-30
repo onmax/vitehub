@@ -189,6 +189,37 @@ describe("API key credentials", () => {
     expect([...second.keys()].sort()).toEqual(["x-trace"])
   })
 
+  it("keeps the credential removed after a redirect chain leaves the first origin", async () => {
+    const upstream = mockFetch((url, _init, index) => index === 0
+      ? new Response(null, { headers: { location: "https://elsewhere.example/hop" }, status: 307 })
+      : index === 1
+        ? new Response(null, { headers: { location: "https://api.example/admin/delete" }, status: 307 })
+        : Response.json({ ok: true, path: url.pathname }))
+    const { name, runtime } = setupRuntime({ definition: { access: { server: { allow: ["*"] } }, provider: key() }, fetch: upstream.fetch })
+    await runtime.setKey(name, secretKey, { actor: owner })
+
+    await runtime.fetch(name, "https://api.example/items", { body: "x", headers: { cookie: "session=1" }, method: "POST" }, { actor: server })
+    expect(upstream.calls.map(call => [call.url, call.authorization])).toEqual([
+      ["https://api.example/items", `Bearer ${secretKey}`],
+      ["https://elsewhere.example/hop", null],
+      ["https://api.example/admin/delete", null],
+    ])
+    expect(new Headers(upstream.mock.mock.calls[2]?.[1]?.headers).get("cookie")).toBeNull()
+  })
+
+  it("never replays a stream body on a redirect that keeps the method", async () => {
+    const upstream = redirecting("/items/moved", 302)
+    const definition: ConnectionDefinition = { access: { server: { allow: ["*"] } }, provider: key() }
+    const { name, runtime } = setupRuntime({ definition, fetch: upstream.fetch })
+    await runtime.setKey(name, secretKey, { actor: owner })
+
+    const body = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("data")); controller.close() } })
+    // SAFETY: Node needs `duplex` for a stream body. The RequestInit type in this project does not declare it.
+    const response = await runtime.fetch(name, "https://api.example/items", { body, duplex: "half", method: "PUT" } as RequestInit, { actor: server })
+    expect(response.status).toBe(302)
+    expect(upstream.calls).toHaveLength(1)
+  })
+
   it("sends one request when the caller handles redirects", async () => {
     const upstream = redirecting("https://elsewhere.example/")
     const { name, runtime } = setupRuntime({ definition: { provider: key() }, fetch: upstream.fetch })

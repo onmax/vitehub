@@ -312,9 +312,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
    * cross-origin redirect, so ViteHub follows redirects itself and drops the credential header there.
    */
   async function withCredential(url: URL, init: RequestInit, credential: [header: string, value: string]): Promise<Response> {
+    // Once the chain leaves the first origin, sensitive headers stay removed, as in Fetch. A redirect back to the
+    // first origin must not turn a request that another origin chose into an authenticated one.
+    let crossed = false
     const withHeaders = (target: URL, request: RequestInit) => {
       const headers = new Headers(request.headers)
-      if (target.origin === url.origin) {
+      crossed ||= target.origin !== url.origin
+      if (!crossed) {
         headers.set(...credential)
         return headers
       }
@@ -329,12 +333,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const response = await fetcher(target, { ...request, headers: withHeaders(target, request), redirect: "manual" })
       const location = response.headers.get("location")
       if (!redirectStatuses.has(response.status) || !location || hop === maxRedirects) return response
-      const keepMethod = response.status === 307 || response.status === 308
-      // A stream body was read by the first request and cannot be sent again.
-      if (keepMethod && request.body instanceof ReadableStream) return response
-      await response.body?.cancel().catch(() => undefined)
       const method = (request.method ?? "GET").toUpperCase()
-      if (!keepMethod && (response.status === 303 || method === "POST") && method !== "GET" && method !== "HEAD") {
+      // Fetch turns a 303, and a 301 or 302 after POST, into GET. Other redirects keep the method and the body.
+      const toGet = (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) && method !== "GET" && method !== "HEAD"
+      // A stream body was read by the first request and cannot be sent again.
+      if (!toGet && request.body instanceof ReadableStream) return response
+      await response.body?.cancel().catch(() => undefined)
+      if (toGet) {
         const headers = new Headers(request.headers)
         for (const name of bodyHeaders) headers.delete(name)
         request = { ...request, body: undefined, headers, method: "GET" }
@@ -459,19 +464,17 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     async disconnect(name, lifecycle) {
       const value = await definition(name)
       const db = store(lifecycle.event)
-      const stored = await db.tokens(name).catch((error: unknown) => {
-        if (isConnectionError(error, "key_mismatch")) return undefined
-        throw error
-      })
+      // Snapshot the grant first. A connect that finishes during revocation writes a newer revision, which stays.
+      const initial = await db.grant(name)
+      const stored = initial?.keyMatches ? await db.tokens(name) : undefined
       let revokeError: string | undefined
       // Only the provider that issued the grant may receive it for revocation.
-      if (stored && stored.grant.provider === grantProvider(value.provider) && value.provider.revoke) {
+      if (stored && stored.grant.revision === initial?.revision && stored.grant.provider === grantProvider(value.provider) && value.provider.revoke) {
         await value.provider.revoke(stored.tokens, providerContext(lifecycle.event)).catch((error: unknown) => {
           revokeError = errorCode(error)
         })
       }
-      const grant = stored?.grant ?? await db.grant(name)
-      if (grant) await db.deleteGrant(name, grant.revision)
+      if (initial) await db.deleteGrant(name, initial.revision)
       await record({ action: "disconnect", actor: lifecycle.actor, connection: name, outcome: "succeeded", ...(revokeError ? { error: revokeError } : {}) }, lifecycle.event)
       return summary(name, value, undefined)
     },

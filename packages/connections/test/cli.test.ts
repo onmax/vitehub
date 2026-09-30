@@ -176,6 +176,9 @@ describe("connections CLI", () => {
     expect(request(fetch).body).toEqual({ action: "set-key", key: "sk_cli_marker", name: "executor" })
     // A redirect would resend the key to another URL.
     expect(fetch.mock.calls[0]?.[1]?.redirect).toBe("error")
+    // Other commands have no key in the body and follow redirects.
+    await feature("list").run([], context().context)
+    expect(fetch.mock.calls[1]?.[1]?.redirect).toBe("follow")
     expect(io.stdout.join("")).toMatch(/^executor\s+api-key\s+active/)
     expect(io.stdout.join("") + io.stderr.join("")).not.toContain("sk_cli_marker")
   })

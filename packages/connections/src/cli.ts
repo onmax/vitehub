@@ -45,14 +45,13 @@ const optionalString = v.fallback(v.optional(v.string()), undefined)
 const errorBody = v.object({ code: optionalString, message: optionalString })
 const resultBody = v.record(v.string(), v.unknown())
 
-async function manage(url: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function manage(url: string, body: Record<string, unknown>, redirect: "error" | "follow" = "follow"): Promise<Record<string, unknown>> {
   const base = new URL(url)
   const response = await fetch(new URL("/_vitehub/connections/manage", base), {
     body: JSON.stringify(body),
     headers: { "content-type": "application/json", "origin": base.origin },
     method: "POST",
-    // A redirect would resend the body, which can hold an API key, to another URL.
-    redirect: "error",
+    redirect,
   })
   const value: unknown = await response.json().catch(() => undefined)
   if (!response.ok) {
@@ -171,7 +170,8 @@ export function createConnectionsCliContributor(options: { readKey?: () => Promi
         }),
         command("set-key", "Set the key of an API key Connection from stdin.", async ({ name, url }, context) => {
           assertKeyTarget(url)
-          const result = await manage(url, { action: "set-key", key: await readKey(), name })
+          // A redirect would resend the key to another URL.
+          const result = await manage(url, { action: "set-key", key: await readKey(), name }, "error")
           // SAFETY: The management route returns a ConnectionSummary for the set-key action.
           context.stdout.write(`${line(result.connection as ConnectionSummary)}\n`)
         }),

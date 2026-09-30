@@ -269,7 +269,7 @@ function parse<TSchema extends v.GenericSchema>(schema: TSchema, value: unknown,
   return parsed.output
 }
 
-async function gmailSearch(connection: AgentConnection, ops: GmailOperations, input: GmailSearchInput) {
+async function gmailSearch(connection: AgentConnection, ops: GmailOperations, input: GmailSearchInput, approved: ReadonlySet<string>) {
   const max = input?.max ?? 10
   if (!Number.isInteger(max) || max < 1 || max > 50) {
     throw agentDiagnostics.AGENT_R0089({ message: "[vitehub] gmail_search max must be an integer from 1 to 50." })
@@ -283,13 +283,13 @@ async function gmailSearch(connection: AgentConnection, ops: GmailOperations, in
     maxResults: max,
     q: query,
     ...(input?.pageToken ? { pageToken: input.pageToken } : {}),
-  }), "gmail_search")
+  }, approved), "gmail_search")
   const messages = await Promise.all((list.messages ?? []).map(async (reference) => {
     const message = parse(messageSchema, await connection.call("gmail_search", ops.messagesGet, {
       format: "metadata",
       id: reference.id,
       metadataHeaders: summaryHeaders,
-    }), "gmail_search")
+    }, approved), "gmail_search")
     return {
       id: message.id,
       labelIds: message.labelIds ?? [],
@@ -301,12 +301,12 @@ async function gmailSearch(connection: AgentConnection, ops: GmailOperations, in
   return { messages, ...(list.nextPageToken ? { nextPageToken: list.nextPageToken } : {}), query }
 }
 
-async function gmailRead(connection: AgentConnection, ops: GmailOperations, input: GmailReadInput) {
+async function gmailRead(connection: AgentConnection, ops: GmailOperations, input: GmailReadInput, approved: ReadonlySet<string>) {
   const id = gmailLine(input?.id, "gmail_read id")
   const maxChars = input?.maxChars ?? 20_000
-  const message = parse(messageSchema, await connection.call("gmail_read", ops.messagesGet, { format: "full", id }), "gmail_read")
+  const message = parse(messageSchema, await connection.call("gmail_read", ops.messagesGet, { format: "full", id }, approved), "gmail_read")
   const attachment = async (attachmentId: string) =>
-    parse(attachmentSchema, await connection.call("gmail_read", ops.attachmentsGet, { id: attachmentId, messageId: message.id }), "gmail_read").data
+    parse(attachmentSchema, await connection.call("gmail_read", ops.attachmentsGet, { id: attachmentId, messageId: message.id }, approved), "gmail_read").data
   const plain = (await textParts(attachment, message.payload, "text/plain")).join("\n\n")
   const text = plain || htmlText((await textParts(attachment, message.payload, "text/html")).join("\n\n"))
   return {
@@ -331,8 +331,8 @@ function withoutReplyPrefix(subject: string): string {
  * Gmail adds a draft to a thread only when the thread id, `In-Reply-To`, `References`, and the subject match.
  * The original message supplies all of them.
  */
-async function gmailReplyTarget(connection: AgentConnection, ops: GmailOperations, replyTo: string, subject: string | undefined) {
-  const original = parse(messageSchema, await connection.call("gmail_draft", ops.messagesGet, { format: "metadata", id: replyTo, metadataHeaders: replyHeaders }), "gmail_draft")
+async function gmailReplyTarget(connection: AgentConnection, ops: GmailOperations, replyTo: string, subject: string | undefined, approved: ReadonlySet<string>) {
+  const original = parse(messageSchema, await connection.call("gmail_draft", ops.messagesGet, { format: "metadata", id: replyTo, metadataHeaders: replyHeaders }, approved), "gmail_draft")
   const values = headers(original.payload, replyHeaders)
   const messageId = values["message-id"]?.trim()
   if (!messageId || /[\0\r\n]/.test(messageId) || /[\0\r\n]/.test(values.references ?? "")) {
@@ -349,7 +349,7 @@ async function gmailReplyTarget(connection: AgentConnection, ops: GmailOperation
   }
 }
 
-async function gmailDraft(connection: AgentConnection, ops: GmailOperations, input: GmailDraftInput) {
+async function gmailDraft(connection: AgentConnection, ops: GmailOperations, input: GmailDraftInput, approved: ReadonlySet<string>) {
   const recipients = {
     bcc: gmailRecipients(input?.bcc, "bcc", false),
     body: gmailBody(input?.body),
@@ -359,13 +359,13 @@ async function gmailDraft(connection: AgentConnection, ops: GmailOperations, inp
   const subject = input?.subject === undefined ? undefined : gmailLine(input.subject, "gmail_draft subject")
   const target = input?.replyTo === undefined
     ? undefined
-    : await gmailReplyTarget(connection, ops, gmailLine(input.replyTo, "gmail_draft replyTo"), subject)
+    : await gmailReplyTarget(connection, ops, gmailLine(input.replyTo, "gmail_draft replyTo"), subject, approved)
   const raw = gmailRawMessage({
     ...recipients,
     ...(target ? { reply: target.reply } : {}),
     subject: target?.subject ?? gmailLine(subject, "gmail_draft subject"),
   })
-  const draft = parse(draftSchema, await connection.call("gmail_draft", ops.draftsCreate, { raw, ...(target ? { threadId: target.threadId } : {}) }), "gmail_draft")
+  const draft = parse(draftSchema, await connection.call("gmail_draft", ops.draftsCreate, { raw, ...(target ? { threadId: target.threadId } : {}) }, approved), "gmail_draft")
   return { draftId: draft.id, messageId: draft.message.id, sent: false, threadId: draft.message.threadId }
 }
 
@@ -387,7 +387,7 @@ function gmailTools(context: AgentCapabilityContext, name: string, enabled: Read
       ? {
           gmail_search: defineInternalTool<GmailSearchInput>({
             description: `Search Gmail messages and return sender, recipients, subject, date, and snippet. It does not return full bodies. ${untrusted}`,
-            execute: input => gmailSearch(connection, ops, input),
+            execute: input => gmailSearch(connection, ops, input, connection.approval(input)),
             inputSchema: gmailSearchInputSchema,
             metadata: metadata(ops.messagesList.id),
             name: "gmail_search",
@@ -399,7 +399,7 @@ function gmailTools(context: AgentCapabilityContext, name: string, enabled: Read
       ? {
           gmail_read: defineInternalTool<GmailReadInput>({
             description: `Read one Gmail message by id. Returns headers, the decoded text body (truncated to maxChars), and attachment names. ${untrusted}`,
-            execute: input => gmailRead(connection, ops, input),
+            execute: input => gmailRead(connection, ops, input, connection.approval(input)),
             inputSchema: gmailReadInputSchema,
             metadata: metadata(ops.messagesGet.id),
             name: "gmail_read",
@@ -411,7 +411,7 @@ function gmailTools(context: AgentCapabilityContext, name: string, enabled: Read
       ? {
           gmail_draft: defineInternalTool<GmailDraftInput>({
             description: "Create an unsent plain-text Gmail draft, or a reply draft with replyTo. This tool cannot send messages.",
-            execute: input => gmailDraft(connection, ops, input),
+            execute: input => gmailDraft(connection, ops, input, connection.approval(input)),
             inputSchema: gmailDraftInputSchema,
             metadata: metadata(ops.draftsCreate.id),
             name: "gmail_draft",
