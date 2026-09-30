@@ -59,6 +59,38 @@ describe("connect", () => {
     expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" } })
   })
 
+  it.each([false, true])("keeps token and account together during overlapping callbacks (revoked: %s)", async (revoked) => {
+    const test = createTestRuntime()
+    if (revoked) {
+      await connect(test)
+      await test.runtime.revoke({ name: "mail" })
+    }
+    const second = createConnectionsRuntime({ definitions: { mail: mailConnection() }, fetch: test.provider.fetch, now: () => test.now.value, store: test.store })
+    let enter!: () => void
+    let resume!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const release = new Promise<void>(resolve => { resume = resolve })
+    const put = test.store.state.put
+    test.store.state.put = async (state) => {
+      enter()
+      await release
+      await put(state)
+    }
+    const first = connect(test)
+    await entered
+    try {
+      await expect(connect({ ...test, runtime: second }, { access_token: "other-access", id_token: "account-2", refresh_token: "other-refresh" })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
+      expect(test.provider.calls.at(-1)).toMatchObject({ body: "token=other-refresh", url: "https://auth.example.com/revoke" })
+    }
+    finally {
+      resume()
+      await first
+    }
+    expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" }, status: "connected" })
+    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    expect(test.provider.calls.at(-1)!.headers.get("authorization")).toBe(`Bearer ${ACCESS_TOKEN}`)
+  })
+
   it("revokes the grant and blocks later calls", async () => {
     const test = createTestRuntime()
     await connect(test)
@@ -183,6 +215,16 @@ describe("calls", () => {
     expect(await rejection(client.fetch("https://attacker.example.com/"))).toMatchObject({ code: "CONNECTION_INVALID" })
     expect(await rejection(client.fetch("https://mail.example.com/mail/v1/x", { body: "{}", method: "POST" }))).toMatchObject({ code: "CONNECTION_DENIED" })
   })
+
+  it("preserves caller Accept headers and defaults absent values", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const client = test.runtime.client("mail", {})
+    await client.fetch("https://mail.example.com/mail/v1/users/me/labels", { headers: { Accept: "application/vnd.example+json" } })
+    expect(test.provider.calls.at(-1)!.headers.get("accept")).toBe("application/vnd.example+json")
+    await client.fetch("https://mail.example.com/mail/v1/users/me/labels")
+    expect(test.provider.calls.at(-1)!.headers.get("accept")).toBe("application/json")
+  })
 })
 
 describe("policy", () => {
@@ -254,6 +296,16 @@ describe("dry run", () => {
 })
 
 describe("approvals", () => {
+  it("preserves Accept when replaying an approved fetch", async () => {
+    const test = createTestRuntime(mailConnection({ "agent:labeller": { write: ["fetch"] } }))
+    await connect(test)
+    const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller" }).fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { method: "POST", body: "{}", headers: { Accept: "application/vnd.example+json" } }))
+    expect(error).toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
+    const id = isConnectionError(error) ? error.requestId! : ""
+    await test.runtime.approve({ id })
+    expect(test.provider.calls.at(-1)!.headers.get("accept")).toBe("application/vnd.example+json")
+  })
+
   it("replays an approved write once under the requesting actor", async () => {
     const test = createTestRuntime()
     await connect(test)

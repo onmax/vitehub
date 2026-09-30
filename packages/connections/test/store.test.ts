@@ -1,6 +1,8 @@
 import { createClient } from "@libsql/client"
 import { sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/libsql"
+import { drizzle as drizzleD1 } from "drizzle-orm/d1"
+import { Miniflare } from "miniflare"
 import { describe, expect, it } from "vitest"
 
 import { createDatabaseConnectionStore } from "../src/store.ts"
@@ -25,6 +27,32 @@ describe("stored Connection scopes", () => {
 })
 
 describe("approval execution leases", () => {
+  it("reports matched and lost leases through the D1 Drizzle adapter", async () => {
+    const worker = new Miniflare({
+      modules: true,
+      script: "export default { fetch() { return new Response('ok') } }",
+      compatibilityDate: "2026-07-14",
+      d1Databases: ["DB"],
+    })
+    try {
+      const db = drizzleD1(await worker.getD1Database("DB"))
+      const store = createDatabaseConnectionStore({ db, encryptionKey: new Uint8Array(32).fill(9) })
+      await store.approvals.create({ id: "d1", name: "mail", actor: "agent:test", action: "mail.write", input: {}, status: "pending", createdAt: "2026-09-30T00:00:00.000Z" })
+      expect(await store.approvals.renew("d1", "2026-09-30T00:10:00.000Z")).toBe(false)
+      expect(await store.approvals.transition("d1", "pending", "approved", { executionExpiresAt: "2026-09-30T00:05:00.000Z" })).toMatchObject({ status: "approved" })
+      expect(await store.approvals.renew("d1", "2026-09-30T00:10:00.000Z")).toBe(true)
+      await store.approvals.recover("2026-09-30T00:06:00.000Z")
+      expect(await store.approvals.get("d1")).toMatchObject({ status: "approved" })
+      await store.approvals.recover("2026-09-30T00:10:00.000Z")
+      expect(await store.approvals.renew("d1", "2026-09-30T00:20:00.000Z")).toBe(false)
+      expect(await store.approvals.transition("d1", "approved", "executed")).toBeUndefined()
+      expect(await store.approvals.renew("missing", "2026-09-30T00:20:00.000Z")).toBe(false)
+    }
+    finally {
+      await worker.dispose()
+    }
+  }, 30_000)
+
   it("adds leases to an existing approvals table and only renews active executions", async () => {
     const client = createClient({ url: ":memory:" })
     try {

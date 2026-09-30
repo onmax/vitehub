@@ -21,6 +21,7 @@ const AUTHORIZATION_TTL_MS = 10 * 60_000
 const APPROVAL_EXECUTION_TTL_MS = 5 * 60_000
 
 interface StoredToken {
+  accountId?: string
   accessToken: string
   expiresAt?: number
   refreshToken?: string
@@ -100,6 +101,7 @@ const definitionSchema = v.looseObject({
   scopes: v.array(v.string()),
 })
 const storedTokenSchema = v.object({
+  accountId: v.optional(v.string()),
   accessToken: v.string(),
   expiresAt: v.optional(v.number()),
   refreshToken: v.optional(v.string()),
@@ -299,6 +301,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     requestedScopes: readonly string[] = [],
   ): StoredToken {
     return {
+      accountId: previous?.accountId,
       accessToken: response.access_token,
       expiresAt: response.expires_in === undefined ? undefined : now() + response.expires_in * 1000,
       refreshToken: response.refresh_token ?? previous?.refreshToken,
@@ -397,8 +400,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
           if (expiresSoon(token)) token = await refresh(context.name, context.definition, token.accessToken, false)
           const call = (current: StoredToken) => {
             const headers: Record<string, string> = {
-              ...init.headers,
               accept: "application/json",
+              ...init.headers,
               authorization: `${current.tokenType === "bearer" ? "Bearer" : current.tokenType} ${current.accessToken}`,
             }
             if (providerRequest.body !== undefined && !Object.keys(headers).some(key => key.toLowerCase() === "content-type")) headers["content-type"] = "application/json"
@@ -608,16 +611,20 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       redirect_uri: authorization.redirectUri,
     })
     const account = loaded.provider.account(response)
+    const key = tokenKey(name)
+    // Bind the account check to the same token revision used by the conditional write.
+    const current = await connections.secrets.read(key)
+    const previous = current ? v.safeParse(storedTokenSchema, JSON.parse(current.value)) : undefined
     const state = await connections.state.get(name)
-    if (state?.status !== "revoked" && state?.accountId && account && state.accountId !== account.id) {
+    const accountId = previous?.success ? previous.output.accountId ?? state?.accountId : state?.status === "revoked" ? undefined : state?.accountId
+    if (accountId && account && accountId !== account.id) {
       await revokeProviderToken(loaded, response.refresh_token ?? response.access_token)
       throw new ConnectionError("invalid", `Connection "${name}" belongs to another account. Revoke it before you connect a different account.`, { details: { connection: name } })
     }
     const token = toStoredToken(response, undefined, [
       ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),
     ])
-    const key = tokenKey(name)
-    const current = await connections.secrets.inspect(key)
+    token.accountId = account?.id
     await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
     const timestamp = new Date(now()).toISOString()
     await connections.state.put({

@@ -206,6 +206,65 @@ export default defineConsoleAuthClient({
 
 Use `console.auth.server` or `console.auth.client` for a file in another location. An explicit path conflicts with the corresponding discovered file. Client code does not authorize requests.
 
+### Cloudflare Access
+
+Inline Console Auth needs `node:sqlite`, so it cannot run on Workers. On Cloudflare, protect the Console with a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/) self-hosted application instead. ViteHub verifies the token that Access forwards, so the Console needs no sign-in page, database, or secret:
+
+```ts [vite.config.ts]
+export default defineConfig({
+  plugins: [vitehub({
+    agent: true,
+    console: {
+      access: 'auth',
+      auth: { provider: 'cloudflare-access' },
+    },
+    preset: 'cloudflare',
+  })],
+})
+```
+
+Create the Access application for the Console hostname, or at least for `/_vitehub` and `/api/_vitehub/console`. Then set two Worker variables:
+
+- `CF_ACCESS_TEAM_DOMAIN`: the team domain, for example `acme.cloudflareaccess.com`.
+- `CF_ACCESS_AUD`: the Application Audience (AUD) tag of the Access application.
+
+The generated middleware guards `/_vitehub/**` and every method under `/api/_vitehub/console/**`. For each request, it reads the `Cf-Access-Jwt-Assertion` header and checks the RS256 signature against `https://<team domain>/cdn-cgi/access/certs`, the issuer, the audience, and the expiry. It keeps the key set in memory for each Worker isolate or server process and fetches it again when the cache expires or a token uses an unknown key. A request without a valid token receives `401`, so a `workers.dev` URL or another route that skips Access stays closed. Missing or invalid settings return `500`.
+
+The Access policy decides who can open the Console. ViteHub accepts every identity that Access admits for this application, including service tokens. The Console shows the Access email, or the service token client ID, on its sign-out button. Sign-out opens `/cdn-cgi/access/logout`.
+
+`teamDomain` and `audience` accept a string or an Env declaration, and default to the two variables above. Values resolve for each request from the process environment or the Worker bindings. `env.provider()` sources are rejected. To list the values on the Console **Env** page, declare them in Server Env and pass the same declarations:
+
+```ts [vite.config.ts]
+import { env } from 'vite-hub/env'
+
+const access = {
+  teamDomain: env({ source: env.source('CF_ACCESS_TEAM_DOMAIN') }),
+  audience: env({ source: env.source('CF_ACCESS_AUD') }),
+}
+
+export default defineConfig({
+  env: { server: { access } },
+  plugins: [vitehub({
+    console: { access: 'auth', auth: { provider: 'cloudflare-access', ...access } },
+    preset: 'cloudflare',
+  })],
+})
+```
+
+The provider also works on Node and Vercel when Cloudflare proxies the host and Access protects it. During `vite dev` no Access edge exists, so ViteHub does not register the guard. The development server serves the Console without a check, like `console: true`.
+
+Scripts and CLI commands reach Console routes through the same Access application. Cloudflare checks their credentials at its edge and forwards a signed token. The Worker does not read `CF-Access-Client-Id` or `CF-Access-Client-Secret` itself. Create a service token, add a policy with the **Service Auth** action to the application, and send the token headers:
+
+```bash [Terminal]
+curl https://agent.example.com/api/_vitehub/console/status \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET"
+```
+
+A tool that can send only an `Authorization` header can use the same service token when the Access application reads service tokens from that header (`read_service_tokens_from_header: "Authorization"`). Send `Authorization: {"cf-access-client-id":"<id>","cf-access-client-secret":"<secret>"}`. A user token from `cloudflared access token -app=https://agent.example.com` also works as the `CF_Authorization` cookie.
+
+### Reuse Primary Auth
+
 Existing applications can instead reuse their Primary Auth Definition. Set `console: { access: 'auth' }` and guard `/_vitehub/**` and `/api/_vitehub/console/**` there:
 
 ```ts [vite.config.ts]
@@ -239,6 +298,8 @@ ViteHub checks for an Auth Session before it calls `authorizeConsole`. A missing
 
 The `role` field above is an application example, not a ViteHub field. Replace it with the role, permission, or allowlist already used by the host.
 
+### Host-managed middleware
+
 Apps that use another authentication library must protect `/_vitehub/**` and `/api/_vitehub/console/**` in host middleware and acknowledge that boundary explicitly:
 
 ```ts [vite.config.ts]
@@ -251,7 +312,7 @@ export default defineConfig({
 })
 ```
 
-`host-managed` is an acknowledgement, not middleware. ViteHub does not inspect or enforce the host's access policy in this mode.
+`host-managed` is an acknowledgement, not middleware. ViteHub does not inspect or enforce the host's access policy in this mode. A Cloudflare production build with `host-managed` prints a warning that points to the [Cloudflare Access provider](#cloudflare-access), because the Worker cannot see whether Access protects every Console route.
 
 ### Start Agent Invocations
 
@@ -378,9 +439,9 @@ Blob inspection calls only the configured store's `list` operation. It returns a
 
 ## Inspect the Agent context
 
-Open an Agent Invocation and expand **Captured setup** to inspect the context resolved for that run. The Console shows the final instruction blocks and the model-visible tools, including each tool's description, input JSON Schema, and output JSON Schema when one is available. This is the post-composition contract after the Agent Definition, Capabilities, and runtime tool resolution have been applied, so it also covers dynamic tools whose contract cannot be generated into static documentation.
+Open an Agent Invocation and expand **Captured setup** to inspect the context resolved for that run. The Console shows the final instruction blocks and the model-visible tools, including each tool's label, icon, description, input JSON Schema, and output JSON Schema when one is available. Tools declare the label and icon with [`title` and `icon`](/docs/capabilities/custom-capabilities#minimum-shape). This is the post-composition contract after the Agent Definition, Capabilities, and runtime tool resolution have been applied, so it also covers dynamic tools whose contract cannot be generated into static documentation.
 
-Invocation journals are metadata-only by default. In that mode, Captured setup includes tool names but omits instructions, descriptions, and schemas. Configure the Agent's invocation journal with `configuration: 'content'` to retain the resolved context independently of other trace content. `content: 'content'` also retains it. Large journal observations remain subject to ViteHub's trace bounds and are marked when truncated. That context can contain secrets or customer data contributed by application code, so use the same access, retention, and encryption controls as prompts and model output. See [Agent Invocations](/docs/agents/invocations#observe-the-outcome) for configuration details.
+Invocation journals are metadata-only by default. In that mode, Captured setup includes tool names, labels, and icons but omits instructions, descriptions, and schemas. Configure the Agent's invocation journal with `configuration: 'content'` to retain the resolved context independently of other trace content. `content: 'content'` also retains it. Large journal observations remain subject to ViteHub's trace bounds and are marked when truncated. That context can contain secrets or customer data contributed by application code, so use the same access, retention, and encryption controls as prompts and model output. See [Agent Invocations](/docs/agents/invocations#observe-the-outcome) for configuration details.
 
 ## Inspect usage
 
@@ -423,6 +484,6 @@ Images must be PNG, JPEG, WebP, or GIF, with at most ten images and 10 MiB combi
 
 ## Inspect capabilities
 
-Open the right panel's tab chooser and select **Capabilities**. Select a Capability to inspect its recorded data and tools. MCP groups tools by server and preserves original tool names and schemas. Title shows its generation settings, progress, and result. Other Capabilities have a default tools and configuration view.
+Open the right panel's tab chooser and select **Capabilities**. Select a Capability to inspect its recorded data and tools. Tool rows and calls use each tool's declared label and icon. MCP groups tools by server and preserves original tool names and schemas. Title shows its generation settings, progress, and result. Other Capabilities have a default tools and configuration view.
 
 The panel reads the selected Invocation's snapshots. It does not run MCP discovery or title generation. Missing or truncated capture is marked. Developers can [contribute a read-only view](/docs/capabilities/custom-capabilities#contribute-an-inspection-view) with the shared JSON Render component catalog.
