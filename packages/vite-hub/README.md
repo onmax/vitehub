@@ -151,6 +151,8 @@ Set `console.observations` to configure the fallback journal's observation count
 
 On the `cloudflare` preset, production builds store the fallback journal in the D1 Database binding: the `driver: "d1"` binding, or the `cloudflare.binding` of the default or only Database Definition. The D1 store creates its table on first use. Development, `console.databaseUrl`, and `VITEHUB_CONSOLE_DATABASE_URL` keep libSQL. See [Cloudflare journal](https://vitehub.dev/docs/development/console#cloudflare-journal).
 
+The D1 journal supports Drizzle queries and atomic writes through `console.resolve(context).invocations.db.batch()`. Its `db.transaction()` method rejects before the callback runs. Use `db.batch()` to group D1 writes.
+
 ## Console images
 
 The Console accepts up to ten PNG, JPEG, WebP, or GIF images per message, within a combined 10 MiB limit. Configure durable Blob storage to keep the bytes, and content-enabled Invocation storage to keep message references. Agents can return published Blob image URLs in Markdown. See [Console usage](https://vitehub.dev/docs/console/usage).

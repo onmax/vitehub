@@ -62,7 +62,9 @@ export function consoleD1Binding(
   if (database !== true && database.driver === "d1") return database.binding?.trim() || "DB"
   if (!definitions) return
   const options = database === true ? undefined : database
-  const config = resolveDBViteConfig(options, resolve(definitions.root, options?.projectRoot ?? "."), { serverDirs: definitions.serverDirs })
+  const root = resolve(definitions.root, options?.projectRoot ?? ".")
+  const serverDirs = options?.projectRoot !== undefined ? [resolve(root, "server")] : definitions.serverDirs
+  const config = resolveDBViteConfig(options, root, { serverDirs })
   const name = config?.databases.default ? "default" : config?.databaseNames.length === 1 ? config.databaseNames[0] : undefined
   return name ? config?.databases[name]?.cloudflare?.binding : undefined
 }

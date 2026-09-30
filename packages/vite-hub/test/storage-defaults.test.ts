@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { pathToFileURL } from "node:url"
+import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import type { Plugin } from "vite"
 import { describe, expect, it } from "vitest"
 import { consoleD1Binding, resolveConsoleJournal, withDataDir } from "../src/storage-config.ts"
@@ -21,7 +22,7 @@ async function generatedConsolePlugin(options: ViteHubOptions, command: "build" 
     const config = plugin?.config
     const configResolved = plugin?.configResolved
     if (!config || !configResolved) throw new TypeError("Expected Console config hooks.")
-    await Reflect.apply("handler" in config ? config.handler : config, {}, [{ root }, { command, mode: command === "build" ? "production" : "development" }])
+    await Reflect.apply("handler" in config ? config.handler : config, {}, [{ root, [VITEHUB_SERVER_DIRS]: [join(root, "server")] }, { command, mode: command === "build" ? "production" : "development" }])
     const info: string[] = []
     await Reflect.apply("handler" in configResolved ? configResolved.handler : configResolved, {}, [{ root, logger: { info: (message: string) => info.push(message) } }])
     return { info, plugin: await readFile(join(root, ".vitehub/nitro/console/plugin.mjs"), "utf8") }
@@ -121,6 +122,15 @@ describe("Console journal host defaults", () => {
     expect(plugin).toContain(`d1: { binding: "APP_DB",`)
     const withoutDefinition = await generatedConsolePlugin({ ...cloudflare, database: true }, "build")
     expect(withoutDefinition.plugin).not.toContain("cloudflare:workers")
+  })
+
+  it("reads the D1 binding from the Database project root", async () => {
+    const { plugin } = await generatedConsolePlugin({ ...cloudflare, database: { projectRoot: "data" } }, "build", {
+      "server/databases/config.ts": 'export default defineDatabase({ cloudflare: { binding: "APP_DB", databaseName: "app" }, schema: {} })\n',
+      "data/server/databases/config.ts": 'export default defineDatabase({ cloudflare: { binding: "DATA_DB", databaseName: "data" }, schema: {} })\n',
+    })
+    expect(plugin).toContain('d1: { binding: "DATA_DB",')
+    expect(plugin).not.toContain('d1: { binding: "APP_DB",')
   })
 
   it("keeps the local libSQL journal during Cloudflare development", async () => {

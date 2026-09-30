@@ -585,6 +585,24 @@ describe("ViteHub Nuxt integration", () => {
     await application.runCloseHook()
   })
 
+  it("discovers the Nuxt Console D1 journal from the Database project root", async () => {
+    await mkdir("/tmp/vitehub-nuxt/custom-server/databases", { recursive: true })
+    await writeFile("/tmp/vitehub-nuxt/custom-server/databases/config.ts", 'export default defineDatabase({ cloudflare: { binding: "APP_DB", databaseName: "app" }, schema: {} })\n')
+    await mkdir("/tmp/vitehub-nuxt/custom-server/data/server/databases", { recursive: true })
+    await writeFile("/tmp/vitehub-nuxt/custom-server/data/server/databases/config.ts", 'export default defineDatabase({ cloudflare: { binding: "DATA_DB", databaseName: "data" }, schema: {} })\n')
+    const application = createNuxt(false)
+    await viteHubNuxtModule({
+      preset: "cloudflare",
+      agent: true,
+      console: { exposure: "host-managed" },
+      database: { projectRoot: "custom-server/data" },
+    }, application.nuxt)
+    const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
+    expect(generated).toContain('d1: { binding: "DATA_DB",')
+    expect(generated).not.toContain('d1: { binding: "APP_DB",')
+    await application.runCloseHook()
+  })
+
   it("preserves an explicit Nuxt libSQL Console journal on Cloudflare", async () => {
     const application = createNuxt(false)
     await viteHubNuxtModule({

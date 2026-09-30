@@ -8,7 +8,7 @@ import { installConsoleAgentDefinitions } from "../src/console/runtime/server/ag
 import { console as consoleRuntime } from "../src/console/server.ts"
 import { createConsoleD1Invocations, installConsoleInvocations } from "../src/console/runtime/server/invocations.ts"
 
-import type { AgentInvocationD1Database } from "@vite-hub/agent/invocations/d1"
+import type { AgentInvocationD1Database, AgentInvocationD1Statement } from "@vite-hub/agent/invocations/d1"
 
 describe("Console D1 journal", () => {
   let miniflare: Miniflare
@@ -91,5 +91,48 @@ describe("Console D1 journal", () => {
   it("reports a missing D1 binding", async () => {
     const invocations = createConsoleD1Invocations({ binding: "JOURNAL", env: () => ({}) })
     await expect(invocations.list()).rejects.toThrow("requires the D1 binding \"JOURNAL\"")
+  })
+
+  it("accepts null results for batch writes and keeps mixed read and returning results", async () => {
+    const binding: AgentInvocationD1Database = {
+      prepare: query => database.prepare(query),
+      // doctor-disable-next-line typescript/evidence/no-caller-chosen-result-type -- Implements the D1 batch contract while reproducing an empty write response.
+      async batch<T>(statements: AgentInvocationD1Statement[]) {
+        const results = await database.batch<T>(statements)
+        for (const result of results) {
+          if (result.results.length === 0) Object.defineProperty(result, "results", { value: null })
+        }
+        return results
+      },
+    }
+    installConsoleInvocations("/console-d1-null-results", undefined, undefined, undefined, {
+      binding: "JOURNAL",
+      env: () => ({ JOURNAL: binding }),
+    })
+    const { db, schema } = consoleRuntime.resolve({ memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }).invocations
+    const record = { id: "null-batch-results", traceId: "null-batch-trace", status: "completed" as const, createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-09-30T00:00:00.000Z", observations: [] }
+    const values = { id: record.id, status: record.status, search: "", summary: record, record }
+    const results = await db.batch([
+      db.insert(schema.invocations).values(values),
+      db.update(schema.invocations).set({ agentName: "batch-write" }).where(eq(schema.invocations.id, record.id)),
+      db.select().from(schema.invocations).where(eq(schema.invocations.id, record.id)),
+      db.delete(schema.invocations).where(eq(schema.invocations.id, record.id)),
+      db.insert(schema.invocations).values(values).returning({ id: schema.invocations.id }),
+    ])
+    expect(results).toMatchObject([{ rows: [] }, { rows: [] }, [{ agentName: "batch-write" }], { rows: [] }, [{ id: record.id }]])
+    await expect(db.select().from(schema.invocations).where(eq(schema.invocations.id, record.id))).resolves.toMatchObject([{ id: record.id }])
+  })
+
+  it("rejects callback transactions before resolving D1 or running the callback", async () => {
+    const env = vi.fn(() => ({ JOURNAL: database }))
+    installConsoleInvocations("/console-d1-transaction", undefined, undefined, undefined, { binding: "JOURNAL", env })
+    const { db, schema } = consoleRuntime.resolve({ memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }).invocations
+    const callback = vi.fn(async (transaction: Parameters<Parameters<typeof db.transaction>[0]>[0]) => {
+      await transaction.update(schema.invocations).set({ agentName: "uncommitted" })
+      throw new Error("Roll back the write.")
+    })
+    await expect(db.transaction(callback)).rejects.toThrow("does not support db.transaction(). Use db.batch()")
+    expect(callback).not.toHaveBeenCalled()
+    expect(env).not.toHaveBeenCalled()
   })
 })

@@ -194,20 +194,25 @@ export function createConsoleD1Invocations(d1: ConsoleD1Journal, observations?: 
     observations,
     store: createD1AgentInvocationStore({ database, migrate: false }),
   })
+  const db = drizzleRemote(async (query, parameters, method) => {
+    const binding = await database()
+    const statement = binding.prepare(query).bind(...parameters)
+    const rows = await statement.raw()
+    return { rows: method === "get" ? rows[0]! : rows }
+  }, async (queries) => {
+    const binding = await database()
+    const results = await binding.batch(queries.map(query => binding.prepare(query.sql).bind(...query.params)))
+    return results.map((result, index) => {
+      const rows = (result.results ?? []).map(row => Object.values(row))
+      return { rows: queries[index]!.method === "get" ? rows[0]! : rows }
+    })
+  }, { schema: consoleInvocationSchema })
+  // D1 cannot keep Drizzle's separate BEGIN/query/COMMIT calls in one transaction.
+  db.transaction = async () => {
+    throw viteHubErrorDiagnostics.VITE_HUB_R0123({ message: "[vitehub] The D1 Console journal does not support db.transaction(). Use db.batch() for atomic writes." })
+  }
   consoleInvocationDatabases.set(invocations, {
-    db: drizzleRemote(async (query, parameters, method) => {
-      const binding = await database()
-      const statement = binding.prepare(query).bind(...parameters)
-      const rows = await statement.raw()
-      return { rows: method === "get" ? rows[0]! : rows }
-    }, async (queries) => {
-      const binding = await database()
-      const results = await binding.batch(queries.map(query => binding.prepare(query.sql).bind(...query.params)))
-      return results.map((result, index) => {
-        const rows = result.results.map(row => Object.values(row))
-        return { rows: queries[index]!.method === "get" ? rows[0]! : rows }
-      })
-    }, { schema: consoleInvocationSchema }),
+    db,
     schema: consoleInvocationSchema,
   })
   consoleDatabaseConfigurations.set(invocations, `d1:${d1.binding}`)

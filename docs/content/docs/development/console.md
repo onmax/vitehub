@@ -360,6 +360,8 @@ The build prints `Console journal: D1 binding DB, table vitehub_agent_invocation
 
 The fallback journal exposes `console.resolve(context).invocations` from `vite-hub/console/server`. It provides `db` and `schema.invocations` for Drizzle queries on D1 and libSQL. The schema contains the columns shared by both stores. On D1, each query or batch resolves the Worker binding and creates the journal table before it runs.
 
+Use `db.batch()` for atomic D1 writes. If any statement fails, D1 rolls back the whole batch. D1 does not support Drizzle's callback transactions, so `db.transaction()` rejects with `VITE_HUB_R0123` before the callback runs. The libSQL journal retains its transaction support.
+
 `vite dev` keeps the local SQLite journal. `console.databaseUrl` at build time, or `VITEHUB_CONSOLE_DATABASE_URL` at runtime, selects libSQL instead. An Agent Definition with its own `invocations` still wins. If the binding is missing from the Worker env, journal reads and writes fail with a diagnostic. Agent results do not change.
 
 The Console sends every read through one Devframe SSE instance at `/_vitehub/rpc/**`. Its internal request contract uses `GET` semantics for bounded listings and metadata, and JSON-body `POST` semantics to read a selected KV value without putting an opaque key in the request URL. The POST operation remains read-only. Responses set `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.
