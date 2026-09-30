@@ -262,7 +262,7 @@ function withSiblingWorkspaceSourceRoot<TRuntimeConfig extends AgentRuntimeConfi
 
   // These options came from an already validated Agent Definition; this pass
   // only fills the inferred workspace source root.
-  return defineAgent({
+  return defineAgent<TRuntimeConfig>({
     ...options,
     workspace: {
       ...options.workspace,
@@ -288,7 +288,7 @@ function applyVariant<TRuntimeConfig extends AgentRuntimeConfig>(
   if (!isVariantOverride(variant)) return agent
   const settings = (agent as { __vitehubAgentSettings?: AgentSettings<TRuntimeConfig> }).__vitehubAgentSettings
   if (settings) {
-    return defineAgent({
+    return defineAgent<TRuntimeConfig>({
       ...settings,
       driver: applyVariantToExplicitDriver(settings.driver, variant) as never,
     } as never)
@@ -299,7 +299,7 @@ function applyVariant<TRuntimeConfig extends AgentRuntimeConfig>(
 
   const options = agent.__vitehubWorkspaceAgentOptions as WorkspaceAgentOptions<TRuntimeConfig>
   const driver = (options as { driver?: unknown }).driver
-  return defineAgent({
+  return defineAgent<TRuntimeConfig>({
     ...options,
     driver: applyVariantToExplicitDriver(driver, variant) as never,
   } as never)

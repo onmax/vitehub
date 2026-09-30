@@ -130,10 +130,13 @@ export interface AgentChannelOptions<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TBody extends AgentChannelChatRouteBody = AgentChannelChatRouteBody,
   TAuth = unknown,
+  TData = unknown,
+  TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
 > {
   adapter?: AgentChannelDefinition<TRuntimeConfig>["adapter"]
   capabilities?: AgentChannelDefinition<TRuntimeConfig>["capabilities"]
   identity?: AgentChannelDefinition<TRuntimeConfig>["identity"]
+  message?: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods>
   messages?: false | AgentMessageChannelSettings<TRuntimeConfig>
   route?: boolean | AgentChannelChatRouteHandlerOptions<TBody, TAuth>
   triggers?: AgentChannelDefinition<TRuntimeConfig>["triggers"]
@@ -153,7 +156,9 @@ export interface AgentWebChatChannelOptions<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TBody extends AgentChannelChatRouteBody = AgentChannelChatRouteBody,
   TAuth = unknown,
-> extends AgentChannelOptions<TRuntimeConfig, TBody, TAuth> {}
+  TData = unknown,
+  TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
+> extends AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods> {}
 
 type GitHubAppValue<T, TRuntimeConfig extends AgentRuntimeConfig> =
   MaybeResolvable<T, AgentCallbackContext<TRuntimeConfig> | AgentChannelDeliveryEffectContext<TRuntimeConfig>>
@@ -484,8 +489,12 @@ export interface GitHubChannelActivityOptions<TRuntimeConfig extends AgentRuntim
   publicUrl: MaybeResolvable<string, AgentCallbackContext<TRuntimeConfig>>
 }
 
-export interface GitHubChannelOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
-  extends AgentChannelOptions<TRuntimeConfig> {
+export interface GitHubChannelOptions<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
+>
+  extends AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods> {
   activity?: boolean | GitHubChannelActivityOptions<TRuntimeConfig>
   app?: true | GitHubAppOptions<TRuntimeConfig>
   pullRequest?: boolean | GitHubPullRequestCommentEventOptions<TRuntimeConfig>
@@ -503,8 +512,12 @@ export interface DiscordAdapterOptions {
   userName?: string
 }
 
-export interface DiscordChannelOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
-  extends Omit<AgentChannelOptions<TRuntimeConfig>, "adapter"> {
+export interface DiscordChannelOptions<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
+>
+  extends Omit<AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods>, "adapter"> {
   adapter?: true | DiscordAdapterOptions | AgentChannelOptions<TRuntimeConfig>["adapter"]
 }
 
@@ -512,8 +525,12 @@ type TelegramChannelValue<T, TRuntimeConfig extends AgentRuntimeConfig> =
   MaybeResolvable<T, AgentCallbackContext<TRuntimeConfig>>
 type TelegramSecret = string | { unseal: () => string }
 
-export interface TelegramChannelOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
-  extends Omit<AgentChannelOptions<TRuntimeConfig>, "adapter"> {
+export interface TelegramChannelOptions<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
+>
+  extends Omit<AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods>, "adapter"> {
   adapter?: AgentChannelOptions<TRuntimeConfig>["adapter"]
   allowedUserIds?: TelegramChannelValue<TelegramAdapterConfig["allowedUserIds"], TRuntimeConfig>
   apiBaseUrl?: TelegramChannelValue<TelegramAdapterConfig["apiBaseUrl"], TRuntimeConfig>
@@ -3080,11 +3097,11 @@ const reservedChannelMessageMethodNames = new Set(["channel", "data", "kind", "t
 function validateChannelMessageDefinition(kind: string, message: unknown): void {
   if (message === undefined) return
   if (!isRecord(message)) {
-    throw agentDiagnostics.AGENT_R0928({ message: `[vitehub] defineChannel("${kind}", { message }) expects an object.` })
+    throw agentDiagnostics.AGENT_R0930({ message: `[vitehub] defineChannel("${kind}", { message }) expects an object.` })
   }
   if (message.methods === undefined) return
   if (!isRecord(message.methods)) {
-    throw agentDiagnostics.AGENT_R0928({ message: `[vitehub] defineChannel("${kind}", { message: { methods } }) expects an object.` })
+    throw agentDiagnostics.AGENT_R0930({ message: `[vitehub] defineChannel("${kind}", { message: { methods } }) expects an object.` })
   }
   for (const [name, method] of Object.entries(message.methods)) {
     if (reservedChannelMessageMethodNames.has(name)) {
@@ -3092,7 +3109,7 @@ function validateChannelMessageDefinition(kind: string, message: unknown): void 
     }
     if (hasRuntimeType(method, "function")) continue
     if (isRecord(method) && method.read === true && hasRuntimeType(method.handler, "function")) continue
-    throw agentDiagnostics.AGENT_R0928({ message: `[vitehub] Channel "${kind}" message method "${name}" must be a function or { read: true, handler }.` })
+    throw agentDiagnostics.AGENT_R0930({ message: `[vitehub] Channel "${kind}" message method "${name}" must be a function or { read: true, handler }.` })
   }
 }
 
@@ -3138,31 +3155,83 @@ export function defineChannelTrigger<
   return definition
 }
 
-export function discord<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>(
-  options: DiscordChannelOptions<TRuntimeConfig> = {},
-): AgentChannelDefinitionOf<TRuntimeConfig, "discord"> {
+// Infer message methods without a default; the following overload keeps explicit runtime-config calls.
+export function discord<
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+>(
+  options: DiscordChannelOptions<TRuntimeConfig, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+): AgentChannelDefinitionOf<TRuntimeConfig, "discord", TData, TMethods>
+export function discord<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options?: DiscordChannelOptions<TRuntimeConfig, TData, TMethods>,
+): AgentChannelDefinitionOf<TRuntimeConfig, "discord", TData, TMethods>
+export function discord<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options: DiscordChannelOptions<TRuntimeConfig, TData, TMethods> = {},
+): AgentChannelDefinitionOf<TRuntimeConfig, "discord", TData, TMethods> {
   return defineChannel("discord", {
     ...options,
     adapter: discordAdapterResolver(options.adapter),
   })
 }
 
-export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>(
-  options: GitHubChannelOptions<TRuntimeConfig> & {
+export function github<
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+>(
+  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> } & {
     pullRequest: true | (GitHubPullRequestCommentEventOptions<TRuntimeConfig> & { workspace?: true | { mount?: string } })
   },
-): AgentChannelDefinitionOf<TRuntimeConfig, "github"> & {
+): AgentChannelDefinitionOf<TRuntimeConfig, "github", TData, TMethods> & {
   capabilities: readonly [
     AgentCapabilityDefinition<TRuntimeConfig> & { workspace: NonNullable<AgentCapabilityDefinition<TRuntimeConfig>["workspace"]> },
     ...AgentCapabilityDefinition<TRuntimeConfig>[],
   ]
 }
-export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>(
-  options?: GitHubChannelOptions<TRuntimeConfig>,
-): AgentChannelDefinitionOf<TRuntimeConfig, "github">
-export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>(
-  options: GitHubChannelOptions<TRuntimeConfig> = {},
-): AgentChannelDefinitionOf<TRuntimeConfig, "github"> {
+export function github<
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+>(
+  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+): AgentChannelDefinitionOf<TRuntimeConfig, "github", TData, TMethods>
+export function github<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods> & {
+    pullRequest: true | (GitHubPullRequestCommentEventOptions<TRuntimeConfig> & { workspace?: true | { mount?: string } })
+  },
+): AgentChannelDefinitionOf<TRuntimeConfig, "github", TData, TMethods> & {
+  capabilities: readonly [
+    AgentCapabilityDefinition<TRuntimeConfig> & { workspace: NonNullable<AgentCapabilityDefinition<TRuntimeConfig>["workspace"]> },
+    ...AgentCapabilityDefinition<TRuntimeConfig>[],
+  ]
+}
+export function github<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options?: GitHubChannelOptions<TRuntimeConfig, TData, TMethods>,
+): AgentChannelDefinitionOf<TRuntimeConfig, "github", TData, TMethods>
+export function github<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods> = {},
+): AgentChannelDefinitionOf<TRuntimeConfig, "github", TData, TMethods> {
   const { activity, app: appOptions, pullRequest, ...channelOptions } = options
   const activityDefinition = activity ? githubAgentActivity(appOptions) : undefined
   const openedActivityDefinition = activity ? githubAgentActivity(appOptions, "initialize") : undefined
@@ -3198,33 +3267,107 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
 }
 
 export function http<
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
   TBody extends AgentChannelChatRouteBody = AgentChannelChatRouteBody,
   TAuth = unknown,
 >(
-  options: AgentChannelOptions<TRuntimeConfig, TBody, TAuth> = {},
-): AgentChannelDefinitionOf<TRuntimeConfig, "http"> {
+  options: AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+): AgentChannelDefinitionOf<TRuntimeConfig, "http", TData, TMethods>
+export function http<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TBody extends AgentChannelChatRouteBody = AgentChannelChatRouteBody,
+  TAuth = unknown,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options?: AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods>,
+): AgentChannelDefinitionOf<TRuntimeConfig, "http", TData, TMethods>
+export function http<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TBody extends AgentChannelChatRouteBody = AgentChannelChatRouteBody,
+  TAuth = unknown,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options: AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods> = {},
+): AgentChannelDefinitionOf<TRuntimeConfig, "http", TData, TMethods> {
   if ("path" in options) {
     throw agentDiagnostics.AGENT_R0372({ message: "[vitehub] http({ path }) is not wired yet. Webhook routes are configured with webhooks.path." })
   }
   return defineChannel("http", options)
 }
 
-export function slack<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>(
-  options: AgentChannelOptions<TRuntimeConfig> = {},
-): AgentChannelDefinitionOf<TRuntimeConfig, "slack"> {
+export function slack<
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+>(
+  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+): AgentChannelDefinitionOf<TRuntimeConfig, "slack", TData, TMethods>
+export function slack<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options?: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods>,
+): AgentChannelDefinitionOf<TRuntimeConfig, "slack", TData, TMethods>
+export function slack<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods> = {},
+): AgentChannelDefinitionOf<TRuntimeConfig, "slack", TData, TMethods> {
   return defineChannel("slack", options)
 }
 
-export function teams<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>(
-  options: AgentChannelOptions<TRuntimeConfig> = {},
-): AgentChannelDefinitionOf<TRuntimeConfig, "teams"> {
+export function teams<
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+>(
+  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods>
+export function teams<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options?: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods>,
+): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods>
+export function teams<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods> = {},
+): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods> {
   return defineMessageChannelInstructions(defineChannel("teams", options), "Write formulas for Microsoft Teams as readable plain text, using words, Unicode symbols, or inline code. Teams does not render LaTeX math delimiters or Mermaid diagrams. Explain variables in short bullets; use a numbered flow instead of diagram syntax.")
 }
 
-export function telegram<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>(
-  options: TelegramChannelOptions<TRuntimeConfig> = {},
-): AgentChannelDefinitionOf<TRuntimeConfig, "telegram"> {
+export function telegram<
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+>(
+  options: TelegramChannelOptions<TRuntimeConfig, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+): AgentChannelDefinitionOf<TRuntimeConfig, "telegram", TData, TMethods>
+export function telegram<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options?: TelegramChannelOptions<TRuntimeConfig, TData, TMethods>,
+): AgentChannelDefinitionOf<TRuntimeConfig, "telegram", TData, TMethods>
+export function telegram<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options: TelegramChannelOptions<TRuntimeConfig, TData, TMethods> = {},
+): AgentChannelDefinitionOf<TRuntimeConfig, "telegram", TData, TMethods> {
   if (options.webhooks !== undefined && options.webhookSecret !== undefined) {
     throw agentDiagnostics.AGENT_R0373({ message: "[vitehub] telegram() accepts webhookSecret or webhooks, not both." })
   }
@@ -3299,12 +3442,32 @@ export function telegram<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntim
 }
 
 export function webChat<
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TData = unknown,
   TBody extends AgentChannelChatRouteBody = AgentChannelChatRouteBody,
   TAuth = unknown,
 >(
-  options: AgentWebChatChannelOptions<TRuntimeConfig, TBody, TAuth> = {},
-): AgentChannelDefinitionOf<TRuntimeConfig, "web-chat"> {
+  options: AgentWebChatChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+): AgentChannelDefinitionOf<TRuntimeConfig, "web-chat", TData, TMethods>
+export function webChat<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TBody extends AgentChannelChatRouteBody = AgentChannelChatRouteBody,
+  TAuth = unknown,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options?: AgentWebChatChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods>,
+): AgentChannelDefinitionOf<TRuntimeConfig, "web-chat", TData, TMethods>
+export function webChat<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  TBody extends AgentChannelChatRouteBody = AgentChannelChatRouteBody,
+  TAuth = unknown,
+  TData = unknown,
+  const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+>(
+  options: AgentWebChatChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods> = {},
+): AgentChannelDefinitionOf<TRuntimeConfig, "web-chat", TData, TMethods> {
   return defineChannel("web-chat", {
     ...options,
     route: options.route ?? true,

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import * as v from "valibot"
 
 import { createTraceEventLog } from "@vite-hub/runtime"
-import { defineChannel, slack } from "../src/channels.ts"
+import { defineChannel, slack, telegram } from "../src/channels.ts"
 import { withAgentChannelDeliveryOwnershipVerifier } from "../src/internal/channel-delivery.ts"
 import { channelMessageContextKey } from "../src/internal/channel-delivery-handlers.ts"
 import { defineAgent, runAgent, runAgentTrigger } from "../src/index.ts"
@@ -59,6 +59,49 @@ function mailChannel(provider: { label: (id: string, add: string[]) => void, sub
 }
 
 describe("Channel message handle", () => {
+  it.each([false, true])("retains custom message methods on a Telegram helper with dryRun=%s", async dryRun => {
+    const label = vi.fn((id: string, value: string) => `${id}:${value}`)
+    const subject = vi.fn((id: string) => `subject:${id}`)
+    const seen: unknown[] = []
+    const support = telegram({
+      allowedUserIds: [123],
+      botToken: "test-token",
+      messages: false,
+      message: {
+        data: v.object({ id: v.string() }),
+        methods: {
+          label: (context, value: string) => label(context.message.id, value),
+          subject: { read: true, handler: context => subject(context.message.id) },
+        },
+      },
+      triggers: {
+        custom: {
+          invoke: (context, input: { id: string }) => ({
+            input: { dryRun, prompt: "classify message" },
+            message: input,
+            run: { channelId: context.trigger.channelId, origin: context.channel.kind, runId: `telegram-custom-${dryRun}` },
+          }),
+        },
+      },
+    })
+    const agent = defineAgent({
+      channels: { support },
+      driver: { run: () => "Receipts" },
+      hooks: {
+        async "agent:finish"(event) {
+          if (!event.message) throw new Error("expected a Channel message")
+          seen.push(event.message.channel, event.message.kind, event.message.data)
+          seen.push(await event.message.subject(), await event.message.label(String(event.text)))
+        },
+      },
+    })
+    await expect(runAgentTrigger(agent, runtimeContext(), "support.custom", { id: "m1" })).resolves.toBe("Receipts")
+    expect(seen).toEqual(["support", "telegram", { id: "m1" }, "subject:m1", dryRun ? undefined : "m1:Receipts"])
+    expect(subject).toHaveBeenCalledWith("m1")
+    if (dryRun) expect(label).not.toHaveBeenCalled()
+    else expect(label).toHaveBeenCalledWith("m1", "Receipts")
+  })
+
   it("gives finish hooks typed Channel message methods", async () => {
     const provider = { label: vi.fn(), subject: vi.fn(() => "Invoice") }
     const seen: unknown[] = []
