@@ -48,6 +48,22 @@ describe("CI merge gate", () => {
     expect(marker?.if).toBeUndefined()
   })
 
+  it("requires the default success condition across all package test shards", () => {
+    const marker = workflow.jobs["package-tests-success"]
+    expect(marker?.needs).toEqual(["package-tests"])
+    expect(marker?.if).toBeUndefined()
+  })
+
+  it.each(["pull_request", "push"])("rejects a partial package test rerun with failed shards on %s", (event) => {
+    const result = runGate({
+      ...successfulJobs,
+      "package-tests": { result: "success" },
+      "package-tests-success": { result: "skipped" },
+    }, event)
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain("package-tests-success: skipped")
+  })
+
   it.each(["push", "workflow_dispatch"])("rejects a partial matrix rerun with failed shards on %s", (event) => {
     // A partial rerun can report matrix success while the default success()
     // condition still skips the marker because another shard remains failed.
@@ -62,7 +78,7 @@ describe("CI merge gate", () => {
 
   it("accepts the checks intentionally skipped on pull requests", () => {
     const results = Object.fromEntries(jobNames.map(name => [name, {
-      result: ["checks", "package-tests"].includes(name) ? "success" : "skipped",
+      result: ["checks", "package-tests", "package-tests-success"].includes(name) ? "success" : "skipped",
     }]))
     expect(runGate(results).status).toBe(0)
     expect(runGate(results, "push").status).not.toBe(0)
@@ -74,7 +90,7 @@ describe("CI merge gate", () => {
     }
   })
 
-  it.each(["checks", "package-tests"])("rejects skipped required job %s", (name) => {
+  it.each(["checks", "package-tests", "package-tests-success"])("rejects skipped required job %s", (name) => {
     expect(runGate({ ...successfulJobs, [name]: { result: "skipped" } }).status).not.toBe(0)
   })
 
