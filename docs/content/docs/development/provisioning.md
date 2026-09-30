@@ -67,6 +67,8 @@ plan: 1 pending action. Run `vitehub provision run --provider cloudflare` to app
 ```
 
 A pending action needs resource creation or provider-side setup. An existing Vercel Blob store remains pending until it is connected to the project in all required environments.
+If an existing project connection is missing environments, planning fails with `BLOB_R0020`. Correct the connection in Vercel before rerunning status or provisioning. `provision run` cannot modify an existing connection.
+Planning failures exit with code 1 and write the diagnostic to stderr, including with `--json`.
 Without provider credentials, the command still shows recorded ids, but it reports the plan as not checked instead of reporting no pending actions.
 The plan is also not checked when an applicable Provision Step skips its lookup. For example, Vercel Blob requires both `VERCEL_TOKEN` and `VERCEL_PROJECT_ID`.
 

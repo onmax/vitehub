@@ -232,6 +232,9 @@ export function createBlobVercelProvisionStep(resolveOptions: () => BlobModuleOp
       const connectionState = existing?.id
         ? vercelConnectionState(await readVercelBlobStore(request, existing.id), projectId)
         : "absent"
+      if (connectionState === "mismatched") {
+        throw blobErrorDiagnostics.BLOB_R0020({ message: "Vercel Blob is connected to the project without all required environments." })
+      }
 
       return [{
         kind: "vercel-blob-store",

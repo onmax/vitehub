@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { createBlobVercelProvisionStep } from "../packages/blob/src/provision.ts"
-import { runViteHubCli } from "../packages/cli/src/index.ts"
+import { runViteHubCli, runViteHubCliEntrypoint } from "../packages/cli/src/index.ts"
 
 const directories: string[] = []
 
@@ -32,11 +32,11 @@ describe("Vercel Blob provision status", () => {
       root: rootDir,
     })
 
-    for (const connection of ["absent", "other-project", "incomplete", "equivalent", "complete-last", "complete-first"]) {
+    for (const connection of ["absent", "other-project", "equivalent", "complete-last", "complete-first"]) {
       const connected = ["equivalent", "complete-last", "complete-first"].includes(connection)
       projectsMetadata = connection === "absent" ? [] : [{
         projectId: connection === "other-project" ? "prj_other" : "prj_1",
-        environments: connection === "incomplete" ? ["production"] : ["production", "preview", "development"],
+        environments: ["production", "preview", "development"],
       }]
       if (connection === "complete-last") projectsMetadata.unshift({ projectId: "prj_1", environments: ["production"] })
       if (connection === "complete-first") projectsMetadata.push({ projectId: "prj_1", environments: ["production"] })
@@ -58,6 +58,7 @@ describe("Vercel Blob provision status", () => {
             checked: true,
             pending: connected ? 0 : 1,
           },
+          warnings: [],
         })
       }
       else {
@@ -66,7 +67,44 @@ describe("Vercel Blob provision status", () => {
       }
       expect(output).not.toContain("secret-token")
     }
-    expect(fetch).toHaveBeenCalledTimes(12)
+    expect(fetch).toHaveBeenCalledTimes(10)
+    await expect(readFile(join(rootDir, ".vitehub/provision.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it.each([false, true])("fails status for an unrepairable project connection with json=%s", async (json) => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-cli-blob-blocked-status-"))
+    directories.push(rootDir)
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      expect(init?.method).toBe("GET")
+      const body = new URL(String(input)).pathname === "/v1/storage/stores"
+        ? { stores: [{ id: "store_1", name: "existing-blob", type: "blob" }] }
+        : { store: { projectsMetadata: [{ projectId: "prj_1", environments: ["production"] }] } }
+      return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } })
+    })
+    const stdout = { write: vi.fn<(chunk: string | Uint8Array) => void>() }
+    const stderr = { write: vi.fn<(chunk: string | Uint8Array) => void>() }
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never)
+    const step = createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" }))
+
+    runViteHubCliEntrypoint({
+      args: ["provision", "status", "--provider", "vercel", ...json ? ["--json"] : []],
+      cwd: rootDir,
+      env: { VERCEL_TOKEN: "secret-token", VERCEL_PROJECT_ID: "prj_1" },
+      loadConfig: async () => ({
+        plugins: [{ vitehub: { cli: { namespaces: [], provision: [step] } } }],
+        root: rootDir,
+      }),
+      stderr,
+      stdout,
+    })
+
+    await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(1))
+    const diagnostic = stderr.write.mock.calls.map(([chunk]) => String(chunk)).join("")
+    expect(diagnostic).toContain("BLOB_R0020")
+    expect(diagnostic).toContain("without all required environments")
+    expect(diagnostic).not.toContain("secret-token")
+    expect(stdout.write).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledTimes(2)
     await expect(readFile(join(rootDir, ".vitehub/provision.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" })
   })
 

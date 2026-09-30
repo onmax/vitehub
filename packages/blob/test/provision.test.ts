@@ -333,11 +333,9 @@ describe("blob vercel provision step", () => {
       return jsonResponse({ stores: [{ id: "store_1", type: "blob" }] })
     })
 
-    const actions = await createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan(context(fetchImpl))
-    expect(actions[0]!.exists).toBe(true)
-    expect(actions[0]!.pending).toBe(true)
-    await expect(actions[0]!.apply()).rejects.toThrow("without all required environments")
-    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    await expect(createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan(context(fetchImpl)))
+      .rejects.toThrow("without all required environments")
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
   it("is idempotent across repeated provision runs", async () => {
@@ -417,7 +415,24 @@ describe("blob vercel provision step", () => {
       return jsonResponse({ stores: [{ id: "store_1", type: "blob" }] })
     })
 
+    await expect(createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan(context(fetchImpl)))
+      .rejects.toThrow("without all required environments")
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it("rejects a project connection that becomes incomplete after planning", async () => {
+    let reads = 0
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (init?.method === "POST") throw new Error("must not create a duplicate project connection")
+      if (String(input).includes("/storage/stores/store_1")) {
+        reads++
+        return jsonResponse({ store: { projectsMetadata: reads === 1 ? [] : [connectedProject("prj_1", ["production"])] } })
+      }
+      return jsonResponse({ stores: [{ id: "store_1", type: "blob" }] })
+    })
+
     const actions = await createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan(context(fetchImpl))
+    expect(actions[0]!.pending).toBe(true)
     await expect(actions[0]!.apply()).rejects.toThrow("without all required environments")
     expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
