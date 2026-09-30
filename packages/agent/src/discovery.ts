@@ -557,9 +557,19 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   const functionParameterNames = new Map<number, Set<string>>()
+  const defaultParameterInitializers = new Map<number, number>()
   for (const body of functionScopes) {
-    const parameters = openingDelimiters.get(body - 1)
-    if (parameters !== undefined) functionParameterNames.set(body, callbackBindingNames(parameters, body - 1))
+    const arrowBody = tokens[body - 2] === "=" && tokens[body - 1] === ">"
+    const parameterEnd = arrowBody ? body - 3 : body - 1
+    const parameters = openingDelimiters.get(parameterEnd)
+    if (parameters !== undefined) {
+      functionParameterNames.set(body, callbackBindingNames(parameters, parameterEnd))
+      for (let cursor = parameters + 1; cursor < parameterEnd; cursor++) {
+        if (tokens[cursor] === "=" && !["=", ">"].includes(tokens[cursor + 1]!) && tokens[cursor - 1] !== "=") {
+          defaultParameterInitializers.set(cursor + 1, parameterEnd)
+        }
+      }
+    }
   }
 
   function isFunctionParameter(index: number): boolean {
@@ -714,6 +724,22 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
   for (const [close, opening] of openingDelimiters) {
+    if (tokens[opening] === "(") {
+      const compound = tokens.slice(opening + 1, close).some((token, offset) =>
+        tokenScopes[opening + 1 + offset] === opening && ["?", "&", "|", ","].includes(token),
+      )
+      const memberEnd = memberCallEnd(close, opening)
+      const update = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
+      let receiver = opening
+      while (tokens[receiver - 1] === "(") receiver--
+      const prefixUpdate = ["+", "-"].includes(tokens[receiver - 2] ?? "") && tokens[receiver - 1] === tokens[receiver - 2]
+      if (compound && memberEnd > close + 1 && (assignmentOperator(memberEnd) || update || prefixUpdate || tokens[memberEnd] === "(" || tokens[receiver - 1] === "delete")) {
+        for (let reference = opening + 1; reference < close; reference++) {
+          if (visibleDeclaration(reference) !== undefined && !isFunctionParameter(reference)) mutatedBindings.add(tokens[reference]!)
+        }
+      }
+      continue
+    }
     if (!["[", "{"].includes(tokens[opening]) || declarationTypeTokens.has(opening)) continue
     const memberEnd = memberCallEnd(close, opening)
     if (memberEnd <= close + 1) continue
@@ -873,6 +899,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const call = memberCallEnd(index)
     if (visibleDeclaration(index) !== undefined && opaqueCalls.has(call) && !trustedCalls.has(call)) {
       invokedBindings.add(tokens[index]!)
+    }
+  }
+  // Defaults can alias captured options even when a helper has no arguments.
+  // Keep these references opaque when local functions are invoked.
+  if ([...opaqueCalls].some(call => !trustedCalls.has(call) && !parameterLists.has(call))) {
+    for (const [initializer, end] of defaultParameterInitializers) {
+      for (let reference = initializer; reference < end; reference++) {
+        if (visibleDeclaration(reference) !== undefined) mutatedBindings.add(tokens[reference]!)
+      }
     }
   }
   for (const call of opaqueCalls) {

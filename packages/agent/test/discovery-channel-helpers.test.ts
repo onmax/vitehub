@@ -881,3 +881,23 @@ it("rejects direct eval that may mutate captured Channel options", async () => {
     "portal.ts": `${setup} export default github(options)`,
   })).rejects.toThrow(/opaque Channel/)
 })
+
+it.each([
+  '(true ? options : other).pullRequest = true',
+  '++(true ? options : other).pullRequest',
+  '(enabled && options || other).pullRequest = true',
+  'const set = (value = options) => { value.pullRequest = true }; set()',
+  'const set = (value: { pullRequest: boolean } = options) => { value.pullRequest = true }; set()',
+  'function set(value = options) { value.pullRequest = true }; set()',
+])("rejects captured option mutations through compound receivers and defaults: %s", async mutation => {
+  const setup = `${imports} const enabled = true; const options = { pullRequest: false }; const other = { pullRequest: false }; ${mutation};`
+  await expect(discover(`${setup} export default defineAgent({ channels: { custom: github(options) } })`)).rejects.toThrow(/opaque Channel/)
+  await expect(discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": `${setup} export default github(options)`,
+  })).rejects.toThrow(/opaque Channel/)
+})
+
+it("keeps read-only conditional option receivers stateless", async () => {
+  const definition = await discover(`${imports} const options = { pullRequest: false }; const other = {}; const enabled = (true ? options : other).pullRequest; export default defineAgent({ channels: { custom: github(options) } })`)
+  expect(definition?.workspace).toBeUndefined()
+})
