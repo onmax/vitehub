@@ -191,6 +191,7 @@ it.each([
 it.each([
   ["{ pullRequest: false }", false],
   ["{ pullRequest: true }", true],
+  ["{ \\u0070ullRequest: true }", true],
   ["{ pullRequest: { workspace: false } }", false],
   ["{ pullRequest: { workspace: {} } }", true],
   ['{ kind: "custom", pullRequest: true }', false],
@@ -545,6 +546,20 @@ it("keeps options named get or set as plain properties", async () => {
 
 const owning = 'import { github } from "vite-hub/agent/channels"; export default github({ pullRequest: true })'
 
+it.each([
+  ["github({ \\u0070ullRequest: true })", true],
+  ["github({ pull\\u{52}equest: false })", false],
+  ["github({ pullRequest: { \\u0077orkspace: false } })", false],
+  ["webChat({ \\u0063apabilities: [defineCapability({ \\u0077orkspace: {} })] })", true],
+])("decodes escaped Channel option identifiers: %s", async (channel, ownsWorkspace) => {
+  const local = await discover(`${imports} export default defineAgent({ channels: { custom: ${channel} } })`)
+  expect(local?.workspace).toBe(ownsWorkspace ? "review" : undefined)
+  const imported = await discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": `${imports} export default ${channel}`,
+  })
+  expect(imported?.workspace).toBe(ownsWorkspace ? "review" : undefined)
+})
+
 it.each<[string, string, Record<string, string>, string | undefined]>([
   ["default re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "./inner.ts"', "inner.ts": owning }, "review"],
   ["stateless default re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "./inner.ts"', "inner.ts": stateless }, undefined],
@@ -569,6 +584,7 @@ it("records every local declarator", async () => {
 
 it.each([
   'options.pullRequest = true',
+  'opt\\u0069ons.pullRequest = true',
   'options["pullRequest"] = true',
   'options.pullRequest.workspace = true',
   'options["pullRequest"]["workspace"] = true',
