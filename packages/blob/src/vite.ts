@@ -6,7 +6,7 @@ import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir } from "@vite-hub/internal/build/provider-output-sources"
-import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 import { init as initCommonJS, parse as parseCommonJS } from "cjs-module-lexer"
@@ -57,7 +57,7 @@ interface InternalBlobModuleOptions {
   nitroOwned?: boolean
 }
 
-const mergeNoExternal = createNoExternalMerger(blobPackageName)
+const noExternalAddition = createNoExternalAddition(blobPackageName)
 
 function serializeVirtualConfig(config: BlobViteRuntimeConfig): string {
   return [
@@ -427,7 +427,7 @@ export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBl
 
       return {
         resolve: {
-          noExternal: mergeNoExternal(config.resolve?.noExternal),
+          noExternal: noExternalAddition(config.resolve?.noExternal),
         },
       }
     },
