@@ -34,11 +34,11 @@ describe("defineConnection", () => {
     expect(defineConnection({ provider })).toEqual({ provider })
   })
 
-  it("requires an OAuth 2 provider", () => {
+  it("requires an OAuth 2 or API key provider", () => {
     const { provider } = fakeProvider()
     expect(invalidPath(() => defineConnection(untyped(undefined)))).toBe("provider")
     expect(invalidPath(() => defineConnection(untyped({})))).toBe("provider")
-    expect(invalidPath(() => defineConnection(untyped({ provider: { ...provider, kind: "api-key" } })))).toBe("provider")
+    expect(invalidPath(() => defineConnection(untyped({ provider: { ...provider, kind: "basic" } })))).toBe("provider")
   })
 
   it("rejects invalid access rules with the rule path", () => {

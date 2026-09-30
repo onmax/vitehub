@@ -10,7 +10,9 @@ import type {
   ConnectionDefinition,
   ConnectionDefinitionRegistry,
   ConnectionEffect,
+  ConnectionOAuth2Provider,
   ConnectionOperation,
+  ConnectionProvider,
   ConnectionProviderContext,
   ConnectionRequest,
   ConnectionSkipped,
@@ -73,6 +75,8 @@ export interface ConnectionsRuntime {
   open: (input: { event?: unknown, name: string, ticket: string }) => Promise<{ authorizationUrl: string, state: string }>
   record: (activity: Omit<ConnectionActivity, "id" | "timestamp">, event?: unknown) => Promise<void>
   refresh: (name: string, options: ConnectionLifecycleOptions) => Promise<ConnectionSummary>
+  /** Stores the key of an API key Connection. Runs the provider `verify` check first. */
+  setKey: (name: string, key: string, options: ConnectionLifecycleOptions) => Promise<ConnectionSummary>
   /** Creates a single-use connect ticket. `origin` is the public origin of the app. */
   start: (name: string, options: ConnectionLifecycleOptions & { origin: string }) => Promise<{ expiresAt: string, url: string }>
 }
@@ -114,6 +118,19 @@ function requestUrl(request: ConnectionRequest): URL {
     else url.searchParams.set(key, String(value))
   }
   return url
+}
+
+// Visible ASCII only, so a key cannot add a header line or hide whitespace.
+const apiKeyPattern = /^[\x21-\x7e]{1,8192}$/
+
+function oauth2Provider(name: string, provider: ConnectionProvider): ConnectionOAuth2Provider {
+  if (provider.kind !== "oauth2") throw connectionError("unsupported", { connection: name })
+  return provider
+}
+
+function authorization(provider: ConnectionProvider, token: ConnectionTokenSet): [header: string, value: string] {
+  if (provider.kind === "api-key") return [provider.header, provider.scheme ? `${provider.scheme} ${token.accessToken}` : token.accessToken]
+  return ["authorization", `${token.tokenType.toLowerCase() === "bearer" ? "Bearer" : token.tokenType} ${token.accessToken}`]
 }
 
 function target(url: URL): string {
@@ -194,7 +211,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   function summary(name: string, value: ConnectionDefinition, grant: StoredGrant | undefined): ConnectionSummary {
     const base = {
       access: value.access ?? {},
+      kind: value.provider.kind,
       name,
+      ...(value.provider.kind === "api-key" ? { header: value.provider.header } : {}),
       provider: value.provider.id,
       ...(value.description ? { description: value.description } : {}),
     }
@@ -226,6 +245,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const stored = await db.tokens(name)
       if (!stored) throw connectionError("missing", { connection: name })
       if (stored.grant.status === "needs-reconnect") throw connectionError("needs_reconnect", { connection: name })
+      // An API key does not expire. Replacing it is a Console action.
+      if (value.provider.kind === "api-key") return stored.tokens
       initialRevision ??= stored.grant.revision
       const now = Date.now()
       const refreshedByOther = force && stored.grant.revision !== initialRevision
@@ -238,7 +259,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       if (await db.lease(name, stored.grant.revision, now, now + leaseMs)) {
         const started = Date.now()
         try {
-          const refreshed = await value.provider.refresh(stored.tokens, providerContext(event))
+          const refreshed = await oauth2Provider(name, value.provider).refresh(stored.tokens, providerContext(event))
           await db.write({ expectedRevision: stored.grant.revision, name, provider: value.provider.id, tokens: { ...refreshed, account: refreshed.account ?? stored.tokens.account } })
           await recordQuietly({ action: "refresh", actor, connection: name, durationMs: Date.now() - started, outcome: "succeeded" }, event)
           return refreshed
@@ -259,7 +280,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   async function send(name: string, value: ConnectionDefinition, url: URL, init: RequestInit, event: unknown, actor: ConnectionActor): Promise<Response> {
     const authorize = (token: ConnectionTokenSet) => {
       const headers = new Headers(init.headers)
-      headers.set("authorization", `${token.tokenType.toLowerCase() === "bearer" ? "Bearer" : token.tokenType} ${token.accessToken}`)
+      headers.set(...authorization(value.provider, token))
       return fetcher(url, { ...init, headers })
     }
     const token = await tokens(name, value, event, actor)
@@ -395,7 +416,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const value = await definition(name)
       const pending = await store(event).openPending(ticket, Date.now())
       if (!pending || pending.name !== name) throw connectionError("invalid", { connection: name })
-      const authorizationUrl = await value.provider.authorizationUrl({
+      const authorizationUrl = await oauth2Provider(name, value.provider).authorizationUrl({
         codeChallenge: await codeChallenge(pending.verifier),
         redirectUri: pending.redirectUri,
         state: pending.state,
@@ -414,7 +435,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const started = Date.now()
       try {
         if (input.error || !input.code) throw connectionError("provider_failed", { connection: input.name })
-        const tokenSet = await value.provider.exchange({ code: input.code, codeVerifier: pending.verifier, redirectUri: pending.redirectUri }, providerContext(input.event))
+        const tokenSet = await oauth2Provider(input.name, value.provider).exchange({ code: input.code, codeVerifier: pending.verifier, redirectUri: pending.redirectUri }, providerContext(input.event))
         const grant = await db.write({ name: input.name, provider: value.provider.id, tokens: tokenSet })
         await record({ action: "connect", actor: pending.actor, connection: input.name, durationMs: Date.now() - started, outcome: "succeeded" }, input.event)
         return summary(input.name, value, grant)
@@ -426,11 +447,35 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     },
     async refresh(name, lifecycle) {
       const value = await definition(name)
+      oauth2Provider(name, value.provider)
       await tokens(name, value, lifecycle.event, lifecycle.actor, true)
       return inspect(name, lifecycle.event)
     },
+    async setKey(name, key, lifecycle) {
+      const value = await definition(name)
+      const provider = value.provider
+      if (provider.kind !== "api-key") throw connectionError("unsupported", { connection: name })
+      if (!apiKeyPattern.test(key)) throw connectionError("invalid", { connection: name })
+      const db = store(lifecycle.event)
+      const started = Date.now()
+      try {
+        const verified = provider.verify ? await provider.verify(key, providerContext(lifecycle.event)) : {}
+        if (verified === false) throw connectionError("key_rejected", { connection: name })
+        const grant = await db.write({
+          name,
+          provider: provider.id,
+          tokens: { accessToken: key, scopes: [], tokenType: "api-key", ...(verified.account ? { account: verified.account } : {}) },
+        })
+        await record({ action: "connect", actor: lifecycle.actor, connection: name, durationMs: Date.now() - started, outcome: "succeeded" }, lifecycle.event)
+        return summary(name, value, grant)
+      }
+      catch (error) {
+        await recordQuietly({ action: "connect", actor: lifecycle.actor, connection: name, durationMs: Date.now() - started, error: errorCode(error), outcome: "failed" }, lifecycle.event)
+        throw error
+      }
+    },
     async start(name, lifecycle) {
-      await definition(name)
+      oauth2Provider(name, (await definition(name)).provider)
       const origin = new URL(lifecycle.origin).origin
       const ticket = randomToken()
       const expiresAt = Date.now() + pendingTtlMs

@@ -1,6 +1,6 @@
 import { oauth2 } from "./oauth2.ts"
 
-import type { ConnectionOAuthClient, ConnectionProvider } from "../types.ts"
+import type { ConnectionOAuth2Provider, ConnectionOAuthClient } from "../types.ts"
 
 export interface GoogleProviderOptions {
   /** OAuth client of this app. Called for each provider request, so it can read server env. */
@@ -10,7 +10,7 @@ export interface GoogleProviderOptions {
 }
 
 /** Google OAuth 2 with offline access. The grant includes a refresh token. */
-export function google(options: GoogleProviderOptions): ConnectionProvider {
+export function google(options: GoogleProviderOptions): ConnectionOAuth2Provider {
   return oauth2({
     authorizationParams: {
       access_type: "offline",

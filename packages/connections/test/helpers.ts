@@ -8,7 +8,7 @@ import { createConnectionsStore } from "../src/store.ts"
 
 import type { ConnectionsRuntime, ConnectionsRuntimeOptions } from "../src/runtime/core.ts"
 import type { ConnectionsDatabase } from "../src/store.ts"
-import type { ConnectionDefinition, ConnectionOperation, ConnectionProvider, ConnectionTokenSet } from "../src/types.ts"
+import type { ConnectionDefinition, ConnectionOperation, ConnectionOAuth2Provider, ConnectionTokenSet } from "../src/types.ts"
 
 const cleanup: Array<() => void> = []
 
@@ -51,14 +51,14 @@ export function tokenSet(overrides: Partial<ConnectionTokenSet> = {}): Connectio
 }
 
 /** Hand-written provider. `refresh` returns `access-<n>` tokens. */
-export function fakeProvider(overrides: Partial<ConnectionProvider> = {}) {
+export function fakeProvider(overrides: Partial<ConnectionOAuth2Provider> = {}) {
   let count = 0
   const refresh = vi.fn(async (token: ConnectionTokenSet): Promise<ConnectionTokenSet> => {
     count += 1
     return { ...token, accessToken: `refreshed-access-${count}`, expiresAt: Date.now() + 3_600_000 }
   })
   const revoke = vi.fn(async (_token: ConnectionTokenSet): Promise<void> => undefined)
-  const provider: ConnectionProvider = {
+  const provider: ConnectionOAuth2Provider = {
     authorizationUrl: async input => `https://auth.example/authorize?state=${input.state}`,
     exchange: async () => tokenSet(),
     id: "fake",

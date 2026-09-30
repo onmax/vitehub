@@ -66,16 +66,40 @@ export interface ConnectionProviderContext {
   fetch: typeof globalThis.fetch
 }
 
-/** Provider contract. v1 supports OAuth 2 with PKCE. */
-export interface ConnectionProvider {
-  authorizationUrl: (input: ConnectionAuthorizationInput, context: ConnectionProviderContext) => Promise<string>
-  exchange: (input: ConnectionExchangeInput, context: ConnectionProviderContext) => Promise<ConnectionTokenSet>
+interface ConnectionProviderBase {
+  /** Provider identifier shown in the Console. */
   id: string
-  kind: "oauth2"
-  refresh: (token: ConnectionTokenSet, context: ConnectionProviderContext) => Promise<ConnectionTokenSet>
   revoke?: (token: ConnectionTokenSet, context: ConnectionProviderContext) => Promise<void>
   scopes: readonly string[]
 }
+
+/** OAuth 2 authorization code provider with PKCE. The Console starts the consent flow. */
+export interface ConnectionOAuth2Provider extends ConnectionProviderBase {
+  authorizationUrl: (input: ConnectionAuthorizationInput, context: ConnectionProviderContext) => Promise<string>
+  exchange: (input: ConnectionExchangeInput, context: ConnectionProviderContext) => Promise<ConnectionTokenSet>
+  kind: "oauth2"
+  refresh: (token: ConnectionTokenSet, context: ConnectionProviderContext) => Promise<ConnectionTokenSet>
+}
+
+/** Result of an API key check. `false` rejects the key. */
+export type ConnectionApiKeyVerification = false | { account?: string }
+
+/** API key provider. A Console admin sets the key. ViteHub sends it in one request header. */
+export interface ConnectionApiKeyProvider extends ConnectionProviderBase {
+  /** Lowercase request header that carries the key. */
+  header: string
+  kind: "api-key"
+  /** Text before the key in the header value, for example `Bearer`. */
+  scheme?: string
+  /** Checks a new key before ViteHub stores it. */
+  verify?: (key: string, context: ConnectionProviderContext) => Promise<ConnectionApiKeyVerification>
+}
+
+/** Provider contract. v1 supports OAuth 2 with PKCE and API keys. */
+export type ConnectionProvider = ConnectionApiKeyProvider | ConnectionOAuth2Provider
+
+/** How the Connection gets its credential. */
+export type ConnectionKind = ConnectionProvider["kind"]
 
 export interface ConnectionDefinition<TProvider extends ConnectionProvider = ConnectionProvider> {
   access?: ConnectionAccess
@@ -148,6 +172,9 @@ export interface ConnectionSummary {
   connectedAt?: string
   description?: string
   expiresAt?: string
+  /** Request header that carries the key of an API key Connection. */
+  header?: string
+  kind: ConnectionKind
   lastError?: string
   name: string
   provider: string

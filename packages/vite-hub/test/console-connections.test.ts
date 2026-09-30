@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { createClient } from "@libsql/client"
+import { apiKey } from "@vite-hub/connections"
 import { createConnectionsRuntime } from "@vite-hub/connections/server"
 import { drizzle } from "drizzle-orm/libsql"
 import * as v from "valibot"
@@ -47,7 +48,10 @@ function runtime() {
   return createConnectionsRuntime({
     database: () => db,
     encryptionKey: () => Buffer.from(new Uint8Array(32).fill(3)).toString("base64url"),
-    registry: { example: async () => ({ default: definition }) },
+    registry: {
+      example: async () => ({ default: definition }),
+      executor: async () => ({ default: { provider: apiKey({ id: "executor" }) } satisfies ConnectionDefinition }),
+    },
   })
 }
 
@@ -78,7 +82,7 @@ describe("Console Connections", () => {
     installConsoleConnections("/connections-test", () => connections)
     const list = await connectionsRoute({ req: manage({ action: "list" }) })
     expect(list.status).toBe(200)
-    expect(await list.json()).toMatchObject({ admin: true, connections: [{ name: "example", provider: "example", status: "disconnected" }] })
+    expect(await list.json()).toMatchObject({ admin: true, connections: [{ kind: "oauth2", name: "example", provider: "example", status: "disconnected" }, { kind: "api-key", name: "executor", status: "disconnected" }] })
 
     const start = await handleConsoleConnections(manage({ action: "start", name: "example" }))
     const { url } = v.parse(v.object({ url: v.string() }), await start.json())
@@ -98,6 +102,19 @@ describe("Console Connections", () => {
     const body = await activity.text()
     expect(JSON.parse(body)).toMatchObject({ events: [{ action: "connect", actor: { id: "console", kind: "user" }, outcome: "succeeded" }] })
     expect(body).not.toContain("synthetic-access")
+  })
+
+  it("sets an API key through the Console route and records the Console actor", async () => {
+    installConsoleSections("/connections-test", ["connections"])
+    const connections = runtime()
+    installConsoleConnections("/connections-test", () => connections)
+    const saved = await handleConsoleConnections(manage({ action: "set-key", key: "sk_console_marker", name: "executor" }))
+    expect(saved.status).toBe(200)
+    const body = await saved.text()
+    expect(JSON.parse(body)).toMatchObject({ connection: { header: "authorization", kind: "api-key", name: "executor", status: "active" } })
+    expect(body).not.toContain("sk_console_marker")
+    const activity = await handleConsoleConnections(manage({ action: "activity", name: "executor" }))
+    expect(await activity.json()).toMatchObject({ events: [{ action: "connect", actor: { id: "console", kind: "user" }, outcome: "succeeded" }] })
   })
 
   it("rejects cross-origin management requests", async () => {

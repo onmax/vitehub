@@ -11,6 +11,8 @@ export const connectionSummarySchema: v.GenericSchema<unknown, ConnectionSummary
   connectedAt: v.optional(v.string()),
   description: v.optional(v.string()),
   expiresAt: v.optional(v.string()),
+  header: v.optional(v.string()),
+  kind: v.picklist(["api-key", "oauth2"]),
   lastError: v.optional(v.string()),
   name: v.string(),
   provider: v.string(),
@@ -54,7 +56,7 @@ function fallbackMessage(status: number): string {
 
 export async function requestConnectionsManagement<T extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>>(
   endpoint: string,
-  action: "activity" | "disconnect" | "inspect" | "list" | "refresh" | "start",
+  action: "activity" | "disconnect" | "inspect" | "list" | "refresh" | "set-key" | "start",
   schema: T,
   input: Record<string, unknown> = {},
 ): Promise<v.InferOutput<T>> {

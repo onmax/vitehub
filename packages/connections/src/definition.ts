@@ -24,7 +24,7 @@ export function defineConnection<TProvider extends ConnectionProvider>(
   definition: ConnectionDefinition<TProvider>,
 ): ConnectionDefinition<TProvider> {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Connection Definitions can come from JavaScript files, so the shape is checked at runtime.
-  if (!definition || typeof definition !== "object" || !definition.provider || definition.provider.kind !== "oauth2") {
+  if (!definition || typeof definition !== "object" || !definition.provider || (definition.provider.kind !== "oauth2" && definition.provider.kind !== "api-key")) {
     throw connectionError("invalid", { path: "provider" })
   }
   assertRule(definition.access?.server, "access.server")

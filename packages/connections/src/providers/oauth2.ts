@@ -4,7 +4,7 @@ import { connectionError } from "../errors.ts"
 
 import type {
   ConnectionOAuthClient,
-  ConnectionProvider,
+  ConnectionOAuth2Provider,
   ConnectionProviderContext,
   ConnectionSecret,
   ConnectionTokenSet,
@@ -51,7 +51,7 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 /** Creates an OAuth 2 authorization code provider with PKCE S256. */
-export function oauth2(options: OAuth2ProviderOptions): ConnectionProvider {
+export function oauth2(options: OAuth2ProviderOptions): ConnectionOAuth2Provider {
   if (!options.authorizationUrl || !options.tokenUrl || !options.scopes.length) {
     throw connectionError("invalid", { path: "provider" })
   }

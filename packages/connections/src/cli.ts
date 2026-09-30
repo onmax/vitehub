@@ -15,6 +15,7 @@ const usage = [
   "  connect <name>       Print a single-use connect URL. Open it in a browser.",
   "  refresh <name>       Refresh the access token now.",
   "  disconnect <name>    Revoke the grant at the provider and delete it.",
+  "  set-key <name>       Set the key of an API key Connection. Pipe the key on stdin.",
   "",
   "Options:",
   "  --url <url>          Development server URL. Defaults to VITEHUB_DEV_SERVER_URL or http://localhost:5173.",
@@ -59,6 +60,16 @@ async function manage(url: string, body: Record<string, unknown>): Promise<Recor
     throw new Error(`${code}${message}`)
   }
   return v.parse(resultBody, value)
+}
+
+/** Reads a piped key. A key in an argument would stay in the shell history. */
+export async function readPipedKey(stdin: NodeJS.ReadStream = process.stdin): Promise<string> {
+  if (stdin.isTTY) throw new TypeError("Pipe the key on stdin, for example: printf %s \"$KEY\" | vitehub connections set-key <name>")
+  let text = ""
+  for await (const chunk of stdin) text += String(chunk)
+  const key = text.trim()
+  if (!key) throw new TypeError("The key on stdin is empty.")
+  return key
 }
 
 function line(connection: ConnectionSummary): string {
@@ -114,7 +125,8 @@ function command(
 }
 
 /** CLI commands for Connections. They call the Console management route of a development server. */
-export function createConnectionsCliContributor(): ViteHubCliContributor {
+export function createConnectionsCliContributor(options: { readKey?: () => Promise<string> } = {}): ViteHubCliContributor {
+  const readKey = options.readKey ?? (() => readPipedKey())
   return {
     namespaces: [{
       description: "Inspect and manage Connections.",
@@ -145,6 +157,11 @@ export function createConnectionsCliContributor(): ViteHubCliContributor {
         command("disconnect", "Revoke and delete the grant.", async ({ name, url }, context) => {
           const result = await manage(url, { action: "disconnect", name })
           // SAFETY: The management route returns a ConnectionSummary for the disconnect action.
+          context.stdout.write(`${line(result.connection as ConnectionSummary)}\n`)
+        }),
+        command("set-key", "Set the key of an API key Connection from stdin.", async ({ name, url }, context) => {
+          const result = await manage(url, { action: "set-key", key: await readKey(), name })
+          // SAFETY: The management route returns a ConnectionSummary for the set-key action.
           context.stdout.write(`${line(result.connection as ConnectionSummary)}\n`)
         }),
       ],
