@@ -240,6 +240,8 @@ describe("built-in deployment preset integration", () => {
         { source: `defineAgent({ channels: { telegram: telegram(undefined) } })`, required: true },
         { source: `defineAgent({ channels: { telegram: telegram(({})) } })`, required: true },
         { source: `defineAgent({ channels: { telegram: telegram((({ botToken: "token" }))) } })`, required: false },
+        { source: `defineAgent({ channels: { telegram: telegram?.({ botToken: "token" }) } })`, required: false },
+        { source: `function run() { telegram()\n{} }; defineAgent({ channels: {} })`, required: true },
         { source: `const channels = { telegram: {} }; defineAgent({ channels: channels satisfies AgentChannelInputs })`, required: true },
         { source: `defineAgent({ channels: { telegram: { async botToken() { return "token" } } } })`, required: false },
       ]) {

@@ -164,11 +164,30 @@ function channelFactoryReference(
 ): { call: boolean, kind: string } | undefined {
   let kind = bindings.get(tokens[index]!)
   let next = index + 1
-  if (!kind && namespaces.has(tokens[index]!) && tokens[index + 1] === "." && known.has(tokens[index + 2]!)) {
-    kind = tokens[index + 2]!
-    next = index + 3
+  const member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
+  if (!kind && namespaces.has(tokens[index]!) && tokens[member] === "." && known.has(tokens[member + 1]!)) {
+    kind = tokens[member + 1]!
+    next = member + 2
   }
+  if (tokens[next] === "?" && tokens[next + 1] === ".") next += 2
   return kind ? { call: tokens[next] === "(" || tokens[next] === "<", kind } : undefined
+}
+
+// A method key belongs directly to an object, class, or interface body. Function
+// and statement blocks can instead contain a call followed by a standalone block.
+function isMethodContainer(tokens: string[], index: number): boolean {
+  const stack: number[] = []
+  for (let i = 0; i < index; i++) {
+    if (["{", "(", "["].includes(tokens[i]!)) stack.push(i)
+    else if (["}", ")", "]"].includes(tokens[i]!)) stack.pop()
+  }
+  const open = stack.at(-1)
+  if (open === undefined || tokens[open] !== "{") return false
+  if (["=", "(", "[", ":", ",", ".", "return", "throw", "default", "yield", "?", "|", "&", "!", "~", "+", "-", "void", "await", "<"].includes(tokens[open - 1]!)) return true
+  for (let i = open - 1; i >= 0 && !["{", "}", ";"].includes(tokens[i]!); i--) {
+    if (["class", "interface"].includes(tokens[i]!) && tokens[i - 1] !== ".") return true
+  }
+  return false
 }
 
 // Resolve an object literal, or a module-level `const name = { ... }` reference to one.
@@ -386,11 +405,13 @@ function factoryCall(
 ): { name: string, open: number } | undefined {
   let name = bindings.get(tokens[index]!)
   let next = index + 1
-  if (!name && namespaces.has(tokens[index]!) && tokens[index + 1] === "." && names.has(tokens[index + 2]!)) {
-    name = tokens[index + 2]
-    next = index + 3
+  const member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
+  if (!name && namespaces.has(tokens[index]!) && tokens[member] === "." && names.has(tokens[member + 1]!)) {
+    name = tokens[member + 1]
+    next = member + 2
   }
   if (!name) return undefined
+  if (tokens[next] === "?" && tokens[next + 1] === ".") next += 2
   if (tokens[next] === "<") next = skipTypeArguments(tokens, next)
   if (tokens[next] !== "(") return undefined
   const after = tokens[closingDelimiter(tokens, next) + 1]
@@ -399,7 +420,7 @@ function factoryCall(
     && (!["await", "yield", "return", "throw", "new", "typeof", "void", "delete", "in", "instanceof"].includes(previous) || (previous === "void" && tokens[index - 2] === ":"))
   // Method keys are declarations. A call can precede a ternary colon, so also
   // require the key to follow a property boundary or a method modifier.
-  if (["{", ":"].includes(after!) && (afterType || ["{", "}", ",", ";", "async", "get", "set", "*", "static", "public", "private", "protected", "abstract", "declare"].includes(previous))) return undefined
+  if (["{", ":"].includes(after!) && (afterType || ["{", "}", ",", ";", "async", "get", "set", "*", "static", "public", "private", "protected", "abstract", "declare"].includes(previous)) && isMethodContainer(tokens, index)) return undefined
   return { name, open: next }
 }
 

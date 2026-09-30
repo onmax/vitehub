@@ -103,6 +103,43 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it("keeps calls followed by standalone blocks while ignoring multiline methods", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      function run() { telegram()
+        {} }
+      const callback = () => { telegram()
+        {} }
+      const helpers = { telegram()
+        {} }
+      class Tools { telegram()
+        {} }
+      if (config.class) { telegram()
+        {} }
+      export default { telegram()
+        {} }
+    `)).toEqual([
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: [] },
+    ])
+  })
+
+  it.each([
+    "telegram?.({ botToken: token })",
+    "telegram?.<Runtime>({ botToken: token })",
+    "channels.telegram?.({ botToken: token })",
+    "channels?.telegram({ botToken: token })",
+    "channels?.telegram?.({ botToken: token })",
+  ])("reads options from optional factory calls: %s", (factory) => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { telegram } from "vite-hub/agent/channels"
+      import * as channels from "vite-hub/agent/channels"
+      export default defineAgent({ channels: { telegram: ${factory} } })
+    `)).toEqual([{ kind: "telegram", keys: ["botToken"] }])
+  })
+
   it("reads parenthesized static options without treating comma expressions as literals", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
