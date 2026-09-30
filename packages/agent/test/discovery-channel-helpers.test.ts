@@ -197,6 +197,8 @@ it("does not trust a Channel helper from another package or a shadowed helper", 
 })
 
 it.each([
+  'const { github: gh = channels.github } = channels; export default defineAgent({ channels: { github: gh({ pullRequest: true }) } })',
+  'const { github: gh = custom(), telegram: tg = custom() } = channels; export default defineAgent({ channels: { github: gh({ pullRequest: true }), telegram: tg() } })',
   'const { github: gh } = channels; export default defineAgent({ channels: { github: gh({ pullRequest: true }) } })',
   'const { github: gh } = channels\nexport default defineAgent({ channels: { github: gh({ pullRequest: true }) } })',
   'const { github: gh, telegram: tg } = channels; export default defineAgent({ channels: { github: gh({ pullRequest: true }), telegram: tg() } })',
@@ -727,6 +729,12 @@ it.each([
   ['defineCapability({ workspace: false })', false],
   ['{ id: "stateless", workspace: null }', false],
   ['defineCapability({ workspace: 0 })', false],
+  ...["0.0", "-0.0", "+0.0", ".0", "0.", "0e3", "0e-3", "0x0", "0b0", "0o0", "0_0.0_0", "0n", "0x0n", "1e-999"].flatMap(zero => [
+    [`{ id: "stateless", workspace: ${zero} }`, false],
+    [`{ id: "stateless", workspace: false || ${zero} }`, false],
+    [`{ id: "storage", workspace: ${zero} || {} }`, true],
+  ] as const),
+  ...["0.1", "1e3", "0x1", "0b1", "0o1", "1n"].map(number => [`{ id: "storage", workspace: ${number} }`, true] as const),
   ['{ id: "stateless", workspace: -0 }', false],
   ['{ id: "stateless", workspace: "" }', false],
   ['{ id: "stateless", workspace: `` }', false],
@@ -738,10 +746,14 @@ it.each([
   ['{ id: "storage", workspace: (false as boolean) || {} }', true],
   ['{ id: "combined", workspace: false, capabilities: [{ id: "storage", workspace: {} }] }', true],
   ['defineCapability({ workspace: false, capabilities: [{ id: "storage", workspace: {} }] })', true],
-])("matches runtime ownership for falsy Capability Workspaces: %s", async (capability, ownsWorkspace) => {
+] as const)("matches runtime ownership for falsy Capability Workspaces: %s", async (capability, ownsWorkspace) => {
   for (const settings of [`capabilities: [${capability}]`, `channels: { custom: webChat({ capabilities: [${capability}] }) }`]) {
     const local = await discover(`${imports} export default defineAgent({ ${settings} })`)
     expect(local?.workspace).toBe(ownsWorkspace ? "review" : undefined)
+    const imported = await discover('import channel from "../../channel.ts"; export default defineAgent({ channels: { custom: channel } })', {
+      "channel.ts": `${imports} export default webChat({ capabilities: [${capability}] })`,
+    })
+    expect(imported?.workspace).toBe(ownsWorkspace ? "review" : undefined)
   }
 })
 

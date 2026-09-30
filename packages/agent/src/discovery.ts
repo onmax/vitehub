@@ -78,7 +78,7 @@ function tokenizeAgentSource(source: string) {
   const tokens: string[] = []
   const lineBreaks = new Set<number>()
   let previousEnd = 0
-  for (const match of source.matchAll(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|[A-Za-z_$][\w$]*|[^\s]/g)) {
+  for (const match of source.matchAll(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?[\d_]+)?)n?|[A-Za-z_$][\w$]*|[^\s]/g)) {
     const token = match[0]
     if (token.startsWith("//") || token.startsWith("/*")) continue
     if (/[\r\n\u2028\u2029]/.test(source.slice(previousEnd, match.index))) lineBreaks.add(tokens.length)
@@ -629,7 +629,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
             || !firstPartyChannelFactories.has(tokens[property]!)) continue
           const name = tokens[property + 1] === ":" ? tokens[property + 2] : tokens[property]
           const end = tokens[property + 1] === ":" ? property + 3 : property + 1
-          if (name && [",", "}"].includes(tokens[end]!)) helpers.set(name, { reference: cursor + 1, helper: tokens[property]! })
+          // A trusted namespace always supplies this helper, so its default never runs.
+          if (name && names.has(name) && [",", "}", "="].includes(tokens[end]!)) helpers.set(name, { reference: cursor + 1, helper: tokens[property]! })
         }
         destructuredChannelHelpers.set(binding, helpers)
       }
@@ -1124,11 +1125,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (seen.has(index)) throw new Error("[vitehub] Agent Workspace discovery cannot inspect a cyclic Capability Workspace expression. Use a literal Workspace value.")
     seen.add(index)
     if (undefinedValue(index)) return false
-    const negativeZero = tokens[index] === "-" && tokens[index + 1] === "0"
-    if (!["false", "null", "0", '""', "''", "``"].includes(tokens[index]) && !negativeZero) return true
+    const signedNumber = ["-", "+"].includes(tokens[index])
+    const number = tokens[index + (signedNumber ? 1 : 0)]
+    const numericZero = /^(?:\d|\.\d)/.test(number ?? "") && Number(number!.replace(/_/g, "").replace(/n$/, "")) === 0
+    if (!["false", "null", '""', "''", "``"].includes(tokens[index]) && !numericZero) return true
     // A compound expression starting with a falsy literal may still return a
-    // Workspace. Do not confuse zero with a longer numeric literal either.
-    let end = index + (negativeZero ? 2 : 1)
+    // Workspace. Numeric literals are complete tokens, including decimal and radix forms.
+    let end = index + (numericZero && signedNumber ? 2 : 1)
     let scope = tokenScopes[index]
     for (;;) {
       if (tokens[end] === "as" || tokens[end] === "satisfies") { end = skipAssertion(end); continue }
