@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { VITEHUB_NITRO_CONFIG_CONTEXT } from "@vite-hub/internal/build/vite";
+import { mergeConfig } from "vite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { discoverConnectionDefinitions } from "../src/discovery.ts";
@@ -52,11 +53,12 @@ describe("hubConnections", () => {
     const root = await createTempProject();
     const definition = await writeConnection(root, "server/connections/google.ts");
     const plugin = hubConnections({ database: "vite-hub/database/drizzle" });
-    const result = await (plugin.config as unknown as ConfigHook)(
-      { nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true },
-      { command: "serve", mode: "development" },
-    );
-    const nitro = result.nitro as {
+    const config = { nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true };
+    await (plugin.config as unknown as ConfigHook)(config, {
+      command: "serve",
+      mode: "development",
+    });
+    const nitro = config.nitro as {
       alias: Record<string, string>;
       handlers: Array<{ handler: string; route: string }>;
     };
@@ -76,10 +78,11 @@ describe("hubConnections", () => {
 
   it("requires authenticated management configuration in production", async () => {
     const root = await createTempProject();
-    const build = await (hubConnections().config as unknown as ConfigHook)(
-      { nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true },
-      { command: "build", mode: "production" },
-    );
+    const build = { nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true };
+    await (hubConnections().config as unknown as ConfigHook)(build, {
+      command: "build",
+      mode: "production",
+    });
     expect((build.nitro as { handlers?: unknown[] }).handlers ?? []).toEqual([]);
     await expect(
       (hubConnections({ management: true }).config as unknown as ConfigHook)(
@@ -87,13 +90,11 @@ describe("hubConnections", () => {
         { command: "build", mode: "production" },
       ),
     ).rejects.toThrow("requires management");
-    const managed = await (
+    const managed = { nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true };
+    await (
       hubConnections({ management: { actor: "./server/connections-auth.ts" } })
         .config as unknown as ConfigHook
-    )(
-      { nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true },
-      { command: "build", mode: "production" },
-    );
+    )(managed, { command: "build", mode: "production" });
     const handlers = (managed.nitro as { handlers: Array<{ handler: string }> }).handlers;
     expect(handlers).toHaveLength(2);
     const handler = await readFile(handlers[0]!.handler, "utf8");
@@ -102,6 +103,27 @@ describe("hubConnections", () => {
     );
     expect(handler).toContain("createConnectionsHandler({ actor })");
     expect(handler).not.toContain("user:local");
+  });
+
+  it("preserves existing config arrays when Vite merges the hook result", async () => {
+    const root = await createTempProject();
+    const config = {
+      nitro: { handlers: [{ handler: "existing.ts", route: "/existing" }] },
+      root,
+      ssr: { noExternal: ["existing-package"] },
+      [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
+    };
+    const addition = await (hubConnections().config as unknown as ConfigHook)(config, {
+      command: "serve",
+      mode: "development",
+    });
+    const merged = mergeConfig(config, addition);
+    expect(merged.ssr.noExternal).toEqual(["existing-package", "@vite-hub/connections"]);
+    expect(merged.nitro.handlers.map((handler: { route: string }) => handler.route)).toEqual([
+      "/existing",
+      "/_vitehub/connections",
+      "/_vitehub/connections/**",
+    ]);
   });
 
   it("writes registry types and refreshes on hot update", async () => {

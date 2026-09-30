@@ -34,11 +34,13 @@ export interface ConnectionStore {
   approvals: {
     /** Mark expired approval executions as failed with an unknown provider outcome. Never replay them. */
     recover: (before: string) => Promise<void>
+    /** Extend an active execution lease. Terminal approvals are not changed. */
+    renew: (id: string, expiresAt: string) => Promise<void>
     create: (approval: ConnectionApproval) => Promise<void>
     get: (id: string) => Promise<ConnectionApproval | undefined>
     list: (input: { name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApproval[]>
     /** Move an approval from one status to another. Returns `undefined` when the status was not `from`. */
-    transition: (id: string, from: ConnectionApprovalStatus, to: ConnectionApprovalStatus, patch?: { decidedAt?: string, decidedBy?: string, error?: string }) => Promise<ConnectionApproval | undefined>
+    transition: (id: string, from: ConnectionApprovalStatus, to: ConnectionApprovalStatus, patch?: { decidedAt?: string, decidedBy?: string, error?: string, executionExpiresAt?: string }) => Promise<ConnectionApproval | undefined>
   }
   authorizations: {
     put: (authorization: ConnectionAuthorization) => Promise<void>
@@ -135,15 +137,46 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
   })
   const db = options.db
   let ready: Promise<void> | undefined
-  const initialize = () => (ready ??= (async () => {
-    await db.run(sql`CREATE TABLE IF NOT EXISTS vitehub_connection_state (name TEXT PRIMARY KEY, status TEXT NOT NULL, account_id TEXT, account_email TEXT, scopes TEXT NOT NULL, connected_at TEXT, refreshed_at TEXT, updated_at TEXT NOT NULL)`)
-    await db.run(sql`CREATE TABLE IF NOT EXISTS vitehub_connection_authorizations (state TEXT PRIMARY KEY, name TEXT NOT NULL, actor TEXT NOT NULL, verifier TEXT NOT NULL, redirect_uri TEXT NOT NULL, expires_at INTEGER NOT NULL)`)
-    await db.run(sql`CREATE TABLE IF NOT EXISTS vitehub_connection_approvals (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, input TEXT NOT NULL, status TEXT NOT NULL, trace_id TEXT, invocation_id TEXT, created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT, error TEXT)`)
-    await db.run(sql`CREATE INDEX IF NOT EXISTS vitehub_connection_approvals_status ON vitehub_connection_approvals (status, sequence)`)
-  })().catch((error: unknown) => {
-    ready = undefined
-    throw error
-  }))
+  const initialize = () =>
+    (ready ??= (async () => {
+      await db.run(
+        sql`CREATE TABLE IF NOT EXISTS vitehub_connection_state (name TEXT PRIMARY KEY, status TEXT NOT NULL, account_id TEXT, account_email TEXT, scopes TEXT NOT NULL, connected_at TEXT, refreshed_at TEXT, updated_at TEXT NOT NULL)`,
+      )
+      await db.run(
+        sql`CREATE TABLE IF NOT EXISTS vitehub_connection_authorizations (state TEXT PRIMARY KEY, name TEXT NOT NULL, actor TEXT NOT NULL, verifier TEXT NOT NULL, redirect_uri TEXT NOT NULL, expires_at INTEGER NOT NULL)`,
+      )
+      await db.run(
+        sql`CREATE TABLE IF NOT EXISTS vitehub_connection_approvals (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, input TEXT NOT NULL, status TEXT NOT NULL, trace_id TEXT, invocation_id TEXT, created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT, error TEXT, execution_expires_at TEXT)`,
+      )
+      const columns = await db.all(sql`PRAGMA table_info(vitehub_connection_approvals)`)
+      if (
+        !columns.some(
+          (column) =>
+            v.parse(v.object({ name: v.string() }), column).name === "execution_expires_at",
+        )
+      ) {
+        try {
+          await db.run(
+            sql`ALTER TABLE vitehub_connection_approvals ADD COLUMN execution_expires_at TEXT`,
+          )
+        } catch (error) {
+          const updated = await db.all(sql`PRAGMA table_info(vitehub_connection_approvals)`)
+          if (
+            !updated.some(
+              (column) =>
+                v.parse(v.object({ name: v.string() }), column).name === "execution_expires_at",
+            )
+          )
+            throw error
+        }
+      }
+      await db.run(
+        sql`CREATE INDEX IF NOT EXISTS vitehub_connection_approvals_status ON vitehub_connection_approvals (status, sequence)`,
+      )
+    })().catch((error: unknown) => {
+      ready = undefined
+      throw error
+    }))
   const approvalColumns = sql`id, name, actor, action, input, status, trace_id, invocation_id, created_at, decided_at, decided_by, error`
 
   return {
@@ -189,7 +222,15 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
     approvals: {
       async recover(before) {
         await initialize()
-        await db.run(sql`UPDATE vitehub_connection_approvals SET status = 'failed', error = 'CONNECTION_EXECUTION_UNKNOWN' WHERE status = 'approved' AND (decided_at IS NULL OR decided_at <= ${before})`)
+        await db.run(
+          sql`UPDATE vitehub_connection_approvals SET status = 'failed', error = 'CONNECTION_EXECUTION_UNKNOWN' WHERE status = 'approved' AND (execution_expires_at <= ${before} OR (execution_expires_at IS NULL AND (decided_at IS NULL OR decided_at <= ${new Date(Date.parse(before) - 5 * 60_000).toISOString()})))`,
+        )
+      },
+      async renew(id, expiresAt) {
+        await initialize()
+        await db.run(
+          sql`UPDATE vitehub_connection_approvals SET execution_expires_at = ${expiresAt} WHERE id = ${id} AND status = 'approved'`,
+        )
       },
       async create(approval) {
         await initialize()
@@ -207,7 +248,7 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
       },
       async transition(id, from, to, patch = {}) {
         await initialize()
-        const row = (await db.all(sql`UPDATE vitehub_connection_approvals SET status = ${to}, decided_at = COALESCE(${patch.decidedAt ?? null}, decided_at), decided_by = COALESCE(${patch.decidedBy ?? null}, decided_by), error = COALESCE(${patch.error ?? null}, error) WHERE id = ${id} AND status = ${from} RETURNING ${approvalColumns}`))[0]
+        const row = (await db.all(sql`UPDATE vitehub_connection_approvals SET status = ${to}, decided_at = COALESCE(${patch.decidedAt ?? null}, decided_at), decided_by = COALESCE(${patch.decidedBy ?? null}, decided_by), error = COALESCE(${patch.error ?? null}, error), execution_expires_at = COALESCE(${patch.executionExpiresAt ?? null}, execution_expires_at) WHERE id = ${id} AND status = ${from} RETURNING ${approvalColumns}`))[0]
         return row === undefined ? undefined : toApproval(row)
       },
     },

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import * as v from "valibot";
 
 import {
-  createNoExternalMerger,
+  createNoExternalAddition,
   hasNitroConfigContext,
   isServerEnvironment,
   resolveViteHubProjectRoot,
@@ -22,7 +22,7 @@ export const CONNECTIONS_REGISTRY_ID = "#vitehub/connections/registry";
 export const CONNECTIONS_VITE_PLUGIN_NAME = "@vite-hub/connections/vite";
 
 const resolvedConnectionsRegistryId = `\0${CONNECTIONS_REGISTRY_ID}`;
-const mergeNoExternal = createNoExternalMerger("@vite-hub/connections");
+const noExternalAddition = createNoExternalAddition("@vite-hub/connections");
 
 export interface ConnectionsVitePluginOptions {
   /** Module that exports the ViteHub Database as `db`. Set `false` when the app has no database. */
@@ -143,7 +143,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
         v.parse(v.optional(v.array(v.string())), Reflect.get(config, VITEHUB_SERVER_DIRS)) ??
         serverDirs;
       const nextConfig: Record<string, unknown> = {
-        ssr: { noExternal: mergeNoExternal(config.ssr?.noExternal) },
+        ssr: { noExternal: noExternalAddition(config.ssr?.noExternal) },
       };
       if (!hasNitroConfigContext(config)) return nextConfig;
 
@@ -215,7 +215,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
         kit.addHandler({ handler: handlerFile, route: "/_vitehub/connections/**" });
         Object.assign(nitro, kit.config);
       }
-      nextConfig.nitro = nitro;
+      Reflect.set(config, "nitro", nitro);
       return nextConfig;
     },
     async configResolved(config) {
@@ -226,7 +226,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) return;
       return {
-        resolve: { noExternal: mergeNoExternal(config.resolve?.noExternal) },
+        resolve: { noExternal: noExternalAddition(config.resolve?.noExternal) },
       };
     },
     async handleHotUpdate(context) {

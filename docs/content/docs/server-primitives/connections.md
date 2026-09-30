@@ -143,7 +143,7 @@ vitehub connections approvals approve approval_3kq2...
 vitehub connections approvals deny approval_3kq2...
 ```
 
-Approving runs the call once, as the actor that requested it. The access rules still apply. The approval then has status `executed` or `failed`. Execution has a five-minute deadline. If a process stops during execution, the next approval inspection or approval attempt marks expired executions as `failed` with `CONNECTION_EXECUTION_UNKNOWN`. The provider may have completed the write. Check the provider before requesting another approval; the runtime never replays an interrupted execution.
+Approving runs the call once, as the actor that requested it. The access rules still apply. The approval then has status `executed` or `failed`. Execution has a five-minute abort deadline. An active execution renews its database lease every 100 seconds until the provider call settles. Recovery waits for that lease to expire, so concurrent inspection does not fail an active call. If a process stops during execution, the next approval inspection or approval attempt marks expired executions as `failed` with `CONNECTION_EXECUTION_UNKNOWN`. The provider may have completed the write. Check the provider before requesting another approval; the runtime never replays an interrupted execution.
 
 ## Preview writes
 

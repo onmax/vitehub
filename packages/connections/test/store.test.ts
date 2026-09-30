@@ -23,3 +23,51 @@ describe("stored Connection scopes", () => {
     }
   })
 })
+
+describe("approval execution leases", () => {
+  it("adds leases to an existing approvals table and only renews active executions", async () => {
+    const client = createClient({ url: ":memory:" })
+    try {
+      const db = drizzle(client)
+      await db.run(
+        sql`CREATE TABLE vitehub_connection_approvals (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, input TEXT NOT NULL, status TEXT NOT NULL, trace_id TEXT, invocation_id TEXT, created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT, error TEXT)`,
+      )
+      const store = createDatabaseConnectionStore({
+        db,
+        encryptionKey: new Uint8Array(32).fill(9),
+      })
+      await store.approvals.create({
+        id: "a1",
+        name: "mail",
+        actor: "agent:test",
+        action: "mail.write",
+        input: {},
+        status: "pending",
+        createdAt: "2026-09-30T00:00:00.000Z",
+      })
+      await store.approvals.transition("a1", "pending", "approved", {
+        decidedAt: "2026-09-30T00:00:00.000Z",
+        executionExpiresAt: "2026-09-30T00:05:00.000Z",
+      })
+      await store.approvals.renew("a1", "2026-09-30T00:10:00.000Z")
+      await store.approvals.recover("2026-09-30T00:06:00.000Z")
+      expect(await store.approvals.get("a1")).toMatchObject({
+        status: "approved",
+        decidedAt: "2026-09-30T00:00:00.000Z",
+      })
+      await store.approvals.recover("2026-09-30T00:10:00.000Z")
+      expect(await store.approvals.get("a1")).toMatchObject({
+        status: "failed",
+        error: "CONNECTION_EXECUTION_UNKNOWN",
+      })
+      await store.approvals.renew("a1", "2026-09-30T00:20:00.000Z")
+      expect(
+        await db.all(
+          sql`SELECT execution_expires_at FROM vitehub_connection_approvals WHERE id = 'a1'`,
+        ),
+      ).toEqual([{ execution_expires_at: "2026-09-30T00:10:00.000Z" }])
+    } finally {
+      client.close()
+    }
+  })
+})

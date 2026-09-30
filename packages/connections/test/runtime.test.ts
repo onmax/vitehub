@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import { isConnectionError } from "../src/errors.ts"
 import { createConnectionsRuntime } from "../src/runtime.ts"
@@ -66,6 +66,29 @@ describe("connect", () => {
     expect(test.provider.calls.at(-1)).toMatchObject({ body: `token=${REFRESH_TOKEN}`, url: "https://auth.example.com/revoke" })
     const error = await rejection(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" }))
     expect(error).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+  })
+})
+
+describe("OAuth scope fallback", () => {
+  it("uses requested scopes when authorization omits scope and retains them on refresh", async () => {
+    const test = createTestRuntime()
+    await connect(test, { scope: undefined, expires_in: 1 })
+    expect(await test.runtime.inspect("mail")).toMatchObject({
+      scopes: { granted: ["openid", "mail.modify"], missing: [] },
+    })
+    test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600 } })
+    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({
+      scopes: { granted: ["openid", "mail.modify"], missing: [] },
+    })
+  })
+
+  it("preserves an explicit reduced grant", async () => {
+    const test = createTestRuntime()
+    await connect(test, { scope: "openid" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({
+      scopes: { granted: ["openid"], missing: ["mail.modify"] },
+    })
   })
 })
 
@@ -246,22 +269,115 @@ describe("approvals", () => {
     expect(activity.find(entry => entry.operation === "mail.messages.modify" && entry.outcome === "succeeded")).toMatchObject({ actor: { id: "labeller", kind: "agent" }, invocationId: "inv-1" })
   })
 
-  it.each([false, true])("recovers an interrupted replay without repeating a provider write, dispatched=%s", async (dispatched) => {
+  it("keeps a slow provider write active across concurrent runtime inspection", async () => {
     const test = createTestRuntime()
     await connect(test)
-    const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.messages.modify", { id: "m1", userId: "me" }))
+    const error = await rejection(
+      test.runtime
+        .client("mail", { actor: "agent:labeller" })
+        .call("mail.messages.modify", { id: "m1", userId: "me" }),
+    )
     const id = isConnectionError(error) ? error.requestId! : ""
-    await test.store.approvals.transition(id, "pending", "approved", { decidedAt: new Date(test.now.value).toISOString(), decidedBy: "user:owner" })
-    // Model interruption either before dispatch or after the provider commits the write.
-    if (dispatched) await test.runtime.client("mail", {}).call("mail.messages.modify", { id: "m1", userId: "me" })
-    const calls = test.provider.calls.length
-    const restarted = createConnectionsRuntime({ definitions: { mail: mailConnection() }, fetch: test.provider.fetch, now: () => test.now.value, store: test.store })
-    expect(await restarted.approvals({ status: "approved" })).toEqual([expect.objectContaining({ id, status: "approved" })])
-    test.now.value += 5 * 60_000
-    expect(await restarted.approvals({ status: "failed" })).toEqual([expect.objectContaining({ error: "CONNECTION_EXECUTION_UNKNOWN", id, status: "failed" })])
-    expect(await rejection(restarted.approve({ id }))).toMatchObject({ code: "CONNECTION_INVALID" })
-    expect(test.provider.calls).toHaveLength(calls)
+    let finish!: (response: Response) => void
+    let started!: () => void
+    const dispatched = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const slowFetch: typeof fetch = async (input, init) => {
+      const url = input instanceof Request ? input.url : input.toString()
+      if (!url.includes("/modify")) return await test.provider.fetch(input, init)
+      started()
+      return await new Promise<Response>((resolve) => {
+        finish = resolve
+      })
+    }
+    const executing = createConnectionsRuntime({
+      definitions: { mail: mailConnection() },
+      fetch: slowFetch,
+      now: () => test.now.value,
+      store: test.store,
+    })
+    const inspecting = createConnectionsRuntime({
+      definitions: { mail: mailConnection() },
+      now: () => test.now.value,
+      store: test.store,
+    })
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    const replay = executing.approve({ id })
+    try {
+      await dispatched
+      for (let minute = 0; minute < 6; minute++) {
+        test.now.value += 60_000
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(await inspecting.approvals({ status: "approved" })).toEqual([
+          expect.objectContaining({ id, status: "approved" }),
+        ])
+      }
+      expect(await rejection(inspecting.approve({ id }))).toMatchObject({
+        code: "CONNECTION_INVALID",
+      })
+      finish(Response.json({ id: "message-1" }))
+      expect(await replay).toMatchObject({
+        approval: { status: "executed" },
+        result: { id: "message-1" },
+      })
+      test.now.value += 5 * 60_000
+      expect(await inspecting.approvals({ status: "failed" })).toEqual([])
+    } finally {
+      finish(Response.json({ id: "message-1" }))
+      await replay
+      vi.useRealTimers()
+    }
   })
+
+  it.each([
+    { dispatched: false, leased: false },
+    { dispatched: true, leased: false },
+    { dispatched: false, leased: true },
+    { dispatched: true, leased: true },
+  ])(
+    "recovers an interrupted replay without repeating a provider write, %j",
+    async ({ dispatched, leased }) => {
+      const test = createTestRuntime()
+      await connect(test)
+      const error = await rejection(
+        test.runtime
+          .client("mail", { actor: "agent:labeller" })
+          .call("mail.messages.modify", { id: "m1", userId: "me" }),
+      )
+      const id = isConnectionError(error) ? error.requestId! : ""
+      await test.store.approvals.transition(id, "pending", "approved", {
+        decidedAt: new Date(test.now.value).toISOString(),
+        decidedBy: "user:owner",
+        ...(leased
+          ? { executionExpiresAt: new Date(test.now.value + 5 * 60_000).toISOString() }
+          : {}),
+      })
+      // Model interruption either before dispatch or after the provider commits the write.
+      if (dispatched)
+        await test.runtime
+          .client("mail", {})
+          .call("mail.messages.modify", { id: "m1", userId: "me" })
+      const calls = test.provider.calls.length
+      const restarted = createConnectionsRuntime({
+        definitions: { mail: mailConnection() },
+        fetch: test.provider.fetch,
+        now: () => test.now.value,
+        store: test.store,
+      })
+      expect(await restarted.approvals({ status: "approved" })).toEqual([
+        expect.objectContaining({ id, status: "approved" }),
+      ])
+      test.now.value += 5 * 60_000
+      expect(await restarted.approvals({ status: "failed" })).toEqual([
+        expect.objectContaining({ error: "CONNECTION_EXECUTION_UNKNOWN", id, status: "failed" }),
+      ])
+      expect(await rejection(restarted.approve({ id }))).toMatchObject({
+        code: "CONNECTION_INVALID",
+      })
+      expect(test.provider.calls).toHaveLength(calls)
+    },
+  )
 
   it("recovers interrupted approvals beyond the inspection page", async () => {
     const test = createTestRuntime()

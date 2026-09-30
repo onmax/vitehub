@@ -293,12 +293,16 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return token.output
   }
 
-  function toStoredToken(response: ConnectionTokenResponse, previous?: StoredToken): StoredToken {
+  function toStoredToken(
+    response: ConnectionTokenResponse,
+    previous?: StoredToken,
+    requestedScopes: readonly string[] = [],
+  ): StoredToken {
     return {
       accessToken: response.access_token,
       expiresAt: response.expires_in === undefined ? undefined : now() + response.expires_in * 1000,
       refreshToken: response.refresh_token ?? previous?.refreshToken,
-      scopes: splitScopes(response.scope) ?? previous?.scopes ?? [],
+      scopes: splitScopes(response.scope) ?? previous?.scopes ?? [...requestedScopes],
       tokenType: response.token_type ?? "Bearer",
     }
   }
@@ -605,7 +609,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       await revokeProviderToken(loaded, response.refresh_token ?? response.access_token)
       throw new ConnectionError("invalid", `Connection "${name}" belongs to another account. Revoke it before you connect a different account.`, { details: { connection: name } })
     }
-    const token = toStoredToken(response)
+    const token = toStoredToken(response, undefined, [
+      ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),
+    ])
     const key = tokenKey(name)
     const current = await connections.secrets.inspect(key)
     await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
@@ -668,17 +674,32 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
 
   async function approvals(input: { name?: string, status?: ConnectionApprovalStatus } = {}): Promise<ConnectionApproval[]> {
     const connections = await getStore()
-    await connections.approvals.recover(new Date(now() - APPROVAL_EXECUTION_TTL_MS).toISOString())
+    await connections.approvals.recover(new Date(now()).toISOString())
     return await connections.approvals.list(input)
   }
 
   async function approve(input: { actor?: string, id: string }): Promise<{ approval: ConnectionApproval, result?: unknown }> {
     const connections = await getStore()
-    await connections.approvals.recover(new Date(now() - APPROVAL_EXECUTION_TTL_MS).toISOString())
+    await connections.approvals.recover(new Date(now()).toISOString())
     const decidedAt = new Date(now()).toISOString()
-    const approval = await connections.approvals.transition(input.id, "pending", "approved", { decidedAt, decidedBy: input.actor ?? "user:local" })
+    const executionExpiresAt = new Date(now() + APPROVAL_EXECUTION_TTL_MS).toISOString()
+    const approval = await connections.approvals.transition(input.id, "pending", "approved", {
+      decidedAt,
+      decidedBy: input.actor ?? "user:local",
+      executionExpiresAt,
+    })
     if (!approval) throw new ConnectionError("invalid", `Approval "${input.id}" is not pending.`)
-    const signal = AbortSignal.timeout(APPROVAL_EXECUTION_TTL_MS)
+    const leaseAbort = new AbortController()
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(APPROVAL_EXECUTION_TTL_MS),
+      leaseAbort.signal,
+    ])
+    // Keep the lease alive until the provider settles, even if it ignores abort.
+    const heartbeat = setInterval(() => {
+      void connections.approvals
+        .renew(input.id, new Date(now() + APPROVAL_EXECUTION_TTL_MS).toISOString())
+        .catch((error: unknown) => leaseAbort.abort(error))
+    }, APPROVAL_EXECUTION_TTL_MS / 3)
     try {
       const stored = v.parse(approvalInputSchema, approval.input)
       const loaded = await definition(approval.name)
@@ -706,14 +727,23 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         result = await callMethod(context, approval.action, stored.input, signal)
       }
       const executed = await connections.approvals.transition(input.id, "approved", "executed")
-      const output: { approval: ConnectionApproval, result?: unknown } = { approval: executed ?? await connections.approvals.get(input.id) ?? approval }
+      const output: { approval: ConnectionApproval; result?: unknown } = {
+        approval: executed ?? (await connections.approvals.get(input.id)) ?? approval,
+      }
       if (result !== undefined) output.result = result
       return output
     }
     catch (error) {
-      const code = signal.aborted ? "CONNECTION_EXECUTION_UNKNOWN" : isConnectionError(error) ? error.code : "CONNECTION_FAILED"
+      const code = signal.aborted
+        ? "CONNECTION_EXECUTION_UNKNOWN"
+        : isConnectionError(error)
+          ? error.code
+          : "CONNECTION_FAILED"
       await connections.approvals.transition(input.id, "approved", "failed", { error: code })
       throw error
+    }
+    finally {
+      clearInterval(heartbeat)
     }
   }
 
