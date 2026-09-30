@@ -103,7 +103,7 @@ describe("Channel message handle", () => {
     }), { agentName: "support" })
     expect(response.status).toBe(fail ? 500 : 200)
     const output = await response.text()
-    expect(output).toContain(fail ? "driver failed" : "ok")
+    expect(output).toContain(fail ? "Agent request failed." : "ok")
     expect(seen).toEqual([fail ? "error" : "finish", "portal", { id: "message-1", text: "hello", metadata: { category: "support" } }])
     expect(label).toHaveBeenCalledWith("message-1", fail ? "failed" : "finished")
   })
