@@ -81,6 +81,7 @@ export function channelDelivery<TOptions>(options: ChannelDeliveryOptions<TOptio
             if (!message) throw new TypeError(`[vitehub] ${name} requires a non-empty message.`)
             await options.validate?.(message)
             const text = options.format ? await options.format(message, context) : message
+            if (!text.trim()) throw new TypeError(`[vitehub] ${name} requires formatted text to be non-empty.`)
             checkLimit()
             // Count the attempt before sending. A failed send can still have reached the recipient.
             calls++

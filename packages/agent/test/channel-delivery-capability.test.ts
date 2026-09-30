@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 
 import { channelDelivery } from "../src/capabilities.ts"
-import { defineAgent, runAgent } from "../src/index.ts"
+import { createAgentInspectionMetadata, defineAgent, resolveAgentInspectionMetadata, runAgent } from "../src/index.ts"
 
 import type { AgentToolSet } from "../src/index.ts"
 
@@ -96,6 +96,50 @@ describe("channelDelivery()", () => {
 
     await expect(runAgent(agent, { prompt: "Write" })).resolves.toEqual([null, "done"])
     expect(channel.send).toHaveBeenCalledExactlyOnceWith("Formatted", { recipient: "user:1" })
+  })
+
+  it("does not consume an attempt when formatting produces empty text", async () => {
+    const channel = createChannel()
+    const format = vi.fn().mockReturnValueOnce("   ").mockReturnValueOnce("Formatted")
+    const agent = defineAgent({
+      extends: agentCalling(async (tools) => {
+        await expect(tools.send_message!.execute!({ message: "First" })).rejects.toThrow("formatted text to be non-empty")
+        await expect(tools.send_message!.execute!({ message: "Retry" })).resolves.toEqual({ deliveryId: "delivery-1", sent: true })
+      }),
+      capabilities: [channelDelivery({ channel, options: { recipient: "user:1" }, format })],
+    })
+
+    await expect(runAgent(agent, { prompt: "Write" })).resolves.toEqual([null, "done"])
+    expect(channel.send).toHaveBeenCalledExactlyOnceWith("Formatted", { recipient: "user:1" })
+  })
+
+  it("exposes the delivery tool in workspace inspection metadata", () => {
+    const agent = defineAgent({
+      workspace: { sources: {} },
+      driver: { model: {} as never },
+      capabilities: [channelDelivery({ channel: createChannel(), options: { recipient: "user:1" } })],
+    })
+
+    expect(createAgentInspectionMetadata(agent).tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "send_message", category: "capability" }),
+    ]))
+  })
+
+  it("exposes a custom delivery tool in resolved inspection without executing callbacks", async () => {
+    const channel = createChannel()
+    const format = vi.fn()
+    const validate = vi.fn()
+    const agent = defineAgent({
+      extends: agentCalling(async () => {}),
+      capabilities: [channelDelivery({ channel, options: { recipient: "user:1" }, name: "send_report", format, validate })],
+    })
+
+    expect((await resolveAgentInspectionMetadata(agent)).tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "send_report", category: "capability" }),
+    ]))
+    expect(channel.send).not.toHaveBeenCalled()
+    expect(format).not.toHaveBeenCalled()
+    expect(validate).not.toHaveBeenCalled()
   })
 
   it.each([false, true])("skips callbacks after exhausting attempts when the send fails %s", async (fails) => {
