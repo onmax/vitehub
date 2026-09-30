@@ -844,15 +844,17 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // Member expressions are also assignment targets in `for...in/of`.
     // Invalidate their local base binding before inspecting Channel options.
     let member = index - 1
-    if (tokens[member] === "]") {
-      let nesting = 1
-      for (member--; member >= 0 && nesting > 0; member--) {
-        if (tokens[member] === "]") nesting++
-        else if (tokens[member] === "[") nesting--
+    while (member >= 0) {
+      if (tokens[member] === "]") {
+        const opening = openingDelimiters.get(member)
+        if (opening === undefined) break
+        member = opening - 1
       }
-      member--
+      else if (member >= 2 && tokens[member - 1] === ".") {
+        member -= 2
+      }
+      else break
     }
-    while (member >= 2 && tokens[member - 1] === ".") member -= 2
     const loopHeader = tokens[member - 1] === "(" && (tokens[member - 2] === "for"
       || (tokens[member - 2] === "await" && tokens[member - 3] === "for"))
     if (member >= 0 && isIdentifier(tokens[member]) && loopHeader

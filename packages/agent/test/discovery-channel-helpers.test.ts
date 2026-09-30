@@ -910,6 +910,18 @@ it.each(["of", "in"])("rejects member-expression for-%s Channel option targets",
   await expect(discover(source)).rejects.toThrow("opaque Channel")
 })
 
+it.each([
+  ['options["other"].pullRequest', '{ other: settings }'],
+  ['options.other["pullRequest"]', '{ other: settings }'],
+  ['options["other"]["pullRequest"]', '{ other: settings }'],
+  ['options["other"].nested["pullRequest"]', '{ other: { nested: settings } }'],
+])("rejects mixed member loop targets: %s", async (target, container) => {
+  for (const operator of ["of", "in"]) {
+    const source = `${imports} const settings = { pullRequest: false }; const options = ${container}; for (${target} ${operator} ${operator === "of" ? "[true]" : "{ enabled: true }"}) {} export default defineAgent({ channels: { custom: github(settings) } })`
+    await expect(discover(source)).rejects.toThrow("opaque Channel")
+  }
+})
+
 it("rejects predeclared for-await-of Channel option targets", async () => {
   const source = `${imports} let options = { pullRequest: false }; for await (options of [{ pullRequest: true }]) {} export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
