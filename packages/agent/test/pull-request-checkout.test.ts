@@ -67,6 +67,25 @@ async function githubFixture() {
 }
 
 describe("pull request checkout", () => {
+  it.each(["", "vitehub"])("rejects a deleted fork head before preparing the %j mount", async (mount) => {
+    const fixture = await githubFixture()
+    const exec = vi.spyOn(fixture.session, "exec")
+    const checkout = async () => {
+      const plan = pullRequestCheckoutPlan({
+        get: () => ({
+          pullRequest: {
+            head: { ref: "feature", sha: fixture.headSha },
+            source: { mount, ref: "refs/pull/42/head", repo: "vite-hub/vitehub" },
+          },
+        }),
+      })
+      await preparePullRequestCheckout(fixture.session, plan!, { env: fixture.env })
+    }
+    await expect(checkout()).rejects.toThrow("requires an explicit head repository")
+    expect(exec).not.toHaveBeenCalled()
+    expect(await git(fixture.bare, ["rev-parse", "refs/heads/feature"])).toBe(fixture.headSha)
+  })
+
   it("selects base and fork credentials by remote URL without persisting tokens", async () => {
     const fixture = await githubFixture()
     const access = vi.fn(async (input?: { repository?: string }) => {

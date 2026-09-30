@@ -278,7 +278,7 @@ describe("git capability", () => {
       pullRequest: {
         pullRequest: {
           base: { ref: "main" },
-          head: { ref: "feature", sha: pullRequestHeadSha },
+          head: { ref: "feature", repo: "vite-hub/vitehub", sha: pullRequestHeadSha },
           number: 42,
           source: {
             mount: "vitehub",

@@ -97,6 +97,9 @@ export function pullRequestCheckoutPlan(context: ContextStore): PullRequestCheck
   const headBranchRef = safeGitRef(head?.ref)
   const headBranch = headBranchRef && !headBranchRef.startsWith("refs/") ? headBranchRef : undefined
   const headRepository = safeRepository(head?.repo)
+  if (headBranch && !headRepository) {
+    throw agentDiagnostics.AGENT_R0069({ message: "[vitehub] GitHub pull request checkout requires an explicit head repository to track the head branch." })
+  }
 
   const plan: PullRequestCheckoutPlan = { headRef: remoteRef(headRef), headSha, mount, repository }
   if (baseRef) plan.baseRef = remoteRef(baseRef)

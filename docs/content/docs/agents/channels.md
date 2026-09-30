@@ -115,7 +115,7 @@ Set `pullRequest.workspace.mount` to the repository path inside the Workspace. O
 
 When a declared GitHub Source uses the same repository, root, include, and ignore at the same non-root mount, the pull request checkout replaces it for that Invocation. Reads use the pull request head SHA; the declared Source remains unchanged for other Invocations. A different repository or scope at the same mount fails the Invocation with an error that names the Source. Overlapping parent or child mounts and Sources contributed by other Capabilities also produce a conflict.
 
-For provider Drivers such as Codex and Claude Code, the mount is a real Git checkout of the exact head SHA before the Driver starts. `origin` points to the base repository, the base branch is fetched as `origin/<base>`, and a local branch named after the head branch tracks it. The Driver's own shell can run `git fetch`, `git commit`, and `git push` with the Agent GitHub identity. No token is written to the repository configuration.
+For provider Drivers such as Codex and Claude Code, the mount is a real Git checkout of the exact head SHA before the Driver starts. `origin` points to the base repository, the base branch is fetched as `origin/<base>`, and a local branch named after the head branch tracks it. The Driver's own shell can run `git fetch`, `git commit`, and `git push` with the Agent GitHub identity. No token is written to the repository configuration. Checkout setup rejects a head branch without an explicit head repository, including pull requests from deleted forks.
 
 ### Share one GitHub identity
 

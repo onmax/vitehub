@@ -4058,7 +4058,7 @@ cli_auth_credentials_store = "keyring"
         originalFlags = git("ls-files", "-v", "--", "AGENTS.md", "CLAUDE.md")
         originalExclude = await readFile(`${root}/.git/info/exclude`, "utf8")
         base.context.set("pullRequest", {
-          pullRequest: { head: { ref: "feature", sha: git("rev-parse", "HEAD").trim() }, source: { mount: "", repo: "acme/portal", ref: "refs/pull/42/head" } },
+          pullRequest: { head: { ref: "feature", repo: "acme/portal", sha: git("rev-parse", "HEAD").trim() }, source: { mount: "", repo: "acme/portal", ref: "refs/pull/42/head" } },
           repository: { fullName: "acme/portal", name: "portal" },
         })
         return session
