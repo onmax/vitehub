@@ -1,4 +1,5 @@
 import { providerCallbackMetadata, withProviderCallbackMetadata } from "./internal/provider-callback-metadata.ts"
+import { protectGeneratedProviderGitFiles } from "./internal/generated-provider-git-files.ts"
 import { codexLaunchArgs } from "./internal/codex-launch-args.ts"
 import { resolveAgentInstructions } from "./agent-instructions.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
@@ -1782,7 +1783,7 @@ async function prepareWorkspace(context: AgentAdapterRunContext, root: string): 
       // Give the Driver shell a real checkout so it can fetch, commit, and push with the Agent GitHub identity.
       await preparePullRequestCheckout(session, pullRequest, {
         abortSignal: context.input.abortSignal,
-        env: await pullRequestCheckoutEnvironment(context.runtime.githubIdentity, pullRequest.repository, context.input.abortSignal),
+        env: await pullRequestCheckoutEnvironment(context.runtime.githubIdentity, pullRequest.repository, context.input.abortSignal, pullRequest.headRepository),
       })
     }
     catch (error) {
@@ -2438,6 +2439,7 @@ async function* runProvider<
   let abort: (() => void) | undefined
   let unregister: (() => void) | undefined
     const generatedProviderFiles: GeneratedProviderFile[] = []
+  let restoreGeneratedGitMetadata: (() => Promise<void>) | undefined
     let claudePromptFile: string | undefined
   let pendingResumeCursor = preservesProviderSession && sessionKey ? resumeCursors.get(sessionKey) : undefined
   let deferredSessionConsume: Promise<void> | undefined
@@ -2615,6 +2617,9 @@ async function* runProvider<
       generatedProviderFiles.push(await materializeGeneratedProviderFile(root, target, source.content))
     }
     generatedProviderFiles.push(...await materializeProviderSkillCompatibility(root))
+    if (pullRequestRoot) {
+      restoreGeneratedGitMetadata = await protectGeneratedProviderGitFiles(root, generatedProviderFiles.map(file => file.path))
+    }
     // A root pull request checkout is the Driver's repository. Do not add a baseline commit to its branch.
     if (workspaceSession && !pullRequestRoot) {
       await workspaceSession.exec("git", ["add", "-A"], { abortSignal: effectiveSignal })
@@ -2639,10 +2644,11 @@ async function* runProvider<
       ...providerMetadataContext(context),
       abortSignal: effectiveSignal,
     }
+    const githubCheckoutPlan = pullRequestCheckoutPlan(context.context)
     const githubEnvironment = auxiliary || !context.runtime.githubIdentity
       ? undefined
       : await waitForProviderOperation(
-          pullRequestCheckoutEnvironment(context.runtime.githubIdentity, pullRequestCheckoutPlan(context.context)?.repository, effectiveSignal),
+          pullRequestCheckoutEnvironment(context.runtime.githubIdentity, githubCheckoutPlan?.repository, effectiveSignal, githubCheckoutPlan?.headRepository),
           effectiveSignal,
         )
     const configuredEnvironmentOverrides = options.env === undefined
@@ -3040,6 +3046,12 @@ async function* runProvider<
     const finalizeWorkspace = (signal = cleanup.signal) => workspaceFinalization ??= (async () => {
       try {
         for (const generated of generatedProviderFiles.reverse()) await restoreGeneratedProviderFile(generated)
+      }
+      catch (error) {
+        cleanupErrors.push(error)
+      }
+      try {
+        await restoreGeneratedGitMetadata?.()
       }
       catch (error) {
         cleanupErrors.push(error)

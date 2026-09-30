@@ -3,9 +3,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { preparePullRequestCheckout, pullRequestCheckoutPlan } from "../src/internal/pull-request-checkout.ts"
+import { preparePullRequestCheckout, pullRequestCheckoutEnvironment, pullRequestCheckoutPlan } from "../src/internal/pull-request-checkout.ts"
 
 const execFileAsync = promisify(execFile)
 const fixtures: string[] = []
@@ -67,6 +67,45 @@ async function githubFixture() {
 }
 
 describe("pull request checkout", () => {
+  it("selects base and fork credentials by remote URL without persisting tokens", async () => {
+    const fixture = await githubFixture()
+    const access = vi.fn(async (input?: { repository?: string }) => {
+      const token = input?.repository === "contributor/vitehub" ? "fork-token" : "base-token"
+      return {
+        env: {
+          GH_TOKEN: token,
+          GIT_CONFIG_COUNT: "2",
+          GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
+          GIT_CONFIG_KEY_1: "credential.https://github.com.helper",
+          GIT_CONFIG_VALUE_0: "",
+          GIT_CONFIG_VALUE_1: '!f() { printf "username=x-access-token\\npassword=%s\\n" "$GH_TOKEN"; }; f',
+        },
+        token,
+      }
+    })
+    const signal = new AbortController().signal
+    const env = cleanEnv(await pullRequestCheckoutEnvironment({ access }, "vite-hub/vitehub", signal, "contributor/vitehub"))
+    expect(access.mock.calls).toEqual([
+      [{ repository: "vite-hub/vitehub", signal }],
+      [{ repository: "contributor/vitehub", signal }],
+    ])
+    expect(env.GH_TOKEN).toBe("base-token")
+    const fill = async (repository: string) => {
+      return await new Promise<string>((resolve, reject) => {
+        const process = execFile("git", ["credential", "fill"], { cwd: fixture.workspace, env }, (error, stdout) => {
+          if (error) reject(error)
+          else resolve(stdout)
+        })
+        process.stdin?.end(`protocol=https\nhost=github.com\npath=${repository}\n\n`)
+      })
+    }
+    expect(await fill("vite-hub/vitehub.git")).toContain("password=base-token")
+    expect(await fill("contributor/vitehub.git")).toContain("password=fork-token")
+    expect(await fill("contributor/vitehub")).toContain("password=fork-token")
+    expect(await fill("other/vitehub.git")).toContain("password=base-token")
+    expect(Object.entries(env).filter(([key]) => key.startsWith("GIT_CONFIG_VALUE_")).map(([, value]) => value).join("\n")).not.toMatch(/base-token|fork-token/)
+  })
+
   it("creates a real checkout that can fetch, commit, and push with the Agent GitHub environment", async () => {
     const fixture = await githubFixture()
     const plan = pullRequestCheckoutPlan({
@@ -99,6 +138,33 @@ describe("pull request checkout", () => {
 
     expect(await git(fixture.bare, ["rev-parse", "refs/heads/feature"])).toBe(await git(checkout, ["rev-parse", "HEAD"]))
     await expect(preparePullRequestCheckout(fixture.session, { ...plan!, headSha: fixture.headSha }, { env: fixture.env })).rejects.toThrow("does not match the expected SHA")
+  })
+
+  it("tracks the fork remote for default pushes while retaining origin fetches", async () => {
+    const fixture = await githubFixture()
+    const fork = join(fixture.workspace, "..", "remotes", "contributor", "vitehub.git")
+    await mkdir(join(fork, ".."), { recursive: true })
+    await git(fixture.workspace, ["clone", "-q", "--bare", fixture.bare, fork])
+    await preparePullRequestCheckout(fixture.session, {
+      baseRef: "refs/heads/main",
+      headBranch: "feature",
+      headRef: "refs/pull/42/head",
+      headRepository: "contributor/vitehub",
+      headSha: fixture.headSha,
+      mount: "vitehub",
+      repository: "vite-hub/vitehub",
+    }, { env: fixture.env })
+    const checkout = join(fixture.workspace, "vitehub")
+    const env = cleanEnv(fixture.env)
+    expect(await git(checkout, ["remote", "get-url", "origin"])).toBe("https://github.com/vite-hub/vitehub.git")
+    expect(await git(checkout, ["config", "branch.feature.remote"])).toBe("head")
+    await git(checkout, ["fetch", "-q", "origin", "main"], env)
+    await writeFile(join(checkout, "CHANGE.md"), "fork change\n")
+    await git(checkout, ["add", "CHANGE.md"])
+    await git(checkout, ["-c", "user.name=Agent", "-c", "user.email=agent@example.com", "commit", "-qm", "fork change"])
+    await git(checkout, ["push", "-q"], env)
+    expect(await git(fork, ["rev-parse", "refs/heads/feature"])).toBe(await git(checkout, ["rev-parse", "HEAD"]))
+    expect(await git(fixture.bare, ["rev-parse", "refs/heads/feature"])).toBe(fixture.headSha)
   })
 
   it("rejects a fetched head that differs from the webhook SHA", async () => {

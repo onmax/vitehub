@@ -3110,7 +3110,9 @@ function isAgentGitHub(value: unknown): value is AgentGitHub {
   return isRecord(value) && hasRuntimeType(value.access, "function")
 }
 
-function githubIdentityAppOptions<TRuntimeConfig extends AgentRuntimeConfig>(identity: AgentGitHub): GitHubAppOptions<TRuntimeConfig> {
+function githubChannelAppOptions<TRuntimeConfig extends AgentRuntimeConfig>(input: GitHubChannelOptions<TRuntimeConfig>["app"]): true | GitHubAppOptions<TRuntimeConfig> | undefined {
+  if (!isAgentGitHub(input)) return input
+  const identity = input
   const login = identity.identity?.()
   return {
     token: async (_context, scope) => (await identity.access(scope.repository ? { repository: scope.repository } : {})).token,
@@ -3147,7 +3149,7 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
 ): AgentChannelDefinition<TRuntimeConfig> {
   const { activity, app: appInput, pullRequest, ...channelOptions } = options
   const identity = isAgentGitHub(appInput) ? appInput : undefined
-  const appOptions = identity ? githubIdentityAppOptions<TRuntimeConfig>(identity) : appInput as true | GitHubAppOptions<TRuntimeConfig> | undefined
+  const appOptions = githubChannelAppOptions(appInput)
   const activityDefinition = activity ? githubAgentActivity(appOptions) : undefined
   const openedActivityDefinition = activity ? githubAgentActivity(appOptions, "initialize") : undefined
   const app = githubAppOptions(appOptions)

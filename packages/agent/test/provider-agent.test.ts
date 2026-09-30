@@ -254,6 +254,35 @@ describe("Provider Agent Driver", () => {
     })
   })
 
+  it("adds fork credentials while preserving base API access in the Driver environment", async () => {
+    const threadId = "thread-github-fork-environment"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    const access = vi.fn(async (input?: { repository?: string }) => {
+      const token = input?.repository === "contributor/portal" ? "fork-token" : "installation-token"
+      return { env: { GH_TOKEN: token }, token }
+    })
+    const base = context(threadId)
+    base.context.set("pullRequest", {
+      pullRequest: {
+        head: { ref: "feature", repo: "contributor/portal", sha: "a".repeat(40) },
+        number: 42,
+        source: { mount: "portal", ref: "refs/pull/42/head", repo: "acme/portal" },
+      },
+      repository: { fullName: "acme/portal", name: "portal" },
+    })
+    await createProviderAgentAdapter({ provider: "codex" }).generate({ ...base, runtime: { ...base.runtime, githubIdentity: { access } } } as never)
+
+    expect(access).toHaveBeenCalledWith(expect.objectContaining({ repository: "acme/portal" }))
+    expect(access).toHaveBeenCalledWith(expect.objectContaining({ repository: "contributor/portal" }))
+    expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject({
+      GH_TOKEN: "installation-token",
+      VITEHUB_GITHUB_HEAD_TOKEN: "fork-token",
+      GIT_CONFIG_COUNT: "5",
+      GIT_CONFIG_KEY_1: "credential.https://github.com/contributor/portal.helper",
+      GIT_CONFIG_KEY_3: "credential.https://github.com/contributor/portal.git.helper",
+    })
+  })
+
   it("keeps managed browser lifecycle values consistent while preserving caller search paths", async () => {
     const browserThread = "thread-browser-environment"
     runtime(browserThread, [event("turn.completed", browserThread, { state: "completed" }, { turnId: "turn-1" })])
@@ -3985,6 +4014,71 @@ cli_auth_credentials_store = "keyring"
     expect(session.exec.mock.calls[checkout]?.[2]).toMatchObject({ env: { GH_TOKEN: "installation-token" } })
     expect(calls.some(call => call.includes("vitehub provider baseline"))).toBe(baseline)
     expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject({ GH_TOKEN: "installation-token" })
+  })
+
+  it.each(["codex", "claude-code"] as const)("keeps %s generated root checkout files out of Agent commits", async (provider) => {
+    const threadId = `thread-root-generated-git-${provider}`
+    let root = ""
+    let originalFlags = ""
+    let originalExclude = ""
+    const git = (...args: string[]) => {
+      const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8" })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return result.stdout
+    }
+    const base = context(threadId)
+    const session = {
+      close: vi.fn(async () => {
+        expect(await readFile(`${root}/AGENTS.md`, "utf8")).toBe("native instructions")
+        expect(await readFile(`${root}/CLAUDE.md`, "utf8")).toBe("native Claude instructions")
+        expect(git("ls-files", "-v", "--", "AGENTS.md", "CLAUDE.md")).toBe(originalFlags)
+        expect(await readFile(`${root}/.git/info/exclude`, "utf8")).toBe(originalExclude)
+        expect(git("rev-list", "--count", "HEAD")).toBe("2\n")
+      }),
+      commit: vi.fn(async () => undefined),
+      diff: vi.fn(async () => ({ entries: [] })),
+      exec: vi.fn(async (command: string, args: string[] = []) => {
+        const result = spawnSync(command, args, { cwd: root, encoding: "utf8" })
+        return { exitCode: result.status ?? 1, stderr: result.stderr, stdout: result.stdout }
+      }),
+      readFile: vi.fn(async () => new Uint8Array()),
+    }
+    const workspace = {
+      fs: {},
+      tools: {},
+      startSession: vi.fn(async ({ target }: { target: string }) => {
+        root = target
+        git("init", "-q")
+        git("config", "user.name", "Test")
+        git("config", "user.email", "test@localhost")
+        await writeFile(`${root}/AGENTS.md`, "native instructions")
+        await writeFile(`${root}/CLAUDE.md`, "native Claude instructions")
+        git("add", "-A")
+        git("commit", "-qm", "initial repository")
+        originalFlags = git("ls-files", "-v", "--", "AGENTS.md", "CLAUDE.md")
+        originalExclude = await readFile(`${root}/.git/info/exclude`, "utf8")
+        base.context.set("pullRequest", {
+          pullRequest: { head: { ref: "feature", sha: git("rev-parse", "HEAD").trim() }, source: { mount: "", repo: "acme/portal", ref: "refs/pull/42/head" } },
+          repository: { fullName: "acme/portal", name: "portal" },
+        })
+        return session
+      }),
+    }
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+      async onSendTurn() {
+        await writeFile(`${root}/result.txt`, "Agent repair")
+        git("add", "-A")
+        git("commit", "-qm", "Agent repair")
+        expect(git("show", "HEAD:AGENTS.md")).toBe("native instructions")
+        expect(git("show", "HEAD:CLAUDE.md")).toBe("native Claude instructions")
+        expect(git("ls-tree", "-r", "--name-only", "HEAD")).not.toContain("vitehub-system-prompt")
+        expect(git("show", "HEAD:result.txt")).toBe("Agent repair")
+      },
+    })
+    await createProviderAgentAdapter({ instructions: "generated invocation instructions", provider }).generate({
+      ...base, workspace, workspaceDefinition: { mode: "write", name: "docs" }, workspaceMode: "write",
+    } as never)
+    expect(session.close).toHaveBeenCalled()
   })
 
   it("force-closes an aborted Workspace process tree before settling execution", async () => {

@@ -2,6 +2,7 @@ import type { WorkspaceSession } from "@vite-hub/workspace"
 
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import type { AgentGitHub } from "../types.ts"
+import { isRuntimeObject, isRuntimeString } from "./runtime-value.ts"
 
 export interface PullRequestCheckoutPlan {
   baseRef?: string
@@ -26,28 +27,28 @@ const gitEnv = {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return isRuntimeObject(value) && value !== null && !Array.isArray(value)
 }
 
 function safeRepository(repo: unknown): string | undefined {
-  return typeof repo === "string" && githubRepositoryPattern.test(repo) ? repo : undefined
+  return isRuntimeString(repo) && githubRepositoryPattern.test(repo) ? repo : undefined
 }
 
 export function safeGitRef(ref: unknown): string | undefined {
-  if (typeof ref !== "string" || !ref || ref.length > 250) return
+  if (!isRuntimeString(ref) || !ref || ref.length > 250) return
   if (!gitRefPattern.test(ref) || ref.includes("..") || ref.includes("//") || ref.includes("@{") || ref.endsWith(".lock") || ref.endsWith("/") || ref.startsWith("/") || ref.startsWith("-")) return
   return ref
 }
 
 function safeGitSha(sha: unknown): string | undefined {
-  if (typeof sha !== "string") return
+  if (!isRuntimeString(sha)) return
   const normalized = sha.toLowerCase()
   return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(normalized) ? normalized : undefined
 }
 
 /** Normalize a Workspace-relative mount. Returns undefined for paths that leave the Workspace. */
 export function safeWorkspaceMount(path: unknown, allowRoot = false): string | undefined {
-  if (typeof path !== "string") return
+  if (!isRuntimeString(path)) return
   const stripped = path.replace(/\\/g, "/").replace(/^\/workspace(?:\/|$)/, "")
   const parts = stripped.split("/").filter(Boolean)
   if (parts.some(part => part === "." || part === "..")) return
@@ -75,7 +76,7 @@ export function pullRequestCheckoutPlan(context: ContextStore): PullRequestCheck
   if (!pullRequest) return
 
   const provider = isRecord(raw) ? raw.provider : undefined
-  if (typeof provider === "string" && provider !== "github") return
+  if (isRuntimeString(provider) && provider !== "github") return
 
   const source = isRecord(pullRequest.source) ? pullRequest.source : undefined
   if (source?.checkout === false) return
@@ -97,25 +98,43 @@ export function pullRequestCheckoutPlan(context: ContextStore): PullRequestCheck
   const headBranch = headBranchRef && !headBranchRef.startsWith("refs/") ? headBranchRef : undefined
   const headRepository = safeRepository(head?.repo)
 
-  return {
-    ...(baseRef ? { baseRef: remoteRef(baseRef) } : {}),
-    ...(headBranch ? { headBranch } : {}),
-    ...(headRepository && headRepository.toLowerCase() !== repository.toLowerCase() ? { headRepository } : {}),
-    headRef: remoteRef(headRef),
-    headSha,
-    mount,
-    repository,
-  }
+  const plan: PullRequestCheckoutPlan = { headRef: remoteRef(headRef), headSha, mount, repository }
+  if (baseRef) plan.baseRef = remoteRef(baseRef)
+  if (headBranch) plan.headBranch = headBranch
+  if (headRepository && headRepository.toLowerCase() !== repository.toLowerCase()) plan.headRepository = headRepository
+  return plan
 }
 
-/** Resolve the Agent GitHub credential environment for one repository. */
+/** Resolve base access and add environment-only credentials for a fork push remote. */
 export async function pullRequestCheckoutEnvironment(
   github: AgentGitHub | undefined,
   repository: string | undefined,
   abortSignal?: AbortSignal,
+  headRepository?: string,
 ): Promise<Record<string, string>> {
   if (!github) return {}
-  return (await github.access({ ...(repository ? { repository } : {}), ...(abortSignal ? { signal: abortSignal } : {}) })).env
+  const input: { repository?: string, signal?: AbortSignal } = {}
+  if (repository) input.repository = repository
+  if (abortSignal) input.signal = abortSignal
+  const base = await github.access(input)
+  if (!headRepository || headRepository.toLowerCase() === repository?.toLowerCase()) return base.env
+
+  const head = await github.access({ ...input, repository: headRepository })
+  const env: Record<string, string> = { ...base.env, VITEHUB_GITHUB_HEAD_TOKEN: head.token }
+  let count = Number(env.GIT_CONFIG_COUNT || 0)
+  const config = (key: string, value: string) => {
+    env[`GIT_CONFIG_KEY_${count}`] = key
+    env[`GIT_CONFIG_VALUE_${count}`] = value
+    count++
+  }
+  config("credential.https://github.com.useHttpPath", "true")
+  for (const suffix of ["", ".git"]) {
+    const key = `credential.https://github.com/${headRepository}${suffix}.helper`
+    config(key, "")
+    config(key, '!f() { if [ "$1" = get ]; then printf "username=x-access-token\\npassword=%s\\n" "$VITEHUB_GITHUB_HEAD_TOKEN"; fi; }; f')
+  }
+  env.GIT_CONFIG_COUNT = String(count)
+  return env
 }
 
 /**
