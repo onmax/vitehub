@@ -31,11 +31,13 @@ async function transformServerModule(source: string, conditions: string[]) {
 
 describe("provider Agent Drivers in Worker builds", () => {
   it.each([
-    `export default defineAgent({ driver: "codex" })`,
-    `export default defineAgent({ driver: 'claude-code' })`,
-    `export default defineAgent({ driver: { kind: "codex", permissions: "allow-edits" } })`,
-    `export default defineAgent({ driver: codexDriver({ model: "gpt-5" }) })`,
-    `export default defineAgent({ capabilities: [title({ driver: claudeCodeDriver() })], driver: { model: "openai/gpt-5" } })`,
+    `import { defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: "codex" })`,
+    `import { defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: 'claude-code' })`,
+    `import { defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: { kind: "codex", permissions: "allow-edits" } })`,
+    `import { codexDriver, defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: codexDriver({ model: "gpt-5" }) })`,
+    `import { claudeCodeDriver, defineAgent } from "@vite-hub/agent"; export default defineAgent({ capabilities: [title({ driver: claudeCodeDriver() })], driver: { model: "openai/gpt-5" } })`,
+    `import { codexDriver as makeDriver, defineAgent as define } from "@vite-hub/agent"; export default define({ driver: makeDriver() })`,
+    `import * as agent from "@vite-hub/agent"; export default agent.defineAgent({ driver: agent.codexDriver() })`,
     `import workspace from "vite-hub/agent/presets/workspace"`,
     `import { babysitter } from "@vite-hub/agent/presets/babysitter"`,
   ])("finds a provider Driver in %s", (source) => {
@@ -43,10 +45,14 @@ describe("provider Agent Drivers in Worker builds", () => {
   })
 
   it.each([
-    `export default defineAgent({ driver: { model: "openai/gpt-5" } })`,
-    `export default defineAgent({ driver: { run: () => "ok" } })`,
-    `// driver: "codex"\nexport default defineAgent({ driver: { model: "openai/gpt-5" } })`,
-    `/* codexDriver() */ export default defineAgent({ driver: { run: () => "codex" } })`,
+    `import { defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: { model: "openai/gpt-5" } })`,
+    `import { defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: { run: () => "ok" } })`,
+    `import { defineAgent } from "@vite-hub/agent"; const instructions = 'driver: "codex"'; export default defineAgent({ driver: { model: "openai/gpt-5" } })`,
+    `import { defineAgent } from "@vite-hub/agent"; const url = "https://example.com//driver: \\\"codex\\\""; export default defineAgent({ driver: { model: "openai/gpt-5" } })`,
+    `import { defineAgent } from "@vite-hub/agent"; const value = { kind: "codex" }; export default defineAgent({ driver: { run: () => "codex" } })`,
+    `import { defineAgent } from "@vite-hub/agent"; const code = /codexDriver\\(\\)/; export default defineAgent({ driver: { run: () => "codex" } })`,
+    `import type { codexDriver } from "@vite-hub/agent"; import { defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: { model: "openai/gpt-5" } })`,
+    `import type { workspace } from "vite-hub/agent/presets/workspace"`,
   ])("ignores model and run Drivers in %s", (source) => {
     expect(usesProviderAgentDriver(source)).toBe(false)
   })
@@ -59,15 +65,15 @@ describe("provider Agent Drivers in Worker builds", () => {
   })
 
   it("fails a Worker build that selects a provider Driver", async () => {
-    await expect(transformServerModule(`export default defineAgent({ driver: "codex" })`, ["workerd", "worker"]))
+    await expect(transformServerModule(`import { defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: "codex" })`, ["workerd", "worker"]))
       .rejects.toMatchObject({ code: "AGENT_B0019" })
-    await expect(transformServerModule(`export default defineAgent({ driver: "codex" })`, ["workerd", "worker"]))
+    await expect(transformServerModule(`import { defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: "codex" })`, ["workerd", "worker"]))
       .rejects.toThrow(/cannot run in a Cloudflare Worker\. Used in server\/agents\/support\.ts\./)
   })
 
   it("keeps provider Drivers in Node builds and model Drivers in Worker builds", async () => {
-    await expect(transformServerModule(`export default defineAgent({ driver: "codex" })`, ["node", "import"])).resolves.toBeUndefined()
-    await expect(transformServerModule(`export default defineAgent({ driver: { model: "openai/gpt-5" } })`, ["workerd", "worker"])).resolves.toBeUndefined()
+    await expect(transformServerModule(`import { defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: "codex" })`, ["node", "import"])).resolves.toBeUndefined()
+    await expect(transformServerModule(`import { defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: { model: "openai/gpt-5" } })`, ["workerd", "worker"])).resolves.toBeUndefined()
   })
 
   it("fails provider Driver calls that reach the Worker runtime", async () => {
