@@ -90,13 +90,17 @@ function duration(value: string, flag: string): number {
 }
 
 function redactCliArgument(argument: string): string {
-  const separator = argument.indexOf("=")
+  const separator = argument.startsWith("-") ? argument.indexOf("=") : -1
   const prefix = separator === -1 ? "" : argument.slice(0, separator + 1)
   const value = separator === -1 ? argument : argument.slice(separator + 1)
-  if (!/^[a-z][a-z\d+.-]*:\/\//i.test(value)) return argument
+  if (!/^[a-z][a-z\d+.-]*:/i.test(value)) return argument
   try {
     const url = new URL(value)
-    return `${prefix}${url.protocol}//${url.host}${url.pathname}`
+    url.username = ""
+    url.password = ""
+    url.search = ""
+    url.hash = ""
+    return `${prefix}${url.href}`
   }
   catch {
     return `${prefix}[redacted]`

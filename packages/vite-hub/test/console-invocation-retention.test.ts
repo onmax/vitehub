@@ -1,14 +1,16 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { runInNewContext } from "node:vm"
 import { createClient } from "@libsql/client"
 import { createLibsqlAgentInvocationStore } from "@vite-hub/agent/invocations/sqlite"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { createConsoleInvocations, getConsoleUsageIndex } from "../src/console/runtime/server/invocations.ts"
+import { consoleVitePlugin } from "../src/console/vite.ts"
 
 import type { Client } from "@libsql/client"
-import type { AgentInvocationStoreCreateInput } from "@vite-hub/agent/server"
+import type { AgentInvocationRetentionOptions, AgentInvocationStoreCreateInput } from "@vite-hub/agent/server"
 
 const day = 24 * 60 * 60 * 1000
 const ago = (milliseconds: number) => new Date(Date.now() - milliseconds).toISOString()
@@ -56,7 +58,46 @@ async function projectedUsageIds() {
   return result.rows.map(row => row.id)
 }
 
+async function generatedInstallation(retention: AgentInvocationRetentionOptions) {
+  const plugin = consoleVitePlugin({
+    console: { exposure: "host-managed", databaseUrl: url, retention },
+    sections: ["agents"],
+  })
+  const configHook = plugin.config
+  if (!configHook) throw new TypeError("Expected a Console config hook.")
+  const configHandler = "handler" in configHook ? configHook.handler : configHook
+  await Reflect.apply(configHandler, {}, [{ root: directory }, { command: "build", mode: "production" }])
+  const generated = await readFile(join(directory, ".vitehub/nitro/console/plugin.mjs"), "utf8")
+  const installation = generated.split("\n").find(line => line.startsWith("installConsoleAgentDefinitions("))
+  if (!installation) throw new TypeError("Expected a generated Console Agent installation.")
+  return () => runInNewContext(installation, {
+    installConsoleAgentDefinitions: (_definitions: unknown, options: { projectRoot: string, databaseUrl?: string, retention?: AgentInvocationRetentionOptions }) => {
+      createConsoleInvocations(options.projectRoot, undefined, options.databaseUrl, options.retention)
+    },
+  })
+}
+
 describe("Console invocation journal retention", () => {
+  it.each([
+    { maxAgeMs: Number.NaN },
+    { maxAgeMs: Number.POSITIVE_INFINITY },
+    { maxAgeMs: Number.NEGATIVE_INFINITY },
+    { maxRecords: Number.NaN },
+    { maxRecords: Number.POSITIVE_INFINITY },
+    { maxRecords: Number.NEGATIVE_INFINITY },
+  ])("rejects non-finite retention after Vite code generation: %j", async (retention) => {
+    const install = await generatedInstallation(retention)
+    expect(install).toThrow("must be a positive safe integer or false")
+  })
+
+  it.each([{}, { maxAgeMs: false, maxRecords: false }, { maxAgeMs: 30 * day, maxRecords: 10 }] satisfies AgentInvocationRetentionOptions[])(
+    "preserves valid retention after Vite code generation: %j",
+    async (retention) => {
+      const install = await generatedInstallation(retention)
+      expect(install).not.toThrow()
+    },
+  )
+
   it("removes the usage projection with a deleted or pruned invocation", async () => {
     const invocations = createConsoleInvocations(directory, undefined, url)
     const usage = getConsoleUsageIndex(invocations)!

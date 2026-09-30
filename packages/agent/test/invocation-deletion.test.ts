@@ -231,6 +231,22 @@ describe("vitehub agent invocations delete and prune", () => {
     expect(io.chunks.stderr).not.toMatch(/password|secret/)
   })
 
+  it.each([
+    ["file:./journal.sqlite?authToken=secret", "file:///journal.sqlite"],
+    ["file:./journal.sqlite?authToken=secret#fragment-secret", "file:///journal.sqlite"],
+    ["custom+store.v1:journal?authToken=secret#fragment-secret", "custom+store.v1:journal"],
+  ])("redacts %s in misspelled options and unexpected positional arguments", async (url, redactedUrl) => {
+    const option = output()
+    await expect(runAgentInvocationsCli(["prune", `--databse=${url}`], { env: {}, ...option })).resolves.toBe(1)
+    expect(option.chunks.stderr).toContain(`Unknown option: --databse=${redactedUrl}.`)
+    expect(`${option.chunks.stdout}${option.chunks.stderr}`).not.toContain("secret")
+
+    const positional = output()
+    await expect(runAgentInvocationsCli(["prune", url], { env: {}, ...positional })).resolves.toBe(1)
+    expect(positional.chunks.stderr).toContain(`Unexpected argument: ${redactedUrl}.`)
+    expect(`${positional.chunks.stdout}${positional.chunks.stderr}`).not.toContain("secret")
+  })
+
   it("does not print the remote database credentials", async () => {
     const io = output()
     const code = await runAgentInvocationsCli(["prune", "--database", "http://user:url-secret@127.0.0.1:9/journal?authToken=query-secret"], {
