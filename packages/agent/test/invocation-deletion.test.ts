@@ -247,6 +247,18 @@ describe("vitehub agent invocations delete and prune", () => {
     expect(id.chunks.stderr).toContain("delete requires an invocation id.")
   })
 
+  it("rejects dry-run for delete without opening the journal", async () => {
+    const { read, rootDir } = await consoleJournal()
+    const io = output()
+    vi.mocked(createClient).mockClear()
+
+    await expect(runAgentInvocationsCli(["delete", "old-completed", "--dry-run"], { env: {}, rootDir, ...io })).resolves.toBe(1)
+    expect(io.chunks.stderr).toContain("--dry-run is only supported for prune.")
+    expect(io.chunks.stdout).toContain("Usage: vitehub agent invocations")
+    expect(createClient).not.toHaveBeenCalled()
+    await expect(read.get("old-completed")).resolves.toMatchObject({ status: "completed" })
+  })
+
   it("rejects prune durations outside the Date range without changing the journal", async () => {
     const { read, rootDir } = await consoleJournal()
     const io = output()
