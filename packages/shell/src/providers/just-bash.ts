@@ -45,7 +45,7 @@ export function createJustBashProvider(options: JustBashProviderOptions): ShellE
       mountPoint: "/workspace",
       writable: options.fs.writeFs,
     },
-    network: Boolean(options.networkGrants),
+    network: Boolean(options.networkGrants) && (!options.commands || options.commands.includes("curl")),
     processes: {
       background: false,
       interactive: false,

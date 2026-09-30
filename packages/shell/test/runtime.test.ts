@@ -117,12 +117,12 @@ describe("@vite-hub/shell just-bash runtime", () => {
     await expect(session.dispose()).resolves.toMatchObject({ event: "session_disposed" })
   })
 
-  it("runs controlled curl through the just-bash provider network boundary", async () => {
+  it.each([{ commands: ["curl"] }, { commands: undefined }])("runs controlled curl through the just-bash provider network boundary with commands $commands", async ({ commands }) => {
     const workspace = new MemoryWorkspace({})
     const executeSourceRequest = vi.fn(async () => ({ content: "ok\n" }))
     const runtime = createShellRuntime({
       provider: createJustBashProvider({
-        commands: ["curl"],
+        commands,
         cwd: workspaceMountPoint,
         fs: createReadonlyWorkspaceFs(workspace),
         networkGrants: { executeSourceRequest },
@@ -152,6 +152,7 @@ describe("@vite-hub/shell just-bash runtime", () => {
       }),
     })
 
+    expect(runtime.boundary.network).toBe(false)
     await expect(runtime.exec("curl -X POST https://portal.example.com/action")).resolves.toMatchObject({
       event: "policy_denied",
       exitCode: 126,
