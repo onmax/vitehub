@@ -617,6 +617,25 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function recordDestructuringAliases(pattern: number, end: number, value: number, failClosed = true) {
+    for (let index = pattern + 1; index < end; index++) {
+      const close = tokens[index] === "[" ? [...openingDelimiters].find(([, opening]) => opening === index)?.[0] : undefined
+      if (close !== undefined && tokens[close + 1] === ":") { index = close; continue }
+      // Default values and computed keys read members rather than assign them.
+      if (tokens[index] === "=") {
+        let depth = 0
+        for (index++; index < end; index++) {
+          if (depth === 0 && [",", "]", "}"].includes(tokens[index]!)) break
+          if (["(", "[", "{"].includes(tokens[index]!)) depth++
+          else if ([")", "]", "}"].includes(tokens[index]!)) depth--
+        }
+        index--
+        continue
+      }
+      if (declarations.has(tokens[index]!) && [".", "["].includes(tokens[index + 1]!)) {
+        mutatedBindings.add(tokens[index]!)
+        index = memberCallEnd(index) - 1
+      }
+    }
     const names = [...callbackBindingNames(pattern, end)]
     const targets = containerAliasTargets(value, tokens, true)
     if (names.length !== targets.length) {

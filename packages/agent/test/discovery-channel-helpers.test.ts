@@ -928,6 +928,26 @@ it("rejects aliases assigned through container properties", async () => {
   await expect(discover(source)).rejects.toThrow("opaque Channel")
 })
 
+it.each([
+  '({ pullRequest: options.pullRequest } = { pullRequest: true })',
+  '({ pullRequest: options["pullRequest"] } = { pullRequest: true })',
+  '({ nested: { enabled: options.pullRequest } } = { nested: { enabled: true } })',
+  '[options.pullRequest] = [true]',
+  '({ enabled: options.pullRequest = true } = {})',
+  'for ({ enabled: options.pullRequest } of [{ enabled: true }]) {}',
+])("rejects member targets in destructuring patterns: %s", async mutation => {
+  const source = `${imports} const options = { pullRequest: false }; ${mutation}; export default defineAgent({ channels: { custom: github(options) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
+it.each([
+  'let alias; ({ enabled: alias = options.pullRequest } = {})',
+  'let alias; ({ [options.pullRequest]: alias } = {})',
+])("preserves member reads inside destructuring patterns: %s", async read => {
+  const source = `${imports} const options = { pullRequest: false }; ${read}; export default defineAgent({ channels: { custom: github(options) } })`
+  expect((await discover(source))?.workspace).toBeUndefined()
+})
+
 it("rejects predeclared for-of Channel option targets", async () => {
   const source = `${imports} let options = { pullRequest: false }; for (options of [{ pullRequest: true }]) {} export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
