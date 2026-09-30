@@ -255,11 +255,12 @@ const invocations = defineAgentInvocations({
 
 `redact` runs after the content policy and before the journal bounds the observation. It applies to observations streamed during the run, observations that the journal persists after the run finishes, and `appendObservation()` evidence. The journal calls it once for each observation, also when a write is retried. Return `undefined` to drop the observation; `appendObservation()` then returns the unchanged record. `redactError` receives the bounded error and its return value is stored as is. Return `undefined` to store no error details; the record status stays `failed`. A hook that throws drops the observation or the error details. Both hooks must be synchronous. The journal preserves its internal `vitehub.observation.id` after redaction so retries can identify evidence that was already stored. They do not change the live trace log, hook events, or OTLP export.
 
-`agent:finish` and `agent:error` hook events include `event.invocation.traceId` when the Agent has a journal. It equals the `traceId` on the stored record:
+`agent:finish` and `agent:error` hook events include `event.invocation.traceId` after journal creation confirms the stored record identity. It equals the `traceId` on that record. Hooks wait at most one second for pending creation, then proceed without this field if creation is still unresolved. This preserves the Agent result or original error:
 
 ```ts
 hooks: {
   'agent:finish': async (event) => {
+    if (event.invocation.traceId === undefined) return
     await audit.insert({ traceId: event.invocation.traceId, text: event.text })
   },
 }

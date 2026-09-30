@@ -212,8 +212,8 @@ interface BoundAgentInvocations extends AgentInvocations {
 export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   configuration?: TraceEventContentPolicy
   context: AgentRuntimeContext<TRuntimeConfig>
-  /** The `traceId` stored on the invocation record. */
-  traceId: string
+  /** The stored `traceId`, available after creation confirms the record identity. */
+  traceId: string | undefined
   /** Wait for an asynchronous create attempt to resolve its stored identity. */
   ready(): Promise<void>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
@@ -1987,7 +1987,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       }
       return {
         configuration: options.configuration,
-        get traceId() { return traceId },
+        get traceId() { return created ? traceId : undefined },
         async ready() {
           if (creationTask) await boundedStoreOperation(() => creationTask!)
         },

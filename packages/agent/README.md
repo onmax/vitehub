@@ -176,7 +176,7 @@ The portable `@vite-hub/agent/server` entry exports `failInterruptedAgentInvocat
 
 `defineAgentInvocations({ observations, store })` configures retained observation count, content string length, encoded byte budget, and finish drain time. Defaults retain up to 32,768 observations, 65,536 UTF-16 code units of content strings, and a one-second drain, with a 16 MiB aggregate storage limit. Explicit limits support longer traces without removing bounds; records keep those limits across restarts. See [Agent Invocations](../../docs/content/docs/agents/invocations.md) for the limits and privacy policy.
 
-`redact(observation)` rewrites or drops (`undefined`) each observation before storage, including late and appended evidence. `redactError(error)` rewrites the error of a failed record. `agent:finish` and `agent:error` events expose the record's `traceId` as `event.invocation.traceId`.
+`redact(observation)` rewrites or drops (`undefined`) each observation before storage, including late and appended evidence. `redactError(error)` rewrites the error of a failed record. `agent:finish` and `agent:error` events expose the record's `traceId` as `event.invocation.traceId` after journal creation confirms its identity. The field is omitted while creation is unresolved.
 
 Capability setup and close callbacks emit `agent.capability.<phase>` timing events through the invocation trace. They include capability ID, measured duration, outcome, and available correlation IDs, without callback payloads or thrown messages. See [Agent Invocations](../../docs/content/docs/agents/invocations.md#observe-the-outcome) for the event contract.
 

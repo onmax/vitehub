@@ -995,7 +995,7 @@ describe("Agent Invocations", () => {
     else await expect(invocation).resolves.toBe("done")
     const hook = fail ? error : finish
     expect(hook).toHaveBeenCalledOnce()
-    expect(hook.mock.calls[0]?.[0].invocation.traceId).toMatch(/^sha256_/)
+    expect(hook.mock.calls[0]?.[0].invocation).not.toHaveProperty("traceId")
   }, 5_000)
 
   it("does not block trace appends on stalled observation writes", async () => {
@@ -1177,7 +1177,7 @@ describe("Agent Invocations", () => {
     } })
     const retry = await bindAgentInvocations(invocations, { ...context, trace: { id: "retry-trace" } }, { deferClaim: true })
     if (!first || !retry) throw new Error("Expected invocation journals.")
-    expect(retry.traceId).not.toBe(first.traceId)
+    expect(retry.traceId).toBeUndefined()
 
     releaseCreate()
     await retry.ready()
@@ -1189,6 +1189,52 @@ describe("Agent Invocations", () => {
     const record = await invocations.getByRunId("late-duplicate-trace")
     expect(record?.observations[0]?.trace?.id).toBe(first.traceId)
   })
+
+  it.each([false, true])("omits hook trace identity when duplicate creation resolves after readiness, failure: %s", async (fail) => {
+    const memory = createMemoryAgentInvocationStore()
+    const context = { ...runtime(`late-duplicate-hook-${fail}`), trace: { id: "first-trace" } }
+    const first = await bindAgentInvocations(defineAgentInvocations({ store: memory }), context, { deferClaim: true })
+    if (!first) throw new Error("Expected invocation journal.")
+    let releaseCreate!: () => void
+    const createGate = new Promise<void>((resolve) => { releaseCreate = resolve })
+    let resolveCreate!: () => void
+    const created = new Promise<void>((resolve) => { resolveCreate = resolve })
+    const invocations = defineAgentInvocations({ store: {
+      ...memory,
+      async create(input) {
+        await createGate
+        const result = await memory.create(input)
+        resolveCreate()
+        return result
+      },
+    } })
+    const finish = vi.fn()
+    const error = vi.fn()
+    const failure = new Error("driver failed")
+    const agent = defineAgent({
+      driver: { run: () => { if (fail) throw failure; return "done" } },
+      hooks: { "agent:error": error, "agent:finish": finish },
+      invocations,
+      runtime: false,
+    })
+
+    const invocation = runAgent(agent, { ...context, trace: { id: "retry-trace" } }, {})
+    try {
+      if (fail) await expect(invocation).rejects.toBe(failure)
+      else await expect(invocation).resolves.toBe("done")
+      const hook = fail ? error : finish
+      expect(hook).toHaveBeenCalledOnce()
+      expect(hook.mock.calls[0]?.[0].invocation).not.toHaveProperty("traceId")
+
+      releaseCreate()
+      await created
+      expect((await invocations.getByRunId(context.run.runId))?.traceId).toBe(first.traceId)
+      expect(hook.mock.calls[0]?.[0].invocation).not.toHaveProperty("traceId")
+    }
+    finally {
+      releaseCreate()
+    }
+  }, 5_000)
 
   it.each([false, true])("reuses the stored trace id on duplicate invocation hooks, failure: %s", async (fail) => {
     const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
