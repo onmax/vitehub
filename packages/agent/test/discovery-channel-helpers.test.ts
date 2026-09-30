@@ -86,14 +86,14 @@ it.each([
 })
 
 it.each([
-  'const { options: alias } = getOptions(); alias.pullRequest = true',
-  'const { nested: { options: alias } } = getOptions(); alias.pullRequest = true',
-  'const [alias] = getOptions(); alias.pullRequest = true',
-  'const other = 1, { options: alias } = getOptions(); alias.pullRequest = true',
-  'const { options: alias } = (getOptions()); const next = alias; next.pullRequest = true',
-  'const { enable } = getOptions(); enable()',
-])("rejects mutations through destructured opaque call results: %s", async mutation => {
-  const setup = `${imports} const options = { pullRequest: false }; const getOptions = () => ({ options }); ${mutation};`
+  ['const { options: alias } = getOptions(); alias.pullRequest = true', '({ options })'],
+  ['const { nested: { options: alias } } = getOptions(); alias.pullRequest = true', '({ nested: { options } })'],
+  ['const [alias] = getOptions(); alias.pullRequest = true', '[options]'],
+  ['const other = 1, { options: alias } = getOptions(); alias.pullRequest = true', '({ options })'],
+  ['const { options: alias } = (getOptions()); const next = alias; next.pullRequest = true', '({ options })'],
+  ['const { enable } = getOptions(); enable()', '({ enable() { options.pullRequest = true } })'],
+])("rejects mutations through destructured opaque call results: %s", async (mutation, result) => {
+  const setup = `${imports} const options = { pullRequest: false }; const getOptions = () => ${result}; ${mutation};`
   await expect(discover(`${setup} export default defineAgent({ channels: { custom: github(options) } })`)).rejects.toThrow(/opaque Channel/)
   await expect(discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
     "portal.ts": `${setup} export default github(options)`,
