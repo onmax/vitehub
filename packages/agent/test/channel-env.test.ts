@@ -114,6 +114,22 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([])
   })
 
+  it("follows typed maps and explicit properties after spreads", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { telegram } from "vite-hub/agent/channels"
+      const base = {}
+      const baseChannels = {}
+      const channels: AgentChannels = { ...baseChannels, telegram: {} }
+      function format(telegram) { return telegram() }
+      export default defineAgent({ ...base, channels })
+      export const second = defineAgent({ channels: { ...baseChannels, telegram: {} } })
+    `)).toEqual([
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: [] },
+    ])
+  })
+
   it("treats options set to undefined as omitted", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"

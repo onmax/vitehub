@@ -28,13 +28,19 @@ function isStringToken(token: string | undefined): boolean {
 function visitObjectProperties(tokens: string[], start: number, visit: (key: string, value: number | undefined) => void): boolean {
   let depth = 0
   let expectKey = true
+  let unknown = false
   for (let i = start + 1; i < tokens.length; i++) {
     const token = tokens[i]!
     if (depth === 0) {
-      if (token === "}") return true
+      if (token === "}") return !unknown
       if (token === ",") { expectKey = true; continue }
       if (expectKey) {
-        if (token === "." || token === "[") return false
+        if (token === "[") return false
+        if (token === "." && tokens[i + 1] === "." && tokens[i + 2] === ".") {
+          unknown = true
+          expectKey = false
+          continue
+        }
         if (/^[A-Za-z_$][\w$]*$/.test(token) || isStringToken(token)) {
           const key = isStringToken(token) ? token.slice(1, -1) : token
           // A shorthand property `{ telegram }` is its own value.
@@ -88,15 +94,13 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
       else if (!channelModule && clause[b] === "defineAgent") agentFactories.add(local)
     }
   }
-  // A factory name that the module declares again, for example as a parameter, is not tracked.
-  for (const name of locallyDeclaredNames(tokens)) bindings.delete(name)
   const declarations = moduleObjectDeclarations(tokens)
   const agentBindings = new Map([...agentFactories].map(name => [name, "defineAgent"]))
   const agentNames = new Set(["defineAgent"])
   const uses: Array<DiscoveredChannelUse & { index: number }> = []
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i - 1] === "." || tokens[i - 1] === "as") continue
-    const factory = factoryCall(tokens, i, bindings, namespaces, known)
+    const factory = !isShadowedAt(tokens, i, tokens[i]!, bindings) && factoryCall(tokens, i, bindings, namespaces, known)
     if (factory) uses.push({ index: i, kind: factory.name, optionKeys: staticOptionKeys(tokens, factory.open + 1, ")") })
     // Shorthands count only in the top-level `channels` option of defineAgent(), not in types or other objects.
     const agent = factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames)
@@ -148,33 +152,53 @@ function localObject(tokens: string[], index: number, declarations: ReadonlyMap<
   return declaration !== undefined && tokens[declaration] === "{" && [",", "}", ")"].includes(end!) ? declaration : undefined
 }
 
-// Names bound by variable, function, and class declarations and by function parameters.
-function locallyDeclaredNames(tokens: string[]): Set<string> {
-  const names = new Set<string>()
+function isShadowedAt(tokens: string[], index: number, name: string, bindings: ReadonlyMap<string, string>): boolean {
+  if (!bindings.has(name)) return false
   const identifier = /^[A-Za-z_$][\w$]*$/
   for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i]!
-    if (["const", "let", "var", "function", "class"].includes(token) && identifier.test(tokens[i + 1] ?? "")) names.add(tokens[i + 1]!)
-    // A single arrow parameter: `name => ...`.
-    if (identifier.test(token) && tokens[i + 1] === "=" && tokens[i + 2] === ">") names.add(token)
-    if (token !== "(") continue
+    if (tokens[i] !== "function") continue
+    const open = tokens.indexOf("(", i + 1)
+    if (open < 0) continue
     let depth = 0
-    let close = i
+    let close = open
     for (; close < tokens.length; close++) {
-      if (["{", "(", "["].includes(tokens[close]!)) depth++
-      else if (["}", ")", "]"].includes(tokens[close]!) && --depth === 0) break
+      if (["(", "[", "{"].includes(tokens[close]!)) depth++
+      else if ([")", "]", "}"].includes(tokens[close]!) && --depth === 0) break
     }
-    const arrow = tokens[close + 1] === "=" && tokens[close + 2] === ">"
-    const declaredFunction = tokens[i - 1] === "function" || tokens[i - 2] === "function"
-    if (!arrow && !declaredFunction) continue
-    depth = 0
-    for (let j = i + 1; j < close; j++) {
-      if (["{", "(", "["].includes(tokens[j]!)) depth++
-      else if (["}", ")", "]"].includes(tokens[j]!)) depth--
-      else if (depth === 0 && identifier.test(tokens[j]!) && [",", ")", ":", "=", "?"].includes(tokens[j + 1] ?? ")")) names.add(tokens[j]!)
+    if (tokens[close + 1] !== "{") continue
+    const params = new Set<string>()
+    for (let j = open + 1; j < close; j++) if (identifier.test(tokens[j]!)) params.add(tokens[j]!)
+    if (!params.has(name)) continue
+    let bodyDepth = 0
+    let end = close + 1
+    for (; end < tokens.length; end++) {
+      if (["{", "(", "["].includes(tokens[end]!)) bodyDepth++
+      else if (["}", ")", "]"].includes(tokens[end]!) && --bodyDepth === 0) break
     }
+    if (index > close && index < end) return true
   }
-  return names
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] !== "(") continue
+    let depth = 1
+    let close = i + 1
+    for (; close < tokens.length && depth; close++) {
+      if (tokens[close] === "(") depth++
+      else if (tokens[close] === ")") depth--
+    }
+    if (tokens[close] !== "=" || tokens[close + 1] !== ">") continue
+    const params = new Set(tokens.slice(i + 1, close).filter(token => identifier.test(token)))
+    if (!params.has(name)) continue
+    const body = close + 2
+    if (tokens[body] !== "{") { if (index >= body) return true; continue }
+    let bodyDepth = 1
+    let end = body + 1
+    for (; end < tokens.length && bodyDepth; end++) {
+      if (tokens[end] === "{") bodyDepth++
+      else if (tokens[end] === "}") bodyDepth--
+    }
+    if (index > body && index < end) return true
+  }
+  return false
 }
 
 // Map module-level `const name = {` declarations to the index of their opening brace.
@@ -183,8 +207,10 @@ function moduleObjectDeclarations(tokens: string[]): Map<string, number> {
   let depth = 0
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!
-    if (depth === 0 && token === "const" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 1] ?? "") && tokens[i + 2] === "=" && tokens[i + 3] === "{") {
-      declarations.set(tokens[i + 1]!, i + 3)
+    if (depth === 0 && token === "const" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 1] ?? "")) {
+      let equals = i + 2
+      while (tokens[equals] && tokens[equals] !== "=" && tokens[equals] !== ";") equals++
+      if (tokens[equals] === "=" && tokens[equals + 1] === "{") declarations.set(tokens[i + 1]!, equals + 1)
     }
     if (["{", "(", "["].includes(token)) depth++
     else if (["}", ")", "]"].includes(token)) depth--

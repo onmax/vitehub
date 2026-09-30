@@ -66,8 +66,8 @@ let serverEnvModule: Promise<ServerEnvModule | undefined> | undefined
 // provider module that throws while it loads, are configuration errors and stay visible.
 function isMissingModule(error: unknown): boolean {
   const code = isRecord(error) ? error.code : undefined
-  if (code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_IMPORT_NOT_DEFINED") return true
   const message = error instanceof Error ? error.message : ""
+  if (code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_IMPORT_NOT_DEFINED") return message.includes(serverEnvModuleId)
   return message.includes(serverEnvModuleId) && /cannot find|failed to (?:resolve|load)|no such module|missing|not defined/i.test(message)
 }
 
