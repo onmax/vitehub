@@ -839,12 +839,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     seen.add(index)
     const branches = conditionalBranches(index)
     if (branches) return branches.some(branch => capabilityOwnsWorkspace(branch, new Set(seen)))
-    if (tokens[index] === "[") {
+    if (["[", "{"].includes(tokens[index])) {
       let end = index + 1
       let brackets = 1
       for (; end < tokens.length && brackets > 0; end++) {
-        if (tokens[end] === "[") brackets++
-        else if (tokens[end] === "]") brackets--
+        if (["[", "{", "("].includes(tokens[end])) brackets++
+        else if (["]", "}", ")"].includes(tokens[end])) brackets--
       }
       while (end < tokens.length) {
         if (tokens[end] === ")" && wrappers > 0) { end++; wrappers--; continue }
@@ -853,6 +853,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
       if ([".", "[", "?", "!"].includes(tokens[end])) {
         throw new Error("[vitehub] Agent Workspace discovery cannot inspect an opaque Capability expression. Use a literal Capability list with direct local bindings, or add workspace: {} to the Agent definition when the Capabilities own a Workspace.")
+      }
+      if (tokens[index] === "{") {
+        const options = properties(index, true, true)
+        const workspace = options.get("workspace")
+        if (workspace !== undefined && !undefinedValue(workspace)) return true
+        const nested = options.get("capabilities")
+        return nested !== undefined && capabilityOwnsWorkspace(nested, seen)
       }
       let depth = 0
       for (let i = index + 1; i < tokens.length; i++) {

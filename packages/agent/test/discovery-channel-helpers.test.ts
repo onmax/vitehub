@@ -82,6 +82,49 @@ it.each([
 })
 
 it.each([
+  '{ id: "storage", workspace: {} }',
+  '({ id: "storage", workspace: {} })',
+  '({ id: "storage", workspace: {} } as Capability)',
+  'storage',
+  '{ id: "combined", capabilities: [{ id: "storage", workspace: {} }] }',
+  '{ id: "storage", ...contribution }',
+])("detects literal Capability Workspace ownership: %s", async capability => {
+  const setup = `${imports} const storage = { id: "storage", workspace: {} }; const contribution = { workspace: {} };`
+  const settings = [
+    `channels: { custom: webChat({ capabilities: [${capability}] }) }`,
+    `capabilities: [${capability}]`,
+  ]
+  for (const setting of settings) {
+    const definition = await discover(`${setup} export default defineAgent({ ${setting} })`)
+    expect(definition?.workspace).toBe("review")
+  }
+  const imported = await discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": `${setup} export default webChat({ capabilities: [${capability}] })`,
+  })
+  expect(imported?.workspace).toBe("review")
+})
+
+it.each([
+  '{ id: "plain" }',
+  '{ id: "plain", workspace: undefined }',
+  'plain',
+])("keeps literal stateless Capabilities stateless: %s", async capability => {
+  const definition = await discover(`${imports} const plain = { id: "plain" }; export default defineAgent({ channels: { custom: webChat({ capabilities: [${capability}] }) } })`)
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it.each([
+  '{ id: "storage", get workspace() { return {} } }',
+  '({ id: "storage", workspace: {} }).other',
+  '{ id: "storage", ...getContribution() }',
+])("rejects opaque literal Capability ownership: %s", async capability => {
+  const source = `${imports} export default defineAgent({ channels: { custom: webChat({ capabilities: [${capability}] }) } })`
+  await expect(discover(source)).rejects.toThrow(/opaque Channel|opaque Capability|opaque Agent settings/)
+  const explicit = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
+  expect(explicit?.workspace).toBe("review")
+})
+
+it.each([
   ["{ pullRequest: false }", false],
   ["{ pullRequest: true }", true],
   ["{ pullRequest: { workspace: false } }", false],
