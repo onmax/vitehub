@@ -185,10 +185,26 @@ function base64Url(bytes: Uint8Array): string {
   return base64(bytes).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
 }
 
-function decodeBase64Url(value: string): string {
+function decodeBase64Url(value: string, charset = "utf-8"): string {
   const normalized = value.replaceAll("-", "+").replaceAll("_", "/")
   const binary = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="))
-  return new TextDecoder().decode(Uint8Array.from(binary, character => character.charCodeAt(0)))
+  return textDecoder(charset).decode(Uint8Array.from(binary, character => character.charCodeAt(0)))
+}
+
+function textDecoder(charset: string) {
+  try {
+    return new TextDecoder(charset)
+  }
+  catch {
+    // An unknown charset label falls back to UTF-8.
+    return new TextDecoder()
+  }
+}
+
+/** Charset of a MIME part from its `Content-Type` header, for example `ISO-8859-1`. Default: UTF-8. */
+function partCharset(part: GmailPart): string {
+  const contentType = headers(part, ["Content-Type"])["content-type"] ?? ""
+  return /;\s*charset="?([^";\s]+)"?/i.exec(contentType)?.[1] ?? "utf-8"
 }
 
 function encodeHeader(value: string): string {
@@ -233,10 +249,10 @@ function headers(part: GmailPart | undefined, names: readonly string[]): Record<
 async function textParts(read: (attachmentId: string) => Promise<string | undefined>, part: GmailPart | undefined, mimeType: string): Promise<string[]> {
   if (!part) return []
   if (part.mimeType === mimeType && !part.filename) {
-    if (part.body?.data) return [decodeBase64Url(part.body.data)]
+    if (part.body?.data) return [decodeBase64Url(part.body.data, partCharset(part))]
     if (part.body?.attachmentId) {
       const data = await read(part.body.attachmentId)
-      return data ? [decodeBase64Url(data)] : []
+      return data ? [decodeBase64Url(data, partCharset(part))] : []
     }
   }
   return (await Promise.all((part.parts ?? []).map(child => textParts(read, child, mimeType)))).flat()
