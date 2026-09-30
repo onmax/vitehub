@@ -165,9 +165,15 @@ function channelFactoryReference(
   let kind = bindings.get(tokens[index]!)
   let next = index + 1
   const member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
-  if (!kind && namespaces.has(tokens[index]!) && tokens[member] === "." && known.has(tokens[member + 1]!)) {
-    kind = tokens[member + 1]!
-    next = member + 2
+  if (!kind && namespaces.has(tokens[index]!)) {
+    if (tokens[member] === "." && known.has(tokens[member + 1]!)) {
+      kind = tokens[member + 1]!
+      next = member + 2
+    } else if (tokens[member] === "[" && isStringToken(tokens[member + 1]) && tokens[member + 2] === "]"
+      && known.has(tokens[member + 1]!.slice(1, -1))) {
+      kind = tokens[member + 1]!.slice(1, -1)
+      next = member + 3
+    }
   }
   if (tokens[next] === "?" && tokens[next + 1] === ".") next += 2
   return kind ? { call: tokens[next] === "(" || tokens[next] === "<", kind } : undefined
@@ -427,6 +433,15 @@ function statementEnd(tokens: string[], start: number, closes: ReadonlyMap<numbe
     if (close !== undefined) return tokens[close + 1] === ";" ? close + 2 : close + 1
     return end
   }
+  if (tokens[start] === "try") {
+    let end = statementEnd(tokens, start + 1, closes, lineBreaks)
+    if (tokens[end] === "catch") {
+      const close = tokens[end + 1] === "(" ? closes.get(end + 1) : end
+      if (close !== undefined) end = statementEnd(tokens, close + 1, closes, lineBreaks)
+    }
+    if (tokens[end] === "finally") end = statementEnd(tokens, end + 1, closes, lineBreaks)
+    return end
+  }
   if (/^[A-Za-z_$][\w$]*$/.test(tokens[start] ?? "") && tokens[start + 1] === ":") return statementEnd(tokens, start + 2, closes, lineBreaks)
   const end = expressionBodyEnd(tokens, start, lineBreaks, false)
   return tokens[end] === ";" ? end + 1 : end
@@ -567,9 +582,15 @@ function factoryCall(
   let name = bindings.get(tokens[index]!)
   let next = index + 1
   const member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
-  if (!name && namespaces.has(tokens[index]!) && tokens[member] === "." && names.has(tokens[member + 1]!)) {
-    name = tokens[member + 1]
-    next = member + 2
+  if (!name && namespaces.has(tokens[index]!)) {
+    if (tokens[member] === "." && names.has(tokens[member + 1]!)) {
+      name = tokens[member + 1]!
+      next = member + 2
+    } else if (tokens[member] === "[" && isStringToken(tokens[member + 1]) && tokens[member + 2] === "]"
+      && names.has(tokens[member + 1]!.slice(1, -1))) {
+      name = tokens[member + 1]!.slice(1, -1)
+      next = member + 3
+    }
   }
   if (!name) return undefined
   if (tokens[next] === "?" && tokens[next + 1] === ".") next += 2

@@ -52,6 +52,14 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it("finds bracketed namespace factory calls", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import * as channels from "vite-hub/agent/channels"
+      export default defineAgent({ channels: { telegram: channels["telegram"]() } })
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
   it("ignores method declarations while keeping calls inside method bodies", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
@@ -404,6 +412,7 @@ describe("built-in Channel discovery", () => {
       for (const telegram of factories) while (enabled) telegram();
       for (const telegram of factories) do telegram(); while (enabled);
       for (const telegram of factories) label: { telegram() }
+      for (const telegram of factories) try { telegram() } catch { telegram() }
       defineAgent({ channels: { support: telegram() } })
     `)).toEqual([{ kind: "telegram", keys: [] }])
   })
