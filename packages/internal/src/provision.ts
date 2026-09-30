@@ -62,7 +62,14 @@ export function resolveVercelProvisionConfig(env: Record<string, string | undefi
 
 export interface CloudflareEnvelope<T> {
   result?: T
-  result_info?: { cursor?: string }
+  result_info?: {
+    count?: number
+    page?: number
+    per_page?: number
+    total_count?: number
+    total_pages?: number
+    cursor?: string
+  }
   success?: boolean
   errors?: Array<{ code?: number, message?: string }>
 }
