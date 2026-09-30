@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest"
 import { initLogger } from "evlog"
 import { agentEvlogPlugin, createAgentEvlog, filterAgentObservability, sanitizeAgentLog, type AgentEvlogExporter } from "../src/evlog.ts"
-import { defineAgent, runAgent } from "../src/index.ts"
+import { agentInvocationId, defineAgent, runAgent } from "../src/index.ts"
 
 const background: Promise<unknown>[] = []
 const waitUntil = (task: Promise<unknown>) => { background.push(task) }
@@ -170,7 +170,7 @@ it.each([
   await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil, agentIdentity: { name }, run: { runId: "links" } }, { prompt: "hello" })
   await Promise.allSettled(background.splice(0))
   const terminal = exporter.capture.mock.calls.find(([name]) => name === "$ai_trace")
-  expect(terminal?.[1].session_url).toMatch(new RegExp(`^https://console.example/inspect/_vitehub/agents/${segment}/invocations/`))
+  expect(terminal?.[1].session_url).toBe(`https://console.example/inspect/_vitehub/agents/${segment}/invocations/${await agentInvocationId("links", name)}`)
   await hooks.get("close")!()
   expect(telemetry.status().closed).toBe(true)
 })

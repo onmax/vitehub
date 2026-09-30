@@ -179,7 +179,7 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
       agent_name: agentName, run_id: run?.runId, invocation_id: id, thread_id: run?.threadId,
       trace_id: runtime.trace?.id, parent_trace_id: runtime.trace?.parentId,
       $ai_trace_id: runtime.trace?.id || id,
-      session_url: agentName && id ? sessionUrl({ agentName, id }) : undefined,
+      session_url: agentName && id ? sessionUrl({ agentName, id: await agentInvocationId(id, agentName) }) : undefined,
     }
   }
 
