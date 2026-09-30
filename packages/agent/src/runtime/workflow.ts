@@ -361,7 +361,7 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
     : undefined
   if (channelOwnership?.verify) runtimeContext = withAgentChannelDeliveryOwnershipVerifier(runtimeContext, channelOwnership.verify)
   if (payload.parsedInputData === true) {
-    Object.defineProperty(runtimeContext, parsedAgentWorkflowInputDataContextKey, { enumerable: true, value: true })
+    Object.defineProperty(runtimeContext, parsedAgentWorkflowInputDataContextKey, { enumerable: true, value: agent })
   }
   const workflowInput = channelOwnership?.abortSignal
     ? {

@@ -3973,7 +3973,7 @@ async function createAgentInvocationContext<
   let failureTraced = false
   const telemetryContentTraceLogWrapped = initialTelemetryUsesContent || mayResolveContentTelemetry
   try {
-    if (!Reflect.get(context, Symbol.for("vitehub.agent.workflow.parsedInputData"))) {
+    if (Reflect.get(context, Symbol.for("vitehub.agent.workflow.parsedInputData")) !== definition) {
       input = await parseAgentInputData(internalDefinition, input)
     }
     const boundRunEvents = bindAgentRunEvents(definition?.runEvents, tracedRuntimeContext)

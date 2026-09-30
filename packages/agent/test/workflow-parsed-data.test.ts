@@ -131,4 +131,31 @@ describe("durable Agent data handoff", () => {
     expect(result).toEqual({ count: 3 })
     expect(validate).toHaveBeenCalledOnce()
   })
+
+  it("scopes parsed data to the Agent that crossed the Workflow boundary", async () => {
+    const childRun = vi.fn(() => "child")
+    const child = defineAgent({
+      data: v.object({ count: v.string() }),
+      driver: { run: childRun },
+      runtime: false,
+    })
+    const parent = defineAgent({
+      data: v.object({ count: v.pipe(v.string(), v.transform(Number)) }),
+      driver: { run: () => "parent" },
+      hooks: {
+        "agent:input": async (context) => {
+          await runAgentInline(child, context, { data: { count: 1 } as never })
+        },
+      },
+      runtime: false,
+    })
+
+    await expect(runAgentWorkflowDefinition(parent, {
+      id: "nested-agent-data",
+      name: "nested-agent-data",
+      payload: { input: { data: { count: "2" } }, parsedInputData: true },
+      provider: "cloudflare",
+    }, runAgentInline)).rejects.toThrow("Invalid Agent input data")
+    expect(childRun).not.toHaveBeenCalled()
+  })
 })
