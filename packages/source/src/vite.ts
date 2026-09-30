@@ -444,6 +444,7 @@ export function hubSource(options: SourceVitePluginOptions = {}): Plugin & {
 } {
   let latestProjectRoot: string | undefined
   const configuredStateByRoot = new Map<string, {
+    configuredAuth?: boolean
     handlerKey: string
     nitroContribution?: NitroGeneratedConfig
     serverDirs?: string[]
@@ -466,8 +467,12 @@ export function hubSource(options: SourceVitePluginOptions = {}): Plugin & {
     configuredAuth?: boolean,
   ) => {
     const root = resolve(input.projectRoot)
+    const configuredState = configuredStateByRoot.get(root)
+    const resolvedConfiguredAuth = configuredAuth === undefined
+      ? configuredState?.configuredAuth
+      : configuredAuth
     const auth = typeof options.auth === "function"
-      ? options.auth({ configuredAuth, projectRoot: root, serverDirs: input.serverDirs })
+      ? options.auth({ configuredAuth: resolvedConfiguredAuth, projectRoot: root, serverDirs: input.serverDirs })
       : options.auth
     const previousPreparation = sourcePreparationByRoot.get(root) ?? Promise.resolve()
     const preparation = previousPreparation.then(() =>
@@ -566,6 +571,7 @@ export function hubSource(options: SourceVitePluginOptions = {}): Plugin & {
           const handlerKey = await generatedHandlerKey(handlers)
           const nitro = generatedSourceNitroContribution(viteConfig.nitro, handlers)
           configuredStateByRoot.set(projectRoot, {
+            configuredAuth: viteConfig.auth === false ? false : viteConfig.auth ? true : undefined,
             handlerKey,
             nitroContribution: nitro,
             serverDirs: serverDirs?.slice(),
@@ -616,6 +622,7 @@ export function hubSource(options: SourceVitePluginOptions = {}): Plugin & {
         const handlers = await prepareSources({ projectRoot, serverDirs }, viteConfig.auth === false ? false : viteConfig.auth ? true : undefined)
         const handlerKey = await generatedHandlerKey(handlers)
         configuredStateByRoot.set(projectRoot, {
+          configuredAuth: viteConfig.auth === false ? false : viteConfig.auth ? true : undefined,
           handlerKey,
           nitroContribution: configuredState?.nitroContribution,
           serverDirs: serverDirs?.slice(),

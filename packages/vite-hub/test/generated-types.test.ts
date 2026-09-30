@@ -615,6 +615,17 @@ describe("framework generated types", () => {
         ``,
       ].join("\n"),
     )
+
+    await (source as ReturnType<typeof sourcePlugin>).api.prepareSources({ projectRoot: root })
+    await expect(readFile(join(root, ".vitehub/source/routes/meals.mjs"), "utf8")).resolves.toBe(
+      [
+        `import { defineCollectionHandler } from "vite-hub/source/server"`,
+        `import { meals as collection } from ${JSON.stringify(pathToFileURL(join(root, "server/collections/meals.ts")).href)}`,
+        ``,
+        `export default defineCollectionHandler(collection)`,
+        ``,
+      ].join("\n"),
+    )
   })
 
   it("serves server/content.ts through the Comark Content runtime", async () => {
