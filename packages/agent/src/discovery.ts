@@ -530,6 +530,27 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return names
   }
 
+  function patternOpening(close: number): number | undefined {
+    let depth = 0
+    for (let index = close; index >= 0; index--) {
+      if (["]", "}"].includes(tokens[index]!)) depth++
+      else if (["[", "{"].includes(tokens[index]!)) {
+        depth--
+        if (depth === 0) return index
+      }
+    }
+  }
+
+  function recordDestructuringAliases(pattern: number, end: number, value: number) {
+    const names = callbackBindingNames(pattern, end)
+    const targets = containerAliasTargets(value, tokens, true)
+    for (const name of names) {
+      const aliases = assignedAliases.get(name) ?? new Set<string>()
+      for (const target of targets) aliases.add(target)
+      if (aliases.size) assignedAliases.set(name, aliases)
+    }
+  }
+
   const destructuredBindings = new Map<number, Set<string>>()
   const variableDeclarations = new Map<number, number>()
   for (let i = 0; i < tokens.length; i++) {
@@ -619,17 +640,31 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
   for (let index = 0; index < tokens.length; index++) {
-    if (tokens[index] !== "of" || !/^[A-Za-z_$][\w$]*$/.test(tokens[index - 1] ?? "")) continue
-    let declaration = index - 2
-    while (declaration >= 0 && !["const", "let", "var", "for"].includes(tokens[declaration]!)) declaration--
-    if (!["const", "let", "var"].includes(tokens[declaration]!)) continue
-    const alias = tokens[index - 1]!
-    const targets = containerAliasTargets(index + 1, tokens, true)
-    if (targets.length) {
-      const aliases = assignedAliases.get(alias) ?? new Set<string>()
-      for (const target of targets) aliases.add(target)
-      assignedAliases.set(alias, aliases)
+    if (tokens[index] === "=" && ["]", "}"].includes(tokens[index - 1] ?? "")) {
+      const pattern = patternOpening(index - 1)
+      if (pattern !== undefined && [undefined, "(", ")", ";", "{", "}"].includes(tokens[pattern - 1])) {
+        recordDestructuringAliases(pattern, index, index + 1)
+      }
+      continue
     }
+    if (tokens[index] !== "of") continue
+    if (/[A-Za-z_$][\w$]*/.test(tokens[index - 1] ?? "")) {
+      let declaration = index - 2
+      while (declaration >= 0 && !["const", "let", "var", "for"].includes(tokens[declaration]!)) declaration--
+      if (!["const", "let", "var"].includes(tokens[declaration]!)) continue
+      const alias = tokens[index - 1]!
+      const targets = containerAliasTargets(index + 1, tokens, true)
+      if (targets.length) {
+        const aliases = assignedAliases.get(alias) ?? new Set<string>()
+        for (const target of targets) aliases.add(target)
+        assignedAliases.set(alias, aliases)
+      }
+      continue
+    }
+    if (!["]", "}"].includes(tokens[index - 1] ?? "")) continue
+    const pattern = patternOpening(index - 1)
+    if (pattern === undefined) continue
+    recordDestructuringAliases(pattern, index, index + 1)
   }
   const opaqueCalls = new Set<number>()
   const trustedCalls = new Set<number>()
@@ -1137,6 +1172,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     let channelOptions = resolveReference(channel, new Set(), true)
     const moduleImport = moduleImports.get(tokens[channelOptions])
     if (moduleImport && isModuleBinding(channelOptions) && !["(", "<", ".", "[", "?", "!"].includes(tokens[channelOptions + 1])) {
+      if (mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId)
     }
     const helper = channelHelper(channelOptions)
@@ -1337,9 +1373,17 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (capabilities !== undefined && capabilityOwnsWorkspace(capabilities)) return true
     const channels = options.get("channels")
     if (channels !== undefined) {
-      for (const [channelId, channel] of properties(channels, true)) {
-        if (channelOwnsWorkspace(channel, channelId)) return true
+      let opaque = false
+      let owns = false
+      const channelMap = resolveReference(channels)
+      const callbackChannelMap = tokens[channelMap] !== "{"
+        && callbackParameters.some(scope => channelMap >= scope.start && channelMap < scope.end && scope.names.has(tokens[channelMap]))
+      const onOpaqueChannelMap = callbackChannelMap ? undefined : () => { opaque = true }
+      for (const [channelId, channel] of properties(channels, true, false, onOpaqueChannelMap)) {
+        if (channelOwnsWorkspace(channel, channelId)) owns = true
       }
+      if (opaque) throw opaqueChannelError()
+      if (owns) return true
     }
     const inherited = options.get("extends")
     if (inherited !== undefined && ownsWorkspace(inherited, seen, true)) return true

@@ -443,9 +443,13 @@ it.each([
   'const [alias = portal] = []; alias.capabilities = []',
   'const { value: alias = portal } = {}; alias.capabilities = []',
   'const [{ value: alias = portal } = {}] = []; alias.capabilities = []',
+  'let alias; [alias] = [portal]; alias.capabilities = []',
+  'let alias; ({ value: alias } = { value: portal }); alias.capabilities = []',
   'for (const [alias] of [[portal]]) alias.capabilities = []',
   'const iterable = [[portal]]; for (const [alias] of iterable) alias.capabilities = []',
   'const container = [{ value: portal }]; const iterable = container; for (const { value: alias } of iterable) alias.capabilities = []',
+  'let alias; for ([alias] of [[portal]]) alias.capabilities = []',
+  'let alias; for ({ value: alias } of [{ value: portal }]) alias.capabilities = []',
 ])("rejects a mutated loop alias in a relative Channel export: %s", async mutation => {
   const source = 'import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })'
   const files = { "portal.ts": `import { github } from "vite-hub/agent/channels"; const options = { pullRequest: false }; const portal = github(options); ${mutation}; export default portal` }
@@ -469,6 +473,7 @@ it.each([
 })
 
 it.each([
+  ["imported property mutation", 'portal', 'export const portal = github({ pullRequest: false })'],
   ["opaque call", '{ portal }', 'export let portal = github({ pullRequest: false }); mutate(portal)'],
   ["property mutation", '{ portal }', 'export const portal = github({ pullRequest: false }); portal.capabilities = [storage]'],
   ["default export clause", 'portal', 'const portal = github({ pullRequest: false }); portal.capabilities = [storage]; export { portal as default }'],
@@ -477,10 +482,22 @@ it.each([
   ["assignment in a later initializer", '{ portal }', 'export let portal = github({ pullRequest: false }), replacement = (portal = github({ pullRequest: true }))'],
   ["type-annotated alias", '{ portal }', 'export const portal = github({ pullRequest: false }); const alias: typeof portal = portal; mutate(alias)'],
 ])("rejects a mutated relative Channel export: %s", async (_name, binding, declaration) => {
-  const source = `import { defineAgent } from "vite-hub/agent"; import ${binding} from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })`
+  const source = _name === "imported property mutation"
+    ? 'import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; portal.capabilities = []; export default defineAgent({ channels: { github: portal } })'
+    : `import { defineAgent } from "vite-hub/agent"; import ${binding} from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })`
   const files = { "portal.ts": `import { github } from "vite-hub/agent/channels"; import { defineCapability } from "vite-hub/agent"; const storage = defineCapability({ workspace: {} }); ${declaration}` }
   await expect(discover(source, files)).rejects.toThrow("opaque Channel")
   const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
+  expect(definition?.workspace).toBe("review")
+})
+
+it.each([
+  ["opaque spread", 'const extra = makeChannels(); export default defineAgent({ channels: { github: { pullRequest: false }, ...extra } })'],
+  ["opaque computed key", 'const key = getChannelName(); export default defineAgent({ channels: { [key]: github({ pullRequest: true }) } })'],
+])("rejects opaque Channel-map entries: %s", async (_name, declaration) => {
+  const source = `${imports} ${declaration}`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+  const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
   expect(definition?.workspace).toBe("review")
 })
 
