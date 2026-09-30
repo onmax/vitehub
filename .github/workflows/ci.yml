@@ -21,6 +21,7 @@ jobs:
       - checks
       - contract-tests
       - package-tests
+      - package-tests-success
       - consumer-contracts
       - consumer-contracts-success
       - windows-agent-credentials
@@ -99,16 +100,42 @@ jobs:
       - uses: ./.github/actions/setup-deno
       - run: vp run test:contracts
 
+  # Package tests were one 22-minute job. Agent and Workspace each take about
+  # 9 minutes, so they run alone. The last shard excludes the named packages,
+  # so a new package always runs somewhere.
   package-tests:
-    name: package tests
+    name: package tests (${{ matrix.shard.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: agent
+            args: --packages @vite-hub/agent
+          - name: workspace
+            args: --packages @vite-hub/workspace
+          - name: content and workflow
+            args: --packages @vite-hub/content,@vite-hub/workflow
+          - name: other packages
+            args: --exclude @vite-hub/agent,@vite-hub/workspace,@vite-hub/content,@vite-hub/workflow
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/setup-deno
-      - run: vp run test
+      - run: node test/run-package-task.mjs test ${{ matrix.shard.args }}
+
+  # Keep the default success() condition, as for consumer contracts: needs
+  # alone can lose failed matrix shards after a partial rerun.
+  package-tests-success:
+    needs:
+      - package-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - run: echo 'All package test shards passed'
 
   consumer-contracts:
     name: consumer contracts (${{ matrix.shard }})
