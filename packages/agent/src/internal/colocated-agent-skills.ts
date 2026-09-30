@@ -2,6 +2,8 @@ import { hasRuntimeType } from "./runtime-type.ts"
 import type { WorkspaceSourceInput } from "@vite-hub/workspace"
 
 export const colocatedAgentSkillsSymbol: symbol = Symbol.for("vitehub.agent.colocatedSkills")
+// Links a generated Skills clone back to the imported Definition it decorates.
+export const colocatedAgentSkillsSourceSymbol: symbol = Symbol.for("vitehub.agent.colocatedSkillsSource")
 export const colocatedAgentSkillsContextKey = "agent.colocatedSkills"
 
 export type ColocatedAgentSkills = Record<string, WorkspaceSourceInput>
@@ -39,5 +41,6 @@ export function withColocatedAgentSkills<Agent>(agent: Agent, skills: ColocatedA
   // original definition.
   Object.defineProperty(agent, colocatedAgentSkillsSymbol, descriptor)
   Object.defineProperty(resolved, colocatedAgentSkillsSymbol, descriptor)
+  Object.defineProperty(resolved, colocatedAgentSkillsSourceSymbol, { configurable: true, value: agent })
   return resolved
 }

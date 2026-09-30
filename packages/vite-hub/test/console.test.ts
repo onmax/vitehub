@@ -61,6 +61,7 @@ import { createUsageSummary, invocationUsage } from "../src/console/runtime/serv
 
 import { runAgent } from "@vite-hub/agent"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "@vite-hub/agent/server"
+import { agentWithColocatedSkills } from "@vite-hub/agent/runtime/workflow"
 import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 
 import type { AgentInvocations, AgentRuntimeContext } from "@vite-hub/agent"
@@ -1938,6 +1939,28 @@ describe("Agent invocation console", () => {
     const { invocations: records } = await invocations.list({ limit: 10 })
     expect(records).toEqual([expect.objectContaining({ agentName: "labeller", status: "completed" })])
     expect(labeller.name).toBeUndefined()
+  })
+
+  it("records the discovered name on the source of a colocated-Skills clone", async () => {
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    installConsoleInvocationFallback(invocations, process.cwd())
+    const labeller = defineAgent({ driver: { run: () => "labelled" }, runtime: false })
+    const decorated = agentWithColocatedSkills(labeller, {
+      "__vitehubAgentSkill:.agents/skills/review/SKILL.md": {
+        content: new TextEncoder().encode("# Review\n"),
+        materialize: "startup",
+        mount: "",
+        workspacePath: ".agents/skills/review/SKILL.md",
+      },
+    })
+    expect(installConsoleAgentDefinitions([
+      { definition: { default: decorated }, fallbackName: "labeller" },
+    ], { invocations })).toEqual(["labeller"])
+
+    const [error] = await runAgent(labeller, { prompt: "Label this email." })
+    expect(error).toBeNull()
+    const { invocations: records } = await invocations.list({ limit: 10 })
+    expect(records).toEqual([expect.objectContaining({ agentName: "labeller", status: "completed" })])
   })
 
   it("advertises invokable Agents and their profiles only when invocation is enabled", async () => {
