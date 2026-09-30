@@ -103,6 +103,13 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([])
   })
 
+  it("treats bare arrow parameters as shadowing imports", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      const inspect = telegram => telegram()
+    `)).toEqual([])
+  })
+
   it("requires imported, unshadowed Agent factories for shorthand discovery", () => {
     expect(uses(`
       const defineAgent = (options) => options

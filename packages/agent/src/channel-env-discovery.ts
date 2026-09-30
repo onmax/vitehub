@@ -302,6 +302,18 @@ function isShadowedAt(tokens: string[], index: number, name: string, bindings: R
     const end = closes.get(body!) ?? body!
     if (index > close && index < end) return true
   }
+  // A single arrow parameter may omit parentheses: `telegram => telegram()`.
+  for (let parameter = 0; parameter < tokens.length; parameter++) {
+    if (tokens[parameter] !== name || tokens[parameter + 1] !== "=" || tokens[parameter + 2] !== ">") continue
+    const body = parameter + 3
+    if (tokens[body] === "{") {
+      const end = closes.get(body) ?? body
+      if (index > parameter + 2 && index < end) return true
+    } else {
+      const end = expressionBodyEnd(tokens, body, lineBreaks)
+      if (index >= body && index < end) return true
+    }
+  }
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i] !== "(") continue
     let depth = 1
