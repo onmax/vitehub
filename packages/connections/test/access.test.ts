@@ -95,7 +95,10 @@ describe("decideConnectionAccess", () => {
 
 describe("Connection origins", () => {
   it("matches exact origins and subdomain wildcards", () => {
-    const origins = assertConnectionOrigins(["https://API.example.com", "https://*.googleapis.com", "http://localhost:8787"])
+    const origins = assertConnectionOrigins(["https://API.example.com", "https://*.googleapis.com", "http://localhost:8787", "https://default.example:443", "http://plain.example:80"])
+    // Default ports are normalized, as `URL.port` is empty for them.
+    expect(matchesConnectionOrigin(origins, new URL("https://default.example/x"))).toBe(true)
+    expect(matchesConnectionOrigin(origins, new URL("http://plain.example:80/x"))).toBe(true)
     expect(matchesConnectionOrigin(origins, new URL("https://api.example.com/v1?x=1"))).toBe(true)
     expect(matchesConnectionOrigin(origins, new URL("https://gmail.googleapis.com/gmail/v1"))).toBe(true)
     expect(matchesConnectionOrigin(origins, new URL("http://localhost:8787/x"))).toBe(true)
