@@ -52,9 +52,17 @@ describe("provider Agent Drivers in Worker builds", () => {
     `import { defineAgent } from "@vite-hub/agent"; const value = { kind: "codex" }; export default defineAgent({ driver: { run: () => "codex" } })`,
     `import { defineAgent } from "@vite-hub/agent"; const code = /codexDriver\\(\\)/; export default defineAgent({ driver: { run: () => "codex" } })`,
     `import type { codexDriver } from "@vite-hub/agent"; import { defineAgent } from "@vite-hub/agent"; export default defineAgent({ driver: { model: "openai/gpt-5" } })`,
+    `import { type workspace } from "vite-hub/agent/presets/workspace"`,
+    `import { type workspace } from "@vite-hub/agent/presets/workspace"`,
+    `import workspace from "@acme/presets/workspace"`,
+    `import { workspace } from "@acme/presets/babysitter"`,
     `import type { workspace } from "vite-hub/agent/presets/workspace"`,
   ])("ignores model and run Drivers in %s", (source) => {
     expect(usesProviderAgentDriver(source)).toBe(false)
+  })
+
+  it("detects value imports in mixed preset specifiers", () => {
+    expect(usesProviderAgentDriver(`import { type WorkspaceOptions, workspace } from "@vite-hub/agent/presets/workspace"`)).toBe(true)
   })
 
   it("detects Worker resolve conditions", () => {

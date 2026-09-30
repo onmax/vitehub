@@ -2,7 +2,7 @@ import { parseAst } from "vite"
 
 const providerPackageNames = new Set(["@vite-hub/agent", "vite-hub/agent"])
 const providerFactoryNames = new Set(["codexDriver", "claudeCodeDriver"])
-const providerPresetPattern = /\/presets\/(?:workspace|babysitter(?:\/server)?)$/
+const providerPresetPattern = /^(?:@vite-hub\/agent|vite-hub\/agent)\/presets\/(?:workspace|babysitter(?:\/server)?)$/
 const providerKinds = new Set(["codex", "claude-code"])
 
 interface PositionedNode {
@@ -68,6 +68,10 @@ function importedBinding(specifier: PositionedNode): { imported: string, local: 
   return imported && local ? { imported, local } : undefined
 }
 
+function hasValueImport(specifier: unknown): boolean {
+  return isPositionedNode(specifier) && specifier.importKind !== "type"
+}
+
 function isProviderFactoryCall(node: PositionedNode, factoryBindings: Set<string>, namespaces: Set<string>): boolean {
   if (node.type !== "CallExpression" || !isPositionedNode(node.callee)) return false
   if (node.callee.type === "Identifier") return factoryBindings.has(node.callee.name as string)
@@ -121,11 +125,15 @@ export function usesProviderAgentDriver(source: string): boolean {
   visitNodes(program, (node) => {
     if (node.type !== "ImportDeclaration" || node.importKind === "type") return
     const importedSource = literalString(node.source)
-    if (!importedSource || !providerPackageNames.has(importedSource)) {
-      if (importedSource && providerPresetPattern.test(importedSource)) hasProviderPreset = true
+    if (!importedSource) return
+    const specifiers = Array.isArray(node.specifiers) ? node.specifiers : []
+    if (providerPresetPattern.test(importedSource)) {
+      if (specifiers.some(hasValueImport)) hasProviderPreset = true
       return
     }
-    const specifiers = Array.isArray(node.specifiers) ? node.specifiers : []
+    if (!providerPackageNames.has(importedSource)) {
+      return
+    }
     for (const rawSpecifier of specifiers) {
       if (!isPositionedNode(rawSpecifier) || rawSpecifier.importKind === "type") continue
       if (rawSpecifier.type === "ImportNamespaceSpecifier") {
