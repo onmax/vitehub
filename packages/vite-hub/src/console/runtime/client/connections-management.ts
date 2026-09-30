@@ -13,6 +13,7 @@ export const connectionSummarySchema: v.GenericSchema<unknown, ConnectionSummary
   expiresAt: v.optional(v.string()),
   lastError: v.optional(v.string()),
   name: v.string(),
+  origins: v.array(v.string()),
   provider: v.string(),
   scopes: v.array(v.string()),
   status: v.picklist(["active", "disconnected", "error", "needs-reconnect"]),

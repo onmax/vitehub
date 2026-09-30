@@ -35,6 +35,7 @@ const definition: ConnectionDefinition = {
     exchange: async () => ({ accessToken: "synthetic-access", account: "owner@example.com", expiresAt: Date.now() + 3_600_000, scopes: ["test.read"], tokenType: "Bearer" }),
     id: "example",
     kind: "oauth2",
+    origins: ["https://api.example"],
     refresh: async token => token,
     scopes: ["test.read"],
   },
@@ -114,6 +115,9 @@ describe("Console Connections", () => {
       expect(response.status).toBe(403)
       expect(await response.json()).toMatchObject({ code: "CONNECTIONS_DENIED" })
     }
+    // The OAuth routes change a Connection too, so they stay closed.
+    expect((await handleConsoleConnections(new Request(`${origin}/_vitehub/connections/example/connect?ticket=t`))).status).toBe(403)
+    expect((await handleConsoleConnections(new Request(`${origin}/_vitehub/connections/example/callback?code=c&state=s`))).status).toBe(403)
   })
 
   it("rejects cross-origin management requests", async () => {

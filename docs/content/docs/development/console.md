@@ -275,7 +275,7 @@ For `host-managed`, your middleware must authenticate and authorize all `/_viteh
 
 ### Manage Connections
 
-Explicit `access` and `exposure` configurations also keep [Connections](/docs/server-primitives/connections) read-only. Console users can list Connections, access rules, and activity. Set `manageConnections: true` to let them connect, refresh, disconnect, and set keys:
+Explicit `access` and `exposure` configurations also keep [Connections](/docs/server-primitives/connections) read-only. Console users can list Connections, access rules, and activity. Set `manageConnections: true` to let them connect, refresh, and disconnect:
 
 ```ts
 console: { access: 'auth', manageConnections: true }

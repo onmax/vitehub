@@ -86,6 +86,7 @@ const connections = new Map<string, ConnectionSummary>([
     description: "Gmail for the release inbox.",
     expiresAt: "2026-09-29T10:12:00.000Z",
     name: "google",
+    origins: ["https://*.googleapis.com"],
     provider: "google",
     scopes: ["https://www.googleapis.com/auth/gmail.modify"],
     status: "active",
@@ -93,6 +94,7 @@ const connections = new Map<string, ConnectionSummary>([
   ["github", {
     access: { agents: { "release-engineer": { allow: ["github.repos.*"], deny: ["github.repos.delete"] } } },
     name: "github",
+    origins: ["https://api.github.com"],
     provider: "oauth2",
     scopes: ["repo"],
     status: "disconnected",
@@ -125,7 +127,7 @@ async function handleConnections(request: IncomingMessage, response: ServerRespo
     return json(response, { connection: next })
   }
   if (action === "disconnect") {
-    const next: ConnectionSummary = { access: connection.access, name, provider: connection.provider, scopes: connection.scopes, status: "disconnected" }
+    const next: ConnectionSummary = { access: connection.access, name, origins: connection.origins, provider: connection.provider, scopes: connection.scopes, status: "disconnected" }
     connections.set(name, next)
     return json(response, { connection: next })
   }
