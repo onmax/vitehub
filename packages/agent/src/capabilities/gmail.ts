@@ -32,13 +32,16 @@ interface GmailDraftInput {
   bcc?: string[]
   body: string
   cc?: string[]
-  subject: string
-  threadId?: string
+  /** Gmail message id to reply to. The draft joins its thread with matching reply headers. */
+  replyTo?: string
+  /** Required for a new draft. A reply uses the subject of the original message. */
+  subject?: string
   to: string[]
 }
 
 /** The Gmail Operations that this Capability calls, from `@vite-hub/connections/google`. */
 interface GmailOperations {
+  attachmentsGet: AgentConnectionOperation<{ id: string, messageId: string }>
   draftsCreate: AgentConnectionOperation<{ raw: string, threadId?: string }>
   messagesGet: AgentConnectionOperation<{ format: "full" | "metadata", id: string, metadataHeaders?: string[] }>
   messagesList: AgentConnectionOperation<{ maxResults: number, pageToken?: string, q: string }>
@@ -51,6 +54,7 @@ const operationSchema = v.looseObject({
 })
 
 const gmailOperationsSchema = v.looseObject({
+  attachmentsGet: operationSchema,
   draftsCreate: operationSchema,
   messagesGet: operationSchema,
   messagesList: operationSchema,
@@ -92,6 +96,8 @@ const messageListSchema = v.looseObject({
   nextPageToken: v.optional(v.string()),
 })
 
+const attachmentSchema = v.looseObject({ data: v.optional(v.string()) })
+
 const draftSchema = v.looseObject({
   id: v.string(),
   message: v.looseObject({ id: v.string(), threadId: v.string() }),
@@ -123,11 +129,11 @@ const gmailDraftInputSchema: AgentToolSchema<GmailDraftInput> = {
     bcc: { items: { type: "string" }, type: "array" },
     body: { minLength: 1, type: "string" },
     cc: { items: { type: "string" }, type: "array" },
-    subject: { minLength: 1, type: "string" },
-    threadId: { description: "Gmail thread id. Set it to create a reply draft in that thread.", type: "string" },
+    replyTo: { description: "Gmail message id to reply to. The draft joins that thread and uses its subject.", minLength: 1, type: "string" },
+    subject: { description: "Subject of a new draft. Omit it for a reply.", minLength: 1, type: "string" },
     to: { items: { type: "string" }, minItems: 1, type: "array" },
   },
-  required: ["to", "subject", "body"],
+  required: ["to", "body"],
   type: "object",
 }
 
@@ -190,14 +196,20 @@ function encodeHeader(value: string): string {
   return /^[\x20-\x7E]*$/.test(value) ? value : `=?UTF-8?B?${base64(new TextEncoder().encode(value))}?=`
 }
 
+interface GmailReply {
+  inReplyTo: string
+  references: string
+}
+
 /** Builds an RFC 2822 message with a base64 text body, encoded as Gmail `raw`. */
-function gmailRawMessage(input: { bcc: string[], body: string, cc: string[], subject: string, to: string[] }): string {
+function gmailRawMessage(input: { bcc: string[], body: string, cc: string[], reply?: GmailReply, subject: string, to: string[] }): string {
   const body = base64(new TextEncoder().encode(input.body)).replace(/.{76}/g, "$&\r\n")
   const lines = [
     `To: ${input.to.join(", ")}`,
     ...(input.cc.length ? [`Cc: ${input.cc.join(", ")}`] : []),
     ...(input.bcc.length ? [`Bcc: ${input.bcc.join(", ")}`] : []),
     `Subject: ${encodeHeader(input.subject)}`,
+    ...(input.reply ? [`In-Reply-To: ${input.reply.inReplyTo}`, `References: ${input.reply.references}`] : []),
     "MIME-Version: 1.0",
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: base64",
@@ -217,10 +229,17 @@ function headers(part: GmailPart | undefined, names: readonly string[]): Record<
   return result
 }
 
-function textParts(part: GmailPart | undefined, mimeType: string): string[] {
+/** Decoded body parts of one MIME type. Gmail stores large bodies as attachments, so those are fetched. */
+async function textParts(read: (attachmentId: string) => Promise<string | undefined>, part: GmailPart | undefined, mimeType: string): Promise<string[]> {
   if (!part) return []
-  if (part.mimeType === mimeType && part.body?.data && !part.filename) return [decodeBase64Url(part.body.data)]
-  return (part.parts ?? []).flatMap(child => textParts(child, mimeType))
+  if (part.mimeType === mimeType && !part.filename) {
+    if (part.body?.data) return [decodeBase64Url(part.body.data)]
+    if (part.body?.attachmentId) {
+      const data = await read(part.body.attachmentId)
+      return data ? [decodeBase64Url(data)] : []
+    }
+  }
+  return (await Promise.all((part.parts ?? []).map(child => textParts(read, child, mimeType)))).flat()
 }
 
 function attachments(part: GmailPart | undefined): Array<{ filename: string, mimeType?: string, size?: number }> {
@@ -286,8 +305,10 @@ async function gmailRead(connection: AgentConnection, ops: GmailOperations, inpu
   const id = gmailLine(input?.id, "gmail_read id")
   const maxChars = input?.maxChars ?? 20_000
   const message = parse(messageSchema, await connection.call("gmail_read", ops.messagesGet, { format: "full", id }), "gmail_read")
-  const plain = textParts(message.payload, "text/plain").join("\n\n")
-  const text = plain || htmlText(textParts(message.payload, "text/html").join("\n\n"))
+  const attachment = async (attachmentId: string) =>
+    parse(attachmentSchema, await connection.call("gmail_read", ops.attachmentsGet, { id: attachmentId, messageId: message.id }), "gmail_read").data
+  const plain = (await textParts(attachment, message.payload, "text/plain")).join("\n\n")
+  const text = plain || htmlText((await textParts(attachment, message.payload, "text/html")).join("\n\n"))
   return {
     attachments: attachments(message.payload),
     id: message.id,
@@ -299,16 +320,51 @@ async function gmailRead(connection: AgentConnection, ops: GmailOperations, inpu
   }
 }
 
+const replyHeaders = ["Message-ID", "References", "Subject"]
+
+function withoutReplyPrefix(subject: string): string {
+  return subject.replace(/^(?:\s*re\s*:\s*)+/i, "").trim()
+}
+
+/**
+ * Gmail adds a draft to a thread only when the thread id, `In-Reply-To`, `References`, and the subject match.
+ * The original message supplies all of them.
+ */
+async function gmailReplyTarget(connection: AgentConnection, ops: GmailOperations, replyTo: string, subject: string | undefined) {
+  const original = parse(messageSchema, await connection.call("gmail_draft", ops.messagesGet, { format: "metadata", id: replyTo, metadataHeaders: replyHeaders }), "gmail_draft")
+  const values = headers(original.payload, replyHeaders)
+  const messageId = values["message-id"]?.trim()
+  if (!messageId || /[\0\r\n]/.test(messageId) || /[\0\r\n]/.test(values.references ?? "")) {
+    throw agentDiagnostics.AGENT_R0087({ message: "[vitehub] gmail_draft cannot reply: the original message has no valid Message-ID header." })
+  }
+  const originalSubject = withoutReplyPrefix(values.subject ?? "")
+  if (subject !== undefined && withoutReplyPrefix(subject) !== originalSubject) {
+    throw agentDiagnostics.AGENT_R0084({ message: "[vitehub] gmail_draft subject must match the original subject for a reply. Omit it to use the original subject." })
+  }
+  return {
+    reply: { inReplyTo: messageId, references: [values.references?.trim(), messageId].filter(Boolean).join(" ") },
+    subject: `Re: ${originalSubject}`,
+    threadId: original.threadId,
+  }
+}
+
 async function gmailDraft(connection: AgentConnection, ops: GmailOperations, input: GmailDraftInput) {
-  const raw = gmailRawMessage({
+  const recipients = {
     bcc: gmailRecipients(input?.bcc, "bcc", false),
     body: gmailBody(input?.body),
     cc: gmailRecipients(input?.cc, "cc", false),
-    subject: gmailLine(input?.subject, "gmail_draft subject"),
     to: gmailRecipients(input?.to, "to", true),
+  }
+  const subject = input?.subject === undefined ? undefined : gmailLine(input.subject, "gmail_draft subject")
+  const target = input?.replyTo === undefined
+    ? undefined
+    : await gmailReplyTarget(connection, ops, gmailLine(input.replyTo, "gmail_draft replyTo"), subject)
+  const raw = gmailRawMessage({
+    ...recipients,
+    ...(target ? { reply: target.reply } : {}),
+    subject: target?.subject ?? gmailLine(subject, "gmail_draft subject"),
   })
-  const threadId = input?.threadId === undefined ? undefined : gmailLine(input.threadId, "gmail_draft threadId")
-  const draft = parse(draftSchema, await connection.call("gmail_draft", ops.draftsCreate, { raw, ...(threadId ? { threadId } : {}) }), "gmail_draft")
+  const draft = parse(draftSchema, await connection.call("gmail_draft", ops.draftsCreate, { raw, ...(target ? { threadId: target.threadId } : {}) }), "gmail_draft")
   return { draftId: draft.id, messageId: draft.message.id, sent: false, threadId: draft.message.threadId }
 }
 
@@ -346,14 +402,14 @@ function gmailTools(context: AgentCapabilityContext, name: string, enabled: Read
             inputSchema: gmailReadInputSchema,
             metadata: metadata(ops.messagesGet.id),
             name: "gmail_read",
-            policy: connection.policy("gmail_read", [ops.messagesGet]),
+            policy: connection.policy("gmail_read", [ops.messagesGet, ops.attachmentsGet]),
           }),
         }
       : {}),
     ...(enabled.has("draft")
       ? {
           gmail_draft: defineInternalTool<GmailDraftInput>({
-            description: "Create an unsent plain-text Gmail draft. This tool cannot send messages.",
+            description: "Create an unsent plain-text Gmail draft, or a reply draft with replyTo. This tool cannot send messages.",
             execute: input => gmailDraft(connection, ops, input),
             inputSchema: gmailDraftInputSchema,
             metadata: metadata(ops.draftsCreate.id),

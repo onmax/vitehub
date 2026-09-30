@@ -69,10 +69,12 @@ Open the Console, select **Connections**, and select **Connect** for `google`. O
 | Tool | Operation | Connection Operation ids | Effect |
 | --- | --- | --- | --- |
 | `gmail_search` | `search` | `gmail.messages.list`, `gmail.messages.get` | read |
-| `gmail_read` | `read` | `gmail.messages.get` | read |
-| `gmail_draft` | `draft` | `gmail.drafts.create` | write |
+| `gmail_read` | `read` | `gmail.messages.get`, `gmail.messages.attachments.get` | read |
+| `gmail_draft` | `draft` | `gmail.drafts.create`, and `gmail.messages.get` for a reply | write |
 
-`gmail_search` returns sender, recipients, subject, date, labels, and snippet for each message. The default query is `in:inbox`. `gmail_read` returns the headers, the decoded text body up to `maxChars`, and attachment names. `gmail_draft` creates a plain-text draft. Set `threadId` to create a reply draft in that thread. The result always has `sent: false`.
+`gmail_search` returns sender, recipients, subject, date, labels, and snippet for each message. The default query is `in:inbox`. `gmail_read` returns the headers, the decoded text body up to `maxChars`, and attachment names. Gmail stores large bodies as attachments; `gmail_read` fetches them. `gmail_draft` creates a plain-text draft with `to`, `subject`, and `body`. The result always has `sent: false`.
+
+Set `replyTo` to a Gmail message id to create a reply draft. The tool reads that message and sets the thread id, `In-Reply-To`, `References`, and `Re: <original subject>`, so Gmail adds the draft to the thread. Omit `subject` for a reply. A different subject fails.
 
 The following Agent-visible definitions are resolved from the real Capability during the docs build.
 

@@ -41,6 +41,7 @@ export async function createCapabilityReferences(): Promise<CapabilityReferences
   const connectionsPrimitive = {
     operations: {
       gmail: {
+        attachmentsGet: gmailOperation("gmail.messages.attachments.get", "read"),
         draftsCreate: gmailOperation("gmail.drafts.create", "write"),
         messagesGet: gmailOperation("gmail.messages.get", "read"),
         messagesList: gmailOperation("gmail.messages.list", "read"),
