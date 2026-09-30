@@ -89,6 +89,24 @@ const meals = defineCollection({
 })
 expectTypeOf<CollectionItem<typeof meals>>().toEqualTypeOf<{ id: string }>()
 
+const privateMeals = defineCollection({
+  authorize: ({ user }) => {
+    expectTypeOf(user.id).toBeString()
+    return true
+  },
+  source: table({
+    db,
+    orderBy: {
+      column: schema.meals.createdAt,
+      direction: "desc",
+      tieBreaker: schema.meals.id,
+    },
+    table: schema.meals,
+  }),
+  transform: row => ({ id: row.id }),
+})
+expectTypeOf<CollectionItem<typeof privateMeals>>().toEqualTypeOf<{ id: string }>()
+
 interface MealFilters {
   day?: string
 }
