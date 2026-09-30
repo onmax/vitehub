@@ -74,12 +74,12 @@ export function channelDelivery<TOptions>(options: ChannelDeliveryOptions<TOptio
             const message = isRuntimeRecord(input) && hasRuntimeType(input.message, "string") ? input.message.trim() : ""
             if (!message) throw new TypeError(`[vitehub] ${name} requires a non-empty message.`)
             await options.validate?.(message)
+            const text = options.format ? await options.format(message, context) : message
             if (calls >= maxCalls) {
               throw new ViteHubError("CHANNEL_DELIVERY_LIMIT", `[vitehub] ${name} was already called ${calls} ${calls === 1 ? "time" : "times"}. Do not call it again.`, { details: { maxCalls, tool: name } })
             }
             // Count the attempt before sending. A failed send can still have reached the recipient.
             calls++
-            const text = options.format ? await options.format(message, context) : message
             const [error, receipt] = await options.channel.send(text, options.options)
             if (error) throw error
             sent++
@@ -90,11 +90,10 @@ export function channelDelivery<TOptions>(options: ChannelDeliveryOptions<TOptio
         }),
       })
       if (options.required) {
-        context.output.final((result) => {
-          if (!sent) {
+        context.delivery.finishEffect(({ event }) => {
+          if (!Object.hasOwn(event, "error") && !sent) {
             throw new ViteHubError("CHANNEL_DELIVERY_REQUIRED", `[vitehub] The Agent finished without a successful ${name} call.`, { details: { attempts: calls, tool: name } })
           }
-          return result
         })
       }
     },

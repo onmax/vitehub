@@ -71,14 +71,83 @@ describe("channelDelivery()", () => {
       extends: agentCalling(async (tools) => {
         await expect(tools.send_message!.execute!({ message: "one two three four" })).rejects.toThrow("At most 3 words")
         await expect(tools.send_message!.execute!({ message: "one two three" })).rejects.toThrow("Teams is down")
+        await expect(tools.send_message!.execute!({ message: "Retry" })).rejects.toMatchObject({ code: "CHANNEL_DELIVERY_LIMIT" })
       }),
       capabilities: [channelDelivery({ channel, options: { recipient: "user:1" }, required: true, validate })],
     })
 
     const [error] = await runAgent(agent, { prompt: "Write" })
     expect(error).toMatchObject({ code: "CHANNEL_DELIVERY_REQUIRED" })
-    expect(validate).toHaveBeenCalledTimes(2)
+    expect(validate).toHaveBeenCalledTimes(3)
     expect(channel.send).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps formatter failures retryable", async () => {
+    const channel = createChannel()
+    const format = vi.fn().mockRejectedValueOnce(new Error("Format failed")).mockResolvedValueOnce("Formatted")
+    const agent = defineAgent({
+      extends: agentCalling(async (tools) => {
+        await expect(tools.send_message!.execute!({ message: "First" })).rejects.toThrow("Format failed")
+        expect(channel.send).not.toHaveBeenCalled()
+        await expect(tools.send_message!.execute!({ message: "Retry" })).resolves.toEqual({ deliveryId: "delivery-1", sent: true })
+      }),
+      capabilities: [channelDelivery({ channel, options: { recipient: "user:1" }, required: true, format })],
+    })
+
+    await expect(runAgent(agent, { prompt: "Write" })).resolves.toEqual([null, "done"])
+    expect(channel.send).toHaveBeenCalledExactlyOnceWith("Formatted", { recipient: "user:1" })
+  })
+
+  it("limits concurrent calls after asynchronous formatting", async () => {
+    const channel = createChannel()
+    const agent = defineAgent({
+      extends: agentCalling(async (tools) => {
+        const results = await Promise.allSettled([
+          tools.send_message!.execute!({ message: "First" }),
+          tools.send_message!.execute!({ message: "Second" }),
+        ])
+        expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1)
+        expect(results.find(result => result.status === "rejected")).toMatchObject({ reason: { code: "CHANNEL_DELIVERY_LIMIT" } })
+      }),
+      capabilities: [channelDelivery({ channel, options: { recipient: "user:1" }, required: true, format: async message => message })],
+    })
+
+    await expect(runAgent(agent, { prompt: "Write" })).resolves.toEqual([null, "done"])
+    expect(channel.send).toHaveBeenCalledTimes(1)
+  })
+
+  it("preserves the original invocation error when delivery is required", async () => {
+    const channel = createChannel()
+    const agent = defineAgent({
+      extends: agentCalling(async () => { throw new Error("Driver failed") }),
+      capabilities: [channelDelivery({ channel, options: { recipient: "user:1" }, required: true })],
+    })
+
+    const [error] = await runAgent(agent, { prompt: "Write" })
+    expect(error).toMatchObject({ message: "Driver failed" })
+    expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])("checks required delivery when a Response completes and the Agent sends %s", async (sends) => {
+    const channel = createChannel()
+    const agent = defineAgent({
+      runtime: false,
+      driver: { run: ({ tools }) => new Response(new ReadableStream({
+        async start(controller) {
+          if (sends) await tools?.send_message?.execute?.({ message: "Roast" })
+          controller.enqueue(new TextEncoder().encode("done"))
+          controller.close()
+        },
+      })) },
+      capabilities: [channelDelivery({ channel, options: { recipient: "user:1" }, required: true })],
+    })
+
+    const [error, result] = await runAgent(agent, { prompt: "Write" })
+    expect(error).toBeNull()
+    expect(result).toBeInstanceOf(Response)
+    if (!(result instanceof Response)) throw new Error("Expected Response")
+    if (sends) await expect(result.text()).resolves.toBe("done")
+    else await expect(result.text()).rejects.toMatchObject({ code: "CHANNEL_DELIVERY_REQUIRED" })
   })
 
   it("formats the message with the invocation context", async () => {
