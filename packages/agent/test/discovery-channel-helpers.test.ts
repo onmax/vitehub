@@ -560,6 +560,57 @@ it.each([
   expect(imported?.workspace).toBe(ownsWorkspace ? "review" : undefined)
 })
 
+it.each(["π", "\\u03c0", "\\u{3c0}", "𐐀", "\\u{10400}", "a\\u200Cb"])("tracks Unicode Channel bindings: %s", async (name) => {
+  for (const enabled of [false, true]) {
+    const local = await discover(`${imports} const ${name} = github({ pullRequest: ${enabled} })\nexport default defineAgent({ channels: { custom: ${name} } })`)
+    expect(local?.workspace).toBe(enabled ? "review" : undefined)
+    const imported = await discover(`import { ${name} as portal } from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })`, {
+      "portal.ts": `${imports} export const ${name} = github({ pullRequest: ${enabled} })`,
+    })
+    expect(imported?.workspace).toBe(enabled ? "review" : undefined)
+  }
+})
+
+it.each([
+  ["portal.default", "export default", true],
+  ['portal["default"]', "export default", false],
+  ["portal.channel", "export const channel =", true],
+  ['portal["channel"]', "export const channel =", false],
+])("follows relative Channel namespace members: %s", async (member, declaration, enabled) => {
+  const files = { "portal.ts": `${imports} ${declaration} github({ pullRequest: ${enabled} })` }
+  const source = `import * as portal from "../../portal.ts"; export default defineAgent({ channels: { custom: ${member} } })`
+  expect((await discover(source, files))?.workspace).toBe(enabled ? "review" : undefined)
+  expect((await discover(source.replace("export default defineAgent", `const channel = ${member}; export default defineAgent`).replace(`custom: ${member}`, "custom: channel"), files))?.workspace).toBe(enabled ? "review" : undefined)
+})
+
+it.each(["portal", "portal[key]", "portal.default()", "portal.default.capabilities", "portal.missing", "portal.default && github({ pullRequest: true })", "portal.default || github({ pullRequest: true })", "portal.default ?? github({ pullRequest: true })"])("rejects opaque relative Channel namespace members: %s", async (member) => {
+  await expect(discover(`import * as portal from "../../portal.ts"; const key = "default"; export default defineAgent({ channels: { custom: ${member} } })`, { "portal.ts": owning })).rejects.toThrow(/opaque Channel|imported Channel/)
+})
+
+it("preserves relative namespace re-export traversal and cycle checks", async () => {
+  const source = 'import * as portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal.channel } })'
+  expect((await discover(source, { "portal.ts": 'export { default as channel } from "./inner.ts"', "inner.ts": owning }))?.workspace).toBe("review")
+  await expect(discover(source, { "portal.ts": 'import * as inner from "./inner.ts"; export const channel = inner.channel', "inner.ts": 'export { channel } from "./portal.ts"' })).rejects.toThrow(/imported Channel/)
+})
+
+it("keeps relative namespace imports separate from local shadowing and mutations", async () => {
+  const files = { "portal.ts": `${imports} export const channel = github({ pullRequest: true })` }
+  const prefix = 'import * as portal from "../../portal.ts";'
+  const local = await discover(`${prefix} function create() { const portal = { channel: { kind: "custom" } }; return defineAgent({ channels: { custom: portal.channel } }) }; export default create()`, files)
+  expect(local?.workspace).toBeUndefined()
+  await expect(discover(`${prefix} portal.channel.capabilities = []; export default defineAgent({ channels: { custom: portal.channel } })`, files)).rejects.toThrow(/opaque Channel/)
+})
+
+it.each([
+  'try { throw new Error("unrelated") } catch {}\nconst other = { throw: options };',
+  'const holder = { throw() { return options } };',
+  'const holder = { throw(): Options { return options } };',
+  'const holder = { throw<T>(): T { return options as T } };',
+])("keeps unrelated throws separate from Channel options: %s", async (unrelated) => {
+  const source = `${imports} const options = { pullRequest: false }; ${unrelated} export default defineAgent({ channels: { custom: github(options) } })`
+  expect((await discover(source))?.workspace).toBeUndefined()
+})
+
 it.each<[string, string, Record<string, string>, string | undefined]>([
   ["default re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "./inner.ts"', "inner.ts": owning }, "review"],
   ["stateless default re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "./inner.ts"', "inner.ts": stateless }, undefined],
@@ -585,6 +636,12 @@ it("records every local declarator", async () => {
 it.each([
   'options.pullRequest = true',
   'opt\\u0069ons.pullRequest = true',
+  'const \\u03c0 = options; π.pullRequest = true',
+  'try { throw options } catch (alias) { (alias as typeof options).pullRequest = true }',
+  'try { throw (options as Options) } catch (alias) { alias.pullRequest = true }',
+  'try { throw { options } } catch ({ options: alias }) { alias.pullRequest = true }',
+  'try { throw [options] } catch ([alias]) { alias.pullRequest = true }',
+  'try { throw enabled ? options : {} } catch (alias) { alias.pullRequest = true }',
   'options["pullRequest"] = true',
   'options.pullRequest.workspace = true',
   'options["pullRequest"]["workspace"] = true',

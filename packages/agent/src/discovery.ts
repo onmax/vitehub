@@ -73,17 +73,21 @@ function stripComments(source: string) {
     .replace(/(^|[^:])\/\/.*$/gm, "$1")
 }
 
+function isIdentifier(token: string | undefined): boolean {
+  return !!token && /^[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*$/u.test(token)
+}
+
 // Keep literals as single tokens so their punctuation cannot change object depth.
 function tokenizeAgentSource(source: string) {
   const tokens: string[] = []
   const lineBreaks = new Set<number>()
   let previousEnd = 0
-  for (const match of source.matchAll(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?[\d_]+)?)n?|(?:[A-Za-z_$]|\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4})(?:(?:[\w$])|(?:\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4}))*|[^\s]/g)) {
+  for (const match of source.matchAll(/"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?[\d_]+)?)n?|(?:[\p{ID_Start}$_]|\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4})(?:(?:[\p{ID_Continue}$\u200C\u200D])|(?:\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4}))*|[^\s]/gu)) {
     const token = match[0]
     if (token.startsWith("//") || token.startsWith("/*")) continue
     if (/[\r\n\u2028\u2029]/.test(source.slice(previousEnd, match.index))) lineBreaks.add(tokens.length)
     // Identifier escapes name the same bindings and properties at runtime.
-    tokens.push(/^[A-Za-z_$\\]/.test(token)
+    tokens.push(/^[\p{ID_Start}$_\\]/u.test(token)
       ? token.replace(/\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g, (_escape, point: string | undefined, unit: string | undefined) => String.fromCodePoint(Number.parseInt(point ?? unit!, 16)))
       : token)
     previousEnd = match.index + token.length
@@ -152,7 +156,7 @@ function relativeImportBindings(clause: string[]): [string, string][] {
   if (clause[0] === "type" && clause[1] !== ",") return []
   const bindings: [string, string][] = []
   let index = 0
-  if (/^[A-Za-z_$][\w$]*$/.test(clause[0] ?? "")) {
+  if (isIdentifier(clause[0] ?? "")) {
     bindings.push([clause[0]!, "default"])
     index = clause[1] === "," ? 2 : 1
   }
@@ -166,14 +170,14 @@ function relativeImportBindings(clause: string[]): [string, string][] {
     const name = exportName(clause[i])
     const local = clause[i + 1] === "as" ? clause[i + 2] : name
     if (clause[i + 1] === "as") i += 2
-    if (name !== undefined && local && /^[A-Za-z_$][\w$]*$/.test(local)) bindings.push([local, name])
+    if (name !== undefined && local && isIdentifier(local)) bindings.push([local, name])
   }
   return bindings
 }
 
 function exportName(token: string | undefined): string | undefined {
   if (!token) return
-  if (/^[A-Za-z_$][\w$]*$/.test(token)) return token
+  if (isIdentifier(token)) return token
   if (!/^["']/.test(token)) return
   if (invalidModuleLiteral(token)) return
   try {
@@ -211,11 +215,11 @@ function isWorkspaceAgentDefinition(source: string, file: string): boolean {
 function inspectAgentModule(source: string, file: string, modules: Set<string>) {
   const { tokens, lineBreaks } = tokenizeAgentSource(source)
   function startsStatement(index: number): boolean {
-    if (!lineBreaks.has(index) || !/^(?:[A-Za-z_$][\w$]*$|["'0-9])/.test(tokens[index] ?? "")) return false
+    if (!lineBreaks.has(index) || !(isIdentifier(tokens[index]) || /^["'0-9]/.test(tokens[index] ?? ""))) return false
     if (["in", "instanceof", "as", "satisfies"].includes(tokens[index])) return false
     const previous = tokens[index - 1]
     return [")", "]", "}"].includes(previous) ||
-      (/^[A-Za-z_$][\w$]*$/.test(previous ?? "") && !["return", "throw", "yield", "await", "new", "typeof", "void", "delete", "in", "instanceof", "as", "satisfies"].includes(previous))
+      (isIdentifier(previous ?? "") && !["return", "throw", "yield", "await", "new", "typeof", "void", "delete", "in", "instanceof", "as", "satisfies"].includes(previous))
   }
   const declarations = new Map<string, number>()
   const imported = new Set<string>()
@@ -227,6 +231,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   const importedChannelFactories = new Map<string, string>()
   // Static bindings from relative modules, keyed by local name.
   const moduleImports = new Map<string, { specifier: string, name: string }>()
+  const moduleNamespaces = new Map<string, string>()
   const namedExports = new Map<string, number>()
   // Bindings re-exported from relative modules, keyed by exported name.
   const reExports = new Map<string, { specifier: string, name: string }>()
@@ -306,15 +311,20 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
                 }
               }
               if (moduleName.startsWith("./") || moduleName.startsWith("../")) {
-                for (const [local, name] of relativeImportBindings(tokens.slice(i + 1, j - 1))) {
+                const clause = tokens.slice(i + 1, j - 1)
+                for (const [local, name] of relativeImportBindings(clause)) {
                   moduleImports.set(local, { specifier: moduleName, name })
+                }
+                const star = clause.indexOf("*")
+                if (clause[0] !== "type" && star >= 0 && clause[star + 1] === "as" && isIdentifier(clause[star + 2])) {
+                  moduleNamespaces.set(clause[star + 2]!, moduleName)
                 }
               }
               i = j; break
             }
             continue
           }
-          if (/^[A-Za-z_$]/.test(token) && !["from", "as", "type"].includes(token) && tokens[j + 1] !== "as") imported.add(token)
+          if (isIdentifier(token) && !["from", "as", "type"].includes(token) && tokens[j + 1] !== "as") imported.add(token)
         }
       }
       if (["const", "let", "var"].includes(tokens[i])) {
@@ -341,7 +351,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           for (let e = i + 2; e < close; e++) {
             if (e !== i + 2 && tokens[e - 1] !== ",") continue
             const local = tokens[e]
-            if (!local || !/^[A-Za-z_$][\w$]*$/.test(local)) continue
+            if (!local || !isIdentifier(local)) continue
             const name = tokens[e + 1] === "as" ? exportName(tokens[e + 2]) : local
             if (name !== undefined) pendingExports.set(name, local)
           }
@@ -359,7 +369,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (tokens[i] === "export" && tokens[i + 1] === "*" && tokens[i + 2] === "from") {
         starExports.push(moduleSpecifier(tokens[i + 3]))
       }
-      if (tokens[i] === "export" && tokens[i + 1] === "function" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2] ?? "")) {
+      if (tokens[i] === "export" && tokens[i + 1] === "function" && isIdentifier(tokens[i + 2] ?? "")) {
         namedExports.set(tokens[i + 2]!, i + 2)
       }
     }
@@ -410,11 +420,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (opening !== "[" && opening !== "{") {
       if (!inspectReference) return []
       const reference = containerTokens[index]
-      if (containerTokens === tokens && /^[A-Za-z_$][\w$]*$/.test(reference ?? "")) {
+      if (containerTokens === tokens && isIdentifier(reference ?? "")) {
         return [reference!]
       }
       return containerTokens.slice(index).filter((reference, offset) =>
-        /^[A-Za-z_$][\w$]*$/.test(reference) && containerTokens[index + offset - 1] !== ".",
+        isIdentifier(reference) && containerTokens[index + offset - 1] !== ".",
       )
     }
     const closing = opening === "[" ? "]" : "}"
@@ -544,7 +554,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         }
         cursor++
       } else {
-        if (/^[A-Za-z_$][\w$]*$/.test(token ?? "")) names.add(token)
+        if (isIdentifier(token ?? "")) names.add(token)
         if (tokens[cursor + 1] === "=") initializers?.set(cursor, cursor + 2)
         cursor++
       }
@@ -623,7 +633,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (tokenScopes[cursor] !== scope) continue
       if ([";", "const", "let", "var", "export", "return", "in", "of", "}", ")"].includes(tokens[cursor])) break
       if (tokens[cursor] === "," && (["[", "{"].includes(tokens[cursor + 1])
-        || (/^[A-Za-z_$][\w$]*$/.test(tokens[cursor + 1] ?? "") && ["=", ":", "!"].includes(tokens[cursor + 2])))) {
+        || (isIdentifier(tokens[cursor + 1] ?? "") && ["=", ":", "!"].includes(tokens[cursor + 2])))) {
         variableDeclarations.set(cursor, i)
       }
     }
@@ -678,7 +688,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (declarationTypeTokens.has(i)) continue
     if (tokens[i - 1] === "." && tokens[i - 2] !== ".") continue
     const name = tokens[i]
-    if (!declarations.has(name) && !/^[A-Za-z_$][\w$]*$/.test(name ?? "")) continue
+    if (!declarations.has(name) && !isIdentifier(name ?? "")) continue
     const memberEnd = memberCallEnd(i)
     const propertyAssignment = memberEnd > i + 1 && assignmentOperator(memberEnd)
     const directAssignment = assignmentOperator(i + 1) && !declaratorInitializers.has(i)
@@ -698,11 +708,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       for (const target of targets) aliases.add(target)
       if (aliases.size) assignedAliases.set(name, aliases)
     }
-    if (initializer !== undefined && /^[A-Za-z_$][\w$]*$/.test(tokens[initializer] ?? "")) {
+    if (initializer !== undefined && isIdentifier(tokens[initializer] ?? "")) {
       let aliasEnd = initializer + 1
       while (tokens[aliasEnd] === "." || tokens[aliasEnd] === "[") {
         if (tokens[aliasEnd] === ".") {
-          if (!/^[A-Za-z_$][\w$]*$/.test(tokens[aliasEnd + 1] ?? "")) break
+          if (!isIdentifier(tokens[aliasEnd + 1] ?? "")) break
           aliasEnd += 2
         }
         else {
@@ -831,7 +841,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       continue
     }
     if (tokens[index] !== "of") continue
-    if (/[A-Za-z_$][\w$]*/.test(tokens[index - 1] ?? "")) {
+    if (isIdentifier(tokens[index - 1] ?? "")) {
       let declaration = index - 2
       while (declaration >= 0 && !["const", "let", "var", "for"].includes(tokens[declaration]!)) declaration--
       if (!["const", "let", "var"].includes(tokens[declaration]!)) continue
@@ -855,7 +865,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   for (let index = 0; index + 4 < tokens.length; index++) {
     if (tokens[index + 1] !== "." || !assignmentOperator(index + 3)) continue
     const target = tokens[index + 4]
-    if (target && /^[A-Za-z_$][\w$]*$/.test(target) && visibleDeclaration(index + 4) !== undefined) {
+    if (target && isIdentifier(target) && visibleDeclaration(index + 4) !== undefined) {
       mutatedBindings.add(target)
     }
   }
@@ -866,7 +876,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   const factories = ["defineAgent", "defineChannel", "defineCapability", "channelHelper"] as const
   for (let index = 0; index < tokens.length; index++) {
     if (tokens[index] === "(" && [")", "]"].includes(tokens[index - 1])) opaqueCalls.add(index)
-    if (!/^[A-Za-z_$][\w$]*$/.test(tokens[index]) || tokens[index - 1] === "function") continue
+    if (!isIdentifier(tokens[index]) || tokens[index - 1] === "function") continue
     const call = memberCallEnd(index)
     if (tokens[call] !== "(" || ["if", "for", "while", "switch", "catch", "with", "default", "return", "throw", "yield", "await", "new", "typeof", "void", "delete", "function"].includes(tokens[index])) continue
     opaqueCalls.add(call)
@@ -949,6 +959,27 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (["(", "[", "{"].includes(tokens[argument])) nesting++
       else if ([")", "]", "}"].includes(tokens[argument])) nesting--
       if (nesting > 0 && visibleDeclaration(argument) !== undefined) mutatedBindings.add(tokens[argument])
+    }
+  }
+  // Thrown local values can be mutated through catch bindings. Treat this
+  // escape like an opaque call instead of inferring from stale initializers.
+  for (let index = 0; index < tokens.length; index++) {
+    if (tokens[index] !== "throw" || tokens[index - 1] === "." || tokens[index + 1] === ":" || parameterLists.has(index + 1)) continue
+    // A method named `throw` may have generic parameters or a return type.
+    let parameters = index + 1
+    if (tokens[parameters] === "<") {
+      while (parameters < tokens.length && !["(", ";", "{"].includes(tokens[parameters]!)) parameters++
+    }
+    if (tokens[parameters] === "(" && [...openingDelimiters].some(([close, opening]) =>
+      opening === parameters && ["{", ":"].includes(tokens[close + 1]!))) continue
+    let nesting = 0
+    for (let reference = index + 1; reference < tokens.length; reference++) {
+      const token = tokens[reference]!
+      if (nesting === 0 && ([";", "}"].includes(token) || startsStatement(reference))) break
+      if (["(", "[", "{"].includes(token)) nesting++
+      else if ([")", "]", "}"].includes(token)) nesting--
+      if ((visibleDeclaration(reference) !== undefined || (imported.has(token) && isModuleBinding(reference)))
+        && tokens[reference - 1] !== "." && !isFunctionParameter(reference)) mutatedBindings.add(token)
     }
   }
   for (let changed = true; changed;) {
@@ -1153,7 +1184,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       const nested = options.get("capabilities")
       return nested !== undefined && capabilityOwnsWorkspace(nested, seen)
     }
-    if (!/^[A-Za-z_$][\w$]*$/.test(tokens[index] ?? "")) return false
+    if (!isIdentifier(tokens[index] ?? "")) return false
     let suffix = index + 1
     while (tokens[suffix] === "!") suffix++
     if (binding !== undefined) {
@@ -1611,6 +1642,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   function channelOwnsWorkspace(channel: number, channelId?: string): boolean {
     let channelOptions = resolveReference(channel, new Set(), true)
+    const moduleNamespace = moduleNamespaces.get(tokens[channelOptions])
+    if (moduleNamespace && isModuleBinding(channelOptions)) {
+      const member = memberAccess(channelOptions)
+      if (!member || hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?", "!"].includes(tokens[member.end]) || mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
+      return importedChannelOwnsWorkspace(moduleNamespace, member.name, channelId)
+    }
     const moduleImport = moduleImports.get(tokens[channelOptions])
     if (moduleImport && isModuleBinding(channelOptions) && !["(", "<", ".", "[", "?", "!"].includes(tokens[channelOptions + 1])) {
       if (mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
@@ -1752,12 +1789,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           || (lineBreaks.has(k) && ["const", "let", "var", "export", "import", "function", "class"].includes(token))))) break
         if (token === "=" && initializer === undefined && tokens[k + 1] !== ">") {
           initializer = k + 1
-          if (/^[A-Za-z_$][\w$]*$/.test(tokens[name] ?? "")) result.push([tokens[name]!, initializer, name])
+          if (isIdentifier(tokens[name] ?? "")) result.push([tokens[name]!, initializer, name])
         }
         // A comma separates declarators after an initializer or an uninitialized
         // binding, and only before a binding. This skips type argument commas.
         if (token === "," && (initializer !== undefined || k === name + 1 || tokens[name + 1] === ":")
-          && /^[A-Za-z_$][\w$]*$/.test(tokens[k + 1] ?? "") && ["=", ":", ",", ";"].includes(tokens[k + 2] ?? ";")) {
+          && isIdentifier(tokens[k + 1] ?? "") && ["=", ":", ",", ";"].includes(tokens[k + 2] ?? ";")) {
           name = k + 1
           initializer = undefined
         }
@@ -1968,9 +2005,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         const inCallbackScope = variableScope(i) === callbackScope
         const reference = resolveReference(i, new Set(), true)
         const callEnd = memberCallEnd(reference)
-        const opaqueCall = /^[A-Za-z_$][\w$]*$/.test(tokens[reference] ?? "") && tokens[callEnd] === "("
+        const opaqueCall = isIdentifier(tokens[reference] ?? "") && tokens[callEnd] === "("
           && conditionalBranches(reference) === undefined
-        const opaqueMember = /^[A-Za-z_$][\w$]*$/.test(tokens[reference] ?? "")
+        const opaqueMember = isIdentifier(tokens[reference] ?? "")
           && conditionalBranches(reference) === undefined
           && ([".", "["].includes(tokens[reference + 1]) || (tokens[reference + 1] === "?" && tokens[reference + 2] === "."))
         if (inCallbackScope && (factoryCall(reference) !== undefined || opaqueCall || opaqueMember)) {
