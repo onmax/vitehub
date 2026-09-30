@@ -364,7 +364,17 @@ async function withSharedFilesystemReadLock<T>(lock: string, permissions: Pick<i
   const deadline = Date.now() + 10_000
   let lease: SharedReadLease | undefined
   while (!lease) {
-    for (let writers = pendingWriters.get(lock); writers; writers = pendingWriters.get(lock)) await writers.idle
+    for (let writers = pendingWriters.get(lock); writers; writers = pendingWriters.get(lock)) {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(workspaceError(`[vitehub] Timed out waiting to ${description}.`)), remaining)
+        void writers.idle.then(() => {
+          clearTimeout(timeout)
+          resolve()
+        })
+      })
+    }
     // A writer in another process holds the gate while existing readers drain.
     // Do not extend their shared lease while that writer is waiting.
     const gate = await lstat(`${lock}.gate`).catch((error: NodeJS.ErrnoException) => {

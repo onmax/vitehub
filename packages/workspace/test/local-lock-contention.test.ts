@@ -66,6 +66,46 @@ async function storeWithFiles(count: number) {
   return { gate, paths, root, store }
 }
 
+it("times out readers behind an open local writer and recovers after release", async () => {
+  const { paths, store } = await storeWithFiles(1)
+  const path = paths[0]!
+  let entered!: () => void
+  let resume!: () => void
+  const writing = new Promise<void>((resolve) => { entered = resolve })
+  const resumed = new Promise<void>((resolve) => { resume = resolve })
+  const writer = store.writeFileStream!(path, {
+    path,
+    content: (async function* () {
+      entered()
+      await resumed
+      yield new TextEncoder().encode("updated")
+    })(),
+  })
+  await writing
+  let watchdog!: ReturnType<typeof setTimeout>
+  try {
+    const started = Date.now()
+    const readers = Promise.all([
+      expect(store.readFile(path)).rejects.toThrow(`Timed out waiting to read Workspace path: ${path}.`),
+      expect(store.stat(path)).rejects.toThrow(`Timed out waiting to read Workspace path: ${path}.`),
+    ])
+    await Promise.race([
+      readers,
+      new Promise<never>((_, reject) => {
+        watchdog = setTimeout(() => reject(new Error("Readers did not respect the lock deadline")), 11_500)
+      }),
+    ])
+    expect(Date.now() - started).toBeGreaterThanOrEqual(10_000)
+  }
+  finally {
+    clearTimeout(watchdog)
+    resume()
+    await writer
+  }
+  await expect(store.readFile(path)).resolves.toMatchObject({ content: new TextEncoder().encode("updated") })
+  await expect(store.stat(path)).resolves.toMatchObject({ path })
+}, 20_000)
+
 it("shares one directory read registration across parallel reads", async () => {
   const { gate, paths, root, store } = await storeWithFiles(32)
   gateAttempts.clear()
