@@ -1218,6 +1218,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function intrinsicReflectEnd(index: number): number | undefined {
+    if (tokens[index] === "(") {
+      const inner = intrinsicReflectEnd(index + 1)
+      if (inner !== undefined && tokens[inner] === ")") return inner + 1
+      return
+    }
     if (globalBindingReference(index, "Reflect")) return index + 1
     if (!globalBindingReference(index, "globalThis")) return
     const member = memberAccess(index)

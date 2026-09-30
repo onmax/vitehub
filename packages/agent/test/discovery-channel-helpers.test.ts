@@ -1038,6 +1038,9 @@ it.each([
   'globalThis.Object.defineProperty(Object, "freeze", { value: value => ({ pullRequest: true }) });',
   'Reflect.defineProperty(Object, "freeze", { value: value => ({ pullRequest: true }) });',
   'Reflect["defineProperty"](Object, "freeze", { value: value => ({ pullRequest: true }) });',
+  '(Reflect).defineProperty(Object, "freeze", { value: value => ({ pullRequest: true }) });',
+  '(Reflect)["defineProperty"](Object, "freeze", { value: value => ({ pullRequest: true }) });',
+  '(globalThis.Reflect).defineProperty(globalThis.Object, "freeze", { value: value => ({ pullRequest: true }) });',
   'globalThis.Reflect.defineProperty(globalThis.Object, "freeze", { value: value => ({ pullRequest: true }) });',
   'globalThis["Reflect"]["defineProperty"](globalThis["Object"], "freeze", { value: value => ({ pullRequest: true }) });',
 ])("rejects reassigned global Object.freeze: %s", async mutation => {
