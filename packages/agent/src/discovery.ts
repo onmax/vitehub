@@ -140,10 +140,10 @@ function relativeImportBindings(clause: string[]): [string, string][] {
       while (i < clause.length && ![",", "}"].includes(clause[i + 1] ?? "")) i++
       continue
     }
-    const name = clause[i]!
+    const name = exportName(clause[i])
     const local = clause[i + 1] === "as" ? clause[i + 2] : name
     if (clause[i + 1] === "as") i += 2
-    if (local && /^[A-Za-z_$][\w$]*$/.test(name) && /^[A-Za-z_$][\w$]*$/.test(local)) bindings.push([local, name])
+    if (name !== undefined && local && /^[A-Za-z_$][\w$]*$/.test(local)) bindings.push([local, name])
   }
   return bindings
 }
@@ -172,9 +172,9 @@ function relativeExportBindings(clause: string[]): [string, string][] {
       continue
     }
     const name = exportName(clause[index])
-    if (!name) continue
+    if (name === undefined) continue
     const exported = clause[index + 1] === "as" ? exportName(clause[index + 2]) : name
-    if (exported) {
+    if (exported !== undefined) {
       bindings.push([exported, name])
       if (clause[index + 1] === "as") index += 2
     }
@@ -263,7 +263,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
             if (moduleName === "@vite-hub/agent/channels" || moduleName === "vite-hub/agent/channels") importedChannelNamespaces.add(tokens[j + 1])
             continue
           }
-          if (!sawFrom && /^['"`]/.test(token)) { i = j; break }
+          if (!sawFrom && j === i + 1 && /^['"`]/.test(token)) { i = j; break }
           if (sawFrom) {
             if (/^["'`]/.test(token)) {
               const moduleName = token.slice(1, -1)
@@ -321,7 +321,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
             const local = tokens[e]
             if (!local || !/^[A-Za-z_$][\w$]*$/.test(local)) continue
             const name = tokens[e + 1] === "as" ? exportName(tokens[e + 2]) : local
-            if (name) pendingExports.set(name, local)
+            if (name !== undefined) pendingExports.set(name, local)
           }
         } else {
           // `export { name as alias } from "./channel"` exports the other

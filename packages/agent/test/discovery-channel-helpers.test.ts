@@ -199,6 +199,20 @@ it.each([
   }
 })
 
+it.each(['"review-channel"', "'review-channel'", '""', '"review-\\u0063hannel"'])("resolves string-named relative Channel imports: %s", async exportedName => {
+  for (const pullRequest of [false, true]) {
+    const source = `import { ${exportedName} as portal } from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })`
+    const channel = `${imports} const channel = github({ pullRequest: ${pullRequest} }); export { channel as ${exportedName} };`
+    const direct = await discover(source, { "portal.ts": channel })
+    expect(direct?.workspace).toBe(pullRequest ? "review" : undefined)
+    const reExported = await discover(source, {
+      "portal.ts": `export { ${exportedName} } from "./inner.ts"`,
+      "inner.ts": channel,
+    })
+    expect(reExported?.workspace).toBe(pullRequest ? "review" : undefined)
+  }
+})
+
 const stateless = 'import { github } from "vite-hub/agent/channels"; export default github({ pullRequest: false })'
 
 it.each<[string, string, Record<string, string>]>([
