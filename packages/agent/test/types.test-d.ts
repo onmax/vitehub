@@ -413,6 +413,100 @@ describe("agent public types", () => {
     defineChannel("bad", { message: { methods: { then: () => undefined } } })
   })
 
+  it("types Channel message handles in configured preset and extends hooks", () => {
+    const mail = defineChannel("mail", {
+      message: {
+        data: {
+          "~standard": {
+            validate: () => ({ value: { id: "mail" } }),
+            vendor: "test",
+            version: 1,
+          },
+        },
+        methods: {
+          label: (_context, input: { add: string[] }) => ({ applied: input.add.length }),
+          subject: { read: true, handler: context => context.message.id },
+        },
+      },
+    })
+    const base = defineAgent({
+      options: { name: "mail-agent" },
+      configure: options => defineAgent({ channels: { mail }, name: options.name, driver: { run: () => "ok" } }),
+    })
+
+    defineAgent({
+      preset: "mail",
+      presets: { mail: base },
+      channels: { mail },
+      hooks: {
+        async "agent:finish"(event) {
+          expectTypeOf(event.message?.data).toEqualTypeOf<{ id: string } | undefined>()
+          await event.message?.label({ add: ["Receipts"] })
+        },
+        "agent:error"(event) {
+          expectTypeOf(event.message?.subject).toEqualTypeOf<(() => Promise<string>) | undefined>()
+        },
+      },
+    })
+
+    defineAgent({
+      extends: base,
+      channels: { mail },
+      hooks: {
+        "agent:finish"(event) {
+          expectTypeOf(event.message?.channel).toEqualTypeOf<"mail" | undefined>()
+          expectTypeOf(event.message?.label).toEqualTypeOf<((input: { add: string[] }) => Promise<{ applied: number } | undefined>) | undefined>()
+        },
+        "agent:error"(event) {
+          expectTypeOf(event.message?.data).toEqualTypeOf<{ id: string } | undefined>()
+        },
+      },
+    })
+
+    defineAgent({
+      extends: base,
+      hooks: {
+        "agent:finish"(event) {
+          expectTypeOf(event.message?.label).toEqualTypeOf<((input: { add: string[] }) => Promise<{ applied: number } | undefined>) | undefined>()
+        },
+      },
+    })
+    defineAgent({
+      preset: "mail",
+      presets: { mail: base },
+      hooks: {
+        "agent:error"(event) {
+          expectTypeOf(event.message?.data).toEqualTypeOf<{ id: string } | undefined>()
+        },
+      },
+    })
+
+    const workspaceAgent = defineAgent({
+      channels: { mail },
+      driver: { run: () => "ok" },
+      workspace: { mode: "read" },
+    })
+    const child = defineAgent({
+      extends: workspaceAgent,
+      hooks: {
+        "agent:finish"(event) {
+          expectTypeOf(event.message?.data).toEqualTypeOf<{ id: string } | undefined>()
+          expectTypeOf(event.message?.subject).toEqualTypeOf<(() => Promise<string>) | undefined>()
+        },
+      },
+    })
+    defineAgent({
+      extends: child,
+      channels: { mail: telegram() },
+      hooks: {
+        "agent:error"(event) {
+          expectTypeOf(event.message?.kind).toEqualTypeOf<"telegram" | undefined>()
+          expectTypeOf(event.message?.reply).toEqualTypeOf<((input: AgentChannelDeliveryReplyInput) => Promise<void>) | undefined>()
+        },
+      },
+    })
+  })
+
   it("types static and per-invocation UI message stream projection", () => {
     const projection = {
       commentary: "visible",
