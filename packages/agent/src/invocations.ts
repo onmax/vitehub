@@ -1667,7 +1667,18 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
   }
   const redact = (observation: TraceEventLogEntry): TraceEventLogEntry | undefined => {
     if (!options.redact) return observation
-    try { return options.redact(cloneObservation(observation)) }
+    try {
+      const redacted = options.redact(cloneObservation(observation))
+      const identity = observationIdentity(observation)
+      if (!redacted || identity === undefined) return redacted
+      return {
+        ...redacted,
+        attributes: {
+          ...redacted.attributes,
+          [AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE]: identity,
+        },
+      }
+    }
     catch { return undefined }
   }
   const redactedError = (error: unknown): AgentInvocationRecord["error"] => {

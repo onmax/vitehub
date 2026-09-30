@@ -362,7 +362,7 @@ vitehub({
 
 The build prints `Console journal: D1 binding DB, table vitehub_agent_invocations`, and the generated `.vitehub/nitro/console/plugin.mjs` passes the binding to `installConsoleAgentDefinitions()`. The journal uses the [D1 store](/docs/agents/invocations#store-invocations-in-cloudflare-d1). It creates its table on first use, so no migration step is necessary. It keeps the D1 store retention defaults: 10,000 terminal records from the last 30 days.
 
-The fallback journal exposes `console.resolve(context).invocations` from `vite-hub/console/server`. It provides `db` and `schema.invocations` for Drizzle queries on D1 and libSQL. The schema contains the columns shared by both stores. On D1, each query or batch resolves the Worker binding and creates the journal table before it runs.
+The fallback journal exposes `console.resolve(context).invocations` from `vite-hub/console/server`. It provides `driver`, `db`, and `schema.invocations` for Drizzle queries on D1 and libSQL. Check `driver === 'd1'` or `driver === 'libsql'` before destructuring to narrow the database and schema types. D1 requires non-null `search` and `summary` values on inserts. libSQL reads allow null for those columns while legacy rows await backfill. On D1, each query or batch resolves the Worker binding and creates the journal table before it runs.
 
 Use `db.batch()` for atomic D1 writes. If any statement fails, D1 rolls back the whole batch. D1 does not support Drizzle's callback transactions, so `db.transaction()` rejects with `VITE_HUB_R0123` before the callback runs. The libSQL journal retains its transaction support.
 

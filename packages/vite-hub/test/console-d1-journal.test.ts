@@ -35,7 +35,9 @@ describe("Console D1 journal", () => {
     const invocations = agent.invocations
     if (!invocations) throw new Error("Expected the Console journal fallback.")
     const context = { memo: vi.fn(), run: { runId: "d1-default" }, runtime: "unknown", waitUntil: vi.fn() }
-    const { db, schema } = consoleRuntime.resolve(context).invocations
+    const journalDatabase = consoleRuntime.resolve(context).invocations
+    if (journalDatabase.driver !== "d1") throw new Error("Expected the D1 Console database.")
+    const { db, schema } = journalDatabase
     expectTypeOf<typeof schema.invocations.$inferInsert["search"]>().toEqualTypeOf<string>()
     expectTypeOf<typeof schema.invocations.$inferInsert["summary"]>().toEqualTypeOf<NonNullable<typeof schema.invocations.$inferInsert["summary"]>>()
     expect(schema.invocations.search.notNull).toBe(true)
@@ -67,7 +69,9 @@ describe("Console D1 journal", () => {
       binding: "JOURNAL",
       env: async () => ({ JOURNAL: active }),
     })
-    const { db, schema } = consoleRuntime.resolve({ memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }).invocations
+    const journalDatabase = consoleRuntime.resolve({ memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }).invocations
+    if (journalDatabase.driver !== "d1") throw new Error("Expected the D1 Console database.")
+    const { db, schema } = journalDatabase
     const record = {
       agentName: "binding-test",
       createdAt: "2026-09-30T00:00:00.000Z",
@@ -113,7 +117,9 @@ describe("Console D1 journal", () => {
       binding: "JOURNAL",
       env: () => ({ JOURNAL: binding }),
     })
-    const { db, schema } = consoleRuntime.resolve({ memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }).invocations
+    const journalDatabase = consoleRuntime.resolve({ memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }).invocations
+    if (journalDatabase.driver !== "d1") throw new Error("Expected the D1 Console database.")
+    const { db, schema } = journalDatabase
     const record = { id: "null-batch-results", traceId: "null-batch-trace", status: "completed" as const, createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-09-30T00:00:00.000Z", observations: [] }
     const values = { id: record.id, status: record.status, search: "", summary: record, record }
     const results = await db.batch([
@@ -130,7 +136,9 @@ describe("Console D1 journal", () => {
   it("rejects callback transactions before resolving D1 or running the callback", async () => {
     const env = vi.fn(() => ({ JOURNAL: database }))
     installConsoleInvocations("/console-d1-transaction", undefined, undefined, undefined, { binding: "JOURNAL", env })
-    const { db, schema } = consoleRuntime.resolve({ memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }).invocations
+    const journalDatabase = consoleRuntime.resolve({ memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }).invocations
+    if (journalDatabase.driver !== "d1") throw new Error("Expected the D1 Console database.")
+    const { db, schema } = journalDatabase
     const callback = vi.fn(async (transaction: Parameters<Parameters<typeof db.transaction>[0]>[0]) => {
       await transaction.update(schema.invocations).set({ agentName: "uncommitted" })
       throw new Error("Roll back the write.")

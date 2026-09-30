@@ -2692,7 +2692,7 @@ describe("Agent Invocations", () => {
     }
   })
 
-  it("does not duplicate a delivery committed before a terminal update returns", async () => {
+  it.each([false, true])("does not duplicate a delivery committed before a terminal update returns with attribute replacement %s", async (replaceAttributes) => {
     vi.useFakeTimers()
     try {
       const memory = createMemoryAgentInvocationStore()
@@ -2702,6 +2702,7 @@ describe("Agent Invocations", () => {
       const recoveryTasks: Array<Promise<unknown>> = []
       const invocations = defineAgentInvocations({
         content: "content",
+        redact: replaceAttributes ? observation => ({ ...observation, attributes: { "channel.effect.content": "Safe reply" } }) : undefined,
         store: {
           ...memory,
           async update(id, input, claimId) {
@@ -2739,6 +2740,11 @@ describe("Agent Invocations", () => {
       const record = await invocations.getByRunId("terminal-delivery-ambiguous-success")
       expect(record?.observations.filter(observation => observation.name === "agent.channel.delivery.effect")).toHaveLength(1)
       expect(deliveryUpdates).toBe(2)
+      if (replaceAttributes) {
+        const observation = record?.observations.find(observation => observation.name === "agent.channel.delivery.effect")
+        expect(observation?.attributes?.["vitehub.observation.id"]).toEqual(expect.any(String))
+        expect(observation?.attributes?.["channel.effect.content"]).toBe("Safe reply")
+      }
     }
     finally {
       vi.useRealTimers()

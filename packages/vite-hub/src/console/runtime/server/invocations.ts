@@ -50,15 +50,15 @@ type ConsoleInvocationColumn<Data, NotNull extends boolean, HasDefault extends b
   tableName: "vitehub_agent_invocations"
 }> & { _: { generated: undefined } }
 
-type ConsoleInvocationsTable = SQLiteTableWithColumns<{
+type ConsoleInvocationsTable<Nullable extends boolean> = SQLiteTableWithColumns<{
   columns: {
     agentName: ConsoleInvocationColumn<string, true, true>
     id: ConsoleInvocationColumn<string, true>
     record: ConsoleInvocationColumn<Omit<AgentInvocationRecord, "cursor">, true>
-    search: ConsoleInvocationColumn<string, true>
+    search: ConsoleInvocationColumn<string, Nullable extends true ? false : true>
     sequence: ConsoleInvocationColumn<number, true, true>
     status: ConsoleInvocationColumn<string, true>
-    summary: ConsoleInvocationColumn<Omit<AgentInvocationSummary, "cursor">, true>
+    summary: ConsoleInvocationColumn<Omit<AgentInvocationSummary, "cursor">, Nullable extends true ? false : true>
     updatedAt: ConsoleInvocationColumn<string, true, true>
   }
   dialect: "sqlite"
@@ -67,8 +67,21 @@ type ConsoleInvocationsTable = SQLiteTableWithColumns<{
 }>
 
 // doctor-disable-next-line typescript/evidence/no-chained-type-assertions -- Drizzle's inferred table type cannot be emitted under isolatedDeclarations, so keep the public schema explicit here.
-// SAFETY: The explicit table type mirrors the shared journal columns constructed immediately below.
+// SAFETY: The explicit table type mirrors the libSQL journal columns constructed immediately below.
 const consoleInvocationsTable = sqliteTable("vitehub_agent_invocations", {
+  sequence: integer().primaryKey({ autoIncrement: true }),
+  id: text().notNull().unique(),
+  status: text().notNull(),
+  agentName: text("agent_name").notNull().default(""),
+  search: text(),
+  summary: text({ mode: "json" }).$type<Omit<AgentInvocationSummary, "cursor">>(),
+  updatedAt: text("updated_at").notNull().default(""),
+  record: text({ mode: "json" }).$type<Omit<AgentInvocationRecord, "cursor">>().notNull(),
+}) as unknown as ConsoleInvocationsTable<true>
+
+// doctor-disable-next-line typescript/evidence/no-chained-type-assertions -- Drizzle's inferred table type cannot be emitted under isolatedDeclarations, so keep the public schema explicit here.
+// SAFETY: The explicit table type mirrors the D1 journal columns constructed immediately below.
+const consoleD1InvocationsTable = sqliteTable("vitehub_agent_invocations", {
   sequence: integer().primaryKey({ autoIncrement: true }),
   id: text().notNull().unique(),
   status: text().notNull(),
@@ -77,15 +90,23 @@ const consoleInvocationsTable = sqliteTable("vitehub_agent_invocations", {
   summary: text({ mode: "json" }).$type<Omit<AgentInvocationSummary, "cursor">>().notNull(),
   updatedAt: text("updated_at").notNull().default(""),
   record: text({ mode: "json" }).$type<Omit<AgentInvocationRecord, "cursor">>().notNull(),
-}) as unknown as ConsoleInvocationsTable
+}) as unknown as ConsoleInvocationsTable<false>
 
 const consoleInvocationSchema: { invocations: typeof consoleInvocationsTable } = {
   invocations: consoleInvocationsTable,
 }
+const consoleD1InvocationSchema: { invocations: typeof consoleD1InvocationsTable } = {
+  invocations: consoleD1InvocationsTable,
+}
 
-export interface ConsoleInvocationsDatabase {
-  db: LibSQLDatabase<typeof consoleInvocationSchema> | SqliteRemoteDatabase<typeof consoleInvocationSchema>
+export type ConsoleInvocationsDatabase = {
+  driver: "libsql"
+  db: LibSQLDatabase<typeof consoleInvocationSchema>
   schema: typeof consoleInvocationSchema
+} | {
+  driver: "d1"
+  db: SqliteRemoteDatabase<typeof consoleD1InvocationSchema>
+  schema: typeof consoleD1InvocationSchema
 }
 
 const consoleUsageIndexes = new WeakMap<AgentInvocations, ReturnType<typeof createConsoleUsageIndex>>()
@@ -207,14 +228,15 @@ export function createConsoleD1Invocations(d1: ConsoleD1Journal, observations?: 
       const rows = (result.results ?? []).map(row => Object.values(row))
       return { rows: queries[index]!.method === "get" ? rows[0]! : rows }
     })
-  }, { schema: consoleInvocationSchema })
+  }, { schema: consoleD1InvocationSchema })
   // D1 cannot keep Drizzle's separate BEGIN/query/COMMIT calls in one transaction.
   db.transaction = async () => {
     throw viteHubErrorDiagnostics.VITE_HUB_R0123({ message: "[vitehub] The D1 Console journal does not support db.transaction(). Use db.batch() for atomic writes." })
   }
   consoleInvocationDatabases.set(invocations, {
+    driver: "d1",
     db,
-    schema: consoleInvocationSchema,
+    schema: consoleD1InvocationSchema,
   })
   consoleDatabaseConfigurations.set(invocations, `d1:${d1.binding}`)
   consoleObservationConfigurations.set(invocations, observationConfiguration(observations))
@@ -245,6 +267,7 @@ export function createConsoleInvocations(projectRoot: string, observations?: Age
   consoleObservationConfigurations.set(invocations, observationConfiguration(observations))
   consoleUsageIndexes.set(invocations, createConsoleUsageIndex(client))
   consoleInvocationDatabases.set(invocations, {
+    driver: "libsql",
     db: drizzle(client, { schema: consoleInvocationSchema }),
     schema: consoleInvocationSchema,
   })

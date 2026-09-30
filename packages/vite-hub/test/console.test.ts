@@ -4047,7 +4047,7 @@ describe("Agent invocation console", () => {
       expect(invocation).toMatchObject({ agentName: "agent", status: "completed" })
 
       const requestless = consoleRuntime.resolve(runtime("console-requestless"))
-      expect(requestless.invocations).toEqual({ db, schema })
+      expect(requestless.invocations).toEqual({ driver: "libsql", db, schema })
       expect(() => requestless.invocationUrl(invocation)).toThrow("Console invocation URLs require a request context")
 
       const resolved = consoleRuntime.resolve({
