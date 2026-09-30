@@ -43,22 +43,23 @@ const consoleMetadataContent = [
   "vitehub.session.title",
 ] as const
 
-type ConsoleInvocationColumn<Data, NotNull extends boolean> = AnySQLiteColumn<{
+type ConsoleInvocationColumn<Data, NotNull extends boolean, HasDefault extends boolean = false> = AnySQLiteColumn<{
   data: Data
+  hasDefault: HasDefault
   notNull: NotNull
   tableName: "vitehub_agent_invocations"
-}>
+}> & { _: { generated: undefined } }
 
 type ConsoleInvocationsTable = SQLiteTableWithColumns<{
   columns: {
-    agentName: ConsoleInvocationColumn<string, true>
+    agentName: ConsoleInvocationColumn<string, true, true>
     id: ConsoleInvocationColumn<string, true>
     record: ConsoleInvocationColumn<Omit<AgentInvocationRecord, "cursor">, true>
     search: ConsoleInvocationColumn<string, true>
-    sequence: ConsoleInvocationColumn<number, true>
+    sequence: ConsoleInvocationColumn<number, true, true>
     status: ConsoleInvocationColumn<string, true>
-    summary: ConsoleInvocationColumn<AgentInvocationSummary, true>
-    updatedAt: ConsoleInvocationColumn<string, true>
+    summary: ConsoleInvocationColumn<Omit<AgentInvocationSummary, "cursor">, true>
+    updatedAt: ConsoleInvocationColumn<string, true, true>
   }
   dialect: "sqlite"
   name: "vitehub_agent_invocations"
@@ -73,7 +74,7 @@ const consoleInvocationsTable = sqliteTable("vitehub_agent_invocations", {
   status: text().notNull(),
   agentName: text("agent_name").notNull().default(""),
   search: text().notNull(),
-  summary: text({ mode: "json" }).$type<AgentInvocationSummary>().notNull(),
+  summary: text({ mode: "json" }).$type<Omit<AgentInvocationSummary, "cursor">>().notNull(),
   updatedAt: text("updated_at").notNull().default(""),
   record: text({ mode: "json" }).$type<Omit<AgentInvocationRecord, "cursor">>().notNull(),
 }) as unknown as ConsoleInvocationsTable

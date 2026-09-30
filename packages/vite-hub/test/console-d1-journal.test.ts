@@ -1,7 +1,7 @@
 import { runAgent } from "@vite-hub/agent"
 import { eq } from "drizzle-orm"
 import { Miniflare } from "miniflare"
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
+import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from "vitest"
 
 import { defineAgent } from "../src/agent.ts"
 import { installConsoleAgentDefinitions } from "../src/console/runtime/server/agents.ts"
@@ -36,6 +36,10 @@ describe("Console D1 journal", () => {
     if (!invocations) throw new Error("Expected the Console journal fallback.")
     const context = { memo: vi.fn(), run: { runId: "d1-default" }, runtime: "unknown", waitUntil: vi.fn() }
     const { db, schema } = consoleRuntime.resolve(context).invocations
+    expectTypeOf<typeof schema.invocations.$inferInsert["search"]>().toEqualTypeOf<string>()
+    expectTypeOf<typeof schema.invocations.$inferInsert["summary"]>().toEqualTypeOf<NonNullable<typeof schema.invocations.$inferInsert["summary"]>>()
+    expect(schema.invocations.search.notNull).toBe(true)
+    expect(schema.invocations.summary.notNull).toBe(true)
     // The database is usable before the first invocation write and initializes its schema.
     await expect(db.select().from(schema.invocations)).resolves.toEqual([])
     await expect(db.select().from(schema.invocations).get()).resolves.toBeUndefined()
