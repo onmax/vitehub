@@ -10,6 +10,11 @@ import { createLibsqlAgentInvocationStore } from "../src/invocations/sqlite.ts"
 
 import type { AgentInvocationStore, AgentInvocationStoreCreateInput } from "../src/invocations.ts"
 
+vi.mock("@libsql/client", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@libsql/client")>()
+  return { ...original, createClient: vi.fn(original.createClient) }
+})
+
 const day = 24 * 60 * 60 * 1000
 const ago = (milliseconds: number) => new Date(Date.now() - milliseconds).toISOString()
 const invocation = (id: string, status: AgentInvocationStoreCreateInput["status"], updatedAt = ago(0)): AgentInvocationStoreCreateInput => ({
@@ -272,6 +277,45 @@ describe("vitehub agent invocations delete and prune", () => {
     await expect(runAgentInvocationsCli(["prune", url], { env: {}, ...positional })).resolves.toBe(1)
     expect(positional.chunks.stderr).toContain(`Unexpected argument: ${redactedUrl}.`)
     expect(`${positional.chunks.stdout}${positional.chunks.stderr}`).not.toContain("secret")
+  })
+
+  it.each([
+    { source: "explicit", agentToken: "agent-secret", consoleToken: "console-secret", expectedToken: "agent-secret" },
+    { source: "explicit", agentToken: undefined, consoleToken: "console-secret", expectedToken: undefined },
+    { source: "agent", agentToken: "agent-secret", consoleToken: "console-secret", expectedToken: "agent-secret" },
+    { source: "agent", agentToken: undefined, consoleToken: "console-secret", expectedToken: undefined },
+    { source: "console", agentToken: "agent-secret", consoleToken: "console-secret", expectedToken: "console-secret" },
+    { source: "console", agentToken: "agent-secret", consoleToken: undefined, expectedToken: undefined },
+    { source: "local", agentToken: "agent-secret", consoleToken: "console-secret", expectedToken: "console-secret" },
+    { source: "local", agentToken: "agent-secret", consoleToken: undefined, expectedToken: undefined },
+  ])("binds $source journal credentials with Agent token $agentToken and Console token $consoleToken", async ({ source, agentToken, consoleToken, expectedToken }) => {
+    const rootDir = await temporaryDirectory()
+    const localDirectory = join(rootDir, ".vitehub/data")
+    await mkdir(localDirectory, { recursive: true })
+    const localPath = join(localDirectory, "console.sqlite")
+    const localClient = createClient({ url: `file:${localPath}` })
+    await localClient.execute("SELECT 1")
+    localClient.close()
+
+    const explicitUrl = "https://explicit.example.com"
+    const agentUrl = "https://agent.example.com"
+    const consoleUrl = "https://console.example.com"
+    const expectedUrl = source === "explicit" ? explicitUrl : source === "agent" ? agentUrl : source === "console" ? consoleUrl : `file://${localPath}`
+    vi.mocked(createClient).mockImplementationOnce(() => { throw new Error("Database client creation intercepted") })
+    const io = output()
+    const code = await runAgentInvocationsCli(["prune", ...(source === "explicit" ? ["--database", explicitUrl] : [])], {
+      env: {
+        ...(source === "explicit" || source === "agent" ? { VITEHUB_AGENT_INVOCATIONS_DATABASE_URL: agentUrl } : {}),
+        ...(source !== "local" ? { VITEHUB_CONSOLE_DATABASE_URL: consoleUrl } : {}),
+        ...(agentToken ? { VITEHUB_AGENT_INVOCATIONS_DATABASE_AUTH_TOKEN: agentToken } : {}),
+        ...(consoleToken ? { VITEHUB_CONSOLE_DATABASE_AUTH_TOKEN: consoleToken } : {}),
+      },
+      rootDir,
+      ...io,
+    })
+    expect(code).toBe(1)
+    expect(io.chunks.stderr).toContain("Database client creation intercepted")
+    expect(createClient).toHaveBeenLastCalledWith({ url: expectedUrl, ...(expectedToken ? { authToken: expectedToken } : {}) })
   })
 
   it("does not print the remote database credentials", async () => {
