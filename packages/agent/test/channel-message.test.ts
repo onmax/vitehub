@@ -4,6 +4,7 @@ import * as v from "valibot"
 import { createTraceEventLog } from "@vite-hub/runtime"
 import { defineChannel, slack } from "../src/channels.ts"
 import { withAgentChannelDeliveryOwnershipVerifier } from "../src/internal/channel-delivery.ts"
+import { channelMessageContextKey } from "../src/internal/channel-delivery-handlers.ts"
 import { defineAgent, runAgent, runAgentTrigger } from "../src/index.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
 import type { AgentChannelMessage } from "../src/index.ts"
@@ -79,7 +80,7 @@ describe("Channel message handle", () => {
     expect(provider.label).toHaveBeenCalledWith("m1", ["Receipts"])
   })
 
-  it("validates omitted message data against the declared schema", async () => {
+  it.each([undefined, { id: "inherited" }])("validates omitted message data instead of inherited data %j", async (inheritedMessage) => {
     let reachedHook = false
     const agent = defineAgent({
       channels: {
@@ -88,7 +89,7 @@ describe("Channel message handle", () => {
           messages: false,
           triggers: {
             message: {
-              invoke: () => ({ input: { prompt: "mail" } }),
+              invoke: () => ({ input: { context: inheritedMessage === undefined ? {} : { [channelMessageContextKey]: inheritedMessage }, prompt: "mail" } }),
             },
           },
         }),

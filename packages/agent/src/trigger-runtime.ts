@@ -402,7 +402,8 @@ function withAgentTriggerContext<CALL_OPTIONS>(
   message?: unknown,
 ): AgentRunInput<CALL_OPTIONS> {
   const context = { ...input.context }
-  context[channelMessageContextKey] = message
+  if (message === undefined) delete context[channelMessageContextKey]
+  else context[channelMessageContextKey] = message
   const effects = delivery?.effects ? Array.isArray(delivery.effects) ? delivery.effects : [delivery.effects] : undefined
   const finishEffects = delivery?.finishEffects ? Array.isArray(delivery.finishEffects) ? delivery.finishEffects : [delivery.finishEffects] : undefined
   if (effects?.length) context[channelDeliveryEffectsContextKey] = effects as AgentChannelDeliveryEffectIntent[]
