@@ -214,6 +214,7 @@ describe("hubConnections", () => {
       "connect",
       "refresh",
       "disconnect",
+      "set-key",
     ])
   })
 })
