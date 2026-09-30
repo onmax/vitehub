@@ -93,7 +93,7 @@ function moduleSpecifier(token: string | undefined): string {
   if (!token) return ""
   const body = token.slice(1, -1)
   // Legacy octal and decimal escapes are invalid in strict-mode modules.
-  if (/\\(?:[89]|[1-7][0-7]?|0[0-7])/.test(body)) return ""
+  if (/\\(?:[89]|[1-7][0-7]?|0[0-7]|0(?=[0-9]))/.test(body)) return ""
   const escapes: Record<string, string> = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "0": "\0" }
   return body.replace(/\\(?:u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|x([\da-fA-F]{2})|(\r\n|[\n\r\u2028\u2029])|([\s\S]))/g,
     (_match, codePoint: string | undefined, unicode: string | undefined, hex: string | undefined, continuation: string | undefined, escaped: string | undefined) => {
@@ -105,7 +105,7 @@ function moduleSpecifier(token: string | undefined): string {
 }
 
 function invalidModuleLiteral(token: string | undefined): boolean {
-  return !!token && /^['"]/.test(token) && /\\(?:[89]|[1-7][0-7]?|0[0-7])/.test(token.slice(1, -1))
+  return !!token && /^['"]/.test(token) && /\\(?:[89]|[1-7][0-7]?|0[0-7]|0(?=[0-9]))/.test(token.slice(1, -1))
 }
 
 // First-party Channel helpers from the Agent Channel entry. Only `github()`
@@ -1249,8 +1249,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (inspectChannels && imported.has(tokens[index]) && visibleDeclaration(index) === undefined
       && !callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(tokens[index]))) {
       let referenceEnd = index + 1
-      while (tokens[referenceEnd] === ".") referenceEnd += 2
-      if (!["(", "<"].includes(tokens[referenceEnd])) {
+      let member = index
+      while (true) {
+        const access = memberAccess(member)
+        if (access === undefined) break
+        referenceEnd = access.end
+        member = access.end - 1
+      }
+      if (!["(", "<"].includes(tokens[referenceEnd])
+        && !(tokens[referenceEnd] === "?" && tokens[referenceEnd + 1] === "." && tokens[referenceEnd + 2] === "(")) {
         throw importedChannelError()
       }
     }
@@ -1360,12 +1367,28 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   // Returns the first-party Channel helper name for a call such as
   // `github(...)`, `channels.github(...)`, or an alias of either.
+  function memberAccess(index: number): { name: string, end: number } | undefined {
+    if (tokens[index + 1] === ".") {
+      return { name: tokens[index + 2]!, end: index + 3 }
+    }
+    if (tokens[index + 1] === "?" && tokens[index + 2] === "." && tokens[index + 3] !== "(") {
+      return { name: tokens[index + 3]!, end: index + 4 }
+    }
+    const bracketStart = tokens[index + 1] === "[" ? index + 1
+      : tokens[index + 1] === "?" && tokens[index + 2] === "[" ? index + 2
+      : undefined
+    if (bracketStart !== undefined && tokens[bracketStart + 2] === "]" && /^['"`]/.test(tokens[bracketStart + 1] ?? "")) {
+      return { name: propertyName(tokens[bracketStart + 1]!), end: bracketStart + 3 }
+    }
+  }
+
   function channelHelper(index: number): { call: number, helper: string } | undefined {
     const call = factoryCall(index, "channelHelper")
     if (call === undefined) return
     const reference = resolveReference(index)
-    const member = tokens[reference + 1] === "?" ? reference + 3 : reference + 2
-    const helper = destructuredChannelHelper(reference)?.helper ?? importedChannelFactories.get(tokens[reference]) ?? tokens[member]
+    const helper = destructuredChannelHelper(reference)?.helper
+      ?? importedChannelFactories.get(tokens[reference])
+      ?? memberAccess(reference)?.name
     return helper === undefined ? undefined : { call, helper }
   }
 
@@ -1384,8 +1407,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if ((!destructuredHelper && visibleDeclaration(reference) !== undefined) || callbackParameters.some(scope =>
       reference >= scope.start && reference < scope.end && scope.names.has(tokens[reference]))) return undefined
     // A binding to an Agent value is not an alias of the factory itself.
-    let identityEnd = reference + 1
-    while (tokens[identityEnd] === "." || (tokens[identityEnd] === "?" && tokens[identityEnd + 1] === ".")) identityEnd += tokens[identityEnd] === "?" ? 3 : 2
+    let identityEnd = reference
+    while (true) {
+      const access = memberAccess(identityEnd)
+      if (access === undefined) break
+      identityEnd = access.end
+    }
+    if (identityEnd === reference) identityEnd++
     if (tokens[identityEnd] === "<") identityEnd = skipTypeArguments(identityEnd)
     if (reference !== index && tokens[identityEnd] === "(") return undefined
     let scope = tokenScopes[reference]
@@ -1403,8 +1431,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (name === "channelHelper") {
       // Channel helpers are trusted only when imported from the Channel entry.
       if (!destructuredHelper && !importedChannelFactories.has(factory) && !(importedChannelNamespaces.has(factory)
-        && ((tokens[reference + 1] === "." && firstPartyChannelFactories.has(tokens[reference + 2]))
-          || (tokens[reference + 1] === "?" && tokens[reference + 2] === "." && firstPartyChannelFactories.has(tokens[reference + 3]))))) return undefined
+        && firstPartyChannelFactories.has(memberAccess(reference)?.name ?? ""))) return undefined
     }
     else {
       const bindings = name === "defineAgent" ? importedAgentBindings : name === "defineCapability" ? importedCapabilityBindings : importedChannelBindings
@@ -1413,10 +1440,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           !(namespaces.has(factory) && tokens[reference + 1] === "." && tokens[reference + 2] === name)) return undefined
     }
     let call = index + 1
-    while (tokens[call] === "." || (tokens[call] === "?" && tokens[call + 1] === ".")) {
-      call += tokens[call] === "?" ? 2 : 1
-      if (tokens[call] !== "(") call++
+    while (true) {
+      const access = memberAccess(index)
+      if (access === undefined) break
+      call = access.end
+      index = access.end - 1
     }
+    if (tokens[call] === "?" && tokens[call + 1] === ".") call += 2
     if (tokens[call] === "<") call = skipTypeArguments(call)
     return tokens[call] === "(" ? call : undefined
   }
