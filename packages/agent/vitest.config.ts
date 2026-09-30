@@ -6,6 +6,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "#vitehub/env/server": fileURLToPath(new URL("./test/fixtures/server-env.ts", import.meta.url)),
+      // Tests load and mock the provider Driver source instead of the package import's built output.
+      "#vitehub/agent/provider-agent": fileURLToPath(new URL("./src/provider-agent.ts", import.meta.url)),
     },
   },
   test: {
