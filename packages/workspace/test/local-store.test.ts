@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { createLocalWorkspaceStore } from "../src/storage/local.ts"
+import { createWorkspaceStoreFromProvider } from "../src/storage/provider.ts"
 
 const permissionsFixture = vi.hoisted(() => ({ root: "" }))
 
@@ -2058,5 +2059,88 @@ describe("local workspace store", () => {
       expect.objectContaining({ path: "docs/readme.md", type: "file" }),
       expect.objectContaining({ path: "docs/guide.mdx", type: "file" }),
     ]))
+  })
+})
+
+describe("local workspace store process locks", () => {
+  async function createProcessStore() {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-store-"))
+    tempDirs.push(root)
+    return { root, store: createLocalWorkspaceStore(root, { locks: "process" }) }
+  }
+
+  it("rejects an unknown lock mode", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-store-"))
+    tempDirs.push(root)
+    // @ts-expect-error Runtime validation covers untyped configuration.
+    expect(() => createLocalWorkspaceStore(root, { locks: "shared" })).toThrow("locks must be \"filesystem\" or \"process\"")
+    expect(() => createLocalWorkspaceStore(root, { locks: "filesystem" })).not.toThrow()
+  })
+
+  it("writes and snapshots without a lock directory", async () => {
+    const { root, store } = await createProcessStore()
+    await store.writeFile("docs/readme.md", { path: "docs/readme.md", content: "hello" })
+    await store.writeFile("docs/guide.md", { path: "docs/guide.md", content: "guide" })
+    const snapshot = await store.snapshot({ name: "baseline" })
+    await store.writeFile("docs/readme.md", { path: "docs/readme.md", content: "changed" })
+    const diff = await store.diff({ from: snapshot })
+
+    expect(diff.entries).toEqual([expect.objectContaining({ path: "docs/readme.md", type: "modified" })])
+    expect((await stat(`${root}/.vitehub`)).isDirectory()).toBe(true)
+    await expect(stat(`${root}/.vitehub/locks`)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("prepares .vitehub again when a reused root loses it", async () => {
+    const { root, store } = await createProcessStore()
+    await store.writeFile("docs/readme.md", { path: "docs/readme.md", content: "hello" })
+    await rm(`${root}/.vitehub`, { recursive: true, force: true })
+    await rm(`${root}/docs`, { recursive: true, force: true })
+
+    const reused = createLocalWorkspaceStore(root, { locks: "process" })
+    await reused.writeFile("docs/readme.md", { path: "docs/readme.md", content: "again" })
+    expect((await lstat(`${root}/.vitehub`)).isDirectory()).toBe(true)
+    await expect(reused.readFile("docs/readme.md")).resolves.toMatchObject({ path: "docs/readme.md" })
+  })
+
+  it("passes the lock mode from Workspace store options", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-store-"))
+    tempDirs.push(root)
+    const store = createWorkspaceStoreFromProvider({ name: "docs", store: { provider: "local", root, locks: "process" } })
+    await store.writeFile("docs/readme.md", { path: "docs/readme.md", content: "hello" })
+    await expect(stat(`${root}/.vitehub/locks`)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("serializes writes to one path and lets sibling writes overlap", async () => {
+    const { root, store } = await createProcessStore()
+    const second = createLocalWorkspaceStore(root, { locks: "process" })
+    await store.writeFile("docs/page.md", { path: "docs/page.md", content: "initial" })
+    vi.mocked(writeFile).mockClear()
+    const { writeFile: actualWriteFile } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")
+    let release!: () => void
+    let signalWriting!: () => void
+    const writingStarted = new Promise<void>((resolve) => { signalWriting = resolve })
+    const blocked = new Promise<void>((resolve) => { release = resolve })
+    vi.mocked(writeFile).mockImplementationOnce(async (...args) => {
+      signalWriting()
+      await blocked
+      return await actualWriteFile(...args)
+    })
+
+    const first = store.writeFile("docs/page.md", { path: "docs/page.md", content: "first" })
+    await writingStarted
+    await second.writeFile("docs/sibling.md", { path: "docs/sibling.md", content: "sibling" })
+    const writesBeforeRelease = vi.mocked(writeFile).mock.calls.length
+    const next = second.writeFile("docs/page.md", { path: "docs/page.md", content: "second" })
+    let finished = false
+    void next.then(() => { finished = true })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(finished).toBe(false)
+    expect(vi.mocked(writeFile).mock.calls.length).toBe(writesBeforeRelease)
+
+    release()
+    await first
+    await next
+    await expect(readFile(join(root, "docs/page.md"), "utf8")).resolves.toBe("second")
+    await expect(readFile(join(root, "docs/sibling.md"), "utf8")).resolves.toBe("sibling")
   })
 })

@@ -599,6 +599,12 @@ export interface Logger {
 }
 
 export interface LocalWorkspaceStoreOptions {
+  /**
+   * Path lock scope. `"filesystem"` (default) coordinates every process that shares the root
+   * through lock directories under `.vitehub/locks`. `"process"` keeps the same per-path read and
+   * write locks in memory. Use it only when one process owns the root.
+   */
+  locks?: "filesystem" | "process"
   provider?: "local"
   root?: string
 }

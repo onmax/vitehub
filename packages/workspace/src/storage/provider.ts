@@ -157,7 +157,7 @@ export function createWorkspaceStoreFromProvider(definition: WorkspaceDefinition
     : runtimeConfig
       ? resolve(runtimeConfig.root, definition.name)
       : resolve(rootDir, ".vitehub/workspaces", definition.name)
-  return createLocalWorkspaceStore(root)
+  return createLocalWorkspaceStore(root, { locks: store?.locks })
 }
 
 export function isMaskedWorkspaceRuntimeValue(value: string | undefined): boolean {

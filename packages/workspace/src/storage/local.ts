@@ -17,6 +17,7 @@ import type {
   DiffOptions,
   GlobOptions,
   ListOptions,
+  LocalWorkspaceStoreOptions,
   MkdirOptions,
   RmOptions,
   SnapshotOptions,
@@ -546,6 +547,92 @@ async function withWorkspacePathLock<T>(root: string, path: string, operation: (
   return await lock(0)
 }
 
+type LocalWorkspaceStoreLockOptions = Pick<LocalWorkspaceStoreOptions, "locks">
+
+interface ProcessPathLockState {
+  pendingWriters: number
+  readers: number
+  writer: boolean
+  waiters: Array<() => void>
+}
+
+const processPathLocks = new Map<string, ProcessPathLockState>()
+const processMetadataRoots = new Map<string, Promise<void>>()
+
+async function withProcessLock<T>(key: string, exclusive: boolean, operation: () => Promise<T>): Promise<T> {
+  let state = processPathLocks.get(key)
+  if (!state) processPathLocks.set(key, state = { pendingWriters: 0, readers: 0, writer: false, waiters: [] })
+  const current = state
+  // Waiting writers block new readers, as pending writer intents do in filesystem mode.
+  if (exclusive) current.pendingWriters++
+  try {
+    while (current.writer || (exclusive ? current.readers > 0 : current.pendingWriters > 0)) {
+      await new Promise<void>(resolve => current.waiters.push(resolve))
+    }
+  }
+  finally {
+    if (exclusive) current.pendingWriters--
+  }
+  if (exclusive) current.writer = true
+  else current.readers++
+  try {
+    return await operation()
+  }
+  finally {
+    if (exclusive) current.writer = false
+    else current.readers--
+    const waiters = current.waiters.splice(0)
+    if (!current.writer && current.readers === 0 && current.pendingWriters === 0 && waiters.length === 0) processPathLocks.delete(key)
+    for (const resolve of waiters) resolve()
+  }
+}
+
+async function prepareProcessMetadataRoot(root: string): Promise<void> {
+  const { lstat, mkdir, stat } = await import("node:fs/promises")
+  const previous = processMetadataRoots.get(root)
+  if (previous) {
+    // A reused root, such as a reset checkout, can lose .vitehub between stores.
+    // Prepare it again when it is missing.
+    const ready = await previous.then(() => lstat(`${root}/.vitehub`).then(() => true, () => false), () => false)
+    if (ready) return
+    if (processMetadataRoots.get(root) === previous) processMetadataRoots.delete(root)
+  }
+  let prepared = processMetadataRoots.get(root)
+  if (!prepared) {
+    prepared = (async () => {
+      await mkdir(root, { recursive: true })
+      const permissions = await stat(root)
+      await ensureLockDirectory(`${root}/.vitehub`)
+      if (process.platform !== "win32") await applyMetadataPermissions(`${root}/.vitehub`, permissions.mode & 0o770, permissions.gid)
+    })()
+    processMetadataRoots.set(root, prepared)
+    const current = prepared
+    current.catch(() => {
+      if (processMetadataRoots.get(root) === current) processMetadataRoots.delete(root)
+    })
+  }
+  await prepared
+}
+
+/**
+ * Keeps the lock order of withWorkspacePathLock in memory: shared reads on
+ * each parent path and an exclusive lock on the target path for a write. Use
+ * it only for a store root that one process owns.
+ */
+async function withProcessPathLock<T>(root: string, path: string, operation: () => Promise<T>, readOnly = false): Promise<T> {
+  const parts = normalizeWorkspacePath(path).split("/").filter(Boolean)
+  const paths = parts.map((_, index) => parts.slice(0, index + 1).join("/"))
+  if (paths.length === 0) return await operation()
+  const key = resolve(root)
+  // Metadata directories keep the root permissions, as in filesystem lock mode.
+  await prepareProcessMetadataRoot(key)
+  const lock = async (index: number): Promise<T> => {
+    if (index === paths.length) return await operation()
+    return await withProcessLock(`${key}\0${paths[index]}`, !readOnly && index === paths.length - 1, () => lock(index + 1))
+  }
+  return await lock(0)
+}
+
 async function walk(
   root: string,
   current: string,
@@ -613,10 +700,18 @@ class LocalWorkspaceStore implements WorkspaceStore {
   #files = new Map<string, { version: string, value: Pick<WorkspaceFile, "mediaType" | "metadata"> }>()
   #fileMetadataRoot: string
   #metaPath: string
+  #processLocks: boolean
 
-  constructor(public root: string) {
+  constructor(public root: string, options: LocalWorkspaceStoreLockOptions = {}) {
+    this.#processLocks = options.locks === "process"
     this.#fileMetadataRoot = `${root}/.vitehub/file-metadata`
     this.#metaPath = `${root}.meta.json`
+  }
+
+  async #pathLock<T>(root: string, path: string, operation: () => Promise<T>, readOnly = false): Promise<T> {
+    return this.#processLocks
+      ? await withProcessPathLock(root, path, operation, readOnly)
+      : await withWorkspacePathLock(root, path, operation, readOnly)
   }
 
   #removalMarker(path: string) {
@@ -758,7 +853,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async readFile(path: string): Promise<WorkspaceFile | undefined> {
-    return await withWorkspacePathLock(this.root, path, () => this.#readFile(path), true)
+    return await this.#pathLock(this.root, path, () => this.#readFile(path), true)
   }
 
   async #readFile(path: string): Promise<WorkspaceFile | undefined> {
@@ -780,11 +875,11 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async writeFile(path: string, file: WorkspaceFile): Promise<void> {
-    await withWorkspacePathLock(this.root, path, () => this.#writeFile(path, file))
+    await this.#pathLock(this.root, path, () => this.#writeFile(path, file))
   }
 
   async writeFileConditional(path: string, file: WorkspaceFile, ifDigest: string | null): Promise<void> {
-    await withWorkspacePathLock(this.root, path, async () => {
+    await this.#pathLock(this.root, path, async () => {
       const normalized = normalizeWorkspacePath(path)
       const current = await this.#stat(normalized)
       assertWorkspaceDigest(normalized, ifDigest, current?.type === "file" ? current.digest : undefined)
@@ -864,7 +959,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async writeFileStream(path: string, file: WorkspaceStreamFile): Promise<WorkspaceStat & { digest: string }> {
-    return await withWorkspacePathLock(this.root, path, () => this.#writeFileStream(path, file))
+    return await this.#pathLock(this.root, path, () => this.#writeFileStream(path, file))
   }
 
   async #writeFileStream(path: string, file: WorkspaceStreamFile): Promise<WorkspaceStat & { digest: string }> {
@@ -974,9 +1069,17 @@ class LocalWorkspaceStore implements WorkspaceStore {
       group.push(entry)
       groups.set(key, group)
     }
-    const independent = [...groups.values()]
+    // Process locks share parent reads in memory, so entries of one folder do not contend.
+    const independent = this.#processLocks ? filtered.map(entry => [entry]) : [...groups.values()]
     for (let index = 0; index < independent.length; index += 64) {
       await Promise.all(independent.slice(index, index + 64).map(async (group) => {
+        if (this.#processLocks) {
+          for (const entry of group) {
+            const info = await this.#pathLock(this.root, entry.path, () => this.#stat(entry.path, includeDigest), true)
+            if (info) entries.push(info)
+          }
+          return
+        }
         const heldReadPrefix = normalizedPrefix || group[0]!.path.split("/")[0]!
         let offset = 0
         while (offset < group.length) {
@@ -1001,7 +1104,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async stat(path: string): Promise<WorkspaceStat | undefined> {
-    return await withWorkspacePathLock(this.root, path, () => this.#stat(path), true)
+    return await this.#pathLock(this.root, path, () => this.#stat(path), true)
   }
 
   async #stat(path: string, includeDigest = true): Promise<WorkspaceStat | undefined> {
@@ -1028,14 +1131,14 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async mkdir(path: string, options: MkdirOptions = {}): Promise<void> {
-    await withWorkspacePathLock(this.root, path, async () => {
+    await this.#pathLock(this.root, path, async () => {
       await this.#assertPathComponents(path)
       await mkdir(resolveInside(this.root, path), { recursive: options.recursive ?? true })
     })
   }
 
   async removeEmptyDirectory(path: string): Promise<void> {
-    await withWorkspacePathLock(this.root, path, async () => {
+    await this.#pathLock(this.root, path, async () => {
       await this.#assertPathComponents(path, false)
       const absolute = resolveInside(this.root, path)
       const info = await lstat(absolute).catch((error: NodeJS.ErrnoException) => {
@@ -1050,7 +1153,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async rm(path: string, options: RmOptions = {}): Promise<void> {
-    await withWorkspacePathLock(this.root, path, () => this.#rm(path, options))
+    await this.#pathLock(this.root, path, () => this.#rm(path, options))
   }
 
   async #rm(path: string, options: RmOptions = {}): Promise<void> {
@@ -1135,7 +1238,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async setMeta(key: string, value: unknown): Promise<void> {
-    await withWorkspacePathLock(this.root, ".vitehub/metadata", async () => {
+    await this.#pathLock(this.root, ".vitehub/metadata", async () => {
       const metadata = await this.#readMeta()
       metadata.set(key, value)
       await this.#writeMeta(metadata)
@@ -1186,7 +1289,10 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 }
 
-export function createLocalWorkspaceStore(root: string): WorkspaceStore {
+export function createLocalWorkspaceStore(root: string, options: LocalWorkspaceStoreLockOptions = {}): WorkspaceStore {
   if (!root) throw workspaceError("[vitehub] Local workspace store requires a root directory.")
-  return new LocalWorkspaceStore(root)
+  if (options.locks !== undefined && options.locks !== "filesystem" && options.locks !== "process") {
+    throw workspaceError("[vitehub] Local workspace store locks must be \"filesystem\" or \"process\".")
+  }
+  return new LocalWorkspaceStore(root, options)
 }
