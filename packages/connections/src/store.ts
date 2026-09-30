@@ -35,7 +35,7 @@ export interface ConnectionStore {
     /** Mark expired approval executions as failed with an unknown provider outcome. Never replay them. */
     recover: (before: string) => Promise<void>
     /** Extend an active execution lease. Terminal approvals are not changed. */
-    renew: (id: string, expiresAt: string) => Promise<void>
+    renew: (id: string, expiresAt: string) => Promise<boolean>
     create: (approval: ConnectionApproval) => Promise<void>
     get: (id: string) => Promise<ConnectionApproval | undefined>
     list: (input: { name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApproval[]>
@@ -228,9 +228,10 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
       },
       async renew(id, expiresAt) {
         await initialize()
-        await db.run(
-          sql`UPDATE vitehub_connection_approvals SET execution_expires_at = ${expiresAt} WHERE id = ${id} AND status = 'approved'`,
+        const rows = await db.all(
+          sql`UPDATE vitehub_connection_approvals SET execution_expires_at = ${expiresAt} WHERE id = ${id} AND status = 'approved' RETURNING id`,
         )
+        return rows.length > 0
       },
       async create(approval) {
         await initialize()

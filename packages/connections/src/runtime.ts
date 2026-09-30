@@ -57,7 +57,7 @@ interface ProviderRequest {
 /** A stored approval input. Typed methods store their input; `fetch` stores the request. */
 type ApprovalInput =
   | { input: unknown, kind: "method" }
-  | { body?: string, contentType?: string, kind: "fetch", method: string, url: string }
+  | { body?: string, headers?: Record<string, string>, kind: "fetch", method: string, url: string }
 
 /** An untyped client. `useConnection()` wraps it in the typed client tree. */
 export interface ConnectionRuntimeClient {
@@ -116,7 +116,7 @@ const tokenResponseSchema = v.object({
 })
 const approvalInputSchema = v.variant("kind", [
   v.object({ input: v.unknown(), kind: v.literal("method") }),
-  v.object({ body: v.optional(v.string()), contentType: v.optional(v.string()), kind: v.literal("fetch"), method: v.string(), url: v.string() }),
+  v.object({ body: v.optional(v.string()), headers: v.optional(v.record(v.string(), v.string())), kind: v.literal("fetch"), method: v.string(), url: v.string() }),
 ])
 
 function isDefinition(value: unknown): value is ConnectionDefinition {
@@ -386,7 +386,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   }
 
   /** Send one provider request with the Connection token inside an audited Env Bridge use. */
-  async function send(context: CallContext, providerRequest: ProviderRequest, init: { contentType?: string, signal?: AbortSignal } = {}): Promise<Response> {
+  async function send(context: CallContext, providerRequest: ProviderRequest, init: { headers?: Record<string, string>, signal?: AbortSignal } = {}): Promise<Response> {
     const connections = await getStore()
     await requireConnected(context.name)
     let failure: unknown
@@ -397,10 +397,11 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
           if (expiresSoon(token)) token = await refresh(context.name, context.definition, token.accessToken, false)
           const call = (current: StoredToken) => {
             const headers: Record<string, string> = {
+              ...init.headers,
               accept: "application/json",
               authorization: `${current.tokenType === "bearer" ? "Bearer" : current.tokenType} ${current.accessToken}`,
             }
-            if (providerRequest.body !== undefined) headers["content-type"] = init.contentType ?? "application/json"
+            if (providerRequest.body !== undefined && !Object.keys(headers).some(key => key.toLowerCase() === "content-type")) headers["content-type"] = "application/json"
             return request(providerRequest.url, {
               body: providerRequest.body,
               headers,
@@ -437,7 +438,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   }
 
   /** Apply policy, dry run, and approval, then send. Returns `undefined` when dry run skips a write. */
-  async function governed(context: CallContext, providerRequest: ProviderRequest, approvalInput: ApprovalInput, init: { contentType?: string, signal?: AbortSignal } = {}): Promise<Response | undefined> {
+  async function governed(context: CallContext, providerRequest: ProviderRequest, approvalInput: ApprovalInput, init: { headers?: Record<string, string>, signal?: AbortSignal } = {}): Promise<Response | undefined> {
     const decision = decide({
       action: providerRequest.action,
       actor: context.actor,
@@ -513,12 +514,15 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       throw new ConnectionError("invalid", "Connection fetch accepts only a string body.")
     }
     const body = init.body ?? undefined
-    const contentType = new Headers(init.headers).get("content-type") ?? undefined
+    const headers: Record<string, string> = {}
+    for (const [key, value] of new Headers(init.headers)) {
+      if (key.toLowerCase() !== "authorization") headers[key] = value
+    }
     return await governed(
       context,
       { action: "fetch", body, highRisk: false, input: { method, url: url.toString() }, method, url: url.toString(), write },
-      { body, contentType, kind: "fetch", method, url: url.toString() },
-      { contentType, signal: init.signal ?? undefined },
+      { body, headers, kind: "fetch", method, url: url.toString() },
+      { headers, signal: init.signal ?? undefined },
     )
   }
 
@@ -698,6 +702,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const heartbeat = setInterval(() => {
       void connections.approvals
         .renew(input.id, new Date(now() + APPROVAL_EXECUTION_TTL_MS).toISOString())
+        .then(active => { if (!active) leaseAbort.abort(new ConnectionError("invalid", "Approval execution lease was lost.")) })
         .catch((error: unknown) => leaseAbort.abort(error))
     }, APPROVAL_EXECUTION_TTL_MS / 3)
     try {
@@ -717,7 +722,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       if (stored.kind === "fetch") {
         const response = await callFetch(context, stored.url, {
           body: stored.body,
-          headers: stored.contentType ? { "content-type": stored.contentType } : undefined,
+          headers: stored.headers,
           method: stored.method,
           signal,
         })
@@ -727,8 +732,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         result = await callMethod(context, approval.action, stored.input, signal)
       }
       const executed = await connections.approvals.transition(input.id, "approved", "executed")
+      if (!executed) throw new ConnectionError("invalid", "Approval execution lease was lost.")
       const output: { approval: ConnectionApproval; result?: unknown } = {
-        approval: executed ?? (await connections.approvals.get(input.id)) ?? approval,
+        approval: executed,
       }
       if (result !== undefined) output.result = result
       return output
