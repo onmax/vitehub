@@ -40,6 +40,7 @@ const run = promisify(execFile);
 const cleanup: Array<() => Promise<unknown>> = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const dispose of cleanup.splice(0).reverse()) await dispose();
   agentStatus.definitions.length = 0;
 });
@@ -69,6 +70,34 @@ function feature(name: "serve" | "check") {
 }
 
 describe("vitehub box", () => {
+  it.each(["codex", "claude-code"])("uses supplied proxy settings only for %s", async (driver) => {
+    vi.stubEnv("CLIPROXY_BASE_URL", "https://ambient.example/v1");
+    vi.stubEnv("CLIPROXY_API_KEY", "ambient-key");
+    const env = {
+      CLIPROXY_BASE_URL: "https://supplied.example/v1",
+      CLIPROXY_API_KEY: "supplied-key",
+      CRABBOX_SSH_KEY: "/ssh/id_ed25519",
+      CRABBOX_STATIC_USER: "agent",
+    };
+    await feature("check").run(["--driver", driver], context(env).context);
+    if (driver === "codex") {
+      expect(agentStatus.definitions.at(-1)).toMatchObject({
+        driver: {
+          env: { CLIPROXY_BASE_URL: env.CLIPROXY_BASE_URL, CLIPROXY_API_KEY: env.CLIPROXY_API_KEY },
+        },
+      });
+      await feature("check").run(
+        [],
+        context({ ...env, CLIPROXY_BASE_URL: undefined, CLIPROXY_API_KEY: undefined }).context,
+      );
+      expect(agentStatus.definitions.at(-1)).toMatchObject({
+        driver: { env: { CLIPROXY_BASE_URL: undefined, CLIPROXY_API_KEY: undefined } },
+      });
+    } else {
+      expect(agentStatus.definitions.at(-1)).not.toHaveProperty("driver.env");
+    }
+  });
+
   it("serves SSH commands from env fallbacks and stops on SIGTERM", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-box-cli-"));
     cleanup.push(() => rm(root, { recursive: true, force: true }));

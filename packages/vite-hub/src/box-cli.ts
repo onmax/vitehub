@@ -137,7 +137,6 @@ async function check(args: string[], context: ViteHubCliContext): Promise<number
     ...(hostKeyFile ? { hostKeyFile } : {}),
     ...(knownHostsFile ? { knownHostsFile } : {}),
   });
-  const credentials = driver === "codex" ? env.CODEX_AUTH_JSON : undefined;
   const remoteProbe = String.raw`
 umask 077
 temporary_root=$TMPDIR
@@ -176,7 +175,11 @@ fi
         ? {
             kind: "codex",
             launch,
-            ...(credentials ? { env: { CODEX_AUTH_JSON: credentials } } : {}),
+            env: {
+              CODEX_AUTH_JSON: env.CODEX_AUTH_JSON,
+              CLIPROXY_BASE_URL: env.CLIPROXY_BASE_URL,
+              CLIPROXY_API_KEY: env.CLIPROXY_API_KEY,
+            },
           }
         : { kind: "claude-code", launch },
   });
