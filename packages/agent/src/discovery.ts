@@ -213,7 +213,6 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // Local export clauses may appear before their declarations.
   const pendingExports = new Map<string, string>()
   const opaqueExports = new Set<string>()
-  const mutableDeclarations = new Set<string>()
   const mutatedBindings = new Set<string>()
   const assignedAliases = new Map<string, Set<string>>()
   let exported: number | undefined
@@ -300,7 +299,6 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         // Record every declarator, such as `a` and `b` in `const a = x, b = y`.
         for (const [name, initializer] of declarators(i)) {
           declarations.set(name, initializer)
-          if (tokens[i] === "let" || tokens[i] === "var") mutableDeclarations.add(name)
           if (tokens[i - 1] === "export") namedExports.set(name, initializer)
         }
       }
@@ -379,25 +377,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         break
       }
     }
-    let memberEnd = i + 1
-    while (tokens[memberEnd] === "." || tokens[memberEnd] === "[") {
-      if (tokens[memberEnd] === ".") {
-        if (!/^[A-Za-z_$][\w$]*$/.test(tokens[memberEnd + 1] ?? "")) break
-        memberEnd += 2
-      }
-      else {
-        let nesting = 1
-        memberEnd++
-        while (memberEnd < tokens.length && nesting > 0) {
-          if (tokens[memberEnd] === "[") nesting++
-          if (tokens[memberEnd] === "]") nesting--
-          memberEnd++
-        }
-        if (nesting > 0) break
-      }
-    }
+    const memberEnd = memberCallEnd(i)
     const propertyAssignment = memberEnd > i + 1 && assignmentOperator(memberEnd)
-    const directAssignment = assignmentOperator(i + 1) && !declarationBinding
+    const directAssignment = assignmentOperator(i + 1) && !declarationBinding && declarations.get(name) !== i + 2
     const prefixUpdate = ["+", "-"].includes(tokens[i - 2] ?? "") && tokens[i - 1] === tokens[i - 2]
     const postfixUpdate = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
     let deletion = tokens[i - 1] === "delete"
@@ -434,11 +416,6 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
     }
   }
-  for (const name of namedExports.keys()) {
-    const local = pendingExports.get(name) ?? name
-    if (mutableDeclarations.has(local) && mutatedBindings.has(local)) opaqueExports.add(name)
-  }
-
   // A declaration is visible only in its containing scope and descendants.
   const tokenScopes: (number | undefined)[] = []
   const scopeParents = new Map<number, number | undefined>()
@@ -602,6 +579,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         changed = true
       }
     }
+  }
+  for (const name of new Set([...namedExports.keys(), ...pendingExports.keys()])) {
+    const local = pendingExports.get(name) ?? name
+    if (mutatedBindings.has(local)) opaqueExports.add(name)
   }
 
   function visibleDeclaration(index: number): number | undefined {

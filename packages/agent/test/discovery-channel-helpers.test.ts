@@ -239,6 +239,12 @@ it.each([
   'Object.assign((<Options>options), { pullRequest: true })',
   'Object.assign(options!, { pullRequest: true })',
   'Object.defineProperty(options, "pullRequest", { value: true })',
+  '(options).pullRequest = true',
+  '((options)).pullRequest = true',
+  '(options as Options).pullRequest = true',
+  '(options satisfies Options).pullRequest.workspace = true',
+  '(options.pullRequest).workspace = true',
+  '(options!).pullRequest = true',
   'const enable = value => { value.pullRequest = true }; enable(options)',
   'function enable(value) { value.pullRequest = true }; enable(options)',
   'const enable = (flag, value) => { value.pullRequest = flag }; enable(true, options)',
@@ -262,6 +268,20 @@ it("rejects a reassigned relative Channel export", async () => {
   const source = 'import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })'
   const files = { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export let portal = github({ pullRequest: false }); portal = github({ pullRequest: true })' }
   await expect(discover(source, files)).rejects.toThrow("cannot inspect an imported Channel")
+  const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
+  expect(definition?.workspace).toBe("review")
+})
+
+it.each([
+  ["opaque call", '{ portal }', 'export let portal = github({ pullRequest: false }); mutate(portal)'],
+  ["property mutation", '{ portal }', 'export const portal = github({ pullRequest: false }); portal.capabilities = [storage]'],
+  ["default export clause", 'portal', 'const portal = github({ pullRequest: false }); portal.capabilities = [storage]; export { portal as default }'],
+  ["named export alias", '{ channel as portal }', 'const portal = github({ pullRequest: false }); portal.capabilities = [storage]; export { portal as channel }'],
+  ["mutated alias", '{ portal }', 'export const portal = github({ pullRequest: false }); const alias = portal; mutate(alias)'],
+])("rejects a mutated relative Channel export: %s", async (_name, binding, declaration) => {
+  const source = `import { defineAgent } from "vite-hub/agent"; import ${binding} from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })`
+  const files = { "portal.ts": `import { github } from "vite-hub/agent/channels"; import { defineCapability } from "vite-hub/agent"; const storage = defineCapability({ workspace: {} }); ${declaration}` }
+  await expect(discover(source, files)).rejects.toThrow("opaque Channel")
   const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"), files)
   expect(definition?.workspace).toBe("review")
 })
