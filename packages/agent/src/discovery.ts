@@ -845,6 +845,22 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       && visibleDeclaration(index) === undefined) trustedCalls.add(call)
     if (tokens[index - 1] !== "." && factories.some(name => factoryCall(index, name) === call)) trustedCalls.add(call)
   }
+  const opaqueResultBindings = new Set<string>()
+  for (let binding = 0; binding < tokens.length; binding++) {
+    if (tokens[binding - 1] === "." || visibleDeclaration(binding) === undefined) continue
+    let initializer = declaratorInitializers.get(binding)
+      ?? (tokens[binding + 1] === "=" && !["=", ">"].includes(tokens[binding + 2]!) ? binding + 2 : undefined)
+    if (initializer === undefined) continue
+    while (tokens[initializer] === "(") initializer++
+    const call = memberCallEnd(initializer)
+    if (opaqueCalls.has(call) && !trustedCalls.has(call)) opaqueResultBindings.add(tokens[binding]!)
+  }
+  function invalidateCapturedBindings() {
+    for (const name of declarations.keys()) mutatedBindings.add(name)
+    for (const binding of variableDeclarations.keys()) {
+      for (const name of destructuredBindings.get(binding) ?? [tokens[binding + 1]!]) mutatedBindings.add(name)
+    }
+  }
   for (const call of opaqueCalls) {
     if (trustedCalls.has(call) || parameterLists.has(call)) continue
     // A write through an opaque call result may mutate a captured options
@@ -861,10 +877,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       const memberEnd = memberCallEnd(close - 1, call)
       const update = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
       if (memberEnd > close && (assignmentOperator(memberEnd) || update)) {
-        for (const name of declarations.keys()) mutatedBindings.add(name)
-        for (const binding of variableDeclarations.keys()) {
-          for (const name of destructuredBindings.get(binding) ?? [tokens[binding + 1]!]) mutatedBindings.add(name)
-        }
+        invalidateCapturedBindings()
       }
     }
     let nesting = 1
@@ -885,6 +898,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
     }
   }
+  if ([...opaqueResultBindings].some(name => mutatedBindings.has(name))) invalidateCapturedBindings()
   for (const name of new Set([...namedExports.keys(), ...pendingExports.keys()])) {
     const local = pendingExports.get(name) ?? name
     if (mutatedBindings.has(local)) opaqueExports.add(name)
