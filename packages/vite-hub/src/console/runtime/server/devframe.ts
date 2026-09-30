@@ -47,12 +47,13 @@ function createDevframeH3Handler(definition: DevframeDefinition, options: Devfra
     }
     const origin = request.headers.get("origin")
     const site = request.headers.get("sec-fetch-site")
+    const markedRequest = site === null && (request.method === "GET" || request.method === "POST") && request.headers.get(consoleRpcHeader) === "1"
     // Discovery opens no session and Devframe fetches it before the SSE fetch hook.
     const discovery = request.method === "GET" && url.pathname === `${consoleDevframeBase}__connection.json`
     // Browsers control Fetch Metadata, which survives trusted TLS termination.
     // Without origin evidence, require a header that foreign pages cannot send without preflight.
     if (origin === "null" || site === "cross-site" || site === "same-site"
-      || (site !== "same-origin" && origin !== null && origin !== url.origin)
+      || (site !== "same-origin" && origin !== null && origin !== url.origin && !markedRequest)
       || (!discovery && site !== "same-origin" && origin === null && request.headers.get(consoleRpcHeader) !== "1")) {
       return new Response("Forbidden", {
         headers: responseHeaders,
