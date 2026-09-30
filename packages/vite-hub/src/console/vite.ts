@@ -377,7 +377,8 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       const kit = createNitroServerKit(nitro)
       for (const handler of [
         { handler: join(consoleRuntimeRoot, "server/status.get.js"), route: "/api/_vitehub/console/status", method: "get" },
-        { handler: join(consoleRuntimeRoot, "server/usage.get.js"), route: "/api/_vitehub/console/usage", method: "get" },
+        // The Usage section reads the Agent invocation journal, which exists only with the Agents section.
+        ...(sections.includes("usage") ? [{ handler: join(consoleRuntimeRoot, "server/usage.get.js"), route: "/api/_vitehub/console/usage", method: "get" }] : []),
         ...(consoleAuthHandlers ? [{ handler: consoleAuthHandlers.signIn, route: "/_vitehub/sign-in", method: "get" }] : []),
         { handler: join(consoleRuntimeRoot, "server/page.get.js"), route: "/_vitehub" },
         { handler: join(consoleRuntimeRoot, "server/page.get.js"), route: "/_vitehub/**" },
