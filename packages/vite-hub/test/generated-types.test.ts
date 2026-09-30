@@ -120,6 +120,7 @@ function contentModule(): string {
 function configResolved(plugin: Plugin) {
   // SAFETY: This fixture invokes the documented Vite configResolved hook signature.
   return plugin.configResolved as (config: {
+    auth?: false | Record<string, never>
     nitro?: Record<string, unknown>
     root: string
     [VITEHUB_PROJECT_ROOT]?: string
@@ -590,6 +591,27 @@ describe("framework generated types", () => {
         `import { meals as collection } from ${JSON.stringify(pathToFileURL(join(root, "server/collections/meals.ts")).href)}`,
         ``,
         `export default defineCollectionHandler(collection, { authorizeRequest })`,
+        ``,
+      ].join("\n"),
+    )
+  })
+
+  it("omits Auth's authorizer when the resolved Vite config disables Auth", async () => {
+    const { root } = await createNestedProject()
+    await mkdir(join(root, "server/collections"), { recursive: true })
+    await writeFile(join(root, "server/collections/meals.ts"), collectionModule("meals"))
+
+    const [source] = frameworkHubSource({
+      auth: ({ configuredAuth }) => configuredAuth !== false,
+    })
+    await configResolved(source!)({ auth: false, root })
+
+    await expect(readFile(join(root, ".vitehub/source/routes/meals.mjs"), "utf8")).resolves.toBe(
+      [
+        `import { defineCollectionHandler } from "vite-hub/source/server"`,
+        `import { meals as collection } from ${JSON.stringify(pathToFileURL(join(root, "server/collections/meals.ts")).href)}`,
+        ``,
+        `export default defineCollectionHandler(collection)`,
         ``,
       ].join("\n"),
     )
