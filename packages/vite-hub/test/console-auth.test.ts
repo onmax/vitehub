@@ -9,6 +9,7 @@ import type { AuthRuntimeContext } from "@vite-hub/auth"
 import { handleAuthRequest, requireAuthAccessRoutes } from "@vite-hub/auth/server"
 import { describe, expect, it, vi } from "vitest"
 import { build } from "esbuild"
+import { resolveConfig } from "vite"
 
 import { consoleAuthPageResponse, consoleAuthSignInPage, createConsoleAuthDefinition, defineConsoleAuth, prepareConsoleAuth } from "../src/console/auth.ts"
 import { resolveConsoleAuthConfig, writeConsoleAuthHandlers } from "../src/console/auth-build.ts"
@@ -271,6 +272,29 @@ describe("independent Console Auth", () => {
       expect(await readFile(handlers.signIn, "utf8")).toContain("consoleAuthSignInPage(signInProvider, event.req")
       expect(route).toContain("handleAuthRequest(definition, event.req")
       expect(route).toContain('from "#vitehub/auth/server"')
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it("generates session auth routes from the final Vite base", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-auth-final-base-"))
+    try {
+      const server = resolve(root, "console-auth.ts")
+      await writeFile(server, "export default {}")
+      await resolveConfig({
+        root,
+        configFile: false,
+        base: "/early/",
+        plugins: [
+          consoleVitePlugin({ console: { access: "auth", auth: { server } }, preset: "node" }),
+          { name: "change-console-base", config: () => ({ base: "/portal/" }) },
+        ],
+      }, "build", "production")
+      const middleware = await readFile(resolve(root, ".vitehub/nitro/console/auth-middleware.mjs"), "utf8")
+      expect(middleware).toContain('const mountBase = "/portal"')
+      expect(middleware).not.toContain("/early/")
     }
     finally {
       await rm(root, { recursive: true, force: true })

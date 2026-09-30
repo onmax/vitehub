@@ -417,6 +417,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       if (journal && "d1Binding" in journal && sections.includes("agents")) config.logger.info(consoleD1JournalMessage(journal.d1Binding))
       root = config.root
       baseURL = config.base
+      await refreshConsoleAuthClient?.()
       projectRoot ||= resolveViteHubProjectRoot(config.root)
       generatedPlugin ||= resolve(config.root, generatedConsolePlugin)
       // SAFETY: ViteHub KV and Nitro extend the resolved Vite config with these documented keys.

@@ -7,6 +7,7 @@ import { env } from "@vite-hub/env"
 import { build } from "esbuild"
 import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { Miniflare } from "miniflare"
+import { resolveConfig } from "vite"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
 import { createCloudflareAccessVerifier, handleCloudflareAccessConsoleRequest, type CloudflareAccessVerifier } from "../src/console/auth-cloudflare-access.ts"
@@ -333,6 +334,34 @@ describe("Cloudflare Access Console Auth", () => {
       for (const path of ["/_vitehub", "/_vitehub/rpc/__call", "/api/_vitehub/console/auth/identity"]) {
         for (const method of ["GET", "POST"]) {
           expect((await guard(consoleEvent(`https://app.example.com${mount}${path}`, undefined, method)))?.status).toBe(401)
+        }
+      }
+      expect(await guard(consoleEvent("https://app.example.com/api/app"))).toBeUndefined()
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it("guards the final mount when a later Vite plugin changes the base", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-cf-access-vite-final-base-"))
+    try {
+      await resolveConfig({
+        root,
+        configFile: false,
+        base: "/early/",
+        plugins: [
+          consoleVitePlugin({ console: { access: "auth", auth: { provider: "cloudflare-access", audience, teamDomain } }, preset: "cloudflare" }),
+          { name: "change-console-base", config: () => ({ base: "/portal/" }) },
+        ],
+      }, "build", "production")
+      const bundled = await bundleMiddleware(root, "node", resolve(root, ".vitehub/nitro/console/auth-middleware.mjs"))
+      const file = join(root, "guard.mjs")
+      await writeFile(file, bundled)
+      const { default: guard } = await import(pathToFileURL(file).href) as { default: (event: ReturnType<typeof consoleEvent>) => Promise<Response | undefined> }
+      for (const path of ["/_vitehub", "/_vitehub/rpc/__call", "/api/_vitehub/console/auth/identity"]) {
+        for (const method of ["GET", "POST"]) {
+          expect((await guard(consoleEvent(`https://app.example.com/portal${path}`, undefined, method)))?.status).toBe(401)
         }
       }
       expect(await guard(consoleEvent("https://app.example.com/api/app"))).toBeUndefined()
