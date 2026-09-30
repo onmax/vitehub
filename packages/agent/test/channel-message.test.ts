@@ -108,6 +108,54 @@ describe("Channel message handle", () => {
     expect(label).toHaveBeenCalledWith("message-1", fail ? "failed" : "finished")
   })
 
+  it.each([false, true])("uses the current inbound message when a generated route selects another session (error: %s)", async fail => {
+    const seen: unknown[] = []
+    const history: unknown[] = []
+    const agent = defineAgent({
+      channels: {
+        portal: webChat({
+          messages: { sessions: { strategy: "manual" } },
+          route: { admission: { authenticate: () => true }, input: { trust: ["session"] } },
+          message: {
+            data: v.object({ id: v.string(), text: v.string() }),
+            methods: {},
+          },
+        }),
+      },
+      driver: { run: ({ input }) => {
+        history.push(input.messages?.map(message => message.id))
+        if (fail) throw new Error("driver failed")
+        return "ok"
+      } },
+      hooks: {
+        "agent:finish": event => {
+          seen.push(event.message?.data)
+        },
+        "agent:error": event => {
+          seen.push(event.message?.data)
+        },
+      },
+    })
+    // SAFETY: The generated route accepts this host-independent Agent through its internal host boundary.
+    const handler = createChannelChatRouteHandler(agent as never)
+    const response = await handler(new Request("https://example.com/api/_vitehub/agents/support/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          { id: "old-message", metadata: { sessionId: "old" }, parts: [{ type: "text", text: "old" }], role: "user" },
+          { id: "current-message", metadata: { sessionId: "current" }, parts: [{ type: "text", text: "current" }], role: "user" },
+        ],
+        session: { id: "old" },
+      }),
+    }), { agentName: "support" })
+
+    const responseText = await response.text()
+    expect(response.status, responseText).toBe(fail ? 500 : 200)
+    expect(seen).toEqual([{ id: "current-message", text: "current" }])
+    expect(history).toEqual([["old-message"]])
+  })
+
   it.each([false, true])("retains custom message methods on a Telegram helper with dryRun=%s", async dryRun => {
     const label = vi.fn((id: string, value: string) => `${id}:${value}`)
     const subject = vi.fn((id: string) => `subject:${id}`)
