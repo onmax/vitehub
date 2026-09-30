@@ -490,9 +490,11 @@ describe("agent Vite plugin", () => {
     // SAFETY: The plugin under test produced this hook, so the test invokes its documented callable shape.
     const config = plugin.config as (config: { define?: Record<string, string>; root?: string; server?: { watch?: { ignored?: string | string[] } } }) => { define?: Record<string, string>; server?: { watch?: { ignored?: string[] } } }
 
-    expect(config({}).server?.watch?.ignored).toEqual(["**/.vitehub/**"])
-    expect(config({ server: { watch: { ignored: ["**/node_modules/**"] } } }).server?.watch?.ignored).toEqual(["**/node_modules/**", "**/.vitehub/**"])
-    expect(config({ server: { watch: { ignored: ["**/.vitehub/**"] } } }).server?.watch?.ignored).toEqual(["**/.vitehub/**"])
+    const watchIgnored = (input: { server?: { watch?: { ignored?: string[] } } }) => mergeConfig(input, config(input)).server?.watch?.ignored
+
+    expect(watchIgnored({})).toEqual(["**/.vitehub/**"])
+    expect(watchIgnored({ server: { watch: { ignored: ["**/node_modules/**"] } } })).toEqual(["**/node_modules/**", "**/.vitehub/**"])
+    expect(watchIgnored({ server: { watch: { ignored: ["**/.vitehub/**"] } } })).toEqual(["**/.vitehub/**"])
     expect(config({ root: "/repo/apps/web" }).define?.__VITEHUB_AGENT_APP_ROOT__).toBe(JSON.stringify("/repo/apps/web"))
     expect(config({ define: { __VITEHUB_AGENT_APP_ROOT__: "configured" }, root: "/repo/apps/web" }).define?.__VITEHUB_AGENT_APP_ROOT__).toBe("configured")
   })
@@ -500,6 +502,7 @@ describe("agent Vite plugin", () => {
   it("merges server noExternal", async () => {
     const { hubAgent } = await import("../src/vite.ts")
     const plugin = hubAgent()
+    const environment = { consumer: "server", resolve: { noExternal: ["existing", "@vite-hub/agent"] } }
 
     const hook = plugin.configEnvironment
     const result = isRuntimeFunction(hook)
@@ -507,20 +510,14 @@ describe("agent Vite plugin", () => {
           // SAFETY: This synthetic test input exercises a hook that does not inspect the omitted host-only context.
           {} as never,
           "ssr",
-          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
-          {
-            // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
-            consumer: "server",
-            resolve: { noExternal: ["existing"] },
-          } as never,
+          // SAFETY: This fixture supplies the environment fields read by the hook.
+          environment as never,
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           {} as never,
         )
       : undefined
 
-    expect(result).toMatchObject({
-      resolve: { noExternal: ["existing", "@vite-hub/agent", "@t3tools/provider-runtime"] },
-    })
+    expect(result ? mergeConfig(environment, result).resolve.noExternal : undefined).toEqual(["existing", "@vite-hub/agent", "@t3tools/provider-runtime"])
   })
 
   it("bundles the provider runtime into hosted Vite server output", async () => {
@@ -10464,6 +10461,73 @@ describe("server helpers", () => {
       await vi.waitFor(() => expect(complete).toHaveBeenCalled())
       expect(retry).not.toHaveBeenCalled()
     } finally {
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+      consoleError.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it("yields while it reconciles a late webhook invocation until the reconciliation deadline", async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { defineAgent } = await import("../src/index.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-late-reconciliation-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const releaseLock = vi.spyOn(state, "releaseLock")
+    // The run ignores abort, so its invocation stays running after the execution deadline.
+    const run = vi.fn(() => new Promise<never>(() => undefined))
+    const agent = defineAgent({ driver: { run } })
+    await state.connect()
+    await state.enqueueWebhookDelivery({
+      concurrencyKey: "review:late",
+      concurrencyGroup: "review:default",
+      concurrencyLimit: 1,
+      deliveryId: "delivery-late-reconciliation",
+      enqueuedAt: Date.now(),
+      invocation: { input: { prompt: "persisted" } },
+      leaseTtlMs: 3_600_000,
+      request: { body: "{}", headers: {}, method: "POST", url: "https://example.com" },
+      scope: "webhook:review:github:late:",
+      webhookId: "missing-registration",
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const stop = createChannelWebhookRouteHandler(agent as never).resume({
+      agentName: "review",
+      webhookState: state,
+    })
+    // A reconciliation loop that never waits for a timer starves the event loop.
+    // Park a deadline after 1,000 races against it, so a regression fails the
+    // assertions below instead of exhausting the heap.
+    const race = Promise.race.bind(Promise)
+    const races = new Map<unknown, number>()
+    const raceSpy = vi.spyOn(Promise, "race").mockImplementation((values) => {
+      const entries = [...values]
+      const count = (races.get(entries.at(-1)) ?? 0) + 1
+      races.set(entries.at(-1), count)
+      return count < 1_000 ? race(entries) : new Promise(() => undefined)
+    })
+
+    try {
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      await vi.advanceTimersByTimeAsync(900_000)
+      const scheduled = vi.fn()
+      setTimeout(scheduled, 5_000)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(scheduled).toHaveBeenCalledOnce()
+      expect(Math.max(...races.values())).toBeLessThan(100)
+      expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining("did not reach a terminal state"))
+      expect(releaseLock).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(55_000)
+      await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith(
+        '[vitehub] Late webhook invocation "delivery-late-reconciliation" did not reach a terminal state within 60000ms; releasing its retained concurrency fence.',
+      ))
+      await vi.waitFor(() => expect(releaseLock).toHaveBeenCalled())
+    } finally {
+      raceSpy.mockRestore()
       await stop()
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
