@@ -96,7 +96,6 @@ import {
   resolveAgentCapabilities,
   resolveAgentCapabilityDefinitions,
   resolveStaticCapabilityTools,
-  snapshotCapabilityData,
   validateAgentCapabilityComposition,
   withCapabilityCleanup,
   withResponseCleanup,
@@ -3898,44 +3897,13 @@ function createAgentTelemetryScheduler<TRuntimeConfig extends AgentRuntimeConfig
 }
 
 
-function agentInputDataOutputCompatible(value: unknown, baseline: unknown, seen = new WeakMap<object, object>()): boolean {
-  if (Object.is(value, baseline)) return true
-  if (!value || !baseline || !hasRuntimeType(value, "object") || !hasRuntimeType(baseline, "object")) {
-    return typeof value === typeof baseline
-  }
-  const matched = seen.get(value)
-  if (matched === baseline) return true
-  seen.set(value, baseline)
-  if (value instanceof Date || baseline instanceof Date) return value instanceof Date && baseline instanceof Date
-    && value.getTime() === baseline.getTime()
-  if (value instanceof URL || baseline instanceof URL) return value instanceof URL && baseline instanceof URL
-    && value.href === baseline.href
-  if (Array.isArray(value) || Array.isArray(baseline)) {
-    return Array.isArray(value) && Array.isArray(baseline)
-      && value.length === baseline.length
-      && value.every((entry, index) => agentInputDataOutputCompatible(entry, baseline[index], seen))
-  }
-  if (Object.getPrototypeOf(value) !== Object.getPrototypeOf(baseline)) return false
-  const valueKeys = Reflect.ownKeys(value)
-  const baselineKeys = Reflect.ownKeys(baseline)
-  return valueKeys.length === baselineKeys.length
-    && valueKeys.every(key => baselineKeys.includes(key) && agentInputDataOutputCompatible(value[key as keyof typeof value], baseline[key as keyof typeof baseline], seen))
-}
-
 async function parseAgentInputData<TInput extends AgentRunInput<unknown>>(
   definition: { [baseAgentData]?: StandardSchemaV1 } | undefined,
   input: TInput,
-  parsedBaseline?: unknown,
 ): Promise<TInput> {
   const schema = definition?.[baseAgentData]
   if (!schema) return input
-  try {
-    return { ...input, data: await parseStandardSchema(schema, input.data, "Agent input data") }
-  }
-  catch (error) {
-    if (parsedBaseline !== undefined && agentInputDataOutputCompatible(input.data, parsedBaseline)) return input
-    throw error
-  }
+  return { ...input, data: await parseStandardSchema(schema, input.data, "Agent input data") }
 }
 
 async function createAgentInvocationContext<
@@ -4008,7 +3976,6 @@ async function createAgentInvocationContext<
     if (!Reflect.get(context, Symbol.for("vitehub.agent.workflow.parsedInputData"))) {
       input = await parseAgentInputData(internalDefinition, input)
     }
-    let parsedInputDataBaseline = snapshotCapabilityData(input.data)
     const boundRunEvents = bindAgentRunEvents(definition?.runEvents, tracedRuntimeContext)
     runtimeContext = boundRunEvents
       ? { ...tracedRuntimeContext, runEvents: boundRunEvents }
@@ -4238,8 +4205,7 @@ async function createAgentInvocationContext<
     const validateCapabilityInput = async (closeOnError = true) => {
       if (!internalDefinition?.[baseAgentData] || !capabilities.inputDataChanged()) return
       try {
-        capabilities.input = await parseAgentInputData(internalDefinition, capabilities.input, parsedInputDataBaseline)
-        parsedInputDataBaseline = snapshotCapabilityData(capabilities.input.data)
+        capabilities.input = await parseAgentInputData(internalDefinition, capabilities.input)
         capabilities.setInputDataBaseline(capabilities.input)
       }
       catch (error) {

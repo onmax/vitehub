@@ -183,6 +183,8 @@ Call sites use the schema input type. Hooks and `intercept` receive the schema o
 
 ViteHub validates changed data again after input hooks and before the Driver runs. It detects in-place changes to arrays, plain records, `Date`, `RegExp`, `Map`, `Set`, `URL`, and `URLSearchParams`. Replace other class instances instead of mutating their internal state, which ViteHub cannot snapshot.
 
+Hooks and Capabilities receive the parsed output, but changed data is validated as schema input. Do not replace transformed output with another value; define the desired value in the original input form instead.
+
 ## Finish before the Driver
 
 Set `intercept` when app code can answer some Invocations without the Driver. The handler receives the same context as an `agent:input` hook plus the parsed `data`. Return `undefined` to continue to the Driver. Return another value to finish the Invocation with that value as its output. Throw to fail the Invocation.

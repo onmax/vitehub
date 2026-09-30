@@ -140,7 +140,7 @@ describe("Agent data and intercept", () => {
     expect(transform).toHaveBeenCalledOnce()
   })
 
-  it("accepts transformed output changed by an input hook without reparsing it", async () => {
+  it("rejects transformed output changed by an input hook", async () => {
     const transform = vi.fn(Number)
     const run = vi.fn(({ input }: { input: { data?: unknown } }) => input.data)
     const agent = defineAgent({
@@ -152,9 +152,26 @@ describe("Agent data and intercept", () => {
 
     const [error, output] = await runAgent(agent, { data: { count: "2" } })
 
-    expect(error).toBeNull()
-    expect(output).toEqual({ count: 3 })
+    expect(error?.message).toContain("Invalid Agent input data")
+    expect(output).toBeNull()
+    expect(run).not.toHaveBeenCalled()
     expect(transform).toHaveBeenCalledOnce()
+  })
+
+  it("rejects transformed output that violates its constraint after an input hook", async () => {
+    const run = vi.fn(({ input }: { input: { data?: unknown } }) => input.data)
+    const agent = defineAgent({
+      data: v.pipe(v.string(), v.transform(Number), v.minValue(1)),
+      driver: { run },
+      hooks: { "agent:input": ({ input }) => { input.data = -1 } },
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: "2" })
+
+    expect(error?.message).toContain("Invalid Agent input data")
+    expect(output).toBeNull()
+    expect(run).not.toHaveBeenCalled()
   })
 
   it("validates data replaced by a Capability before hooks and intercept", async () => {
