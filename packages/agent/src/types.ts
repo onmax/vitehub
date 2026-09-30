@@ -1683,7 +1683,7 @@ export interface AgentDefinition<
   TDataInput = unknown,
   TDriverOutput = TOutput,
   TData = unknown,
-  TInterceptOutput = never,
+  TInterceptOutput = TOutput,
 > extends AgentDataCarrier<TDataInput>, AgentDataOutputCarrier<TData>, AgentDriverOutputCarrier<TDriverOutput>, AgentInterceptOutputCarrier<TInterceptOutput> {
   [agentOutputType]?: TOutput
   box?: AgentBoxInput<TRuntimeConfig>

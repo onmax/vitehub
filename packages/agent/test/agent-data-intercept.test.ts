@@ -140,6 +140,23 @@ describe("Agent data and intercept", () => {
     expect(transform).toHaveBeenCalledOnce()
   })
 
+  it("accepts transformed output changed by an input hook without reparsing it", async () => {
+    const transform = vi.fn(Number)
+    const run = vi.fn(({ input }: { input: { data?: unknown } }) => input.data)
+    const agent = defineAgent({
+      data: v.object({ count: v.pipe(v.string(), v.transform(transform)) }),
+      driver: { run },
+      hooks: { "agent:input": ({ input }) => { input.data = { count: 3 } } },
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { data: { count: "2" } })
+
+    expect(error).toBeNull()
+    expect(output).toEqual({ count: 3 })
+    expect(transform).toHaveBeenCalledOnce()
+  })
+
   it("validates data replaced by a Capability before hooks and intercept", async () => {
     const inputHook = vi.fn()
     const intercept = vi.fn(() => undefined)
@@ -281,7 +298,7 @@ describe("Agent data and intercept", () => {
       id: "replace-input",
       input(context) {
         const input = context.input.get()
-        input.data = { count: 2 }
+        input.data = { count: true }
         context.input.set(input)
       },
     })

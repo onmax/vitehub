@@ -499,7 +499,7 @@ function isPlainRecord(input: unknown): input is Record<string, unknown> {
   return !!input && hasRuntimeType(input, "object") && !Array.isArray(input)
 }
 
-function snapshotCapabilityData(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
+export function snapshotCapabilityData(value: unknown, seen: WeakMap<object, unknown> = new WeakMap()): unknown {
   if (!value || !hasRuntimeType(value, "object")) return value
   const existing = seen.get(value)
   if (existing) return existing

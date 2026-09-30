@@ -153,7 +153,7 @@ export type WorkspaceAgentDefinition<
   TDataInput = unknown,
   TData = unknown,
   TDriverOutput = TOutput,
-  TInterceptOutput = never,
+  TInterceptOutput = TOutput,
 > = AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput, TDataInput, TDriverOutput, TData, TInterceptOutput> & WorkspaceAgentWorkspaceOptions & {
   __vitehubWorkspaceAgent: true
   __vitehubWorkspaceAgentOptions: WorkspaceAgentOptions<TRuntimeConfig, Name, CALL_OPTIONS, TInvokerProfile, TContextValues, TCapabilities, TOutput>

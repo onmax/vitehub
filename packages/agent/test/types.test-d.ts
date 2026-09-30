@@ -792,11 +792,24 @@ describe("agent public types", () => {
     expectTypeOf(registeredWorkspace).toEqualTypeOf<typeof interceptedWorkspaceDefinition>()
     expectTypeOf(runAgentInline(registeredFallthrough, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput>>()
     const interceptedDefinition: AgentDefinition<AgentRuntimeConfig, unknown, AgentInvokerProfile, AgentInvocationContextValues, DriverOutput | InterceptOutput, unknown, DriverOutput, unknown, InterceptOutput> = interceptedWorkspaceDefinition
+    const legacyInterceptedDefinition: AgentDefinition<AgentRuntimeConfig, unknown, AgentInvokerProfile, AgentInvocationContextValues, DriverOutput | InterceptOutput> = defineAgent({
+      driver: { output: { schema }, run: () => "{}" },
+      intercept: (): InterceptOutput => ({ matched: true }),
+      runtime: false,
+    })
+    const legacyInterceptedWorkspaceDefinition: WorkspaceAgentDefinition<AgentRuntimeConfig, WorkspaceName, unknown, AgentInvokerProfile, AgentInvocationContextValues, AgentCapabilitiesInput<AgentRuntimeConfig>, DriverOutput | InterceptOutput> = defineAgent({
+      driver: { output: { schema }, run: () => "{}" },
+      intercept: (): InterceptOutput => ({ matched: true }),
+      runtime: false,
+      workspace: {},
+    })
     const intercepted = defineAgent({ extends: interceptedDefinition })
     const fallthrough = defineAgent({ extends: interceptedDefinition, intercept: () => undefined })
     expectTypeOf(runAgentInline(workspaceIntercepted, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput | InterceptOutput>>()
     expectTypeOf(runAgentInline(workspaceFallthrough, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput>>()
     expectTypeOf(runAgentInline(intercepted, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput | InterceptOutput>>()
+    expectTypeOf(runAgentInline(legacyInterceptedDefinition, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput | InterceptOutput>>()
+    expectTypeOf(runAgentInline(legacyInterceptedWorkspaceDefinition, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput | InterceptOutput>>()
     expectTypeOf(runAgentInline(fallthrough, runtime, {})).toEqualTypeOf<Promise<Response | DriverOutput>>()
     function registerWithCallOptions(agent: WorkspaceAgentDefinition<AgentRuntimeConfig, WorkspaceName, { count: number }>) {
       return registerWorkspaceAgent(agent)
