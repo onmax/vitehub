@@ -109,11 +109,10 @@ describe("Node storage defaults", () => {
 describe("Console journal host defaults", () => {
   const cloudflare = { preset: "cloudflare", agent: true, console: { exposure: "host-managed" }, database: { driver: "d1", binding: "DB" } } satisfies ViteHubOptions
 
-  it("stores the journal in the D1 Database binding of a Cloudflare build", async () => {
+  it("does not select an unprovisioned explicit D1 binding", async () => {
     const { info, plugin } = await generatedConsolePlugin(cloudflare, "build")
-    expect(plugin).toContain(`d1: { binding: "DB", env: async () => (await import("cloudflare:workers")).env }`)
-    expect(plugin).not.toContain("databaseUrl")
-    expect(info).toEqual([expect.stringContaining("Console journal: D1 binding DB, table vitehub_agent_invocations")])
+    expect(plugin).not.toContain("cloudflare:workers")
+    expect(info).toEqual([])
   })
 
   it("reads the D1 binding from the default Database Definition", async () => {
@@ -149,8 +148,8 @@ describe("Console journal host defaults", () => {
   })
 
   it("resolves the D1 binding from the Database options", () => {
-    expect(consoleD1Binding("cloudflare", { driver: "d1" })).toBe("DB")
-    expect(consoleD1Binding("cloudflare", { driver: "d1", binding: " JOURNAL " })).toBe("JOURNAL")
+    expect(consoleD1Binding("cloudflare", { driver: "d1" })).toBeUndefined()
+    expect(consoleD1Binding("cloudflare", { driver: "d1", binding: " JOURNAL " })).toBeUndefined()
     expect(consoleD1Binding("cloudflare", true)).toBeUndefined()
     expect(consoleD1Binding("cloudflare", { connection: { url: "libsql://db.example.com" } })).toBeUndefined()
     expect(consoleD1Binding("vercel", { driver: "d1" })).toBeUndefined()

@@ -59,7 +59,15 @@ export function consoleD1Binding(
   definitions?: { root: string, serverDirs?: string[] },
 ): string | undefined {
   if (preset !== "cloudflare" || !database) return
-  if (database !== true && database.driver === "d1") return database.binding?.trim() || "DB"
+  if (database !== true && database.driver === "d1") {
+    if (!definitions) return
+    const options = database
+    const root = resolve(definitions.root, options.projectRoot ?? ".")
+    const serverDirs = options.projectRoot !== undefined ? [resolve(root, "server")] : definitions.serverDirs
+    const config = resolveDBViteConfig(options, root, { serverDirs })
+    if (!config?.databaseNames.length) return
+    return database.binding?.trim() || "DB"
+  }
   if (!definitions) return
   const options = database === true ? undefined : database
   const root = resolve(definitions.root, options?.projectRoot ?? ".")

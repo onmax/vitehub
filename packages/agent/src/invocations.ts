@@ -214,6 +214,8 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   context: AgentRuntimeContext<TRuntimeConfig>
   /** The `traceId` stored on the invocation record. */
   traceId: string
+  /** Wait for an asynchronous create attempt to resolve its stored identity. */
+  ready(): Promise<void>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
   running(): Promise<void>
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
@@ -1986,6 +1988,9 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       return {
         configuration: options.configuration,
         get traceId() { return traceId },
+        async ready() {
+          if (creationTask) await creationTask
+        },
         context: {
           ...context,
           run: { ...context.run, runId },
@@ -2144,6 +2149,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       if (!observation) return existing
       const prepared = await boundedJournalObservation({
         ...observation,
+        ...(observation.trace ? { trace: { ...observation.trace, id: existing.traceId } } : {}),
         attributes: { ...observation.attributes, [AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE]: appendOptions.id },
       }, limits)
       const { sequence: _sequence, ...appendObservation } = prepared

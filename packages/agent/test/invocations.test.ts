@@ -1085,6 +1085,17 @@ describe("Agent Invocations", () => {
     }
   })
 
+  it("rewrites appended observation traces to the stored invocation trace", async () => {
+    const store = createMemoryAgentInvocationStore()
+    const timestamp = "2026-01-01T00:00:00.000Z"
+    await store.create({ id: "append-trace", observations: [], status: "completed", createdAt: timestamp, updatedAt: timestamp, traceId: "stored-trace" })
+    const invocations = defineAgentInvocations({ store })
+    await invocations.appendObservation("append-trace", {
+      name: "retry.evidence", trace: { id: "retry-trace" }, type: "run",
+    }, { id: "retry" })
+    expect((await store.get("append-trace"))?.observations[0]?.trace?.id).toBe("stored-trace")
+  })
+
   it("reports the stored trace id on finish and error hook events", async () => {
     const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
     const finish = vi.fn()
