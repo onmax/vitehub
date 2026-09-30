@@ -896,6 +896,11 @@ it("rejects aliases assigned through container properties", async () => {
   await expect(discover(source)).rejects.toThrow("opaque Channel")
 })
 
+it("rejects predeclared for-of Channel option targets", async () => {
+  const source = `${imports} let options = { pullRequest: false }; for (options of [{ pullRequest: true }]) {} export default defineAgent({ channels: { custom: github(options) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
 it.each<[string, string, Record<string, string>]>([
   ["package re-export", 'import portal from "../../portal.ts"', { "portal.ts": 'export { default } from "@acme/channels"' }],
   ["package star re-export", 'import { portal } from "../../portal.ts"', { "portal.ts": 'export * from "@acme/channels"' }],

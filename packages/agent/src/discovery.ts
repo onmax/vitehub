@@ -842,10 +842,20 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
     if (tokens[index] !== "of") continue
     if (isIdentifier(tokens[index - 1] ?? "")) {
+      const alias = tokens[index - 1]!
+      // A binding declared outside the loop is assigned by the `of` target.
+      // Invalidate it even though the declaration keyword is before `for`.
+      if (declarations.has(alias) && tokens[index - 2] === "(" && tokens[index - 3] === "for") {
+        mutatedBindings.add(alias)
+        continue
+      }
       let declaration = index - 2
       while (declaration >= 0 && !["const", "let", "var", "for"].includes(tokens[declaration]!)) declaration--
+      // A predeclared `for...of` target is assigned on every iteration. Its
+      // initialiser cannot safely be used for Channel ownership inference.
       if (!["const", "let", "var"].includes(tokens[declaration]!)) continue
-      const alias = tokens[index - 1]!
+      const loopDeclaration = tokens[declaration - 1] === "(" && tokens[declaration - 2] === "for"
+      if (!loopDeclaration) mutatedBindings.add(alias)
       const targets = containerAliasTargets(index + 1, tokens, true)
       if (targets.length) {
         const aliases = assignedAliases.get(alias) ?? new Set<string>()
