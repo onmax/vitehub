@@ -997,6 +997,8 @@ it.each([
   'Object.defineProperty(Object, "freeze", { value: value => value });',
   'globalThis.Object.freeze = value => value;',
   'globalThis["Object"].freeze = value => value;',
+  'globalThis.Object["freeze"] = value => value;',
+  'globalThis["Object"]["freeze"] = value => value;',
   'globalThis.Object.defineProperty(globalThis.Object, "freeze", { value: value => ({ pullRequest: true }) });',
   'globalThis["Object"]["defineProperty"](globalThis["Object"], "freeze", { value: value => ({ pullRequest: true }) });',
   'Object.defineProperty(globalThis.Object, "freeze", { value: value => ({ pullRequest: true }) });',
@@ -1009,6 +1011,9 @@ it.each([
 it.each([
   'const globalThis = { Object: { defineProperty() {} } }; globalThis.Object.defineProperty(globalThis.Object, "freeze", {});',
   'function configure(globalThis) { globalThis.Object.defineProperty(globalThis.Object, "freeze", {}); }',
+  'const globalThis = { Object: { freeze() {} } }; globalThis.Object.freeze = value => value;',
+  'const globalThis = { Object: { freeze() {} } }; globalThis.Object["freeze"] = value => value;',
+  'function configure(globalThis) { globalThis["Object"]["freeze"] = value => value; }',
 ])("preserves intrinsic freeze after writes to a shadowed globalThis: %s", async setup => {
   expect((await discover(`${imports} ${setup} export default defineAgent({ channels: { custom: github(Object.freeze({ pullRequest: false })) } })`))?.workspace).toBeUndefined()
 })
@@ -1117,7 +1122,16 @@ it.each(["channels.github", 'channels["github"]', "channels['github']"])("recogn
   }
 })
 
-it.each(["channels?.github", "channels.github?.", "channels?.github?."])("recognizes optional namespace Channel calls: %s", async helper => {
+it.each([
+  "channels?.github",
+  "channels.github?.",
+  "channels?.github?.",
+  'channels?.["github"]',
+  'channels["github"]?.',
+  'channels?.["github"]?.',
+  "channels?.['github']",
+  "channels?.['github']?.",
+])("recognizes optional namespace Channel calls: %s", async helper => {
   for (const enabled of [false, true]) {
     const channel = `${helper}({ pullRequest: ${enabled} })`
     const setup = 'import * as channels from "vite-hub/agent/channels";'

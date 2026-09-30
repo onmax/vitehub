@@ -763,20 +763,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     for (let cursor = i - 1; !deletion && tokens[cursor] === "("; cursor--) {
       deletion = tokens[cursor - 1] === "delete"
     }
+    // Global member writes must invalidate Object before the generic mutation
+    // scan marks globalThis itself as mutated.
+    if (globalBindingReference(i, "globalThis")) {
+      const objectMember = memberAccess(i)
+      const freezeMember = objectMember?.name === "Object" ? memberAccess(objectMember.end - 1) : undefined
+      if (freezeMember?.name === "freeze" && assignmentOperator(freezeMember.end)) mutatedBindings.add("Object")
+    }
     if ((propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion)
       && !isFunctionParameter(i)) mutatedBindings.add(name)
-    // `globalThis.Object.freeze = ...` and `globalThis["Object"].freeze = ...`
-    // mutate the same intrinsic as a bare Object.freeze assignment.
-    if (name === "globalThis") {
-      const objectMember = tokens[i + 1] === "." && tokens[i + 2] === "Object"
-        || tokens[i + 1] === "[" && /^['\"]Object['\"]$/.test(tokens[i + 2] ?? "") && tokens[i + 3] === "]"
-      const freezeOffset = tokens[i + 1] === "." ? 3 : 4
-      const assignment = i + freezeOffset + 2
-      if (objectMember && tokens[i + freezeOffset] === "." && tokens[i + freezeOffset + 1] === "freeze"
-        && assignmentOperator(assignment)) {
-        mutatedBindings.add("Object")
-      }
-    }
 
     const initializer = declaratorInitializers.get(i) ?? (tokens[i + 1] === "=" ? i + 2 : undefined)
     if (initializer !== undefined) {
@@ -1747,11 +1742,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (tokens[index + 1] === ".") {
       return { name: tokens[index + 2]!, end: index + 3 }
     }
-    if (tokens[index + 1] === "?" && tokens[index + 2] === "." && tokens[index + 3] !== "(") {
+    if (tokens[index + 1] === "?" && tokens[index + 2] === "." && !["(", "["].includes(tokens[index + 3]!)) {
       return { name: tokens[index + 3]!, end: index + 4 }
     }
     const bracketStart = tokens[index + 1] === "[" ? index + 1
-      : tokens[index + 1] === "?" && tokens[index + 2] === "[" ? index + 2
+      : tokens[index + 1] === "?" && tokens[index + 2] === "." && tokens[index + 3] === "[" ? index + 3
       : undefined
     if (bracketStart !== undefined && tokens[bracketStart + 2] === "]" && /^['"`]/.test(tokens[bracketStart + 1] ?? "")) {
       return { name: propertyName(tokens[bracketStart + 1]!), end: bracketStart + 3 }
