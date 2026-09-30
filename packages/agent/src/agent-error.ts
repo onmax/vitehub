@@ -126,9 +126,9 @@ export type AgentPublicErrorCode =
 export interface AgentPublicErrorDetails {
   capability?: string
   category?: string
-  /** Provider quota reset time as an ISO 8601 timestamp, when `resetText` parses as a date. */
+  /** Provider quota reset time as an ISO 8601 timestamp, for a validated reset time. */
   resetAt?: string
-  /** Provider quota reset time as the provider wrote it, for example `Sep 15th, 2026 1:23 AM`. */
+  /** Validated provider quota reset time as the provider wrote it, for example `Sep 15th, 2026 1:23 AM`. */
   resetText?: string
   retryAfter?: number
 }
@@ -172,18 +172,14 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
   if (!afterPrompt) return
 
   // Match timestamps first to keep periods in abbreviations and explicit zones.
-  const timestamp = afterPrompt.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})|[A-Za-z]{3,9}\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\s+\d{1,2}:\d{2}\s+[ap]\.?m\.?(?:\s+(?:UTC|GMT|UT|[ECMP][DS]T|CET|CEST|EET|EEST|BST|IST|JST|AEST|AEDT|[+-]\d{2}:?\d{2}))?)(?=\.|\s*$)/i)?.[1]
-  // Provider-specific wording ends at the first sentence boundary, including
-  // when the next sentence starts with a digit.
+  const timestamp = afterPrompt.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\s+\d{1,2}:\d{2}\s+[ap]\.?m\.?(?:\s+(?:UTC|GMT|UT|[ECMP][DS]T|CET|CEST|EET|EEST|BST|IST|JST|AEST|AEDT|[+-]\d{2}:?\d{2}))?)(?=\.|\s*$)/i)?.[1]
   const resetText = timestamp?.replace(/\.$/, "")
-    ?? afterPrompt.match(/^([A-Za-z0-9 ,:/+.-]{1,64}?)(?=\.(?:\s|$))/)?.[1]?.trim()
   if (!resetText || resetText.length > 64) return
   const time = Date.parse(resetText
     .replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, "$1")
     .replace(/\b([ap])\.m\.?/gi, "$1m"))
-  const details: AgentPublicErrorDetails = { resetText }
-  if (Number.isFinite(time)) details.resetAt = new Date(time).toISOString()
-  return details
+  if (!Number.isFinite(time)) return
+  return { resetText, resetAt: new Date(time).toISOString() }
 }
 
 function quotaExhausted(...messages: unknown[]): AgentPublicError {

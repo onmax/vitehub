@@ -131,10 +131,10 @@ private response data.
 | `INTERNAL` | The failure has no approved public mapping. The message stays generic. |
 
 `PROVIDER_QUOTA_EXHAUSTED` carries the provider's reset time when the failure
-text says `try again at <time>.`. `resetText` keeps the provider's wording, for
-example `Sep 15th, 2026 1:23 AM`. `resetAt` is the same time as an ISO 8601
-timestamp when it parses as a date. A time without a zone is read in the
-server's local time zone.
+text says `try again at <time>.` and contains a recognized, parseable timestamp.
+`resetText` keeps the provider's wording, for example `Sep 15th, 2026 1:23 AM`. `resetAt` is the same time as an ISO 8601
+timestamp. Unrecognized or unparseable reset text is omitted. A time without
+a zone is read in the server's local time zone.
 
 The mapper includes only bounded identifiers, categories, retry delays, reset
 times, and request IDs. It replaces unknown errors with a context-specific `INTERNAL`

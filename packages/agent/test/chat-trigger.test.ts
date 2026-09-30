@@ -49,10 +49,10 @@ describe("chat error fallback", () => {
     expect(publicError.details?.resetAt).toBe(new Date(2026, 8, 15, 1, 23).toISOString())
   })
 
-  it("keeps an unparseable reset time as text only", () => {
+  it("omits unrecognized reset wording", () => {
     const error = agentDiagnostics.AGENT_R0726({ message: "Usage limit reached. Try again at the next billing cycle." })
 
-    expect(toAgentPublicError(error, "http").details).toEqual({ resetText: "the next billing cycle" })
+    expect(toAgentPublicError(error, "http").details).toBeUndefined()
     expect(toAgentPublicError(agentDiagnostics.AGENT_R0726({ message: "Quota exhausted" }), "http").details).toBeUndefined()
   })
 
@@ -102,9 +102,30 @@ describe("chat error fallback", () => {
   })
 
   it("stops reset text before a following numeric sentence", () => {
-    const error = agentDiagnostics.AGENT_R0726({ message: "Usage limit reached. Try again at tomorrow. 2 attempts remain." })
+    const error = agentDiagnostics.AGENT_R0726({ message: "Usage limit reached. Try again at Sep 15th, 2026 1:23 AM. 2 attempts remain." })
 
-    expect(toAgentPublicError(error, "http").details).toEqual({ resetText: "tomorrow" })
+    expect(toAgentPublicError(error, "http").details?.resetText).toBe("Sep 15th, 2026 1:23 AM")
+  })
+
+  it.each([
+    "token sk-live-secret",
+    "the next billing cycle",
+    "2026-99-15T01:23:00Z",
+    "Secret 15, 2026 1:23 AM",
+  ])("omits private or invalid reset text: %s", async (reset) => {
+    const message = `Quota exhausted. Try again at ${reset}.`
+    const errors = [
+      agentDiagnostics.AGENT_R0726({ message }),
+      { name: "AI_APICallError", statusCode: 429, data: { error: { code: "insufficient_quota", message } } },
+    ]
+    for (const error of errors) {
+      for (const context of ["http", "invocation", "serialization"] as const) {
+        const publicError = toAgentPublicError(error, context)
+        expect(publicError).toEqual({ code: "PROVIDER_QUOTA_EXHAUSTED", error: "AI provider quota is exhausted." })
+        expect(await resolveChatErrorFallbackText(undefined, { error, publicError } as never))
+          .toBe("The AI provider usage limit has been reached. Usage will reset when the provider quota renews.")
+      }
+    }
   })
 
   it("reads reset times from AI SDK quota errors", () => {
