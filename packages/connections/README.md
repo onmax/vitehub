@@ -2,7 +2,7 @@
 
 `@vite-hub/connections` stores one OAuth grant per Connection and lets server code call the provider API with typed methods. Each call applies the Connection access rules, can wait for approval, and is recorded as Env Bridge activity. Application code never reads the token.
 
-Most ViteHub applications should install the `vite-hub` framework distribution and use its `vite-hub/connections` imports. Install this owner package directly when you build a library or a custom framework integration.
+Install this owner package alongside `vite-hub` and use `@vite-hub/connections` imports. The owner plugin provides Connection discovery and management for Vite applications.
 
 ## Install the owner package
 
@@ -64,8 +64,18 @@ setConnectionsRuntime({
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `database` | `false` | Module that exports the SQLite Drizzle database as `db`. |
-| `management` | `false` | Mount the management API in production. Protect it with authentication. |
+| `management` | `false` | Use `{ actor: "./server/connections-auth.ts" }` to mount the production API with an authentication module. `true` is supported only in development. |
 | `projectRoot` | Vite root | Project root for discovery. |
+
+The actor module must default-export a function that authenticates the `Request` and returns `user:<id>` for an authorized manager. Return `undefined` to reject the request. Relative module paths resolve from the project root. The handler checks every API request and OAuth callback. Console authentication does not protect these routes automatically.
+
+```ts
+import { hubConnections } from "@vite-hub/connections/vite";
+
+hubConnections({ management: { actor: "./server/connections-auth.ts" } });
+```
+
+Development uses `user:local` when no actor module is configured. A directly mounted `createConnectionsHandler()` also requires an `actor` callback and denies requests by default.
 
 ## Generate API catalogs
 

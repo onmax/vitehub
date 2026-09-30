@@ -1,3 +1,5 @@
+import * as v from "valibot"
+
 import { ConnectionError, isConnectionError, isEnvBridgeError } from "./errors.ts"
 import { connectionActions, decide, envActor, providerApis } from "./policy.ts"
 
@@ -16,6 +18,7 @@ import type {
 
 const REFRESH_WINDOW_MS = 60_000
 const AUTHORIZATION_TTL_MS = 10 * 60_000
+const APPROVAL_EXECUTION_TTL_MS = 5 * 60_000
 
 interface StoredToken {
   accessToken: string
@@ -79,12 +82,49 @@ export interface ConnectionsRuntime {
   revoke: (input: { actor?: string, name: string }) => Promise<ConnectionInspection>
 }
 
+const connectionValue = v.union([v.string(), v.function()])
+const definitionSchema = v.looseObject({
+  provider: v.looseObject({
+    id: v.string(),
+    authorizationEndpoint: v.string(),
+    tokenEndpoint: v.string(),
+    clientId: connectionValue,
+    clientSecret: v.optional(connectionValue),
+    account: v.function(),
+    apis: v.record(v.string(), v.object({
+      rootUrl: v.string(),
+      methods: v.record(v.string(), v.tuple([v.string(), v.string(), v.boolean()])),
+      highRisk: v.optional(v.array(v.string())),
+    })),
+  }),
+  scopes: v.array(v.string()),
+})
+const storedTokenSchema = v.object({
+  accessToken: v.string(),
+  expiresAt: v.optional(v.number()),
+  refreshToken: v.optional(v.string()),
+  scopes: v.array(v.string()),
+  tokenType: v.string(),
+})
+const tokenResponseSchema = v.object({
+  access_token: v.string(),
+  expires_in: v.optional(v.number()),
+  id_token: v.optional(v.string()),
+  refresh_token: v.optional(v.string()),
+  scope: v.optional(v.string()),
+  token_type: v.optional(v.string()),
+})
+const approvalInputSchema = v.variant("kind", [
+  v.object({ input: v.unknown(), kind: v.literal("method") }),
+  v.object({ body: v.optional(v.string()), contentType: v.optional(v.string()), kind: v.literal("fetch"), method: v.string(), url: v.string() }),
+])
+
 function isDefinition(value: unknown): value is ConnectionDefinition {
-  return Boolean(value) && typeof value === "object" && "provider" in (value as object) && "scopes" in (value as object)
+  return v.is(definitionSchema, value)
 }
 
 async function resolveValue(value: ConnectionValue | undefined): Promise<string | undefined> {
-  return typeof value === "function" ? await value() : value
+  return v.is(v.string(), value) || value === undefined ? value : await value()
 }
 
 function base64Url(bytes: Uint8Array): string {
@@ -115,17 +155,19 @@ function parseToken(value: string, name: string): StoredToken {
   catch {
     throw new ConnectionError("invalid", `Stored token for Connection "${name}" is invalid.`, { details: { connection: name } })
   }
-  if (!parsed || typeof parsed !== "object" || !("accessToken" in parsed) || typeof parsed.accessToken !== "string") {
+  const token = v.safeParse(storedTokenSchema, parsed)
+  if (!token.success) {
     throw new ConnectionError("reauth_required", `Connection "${name}" is not connected. Run \`vitehub connections connect ${name}\`.`, { details: { connection: name } })
   }
-  return parsed as StoredToken
+  return token.output
 }
 
 function buildMethodRequest(catalog: ConnectionApiCatalog, method: string, input: unknown): { body?: string, method: string, url: string } {
   const entry = catalog.methods[method]
   if (!entry) throw new ConnectionError("invalid", `Unknown method "${method}".`)
   const [httpMethod, template, acceptsBody] = entry
-  const params: Record<string, unknown> = input && typeof input === "object" ? { ...(input as Record<string, unknown>) } : {}
+  const parsedInput = v.safeParse(v.record(v.string(), v.unknown()), input)
+  const params: Record<string, unknown> = parsedInput.success ? { ...parsedInput.output } : {}
   const body = params.requestBody
   delete params.requestBody
   const path = template.replace(/\{(\+?)([^}]+)\}/g, (_match, reserved: string, parameter: string) => {
@@ -140,7 +182,7 @@ function buildMethodRequest(catalog: ConnectionApiCatalog, method: string, input
     for (const item of Array.isArray(value) ? value : [value]) url.searchParams.append(parameter, String(item))
   }
   return {
-    ...(acceptsBody && body !== undefined ? { body: JSON.stringify(body) } : {}),
+    body: acceptsBody && body !== undefined ? JSON.stringify(body) : undefined,
     method: httpMethod,
     url: url.toString(),
   }
@@ -149,9 +191,8 @@ function buildMethodRequest(catalog: ConnectionApiCatalog, method: string, input
 async function providerMessage(response: Response): Promise<string | undefined> {
   try {
     const body: unknown = await response.clone().json()
-    const error = body && typeof body === "object" && "error" in body ? body.error : undefined
-    const message = error && typeof error === "object" && "message" in error ? error.message : undefined
-    return typeof message === "string" ? message.slice(0, 300) : undefined
+    const parsed = v.safeParse(v.object({ error: v.object({ message: v.string() }) }), body)
+    return parsed.success ? parsed.output.error.message.slice(0, 300) : undefined
   }
   catch {
     return undefined
@@ -171,7 +212,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   let store: Promise<ConnectionStore> | undefined
   const definitions = new Map<string, Promise<ConnectionDefinition | undefined>>()
 
-  const getStore = () => (store ??= Promise.resolve(typeof options.store === "function" ? options.store() : options.store).catch((error: unknown) => {
+  const getStore = () => (store ??= Promise.resolve(v.is(v.function(), options.store) ? options.store() : options.store).catch((error: unknown) => {
     store = undefined
     throw error
   }))
@@ -180,12 +221,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const entry = Object.hasOwn(options.definitions, name) ? options.definitions[name] : undefined
     if (!entry) return undefined
     if (isDefinition(entry)) return entry
+    if (!v.is(v.function(), entry)) return undefined
     let loaded = definitions.get(name)
     if (!loaded) {
       loaded = entry().then((module) => {
         if (isDefinition(module)) return module
-        const exported = module && typeof module === "object" && "default" in module ? module.default : undefined
-        return isDefinition(exported) ? exported : undefined
+        const parsedModule = v.safeParse(v.object({ default: v.unknown() }), module)
+        return parsedModule.success && isDefinition(parsedModule.output.default) ? parsedModule.output.default : undefined
       })
       definitions.set(name, loaded)
     }
@@ -203,8 +245,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return {
       actor: envActor(actor),
       admin: true,
-      ...(options.traceId ? { traceId: options.traceId } : {}),
-      ...(options.invocationId ? { invocationId: options.invocationId } : {}),
+      traceId: options.traceId,
+      invocationId: options.invocationId,
     }
   }
 
@@ -218,8 +260,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       operationId: crypto.randomUUID(),
       outcome: "denied",
       timestamp: new Date(now()).toISOString(),
-      ...(options.traceId ? { traceId: options.traceId } : {}),
-      ...(options.invocationId ? { invocationId: options.invocationId } : {}),
+      traceId: options.traceId,
+      invocationId: options.invocationId,
     }
     await (await getStore()).access.append(event)
   }
@@ -229,29 +271,33 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const clientId = await resolveValue(provider.clientId)
     const clientSecret = await resolveValue(provider.clientSecret)
     if (!clientId) throw new ConnectionError("invalid", `Provider "${provider.id}" has no client id.`)
+    const form = new URLSearchParams({ ...parameters, client_id: clientId })
+    if (clientSecret) form.set("client_secret", clientSecret)
     const response = await request(provider.tokenEndpoint, {
-      body: new URLSearchParams({ ...parameters, client_id: clientId, ...(clientSecret ? { client_secret: clientSecret } : {}) }),
+      body: form,
       headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
       method: "POST",
     })
     const body: unknown = await response.json().catch(() => undefined)
-    const error = body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : undefined
+    const parsedError = v.safeParse(v.object({ error: v.string() }), body)
+    const error = parsedError.success ? parsedError.output.error : undefined
     if (!response.ok || error) {
       throw new ConnectionError(error === "invalid_grant" ? "reauth_required" : "provider", `Provider "${provider.id}" rejected the token request${error ? ` (${error})` : ""}.`, {
         details: { status: response.status },
       })
     }
-    if (!body || typeof body !== "object" || !("access_token" in body) || typeof body.access_token !== "string") {
+    const token = v.safeParse(tokenResponseSchema, body)
+    if (!token.success) {
       throw new ConnectionError("provider", `Provider "${provider.id}" returned no access token.`)
     }
-    return body as ConnectionTokenResponse
+    return token.output
   }
 
   function toStoredToken(response: ConnectionTokenResponse, previous?: StoredToken): StoredToken {
     return {
       accessToken: response.access_token,
-      ...(response.expires_in ? { expiresAt: now() + response.expires_in * 1000 } : {}),
-      ...(response.refresh_token ?? previous?.refreshToken ? { refreshToken: response.refresh_token ?? previous?.refreshToken } : {}),
+      expiresAt: response.expires_in === undefined ? undefined : now() + response.expires_in * 1000,
+      refreshToken: response.refresh_token ?? previous?.refreshToken,
       scopes: splitScopes(response.scope) ?? previous?.scopes ?? [],
       tokenType: response.token_type ?? "Bearer",
     }
@@ -345,16 +391,19 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         try {
           let token = parseToken(secret.unseal(), context.name)
           if (expiresSoon(token)) token = await refresh(context.name, context.definition, token.accessToken, false)
-          const call = (current: StoredToken) => request(providerRequest.url, {
-            ...(providerRequest.body === undefined ? {} : { body: providerRequest.body }),
-            headers: {
+          const call = (current: StoredToken) => {
+            const headers: Record<string, string> = {
               accept: "application/json",
               authorization: `${current.tokenType === "bearer" ? "Bearer" : current.tokenType} ${current.accessToken}`,
-              ...(providerRequest.body === undefined ? {} : { "content-type": init.contentType ?? "application/json" }),
-            },
-            method: providerRequest.method,
-            ...(init.signal ? { signal: init.signal } : {}),
-          })
+            }
+            if (providerRequest.body !== undefined) headers["content-type"] = init.contentType ?? "application/json"
+            return request(providerRequest.url, {
+              body: providerRequest.body,
+              headers,
+              method: providerRequest.method,
+              signal: init.signal,
+            })
+          }
           let response = await call(token)
           if (response.status === 401) {
             token = await refresh(context.name, context.definition, token.accessToken, true)
@@ -404,7 +453,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         kind: providerRequest.action,
         payload: {
           connection: context.name,
-          ...(providerRequest.input === undefined ? {} : { input: providerRequest.input }),
+          input: providerRequest.input,
           method: providerRequest.method,
           url: providerRequest.url,
         },
@@ -422,8 +471,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         input: approvalInput,
         name: context.name,
         status: "pending",
-        ...(context.options.traceId ? { traceId: context.options.traceId } : {}),
-        ...(context.options.invocationId ? { invocationId: context.options.invocationId } : {}),
+        traceId: context.options.traceId,
+        invocationId: context.options.invocationId,
       }
       await (await getStore()).approvals.create(approval)
       throw new ConnectionError("approval_required", `Approval is required for ${providerRequest.action} on Connection "${context.name}". Request: ${approval.id}.`, {
@@ -456,16 +505,16 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const write = method !== "GET" && method !== "HEAD"
     const allowed = Object.values(providerApis(context.definition)).some(catalog => url.origin === new URL(catalog.rootUrl).origin)
     if (!allowed) throw new ConnectionError("invalid", `Connection "${context.name}" does not send its token to ${url.origin}.`, { details: { connection: context.name } })
-    if (init.body !== undefined && init.body !== null && typeof init.body !== "string") {
+    if (init.body !== undefined && init.body !== null && !v.is(v.string(), init.body)) {
       throw new ConnectionError("invalid", "Connection fetch accepts only a string body.")
     }
     const body = init.body ?? undefined
     const contentType = new Headers(init.headers).get("content-type") ?? undefined
     return await governed(
       context,
-      { action: "fetch", ...(body === undefined ? {} : { body }), highRisk: false, input: { method, url: url.toString() }, method, url: url.toString(), write },
-      { ...(body === undefined ? {} : { body }), ...(contentType ? { contentType } : {}), kind: "fetch", method, url: url.toString() },
-      { ...(contentType ? { contentType } : {}), ...(init.signal ? { signal: init.signal } : {}) },
+      { action: "fetch", body, highRisk: false, input: { method, url: url.toString() }, method, url: url.toString(), write },
+      { body, contentType, kind: "fetch", method, url: url.toString() },
+      { contentType, signal: init.signal ?? undefined },
     )
   }
 
@@ -489,12 +538,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const declared = [...loaded.scopes]
     const granted = state?.scopes ?? []
     return {
-      ...(state?.accountId ? { account: { id: state.accountId, ...(state.accountEmail ? { email: state.accountEmail } : {}) } } : {}),
+      account: state?.accountId ? { id: state.accountId, email: state.accountEmail } : undefined,
       actions: connectionActions(loaded),
-      ...(state?.connectedAt ? { connectedAt: state.connectedAt } : {}),
+      connectedAt: state?.connectedAt,
       name,
       provider: loaded.provider.id,
-      ...(state?.refreshedAt ? { refreshedAt: state.refreshedAt } : {}),
+      refreshedAt: state?.refreshedAt,
       scopes: {
         declared,
         granted,
@@ -562,8 +611,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
     const timestamp = new Date(now()).toISOString()
     await connections.state.put({
-      ...(account?.email ? { accountEmail: account.email } : {}),
-      ...(account ? { accountId: account.id } : {}),
+      accountEmail: account?.email,
+      accountId: account?.id,
       connectedAt: timestamp,
       name,
       refreshedAt: timestamp,
@@ -618,16 +667,20 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   }
 
   async function approvals(input: { name?: string, status?: ConnectionApprovalStatus } = {}): Promise<ConnectionApproval[]> {
-    return await (await getStore()).approvals.list(input)
+    const connections = await getStore()
+    await connections.approvals.recover(new Date(now() - APPROVAL_EXECUTION_TTL_MS).toISOString())
+    return await connections.approvals.list(input)
   }
 
   async function approve(input: { actor?: string, id: string }): Promise<{ approval: ConnectionApproval, result?: unknown }> {
     const connections = await getStore()
+    await connections.approvals.recover(new Date(now() - APPROVAL_EXECUTION_TTL_MS).toISOString())
     const decidedAt = new Date(now()).toISOString()
     const approval = await connections.approvals.transition(input.id, "pending", "approved", { decidedAt, decidedBy: input.actor ?? "user:local" })
     if (!approval) throw new ConnectionError("invalid", `Approval "${input.id}" is not pending.`)
-    const stored = approval.input as ApprovalInput
+    const signal = AbortSignal.timeout(APPROVAL_EXECUTION_TTL_MS)
     try {
+      const stored = v.parse(approvalInputSchema, approval.input)
       const loaded = await definition(approval.name)
       const context: CallContext = {
         actor: approval.actor,
@@ -635,27 +688,30 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         definition: loaded,
         name: approval.name,
         options: {
-          ...(approval.traceId ? { traceId: approval.traceId } : {}),
-          ...(approval.invocationId ? { invocationId: approval.invocationId } : {}),
+          traceId: approval.traceId,
+          invocationId: approval.invocationId,
         },
       }
       let result: unknown
       if (stored.kind === "fetch") {
         const response = await callFetch(context, stored.url, {
-          ...(stored.body === undefined ? {} : { body: stored.body }),
-          ...(stored.contentType ? { headers: { "content-type": stored.contentType } } : {}),
+          body: stored.body,
+          headers: stored.contentType ? { "content-type": stored.contentType } : undefined,
           method: stored.method,
+          signal,
         })
         result = response ? { status: response.status } : undefined
       }
       else {
-        result = await callMethod(context, approval.action, stored.input)
+        result = await callMethod(context, approval.action, stored.input, signal)
       }
       const executed = await connections.approvals.transition(input.id, "approved", "executed")
-      return { approval: executed ?? approval, ...(result === undefined ? {} : { result }) }
+      const output: { approval: ConnectionApproval, result?: unknown } = { approval: executed ?? await connections.approvals.get(input.id) ?? approval }
+      if (result !== undefined) output.result = result
+      return output
     }
     catch (error) {
-      const code = isConnectionError(error) ? error.code : "CONNECTION_FAILED"
+      const code = signal.aborted ? "CONNECTION_EXECUTION_UNKNOWN" : isConnectionError(error) ? error.code : "CONNECTION_FAILED"
       await connections.approvals.transition(input.id, "approved", "failed", { error: code })
       throw error
     }

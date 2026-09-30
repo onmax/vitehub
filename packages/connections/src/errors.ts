@@ -11,12 +11,20 @@ export interface ConnectionErrorDetails {
   status?: number
 }
 
+const errorCodes = {
+  approval_required: "CONNECTION_APPROVAL_REQUIRED",
+  denied: "CONNECTION_DENIED",
+  invalid: "CONNECTION_INVALID",
+  provider: "CONNECTION_PROVIDER",
+  reauth_required: "CONNECTION_REAUTH_REQUIRED",
+} as const satisfies Record<ConnectionErrorReason, ConnectionErrorCode>
+
 /** A Connection failure. The message and details never contain token values. */
 export class ConnectionError extends ViteHubError<ConnectionErrorCode, ConnectionErrorDetails> {
   readonly reason: ConnectionErrorReason
 
   constructor(reason: ConnectionErrorReason, message: string, options: { details?: ConnectionErrorDetails, requestId?: string } = {}) {
-    super(`CONNECTION_${reason.toUpperCase() as Uppercase<ConnectionErrorReason>}`, message, options)
+    super(errorCodes[reason], message, options)
     this.reason = reason
   }
 

@@ -2,6 +2,7 @@ import { describe, expectTypeOf, it } from "vitest"
 
 import { defineConnection } from "../src/definition.ts"
 import { google } from "../src/google.ts"
+import { useConnection } from "../src/runtime/state.ts"
 
 import type { GmailLabel } from "../src/google.ts"
 import type { ConnectionClient, ConnectionDefinition } from "../src/types.ts"
@@ -19,6 +20,12 @@ const connection = defineConnection({
 type Client = typeof connection extends ConnectionDefinition<infer TApis, infer TSelection> ? ConnectionClient<TApis, TSelection> : never
 declare const client: Client
 
+declare global {
+  interface ViteHubConnectionDefinitionModules {
+    typeTest: { default: typeof connection }
+  }
+}
+
 describe("Connection types", () => {
   it("exposes only selected methods", () => {
     expectTypeOf(client.gmail.users.labels.list).toBeFunction()
@@ -33,6 +40,19 @@ describe("Connection types", () => {
     await client.gmail.users.messages.modify({ id: "m1", requestBody: { addLabelIds: ["L1"] }, userId: "me" })
     // @ts-expect-error userId is required.
     await client.gmail.users.messages.modify({ id: "m1" })
+  })
+
+  it("includes skipped writes when dry run may be enabled", async () => {
+    const normal = useConnection("typeTest")
+    const dryRun = useConnection("typeTest", { dryRun: true })
+    const conditional = useConnection("typeTest", { dryRun: true as boolean })
+    type NormalResult = Awaited<ReturnType<typeof normal.gmail.users.messages.modify>>
+    expectTypeOf<Awaited<ReturnType<typeof dryRun.gmail.users.messages.modify>>>().toEqualTypeOf<NormalResult | undefined>()
+    expectTypeOf<Awaited<ReturnType<typeof conditional.gmail.users.messages.modify>>>().toEqualTypeOf<NormalResult | undefined>()
+    expectTypeOf<Awaited<ReturnType<typeof normal.gmail.users.labels.list>>>().toEqualTypeOf<Awaited<ReturnType<typeof client.gmail.users.labels.list>>>()
+    const result = await dryRun.gmail.users.messages.modify({ id: "m1", userId: "me" })
+    // @ts-expect-error A skipped write has no provider response.
+    expectTypeOf(result.id).toBeString()
   })
 
   it("checks access patterns", () => {

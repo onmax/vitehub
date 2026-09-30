@@ -12,15 +12,18 @@ Connections need the ViteHub [Database](/docs/server-primitives/database). Token
 
 ## Enable Connections
 
+Install the owner package with `pnpm add @vite-hub/connections`. Add its Vite plugin alongside the ViteHub Database plugin.
+
 ```ts [vite.config.ts]
 import { defineConfig } from 'vite'
 import { vitehub } from 'vite-hub'
+import { hubConnections } from '@vite-hub/connections/vite'
 
 export default defineConfig({
-  plugins: [vitehub({
-    database: true,
-    connections: true,
-  })],
+  plugins: [
+    vitehub({ database: true }),
+    hubConnections({ database: 'vite-hub/database/drizzle' }),
+  ],
 })
 ```
 
@@ -31,8 +34,8 @@ Set `VITEHUB_CONNECTIONS_KEY` to 32 random bytes in base64 or hex. Create one wi
 Put each definition in `server/connections/<name>.ts`, or in a `*.connection.ts` file. The file name is the Connection name.
 
 ```ts [server/connections/google.ts]
-import { defineConnection } from 'vite-hub/connections'
-import { google } from 'vite-hub/connections/google'
+import { defineConnection } from '@vite-hub/connections'
+import { google } from '@vite-hub/connections/google'
 
 export default defineConnection({
   provider: google({
@@ -74,12 +77,14 @@ vitehub connections connect google --port 8976
 
 The command prints the provider URL. Open it, grant access, and the loopback callback stores the token. A Connection has one account. To change the account, revoke the Connection first.
 
-In production, mount the management API behind Console authentication with `connections: { management: true }`. Then open `https://<your-app>/_vitehub/connections/connect/google` while you are signed in to the Console. `vitehub connections connect google --url https://<your-app>` prints that URL.
+In production, configure `hubConnections({ database: 'vite-hub/database/drizzle', management: { actor: './server/connections-actor.ts' } })`. The actor module must export a default function that checks the request's authenticated session and returns `user:<id>`, or `undefined` to deny access. `management: true` fails the production build because it has no authenticated identity resolver.
+
+Open `https://<your-app>/_vitehub/connections/connect/google` while signed in to your app. `vitehub connections connect google --url https://<your-app>` prints that URL.
 
 ## Call the API
 
 ```ts [server/tasks/label.ts]
-import { useConnection } from 'vite-hub/connections/server'
+import { useConnection } from '@vite-hub/connections/server'
 
 const gmail = useConnection('google', { actor: 'schedule:gmail' }).gmail
 
@@ -138,7 +143,7 @@ vitehub connections approvals approve approval_3kq2...
 vitehub connections approvals deny approval_3kq2...
 ```
 
-Approving runs the call once, as the actor that requested it. The access rules still apply. The approval then has status `executed` or `failed`.
+Approving runs the call once, as the actor that requested it. The access rules still apply. The approval then has status `executed` or `failed`. Execution has a five-minute deadline. If a process stops during execution, the next approval inspection or approval attempt marks expired executions as `failed` with `CONNECTION_EXECUTION_UNKNOWN`. The provider may have completed the write. Check the provider before requesting another approval; the runtime never replays an interrupted execution.
 
 ## Preview writes
 

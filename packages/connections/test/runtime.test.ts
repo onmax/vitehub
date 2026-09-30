@@ -246,6 +246,36 @@ describe("approvals", () => {
     expect(activity.find(entry => entry.operation === "mail.messages.modify" && entry.outcome === "succeeded")).toMatchObject({ actor: { id: "labeller", kind: "agent" }, invocationId: "inv-1" })
   })
 
+  it.each([false, true])("recovers an interrupted replay without repeating a provider write, dispatched=%s", async (dispatched) => {
+    const test = createTestRuntime()
+    await connect(test)
+    const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.messages.modify", { id: "m1", userId: "me" }))
+    const id = isConnectionError(error) ? error.requestId! : ""
+    await test.store.approvals.transition(id, "pending", "approved", { decidedAt: new Date(test.now.value).toISOString(), decidedBy: "user:owner" })
+    // Model interruption either before dispatch or after the provider commits the write.
+    if (dispatched) await test.runtime.client("mail", {}).call("mail.messages.modify", { id: "m1", userId: "me" })
+    const calls = test.provider.calls.length
+    const restarted = createConnectionsRuntime({ definitions: { mail: mailConnection() }, fetch: test.provider.fetch, now: () => test.now.value, store: test.store })
+    expect(await restarted.approvals({ status: "approved" })).toEqual([expect.objectContaining({ id, status: "approved" })])
+    test.now.value += 5 * 60_000
+    expect(await restarted.approvals({ status: "failed" })).toEqual([expect.objectContaining({ error: "CONNECTION_EXECUTION_UNKNOWN", id, status: "failed" })])
+    expect(await rejection(restarted.approve({ id }))).toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(test.provider.calls).toHaveLength(calls)
+  })
+
+  it("recovers interrupted approvals beyond the inspection page", async () => {
+    const test = createTestRuntime()
+    for (let index = 0; index < 101; index++) {
+      const id = `interrupted-${index}`
+      await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:labeller", createdAt: new Date(test.now.value).toISOString(), id, input: { input: { id: "m1", userId: "me" }, kind: "method" }, name: "mail", status: "pending" })
+      await test.store.approvals.transition(id, "pending", "approved", { decidedAt: new Date(test.now.value).toISOString() })
+    }
+    test.now.value += 5 * 60_000
+    expect(await test.runtime.approvals({ status: "approved" })).toEqual([])
+    expect(await test.store.approvals.get("interrupted-0")).toMatchObject({ error: "CONNECTION_EXECUTION_UNKNOWN", status: "failed" })
+    expect(test.provider.calls).toEqual([])
+  })
+
   it("denies a pending write without calling the provider", async () => {
     const test = createTestRuntime()
     await connect(test)

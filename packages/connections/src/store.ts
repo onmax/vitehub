@@ -32,6 +32,8 @@ export interface ConnectionAuthorization {
 /** Storage for Connections. Tokens live in the Env Bridge secret store. */
 export interface ConnectionStore {
   approvals: {
+    /** Mark expired approval executions as failed with an unknown provider outcome. Never replay them. */
+    recover: (before: string) => Promise<void>
     create: (approval: ConnectionApproval) => Promise<void>
     get: (id: string) => Promise<ConnectionApproval | undefined>
     list: (input: { name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApproval[]>
@@ -97,25 +99,28 @@ function parseJson(value: string): unknown {
 
 function stringArray(value: string): string[] {
   const parsed = parseJson(value)
-  return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : []
+  const result = v.safeParse(v.array(v.string()), parsed)
+  if (!result.success) throw new ConnectionError("invalid", "Stored Connection scopes are invalid.")
+  return result.output
 }
 
 function toApproval(row: unknown): ConnectionApproval {
   const stored = v.parse(approvalRow, row)
-  return {
+  const approval: ConnectionApproval = {
     action: stored.action,
     actor: stored.actor,
     createdAt: stored.created_at,
-    ...(stored.decided_at ? { decidedAt: stored.decided_at } : {}),
-    ...(stored.decided_by ? { decidedBy: stored.decided_by } : {}),
-    ...(stored.error ? { error: stored.error } : {}),
     id: stored.id,
     input: parseJson(stored.input),
-    ...(stored.invocation_id ? { invocationId: stored.invocation_id } : {}),
     name: stored.name,
     status: stored.status,
-    ...(stored.trace_id ? { traceId: stored.trace_id } : {}),
   }
+  if (stored.decided_at) approval.decidedAt = stored.decided_at
+  if (stored.decided_by) approval.decidedBy = stored.decided_by
+  if (stored.error) approval.error = stored.error
+  if (stored.invocation_id) approval.invocationId = stored.invocation_id
+  if (stored.trace_id) approval.traceId = stored.trace_id
+  return approval
 }
 
 /**
@@ -150,16 +155,17 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
         const row = (await db.all(sql`SELECT name, status, account_id, account_email, scopes, connected_at, refreshed_at, updated_at FROM vitehub_connection_state WHERE name = ${name}`))[0]
         if (row === undefined) return undefined
         const stored = v.parse(stateRow, row)
-        return {
-          ...(stored.account_email ? { accountEmail: stored.account_email } : {}),
-          ...(stored.account_id ? { accountId: stored.account_id } : {}),
-          ...(stored.connected_at ? { connectedAt: stored.connected_at } : {}),
+        const state: ConnectionState = {
           name: stored.name,
-          ...(stored.refreshed_at ? { refreshedAt: stored.refreshed_at } : {}),
           scopes: stringArray(stored.scopes),
           status: stored.status,
           updatedAt: stored.updated_at,
         }
+        if (stored.account_email) state.accountEmail = stored.account_email
+        if (stored.account_id) state.accountId = stored.account_id
+        if (stored.connected_at) state.connectedAt = stored.connected_at
+        if (stored.refreshed_at) state.refreshedAt = stored.refreshed_at
+        return state
       },
       async put(state) {
         await initialize()
@@ -181,6 +187,10 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
       },
     },
     approvals: {
+      async recover(before) {
+        await initialize()
+        await db.run(sql`UPDATE vitehub_connection_approvals SET status = 'failed', error = 'CONNECTION_EXECUTION_UNKNOWN' WHERE status = 'approved' AND (decided_at IS NULL OR decided_at <= ${before})`)
+      },
       async create(approval) {
         await initialize()
         await db.run(sql`INSERT INTO vitehub_connection_approvals (id, name, actor, action, input, status, trace_id, invocation_id, created_at) VALUES (${approval.id}, ${approval.name}, ${approval.actor}, ${approval.action}, ${JSON.stringify(approval.input ?? null)}, ${approval.status}, ${approval.traceId ?? null}, ${approval.invocationId ?? null}, ${approval.createdAt})`)

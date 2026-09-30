@@ -133,21 +133,21 @@ type MethodInput<TSignature> = TSignature extends { body: infer TBody, params: i
 type MethodResponse<TSignature> = TSignature extends { response: infer TResponse } ? TResponse : never
 
 /** A typed provider method. In dry run, a skipped write resolves to `undefined`. */
-export type ConnectionMethod<TSignature> = object extends MethodInput<TSignature>
-  ? (input?: MethodInput<TSignature>, options?: ConnectionCallOptions) => Promise<MethodResponse<TSignature>>
-  : (input: MethodInput<TSignature>, options?: ConnectionCallOptions) => Promise<MethodResponse<TSignature>>
+export type ConnectionMethod<TSignature, TDryRun extends boolean = false> = object extends MethodInput<TSignature>
+  ? (input?: MethodInput<TSignature>, options?: ConnectionCallOptions) => Promise<MethodResponse<TSignature> | (true extends TDryRun ? undefined : never)>
+  : (input: MethodInput<TSignature>, options?: ConnectionCallOptions) => Promise<MethodResponse<TSignature> | (true extends TDryRun ? undefined : never)>
 
 type Head<TId extends string> = TId extends `${infer THead}.${string}` ? THead : TId
 
 /** Nested client built from dotted method ids, for example `gmail.users.labels.list()`. */
-export type ConnectionClientTree<TMethods> = {
-  readonly [THead in Head<MethodId<TMethods>>]: (THead extends keyof TMethods ? ConnectionMethod<TMethods[THead]> : unknown)
-    & ConnectionClientTree<{ [TId in MethodId<TMethods> as TId extends `${THead}.${infer TRest}` ? TRest : never]: TMethods[TId] }>
+export type ConnectionClientTree<TMethods, TDryRun extends boolean = false> = {
+  readonly [THead in Head<MethodId<TMethods>>]: (THead extends keyof TMethods ? ConnectionMethod<TMethods[THead], TDryRun> : unknown)
+    & ConnectionClientTree<{ [TId in MethodId<TMethods> as TId extends `${THead}.${infer TRest}` ? TRest : never]: TMethods[TId] }, TDryRun>
 }
 
 type SelectionPatterns<TSelection, TApi> = TSelection extends { readonly [TKey in TApi & PropertyKey]?: readonly (infer TPattern)[] } ? TPattern : never
 
-export type ConnectionClient<TApis extends object = object, TSelection = ConnectionApiSelection<TApis>> = {
+export type ConnectionClient<TApis extends object = object, TSelection = ConnectionApiSelection<TApis>, TDryRun extends boolean = false> = {
   readonly name: string
   /**
    * Call a provider URL with the Connection token. GET is a read. Other methods are
@@ -155,7 +155,7 @@ export type ConnectionClient<TApis extends object = object, TSelection = Connect
    */
   fetch: (input: string | URL, init?: RequestInit) => Promise<Response>
 } & {
-  readonly [TApi in keyof TApis & keyof TSelection]: ConnectionClientTree<SelectedMethods<TApis[TApi], SelectionPatterns<TSelection, TApi>>>
+  readonly [TApi in keyof TApis & keyof TSelection]: ConnectionClientTree<SelectedMethods<TApis[TApi], SelectionPatterns<TSelection, TApi>>, TDryRun>
 }
 
 /** A write that dry run skipped. The fields match the Channel dry-run record. */

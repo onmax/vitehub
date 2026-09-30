@@ -5,7 +5,7 @@ import { createConnectionsHandler } from "../src/http.ts"
 import { ACCESS_TOKEN, connect, createTestRuntime, REFRESH_TOKEN } from "./helpers.ts"
 
 function cli(test = createTestRuntime()) {
-  const handler = createConnectionsHandler({ runtime: () => test.runtime })
+  const handler = createConnectionsHandler({ actor: () => "user:local", runtime: () => test.runtime })
   const output = { stderr: "", stdout: "" }
   const context = {
     env: {},
@@ -80,6 +80,19 @@ describe("vitehub connections", () => {
     expect(await harness.run("activity", ["mail"])).toBe(0)
     expect(harness.output.stdout).toMatch(/^\d{4}-\d{2}-\d{2}T\S+ {2}succeeded {2}\S+ {2}mail\.labels\.list {2}service:schedule:mail /m)
     expect(harness.output.stdout).not.toContain("undefined")
+  })
+
+  it("rejects malformed successful management responses", async () => {
+    const output = { stderr: "", stdout: "" }
+    const context = {
+      env: {},
+      stderr: { write: (chunk: string | Uint8Array) => (output.stderr += String(chunk)) },
+      stdout: { write: (chunk: string | Uint8Array) => (output.stdout += String(chunk)) },
+    }
+    const options = { fetch: async () => Response.json({ connections: [{ name: "mail" }] }) }
+    expect(await runConnectionsCli("list", [], context, options)).toBe(1)
+    expect(output.stderr).toContain("invalid Connections response")
+    expect(output.stdout).toBe("")
   })
 
   it("reports errors and unknown options", async () => {

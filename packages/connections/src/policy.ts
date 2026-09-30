@@ -20,12 +20,14 @@ export function envActor(actor: string): EnvActor {
 
 /** The provider API catalogs of a definition, by API name. */
 export function providerApis(definition: ConnectionDefinition): Readonly<Record<string, ConnectionApiCatalog>> {
+  // SAFETY: ConnectionProvider maps each named API to a ConnectionApiCatalog; the default object generic erases those keys.
   return definition.provider.apis as Readonly<Record<string, ConnectionApiCatalog>>
 }
 
 /** List the API methods that a definition exposes, as action ids. */
 export function connectionActions(definition: ConnectionDefinition): ConnectionActionInfo[] {
   const apis = providerApis(definition)
+  // SAFETY: ConnectionApiSelection maps each named API to optional string patterns; the default object generic erases those keys.
   const selection = definition.api as Readonly<Record<string, readonly string[] | undefined>> | undefined
   const actions: ConnectionActionInfo[] = []
   for (const [api, catalog] of Object.entries(apis)) {
