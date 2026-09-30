@@ -81,6 +81,18 @@ function tokenizeAgentSource(source: string) {
   const tokens: string[] = []
   const lineBreaks = new Set<number>()
   let previousEnd = 0
+  function closesControlCondition(index: number): boolean {
+    if (tokens[index] !== ")") return false
+    let depth = 0
+    for (let cursor = index; cursor >= 0; cursor--) {
+      if ([")", "]", "}"].includes(tokens[cursor]!)) depth++
+      else if (tokens[cursor] === "(") {
+        depth--
+        if (depth === 0) return ["if", "for", "while", "switch", "catch", "with"].includes(tokens[cursor - 1] ?? "")
+      }
+    }
+    return false
+  }
   const tokenPattern = /"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?[\d_]+)?)n?|(?:[\p{ID_Start}$_]|\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4})(?:(?:[\p{ID_Continue}$\u200C\u200D])|(?:\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4}))*|[^\s]/gu
   for (let match = tokenPattern.exec(source); match !== null; match = tokenPattern.exec(source)) {
     let token = match[0]
@@ -88,7 +100,7 @@ function tokenizeAgentSource(source: string) {
     if (/[\r\n\u2028\u2029]/.test(source.slice(previousEnd, match.index))) lineBreaks.add(tokens.length)
     const previous = tokens.at(-1)
     const endsExpression = previous !== undefined && (
-      /^(?:\d|\.\d|["'`]|\/.)/.test(previous) || [")", "]", "}"].includes(previous)
+      /^(?:\d|\.\d|["'`]|\/.)/.test(previous) || ([")", "]", "}"].includes(previous) && !closesControlCondition(tokens.length - 1))
       || (["+", "-"].includes(previous) && tokens.at(-2) === previous)
       || (isIdentifier(previous) && !["return", "throw", "yield", "await", "case", "else", "in", "of", "instanceof", "typeof", "void", "delete", "new"].includes(previous))
     )
@@ -945,6 +957,21 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (["(", "[", "{"].includes(token)) depth++
       else if ([")", "]", "}"].includes(token)) depth--
       if (visibleDeclaration(reference) !== undefined && tokens[reference - 1] !== ".") mutatedBindings.add(token)
+    }
+  }
+  // A reassigned global freeze helper cannot be trusted for static inspection.
+  // Record direct, computed, and defineProperty writes before recognizing any
+  // Object.freeze call as value-preserving.
+  for (let index = 0; index < tokens.length; index++) {
+    if (!globalObjectReference(index)) continue
+    const memberEnd = memberCallEnd(index)
+    const directFreeze = (tokens[index + 1] === "." && tokens[index + 2] === "freeze")
+      || (tokens[index + 1] === "[" && propertyName(tokens[index + 2] ?? "") === "freeze")
+    if (directFreeze && assignmentOperator(memberEnd)) mutatedBindings.add("Object")
+    if (tokens[index + 1] === "." && tokens[index + 2] === "defineProperty" && tokens[index + 3] === "(") {
+      const target = resolveReference(index + 4)
+      const property = resolveReference(index + 6)
+      if (globalObjectReference(target) && propertyName(tokens[property] ?? "") === "freeze") mutatedBindings.add("Object")
     }
   }
   const opaqueCalls = new Set<number>()

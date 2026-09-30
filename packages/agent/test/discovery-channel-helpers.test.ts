@@ -972,6 +972,20 @@ it("preserves regex literals containing apparent Channel option writes", async (
   expect((await discover(source))?.workspace).toBeUndefined()
 })
 
+it("preserves regex literals after control conditions", async () => {
+  const source = `${imports} const options = { pullRequest: false }; if (true) /options.pullRequest = true/.test(""); export default defineAgent({ channels: { custom: github(options) } })`
+  expect((await discover(source))?.workspace).toBeUndefined()
+})
+
+it.each([
+  'Object.freeze = value => value;',
+  'Object["freeze"] = value => value;',
+  'Object.defineProperty(Object, "freeze", { value: value => value });',
+])("rejects reassigned global Object.freeze: %s", async mutation => {
+  const source = `${imports} const value = (input: unknown) => input; ${mutation} export default defineAgent({ channels: { custom: github(Object.freeze({ pullRequest: false })) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
 it.each(["of", "in"])("rejects member-expression for-%s Channel option targets", async operator => {
   const source = `${imports} let options = { pullRequest: false }; for (options.pullRequest ${operator} { enabled: true }) {} export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
