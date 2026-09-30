@@ -1,6 +1,8 @@
+import { execFileSync } from "node:child_process"
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 
 import { createBuilder, resolveConfig } from "vite"
 import { describe, expect, it } from "vitest"
@@ -198,6 +200,16 @@ describe("built-in deployment preset integration", () => {
 
       const config = await resolve()
       expect(requiredSecrets(config)).toEqual(["TELEGRAM_BOT_TOKEN"])
+      await symlink(join(import.meta.dirname, "../../..", "node_modules"), join(root, "node_modules"), "dir")
+      const moduleUrl = pathToFileURL(join(root, ".vitehub", "env", "server.mjs")).href
+      const token = execFileSync(process.execPath, ["--input-type=module", "-e", `
+        const { useServerEnv } = await import(${JSON.stringify(moduleUrl)})
+        const serverEnv = useServerEnv({
+          env: { VITEHUB_GITHUB_TOKEN: "", GH_TOKEN: "fallback-token", GITHUB_TOKEN: "last-token", TELEGRAM_BOT_TOKEN: "telegram-token" },
+        })
+        console.log(serverEnv.github.token.unseal())
+      `], { encoding: "utf8" })
+      expect(token.trim()).toBe("fallback-token")
       const types = await readFile(join(root, ".vitehub", "types", "env.d.ts"), "utf8")
       expect(types).toContain("\"telegram\": {")
       expect(types).toContain("\"botToken\": import(\"vite-hub/env/secret\").SecretEnv<string>")

@@ -74,7 +74,7 @@ function staticOptionKeys(tokens: string[], start: number, empty: string): Reado
  * `vite-hub/agent/channels`, and Channel shorthands such as `channels: { telegram: { ... } }`.
  */
 export function discoverBuiltInChannelUses(source: string, kinds: Iterable<string>): DiscoveredChannelUse[] {
-  const { tokens } = tokenizeAgentSource(source)
+  const { tokens, lineBreaks } = tokenizeAgentSource(source)
   const known = new Set(kinds)
   const bindings = new Map<string, string>()
   const namespaces = new Set<string>()
@@ -103,7 +103,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
   const uses: Array<DiscoveredChannelUse & { index: number }> = []
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i - 1] === "." || tokens[i - 1] === "as") continue
-    const factory = !isShadowedAt(tokens, i, tokens[i]!, shadowBindings) && factoryCall(tokens, i, bindings, namespaces, known)
+    const factory = !isShadowedAt(tokens, i, tokens[i]!, shadowBindings, lineBreaks) && factoryCall(tokens, i, bindings, namespaces, known)
     if (factory) uses.push({ index: i, kind: factory.name, optionKeys: staticOptionKeys(tokens, factory.open + 1, ")") })
     // Shorthands count only in the top-level `channels` option of defineAgent(), not in types or other objects.
     const agent = factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames)
@@ -114,7 +114,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
       visitObjectProperties(tokens, channels, (key, value) => {
         if (value === undefined) return
         const reference = channelFactoryReference(tokens, value, bindings, namespaces, known)
-        if (reference && isShadowedAt(tokens, value, tokens[value]!, shadowBindings)) return
+        if (reference && isShadowedAt(tokens, value, tokens[value]!, shadowBindings, lineBreaks)) return
         // A factory call is found by the call scan. Runtime calls a bare factory without options
         // and uses the kind it returns, whatever the key is.
         if (reference?.call) return
@@ -162,7 +162,7 @@ function localObject(tokens: string[], index: number, declarations: ReadonlyMap<
   return declaration !== undefined && tokens[declaration] === "{" && [",", "}", ")", "as", "satisfies"].includes(end!) ? declaration : undefined
 }
 
-function isShadowedAt(tokens: string[], index: number, name: string, bindings: ReadonlyMap<string, string>): boolean {
+function isShadowedAt(tokens: string[], index: number, name: string, bindings: ReadonlyMap<string, string>, lineBreaks: ReadonlySet<number>): boolean {
   if (!bindings.has(name)) return false
   if (hasLocalBinding(tokens, index, name)) return true
   const identifier = /^[A-Za-z_$][\w$]*$/
@@ -200,7 +200,11 @@ function isShadowedAt(tokens: string[], index: number, name: string, bindings: R
     const params = new Set(tokens.slice(i + 1, close).filter(token => identifier.test(token)))
     if (!params.has(name)) continue
     const body = close + 2
-    if (tokens[body] !== "{") { if (index >= body) return true; continue }
+    if (tokens[body] !== "{") {
+      const end = expressionBodyEnd(tokens, body, lineBreaks)
+      if (index >= body && index < end) return true
+      continue
+    }
     let bodyDepth = 1
     let end = body + 1
     for (; end < tokens.length && bodyDepth; end++) {
@@ -210,6 +214,29 @@ function isShadowedAt(tokens: string[], index: number, name: string, bindings: R
     if (index > body && index < end) return true
   }
   return false
+}
+
+function expressionBodyEnd(tokens: string[], start: number, lineBreaks: ReadonlySet<number>): number {
+  const stack: string[] = []
+  for (let i = start; i < tokens.length; i++) {
+    const token = tokens[i]!
+    const previous = tokens[i - 1]
+    if (stack.length === 0 && i > start && lineBreaks.has(i)
+      && /^[A-Za-z_$][\w$]*$/.test(token) && !["in", "instanceof", "as", "satisfies"].includes(token)
+      && ([")", "]", "}"].includes(previous!) || (/^[A-Za-z_$][\w$]*$/.test(previous ?? "")
+        && !["await", "new", "typeof", "void", "delete", "yield", "in", "instanceof", "as", "satisfies"].includes(previous!)))) return i
+    if (token === "(" || token === "[" || token === "{") {
+      stack.push(token)
+      continue
+    }
+    if (token === ")" || token === "]" || token === "}") {
+      if (stack.length === 0) return i
+      stack.pop()
+      continue
+    }
+    if (stack.length === 0 && [",", ";"].includes(token)) return i
+  }
+  return tokens.length
 }
 
 // Lexical declarations shadow the import throughout their block. `var` belongs

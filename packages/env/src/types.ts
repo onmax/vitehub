@@ -49,6 +49,8 @@ export type EnvSource =
     label: string
     name: string
     names?: string[]
+    /** Treat empty host values as missing when reading the ordered names. */
+    skipEmpty?: boolean
     serializable: true
   }
   | {

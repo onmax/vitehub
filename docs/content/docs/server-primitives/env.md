@@ -133,6 +133,7 @@ Pass Integration Options to `hubEnv()`.
 | --- | --- |
 | `env.source('NAME')` | Reads one host env variable. |
 | `env.source(['PRIMARY', 'FALLBACK'])` | Reads the first available env variable from a list. |
+| `env.source(['PRIMARY', 'FALLBACK'], { skipEmpty: true })` | Reads the first defined, non-empty env variable from a list. |
 | `env.custom(label, resolver)` | Resolves from a custom callback. |
 | `env.gitBranch()` | Reads the current Git branch. |
 | `env.gitCommit({ short })` | Reads the current Git commit. |

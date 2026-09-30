@@ -222,6 +222,14 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: [] }])
   })
 
+  it("keeps imported factories visible after module-level computed destructuring", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      const { [telegram]: value } = source;
+      telegram()
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
   it("respects function, class, and catch bindings in their lexical scopes", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
@@ -231,6 +239,18 @@ describe("built-in Channel discovery", () => {
       const named = function telegram() { return telegram() }
       const namedClass = class telegram { static run() { return new telegram() } }
       telegram()
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
+  it.each([
+    "const format = (telegram) => telegram(); telegram()",
+    "const format = (telegram) => telegram()\ntelegram()",
+    "const callbacks = [(telegram) => telegram(), telegram()]",
+    "const format = wrap((telegram) => telegram()); telegram()",
+  ])("ends expression-bodied arrow scopes at the expression boundary: %s", (source) => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      ${source}
     `)).toEqual([{ kind: "telegram", keys: [] }])
   })
 

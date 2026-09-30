@@ -37,7 +37,7 @@ export function agentChannelEnvPlugin(): Plugin {
         const group: EnvRuntimeConfigOptions = { ...existing }
         for (const [field, { names, required, secret }] of Object.entries(fields)) {
           if (group[field] !== undefined) continue
-          group[field] = env({ optional: !required, secret, source: env.source(names) })
+          group[field] = env({ optional: !required, secret, source: env.source(names, { skipEmpty: true }) })
           changed = true
         }
         server[channel] = group
