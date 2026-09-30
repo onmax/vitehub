@@ -2,6 +2,7 @@ import type { AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-pres
 export type { AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
 import { invocationUsageWithAuxiliaryCalls } from "./internal/auxiliary-usage.ts"
 import { agentLayerMetadata, createConfiguredAgentDefinition, rememberAgentLayerOptions, resolveAgentLayerOptions } from "./agent-layers.ts"
+import { readDiscoveredAgentName } from "./internal/discovered-agent-name.ts"
 import { asUnknownBoundary, hasRuntimeType, isCallableMember, isRuntimeObject, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { Diagnostic } from "nostics"
 import agentRegistry from "#vitehub/agent/registry"
@@ -805,6 +806,11 @@ const agentWorkflowHandles = new WeakMap<object, Map<string, WorkflowHandle<Agen
 const agentWorkflowNames = new Set<string>()
 const agentIdentityOwner = Symbol("vitehub.agentIdentityOwner")
 
+// Name journal records like the Console lists them: explicit name, host identity, then discovered file name.
+function agentInvocationName(agent: { name?: string }, context: Pick<AgentRuntimeContext, "agentIdentity">): string | undefined {
+  return agent.name || context.agentIdentity?.name || readDiscoveredAgentName(agent)
+}
+
 interface DefaultAgentWorkflowRuntimeBinding extends AgentWorkflowRuntimeBinding {
   discoveryDefault: true
 }
@@ -1036,7 +1042,7 @@ async function runAgentAsWorkflow<
       const journal = await bindAgentInvocations(agent.invocations, {
         ...context,
         run: { ...context.run, runId },
-      }, { agentName: agent.name || context.agentIdentity?.name, terminalTakeover: true })
+      }, { agentName: agentInvocationName(agent, context), terminalTakeover: true })
       await journal?.finish(status, error)
     }
     catch (journalError) {
@@ -1189,7 +1195,7 @@ async function runAgentAsWorkflow<
       )
       await workflowRuntimeState.runWithWorkflowRuntimeEvent(workflowEvent, () => deferAgentWorkflowRecovery(recoveryHandle, {
         invocationRecovery: {
-          ...(agent.name || context.agentIdentity?.name ? { agentName: agent.name || context.agentIdentity?.name } : {}),
+          ...(agentInvocationName(agent, context) ? { agentName: agentInvocationName(agent, context) } : {}),
           runId,
           sourceRunId,
           workflowName,
@@ -1224,7 +1230,7 @@ async function runAgentAsWorkflow<
         const invocationJournal = await bindAgentInvocations(agent.invocations, {
           ...context,
           run: { ...context.run, runId: failedRunId },
-        }, { agentName: agent.name || context.agentIdentity?.name, deferClaim: ambiguous, terminalTakeover: true })
+        }, { agentName: agentInvocationName(agent, context), deferClaim: ambiguous, terminalTakeover: true })
         if (!ambiguous) await invocationJournal?.finish("failed", error)
       }
     }
@@ -1256,7 +1262,7 @@ async function runAgentAsWorkflow<
     invocationJournal = await bindAgentInvocations(agent.invocations, {
       ...context,
       run: { ...context.run, runId: options.fresh && !durableChannelDelivery ? run.id : context.run?.runId ?? run.id },
-    }, { agentName: agent.name || context.agentIdentity?.name, deferClaim: true, terminalTakeover: true })
+    }, { agentName: agentInvocationName(agent, context), deferClaim: true, terminalTakeover: true })
     if (snapshot?.status === "cancelled" || snapshot?.status === "completed" || snapshot?.status === "failed") {
       await invocationJournal?.finish(snapshot.status, snapshot.error)
     }
@@ -7465,7 +7471,7 @@ async function executeAgentInvocation<
           ? { run: { ...context.run, runId: (context as AgentRuntimeContext & { [agentInvocationRunId]: string })[agentInvocationRunId] } }
           : {}),
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      }, { agentName: (definition as AgentDefinition).name || context.agentIdentity?.name })
+      }, { agentName: agentInvocationName(definition as AgentDefinition, context) })
       : undefined
   }
   catch (error) {

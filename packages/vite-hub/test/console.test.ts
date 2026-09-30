@@ -1925,6 +1925,21 @@ describe("Agent invocation console", () => {
     await expect(agentsHandler(event("127.0.0.1"))).resolves.toEqual({ agents: ["support"] })
   })
 
+  it("records the discovered name for an unnamed Agent run from server code", async () => {
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    installConsoleInvocationFallback(invocations, process.cwd())
+    const labeller = defineAgent({ driver: { run: () => "labelled" }, runtime: false })
+    expect(installConsoleAgentDefinitions([
+      { definition: { default: labeller }, fallbackName: "labeller" },
+    ], { invocations })).toEqual(["labeller"])
+
+    const [error] = await runAgent(labeller, { prompt: "Label this email." })
+    expect(error).toBeNull()
+    const { invocations: records } = await invocations.list({ limit: 10 })
+    expect(records).toEqual([expect.objectContaining({ agentName: "labeller", status: "completed" })])
+    expect(labeller.name).toBeUndefined()
+  })
+
   it("advertises invokable Agents and their profiles only when invocation is enabled", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-invoke-agents-"))
     try {
