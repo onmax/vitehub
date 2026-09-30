@@ -1,4 +1,5 @@
 import { parseAst } from "vite"
+import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 
 const providerPackageNames = new Set(["@vite-hub/agent", "vite-hub/agent"])
 const capabilityPackageNames = new Set(["@vite-hub/agent/capabilities", "vite-hub/agent/capabilities"])
@@ -17,10 +18,10 @@ interface PositionedNode {
 function isPositionedNode(value: unknown): value is PositionedNode {
   return Boolean(
     value
-    && typeof value === "object"
-    && typeof (value as PositionedNode).type === "string"
-    && typeof (value as PositionedNode).start === "number"
-    && typeof (value as PositionedNode).end === "number",
+    && isRuntimeRecord(value)
+    && hasRuntimeType(value.type, "string")
+    && hasRuntimeType(value.start, "number")
+    && hasRuntimeType(value.end, "number"),
   )
 }
 
@@ -37,11 +38,11 @@ function visitNodes(node: PositionedNode, visit: (node: PositionedNode) => void)
 }
 
 function identifierName(value: unknown): string | undefined {
-  return isPositionedNode(value) && value.type === "Identifier" && typeof value.name === "string" ? value.name : undefined
+  return isPositionedNode(value) && value.type === "Identifier" && hasRuntimeType(value.name, "string") ? value.name : undefined
 }
 
 function literalString(value: unknown): string | undefined {
-  return isPositionedNode(value) && value.type === "Literal" && typeof value.value === "string" ? value.value : undefined
+  return isPositionedNode(value) && value.type === "Literal" && hasRuntimeType(value.value, "string") ? value.value : undefined
 }
 
 function unwrapTypeScriptExpression(node: PositionedNode): PositionedNode {
@@ -150,6 +151,16 @@ function isShadowedByLexicalDeclaration(
       if (isPositionedNode(ancestor.left) && declaredNames(ancestor.left).includes(binding)) return true
       if (isPositionedNode(ancestor.init) && declaredNames(ancestor.init).includes(binding)) return true
     }
+    if (ancestor.type === "CatchClause" && patternIdentifiers(ancestor.param).includes(binding)) return true
+    if (ancestor.type === "SwitchStatement") {
+      const cases = Array.isArray(ancestor.cases) ? ancestor.cases : []
+      // The discriminant runs outside the lexical environment shared by all cases.
+      if (!cases.some(candidate => isPositionedNode(candidate) && candidate.start <= node.start && node.end <= candidate.end)) continue
+      if (cases.some((candidate) => {
+        const statements = isPositionedNode(candidate) && Array.isArray(candidate.consequent) ? candidate.consequent : []
+        return statements.some(statement => isPositionedNode(statement) && declaredNames(statement).includes(binding))
+      })) return true
+    }
   }
   return false
 }
@@ -198,18 +209,36 @@ function objectProperty(node: PositionedNode, name: string): PositionedNode | un
   return isPositionedNode(property) && isPositionedNode(property.value) ? property.value : undefined
 }
 
-function isProviderCapabilityCall(node: PositionedNode, capabilityBindings: Set<string>, namespaces: Set<string>): boolean {
+function isProviderCapabilityCall(
+  node: PositionedNode,
+  capabilityBindings: Set<string>,
+  namespaces: Set<string>,
+  ancestors: Map<PositionedNode, PositionedNode[]>,
+): boolean {
   if (node.type !== "CallExpression" || !isPositionedNode(node.callee)) return false
-  if (node.callee.type === "Identifier") return capabilityBindings.has(identifierName(node.callee) ?? "")
+  if (node.callee.type === "Identifier") {
+    const name = identifierName(node.callee) ?? ""
+    return capabilityBindings.has(name)
+      && !isShadowedByFunctionParameter(node, name, ancestors)
+      && !isShadowedByLexicalDeclaration(node, name, ancestors)
+  }
   if (node.callee.type !== "MemberExpression" || node.callee.computed === true) return false
-  return namespaces.has(identifierName(node.callee.object) ?? "")
+  const namespace = identifierName(node.callee.object) ?? ""
+  return namespaces.has(namespace)
     && providerCapabilityNames.has(identifierName(node.callee.property) ?? "")
+    && !isShadowedByFunctionParameter(node, namespace, ancestors)
+    && !isShadowedByLexicalDeclaration(node, namespace, ancestors)
 }
 
-function hasProviderCapabilityDriver(node: PositionedNode, capabilityBindings: Set<string>, namespaces: Set<string>): boolean {
+function hasProviderCapabilityDriver(
+  node: PositionedNode,
+  capabilityBindings: Set<string>,
+  namespaces: Set<string>,
+  ancestors: Map<PositionedNode, PositionedNode[]>,
+): boolean {
   let found = false
   visitNodes(node, (descendant) => {
-    if (found || !isProviderCapabilityCall(descendant, capabilityBindings, namespaces)) return
+    if (found || !isProviderCapabilityCall(descendant, capabilityBindings, namespaces, ancestors)) return
     const options = Array.isArray(descendant.arguments) && isPositionedNode(descendant.arguments[0])
       ? unwrapTypeScriptExpression(descendant.arguments[0])
       : undefined
@@ -246,7 +275,7 @@ function hasProviderDriverDefinition(
   const driver = objectProperty(options, "driver")
   if (driver && hasProviderDriverValue(driver)) return true
   const capabilities = objectProperty(options, "capabilities")
-  return capabilities ? hasProviderCapabilityDriver(capabilities, capabilityBindings, capabilityNamespaces) : false
+  return capabilities ? hasProviderCapabilityDriver(capabilities, capabilityBindings, capabilityNamespaces, ancestors) : false
 }
 
 /** Reports whether a server module selects a provider Agent Driver from statically recognizable syntax. */

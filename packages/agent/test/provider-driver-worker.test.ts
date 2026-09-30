@@ -72,6 +72,40 @@ describe("provider Agent Drivers in Worker builds", () => {
     expect(usesProviderAgentDriver(`import { type WorkspaceOptions, workspace } from "@vite-hub/agent/presets/workspace"`)).toBe(true)
   })
 
+  it.each([
+    ["codexDriver", `codexDriver()`],
+    ["defineAgent", `defineAgent({ driver: "codex" })`],
+    ["agent", `agent.codexDriver()`],
+    ["capabilities", `defineAgent({ capabilities: [capabilities.title({ driver: "codex" })], driver: { model: "openai/gpt-5" } })`],
+  ])("respects catch and switch bindings for %s", (binding, call) => {
+    const imports = `import { codexDriver, defineAgent } from "@vite-hub/agent"; import * as agent from "@vite-hub/agent"; import * as capabilities from "@vite-hub/agent/capabilities";`
+    expect(usesProviderAgentDriver(`${imports} try {} catch (${binding}) { ${call} }`)).toBe(false)
+    expect(usesProviderAgentDriver(`${imports} switch (value) { case 0: let ${binding}; break; case 1: ${call}; }`)).toBe(false)
+    expect(usesProviderAgentDriver(`${imports} switch (value) { case 0: let ${binding}; break; case 1: ${call}; } ${call}`)).toBe(true)
+    expect(usesProviderAgentDriver(`${imports} switch (${call}) { case 0: let ${binding}; }`)).toBe(true)
+  })
+
+  it.each(["title", "progressSummary"])("respects shadowed %s Capability imports", async (capability) => {
+    const imports = `import { defineAgent } from "@vite-hub/agent"; import { ${capability} as makeCapability } from "@vite-hub/agent/capabilities";`
+    const options = `{ capabilities: [makeCapability({ driver: "codex" })], driver: { model: "openai/gpt-5" } }`
+    expect(usesProviderAgentDriver(`${imports} export default defineAgent(${options})`)).toBe(true)
+    const parameterSource = `${imports} export const make = (makeCapability) => defineAgent(${options})`
+    expect(usesProviderAgentDriver(parameterSource)).toBe(false)
+    await expect(transformServerModule(parameterSource, ["workerd", "worker"])).resolves.toBeUndefined()
+    expect(usesProviderAgentDriver(`${imports} { const makeCapability = customCapability; defineAgent(${options}) }`)).toBe(false)
+    expect(usesProviderAgentDriver(`${imports} { const makeCapability = customCapability; defineAgent(${options}) } export default defineAgent(${options})`)).toBe(true)
+  })
+
+  it.each(["title", "progressSummary"])("respects shadowed %s Capability namespaces", async (capability) => {
+    const imports = `import { defineAgent } from "@vite-hub/agent"; import * as capabilities from "@vite-hub/agent/capabilities";`
+    const options = `{ capabilities: [capabilities.${capability}({ driver: "codex" })], driver: { run: () => "ok" } }`
+    expect(usesProviderAgentDriver(`${imports} export default defineAgent(${options})`)).toBe(true)
+    expect(usesProviderAgentDriver(`${imports} export const make = (capabilities: object) => defineAgent(${options})`)).toBe(false)
+    const blockSource = `${imports} { const capabilities = customCapabilities; defineAgent(${options}) }`
+    expect(usesProviderAgentDriver(blockSource)).toBe(false)
+    await expect(transformServerModule(blockSource, ["workerd", "worker"])).resolves.toBeUndefined()
+  })
+
   it("detects Worker resolve conditions", () => {
     expect(resolvesWorkerConditions(["workerd", "worker"])).toBe(true)
     expect(resolvesWorkerConditions(["worker"])).toBe(true)
