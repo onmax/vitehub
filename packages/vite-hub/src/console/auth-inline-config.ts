@@ -27,7 +27,7 @@ const githubLogin = /^[a-z\d][a-z\d-]{0,38}$/i
 export function resolveInlineConsoleAuthGates(config: InlineConsoleAuth): InlineConsoleAuthGates {
   const orgs = config.org === undefined ? [] : [config.org].flat()
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Inline config crosses the JSON-serialized Vite config boundary, so verify each organization login.
-  if (orgs.some(org => typeof org !== "string" || !githubLogin.test(org))) {
+  if ((config.org !== undefined && orgs.length === 0) || orgs.some(org => typeof org !== "string" || !githubLogin.test(org))) {
     throw new TypeError("[vitehub] Inline Console Auth org must be a GitHub organization login.")
   }
   if (config.allowedEmails !== undefined && (!Array.isArray(config.allowedEmails) || config.allowedEmails.length === 0)) {

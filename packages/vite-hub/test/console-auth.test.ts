@@ -431,7 +431,7 @@ describe("independent Console Auth", () => {
     const github: Record<string, unknown> = {
       "/user": { id: 1, login: "octocat", name: null, avatar_url: "https://avatars.example/octocat" },
       "/user/memberships/orgs/acme": { state: "active" },
-      "/user/emails": [
+      "/user/emails?per_page=100&page=1": [
         { email: "secondary@example.com", verified: true },
         { email: "primary@example.com", primary: true, verified: true },
       ],
@@ -439,8 +439,9 @@ describe("independent Console Auth", () => {
     const requests: string[] = []
     vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
       const url = new URL(input)
-      requests.push(`${url.pathname} ${new Headers(init?.headers).get("authorization")}`)
-      return url.pathname in github ? Response.json(github[url.pathname]) : new Response("{}", { status: 404 })
+      requests.push(`${url.pathname}${url.search} ${new Headers(init?.headers).get("authorization")}`)
+      const path = `${url.pathname}${url.search}`
+      return path in github ? Response.json(github[path]) : new Response("{}", { status: 404 })
     })
     try {
       const databasePath = join(root, "nested", "console-auth.sqlite")
@@ -460,11 +461,18 @@ describe("independent Console Auth", () => {
         user: { email: "primary@example.com", emailVerified: true, image: "https://avatars.example/octocat", name: "octocat" },
       })
       expect(requests).toContain("/user/memberships/orgs/acme Bearer token")
-      github["/user/emails"] = [{ email: "primary@example.com", primary: true, verified: false }, { email: "other@example.com", verified: true }]
+      github["/user/emails?per_page=100&page=1"] = [{ email: "primary@example.com", primary: true, verified: false }, { email: "other@example.com", verified: true }]
       expect((await getUserInfo({ accessToken: "token" }))?.user.email).toBe("other@example.com")
-      github["/user/emails"] = [{ email: "primary@example.com", primary: true, verified: false }]
+      github["/user/emails?per_page=100&page=1"] = Array.from({ length: 100 }, () => ({ email: "secondary@example.com", verified: true }))
+      github["/user/emails?per_page=100&page=2"] = [{ email: "primary@example.com", primary: true, verified: true }]
+      expect((await getUserInfo({ accessToken: "token" }))?.user.email).toBe("primary@example.com")
+      github["/user/emails?per_page=100&page=2"] = []
+      expect((await getUserInfo({ accessToken: "token" }))?.user.email).toBe("secondary@example.com")
+      delete github["/user/emails?per_page=100&page=2"]
       expect(await getUserInfo({ accessToken: "token" })).toBeNull()
-      github["/user/emails"] = [{ email: "primary@example.com", primary: true, verified: true }]
+      github["/user/emails?per_page=100&page=1"] = [{ email: "primary@example.com", primary: true, verified: false }]
+      expect(await getUserInfo({ accessToken: "token" })).toBeNull()
+      github["/user/emails?per_page=100&page=1"] = [{ email: "primary@example.com", primary: true, verified: true }]
       github["/user/memberships/orgs/acme"] = { state: "pending" }
       expect(await getUserInfo({ accessToken: "token" })).toBeNull()
       expect(await getUserInfo({})).toBeNull()
@@ -482,6 +490,8 @@ describe("independent Console Auth", () => {
       expect(emailsOnly.signIn.scopes).toEqual(["user:email"])
       expect(emailsOnlyOptions({ env: {}, requestOrigin: "https://example.com" }).socialProviders?.github).not.toHaveProperty("getUserInfo")
 
+      expect(() => createInlineConsoleAuth({ provider: "github", org: [], allowedEmails: ["primary@example.com"], databasePath })).toThrow("GitHub organization login")
+      expect(() => resolveConsoleAuthConfig(root, { provider: "github", org: [], allowedEmails: ["primary@example.com"], databasePath })).toThrow("GitHub organization login")
       expect(() => createInlineConsoleAuth({ provider: "github", org: "../admin", databasePath })).toThrow("GitHub organization login")
       expect(() => createInlineConsoleAuth({ provider: "github", databasePath })).toThrow("allowedEmails, org, or both")
       expect(() => resolveConsoleAuthConfig(root, { provider: "github", org: "acme" })).toThrow("Set databasePath or dataDir")
@@ -489,6 +499,63 @@ describe("independent Console Auth", () => {
     finally {
       vi.unstubAllEnvs()
       vi.unstubAllGlobals()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it("requires new session cookies when the organization gate changes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-auth-policy-"))
+    vi.stubEnv("GITHUB_CLIENT_ID", "client-id")
+    vi.stubEnv("GITHUB_CLIENT_SECRET", "client-secret")
+    vi.stubEnv("BETTER_AUTH_SECRET", "test-secret-at-least-32-bytes-long")
+    const databases: DatabaseSync[] = []
+    try {
+      const databasePath = join(root, "console-auth.sqlite")
+      const withGate = (org?: string | string[]) => {
+        const input = createInlineConsoleAuth({ provider: "github", allowedEmails: ["user@example.com"], org, databasePath })
+        const options = input.auth.options
+        if (typeof options !== "function") throw new TypeError("Expected resolved Console Auth options.")
+        const resolved = options({ env: {}, requestOrigin: "https://example.com" })
+        if (!(resolved.database instanceof DatabaseSync)) throw new TypeError("Expected a SQLite database.")
+        databases.push(resolved.database)
+        // Use a local sign-in to issue real Better Auth cookies without a live GitHub OAuth exchange.
+        return { ...input, auth: defineAuth(() => ({ ...resolved, emailAndPassword: { enabled: true } })) }
+      }
+      const emailOnly = withGate()
+      const definition = createConsoleAuthDefinition(emailOnly)
+      const signUp = new Request("https://example.com/api/_vitehub/console/auth/sign-up/email", {
+        body: JSON.stringify({ email: "user@example.com", name: "User", password: "passwordpassword" }),
+        headers: { "content-type": "application/json", origin: "https://example.com" },
+        method: "POST",
+      })
+      await prepareConsoleAuth(emailOnly, definition, signUp)
+      const response = await handleAuthRequest(definition, signUp)
+      expect(response.status).toBe(200)
+      const cookie = response.headers.getSetCookie().map(value => value.split(";")[0]).join("; ")
+      databases[0]!.exec('UPDATE "user" SET "emailVerified" = 1')
+      const protectedRequest = (sessionCookie: string) => new Request("https://example.com/api/_vitehub/console/status", {
+        headers: { cookie: sessionCookie },
+      })
+      expect(await requireAuthAccessRoutes(protectedRequest(cookie), [1], definition, [1])).toBeUndefined()
+      const orgInput = withGate(["acme", "other"])
+      const orgDefinition = createConsoleAuthDefinition(orgInput)
+      expect((await requireAuthAccessRoutes(protectedRequest(cookie), [1], orgDefinition, [1]))?.status).toBe(401)
+      const signIn = await handleAuthRequest(orgDefinition, new Request("https://example.com/api/_vitehub/console/auth/sign-in/email", {
+        body: JSON.stringify({ email: "user@example.com", password: "passwordpassword" }),
+        headers: { "content-type": "application/json", origin: "https://example.com" },
+        method: "POST",
+      }))
+      expect(signIn.status).toBe(200)
+      const orgCookie = signIn.headers.getSetCookie().map(value => value.split(";")[0]).join("; ")
+      expect(await requireAuthAccessRoutes(protectedRequest(orgCookie), [1], orgDefinition, [1])).toBeUndefined()
+      const equivalent = createConsoleAuthDefinition(withGate(["OTHER", "acme", "acme"]))
+      expect(await requireAuthAccessRoutes(protectedRequest(orgCookie), [1], equivalent, [1])).toBeUndefined()
+      const changed = createConsoleAuthDefinition(withGate("different"))
+      expect((await requireAuthAccessRoutes(protectedRequest(orgCookie), [1], changed, [1]))?.status).toBe(401)
+    }
+    finally {
+      for (const database of databases) database.close()
+      vi.unstubAllEnvs()
       await rm(root, { recursive: true, force: true })
     }
   })

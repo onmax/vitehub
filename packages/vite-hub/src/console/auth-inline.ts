@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto"
 import { chmodSync, mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -54,9 +55,19 @@ async function githubOrgUserInfo(orgs: readonly string[], accessToken: string | 
   if (!isGitHubProfile(profile)) return null
   const memberships = await Promise.all(orgs.map(org => githubGet(`/user/memberships/orgs/${org}`, accessToken)))
   if (!memberships.some(membership => isRecord(membership) && membership.state === "active")) return null
-  const emails = await githubGet("/user/emails", accessToken)
-  const verified = Array.isArray(emails) ? emails.filter(isVerifiedEmail) : []
-  const email = (verified.find(item => item.primary === true) ?? verified[0])?.email
+  let email: string | undefined
+  for (let page = 1; ; page++) {
+    const emails = await githubGet(`/user/emails?per_page=100&page=${page}`, accessToken)
+    if (!Array.isArray(emails)) return null
+    const verified = emails.filter(isVerifiedEmail)
+    const primary = verified.find(item => item.primary === true)
+    email ??= verified[0]?.email
+    if (primary) {
+      email = primary.email
+      break
+    }
+    if (emails.length < 100) break
+  }
   if (!email) return null
   return {
     data: profile,
@@ -66,6 +77,7 @@ async function githubOrgUserInfo(orgs: readonly string[], accessToken: string | 
 
 export function createInlineConsoleAuth(config: InlineConsoleAuth): ConsoleAuthDefinition {
   const { allowedEmails, databasePath, orgs } = resolveInlineConsoleAuthGates(config)
+  const orgPolicy = JSON.stringify([...new Set(orgs.map(org => org.toLowerCase()))].sort())
   mkdirSync(dirname(databasePath), { recursive: true })
   const database = new DatabaseSync(databasePath)
   // The database holds sessions and OAuth tokens.
@@ -77,11 +89,13 @@ export function createInlineConsoleAuth(config: InlineConsoleAuth): ConsoleAuthD
         clientSecret: requiredEnv(config.clientSecretEnv ?? "GITHUB_CLIENT_SECRET"),
       }
       if (orgs.length) github.getUserInfo = token => githubOrgUserInfo(orgs, token.accessToken)
+      const secret = requiredEnv(config.secretEnv ?? "BETTER_AUTH_SECRET")
       return {
         appName: "ViteHub Console",
         baseURL: config.baseURL ?? process.env.CONSOLE_AUTH_BASE_URL ?? requestOrigin,
         database,
-        secret: requiredEnv(config.secretEnv ?? "BETTER_AUTH_SECRET"),
+        // A cookie signed under a different organization policy must require a new OAuth exchange.
+        secret: orgs.length ? createHmac("sha256", secret).update(`vitehub-console-org:${orgPolicy}`).digest("hex") : secret,
         session: { expiresIn: config.session?.expiresIn },
         socialProviders: { github },
       }
