@@ -1945,7 +1945,7 @@ describe("Agent invocation console", () => {
     const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
     installConsoleInvocationFallback(invocations, process.cwd())
     const labeller = withWorkspace
-      ? defineAgent({ workspace: {}, driver: { model: {} as never, run: () => "labelled" } })
+      ? defineAgent({ workspace: {}, driver: { run: () => "labelled" } })
       : defineAgent({ driver: { run: () => "labelled" }, runtime: false })
     const skillsClone = agentWithColocatedSkills(labeller, {
       "__vitehubAgentSkill:.agents/skills/review/SKILL.md": {
