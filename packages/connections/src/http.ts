@@ -159,6 +159,10 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions): (r
       const connection = path.length === 2 ? segment(path[0]!) : undefined
       if (!connection || (path[1] !== "connect" && path[1] !== "callback")) return json({ message: "Not found." }, 404)
       if (request.method !== "GET") return json({ message: "Method not allowed." }, 405)
+      // Connect and callback change a Connection, so they need the same access as management changes.
+      const access = await options.authenticate(request, event)
+      if (!access) return json({ message: "Authentication required." }, 401)
+      if (!access.admin) return json({ code: "CONNECTIONS_DENIED", message: "This caller cannot change Connections." }, 403)
       const cookiePath = `${basePath}/${encodeURIComponent(connection)}`
       const secure = url.protocol === "https:"
       if (path[1] === "connect") {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import { gmail, gmailOperations, google } from "../src/google.ts"
-import { mockFetch, setupRuntime, tokenSet } from "./helpers.ts"
+import { fakeProvider, mockFetch, setupRuntime, tokenSet } from "./helpers.ts"
 
 import type { ConnectionClient, ConnectionEffect, ConnectionRequest } from "../src/types.ts"
 
@@ -24,7 +24,7 @@ function fakeClient() {
       return { recorded: operation.id } as never
     },
     fetch: async () => new Response(null),
-    status: async () => ({ access: {}, kind: "oauth2", name: "gmail", provider: "google", scopes: [], status: "active" }),
+    status: async () => ({ access: {}, kind: "oauth2", name: "gmail", origins: [], provider: "google", scopes: [], status: "active" }),
   }
   return { calls, client }
 }
@@ -103,7 +103,7 @@ describe("gmail", () => {
 
   it("serializes repeated query values through the runtime", async () => {
     const upstream = mockFetch(() => Response.json({ messages: [] }))
-    const { name, runtime, store } = setupRuntime({ fetch: upstream.fetch, name: "gmail" })
+    const { name, runtime, store } = setupRuntime({ definition: { provider: { ...fakeProvider().provider, origins: ["https://*.googleapis.com"] } }, fetch: upstream.fetch, name: "gmail" })
     await store.write({ name, provider: "fake", tokens: tokenSet() })
 
     await runtime.call(name, gmailOperations.messagesList, { labelIds: ["INBOX", "UNREAD"], maxResults: 5 }, { actor: { id: "server", kind: "service" } })

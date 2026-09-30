@@ -321,6 +321,7 @@ async function gmailRead(connection: AgentConnection, ops: GmailOperations, inpu
 }
 
 const replyHeaders = ["Message-ID", "References", "Subject"]
+const replyInputSchema = v.looseObject({ replyTo: v.string() })
 
 function withoutReplyPrefix(subject: string): string {
   return subject.replace(/^(?:\s*re\s*:\s*)+/i, "").trim()
@@ -414,7 +415,8 @@ function gmailTools(context: AgentCapabilityContext, name: string, enabled: Read
             inputSchema: gmailDraftInputSchema,
             metadata: metadata(ops.draftsCreate.id),
             name: "gmail_draft",
-            policy: connection.policy("gmail_draft", [ops.draftsCreate]),
+            // A reply also reads the original message, so its policy checks that read too.
+            policy: connection.policy("gmail_draft", input => v.is(replyInputSchema, input) ? [ops.draftsCreate, ops.messagesGet] : [ops.draftsCreate]),
           }),
         }
       : {}),

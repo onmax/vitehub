@@ -63,6 +63,7 @@ export function fakeProvider(overrides: Partial<ConnectionOAuth2Provider> = {}) 
     exchange: async () => tokenSet(),
     id: "fake",
     kind: "oauth2",
+    origins: ["https://api.example"],
     refresh,
     revoke,
     scopes: ["test.read"],

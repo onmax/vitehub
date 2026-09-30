@@ -69,6 +69,11 @@ export interface ConnectionProviderContext {
 interface ConnectionProviderBase {
   /** Provider identifier shown in the Console. */
   id: string
+  /**
+   * API origins that may receive the credential, for example `https://api.example.com` or `https://*.example.com`.
+   * Calls to any other origin fail before ViteHub attaches the credential.
+   */
+  origins: readonly string[]
   revoke?: (token: ConnectionTokenSet, context: ConnectionProviderContext) => Promise<void>
   scopes: readonly string[]
 }
@@ -177,6 +182,8 @@ export interface ConnectionSummary {
   kind: ConnectionKind
   lastError?: string
   name: string
+  /** API origins that may receive the credential. */
+  origins: readonly string[]
   provider: string
   scopes: readonly string[]
   status: ConnectionStatus

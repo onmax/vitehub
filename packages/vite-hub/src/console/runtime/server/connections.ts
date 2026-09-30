@@ -10,7 +10,7 @@ import type { ConsoleConnectionsInspection } from "../../internal.ts"
 
 export interface ConsoleConnectionsOptions {
   /**
-   * Allows connect, refresh, disconnect, and key changes. Console access alone only allows reads.
+   * Allows connect, callback, refresh, and disconnect. Console access alone only allows reads.
    * `console: true` in development and `console: { manageConnections: true }` set it.
    */
   manage?: boolean

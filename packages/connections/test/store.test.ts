@@ -145,8 +145,10 @@ describe("createConnectionsStore", () => {
 
   it("deletes grants", async () => {
     const { store } = setup()
-    await store.write({ name: "gmail", provider: "google", tokens: tokenSet() })
-    await store.deleteGrant("gmail")
+    const grant = await store.write({ name: "gmail", provider: "google", tokens: tokenSet() })
+    await store.deleteGrant("gmail", "stale-revision")
+    expect(await store.grant("gmail")).toBeDefined()
+    await store.deleteGrant("gmail", grant.revision)
     expect(await store.grant("gmail")).toBeUndefined()
   })
 

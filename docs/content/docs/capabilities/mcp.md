@@ -100,7 +100,7 @@ access: {
 },
 ```
 
-ViteHub checks access before the tool runs. A denied tool fails with `CAPABILITY_DENIED`. A tool that matches `approve` fails with `APPROVAL_REQUIRED`.
+ViteHub checks access before the tool runs. A denied tool fails with `CAPABILITY_DENIED`. A tool that matches `approve` asks for tool approval: in a provider Agent session, an approved call runs. Otherwise it fails with `APPROVAL_REQUIRED`.
 
 ## Executor through `mcp()`
 
@@ -112,7 +112,7 @@ Define an API key Connection for Executor. Use a personal API key: Executor reje
 import { apiKey, defineConnection } from 'vite-hub/connections'
 
 export default defineConnection({
-  provider: apiKey({ id: 'executor' }),
+  provider: apiKey({ id: 'executor', origins: ['https://executor.sh'] }),
   access: {
     agents: { support: { allow: ['mcp.executor.tools.*'] } },
   },

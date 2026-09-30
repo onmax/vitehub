@@ -58,6 +58,7 @@ describe("defineConnection", () => {
       authorizationUrl: async () => "https://auth.example/authorize",
       exchange: async () => ({ accessToken: "token", scopes: [], tokenType: "Bearer" }),
       id: "custom",
+      origins: ["https://api.example"],
       kind: "oauth2",
       refresh: async token => token,
       scopes: [],

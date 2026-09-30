@@ -51,6 +51,8 @@ async function manage(url: string, body: Record<string, unknown>): Promise<Recor
     body: JSON.stringify(body),
     headers: { "content-type": "application/json", "origin": base.origin },
     method: "POST",
+    // A redirect would resend the body, which can hold an API key, to another URL.
+    redirect: "error",
   })
   const value: unknown = await response.json().catch(() => undefined)
   if (!response.ok) {

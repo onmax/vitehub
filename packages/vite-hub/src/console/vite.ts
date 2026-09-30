@@ -60,7 +60,7 @@ export type ConsoleOptions = (
   | { access?: never, exposure: "host-managed", invoke?: boolean }
 ) & {
   databaseUrl?: string
-  /** Lets Console users connect, refresh, disconnect, and set keys of Connections. Default: `false`. `console: true` enables it. */
+  /** Lets Console users connect, refresh, and disconnect Connections. Default: `false`. `console: true` enables it. */
   manageConnections?: boolean
   observations?: AgentInvocationsOptions["observations"]
 }

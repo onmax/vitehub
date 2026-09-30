@@ -149,6 +149,18 @@ function disconnect() {
                   : "Not connected"
           }}
         </dd>
+        <dt class="text-muted">API origins</dt>
+        <dd>
+          <ul role="list" class="space-y-1">
+            <li
+              v-for="origin in connection.origins"
+              :key="origin"
+              class="break-all font-mono text-xs"
+            >
+              {{ origin }}
+            </li>
+          </ul>
+        </dd>
         <dt class="text-muted">Account</dt>
         <dd class="break-all">{{ connection.account ?? "None" }}</dd>
         <template v-if="connection.connectedAt">

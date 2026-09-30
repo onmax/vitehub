@@ -1,5 +1,6 @@
 import { decideConnectionAccess } from "../access.ts"
 import { connectionError, isConnectionError } from "../errors.ts"
+import { matchesConnectionOrigin } from "../origins.ts"
 import { createConnectionsStore } from "../store.ts"
 
 import type { ConnectionsDatabase, ConnectionsStore, StoredGrant } from "../store.ts"
@@ -40,6 +41,11 @@ export interface ConnectionsRuntimeOptions {
 
 export interface ConnectionCallOptions {
   actor: ConnectionActor
+  /**
+   * Treats a `require-approval` decision as approved. Agent Capabilities set it after the tool approval flow
+   * approved this Operation. `deny` rules still apply.
+   */
+  approved?: boolean
   audit?: "all" | "changes"
   dryRun?: boolean
   /** Effect for `fetch`. Default: GET and HEAD are reads, other methods are writes. */
@@ -137,6 +143,10 @@ function grantProvider(provider: ConnectionProvider): string {
 }
 
 const redirectStatuses = new Set([301, 302, 303, 307, 308])
+// Fetch drops these on a cross-origin redirect. ViteHub follows redirects itself, so it drops them too.
+const crossOriginHeaders = ["authorization", "cookie", "proxy-authorization"]
+// A redirect that turns the request into GET removes the body, so these no longer describe anything.
+const bodyHeaders = ["content-encoding", "content-language", "content-length", "content-location", "content-type"]
 const maxRedirects = 5
 
 function authorization(provider: ConnectionProvider, token: ConnectionTokenSet): [header: string, value: string] {
@@ -224,6 +234,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       access: value.access ?? {},
       kind: value.provider.kind,
       name,
+      origins: value.provider.origins,
       ...(value.provider.kind === "api-key" ? { header: value.provider.header } : {}),
       provider: value.provider.id,
       ...(value.description ? { description: value.description } : {}),
@@ -303,8 +314,11 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   async function withCredential(url: URL, init: RequestInit, credential: [header: string, value: string]): Promise<Response> {
     const withHeaders = (target: URL, request: RequestInit) => {
       const headers = new Headers(request.headers)
-      if (target.origin === url.origin) headers.set(...credential)
-      else headers.delete(credential[0])
+      if (target.origin === url.origin) {
+        headers.set(...credential)
+        return headers
+      }
+      for (const name of [credential[0], ...crossOriginHeaders]) headers.delete(name)
       return headers
     }
     // The caller handles redirects, so ViteHub sends one request.
@@ -322,7 +336,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const method = (request.method ?? "GET").toUpperCase()
       if (!keepMethod && (response.status === 303 || method === "POST") && method !== "GET" && method !== "HEAD") {
         const headers = new Headers(request.headers)
-        headers.delete("content-type")
+        for (const name of bodyHeaders) headers.delete(name)
         request = { ...request, body: undefined, headers, method: "GET" }
       }
       target = new URL(location, target)
@@ -356,13 +370,18 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       ...options.trace,
       ...(url ? { target: target(url) } : {}),
     }
+    // The credential never leaves the provider origins. Redirects to other origins drop it in `send()`.
+    if (url && !matchesConnectionOrigin(value.provider.origins, url)) {
+      await recordQuietly({ ...base, error: "CONNECTIONS_ORIGIN_NOT_ALLOWED", outcome: "denied" }, options.event)
+      throw connectionError("origin_not_allowed", { connection: name, operation: operation.id })
+    }
     const decision = decideConnectionAccess(value.access, options.actor, operation)
     // The decision does not depend on the audit write, so a missing database cannot turn a denial into another error.
     if (decision === "deny") {
       await recordQuietly({ ...base, outcome: "denied" }, options.event)
       throw connectionError("denied", { connection: name, operation: operation.id })
     }
-    if (decision === "require-approval") {
+    if (decision === "require-approval" && !options.approved) {
       await recordQuietly({ ...base, outcome: "approval-required" }, options.event)
       throw connectionError("approval_required", { connection: name, operation: operation.id })
     }
@@ -451,7 +470,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
           revokeError = errorCode(error)
         })
       }
-      await db.deleteGrant(name)
+      const grant = stored?.grant ?? await db.grant(name)
+      if (grant) await db.deleteGrant(name, grant.revision)
       await record({ action: "disconnect", actor: lifecycle.actor, connection: name, outcome: "succeeded", ...(revokeError ? { error: revokeError } : {}) }, lifecycle.event)
       return summary(name, value, undefined)
     },
@@ -497,7 +517,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         if (input.error || !input.code) throw connectionError("provider_failed", { connection: input.name })
         const tokenSet = await oauth2Provider(input.name, value.provider).exchange({ code: input.code, codeVerifier: pending.verifier, redirectUri: pending.redirectUri }, providerContext(input.event))
         const grant = await db.write({ name: input.name, provider: grantProvider(value.provider), tokens: tokenSet })
-        await record({ action: "connect", actor: pending.actor, connection: input.name, durationMs: Date.now() - started, outcome: "succeeded" }, input.event)
+        // The grant is active now. An audit failure must not report the connect as failed.
+        await recordQuietly({ action: "connect", actor: pending.actor, connection: input.name, durationMs: Date.now() - started, outcome: "succeeded" }, input.event)
         return summary(input.name, value, grant)
       }
       catch (error) {
@@ -526,7 +547,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
           provider: grantProvider(provider),
           tokens: { accessToken: key, scopes: [], tokenType: "api-key", ...(verified.account ? { account: verified.account } : {}) },
         })
-        await record({ action: "connect", actor: lifecycle.actor, connection: name, durationMs: Date.now() - started, outcome: "succeeded" }, lifecycle.event)
+        // The key is stored now. An audit failure must not report the change as failed.
+        await recordQuietly({ action: "connect", actor: lifecycle.actor, connection: name, durationMs: Date.now() - started, outcome: "succeeded" }, lifecycle.event)
         return summary(name, value, grant)
       }
       catch (error) {

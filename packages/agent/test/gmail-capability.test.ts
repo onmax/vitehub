@@ -73,9 +73,9 @@ async function run(tool: AgentToolDefinition | undefined, input: unknown): Promi
   return await tool.execute(input as never, {} as never)
 }
 
-async function decide(tool: AgentToolDefinition | undefined): Promise<unknown> {
+async function decide(tool: AgentToolDefinition | undefined, input?: unknown): Promise<unknown> {
   if (typeof tool?.policy !== "function") throw new Error("expected a tool policy")
-  return await tool.policy({ name: tool.name })
+  return await tool.policy({ input, name: tool.name })
 }
 
 const message = {
@@ -315,6 +315,31 @@ describe("gmail capability", () => {
     const readDenied = connections({ decisions: { "gmail.messages.get": "deny" } })
     expect(await decide((await tools(gmail(), readDenied.primitive)).gmail_search)).toBe("deny")
     expect(readDenied.runtime.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "gmail.messages.get", outcome: "denied", tool: "gmail_search" }), event)
+  })
+
+  it("checks the original message read before a reply draft", async () => {
+    const { primitive, runtime } = connections({ decisions: { "gmail.drafts.create": "allow", "gmail.messages.get": "deny" } })
+    const draftTool = (await tools(gmail({ operations: ["draft"] }), primitive)).gmail_draft
+    expect(await decide(draftTool, { body: "x", subject: "Hi", to: ["a@example.com"] })).toBe("allow")
+    expect(await decide(draftTool, { body: "x", replyTo: "m1", to: ["a@example.com"] })).toBe("deny")
+    expect(runtime.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "gmail.messages.get", outcome: "denied", tool: "gmail_draft" }), event)
+  })
+
+  it("marks only the Operations that the tool policy checked as approved", async () => {
+    const { primitive, runtime } = connections({
+      decisions: { "gmail.drafts.create": "require-approval" },
+      responses: { "gmail.drafts.create": () => ({ id: "d1", message: { id: "m2", threadId: "t1" } }) },
+    })
+    const draftTools = await tools(gmail({ operations: ["search", "draft"] }), primitive)
+    const input = { body: "x", subject: "Hi", to: ["a@example.com"] }
+    // Before the policy ran, the Connection guard alone decides.
+    await run(draftTools.gmail_draft, input)
+    expect(runtime.call.mock.calls[0]?.[3]).not.toHaveProperty("approved")
+
+    // The tool flow asks for approval, then runs the approved tool without the policy.
+    expect(await decide(draftTools.gmail_draft, input)).toBe("require-approval")
+    await run(draftTools.gmail_draft, input)
+    expect(runtime.call.mock.calls[1]?.[3]).toMatchObject({ approved: true, trace: { tool: "gmail_draft" } })
   })
 
   it("keeps a denial when the activity store fails", async () => {

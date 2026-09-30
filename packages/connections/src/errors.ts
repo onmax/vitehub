@@ -10,6 +10,7 @@ const messages = {
   needs_reconnect: "The Connection needs to be reconnected.",
   not_configured: "Connections are not configured. Enable `vitehub({ connections: true })` with a database.",
   not_found: "No Connection Definition was discovered for this name.",
+  origin_not_allowed: "The request URL is not an allowed origin for this Connection.",
   provider_failed: "The Connection provider request failed.",
   unavailable: "The Connection is busy. Try again.",
   unsupported: "This action does not apply to this kind of Connection.",

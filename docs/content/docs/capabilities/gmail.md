@@ -97,7 +97,7 @@ Before a tool runs, ViteHub checks each of its Operation ids against the Agent r
 | Rule for `gmail.drafts.create` | `gmail_draft` result |
 | --- | --- |
 | `allow` | Creates the draft. |
-| `approve` | Fails with `APPROVAL_REQUIRED`. The Agent reports it to the user. Durable approval is not available yet. |
+| `approve` | Asks for tool approval. In a provider Agent session, the user can approve the call and the draft is created. Otherwise it fails with `APPROVAL_REQUIRED`. Durable approval is not available yet. |
 | `deny` or no match | Fails with `CAPABILITY_DENIED`. |
 
 To block a read tool, deny its Operation, for example `deny: ['gmail.messages.*']`.

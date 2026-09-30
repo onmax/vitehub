@@ -101,7 +101,7 @@ import { apiKey, defineConnection } from 'vite-hub/connections'
 
 export default defineConnection({
   description: 'Executor MCP tool catalog.',
-  provider: apiKey({ id: 'executor' }),
+  provider: apiKey({ id: 'executor', origins: ['https://executor.sh'] }),
   access: {
     agents: { support: { allow: ['mcp.executor.tools.*'] } },
   },
@@ -116,12 +116,13 @@ printf %s "$EXECUTOR_API_KEY" | vitehub connections set-key executor
 
 | Option | Default | Description |
 | --- | --- | --- |
+| `origins` | required | API origins that may receive the key. See [Provider origins](#provider-origins). |
 | `header` | `'authorization'` | Request header that carries the key. |
 | `scheme` | `'Bearer'` for `authorization`, none for other headers | Text before the key in the header value. |
-| `id` | `'api-key'` | Provider label in the Console. |
+| `id` | `'api-key'` | Provider label in the Console. It cannot contain `:`. |
 | `verify` | None | `(key, { fetch, event }) => Promise<false \| { account? }>`. Checks a new key before ViteHub stores it. Return `false` to reject the key. `account` is shown in the Console. |
 
-ViteHub sends the credential only to the origin of the request. It follows redirects itself and drops the credential header when a redirect goes to another origin. Pass `redirect: 'manual'` to `fetch` to handle redirects yourself.
+ViteHub sends the credential only to the origin of the request. It follows redirects itself. When a redirect goes to another origin, it drops the credential, `Authorization`, `Cookie`, and `Proxy-Authorization` headers. Pass `redirect: 'manual'` to `fetch` to handle redirects yourself.
 
 `set-key` sends the key only over HTTPS or to a loopback server such as `http://localhost:5173`.
 
@@ -149,6 +150,27 @@ Options:
 | `audit` | `'changes'` | `'changes'` records writes, denials, skipped calls, and failures. `'all'` also records reads. |
 | `trace` | None | `traceId`, `invocationId`, `runId`, and `tool` to link activity to a trace. |
 
+## Provider origins
+
+Each provider declares the API origins that may receive its credential. `call` and `fetch` fail with `CONNECTIONS_ORIGIN_NOT_ALLOWED` for any other origin, and ViteHub records the attempt as denied. `google()` allows `https://*.googleapis.com`. Set `origins` for `oauth2()` and `apiKey()`:
+
+```ts [server/connections/crm.ts]
+import { defineConnection, oauth2 } from 'vite-hub/connections'
+
+export default defineConnection({
+  provider: oauth2({
+    authorizationUrl: 'https://crm.example.com/oauth/authorize',
+    client: ({ event }) => useServerEnv(event).crm,
+    id: 'crm',
+    origins: ['https://api.crm.example.com'],
+    scopes: ['contacts.read'],
+    tokenUrl: 'https://crm.example.com/oauth/token',
+  }),
+})
+```
+
+An origin is `https://host`, `https://host:port`, or `https://*.host` for subdomains. `http` is accepted for local servers.
+
 ## Access rules
 
 `access` has rules for `server`, `routes` (by route id such as `POST /api/sync`), and `agents` (by Agent id). A route without its own rule uses `server`. Each rule has `allow`, `approve`, and `deny` lists of Operation id patterns. `*` matches any characters.
@@ -158,7 +180,7 @@ ViteHub checks `deny` first, then `approve`, then `allow`. When no pattern match
 | Decision | Result |
 | --- | --- |
 | `allow` | The call runs. |
-| `require-approval` | The call fails with `CONNECTIONS_APPROVAL_REQUIRED`. Agent tools report it to the model. |
+| `require-approval` | Server code fails with `CONNECTIONS_APPROVAL_REQUIRED`. An Agent tool asks for tool approval. When a user approves it in a provider Agent session, the call runs. `deny` rules still apply. |
 | `deny` | The call fails with `CONNECTIONS_DENIED`. |
 
 ## Use from Agents
@@ -220,10 +242,11 @@ The CLI calls the management route of a running development server with the Cons
 | `CONNECTIONS_MISSING` | The Connection is not connected. |
 | `CONNECTIONS_NEEDS_RECONNECT` | The provider rejected the refresh token. |
 | `CONNECTIONS_KEY_MISMATCH` | The grant was sealed with a different key. |
-
-When you change the provider of a Connection, the stored grant belongs to the old provider. The status becomes `needs-reconnect` with `lastError: 'CONNECTIONS_PROVIDER_CHANGED'`, and ViteHub never sends that grant to the new provider. Reconnect the Connection.
 | `CONNECTIONS_DENIED`, `CONNECTIONS_APPROVAL_REQUIRED` | Access rules blocked the call. |
+| `CONNECTIONS_ORIGIN_NOT_ALLOWED` | The request URL is not in the provider `origins`. ViteHub did not send the credential. |
 | `CONNECTIONS_PROVIDER_FAILED` | The provider returned an error. `details.status` has the HTTP status. |
 | `CONNECTIONS_UNAVAILABLE` | Another request holds the refresh lease. Try again. |
 | `CONNECTIONS_KEY_REJECTED` | The `verify` check of an API key Connection rejected the new key. The old key stays. |
 | `CONNECTIONS_UNSUPPORTED` | The action does not apply to this kind of Connection, for example `refresh` on an API key or `set-key` on OAuth 2. |
+
+When you change the provider of a Connection, the stored grant belongs to the old provider. The status becomes `needs-reconnect` with `lastError: 'CONNECTIONS_PROVIDER_CHANGED'`, and ViteHub never sends that grant to the new provider. Reconnect the Connection.

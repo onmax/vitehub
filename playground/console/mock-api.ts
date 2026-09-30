@@ -87,6 +87,7 @@ const connections = new Map<string, ConnectionSummary>([
     expiresAt: "2026-09-29T10:12:00.000Z",
     kind: "oauth2",
     name: "google",
+    origins: ["https://*.googleapis.com"],
     provider: "google",
     scopes: ["https://www.googleapis.com/auth/gmail.modify"],
     status: "active",
@@ -95,6 +96,7 @@ const connections = new Map<string, ConnectionSummary>([
     access: { agents: { "release-engineer": { allow: ["github.repos.*"], deny: ["github.repos.delete"] } } },
     kind: "oauth2",
     name: "github",
+    origins: ["https://api.github.com"],
     provider: "oauth2",
     scopes: ["repo"],
     status: "disconnected",
@@ -107,6 +109,7 @@ const connections = new Map<string, ConnectionSummary>([
     header: "authorization",
     kind: "api-key",
     name: "executor",
+    origins: ["https://executor.sh"],
     provider: "executor",
     scopes: [],
     status: "active",
@@ -146,7 +149,7 @@ async function handleConnections(request: IncomingMessage, response: ServerRespo
     return json(response, { connection: next })
   }
   if (action === "disconnect") {
-    const next: ConnectionSummary = { access: connection.access, kind: connection.kind, name, provider: connection.provider, scopes: connection.scopes, status: "disconnected", ...(connection.header ? { header: connection.header } : {}) }
+    const next: ConnectionSummary = { access: connection.access, kind: connection.kind, name, origins: connection.origins, provider: connection.provider, scopes: connection.scopes, status: "disconnected", ...(connection.header ? { header: connection.header } : {}) }
     connections.set(name, next)
     return json(response, { connection: next })
   }

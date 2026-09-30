@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import { connectionAccessRule, decideConnectionAccess, matchesConnectionPattern } from "../src/access.ts"
 import { resolveConnectionActor, routeConnectionActor, serverConnectionActor } from "../src/actor.ts"
+import { assertConnectionOrigins, matchesConnectionOrigin } from "../src/origins.ts"
 
 import type { ConnectionAccess, ConnectionActor } from "../src/types.ts"
 
@@ -92,6 +93,24 @@ describe("decideConnectionAccess", () => {
   })
 })
 
+describe("Connection origins", () => {
+  it("matches exact origins and subdomain wildcards", () => {
+    const origins = assertConnectionOrigins(["https://API.example.com", "https://*.googleapis.com", "http://localhost:8787"])
+    expect(matchesConnectionOrigin(origins, new URL("https://api.example.com/v1?x=1"))).toBe(true)
+    expect(matchesConnectionOrigin(origins, new URL("https://gmail.googleapis.com/gmail/v1"))).toBe(true)
+    expect(matchesConnectionOrigin(origins, new URL("http://localhost:8787/x"))).toBe(true)
+    for (const url of ["https://googleapis.com/x", "https://evil.com/?https://api.example.com", "https://api.example.com.evil.com/", "http://api.example.com/", "https://api.example.com:8443/", "http://localhost:8788/"]) {
+      expect(matchesConnectionOrigin(origins, new URL(url))).toBe(false)
+    }
+  })
+
+  it("rejects missing or malformed origins", () => {
+    for (const origins of [undefined, [], ["api.example.com"], ["https://api.example.com/v1"], ["https://user@api.example.com"], ["ftp://api.example.com"], ["https://a.*.example.com"]]) {
+      expect(() => assertConnectionOrigins(origins)).toThrow("Invalid Connection request.")
+    }
+  })
+})
+
 describe("Connection actors", () => {
   it("uses the matched route pattern of an H3 event", () => {
     expect(routeConnectionActor({ context: { matchedRoute: { route: "/api/labels/:id" } }, method: "post", path: "/api/labels/1" }))
@@ -102,6 +121,12 @@ describe("Connection actors", () => {
     expect(routeConnectionActor({ method: "GET", path: "/api/labels?secret=1" })).toEqual({ id: "GET /api/labels", kind: "route" })
     expect(routeConnectionActor({ req: { method: "PUT", url: "http://localhost/api/x?y=1" } })).toEqual({ id: "PUT /api/x", kind: "route" })
     expect(routeConnectionActor({ req: { method: "DELETE" }, url: new URL("https://app.example/api/z?q=1") })).toEqual({ id: "DELETE /api/z", kind: "route" })
+  })
+
+  it("reads H3 1 requests from event.node.req", () => {
+    expect(routeConnectionActor({ context: {}, node: { req: { method: "post", url: "/api/labels/1?x=1" } } })).toEqual({ id: "POST /api/labels/1", kind: "route" })
+    expect(routeConnectionActor({ context: { matchedRoute: { route: "/api/labels/:id" } }, node: { req: { method: "PATCH", url: "/api/labels/1" } } }))
+      .toEqual({ id: "PATCH /api/labels/:id", kind: "route" })
   })
 
   it("returns no route actor for events without a method or path", () => {

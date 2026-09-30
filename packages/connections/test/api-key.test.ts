@@ -3,10 +3,17 @@ import { describe, expect, it, vi } from "vitest"
 import { defineConnection } from "../src/definition.ts"
 import { createConnectionsHandler } from "../src/http.ts"
 import { apiKey } from "../src/providers/api-key.ts"
+
+import type { ApiKeyProviderOptions } from "../src/providers/api-key.ts"
 import { expectCode, mockFetch, readOperation, rows, setupRuntime, writeOperation } from "./helpers.ts"
 
 import type { ConnectionsAccess } from "../src/http.ts"
 import type { ConnectionActor, ConnectionDefinition } from "../src/types.ts"
+
+/** `apiKey()` for the test API origin. */
+function key(options: Partial<ApiKeyProviderOptions> = {}) {
+  return apiKey({ origins: ["https://api.example"], ...options })
+}
 
 const secretKey = "sk_live_api-key-marker"
 const owner: ConnectionActor = { id: "owner", kind: "user" }
@@ -22,35 +29,37 @@ function sentHeaders(mock: ReturnType<typeof api>["mock"], index = 0): Headers {
   return new Headers(mock.mock.calls[index]?.[1]?.headers)
 }
 
-describe("apiKey()", () => {
+describe("key()", () => {
   it("sends a Bearer authorization header by default", () => {
-    expect(apiKey()).toEqual({ header: "authorization", id: "api-key", kind: "api-key", scheme: "Bearer", scopes: [] })
+    expect(key()).toEqual({ header: "authorization", id: "api-key", kind: "api-key", origins: ["https://api.example"], scheme: "Bearer", scopes: [] })
   })
 
   it("uses a custom header without a scheme", () => {
-    expect(apiKey({ header: "X-Api-Key", id: "executor" })).toEqual({ header: "x-api-key", id: "executor", kind: "api-key", scopes: [] })
+    expect(key({ header: "X-Api-Key", id: "executor" })).toEqual({ header: "x-api-key", id: "executor", kind: "api-key", origins: ["https://api.example"], scopes: [] })
   })
 
   it("rejects header names and schemes that are not HTTP tokens", () => {
-    expect(() => apiKey({ header: "x-api-key\r\nx-other" })).toThrow("Invalid Connection request.")
-    expect(() => apiKey({ header: "" })).toThrow("Invalid Connection request.")
-    expect(() => apiKey({ scheme: "Bearer token" })).toThrow("Invalid Connection request.")
+    expect(() => key({ header: "x-api-key\r\nx-other" })).toThrow("Invalid Connection request.")
+    expect(() => key({ header: "" })).toThrow("Invalid Connection request.")
+    expect(() => key({ scheme: "Bearer token" })).toThrow("Invalid Connection request.")
+    expect(() => key({ id: "api-key:foo" })).toThrow("Invalid Connection request.")
+    expect(() => apiKey({ origins: [] })).toThrow("Invalid Connection request.")
   })
 
   it("is a valid Connection provider", () => {
-    expect(defineConnection({ provider: apiKey() }).provider.kind).toBe("api-key")
+    expect(defineConnection({ provider: key() }).provider.kind).toBe("api-key")
   })
 
   it("rejects malformed API key providers from JavaScript definitions", () => {
     // SAFETY: JavaScript definitions are not type-checked; these shapes stand in for them.
     const untyped = (provider: unknown) => ({ provider }) as unknown as ConnectionDefinition
     for (const provider of [
-      { id: "custom", kind: "api-key", scopes: [] },
-      { header: "x-api-key\r\nx", id: "custom", kind: "api-key", scopes: [] },
-      { header: "X-Api-Key", id: "custom", kind: "api-key", scopes: [] },
-      { header: "x-api-key", id: "", kind: "api-key", scopes: [] },
-      { header: "authorization", id: "custom", kind: "api-key", scheme: "Bearer token", scopes: [] },
-      { header: "authorization", id: "custom", kind: "api-key", scopes: [], verify: "yes" },
+      { id: "custom", kind: "api-key", origins: ["https://api.example"], scopes: [] },
+      { header: "x-api-key\r\nx", id: "custom", kind: "api-key", origins: ["https://api.example"], scopes: [] },
+      { header: "X-Api-Key", id: "custom", kind: "api-key", origins: ["https://api.example"], scopes: [] },
+      { header: "x-api-key", id: "", kind: "api-key", origins: ["https://api.example"], scopes: [] },
+      { header: "authorization", id: "custom", kind: "api-key", origins: ["https://api.example"], scheme: "Bearer token", scopes: [] },
+      { header: "authorization", id: "custom", kind: "api-key", origins: ["https://api.example"], scopes: [], verify: "yes" },
     ]) {
       expect(() => defineConnection(untyped(provider))).toThrow("Invalid Connection request.")
     }
@@ -60,7 +69,7 @@ describe("apiKey()", () => {
 describe("API key Connections", () => {
   it("stores the key sealed and sends it with each request", async () => {
     const upstream = api()
-    const { db, name, runtime } = setupRuntime({ definition: { provider: apiKey({ header: "x-api-key" }) }, fetch: upstream.fetch })
+    const { db, name, runtime } = setupRuntime({ definition: { provider: key({ header: "x-api-key" }) }, fetch: upstream.fetch })
 
     await expect(runtime.inspect(name)).resolves.toMatchObject({ header: "x-api-key", kind: "api-key", scopes: [], status: "disconnected" })
     await expect(runtime.setKey(name, secretKey, { actor: owner })).resolves.toMatchObject({ kind: "api-key", provider: "api-key", status: "active" })
@@ -77,7 +86,7 @@ describe("API key Connections", () => {
 
   it("applies access rules and audit like OAuth Connections", async () => {
     const upstream = api()
-    const definition: ConnectionDefinition = { access: { agents: { support: { allow: ["test.items.create"] } } }, provider: apiKey() }
+    const definition: ConnectionDefinition = { access: { agents: { support: { allow: ["test.items.create"] } } }, provider: key() }
     const { name, runtime } = setupRuntime({ definition, fetch: upstream.fetch })
     await runtime.setKey(name, secretKey, { actor: owner })
 
@@ -90,7 +99,7 @@ describe("API key Connections", () => {
 
   it("replaces the key and does not refresh or retry a 401", async () => {
     const upstream = mockFetch(() => new Response(null, { status: 401 }))
-    const { name, runtime } = setupRuntime({ definition: { provider: apiKey() }, fetch: upstream.fetch })
+    const { name, runtime } = setupRuntime({ definition: { provider: key() }, fetch: upstream.fetch })
     await runtime.setKey(name, "first-key", { actor: owner })
     await runtime.setKey(name, secretKey, { actor: owner })
 
@@ -104,7 +113,7 @@ describe("API key Connections", () => {
 
   it("verifies a new key and keeps the old key when the check fails", async () => {
     const verify = vi.fn(async (key: string) => key === secretKey ? { account: "acme workspace" } : false as const)
-    const { name, runtime } = setupRuntime({ definition: { provider: apiKey({ verify }) } })
+    const { name, runtime } = setupRuntime({ definition: { provider: key({ verify }) } })
 
     await expect(runtime.setKey(name, secretKey, { actor: owner })).resolves.toMatchObject({ account: "acme workspace", status: "active" })
     await expectCode(runtime.setKey(name, "wrong-key", { actor: owner }), "CONNECTIONS_KEY_REJECTED")
@@ -115,7 +124,7 @@ describe("API key Connections", () => {
   })
 
   it("rejects keys with whitespace or control characters", async () => {
-    const { name, runtime } = setupRuntime({ definition: { provider: apiKey() } })
+    const { name, runtime } = setupRuntime({ definition: { provider: key() } })
     for (const key of ["", "two words", "line\nbreak", "tab\tkey", "x".repeat(8193)]) {
       await expectCode(runtime.setKey(name, key, { actor: owner }), "CONNECTIONS_INVALID")
     }
@@ -127,7 +136,7 @@ describe("API key Connections", () => {
   })
 
   it("disconnects and deletes the key", async () => {
-    const { name, runtime, store } = setupRuntime({ definition: { provider: apiKey() } })
+    const { name, runtime, store } = setupRuntime({ definition: { provider: key() } })
     await runtime.setKey(name, secretKey, { actor: owner })
     await expect(runtime.disconnect(name, { actor: owner })).resolves.toMatchObject({ status: "disconnected" })
     expect(await store.grant(name)).toBeUndefined()
@@ -141,7 +150,7 @@ describe("API key credentials", () => {
 
   it("drops the key on a cross-origin redirect", async () => {
     const upstream = redirecting("https://elsewhere.example/items/7")
-    const { name, runtime } = setupRuntime({ definition: { provider: apiKey({ header: "x-api-key" }) }, fetch: upstream.fetch })
+    const { name, runtime } = setupRuntime({ definition: { provider: key({ header: "x-api-key" }) }, fetch: upstream.fetch })
     await runtime.setKey(name, secretKey, { actor: owner })
 
     await expect(runtime.call(name, readOperation, { id: "7" }, { actor: server })).resolves.toEqual({ id: "7", ok: true })
@@ -153,9 +162,15 @@ describe("API key credentials", () => {
 
   it("keeps the key on a same-origin redirect and turns a 303 into GET", async () => {
     const upstream = redirecting("/items/created", 303)
-    const definition: ConnectionDefinition = { access: { server: { allow: ["*"] } }, provider: apiKey() }
+    const definition: ConnectionDefinition = { access: { server: { allow: ["*"] } }, provider: key() }
     const { name, runtime } = setupRuntime({ definition, fetch: upstream.fetch })
     await runtime.setKey(name, secretKey, { actor: owner })
+
+    await runtime.fetch(name, "https://api.example/items", { body: "raw", headers: { "content-encoding": "gzip", "content-language": "en", "content-type": "text/plain" }, method: "POST" }, { actor: server })
+    const rewritten = new Headers(upstream.mock.mock.calls[1]?.[1]?.headers)
+    expect(["content-encoding", "content-language", "content-type"].map(header => rewritten.get(header))).toEqual([null, null, null])
+    upstream.mock.mockClear()
+    upstream.calls.length = 0
 
     await runtime.call(name, writeOperation, { name: "x" }, { actor: server })
     expect(upstream.calls.map(call => [call.method, call.url, call.authorization, call.body])).toEqual([
@@ -164,9 +179,19 @@ describe("API key credentials", () => {
     ])
   })
 
+  it("drops cookies and other credentials on a cross-origin redirect", async () => {
+    const upstream = redirecting("https://elsewhere.example/next", 307)
+    const { name, runtime } = setupRuntime({ definition: { provider: key({ header: "x-api-key" }) }, fetch: upstream.fetch })
+    await runtime.setKey(name, secretKey, { actor: owner })
+
+    await runtime.fetch(name, "https://api.example/items", { headers: { "authorization": "Basic caller", "cookie": "session=1", "proxy-authorization": "Basic proxy", "x-trace": "t1" } }, { actor: server })
+    const second = new Headers(upstream.mock.mock.calls[1]?.[1]?.headers)
+    expect([...second.keys()].sort()).toEqual(["x-trace"])
+  })
+
   it("sends one request when the caller handles redirects", async () => {
     const upstream = redirecting("https://elsewhere.example/")
-    const { name, runtime } = setupRuntime({ definition: { provider: apiKey() }, fetch: upstream.fetch })
+    const { name, runtime } = setupRuntime({ definition: { provider: key() }, fetch: upstream.fetch })
     await runtime.setKey(name, secretKey, { actor: owner })
 
     const response = await runtime.fetch(name, "https://api.example/items", { redirect: "manual" }, { actor: server })
@@ -176,7 +201,7 @@ describe("API key credentials", () => {
 
   it("does not use an OAuth grant for an API key Connection with the same provider id", async () => {
     const upstream = api()
-    const { name, runtime, store } = setupRuntime({ definition: { provider: apiKey({ id: "fake" }) }, fetch: upstream.fetch })
+    const { name, runtime, store } = setupRuntime({ definition: { provider: key({ id: "fake" }) }, fetch: upstream.fetch })
     await store.write({ name, provider: "fake", tokens: { accessToken: "oauth-access-marker", scopes: [], tokenType: "Bearer" } })
 
     expect(await runtime.inspect(name)).toMatchObject({ lastError: "CONNECTIONS_PROVIDER_CHANGED", status: "needs-reconnect" })
@@ -189,7 +214,7 @@ describe("API key credentials", () => {
 
 describe("API key management route", () => {
   function setup(access: ConnectionsAccess) {
-    const context = setupRuntime({ definition: { provider: apiKey() }, name: "executor" })
+    const context = setupRuntime({ definition: { provider: key() }, name: "executor" })
     const handler = createConnectionsHandler({ authenticate: async () => access, runtime: context.runtime })
     const manage = (input: unknown) => handler(new Request(`${origin}/_vitehub/connections/manage`, { body: JSON.stringify(input), headers: { origin }, method: "POST" }))
     return { ...context, manage }

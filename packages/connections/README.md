@@ -35,7 +35,7 @@ export default defineConnection({
 
 Access rules check `deny`, then `approve`, then `allow`. When no pattern matches, reads are allowed and writes are denied. `approve` makes the call fail with `CONNECTIONS_APPROVAL_REQUIRED`.
 
-Use `oauth2()` from `@vite-hub/connections` for other OAuth 2 providers. Use `apiKey()` for a provider that takes a static key. A Console admin sets the key, and ViteHub sends it in one request header.
+Use `oauth2()` from `@vite-hub/connections` for other OAuth 2 providers. Use `apiKey()` for a provider that takes a static key. A Console admin sets the key, and ViteHub sends it in one request header. Both need `origins`: the API origins that may receive the credential, for example `["https://api.example.com"]`. Calls to other origins fail with `CONNECTIONS_ORIGIN_NOT_ALLOWED`.
 
 ## Call the provider
 

@@ -13,6 +13,7 @@ const summary: ConnectionSummary = {
   expiresAt: "2026-09-29T12:00:00.000Z",
   kind: "oauth2",
   name: "gmail",
+  origins: ["https://*.googleapis.com"],
   provider: "google",
   scopes: [],
   status: "active",
@@ -173,6 +174,8 @@ describe("connections CLI", () => {
 
     expect(await feature("set-key", async () => "sk_cli_marker").run(["executor"], io.context)).toBe(0)
     expect(request(fetch).body).toEqual({ action: "set-key", key: "sk_cli_marker", name: "executor" })
+    // A redirect would resend the key to another URL.
+    expect(fetch.mock.calls[0]?.[1]?.redirect).toBe("error")
     expect(io.stdout.join("")).toMatch(/^executor\s+api-key\s+active/)
     expect(io.stdout.join("") + io.stderr.join("")).not.toContain("sk_cli_marker")
   })
