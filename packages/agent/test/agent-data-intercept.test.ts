@@ -111,6 +111,7 @@ describe("Agent data and intercept", () => {
         else if (change === "replace") Reflect.set(input, "data", { from: "invalid" })
         else if (input.data) Reflect.deleteProperty(input.data, "subject")
       } },
+      intercept: () => ({ intercepted: true }),
       runtime: false,
     })
 
@@ -368,6 +369,27 @@ describe("Agent data and intercept", () => {
     expect(error).toBeNull()
     expect(output).toBe("intercepted")
     expect(dependent).not.toHaveBeenCalled()
+  })
+
+  it("skips Capability tool transforms for intercepted Invocations", async () => {
+    const transform = vi.fn(() => { throw new Error("tool transform should not run") })
+    const agent = defineAgent({
+      capabilities: [{
+        id: "transform",
+        configure(context) {
+          context.tools.transform(transform)
+        },
+      }],
+      driver: { run: () => "driver" },
+      intercept: () => "intercepted",
+      runtime: false,
+    })
+
+    const [error, output] = await runAgent(agent, { prompt: "go" })
+
+    expect(error).toBeNull()
+    expect(output).toBe("intercepted")
+    expect(transform).not.toHaveBeenCalled()
   })
 
   it("validates data changed by a preparation-dependent input phase before the Driver", async () => {

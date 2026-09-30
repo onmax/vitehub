@@ -562,6 +562,28 @@ describe("agent public types", () => {
     // SAFETY: This compile-time fixture intentionally supplies the exact asserted public contract.
     expectTypeOf(runAgentInline(workspaceAgent, {} as AgentRuntimeContext, { data: { from: "a@example.com", subject: "Hi" } })).toEqualTypeOf<Promise<Response | JevDecision | RuleDecision>>()
 
+    const transformedWorkspaceAgent = defineAgent({
+      data: schemaFor<{ count: number }, { count: string }>(),
+      driver: { output: { schema: schemaFor<JevDecision>() }, run: () => "{}" },
+      hooks: {
+        "agent:error"({ input }) {
+          expectTypeOf(input.data).toEqualTypeOf<{ count: number } | undefined>()
+        },
+        "agent:finish"({ input }) {
+          expectTypeOf(input.data).toEqualTypeOf<{ count: number } | undefined>()
+        },
+        "agent:input"({ input }) {
+          expectTypeOf(input.data).toEqualTypeOf<{ count: number } | undefined>()
+        },
+      },
+      runtime: false,
+      workspace: {},
+    })
+    expectTypeOf<Parameters<NonNullable<NonNullable<typeof transformedWorkspaceAgent.hooks>["agent:input"]>>[0]["input"]["data"]>().toEqualTypeOf<{ count: number } | undefined>()
+    void runAgent(transformedWorkspaceAgent, { data: { count: "2" } })
+    // @ts-expect-error Workspace call sites accept the schema input type, not its parsed output.
+    void runAgent(transformedWorkspaceAgent, { data: { count: 2 } })
+
     const runtimeContext: AgentRuntimeContext = {
       memo: (_key, create) => create(),
       runtime: "unknown",

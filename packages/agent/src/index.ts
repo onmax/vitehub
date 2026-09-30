@@ -2343,7 +2343,7 @@ export interface DefineAgent {
       intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, TContextValues, LayerData<TParent, TSchema>, TIntercept>
       workspace?: WorkspaceAgentWorkspaceConfig
     },
-  ): WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, LayerOutput<TParent, TIntercept, [TIntercept] extends [never] ? false : true, TDriver>, LayerDataInput<TParent, TSchema>> & LayerDefinition<TParent, LayerDataInput<TParent, TSchema>, LayerData<TParent, TSchema>, TIntercept, [TIntercept] extends [never] ? false : true, TDriver>
+  ): WorkspaceAgentDefinition<TRuntimeConfig, WorkspaceName, CALL_OPTIONS, TInvokerProfile, TContextValues, AgentCapabilitiesInput<TRuntimeConfig>, LayerOutput<TParent, TIntercept, [TIntercept] extends [never] ? false : true, TDriver>, LayerDataInput<TParent, TSchema>, LayerData<TParent, TSchema>> & LayerDefinition<TParent, LayerDataInput<TParent, TSchema>, LayerData<TParent, TSchema>, TIntercept, [TIntercept] extends [never] ? false : true, TDriver>
 
   <
     const TPreset extends string,
@@ -2581,7 +2581,7 @@ export interface DefineAgent {
     >,
   >(
     options: TOptions & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, driver: CustomAgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>, data?: StandardSchemaV1<TDataInput, TData>, intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TData, TIntercept> } & ValidateWorkspaceAgentOptions<TOptions>,
-  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput | AgentInterceptOutput<TIntercept>, TDataInput> & AgentDefinition<TRuntimeConfig, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | AgentInterceptOutput<TIntercept>, TDataInput, TOutput, TData, AgentInterceptOutput<TIntercept>>
+  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput | AgentInterceptOutput<TIntercept>, TDataInput, TData> & AgentDefinition<TRuntimeConfig, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | AgentInterceptOutput<TIntercept>, TDataInput, TOutput, TData, AgentInterceptOutput<TIntercept>>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
     Name extends WorkspaceName = WorkspaceName,
@@ -2619,7 +2619,7 @@ export interface DefineAgent {
     >,
   >(
     options: TOptions & { capabilities?: AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, driver: AgentDriver<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput>, data?: StandardSchemaV1<TDataInput, TData>, intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, AgentCapabilitiesInvocationContextValues<TCapabilities>, TData, TIntercept> } & ValidateWorkspaceAgentOptions<TOptions>,
-  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput | AgentInterceptOutput<TIntercept>, TDataInput> & AgentDefinition<TRuntimeConfig, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | AgentInterceptOutput<TIntercept>, TDataInput, TOutput, TData, AgentInterceptOutput<TIntercept>>
+  ): WorkspaceAgentDefinition<TRuntimeConfig, Name, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, AgentCapabilitiesOption<TRuntimeConfig, Name, CALL_OPTIONS, TCapabilities>, TOutput | AgentInterceptOutput<TIntercept>, TDataInput, TData> & AgentDefinition<TRuntimeConfig, CALL_OPTIONS, AgentInvokerProfileOf<TOptions>, AgentCapabilitiesInvocationContextValues<TCapabilities>, TOutput | AgentInterceptOutput<TIntercept>, TDataInput, TOutput, TData, AgentInterceptOutput<TIntercept>>
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
     CALL_OPTIONS = unknown,
@@ -4282,22 +4282,27 @@ async function createAgentInvocationContext<
       if (!capabilities.response) await knownUnavailable(capabilities)
     }
     let transformed: { tools: typeof capabilities.tools, originalNames: Map<string, string> }
-    try {
-      const collisions = Object.keys(invocationTools || {}).filter(name => Object.hasOwn(capabilities.tools || {}, name))
-      if (collisions.length) throw new Error(`[vitehub] Invocation tool name already exists: ${collisions.join(", ")}.`)
-      const availableTools = invocationTools ? { ...capabilities.tools, ...invocationTools } : capabilities.tools
-      transformed = resolveCapabilityCli
-        ? { tools: availableTools, originalNames: new Map(Object.keys(availableTools || {}).map(name => [name, name])) }
-        : await applyCapabilityToolTransforms(availableTools, capabilities.toolTransforms)
+    if (intercepted) {
+      transformed = { tools: undefined, originalNames: new Map() }
     }
-    catch (error) {
+    else {
       try {
-        await capabilities.close()
+        const collisions = Object.keys(invocationTools || {}).filter(name => Object.hasOwn(capabilities.tools || {}, name))
+        if (collisions.length) throw new Error(`[vitehub] Invocation tool name already exists: ${collisions.join(", ")}.`)
+        const availableTools = invocationTools ? { ...capabilities.tools, ...invocationTools } : capabilities.tools
+        transformed = resolveCapabilityCli
+          ? { tools: availableTools, originalNames: new Map(Object.keys(availableTools || {}).map(name => [name, name])) }
+          : await applyCapabilityToolTransforms(availableTools, capabilities.toolTransforms)
       }
-      catch (closeError) {
-        throw new AggregateError([error, closeError], "[vitehub] Agent tool transform failed and cleanup also failed.")
+      catch (error) {
+        try {
+          await capabilities.close()
+        }
+        catch (closeError) {
+          throw new AggregateError([error, closeError], "[vitehub] Agent tool transform failed and cleanup also failed.")
+        }
+        throw error
       }
-      throw error
     }
     const transformedTools = transformed.tools
     const preparedTools = withAgentToolJsonSchemas(withJsonCompatibleToolOutputs(applyAgentToolPolicies(transformedTools) || {}))
