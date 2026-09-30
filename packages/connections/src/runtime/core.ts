@@ -195,15 +195,20 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       ...(value.description ? { description: value.description } : {}),
     }
     if (!grant) return { ...base, scopes: value.provider.scopes, status: "disconnected" }
+    const current = grant.keyMatches && grant.provider === value.provider.id
     return {
       ...base,
       connectedAt: grant.connectedAt,
       scopes: grant.scopes,
-      status: grant.keyMatches ? grant.status : "needs-reconnect",
+      status: current ? grant.status : "needs-reconnect",
       updatedAt: grant.updatedAt,
       ...(grant.account ? { account: grant.account } : {}),
       ...(grant.expiresAt ? { expiresAt: new Date(grant.expiresAt).toISOString() } : {}),
-      ...(grant.keyMatches ? grant.lastError ? { lastError: grant.lastError } : {} : { lastError: "CONNECTIONS_KEY_MISMATCH" }),
+      ...(!grant.keyMatches
+        ? { lastError: "CONNECTIONS_KEY_MISMATCH" }
+        : grant.provider !== value.provider.id
+          ? { lastError: "CONNECTIONS_PROVIDER_CHANGED" }
+          : grant.lastError ? { lastError: grant.lastError } : {}),
     }
   }
 
@@ -222,13 +227,15 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const stored = await db.tokens(name)
       if (!stored) throw connectionError("missing", { connection: name })
       if (stored.grant.status === "needs-reconnect") throw connectionError("needs_reconnect", { connection: name })
+      // A grant from another provider must never reach the new provider.
+      if (stored.grant.provider !== value.provider.id) throw connectionError("needs_reconnect", { connection: name })
       initialRevision ??= stored.grant.revision
       const now = Date.now()
       const refreshedByOther = force && stored.grant.revision !== initialRevision
       const fresh = !force && (stored.tokens.expiresAt === undefined || stored.tokens.expiresAt - refreshSkewMs > now)
       if (fresh || refreshedByOther) return stored.tokens
       if (!stored.tokens.refreshToken) {
-        await db.release(name, "needs-reconnect", "CONNECTIONS_NEEDS_RECONNECT")
+        await db.release(name, stored.grant.revision, "needs-reconnect", "CONNECTIONS_NEEDS_RECONNECT")
         throw connectionError("needs_reconnect", { connection: name })
       }
       if (await db.lease(name, stored.grant.revision, now, now + leaseMs)) {
@@ -241,7 +248,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         }
         catch (error) {
           const reconnect = isConnectionError(error, "needs_reconnect")
-          await db.release(name, reconnect ? "needs-reconnect" : "error", errorCode(error)).catch(() => undefined)
+          // The revision keeps a stale refresh from marking a newer grant.
+          await db.release(name, stored.grant.revision, reconnect ? "needs-reconnect" : "error", errorCode(error)).catch(() => undefined)
           await recordQuietly({ action: "refresh", actor, connection: name, durationMs: Date.now() - started, error: errorCode(error), outcome: "failed", ...(errorStatus(error) ? { status: errorStatus(error) } : {}) }, event)
           throw reconnect ? connectionError("needs_reconnect", { connection: name }, error) : error
         }
@@ -296,26 +304,30 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return base
   }
 
-  async function execute(
+  /** Sends the request and runs `read` on the response. Activity records the outcome after `read`. */
+  async function execute<TResult>(
     name: string,
     value: ConnectionDefinition,
     base: Omit<ConnectionActivity, "id" | "outcome" | "timestamp">,
     url: URL,
     init: RequestInit,
     options: ConnectionCallOptions,
-  ): Promise<Response> {
+    read: (response: Response) => Promise<TResult>,
+  ): Promise<TResult> {
     const started = Date.now()
     const audit = options.audit === "all" || base.effect === "write"
+    let status: number | undefined
     try {
       const response = await send(name, value, url, init, options.event, options.actor)
-      const outcome = response.ok ? "succeeded" : "failed"
+      status = response.status
+      const result = await read(response)
       if (audit || !response.ok) {
-        await recordQuietly({ ...base, durationMs: Date.now() - started, outcome, status: response.status, ...(response.ok ? {} : { error: "CONNECTIONS_PROVIDER_FAILED" }) }, options.event)
+        await recordQuietly({ ...base, durationMs: Date.now() - started, outcome: response.ok ? "succeeded" : "failed", status, ...(response.ok ? {} : { error: "CONNECTIONS_PROVIDER_FAILED" }) }, options.event)
       }
-      return response
+      return result
     }
     catch (error) {
-      await recordQuietly({ ...base, durationMs: Date.now() - started, error: errorCode(error), outcome: "failed" }, options.event)
+      await recordQuietly({ ...base, durationMs: Date.now() - started, error: errorCode(error), outcome: "failed", ...(status === undefined ? {} : { status }) }, options.event)
       throw error
     }
   }
@@ -340,15 +352,22 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         headers.set("content-type", "application/json")
         body = JSON.stringify(request.body)
       }
-      const response = await execute(name, value, base, url, { body, headers, method: request.method }, callOptions)
-      if (!response.ok) {
-        await response.body?.cancel().catch(() => undefined)
-        throw connectionError("provider_failed", { connection: name, operation: operation.id, status: response.status })
-      }
-      const text = await response.text()
-      const parsed: unknown = text ? JSON.parse(text) : undefined
-      // SAFETY: Without a parse function, the Operation declaration states the provider response shape.
-      return operation.parse ? operation.parse(parsed) : parsed as never
+      return execute(name, value, base, url, { body, headers, method: request.method }, callOptions, async (response) => {
+        if (!response.ok) {
+          await response.body?.cancel().catch(() => undefined)
+          throw connectionError("provider_failed", { connection: name, operation: operation.id, status: response.status })
+        }
+        const text = await response.text()
+        let parsed: unknown
+        try {
+          parsed = text ? JSON.parse(text) : undefined
+        }
+        catch (error) {
+          throw connectionError("provider_failed", { connection: name, operation: operation.id, status: response.status }, error)
+        }
+        // SAFETY: Without a parse function, the Operation declaration states the provider response shape.
+        return operation.parse ? operation.parse(parsed) : parsed as never
+      })
     },
     async decide(name, actor, operation) {
       return decideConnectionAccess((await definition(name)).access, actor, operation)
@@ -361,7 +380,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         throw error
       })
       let revokeError: string | undefined
-      if (stored && value.provider.revoke) {
+      // Only the provider that issued the grant may receive it for revocation.
+      if (stored && stored.grant.provider === value.provider.id && value.provider.revoke) {
         await value.provider.revoke(stored.tokens, providerContext(lifecycle.event)).catch((error: unknown) => {
           revokeError = errorCode(error)
         })
@@ -380,7 +400,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         await recordQuietly({ ...base, outcome: "skipped" }, callOptions.event)
         return new Response(null, { headers: { "x-vitehub-connection-skipped": "dry-run" }, status: 204 })
       }
-      return execute(name, value, base, url, { ...init, method }, callOptions)
+      return execute(name, value, base, url, { ...init, method }, callOptions, async response => response)
     },
     inspect,
     async list(event) {

@@ -166,6 +166,21 @@ describe("Connections runtime dry run and audit", () => {
     expect(await runtime.activity({})).toEqual([expect.objectContaining({ error: "CONNECTIONS_PROVIDER_FAILED", outcome: "failed", status: 500 })])
   })
 
+  it("records a malformed or rejected response as a failed call", async () => {
+    const api = mockFetch(() => new Response("not json", { status: 200 }))
+    const { name, runtime, store } = setupRuntime({ definition: { access: { server: { allow: ["*"] } }, provider: fakeProvider().provider }, fetch: api.fetch })
+    await store.write({ name, provider: "fake", tokens: tokenSet() })
+    const strict = { ...writeOperation, parse: () => { throw new TypeError("unexpected shape") } }
+
+    await expectCode(runtime.call(name, writeOperation, { name: "x" }, { actor: server }), "CONNECTIONS_PROVIDER_FAILED")
+    api.mock.mockImplementation(async () => Response.json({ other: true }))
+    await expect(runtime.call(name, strict, { name: "x" }, { actor: server })).rejects.toThrow("unexpected shape")
+    expect((await runtime.activity({})).map(event => [event.outcome, event.error, event.status])).toEqual([
+      ["failed", "CONNECTIONS_FAILED", 200],
+      ["failed", "CONNECTIONS_PROVIDER_FAILED", 200],
+    ])
+  })
+
   it("never stores tokens or bodies in activity", async () => {
     const api = mockFetch((url, init, index) => index === 1
       ? new Response(null, { status: 401 })
@@ -401,6 +416,19 @@ describe("Connections runtime lifecycle", () => {
     expect(await second.inspect("api")).toMatchObject({ lastError: "CONNECTIONS_KEY_MISMATCH", status: "needs-reconnect" })
     await expectCode(second.call("api", readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_KEY_MISMATCH")
     expect(await first.inspect("api")).toMatchObject({ status: "active" })
+  })
+
+  it("requires a reconnect when the provider of a Connection changed", async () => {
+    const api = okApi()
+    const { fake, name, runtime, store } = setupRuntime({ fetch: api.fetch })
+    await store.write({ name, provider: "previous", tokens: tokenSet() })
+
+    expect(await runtime.inspect(name)).toMatchObject({ lastError: "CONNECTIONS_PROVIDER_CHANGED", status: "needs-reconnect" })
+    await expectCode(runtime.call(name, readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_NEEDS_RECONNECT")
+    expect(api.calls).toEqual([])
+    await runtime.disconnect(name, { actor: server })
+    expect(fake.revoke).not.toHaveBeenCalled()
+    expect(await store.grant(name)).toBeUndefined()
   })
 
   it("revokes and deletes the grant on disconnect", async () => {

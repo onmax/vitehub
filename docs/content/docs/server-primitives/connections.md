@@ -172,6 +172,8 @@ The CLI calls the management route of a running development server with the Cons
 | `CONNECTIONS_MISSING` | The Connection is not connected. |
 | `CONNECTIONS_NEEDS_RECONNECT` | The provider rejected the refresh token. |
 | `CONNECTIONS_KEY_MISMATCH` | The grant was sealed with a different key. |
+
+When you change the provider of a Connection, the stored grant belongs to the old provider. The status becomes `needs-reconnect` with `lastError: 'CONNECTIONS_PROVIDER_CHANGED'`, and ViteHub never sends that grant to the new provider. Reconnect the Connection.
 | `CONNECTIONS_DENIED`, `CONNECTIONS_APPROVAL_REQUIRED` | Access rules blocked the call. |
 | `CONNECTIONS_PROVIDER_FAILED` | The provider returned an error. `details.status` has the HTTP status. |
 | `CONNECTIONS_UNAVAILABLE` | Another request holds the refresh lease. Try again. |

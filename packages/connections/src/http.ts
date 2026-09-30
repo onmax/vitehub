@@ -132,7 +132,7 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions): (r
     const input = parsed.output
     const { runtime } = options
     if ((input.action === "start" || input.action === "refresh" || input.action === "disconnect") && !access.admin) {
-      return json({ code: "CONNECTIONS_DENIED", message: "Only Console admins can change Connections." }, 403)
+      return json({ code: "CONNECTIONS_DENIED", message: "This caller cannot change Connections." }, 403)
     }
     switch (input.action) {
       case "list": return json({ admin: access.admin, connections: await runtime.list(event) })
