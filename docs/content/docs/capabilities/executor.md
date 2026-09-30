@@ -85,9 +85,9 @@ You can use both. For example, use a Google Connection for Gmail and Executor fo
 
 To move a Gmail integration from Executor to Connections:
 
-1. Define a Google Connection, set `VITEHUB_CONNECTIONS_KEY`, and connect the same Google account.
-2. Replace Executor tool calls in server code with `useConnection('google', { actor })`. Replace Agent Executor Gmail tools with `gmail({ connection: 'google' })`.
-3. Add `access` rules for each actor that writes, and run a write with `dryRun: true` first.
+1. [Enable Connections](/docs/server-primitives/connections#enable-connections) with `database: true` and `connections: true`. Define a Google Connection, set `VITEHUB_CONNECTIONS_KEY`, and connect the same Google account.
+2. Replace Executor tool calls in server code with `useConnection('google', { actor })`. Replace Agent Executor Gmail tools with `gmail({ connection: 'google', tools: [...] })`. Select the Gmail tools that match the existing operations and allow their corresponding methods in the Connection's `api` configuration. The default tools cover only search and read.
+3. Add `access` rules for every caller that must retain access. Give read-only actors `read: true`, and add `write` permissions only for actors that need them. An actor omitted from an existing `access` object is denied. Run a write with `dryRun: true` first.
 4. Remove the Executor credential when no caller uses it.
 
 ## Options
