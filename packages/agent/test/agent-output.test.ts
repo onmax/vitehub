@@ -394,6 +394,27 @@ describe("agent output helpers", () => {
     expect(normalize({ title: "Found breakfast", toolCallId: "call-1", type })).toMatchObject({ title: "Found breakfast" })
   })
 
+  it.each(["tool-result", "tool-output-available", "tool-error", "tool-output-error"])("clears provider titles after %s before a call ID is reused", (type) => {
+    const toolNames = new Map<string, string>()
+    const toolTitles = new Map<string, string>()
+    const defaults = agentToolStreamDefaults({ search: { title: "Searched meals" }, untitled: {} })
+    const normalize = (chunk: unknown) => toAgentStreamEvent(chunk, toolNames, undefined, defaults, undefined, toolTitles)
+
+    for (const toolName of ["search", "untitled"]) {
+      normalize({ title: "Search breakfast", toolCallId: "call-1", toolName, type: "tool-call" })
+      expect(normalize({ toolCallId: "call-1", type })).toMatchObject({ title: "Search breakfast" })
+      const restarted = normalize({ toolCallId: "call-1", toolName, type: "tool-input-start" })
+      const call = normalize({ toolCallId: "call-1", toolName, type: "tool-call" })
+      const result = normalize({ toolCallId: "call-1", type })
+      for (const event of [restarted, call, result]) {
+        if (toolName === "search") expect(event).toMatchObject({ title: "Searched meals" })
+        else expect(event).not.toHaveProperty("title")
+      }
+      expect(normalize({ title: "Found lunch", toolCallId: "call-1", toolName, type })).toMatchObject({ title: "Found lunch" })
+      expect(toolTitles.has("call-1")).toBe(false)
+    }
+  })
+
   it("normalizes AI SDK stream aliases", () => {
     expect(toAgentStreamEvent({ textDelta: "x", type: "text" })).toEqual({
       id: undefined,

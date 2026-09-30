@@ -1712,6 +1712,41 @@ describe("agent message protocol", () => {
     }))
   })
 
+  it.each(["static", "resolved"])("includes %s adapter-local tool titles in AI SDK telemetry", async (kind) => {
+    const { createAiSdkAdapter } = await import("../src/ai-sdk.ts")
+    const traceLog = createTraceEventLog({ content: "content" })
+    loadAiSdk.mockResolvedValue({
+      isStepCount: () => () => false,
+      jsonSchema: vi.fn(schema => schema),
+      ToolLoopAgent: class {
+        constructor(private settings: Record<string, unknown>) {}
+
+        async generate() {
+          // SAFETY: The adapter configures AI SDK telemetry with this contract.
+          const telemetry = this.settings.telemetry as { integrations: import("ai").Telemetry[] }
+          for (const integration of telemetry.integrations) {
+            // SAFETY: Only tool identity and output fields are used by the integration.
+            await integration.onToolExecutionStart?.({ toolCallId: "local-1", toolName: "search" } as never)
+            // SAFETY: Only tool identity and output fields are used by the integration.
+            await integration.onToolExecutionEnd?.({ toolCallId: "local-1", toolName: "search", toolOutput: { type: "text", value: "done" } } as never)
+          }
+          return { text: "done" }
+        }
+      },
+    })
+    const tools = { search: { execute: () => "done", name: "search", title: "Searched meals" } }
+    const agent = adapterDefinition(createAiSdkAdapter({
+      // SAFETY: The mocked AI SDK does not call the model.
+      model: {} as never,
+      tools: kind === "static" ? tools : () => tools,
+    }))
+
+    await runAgent(agent, { memo: vi.fn(), runtime: "unknown", traceLog, waitUntil: vi.fn() }, { prompt: "Search meals" })
+    const events = traceLog.entries().filter(entry => entry.name === "agent.tool.start" || entry.name === "agent.tool.finish")
+    expect(events).toHaveLength(2)
+    for (const event of events) expect(event.attributes).toMatchObject({ "tool.name": "search", "tool.title": "Searched meals" })
+  })
+
   it("exports product actions from AI SDK telemetry integrations", async () => {
     const { aiSdkTelemetryIntegration } = await import("../src/trace.ts")
     const traceLog = createTraceEventLog({ content: "content" })
