@@ -4,11 +4,11 @@ import { resolve } from "node:path"
 import { discoverWorkflowDefinitions } from "../discovery.ts"
 import { createWorkflowRegistryContents, workflowPackageName } from "./vite-build.ts"
 
-import type { DiscoveredWorkflowDefinition } from "../types.ts"
+import type { DiscoveredWorkflowDefinition, ResolvedWorkflowOptions } from "../types.ts"
 
 // Provider servers install the discovered Workflow registry in production. In
 // `vite dev`, the app runs in the Nitro dev runtime, so the Vite plugin writes
-// the registry and a Nitro plugin that installs it at startup. Build output
+// the registry and a Nitro plugin that installs it and the runtime config at startup. Build output
 // never contains these files.
 export const workflowDevGeneratedDir = ".vitehub/nitro/workflow"
 const devRegistryFile = "dev-registry.mjs"
@@ -30,13 +30,14 @@ export function createWorkflowDevRegistryModule(registryFile: string, definition
   return createWorkflowRegistryContents(registryFile, definitions.filter(isWorkflowDevDefinition), { workflow: importBase })
 }
 
-export function createWorkflowDevPluginModule(importBase = workflowPackageName): string {
+export function createWorkflowDevPluginModule(workflow: ResolvedWorkflowOptions, importBase = workflowPackageName): string {
   return [
     "import { definePlugin } from \"nitro\"",
-    `import { setWorkflowRuntimeRegistry } from ${JSON.stringify(`${importBase}/runtime/state`)}`,
+    `import { setWorkflowRuntimeConfig, setWorkflowRuntimeRegistry } from ${JSON.stringify(`${importBase}/runtime/state`)}`,
     `import registry from ${JSON.stringify(`./${devRegistryFile}`)}`,
     "",
     "export default definePlugin(() => {",
+    `  setWorkflowRuntimeConfig(${JSON.stringify(workflow)})`,
     "  setWorkflowRuntimeRegistry(registry)",
     "})",
     "",
@@ -54,18 +55,20 @@ export interface WorkflowDevRegistryFilesOptions {
   definitions: DiscoveredWorkflowDefinition[]
   importBase?: string
   projectRoot: string
+  workflow: ResolvedWorkflowOptions
 }
 
 export interface WorkflowDevRegistryFiles {
   /** Files whose contents changed. */
   changed: string[]
-  /** Nitro plugin that installs the registry. */
+  /** Nitro plugin that installs the registry and runtime configuration. */
   plugin: string
 }
 
 /**
  * Writes the development registry of discovered Workflow Definitions and the
- * Nitro plugin that installs it. Files that did not change are not written again.
+ * Nitro plugin that installs it and the runtime configuration. Files that did
+ * not change are not written again.
  */
 export async function writeWorkflowDevRegistryFiles(options: WorkflowDevRegistryFilesOptions): Promise<WorkflowDevRegistryFiles> {
   const directory = resolve(options.projectRoot, workflowDevGeneratedDir)
@@ -74,7 +77,7 @@ export async function writeWorkflowDevRegistryFiles(options: WorkflowDevRegistry
   const plugin = resolve(directory, devPluginFile)
   const files: Array<[string, string]> = [
     [registry, createWorkflowDevRegistryModule(registry, options.definitions, options.importBase)],
-    [plugin, createWorkflowDevPluginModule(options.importBase)],
+    [plugin, createWorkflowDevPluginModule(options.workflow, options.importBase)],
   ]
   const changed: string[] = []
   for (const [file, contents] of files) {

@@ -14,7 +14,7 @@ import { normalizeWorkflowOptions } from "./config.ts"
 import { discoverWorkflowDevDefinitions, workflowDevGeneratedDir, writeWorkflowDevRegistryFiles } from "./internal/dev-registry.ts"
 import { createCloudflareWorkflowNitroConfig, createOptionalViteDevtoolsPlugin, createVercelWorkflowTransformPlugin, discoverWorkflowProviderSources, generateWorkflowProviderOutputs, hasVercelNativeWorkflowEntry, resolveVercelWorkflowWorld, workflowPackageName, writeProviderEntries } from "./internal/vite-build.ts"
 
-import type { WorkflowModuleOptions } from "./types.ts"
+import type { ResolvedWorkflowOptions, WorkflowModuleOptions } from "./types.ts"
 import type { ProviderDeploymentOutputGeneration, ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import type { Plugin as EsbuildPlugin } from "esbuild"
 import type { ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
@@ -169,24 +169,26 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
   }
 
   // Provider servers install the discovered Workflow registry in production.
-  // In `vite dev`, a generated Nitro plugin installs it in the Nitro dev runtime.
+  // In `vite dev`, a generated Nitro plugin installs it and the resolved runtime configuration.
   let devRootDir: string | undefined
+  let devWorkflow: ResolvedWorkflowOptions | undefined
 
-  function isWorkflowEnabled(): boolean {
+  function resolveDevWorkflow(): ResolvedWorkflowOptions | undefined {
     try {
-      return Boolean(normalizeWorkflowOptions(workflow, { hosting: internalOptions.hosting ?? "vercel" }))
+      return normalizeWorkflowOptions(workflow, { hosting: internalOptions.hosting ?? "vercel" })
     }
     catch {
       // The build reports configuration errors. Development keeps the app running without a registry.
-      return false
+      return undefined
     }
   }
 
-  async function writeDevRegistry(rootDir: string) {
+  async function writeDevRegistry(rootDir: string, workflow: ResolvedWorkflowOptions) {
     return await writeWorkflowDevRegistryFiles({
       definitions: discoverWorkflowDevDefinitions(rootDir, serverDirs),
       importBase: internalOptions.importBase,
       projectRoot: rootDir,
+      workflow,
     })
   }
 
@@ -199,9 +201,11 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         workflow = config.workflow ?? workflow
         // SAFETY: ViteHub supplies this optional string-array extension during framework configuration.
         serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
-        if (env.command !== "serve" || !isWorkflowEnabled()) return
+        if (env.command !== "serve") return
+        devWorkflow = resolveDevWorkflow()
+        if (!devWorkflow) return
         devRootDir = resolveViteHubProjectRoot(resolve(config.root || process.cwd()))
-        const { plugin } = await writeDevRegistry(devRootDir)
+        const { plugin } = await writeDevRegistry(devRootDir, devWorkflow)
         const kit = createNitroServerKit(Reflect.get(config, "nitro"))
         kit.addPlugin(plugin, "start")
         Reflect.set(config, "nitro", kit.config)
@@ -209,13 +213,14 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     },
     configureServer(server) {
       const rootDir = devRootDir
-      if (!rootDir) return
+      const workflowConfig = devWorkflow
+      if (!rootDir || !workflowConfig) return
       // Vite does not call `handleHotUpdate` for new or deleted files, so watch them directly.
       const refresh = async (path: string) => {
         const file = path.replace(/\\/g, "/")
         if (file.includes(`/${workflowDevGeneratedDir}/`)) return
         if (!/\.(?:c|m)?[jt]s$/i.test(file) || !/(?:\/workflows\/|\.workflow\.)/i.test(file)) return
-        const { changed } = await writeDevRegistry(rootDir)
+        const { changed } = await writeDevRegistry(rootDir, workflowConfig)
         const environment = server.environments.nitro ?? server.environments.ssr
         const filesToInvalidate = new Set([
           ...changed,

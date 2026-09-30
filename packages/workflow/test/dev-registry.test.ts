@@ -3,13 +3,14 @@ import { EventEmitter } from "node:events"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 
 import { afterEach, describe, expect, it } from "vitest"
 
 import { createWorkflowDevPluginModule, workflowDevGeneratedDir } from "../src/internal/dev-registry.ts"
 import { hubWorkflow } from "../src/vite.ts"
 
-import type { WorkflowModuleOptions } from "../src/types.ts"
+import type { ResolvedWorkflowOptions, WorkflowModuleOptions } from "../src/types.ts"
 
 let root: string | undefined
 
@@ -54,10 +55,53 @@ async function waitFor(check: () => Promise<boolean>): Promise<void> {
 
 describe("Workflow dev registry", () => {
   it("generates a Nitro plugin that installs the development registry", () => {
-    const code = createWorkflowDevPluginModule("vite-hub/_internal/workflow")
-    expect(code).toContain(`import { setWorkflowRuntimeRegistry } from "vite-hub/_internal/workflow/runtime/state"`)
+    const code = createWorkflowDevPluginModule({ provider: "vercel" }, "vite-hub/_internal/workflow")
+    expect(code).toContain(`import { setWorkflowRuntimeConfig, setWorkflowRuntimeRegistry } from "vite-hub/_internal/workflow/runtime/state"`)
     expect(code).toContain(`import registry from "./dev-registry.mjs"`)
     expect(code).toContain("setWorkflowRuntimeRegistry(registry)")
+  })
+
+  it.each<ResolvedWorkflowOptions>([
+    { provider: "vercel" },
+    { provider: "cloudflare" },
+    { provider: "openworkflow", sqlite: { path: ".data/workflow.sqlite" } },
+    { provider: "openworkflow", postgres: { url: "postgres://localhost/workflow" } },
+    { provider: "openworkflow", postgres: { url: { kind: "env-variable", source: { kind: "env", name: "OPENWORKFLOW_POSTGRES_URL" } } } },
+  ])("installs the selected runtime configuration at startup: %j", async (workflow) => {
+    const projectRoot = await createApp()
+    await configHook(workflow)({ root: projectRoot }, { command: "serve", mode: "development" })
+
+    // Execute the generated plugin with only its external Nitro and runtime state imports stubbed.
+    const nitroDir = join(projectRoot, "node_modules/nitro")
+    const stateDir = join(projectRoot, "node_modules/@vite-hub/workflow")
+    await mkdir(nitroDir, { recursive: true })
+    await mkdir(stateDir, { recursive: true })
+    await writeFile(join(nitroDir, "package.json"), JSON.stringify({ type: "module", exports: "./index.mjs" }))
+    await writeFile(join(nitroDir, "index.mjs"), "export const definePlugin = setup => setup\n")
+    await writeFile(join(stateDir, "package.json"), JSON.stringify({ type: "module", exports: { "./runtime/state": "./state.mjs" } }))
+    await writeFile(join(stateDir, "state.mjs"), [
+      "export let config, registry",
+      "export const setWorkflowRuntimeConfig = value => { config = value }",
+      "export const setWorkflowRuntimeRegistry = value => { registry = value }",
+    ].join("\n"))
+    const pluginUrl = pathToFileURL(join(projectRoot, workflowDevGeneratedDir, "dev-plugin.mjs")).href
+    const stateUrl = pathToFileURL(join(stateDir, "state.mjs")).href
+    const { default: startup } = await import(/* @vite-ignore */ pluginUrl)
+    await startup()
+    const state = await import(/* @vite-ignore */ stateUrl)
+    expect(state.config).toEqual(workflow)
+    expect(state.registry).toHaveProperty("welcome")
+  })
+
+  it("uses the config hook override when resolving runtime options", async () => {
+    const projectRoot = await createApp()
+    await configHook({ provider: "vercel" })({
+      root: projectRoot,
+      workflow: { provider: "openworkflow", sqlite: { path: ".data/override.sqlite" } },
+    }, { command: "serve", mode: "development" })
+    const plugin = await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-plugin.mjs"), "utf8")
+    expect(plugin).toContain('"provider":"openworkflow"')
+    expect(plugin).toContain('"path":".data/override.sqlite"')
   })
 
   it("adds the registry plugin before Nitro reads its config in development", async () => {
