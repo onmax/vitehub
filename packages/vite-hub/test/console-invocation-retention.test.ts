@@ -94,7 +94,9 @@ describe("Console invocation journal retention", () => {
     { maxRecords: Number.NaN },
     { maxRecords: Number.POSITIVE_INFINITY },
     { maxRecords: Number.NEGATIVE_INFINITY },
-  ])("rejects non-finite retention after Vite code generation: %j", async (retention) => {
+    { maxAgeMs: "1000" },
+    { maxRecords: "false" },
+  ] as unknown as AgentInvocationRetentionOptions[]) ("rejects invalid retention after Vite code generation: %j", async (retention) => {
     const install = await generatedInstallation(retention)
     expect(install).toThrow("must be a positive safe integer or false")
   })

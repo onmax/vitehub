@@ -259,7 +259,7 @@ function journalDatabase(parsed: ParsedArgs, context: AgentInvocationsCliContext
   const root = resolveViteHubProjectRoot(context.rootDir ?? process.cwd())
   const explicit = parsed.database?.trim() || context.env.VITEHUB_AGENT_INVOCATIONS_DATABASE_URL?.trim()
   const configured = explicit || context.env.VITEHUB_CONSOLE_DATABASE_URL?.trim()
-  const authToken = explicit ? context.env.VITEHUB_AGENT_INVOCATIONS_DATABASE_AUTH_TOKEN : context.env.VITEHUB_CONSOLE_DATABASE_AUTH_TOKEN
+  const authToken = context.env.VITEHUB_AGENT_INVOCATIONS_DATABASE_AUTH_TOKEN || context.env.VITEHUB_CONSOLE_DATABASE_AUTH_TOKEN
   const token = authToken ? { authToken } : {}
   const secrets = authToken ? [authToken] : []
   if (configured && !/^file:/i.test(configured) && /^[a-z][a-z\d+.-]+:/i.test(configured)) {
