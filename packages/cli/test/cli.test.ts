@@ -26,7 +26,7 @@ async function createTempDir() {
   return rootDir
 }
 
-function provisionPlugin(apply: () => Promise<{ ids?: unknown }>) {
+function provisionPlugin(apply: () => Promise<{ ids?: unknown }>, overrides: { exists?: boolean, pending?: boolean } = {}) {
   return {
     vitehub: {
       cli: {
@@ -34,7 +34,7 @@ function provisionPlugin(apply: () => Promise<{ ids?: unknown }>) {
         provision: [{
           id: "test:cloudflare",
           provider: "cloudflare",
-          plan: async () => [{ kind: "test-resource", name: "demo", exists: false, apply }],
+          plan: async () => [{ kind: "test-resource", name: "demo", exists: false, ...overrides, apply }],
         }],
       },
     },
@@ -713,6 +713,33 @@ export default function (_options, nuxt) {
       schemaVersion: 1,
       stateFile: ".vitehub/provision.json",
       warnings: [],
+    })
+    expect(apply).not.toHaveBeenCalled()
+  })
+
+  it("counts existing but incomplete actions as pending", async () => {
+    const rootDir = await createTempDir()
+    const apply = vi.fn(async () => ({}))
+    const stdout = stream()
+    const loadConfig = async () => ({
+      plugins: [provisionPlugin(apply, { exists: true, pending: true })],
+      root: rootDir,
+    })
+
+    await expect(runViteHubCli({
+      args: ["provision", "status", "--provider", "cloudflare", "--json"],
+      cwd: rootDir,
+      env: { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "test-token" },
+      loadConfig,
+      stdout,
+    })).resolves.toBe(0)
+
+    expect(JSON.parse(stdout.output())).toMatchObject({
+      plan: {
+        actions: [{ exists: true, kind: "test-resource", name: "demo", pending: true, step: "test:cloudflare" }],
+        checked: true,
+        pending: 1,
+      },
     })
     expect(apply).not.toHaveBeenCalled()
   })

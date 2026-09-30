@@ -156,12 +156,19 @@ async function planProvision(provider: ProvisionProvider, context: ProvisionFeat
 }
 
 function serializeAction({ action, step }: PlannedProvisionAction) {
-  return { exists: action.exists, kind: action.kind, name: action.name, step }
+  return {
+    ...(action.pending === undefined ? {} : { pending: action.pending }),
+    exists: action.exists,
+    kind: action.kind,
+    name: action.name,
+    step,
+  }
 }
 
 function writeActions(actions: PlannedProvisionAction[], stdout: ProvisionFeatureContext["stdout"]): void {
   for (const { action } of actions) {
-    stdout.write(`${action.exists ? "exists" : "create"}\t${action.kind}\t${action.name}\n`)
+    const status = !action.exists ? "create" : action.pending ? "pending" : "exists"
+    stdout.write(`${status}\t${action.kind}\t${action.name}\n`)
   }
 }
 
@@ -226,7 +233,7 @@ export async function runProvisionStatus(args: string[], context: ProvisionFeatu
   const { actions, checked, warnings } = hasCredentials
     ? await planProvision(provider, context, options, parsed.json)
     : { actions: [], checked: false, warnings: [`provision: plan not checked, missing ${PROVIDER_CREDENTIALS[provider]}.`] }
-  const pending = actions.filter(({ action }) => !action.exists).length
+  const pending = actions.filter(({ action }) => action.pending ?? !action.exists).length
 
   if (parsed.json) {
     context.stdout.write(`${JSON.stringify({

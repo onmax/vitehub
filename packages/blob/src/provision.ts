@@ -229,11 +229,15 @@ export function createBlobVercelProvisionStep(resolveOptions: () => BlobModuleOp
         (!store.type || store.type === "blob")
         && (store.access ?? "public") === requested.access,
       )
+      const connectionState = existing?.id
+        ? vercelConnectionState(await readVercelBlobStore(request, existing.id), projectId)
+        : "absent"
 
       return [{
         kind: "vercel-blob-store",
         name: existing?.name ?? VERCEL_BLOB_STORE_NAME,
         exists: Boolean(existing),
+        pending: !existing || connectionState !== "equivalent",
         apply: async () => {
           const store = existing ?? (await request("/v1/storage/stores/blob", {
             method: "POST",

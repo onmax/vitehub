@@ -66,7 +66,7 @@ create  cloudflare-d1   app-content
 plan: 1 pending action. Run `vitehub provision run --provider cloudflare` to apply.
 ```
 
-A pending action is a planned resource that does not exist yet.
+A pending action needs resource creation or provider-side setup. An existing Vercel Blob store remains pending until it is connected to the project in all required environments.
 Without provider credentials, the command still shows recorded ids, but it reports the plan as not checked instead of reporting no pending actions.
 The plan is also not checked when an applicable Provision Step skips its lookup. For example, Vercel Blob requires both `VERCEL_TOKEN` and `VERCEL_PROJECT_ID`.
 
@@ -97,6 +97,7 @@ pnpm vitehub provision status --provider cloudflare --json
 ```
 
 `provision run --json` returns `mode` (`dry-run` or `apply`), the planned `actions`, the `ids` written by this run, `stateFile` (`null` when nothing was written), and `warnings`.
+An action may include `pending` to report required provider-side setup independently of resource existence. Without this field, an action is pending when `exists` is `false`. Vercel Blob includes the field because an existing store may still need a project connection.
 Both commands exit with code `0` when the plan phase succeeds, also when actions are pending.
 For `provision status --json`, require `plan.checked === true` before checking `plan.pending === 0` to gate a CI step. An unchecked plan can have zero pending actions because resource lookups were skipped.
 

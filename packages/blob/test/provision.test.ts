@@ -265,6 +265,7 @@ describe("blob vercel provision step", () => {
     const actions = await createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan(context(fetchImpl))
     expect(actions).toHaveLength(1)
     expect(actions[0]!.exists).toBe(true)
+    expect(actions[0]!.pending).toBe(true)
     const result = await actions[0]!.apply()
 
     expect(result.ids).toBeUndefined()
@@ -272,6 +273,7 @@ describe("blob vercel provision step", () => {
     expect(JSON.stringify(requests)).not.toContain("secret-token")
     expect(requests).toEqual([
       { body: undefined, method: "GET", url: expect.stringContaining("/v1/storage/stores") },
+      { body: undefined, method: "GET", url: expect.stringContaining("/storage/stores/store_1") },
       { body: undefined, method: "GET", url: expect.stringContaining("/storage/stores/store_1") },
       {
         body: { envVarEnvironments: requiredEnvironments, projectId: "prj_1", type: "integration" },
@@ -294,9 +296,10 @@ describe("blob vercel provision step", () => {
     const actions = await createBlobVercelProvisionStep(() => ({ access: "private", driver: "vercel-blob" })).plan(context(fetchImpl))
     expect(actions).toHaveLength(1)
     expect(actions[0]!.exists).toBe(true)
+    expect(actions[0]!.pending).toBe(false)
     await actions[0]!.apply()
 
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
 
   it("is idempotent across repeated provision runs", async () => {
@@ -343,6 +346,7 @@ describe("blob vercel provision step", () => {
     const actions = await createBlobVercelProvisionStep(() => ({ access: "private", driver: "vercel-blob" })).plan(context(fetchImpl))
     expect(actions).toHaveLength(1)
     expect(actions[0]!.exists).toBe(false)
+    expect(actions[0]!.pending).toBe(true)
     await actions[0]!.apply()
 
     expect(requests).toEqual([
@@ -377,7 +381,7 @@ describe("blob vercel provision step", () => {
 
     const actions = await createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan(context(fetchImpl))
     await expect(actions[0]!.apply()).rejects.toThrow("without all required environments")
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
 
   it("accepts a concurrent connection only after the exact store proves equivalence", async () => {
@@ -387,14 +391,14 @@ describe("blob vercel provision step", () => {
       if (init?.method === "POST") return jsonResponse({ error: { code: "already_connected" } }, 400)
       if (url.includes("/storage/stores/store_1")) {
         reads++
-        return jsonResponse({ store: { projectsMetadata: reads === 1 ? [] : [connectedProject()] } })
+        return jsonResponse({ store: { projectsMetadata: reads <= 2 ? [] : [connectedProject()] } })
       }
       return jsonResponse({ stores: [{ id: "store_1", type: "blob" }] })
     })
 
     const actions = await createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan(context(fetchImpl))
     await expect(actions[0]!.apply()).resolves.toEqual({})
-    expect(reads).toBe(2)
+    expect(reads).toBe(3)
   })
 
   it("does not treat an invalid connection type or a different project as success", async () => {
@@ -435,8 +439,8 @@ describe("blob vercel provision step", () => {
       return jsonResponse({ stores: [{ id: "store_1", type: "blob" }] })
     })
 
-    const actions = await createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan(context(fetchImpl))
-    await expect(actions[0]!.apply()).rejects.toThrow("GET /storage/stores/store_1 (403)")
+    await expect(createBlobVercelProvisionStep(() => ({ driver: "vercel-blob" })).plan(context(fetchImpl)))
+      .rejects.toThrow("GET /storage/stores/store_1 (403)")
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 })

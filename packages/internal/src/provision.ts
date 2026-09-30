@@ -29,6 +29,7 @@ export interface ProvisionAction {
   kind: string
   name: string
   exists: boolean
+  pending?: boolean
   apply: () => Promise<ProvisionResult>
 }
 
