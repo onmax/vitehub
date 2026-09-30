@@ -259,10 +259,12 @@ describe("built-in Channel discovery", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
       telegram({ botToken: undefined as string | undefined })
+      telegram({ botToken: undefined satisfies string | undefined })
       telegram(undefined as TelegramOptions | undefined)
       telegram({ botToken: token as string | undefined })
       telegram({ botToken: undefined as string | undefined ?? token })
     `)).toEqual([
+      { kind: "telegram", keys: [] },
       { kind: "telegram", keys: [] },
       { kind: "telegram", keys: [] },
       { kind: "telegram", keys: ["botToken"] },

@@ -233,7 +233,7 @@ function isObjectOrTypeContainer(tokens: string[], open: number, outer?: number)
 function isUndefinedValue(tokens: string[], start: number, terminators: ReadonlySet<string>): boolean {
   if (tokens[start] !== "undefined") return false
   if (terminators.has(tokens[start + 1]!)) return true
-  if (tokens[start + 1] !== "as") return false
+  if (!["as", "satisfies"].includes(tokens[start + 1]!)) return false
   let depth = 0
   for (let i = start + 2; i < tokens.length; i++) {
     const token = tokens[i]!
