@@ -164,7 +164,8 @@ function channelFactoryReference(
 ): { call: boolean, kind: string } | undefined {
   let kind = bindings.get(tokens[index]!)
   let next = index + 1
-  const member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
+  let member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
+  if (tokens[member] === "." && tokens[member + 1] === "[") member++
   if (!kind && namespaces.has(tokens[index]!)) {
     if (tokens[member] === "." && known.has(tokens[member + 1]!)) {
       kind = tokens[member + 1]!
@@ -176,7 +177,8 @@ function channelFactoryReference(
     }
   }
   if (tokens[next] === "?" && tokens[next + 1] === ".") next += 2
-  return kind ? { call: tokens[next] === "(" || tokens[next] === "<", kind } : undefined
+  if (tokens[next] === "<") next = skipTypeArguments(tokens, next)
+  return kind ? { call: tokens[next] === "(", kind } : undefined
 }
 
 // A method key belongs directly to an object, class, or interface body. Function
@@ -581,7 +583,8 @@ function factoryCall(
 ): { name: string, open: number } | undefined {
   let name = bindings.get(tokens[index]!)
   let next = index + 1
-  const member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
+  let member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
+  if (tokens[member] === "." && tokens[member + 1] === "[") member++
   if (!name && namespaces.has(tokens[index]!)) {
     if (tokens[member] === "." && names.has(tokens[member + 1]!)) {
       name = tokens[member + 1]!

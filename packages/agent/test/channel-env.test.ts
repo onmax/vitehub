@@ -60,6 +60,25 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: [] }])
   })
 
+  it("finds generic bare factory references by their imported kind", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { telegram as bot } from "vite-hub/agent/channels"
+      import * as channels from "vite-hub/agent/channels"
+      export default defineAgent({ channels: {
+        support: bot<Runtime>,
+        discord: channels.telegram<Map<string, (value: string) => void>>,
+        repo: channels["github"]<Runtime>,
+        explicit: bot<Runtime>({ botToken: token }),
+      } })
+    `)).toEqual([
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: [] },
+      { kind: "github", keys: [] },
+      { kind: "telegram", keys: ["botToken"] },
+    ])
+  })
+
   it("ignores method declarations while keeping calls inside method bodies", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
@@ -187,6 +206,10 @@ describe("built-in Channel discovery", () => {
     "channels.telegram?.({ botToken: token })",
     "channels?.telegram({ botToken: token })",
     "channels?.telegram?.({ botToken: token })",
+    "channels?.[\"telegram\"]({ botToken: token })",
+    "channels?.[\"telegram\"]?.({ botToken: token })",
+    "channels?.[\"telegram\"]<Runtime>({ botToken: token })",
+    "channels?.[\"telegram\"]?.<Runtime>({ botToken: token })",
   ])("reads options from optional factory calls: %s", (factory) => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
@@ -553,6 +576,25 @@ describe("built-in Channel discovery", () => {
 
       await rm(join(root, "server", "agents", "support.ts"))
       expect(discoverAgentChannelEnv({ rootDir: root }).telegram?.botToken?.required).toBe(false)
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it.each(["telegram<Runtime>", "channels?.[\"telegram\"]()", "channels?.[\"telegram\"]"])("requires Telegram Env for %s", async (factory) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-channel-env-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      await writeFile(join(root, "server", "agents", "support.ts"), `
+        import { defineAgent } from "vite-hub/agent"
+        import { telegram } from "vite-hub/agent/channels"
+        import * as channels from "vite-hub/agent/channels"
+        export default defineAgent({ channels: { support: ${factory} } })
+      `)
+      expect(discoverAgentChannelEnv({ rootDir: root }).telegram?.botToken).toEqual({
+        names: ["TELEGRAM_BOT_TOKEN"], required: true, secret: true,
+      })
     }
     finally {
       await rm(root, { force: true, recursive: true })

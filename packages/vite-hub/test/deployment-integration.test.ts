@@ -241,6 +241,9 @@ describe("built-in deployment preset integration", () => {
         { source: `defineAgent({ channels: { telegram: telegram(({})) } })`, required: true },
         { source: `defineAgent({ channels: { telegram: telegram((({ botToken: "token" }))) } })`, required: false },
         { source: `defineAgent({ channels: { telegram: telegram?.({ botToken: "token" }) } })`, required: false },
+        { source: `defineAgent({ channels: { support: telegram<Runtime> } })`, required: true },
+        { source: `defineAgent({ channels: { support: channelFactories?.["telegram"]() } })`, required: true },
+        { source: `defineAgent({ channels: { support: channelFactories?.["telegram"]?.<Runtime>({ botToken: "token" }) } })`, required: false },
         { source: `function run() { telegram()\n{} }; defineAgent({ channels: {} })`, required: true },
         { source: `label: { telegram()\n{} }; defineAgent({ channels: {} })`, required: true },
         { source: `switch (value) { case "ready": { telegram()\n{} } }; defineAgent({ channels: {} })`, required: true },
@@ -253,6 +256,7 @@ describe("built-in deployment preset integration", () => {
         await writeFile(join(root, "server", "agents", "support.ts"), [
           `import { defineAgent } from "vite-hub/agent"`,
           `import { telegram } from "vite-hub/agent/channels"`,
+          `import * as channelFactories from "vite-hub/agent/channels"`,
           source,
         ].join("\n"))
         expect((requiredSecrets(await resolve()) ?? []).includes("TELEGRAM_BOT_TOKEN"), source).toBe(required)
