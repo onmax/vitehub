@@ -305,7 +305,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       baseURL = config.base ?? "/"
       consoleAuthHandlers = consoleAuthConfig ? await writeConsoleAuthHandlers(root, consoleAuthConfig, baseURL) : undefined
       refreshConsoleAuthClient = consoleAuthConfig
-        ? async () => { consoleAuthHandlers = await writeConsoleAuthHandlers(root!, consoleAuthConfig, baseURL) }
+        ? serializeConsoleRefresh(async () => { consoleAuthHandlers = await writeConsoleAuthHandlers(root!, consoleAuthConfig, baseURL) })
         : undefined
       projectRoot = resolveViteHubProjectRoot(root)
       const configuredFixture = viteConfig.vitehubCliDiscovery
