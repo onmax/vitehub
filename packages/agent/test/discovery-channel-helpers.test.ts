@@ -551,6 +551,10 @@ it.each([
   ["github({ pull\\u{52}equest: false })", false],
   ["github({ pullRequest: { \\u0077orkspace: false } })", false],
   ["webChat({ \\u0063apabilities: [defineCapability({ \\u0077orkspace: {} })] })", true],
+  [String.raw`github({ "\x70ullRequest": true })`, true],
+  [String.raw`github({ '\u{70}ullRequest': false })`, false],
+  [String.raw`github({ pullRequest: { "\x77orkspace": false } })`, false],
+  [String.raw`webChat({ "\x63apabilities": [defineCapability({ "\x77orkspace": {} })] })`, true],
 ])("decodes escaped Channel option identifiers: %s", async (channel, ownsWorkspace) => {
   const local = await discover(`${imports} export default defineAgent({ channels: { custom: ${channel} } })`)
   expect(local?.workspace).toBe(ownsWorkspace ? "review" : undefined)
@@ -909,6 +913,21 @@ it.each(["of", "in"])("rejects member-expression for-%s Channel option targets",
 it("rejects predeclared for-await-of Channel option targets", async () => {
   const source = `${imports} let options = { pullRequest: false }; for await (options of [{ pullRequest: true }]) {} export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
+it.each([
+  'for ({ value: alias } of values()) alias.pullRequest = true',
+  'for ([alias] of values()) alias.pullRequest = true',
+  'for await ({ value: alias } of (values())) alias.pullRequest = true',
+  'for ({ value: alias } of values()) alias.pullRequest = true; for ({ value: alias } of [{ value: {} }]) {}',
+])("rejects predeclared destructuring from opaque for-of results: %s", async mutation => {
+  const source = `${imports} const options = { pullRequest: false }; const values = () => [{ value: options }]; let alias: typeof options; ${mutation}; export default defineAgent({ channels: { custom: github(options) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
+it("preserves read-only predeclared destructuring from opaque for-of results", async () => {
+  const source = `${imports} const options = { pullRequest: false }; const values = () => [{ value: options }]; let alias: typeof options; for ({ value: alias } of values()) alias.pullRequest === false; export default defineAgent({ channels: { custom: github(options) } })`
+  expect((await discover(source))?.workspace).toBeUndefined()
 })
 
 it.each<[string, string, Record<string, string>]>([

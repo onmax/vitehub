@@ -9,7 +9,6 @@ import {
   mergeDefinitions,
   normalizeSuffixDefinitionName,
 } from "@vite-hub/internal/definition-catalog"
-import { parse, string } from "valibot"
 
 import type { DiscoveredAgentDefinition } from "./types.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
@@ -242,6 +241,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   const opaqueExports = new Set<string>()
   const mutatedBindings = new Set<string>()
   const assignedAliases = new Map<string, Set<string>>()
+  const loopResultBindings = new Map<number, Set<string>>()
   let exported: number | undefined
   let depth = 0
   for (let i = 0; i < tokens.length; i++) {
@@ -888,6 +888,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const pattern = patternOpening(index - 1)
     if (pattern === undefined) continue
     recordDestructuringAliases(pattern, index, index + 1)
+    loopResultBindings.set(index + 1, callbackBindingNames(pattern, index))
   }
   // A property assignment can introduce an alias into a container that had
   // no literal property to inspect. Invalidate local RHS references so a
@@ -948,6 +949,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const call = memberCallEnd(initializer)
     if (opaqueCalls.has(call) && !trustedCalls.has(call)) {
       for (const name of destructuredBindings.get(binding) ?? [tokens[binding]!]) opaqueResultBindings.add(name)
+    }
+  }
+  // Predeclared loop targets have no destructuring declaration to record
+  // an opaque result. Keep their writes subject to captured-binding taint.
+  for (const [initializer, names] of loopResultBindings) {
+    let value = initializer
+    while (tokens[value] === "(") value++
+    const call = memberCallEnd(value)
+    if (opaqueCalls.has(call) && !trustedCalls.has(call)) {
+      for (const name of names) opaqueResultBindings.add(name)
     }
   }
   function invalidateCapturedBindings() {
@@ -1461,15 +1472,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   function propertyName(token: string): string {
     if (!/^["'`]/.test(token)) return token
-    if (token[0] === '`') return token.slice(1, -1)
-    try {
-      const value: unknown = token[0] === '"'
-        ? JSON.parse(token)
-        : JSON.parse(`"${token.slice(1, -1).replace(/\\"/g, '\\\\"')}"`)
-      return parse(string(), value)
-    } catch {
+    if (invalidModuleLiteral(token)) {
       throw new Error("[vitehub] Agent Workspace discovery cannot inspect an escaped settings key. Use an unescaped literal key.")
     }
+    return moduleSpecifier(token)
   }
 
   function properties(index: number, inspectChannels = false, inspectSettings = false, onOpaqueSettings?: () => void, onPrototypeSettings?: () => void): Map<string, number> {
