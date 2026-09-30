@@ -3,9 +3,10 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { createClient } from "@libsql/client"
-import { createD1AgentInvocationStore } from "@vite-hub/agent/invocations/d1"
+import { createD1AgentInvocationStore, d1AgentInvocationSchema } from "@vite-hub/agent/invocations/d1"
 import { createLibsqlAgentInvocationStore } from "@vite-hub/agent/invocations/sqlite"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "@vite-hub/agent/server"
+import { drizzle as drizzleRemote } from "drizzle-orm/sqlite-proxy"
 import { drizzle } from "drizzle-orm/libsql"
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core"
 
@@ -22,9 +23,10 @@ import {
 import { consoleFixtureRevision, readConsoleFixture } from "../../fixture.ts"
 
 import type { AgentInvocationRecord, AgentInvocationSummary, AgentInvocations } from "@vite-hub/agent"
-import type { AgentInvocationD1Database } from "@vite-hub/agent/invocations/d1"
+import type { AgentInvocationD1Database, AgentInvocationD1Statement } from "@vite-hub/agent/invocations/d1"
 import type { AgentInvocationsOptions } from "@vite-hub/agent/server"
 import type { ConsoleFixture } from "../../fixture.ts"
+import type { SqliteRemoteDatabase } from "drizzle-orm/sqlite-proxy"
 import type { LibSQLDatabase } from "drizzle-orm/libsql"
 import type { AnySQLiteColumn, SQLiteTableWithColumns } from "drizzle-orm/sqlite-core"
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
@@ -53,7 +55,6 @@ type ConsoleInvocationsTable = SQLiteTableWithColumns<{
     id: ConsoleInvocationColumn<string, true>
     record: ConsoleInvocationColumn<Omit<AgentInvocationRecord, "cursor">, true>
     search: ConsoleInvocationColumn<string, false>
-    searchVersion: ConsoleInvocationColumn<number, true>
     sequence: ConsoleInvocationColumn<number, true>
     status: ConsoleInvocationColumn<string, true>
     summary: ConsoleInvocationColumn<AgentInvocationSummary, false>
@@ -65,14 +66,13 @@ type ConsoleInvocationsTable = SQLiteTableWithColumns<{
 }>
 
 // doctor-disable-next-line typescript/evidence/no-chained-type-assertions -- Drizzle's inferred table type cannot be emitted under isolatedDeclarations, so keep the public schema explicit here.
-// SAFETY: The explicit table type mirrors every column constructed immediately below.
+// SAFETY: The explicit table type mirrors the shared journal columns constructed immediately below.
 const consoleInvocationsTable = sqliteTable("vitehub_agent_invocations", {
   sequence: integer().primaryKey({ autoIncrement: true }),
   id: text().notNull().unique(),
   status: text().notNull(),
   agentName: text("agent_name").notNull().default(""),
   search: text(),
-  searchVersion: integer("search_version").notNull().default(0),
   summary: text({ mode: "json" }).$type<AgentInvocationSummary>(),
   updatedAt: text("updated_at").notNull().default(""),
   record: text({ mode: "json" }).$type<Omit<AgentInvocationRecord, "cursor">>().notNull(),
@@ -83,7 +83,7 @@ const consoleInvocationSchema: { invocations: typeof consoleInvocationsTable } =
 }
 
 export interface ConsoleInvocationsDatabase {
-  db: LibSQLDatabase<typeof consoleInvocationSchema>
+  db: LibSQLDatabase<typeof consoleInvocationSchema> | SqliteRemoteDatabase<typeof consoleInvocationSchema>
   schema: typeof consoleInvocationSchema
 }
 
@@ -156,26 +156,59 @@ export interface ConsoleD1Journal {
   env: () => Promise<Record<string, unknown>> | Record<string, unknown>
 }
 
-function isD1Database(value: unknown): value is AgentInvocationD1Database {
+interface ConsoleD1Statement extends AgentInvocationD1Statement {
+  bind(...values: unknown[]): ConsoleD1Statement
+  raw(): Promise<unknown[][]>
+}
+
+interface ConsoleD1Database extends AgentInvocationD1Database {
+  prepare(query: string): ConsoleD1Statement
+}
+
+function isD1Database(value: unknown): value is ConsoleD1Database {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The Worker env is untyped, so check the D1 methods that the journal calls.
-  return typeof value === "object" && value !== null && "prepare" in value && typeof value.prepare === "function" && "batch" in value && typeof value.batch === "function"
+  if (typeof value !== "object" || value === null || !("prepare" in value) || typeof value.prepare !== "function" || !("batch" in value) || typeof value.batch !== "function") return false
+  const statement: unknown = value.prepare("SELECT 1")
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Console Drizzle reads positional rows through D1's raw statement operation.
+  return typeof statement === "object" && statement !== null && "raw" in statement && typeof statement.raw === "function"
 }
 
 /** Console journal in the app's D1 database. The store creates its table on first use and keeps its default retention. */
 export function createConsoleD1Invocations(d1: ConsoleD1Journal, observations?: AgentInvocationsOptions["observations"]): AgentInvocations {
+  // Keep only completed initialization; Worker requests cannot share pending I/O.
+  const migrated = new WeakSet<AgentInvocationD1Database>()
+  const database = async () => {
+    const binding = (await d1.env())[d1.binding]
+    if (!isD1Database(binding)) {
+      throw viteHubErrorDiagnostics.VITE_HUB_R0122({ message: `[vitehub] The Console journal requires the D1 binding ${JSON.stringify(d1.binding)} in the Worker env. Configure the Database D1 binding or set console.databaseUrl.` })
+    }
+    if (!migrated.has(binding)) {
+      await binding.batch(d1AgentInvocationSchema().map(statement => binding.prepare(statement)))
+      migrated.add(binding)
+    }
+    return binding
+  }
   const invocations = defineAgentInvocations({
     configuration: "content",
     metadataContent: consoleMetadataContent,
     observations,
-    store: createD1AgentInvocationStore({
-      async database() {
-        const database = (await d1.env())[d1.binding]
-        if (!isD1Database(database)) {
-          throw viteHubErrorDiagnostics.VITE_HUB_R0122({ message: `[vitehub] The Console journal requires the D1 binding ${JSON.stringify(d1.binding)} in the Worker env. Configure the Database D1 binding or set console.databaseUrl.` })
-        }
-        return database
-      },
-    }),
+    store: createD1AgentInvocationStore({ database, migrate: false }),
+  })
+  consoleInvocationDatabases.set(invocations, {
+    db: drizzleRemote(async (query, parameters, method) => {
+      const binding = await database()
+      const statement = binding.prepare(query).bind(...parameters)
+      const rows = await statement.raw()
+      return { rows: method === "get" ? rows[0]! : rows }
+    }, async (queries) => {
+      const binding = await database()
+      const results = await binding.batch(queries.map(query => binding.prepare(query.sql).bind(...query.params)))
+      return results.map((result, index) => {
+        const rows = result.results.map(row => Object.values(row))
+        return { rows: queries[index]!.method === "get" ? rows[0]! : rows }
+      })
+    }, { schema: consoleInvocationSchema }),
+    schema: consoleInvocationSchema,
   })
   consoleDatabaseConfigurations.set(invocations, `d1:${d1.binding}`)
   consoleObservationConfigurations.set(invocations, observationConfiguration(observations))

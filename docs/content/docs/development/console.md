@@ -358,6 +358,8 @@ vitehub({
 
 The build prints `Console journal: D1 binding DB, table vitehub_agent_invocations`, and the generated `.vitehub/nitro/console/plugin.mjs` passes the binding to `installConsoleAgentDefinitions()`. The journal uses the [D1 store](/docs/agents/invocations#store-invocations-in-cloudflare-d1). It creates its table on first use, so no migration step is necessary. It keeps the D1 store retention defaults: 10,000 terminal records from the last 30 days.
 
+The fallback journal exposes `console.resolve(context).invocations` from `vite-hub/console/server`. It provides `db` and `schema.invocations` for Drizzle queries on D1 and libSQL. The schema contains the columns shared by both stores. On D1, each query or batch resolves the Worker binding and creates the journal table before it runs.
+
 `vite dev` keeps the local SQLite journal. `console.databaseUrl` at build time, or `VITEHUB_CONSOLE_DATABASE_URL` at runtime, selects libSQL instead. An Agent Definition with its own `invocations` still wins. If the binding is missing from the Worker env, journal reads and writes fail with a diagnostic. Agent results do not change.
 
 The Console sends every read through one Devframe SSE instance at `/_vitehub/rpc/**`. Its internal request contract uses `GET` semantics for bounded listings and metadata, and JSON-body `POST` semantics to read a selected KV value without putting an opaque key in the request URL. The POST operation remains read-only. Responses set `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.
