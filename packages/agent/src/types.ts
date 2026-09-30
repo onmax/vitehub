@@ -228,9 +228,15 @@ export interface AgentInvokerOptions<
 export interface AgentRunInput<
   CALL_OPTIONS = unknown,
   TContext extends object = AgentRunInputContextValues,
+  TData = unknown,
 > {
   abortSignal?: AbortSignal
   context?: TContext
+  /**
+   * Structured Invocation input. `defineAgent({ data })` validates it before Capabilities, hooks, and the Driver run.
+   * Model and provider Drivers do not read it; use `prompt` or `messages` for model text.
+   */
+  data?: TData
   message?: string | Message
   messages?: Message[]
   options?: CALL_OPTIONS
@@ -626,7 +632,11 @@ export interface AgentWebhookRegistrationDefinition<TRuntimeConfig extends Agent
   method?: "POST" | (string & {})
   path?: string
   provider: string
-  signature?: "github-sha256" | (string & {}) | {
+  signature?: "github-sha256" | "stripe-sha256" | (string & {}) | {
+    preset: "stripe-sha256"
+    /** Maximum age of the signed `t` timestamp in integer seconds. Must be finite and non-negative. Defaults to 300. Future timestamps pass the age check. */
+    toleranceSeconds?: number
+  } | {
     verify: (input: {
       header: string
       rawBody: Uint8Array
@@ -706,13 +716,36 @@ export interface AgentRunCallbackContext<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TContextValues extends object = AgentInvocationContextValues,
+  TData = unknown,
 > extends AgentCallbackContext<TRuntimeConfig> {
   actor: AgentActor
   context: AgentInvocationContextStore<TContextValues>
-  input: AgentRunInput<CALL_OPTIONS>
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, TData>
   invoker: AgentInvoker
   run?: AgentRunMetadata
 }
+
+export interface AgentInterceptContext<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+  TData = unknown,
+> extends AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData> {
+  /** Invocation `data` after `defineAgent({ data })` validation. */
+  data: TData
+}
+
+/**
+ * Handles an Invocation before the Driver runs.
+ * Return `undefined` to continue to the Driver. Return another value to finish the Invocation with that value as its output.
+ */
+export type AgentInterceptHandler<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+  TData = unknown,
+  TIntercept = unknown,
+> = (context: AgentInterceptContext<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData>) => MaybePromise<TIntercept | undefined>
 
 export interface AgentRunResult {
   artifacts?: readonly PublishedAgentDeliveryArtifact[]
@@ -751,12 +784,13 @@ export interface AgentFinishEvent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
 > {
   actor: AgentActor
   error?: unknown
   errorMessage?: string
   extensions: AgentFinishExtensions
-  input: AgentRunInput<CALL_OPTIONS>
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, TData>
   invoker: AgentInvoker
   invocation: {
     durationMs: number
@@ -776,7 +810,8 @@ export type AgentFinishHookEvent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
-> = Omit<AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS, TOutput>, "error" | "errorMessage"> & {
+  TData = unknown,
+> = Omit<AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS, TOutput, TData>, "error" | "errorMessage"> & {
   reaction: (input: AgentChannelDeliveryReactionInput, options?: AgentChannelDeliveryEffectIntentOptions) => AgentChannelDeliveryEffectIntent<"reaction">
   reply: (input: AgentChannelDeliveryReplyInput, options?: AgentChannelDeliveryEffectIntentOptions) => AgentChannelDeliveryEffectIntent<"reply">
   status: (input: AgentChannelDeliveryStatusInput, options?: AgentChannelDeliveryEffectIntentOptions) => AgentChannelDeliveryEffectIntent<"status">
@@ -785,7 +820,8 @@ export type AgentFinishHookEvent<
 export type AgentErrorHookEvent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
-> = Omit<AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS>, "error" | "errorMessage" | "result" | "text"> & {
+  TData = unknown,
+> = Omit<AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS, unknown, TData>, "error" | "errorMessage" | "result" | "text"> & {
   error: unknown
   errorMessage: string
   publicError: AgentPublicError
@@ -797,31 +833,39 @@ export type AgentErrorHookEvent<
 export type AgentErrorHook<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
-> = (event: AgentErrorHookEvent<TRuntimeConfig, CALL_OPTIONS>) => MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
+  TData = unknown,
+> = {
+  bivarianceHack(event: AgentErrorHookEvent<TRuntimeConfig, CALL_OPTIONS, TData>): MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
+}["bivarianceHack"]
 
 export type AgentFinishHook<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
 > = {
-  bivarianceHack(event: AgentFinishHookEvent<TRuntimeConfig, CALL_OPTIONS, TOutput>): MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
+  bivarianceHack(event: AgentFinishHookEvent<TRuntimeConfig, CALL_OPTIONS, TOutput, TData>): MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
 }["bivarianceHack"]
 
 export type AgentInputHook<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TContextValues extends object = AgentInvocationContextValues,
-> = (context: AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues>) => MaybePromise<void>
+  TData = unknown,
+> = {
+  bivarianceHack(context: AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData>): MaybePromise<void>
+}["bivarianceHack"]
 
 export interface AgentInvocationHooks<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TContextValues extends object = AgentInvocationContextValues,
   TOutput = unknown,
+  TData = unknown,
 > {
-  "agent:error"?: AgentErrorHook<TRuntimeConfig, CALL_OPTIONS>
-  "agent:finish"?: AgentFinishHook<TRuntimeConfig, CALL_OPTIONS, TOutput>
-  "agent:input"?: AgentInputHook<TRuntimeConfig, CALL_OPTIONS, TContextValues>
+  "agent:error"?: AgentErrorHook<TRuntimeConfig, CALL_OPTIONS, TData>
+  "agent:finish"?: AgentFinishHook<TRuntimeConfig, CALL_OPTIONS, TOutput, TData>
+  "agent:input"?: AgentInputHook<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData>
 }
 
 export type AgentHookOwner = "agent" | "capability" | "channel" | "runtime" | "integration" | (string & {})
@@ -1571,14 +1615,21 @@ type AgentSharedSettings<
   TContextValues extends object = AgentInvocationContextValues,
   TCapabilities extends AgentCapabilitiesInput<TRuntimeConfig, WorkspaceName, CALL_OPTIONS> | undefined = AgentCapabilitiesInput<TRuntimeConfig, WorkspaceName, CALL_OPTIONS> | undefined,
   TOutput = unknown,
+  TData = unknown,
+  TIntercept = never,
+  TDataInput = TData,
 > = {
   box?: AgentBoxInput<TRuntimeConfig>
   health?: AgentHealthDescriptor
   capabilities?: TCapabilities
   channels?: AgentChannelInputs<TRuntimeConfig>
   cli?: AgentDefinitionCliOptions
+  /** Standard Schema for Invocation `data`. ViteHub validates `data` before Capabilities, hooks, and the Driver run. */
+  data?: StandardSchemaV1<TDataInput, TData>
   description?: string
-  hooks?: AgentCapabilityHooks<TRuntimeConfig> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>
+  hooks?: AgentCapabilityHooks<TRuntimeConfig> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput | TIntercept, TData>
+  /** Finishes the Invocation before the Driver runs when it returns a value other than `undefined`. */
+  intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData, TIntercept>
   invoker?: AgentInvokerOptions<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues>
   invocations?: AgentInvocations
   messages?: AgentMessageChannelSettings<TRuntimeConfig>
@@ -1598,11 +1649,36 @@ export type AgentSettings<
   TCapabilities extends AgentCapabilitiesInput<TRuntimeConfig, WorkspaceName, CALL_OPTIONS> | undefined = AgentCapabilitiesInput<TRuntimeConfig, WorkspaceName, CALL_OPTIONS> | undefined,
   TOutput = unknown,
   TDriver extends AgentDriver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput> = AgentDriver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>,
-> = AgentSharedSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TCapabilities, TOutput> & {
+  TData = unknown,
+  TIntercept = never,
+  TDataInput = TData,
+> = AgentSharedSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TCapabilities, TOutput, TData, TIntercept, TDataInput> & {
   driver: TDriver
 }
 
 declare const agentOutputType: unique symbol
+declare const agentDataType: unique symbol
+declare const agentDriverOutputType: unique symbol
+declare const agentInterceptOutputType: unique symbol
+
+/** Carries the Invocation `data` type that `runAgent()` and related calls accept. This is the `data` schema input type. */
+export interface AgentDataCarrier<TDataInput = unknown> {
+  [agentDataType]?: TDataInput
+}
+
+declare const agentDataOutputType: unique symbol
+
+export interface AgentDataOutputCarrier<TData = unknown> {
+  [agentDataOutputType]?: TData
+}
+
+export interface AgentDriverOutputCarrier<TOutput = unknown> {
+  [agentDriverOutputType]?: [TOutput]
+}
+
+export interface AgentInterceptOutputCarrier<TOutput = unknown> {
+  [agentInterceptOutputType]?: [TOutput]
+}
 
 export interface AgentDefinition<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -1610,7 +1686,11 @@ export interface AgentDefinition<
   TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
   TContextValues extends object = AgentInvocationContextValues,
   TOutput = unknown,
-> {
+  TDataInput = unknown,
+  TDriverOutput = TOutput,
+  TData = unknown,
+  TInterceptOutput = TOutput,
+> extends AgentDataCarrier<TDataInput>, AgentDataOutputCarrier<TData>, AgentDriverOutputCarrier<TDriverOutput>, AgentInterceptOutputCarrier<TInterceptOutput> {
   [agentOutputType]?: TOutput
   box?: AgentBoxInput<TRuntimeConfig>
   health?: AgentHealthDescriptor
@@ -1619,7 +1699,7 @@ export interface AgentDefinition<
   chat?: AgentChatOptions<TRuntimeConfig>
   cli?: AgentDefinitionCliOptions
   description?: string
-  hooks?: AgentCapabilityHooks<TRuntimeConfig, WorkspaceName> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>
+  hooks?: AgentCapabilityHooks<TRuntimeConfig, WorkspaceName> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput, TData>
   invoker?: AgentInvokerOptions<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues>
   invocations?: AgentInvocations
   messages?: AgentMessageChannelSettings<TRuntimeConfig>
@@ -1644,7 +1724,7 @@ export type AgentInput<
   TOutput = unknown,
   CALL_OPTIONS = any,
   TInvokerProfile extends AgentInvokerProfile = any,
-> = AgentDefinition<TContext extends AgentRuntimeContext<infer TRuntimeConfig> ? TRuntimeConfig : AgentRuntimeConfig, CALL_OPTIONS, TInvokerProfile, any, TOutput>
+> = AgentDefinition<TContext extends AgentRuntimeContext<infer TRuntimeConfig> ? TRuntimeConfig : AgentRuntimeConfig, CALL_OPTIONS, TInvokerProfile, any, TOutput, unknown, TOutput, unknown, unknown>
 
 export type AgentRegistryModule<TContext extends AgentRuntimeContext<any> = AgentRuntimeContext> =
   | { default?: AgentInput<TContext> }
