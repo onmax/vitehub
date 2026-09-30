@@ -574,7 +574,8 @@ describe("createCrabboxRuntime", () => {
           },
           {},
         );
-        const session = await boxProvider(box).createSession();
+        const sandbox = boxProvider(box);
+        const session = await sandbox.createSession();
         const holderPid = Number(await readFile(holder, "utf8"));
         process.kill(holderPid, "SIGKILL");
 
@@ -593,6 +594,9 @@ describe("createCrabboxRuntime", () => {
         await expect(session.destroy?.()).rejects.toThrow("Crabbox state lease was lost");
         const remaining = await readdir(stateRoot);
         expect(remaining.filter((name) => name.endsWith(".lock") || name.startsWith(".vitehub-owner-"))).toEqual([]);
+        const next = await sandbox.createSession({ abortSignal: AbortSignal.timeout(5_000) });
+        await expect(next.run({ command: "true" })).resolves.toMatchObject({ exitCode: 0 });
+        await next.destroy?.();
       },
     );
   }, 30_000);

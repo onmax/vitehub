@@ -692,7 +692,6 @@ async function acquireRemoteState(
             if (retry.exitCode !== 0)
               throw boxErrorDiagnostics.BOX_R0106({ message: `[vitehub] Failed to release Crabbox state lease (exit ${retry.exitCode}).` });
           }
-          if (failure) throw failure;
         })().catch((error) => {
           releasePromise = undefined;
           throw error;
