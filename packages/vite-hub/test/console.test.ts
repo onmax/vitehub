@@ -1944,7 +1944,9 @@ describe("Agent invocation console", () => {
   it.each([false, true])("records the discovered name on the source of a Skills clone with workspace decoration %s", async (withWorkspace) => {
     const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
     installConsoleInvocationFallback(invocations, process.cwd())
-    const labeller = defineAgent({ driver: { run: () => "labelled" }, runtime: false, ...(withWorkspace ? { workspace: {} } : {}) })
+    const labeller = withWorkspace
+      ? defineAgent({ workspace: {}, driver: { model: {} as never, run: () => "labelled" } })
+      : defineAgent({ driver: { run: () => "labelled" }, runtime: false })
     const skillsClone = agentWithColocatedSkills(labeller, {
       "__vitehubAgentSkill:.agents/skills/review/SKILL.md": {
         content: btoa("# Review\n"),
