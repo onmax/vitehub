@@ -113,7 +113,40 @@ Reconciled deliveries use `pullRequest.reconcile.concurrencyLimit` concurrent in
 
 Set `pullRequest.workspace.mount` to the repository path inside the Workspace. Omitting `workspace` mounts at `portal`. Both `workspace: true` and `workspace: {}` mount at the Workspace root. Set `workspace: false` to disable the pull request Workspace contribution.
 
-When a declared GitHub Source uses the same repository and the same non-root mount, the pull request checkout replaces it for that Invocation. Reads use the pull request head SHA; the declared Source remains unchanged for other Invocations. Different repositories, overlapping parent or child mounts, and Sources contributed by other Capabilities still produce a conflict.
+When a declared GitHub Source uses the same repository, root, include, and ignore at the same non-root mount, the pull request checkout replaces it for that Invocation. Reads use the pull request head SHA; the declared Source remains unchanged for other Invocations. A different repository or scope at the same mount fails the Invocation with an error that names the Source. Overlapping parent or child mounts and Sources contributed by other Capabilities also produce a conflict.
+
+For provider Drivers such as Codex and Claude Code, the mount is a real Git checkout of the exact head SHA before the Driver starts. `origin` points to the base repository, the base branch is fetched as `origin/<base>`, and a local branch named after the head branch tracks it. The Driver's own shell can run `git fetch`, `git commit`, and `git push` with the Agent GitHub identity. No token is written to the repository configuration.
+
+### Share one GitHub identity
+
+Pass a GitHub identity, such as `createGitHubHost()`, as `app`. The Channel uses it for API calls, and the Agent uses it as `defineAgent({ github })` when that option is not set. Provider Drivers receive its `access().env`: `GH_TOKEN`, `GITHUB_TOKEN`, a Git credential helper, and the commit author and committer. The pull request checkout and `git()` use the same credentials.
+
+```ts [server/agents/reviewer.ts]
+import { defineAgent } from 'vite-hub/agent'
+import { github } from 'vite-hub/agent/channels'
+import { createGitHubHost } from 'vite-hub/agent/server/github'
+
+const githubApp = createGitHubHost({
+  identity: { login: 'reviewer[bot]', email: '123+reviewer[bot]@users.noreply.github.com' },
+  credentials: () => ({
+    owner: 'acme',
+    appId: process.env.GITHUB_APP_ID,
+    installationId: process.env.GITHUB_APP_INSTALLATION_ID,
+    privateKey: process.env.GITHUB_APP_PRIVATE_KEY,
+  }),
+})
+
+export default defineAgent({
+  github: githubApp,
+  channels: {
+    github: github({ app: githubApp, pullRequest: { workspace: { mount: 'storefront' } } }),
+  },
+  driver: { kind: 'codex', permissions: 'allow-all' },
+  workspace: { mode: 'write' },
+})
+```
+
+`driver.env` values override keys from the GitHub identity. Without a GitHub identity, the checkout fetches without credentials, which works only for public repositories.
 
 ## Connect a web chat
 

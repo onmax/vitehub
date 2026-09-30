@@ -229,6 +229,31 @@ describe("Provider Agent Driver", () => {
     vi.unstubAllEnvs()
   })
 
+  it("adds the Agent GitHub environment to the Driver environment", async () => {
+    const threadId = "thread-github-environment"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    const access = vi.fn(async () => ({
+      env: { GH_TOKEN: "installation-token", GIT_AUTHOR_NAME: "app[bot]", GIT_CONFIG_COUNT: "1" },
+      token: "installation-token",
+    }))
+    const base = context(threadId)
+    base.context.set("pullRequest", {
+      pullRequest: { head: { sha: "a".repeat(40) }, number: 42, source: { mount: "portal", ref: "refs/pull/42/head", repo: "acme/portal" } },
+      repository: { fullName: "acme/portal", name: "portal" },
+    })
+    await createProviderAgentAdapter({
+      env: { GIT_AUTHOR_NAME: "Override" },
+      provider: "codex",
+    }).generate({ ...base, runtime: { ...base.runtime, githubIdentity: { access } } } as never)
+
+    expect(access).toHaveBeenCalledWith(expect.objectContaining({ repository: "acme/portal" }))
+    expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject({
+      GH_TOKEN: "installation-token",
+      GIT_AUTHOR_NAME: "Override",
+      GIT_CONFIG_COUNT: "1",
+    })
+  })
+
   it("keeps managed browser lifecycle values consistent while preserving caller search paths", async () => {
     const browserThread = "thread-browser-environment"
     runtime(browserThread, [event("turn.completed", browserThread, { state: "completed" }, { turnId: "turn-1" })])
@@ -3882,6 +3907,47 @@ cli_auth_credentials_store = "keyring"
     // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
     await expect(createProviderAgentAdapter({ provider: "codex" }).generate(context(threadId) as never))
       .rejects.toThrow(/session exited before the turn completed/)
+  })
+
+  it.each([
+    { baseline: true, mount: "portal" },
+    { baseline: false, mount: "" },
+  ])("checks out the pull request with the Agent GitHub environment before the Driver starts (mount $mount)", async ({ baseline, mount }) => {
+    const threadId = `thread-pull-request-checkout-${mount || "root"}`
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    const session = {
+      close: vi.fn(async () => undefined),
+      commit: vi.fn(async () => undefined),
+      diff: vi.fn(async () => ({ entries: [] })),
+      exec: vi.fn(async (command: string, args: string[] = [], _options?: { env?: Record<string, string> }) => ({
+        exitCode: command === "git" && args.join(" ") === "rev-parse --is-inside-work-tree" ? 1 : 0,
+        stderr: "",
+        stdout: "",
+      })),
+      readFile: vi.fn(async () => new Uint8Array()),
+    }
+    const workspace = { fs: {}, startSession: vi.fn(async () => session), tools: {} }
+    const access = vi.fn(async () => ({ env: { GH_TOKEN: "installation-token" }, token: "installation-token" }))
+    const base = context(threadId, { workspace, workspaceDefinition: { mode: "write", name: "docs" }, workspaceMode: "write" })
+    base.context.set("pullRequest", {
+      pullRequest: {
+        head: { ref: "feature", repo: "acme/portal", sha: "a".repeat(40) },
+        number: 42,
+        source: { mount, ref: "refs/pull/42/head", repo: "acme/portal" },
+      },
+      repository: { fullName: "acme/portal", name: "portal" },
+    })
+
+    await createProviderAgentAdapter({ provider: "codex" }).generate({ ...base, runtime: { ...base.runtime, githubIdentity: { access } } } as never)
+
+    const calls = session.exec.mock.calls.map(([command, args = []]) => `${command} ${args.join(" ")}`)
+    const checkout = calls.findIndex(call => call.startsWith("sh -c set -eu"))
+    expect(checkout).toBeGreaterThan(-1)
+    expect(checkout).toBeLessThan(calls.indexOf("git init -q"))
+    expect(calls[checkout]).toContain("git remote add origin 'https://github.com/acme/portal.git'")
+    expect(session.exec.mock.calls[checkout]?.[2]).toMatchObject({ env: { GH_TOKEN: "installation-token" } })
+    expect(calls.some(call => call.includes("vitehub provider baseline"))).toBe(baseline)
+    expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject({ GH_TOKEN: "installation-token" })
   })
 
   it("force-closes an aborted Workspace process tree before settling execution", async () => {

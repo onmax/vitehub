@@ -23,6 +23,7 @@ import type {
   AgentActivityTask,
   AgentActivityUpdate,
   AgentCallbackContext,
+  AgentGitHub,
   AgentCapabilityDefinition,
   AgentChatFinishExtension,
   AgentChatMessage,
@@ -109,6 +110,7 @@ export type {
   AgentChannelInput,
   AgentChannelInputs,
   AgentChannels,
+  AgentGitHub,
   AgentDeliveryArtifact,
   AgentDeliveryArtifactPlacement,
   AgentMessageChannelSettings,
@@ -470,7 +472,11 @@ export interface GitHubChannelActivityOptions<TRuntimeConfig extends AgentRuntim
 export interface GitHubChannelOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
   extends AgentChannelOptions<TRuntimeConfig> {
   activity?: boolean | GitHubChannelActivityOptions<TRuntimeConfig>
-  app?: true | GitHubAppOptions<TRuntimeConfig>
+  /**
+   * GitHub App settings, or an Agent GitHub identity such as `createGitHubHost()`.
+   * An identity also becomes the Agent `github` identity when `defineAgent({ github })` is not set.
+   */
+  app?: true | GitHubAppOptions<TRuntimeConfig> | AgentGitHub
   pullRequest?: boolean | GitHubPullRequestCommentEventOptions<TRuntimeConfig>
 }
 
@@ -3098,6 +3104,31 @@ export function discord<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntime
   })
 }
 
+const githubChannelIdentityKey = Symbol.for("vitehub.githubChannelIdentity")
+
+function isAgentGitHub(value: unknown): value is AgentGitHub {
+  return isRecord(value) && hasRuntimeType(value.access, "function")
+}
+
+function githubIdentityAppOptions<TRuntimeConfig extends AgentRuntimeConfig>(identity: AgentGitHub): GitHubAppOptions<TRuntimeConfig> {
+  const login = identity.identity?.()
+  return {
+    token: async (_context, scope) => (await identity.access(scope.repository ? { repository: scope.repository } : {})).token,
+    ...(login ? { identity: { login } } : {}),
+  }
+}
+
+/** Return the GitHub identity shared by the Agent's github() Channels, when there is exactly one. */
+export function githubChannelIdentity(channels: Readonly<Record<string, object>> | undefined): AgentGitHub | undefined {
+  const identities = new Set<AgentGitHub>()
+  for (const channel of Object.values(channels || {})) {
+    // SAFETY: github() stores its identity under this private symbol.
+    const identity = (channel as { [githubChannelIdentityKey]?: AgentGitHub })[githubChannelIdentityKey]
+    if (identity) identities.add(identity)
+  }
+  return identities.size === 1 ? [...identities][0] : undefined
+}
+
 export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>(
   options: GitHubChannelOptions<TRuntimeConfig> & {
     pullRequest: true | (GitHubPullRequestCommentEventOptions<TRuntimeConfig> & { workspace?: true | { mount?: string } })
@@ -3114,7 +3145,9 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
 export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>(
   options: GitHubChannelOptions<TRuntimeConfig> = {},
 ): AgentChannelDefinition<TRuntimeConfig> {
-  const { activity, app: appOptions, pullRequest, ...channelOptions } = options
+  const { activity, app: appInput, pullRequest, ...channelOptions } = options
+  const identity = isAgentGitHub(appInput) ? appInput : undefined
+  const appOptions = identity ? githubIdentityAppOptions<TRuntimeConfig>(identity) : appInput as true | GitHubAppOptions<TRuntimeConfig> | undefined
   const activityDefinition = activity ? githubAgentActivity(appOptions) : undefined
   const openedActivityDefinition = activity ? githubAgentActivity(appOptions, "initialize") : undefined
   const app = githubAppOptions(appOptions)
@@ -3131,7 +3164,7 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
         userAgent: app?.userAgent,
       })
     : undefined
-  return defineChannel("github", {
+  const channel = defineChannel("github", {
     ...channelOptions,
     activity: activityDefinition,
     capabilities: [
@@ -3147,6 +3180,8 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
     },
     webhooks: githubWebhookDefaults(options.webhooks, appOptions),
   })
+  if (identity) Object.defineProperty(channel, githubChannelIdentityKey, { enumerable: true, value: identity })
+  return channel
 }
 
 export function http<
