@@ -1492,6 +1492,35 @@ describe("agent message protocol", () => {
     expect(observations[0]?.attributes?.["vitehub.observation.truncated"]).toBe(length > 64 * 1024 ? true : undefined)
   })
 
+  it.each(["async", "readable"])("preserves provider tool titles in %s streams and traces", async (kind) => {
+    const { defineAgent, defineCapability, streamAgent } = await import("../src/index.ts")
+    const traceLog = createTraceEventLog({ content: "content" })
+    const chunks = [
+      { id: "search-1", name: "search", title: "Search breakfast", type: "tool-call" },
+      { id: "search-1", name: "search", output: "Found breakfast", type: "tool-result" },
+      { type: "finish" },
+    ]
+    const agent = defineAgent({
+      capabilities: [defineCapability({ id: "search", tools: { search: { name: "search", title: "Searched meals" } } })],
+      driver: { run: () => kind === "readable"
+        ? new ReadableStream({
+            start(controller) {
+              for (const chunk of chunks) controller.enqueue(chunk)
+              controller.close()
+            },
+          })
+        : (async function* () { yield* chunks })() },
+    })
+
+    const stream = await streamAgent(agent, { memo: vi.fn(), runtime: "unknown", traceLog, waitUntil: vi.fn() }, {})
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    for await (const _event of stream as AsyncIterable<unknown>) {}
+
+    const toolEvents = traceLog.entries().filter(event => event.name === "agent.tool.start" || event.name === "agent.tool.finish")
+    expect(toolEvents).toHaveLength(2)
+    for (const event of toolEvents) expect(event.attributes?.["tool.title"]).toBe("Search breakfast")
+  })
+
   it("exports product actions as execute_tool spans with ViteHub rendering semantics", async () => {
     const { defineAgent, defineCapability, streamAgent } = await import("../src/index.ts")
     const traceLog = createTraceEventLog()

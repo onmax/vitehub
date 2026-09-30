@@ -516,9 +516,10 @@ export function agentToolStreamDefaults(tools: Readonly<Record<string, Pick<Agen
     : []))
 }
 
-function toolTitle(value: Record<string, unknown>, defaults: Pick<AgentToolDefinition, "title"> | undefined): { title?: string } {
+function toolTitle(value: Record<string, unknown>, defaults: Pick<AgentToolDefinition, "title"> | undefined, id: string, toolTitles?: Map<string, string>): { title?: string } {
   const title = optionalTitle(value.title)
-  return title.title ? title : optionalTitle(defaults?.title)
+  if (title.title) toolTitles?.set(id, title.title)
+  return title.title ? title : optionalTitle(toolTitles?.get(id) ?? defaults?.title)
 }
 
 function agentActivity(value: unknown): AgentActivity | undefined {
@@ -540,6 +541,7 @@ export function toAgentStreamEvent(
   textPhases?: Map<string, AgentMessagePhase | "hidden">,
   toolDefaults?: AgentToolStreamDefaults,
   messageState?: { messageId?: string },
+  toolTitles?: Map<string, string>,
 ): StreamEvent | undefined {
   if (hasRuntimeType(chunk, "string")) {
     return { text: chunk, type: "text-delta" }
@@ -595,18 +597,18 @@ export function toAgentStreamEvent(
     const id = String(value.id || value.toolCallId)
     const name = String(value.toolName || value.name || toolNames?.get(id) || "tool")
     toolNames?.set(id, name)
-    return { ...optionalAgentActivity(value.activity ?? toolDefaults?.get(name)?.activity), id, input: value.input, ...optionalMessageId(messageId), name, ...toolTitle(value, toolDefaults?.get(name)), type: "tool-input-start" }
+    return { ...optionalAgentActivity(value.activity ?? toolDefaults?.get(name)?.activity), id, input: value.input, ...optionalMessageId(messageId), name, ...toolTitle(value, toolDefaults?.get(name), id, toolTitles), type: "tool-input-start" }
   }
   if (type === "tool-call" || type === "tool-input-available") {
     const id = String(value.toolCallId ?? value.id)
     const name = String(value.toolName ?? value.name ?? toolNames?.get(id) ?? "tool")
     toolNames?.set(id, name)
-    return { ...optionalAgentActivity(value.activity ?? toolDefaults?.get(name)?.activity), id, input: value.input ?? value.args, ...optionalMessageId(messageId), name, ...toolTitle(value, toolDefaults?.get(name)), type: "tool-call" }
+    return { ...optionalAgentActivity(value.activity ?? toolDefaults?.get(name)?.activity), id, input: value.input ?? value.args, ...optionalMessageId(messageId), name, ...toolTitle(value, toolDefaults?.get(name), id, toolTitles), type: "tool-call" }
   }
   if (type === "tool-result" || type === "tool-output-available") {
     const id = String(value.toolCallId ?? value.id)
     const name = String(value.toolName ?? value.name ?? toolNames?.get(id) ?? "tool")
-    return { ...optionalAgentActivity(value.activity ?? toolDefaults?.get(name)?.activity), ...optionalDurationMs(readNumber(value, "durationMs", "duration")), error: hasRuntimeType(value.error, "string") ? value.error : undefined, id, ...optionalMessageId(messageId), name, output: value.output ?? value.result, ...toolTitle(value, toolDefaults?.get(name)), type: "tool-result" }
+    return { ...optionalAgentActivity(value.activity ?? toolDefaults?.get(name)?.activity), ...optionalDurationMs(readNumber(value, "durationMs", "duration")), error: hasRuntimeType(value.error, "string") ? value.error : undefined, id, ...optionalMessageId(messageId), name, output: value.output ?? value.result, ...toolTitle(value, toolDefaults?.get(name), id, toolTitles), type: "tool-result" }
   }
   if (type === "tool-error" || type === "tool-output-error") {
     const id = String(value.toolCallId ?? value.id)
@@ -616,7 +618,7 @@ export function toAgentStreamEvent(
         ? value.errorText
         : String(value.error || "Unknown tool error")
     const name = String(value.toolName ?? value.name ?? toolNames?.get(id) ?? "tool")
-    return { ...optionalAgentActivity(value.activity ?? toolDefaults?.get(name)?.activity), ...optionalDurationMs(readNumber(value, "durationMs", "duration")), error, id, ...optionalMessageId(messageId), name, output: value.output ?? value.result, ...toolTitle(value, toolDefaults?.get(name)), type: "tool-result" }
+    return { ...optionalAgentActivity(value.activity ?? toolDefaults?.get(name)?.activity), ...optionalDurationMs(readNumber(value, "durationMs", "duration")), error, id, ...optionalMessageId(messageId), name, output: value.output ?? value.result, ...toolTitle(value, toolDefaults?.get(name), id, toolTitles), type: "tool-result" }
   }
   if (type === "approval-request") {
     return { id: String(value.id), input: value.input, ...optionalMessageId(messageId), name: String(value.name || "approval"), reason: hasRuntimeType(value.reason, "string") ? value.reason : undefined, type: "approval-request" }
