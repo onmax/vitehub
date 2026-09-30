@@ -59,7 +59,7 @@ describe("types", () => {
   })
 
   it("keeps the provider type of a definition", () => {
-    const provider = oauth2({ authorizationUrl: "https://a.example", client: () => ({ clientId: "id" }), scopes: ["s"], tokenUrl: "https://a.example/token" })
+    const provider = oauth2({ authorizationUrl: "https://a.example", client: () => ({ clientId: "id" }), origins: ["https://api.a.example"], scopes: ["s"], tokenUrl: "https://a.example/token" })
     const definition = defineConnection({ access: { server: { allow: ["*"] } }, provider })
     expectTypeOf(definition.provider).toEqualTypeOf(provider)
 
