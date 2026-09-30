@@ -85,7 +85,7 @@ function tokenizeAgentSource(source: string) {
     if (tokens[index] !== ")") return false
     let depth = 0
     for (let cursor = index; cursor >= 0; cursor--) {
-      if ([")", "]", "}"].includes(tokens[cursor]!)) depth++
+      if (tokens[cursor] === ")") depth++
       else if (tokens[cursor] === "(") {
         depth--
         if (depth === 0) return ["if", "for", "while", "switch", "catch", "with"].includes(tokens[cursor - 1] ?? "")
@@ -628,18 +628,34 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
 
+  function invalidatePatternExpression(start: number, end: number) {
+    for (let index = start; index < end; index++) {
+      if (!declarations.has(tokens[index]!) || ![".", "["].includes(tokens[index + 1]!)) continue
+      const memberEnd = memberCallEnd(index)
+      const update = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
+      const prefixUpdate = ["+", "-"].includes(tokens[index - 2] ?? "") && tokens[index - 1] === tokens[index - 2]
+      const deletion = tokens[index - 1] === "delete"
+      if ((assignmentOperator(memberEnd) || update || prefixUpdate || deletion) && memberEnd <= end) mutatedBindings.add(tokens[index]!)
+    }
+  }
+
   function recordDestructuringAliases(pattern: number, end: number, value: number, failClosed = true) {
     for (let index = pattern + 1; index < end; index++) {
       const close = tokens[index] === "[" ? [...openingDelimiters].find(([, opening]) => opening === index)?.[0] : undefined
-      if (close !== undefined && tokens[close + 1] === ":") { index = close; continue }
-      // Default values and computed keys read members rather than assign them.
+      if (close !== undefined && tokens[close + 1] === ":") {
+        invalidatePatternExpression(index + 1, close)
+        index = close
+        continue
+      }
       if (tokens[index] === "=") {
         let depth = 0
+        const expressionStart = index + 1
         for (index++; index < end; index++) {
           if (depth === 0 && [",", "]", "}"].includes(tokens[index]!)) break
           if (["(", "[", "{"].includes(tokens[index]!)) depth++
           else if ([")", "]", "}"].includes(tokens[index]!)) depth--
         }
+        invalidatePatternExpression(expressionStart, index)
         index--
         continue
       }

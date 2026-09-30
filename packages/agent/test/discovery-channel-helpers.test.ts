@@ -948,6 +948,14 @@ it.each([
   expect((await discover(source))?.workspace).toBeUndefined()
 })
 
+it.each([
+  'let alias; ({ enabled: alias = (options.pullRequest = true) } = {})',
+  'let alias; ({ [options.pullRequest = true]: alias } = {})',
+])("rejects member writes inside destructuring expressions: %s", async mutation => {
+  const source = `${imports} const options = { pullRequest: false }; ${mutation}; export default defineAgent({ channels: { custom: github(options) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
 it("rejects predeclared for-of Channel option targets", async () => {
   const source = `${imports} let options = { pullRequest: false }; for (options of [{ pullRequest: true }]) {} export default defineAgent({ channels: { custom: github(options) } })`
   await expect(discover(source)).rejects.toThrow("opaque Channel")
