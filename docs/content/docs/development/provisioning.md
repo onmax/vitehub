@@ -22,8 +22,9 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 Provider steps use read credentials during planning to distinguish existing resources from resources to create. A dry run does not call `apply()` or write Provision State, but a useful plan still needs the provider credentials required to inspect current state.
 
 ```txt [Output]
-create  d1-database  app-content
-exists  r2-bucket    uploads
+create  d1-database              app-content
+create  cloudflare-kv-namespace  app-cache
+exists  r2-bucket                uploads
 ```
 
 ## Apply the plan
@@ -39,12 +40,16 @@ Vercel Blob provisioning requires `VERCEL_PROJECT_ID` so the provision step can 
 
 After a successful apply, the CLI writes non-secret ids to `.vitehub/provision.json`.
 Vite Integrations may read that file as a binding-id source during dev or build.
+D1 database ids are keyed by Database name under `d1`. Cloudflare KV namespace ids are keyed by KV Store name under `kv`.
 
 ```json [.vitehub/provision.json]
 {
   "cloudflare": {
     "d1": {
       "default": "database-id"
+    },
+    "kv": {
+      "default": "namespace-id"
     }
   }
 }

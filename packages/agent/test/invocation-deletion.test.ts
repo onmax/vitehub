@@ -147,7 +147,9 @@ describe("Agent Invocation retention", () => {
   it("reports a store without delete or prune support", async () => {
     const { delete: _delete, prune: _prune, ...store } = createMemoryAgentInvocationStore()
     const invocations = defineAgentInvocations({ store })
+    await expect(invocations.delete("missing")).rejects.toMatchObject({ code: "AGENT_R0932" })
     await expect(invocations.delete("missing")).rejects.toThrow("does not support deletion")
+    await expect(invocations.prune()).rejects.toMatchObject({ code: "AGENT_R0932" })
     await expect(invocations.prune()).rejects.toThrow("does not support pruning")
   })
 })
