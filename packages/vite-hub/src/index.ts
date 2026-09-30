@@ -713,8 +713,8 @@ function presetBlobOptions(
   }
 }
 
-function normalizePublicUrl(value: unknown): string {
-  const url = typeof value === "string" && URL.canParse(value) ? new URL(value) : undefined
+function normalizePublicUrl(value: string): string {
+  const url = URL.canParse(value) ? new URL(value) : undefined
   if (!url || !["http:", "https:"].includes(url.protocol) || url.pathname !== "/" || url.search || url.hash) {
     throw viteHubErrorDiagnostics.VITE_HUB_R0124({ message: `[vitehub] publicUrl must be an http(s) origin without a path, received ${JSON.stringify(value)}.` })
   }
@@ -727,13 +727,13 @@ function publicUrlPlugin(publicUrl: ViteHubOptions["publicUrl"]): Plugin {
     config(config, { command }) {
       if (!publicUrl || command !== "build") return
       let resolved: PublicUrlConfig
-      if (typeof publicUrl === "string") resolved = { url: normalizePublicUrl(publicUrl) }
-      else {
+      if (publicUrl instanceof Function) {
         const root = resolveViteHubProjectRoot(config.root ?? process.cwd())
         // SAFETY: ViteHub hosts add this private server-directory symbol before plugins read the config.
         const serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
         resolved = { agents: Object.fromEntries(discoverAgentDefinitionEntries(root, serverDirs).map(({ name }) => [name, normalizePublicUrl(publicUrl(name))])) }
       }
+      else resolved = { url: normalizePublicUrl(publicUrl) }
       return { define: { __VITEHUB_PUBLIC_URL__: JSON.stringify(resolved) } }
     },
     configEnvironment(_name, config) {
