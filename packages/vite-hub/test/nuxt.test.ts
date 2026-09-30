@@ -602,6 +602,48 @@ describe("ViteHub Nuxt integration", () => {
     await application.runCloseHook()
   })
 
+  it.each([false, { binding: "REPLAY_DB", databaseId: "replay-id", databaseName: "replayed", driver: "d1" as const }])("uses replayed Database configuration for the Cloudflare journal: %j", async (database) => {
+    const application = createNuxt(false, [{
+      name: "vite-hub/database-replay",
+      config: (): UserConfig & { database: typeof database } => ({ database }),
+    }])
+    await viteHubNuxtModule({
+      preset: "cloudflare", agent: true, console: { exposure: "host-managed" },
+      database: { binding: "INITIAL_DB", databaseId: "initial-id", databaseName: "initial", driver: "d1" },
+    }, application.nuxt)
+    await application.runNitroConfigHook(nitroOptions(application.nuxt))
+
+    const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
+    expect(generated).not.toContain('d1: { binding: "INITIAL_DB",')
+    if (database) expect(generated).toContain('d1: { binding: "REPLAY_DB",')
+    else expect(generated).not.toContain("d1: { binding:")
+    await application.runCloseHook()
+  })
+
+  it.each([undefined, "replayed"])("uses the replayed Database discovery root for the Cloudflare journal: %s", async (projectRoot) => {
+    await mkdir("/tmp/vitehub-nuxt/custom-server/initial/server/databases", { recursive: true })
+    await writeFile("/tmp/vitehub-nuxt/custom-server/initial/server/databases/config.ts", 'export default defineDatabase({ cloudflare: { binding: "INITIAL_DB", databaseId: "initial-id", databaseName: "initial" }, schema: {} })\n')
+    const definitionRoot = projectRoot ? "/tmp/vitehub-nuxt/replayed/server" : "/tmp/vitehub-nuxt/custom-server"
+    await mkdir(resolve(definitionRoot, "databases"), { recursive: true })
+    await writeFile(resolve(definitionRoot, "databases/config.ts"), 'export default defineDatabase({ cloudflare: { binding: "REPLAY_DB", databaseId: "replayed-id", databaseName: "replayed" }, schema: {} })\n')
+    const application = createNuxt(false, [{
+      name: "vite-hub/database-replay",
+      config(config: UserConfig & { database?: { projectRoot?: string } }) {
+        config.database = { projectRoot }
+      },
+    }])
+    await viteHubNuxtModule({
+      preset: "cloudflare", agent: true, console: { exposure: "host-managed" },
+      database: { databaseId: "initial-id", databaseName: "initial", projectRoot: "custom-server/initial" },
+    }, application.nuxt)
+    await application.runNitroConfigHook(nitroOptions(application.nuxt))
+
+    const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
+    expect(generated).toContain('d1: { binding: "REPLAY_DB",')
+    expect(generated).not.toContain('d1: { binding: "INITIAL_DB",')
+    await application.runCloseHook()
+  })
+
   it("discovers the Nuxt Console D1 journal from the Database project root", async () => {
     await mkdir("/tmp/vitehub-nuxt/custom-server/databases", { recursive: true })
     await writeFile("/tmp/vitehub-nuxt/custom-server/databases/config.ts", 'export default defineDatabase({ cloudflare: { binding: "APP_DB", databaseName: "app" }, schema: {} })\n')

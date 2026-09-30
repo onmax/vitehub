@@ -1139,6 +1139,20 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
       const resolvedReplayedBlob = replayedBlobEnabled
         ? resolveBlobViteConfig(replayedBlob === true ? undefined : replayedBlob, { hosting: plan.nitroPreset }).blob
         : false
+      const replayedDatabase = hasReplayedDatabaseDiscoveryRoot
+        ? replayConfig.database ?? configuredOptions.database
+        : configuredOptions.database
+      const replayedJournalDatabase = replayedDatabase && replayedDatabase !== true && hasReplayedDatabaseDiscoveryRoot
+        ? { ...replayedDatabase, projectRoot: replayedDatabaseDiscoveryRoot }
+        : replayedDatabase
+      const replayedConsoleJournal = resolveConsoleJournal(
+        consoleDatabaseUrl(options),
+        consoleD1Binding(plan.preset, replayedJournalDatabase, {
+          root: hasReplayedDatabaseDiscoveryRoot ? projectRoot : consoleDatabaseRoot,
+          serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined,
+        }),
+        !nuxt.options.dev,
+      )
       const resolvedSections = resolveConsoleSectionIds({
         ...options,
         env: options.env !== false,
@@ -1197,7 +1211,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         consoleInvokeEnabled && !resolvedConsoleFixture,
         options.console === true ? undefined : options.console.observations,
         () => !consoleInvocationRootState.closed,
-        consoleJournal,
+        replayedConsoleJournal,
         Boolean(options.console !== true && options.console?.access === "auth" && options.console.auth),
       )
     }
