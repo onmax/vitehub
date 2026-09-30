@@ -687,12 +687,12 @@ async function acquireRemoteState(
             if (!child.stdin.destroyed) child.stdin.end();
           }
           const exitCode = await completion;
-          if (failure) throw failure;
-          if (exitCode !== 0) {
+          if (failure || exitCode !== 0) {
             const retry = await runCrabbox(options, leaseId, { command: releaseScript });
             if (retry.exitCode !== 0)
               throw boxErrorDiagnostics.BOX_R0106({ message: `[vitehub] Failed to release Crabbox state lease (exit ${retry.exitCode}).` });
           }
+          if (failure) throw failure;
         })().catch((error) => {
           releasePromise = undefined;
           throw error;
@@ -736,8 +736,10 @@ function createCrabboxSession(state: CrabboxSessionState, sessionId: string | un
           if (!cleanupFailure && result && result.exitCode !== 0) cleanupFailure = crabboxError("remove disposable Box cache", result)
           if (!cleanupFailure) {
             await state.stateLease.release().catch((error) => (cleanupFailure ||= error));
-            await rm(state.options.stateHome, { force: true, recursive: true }).catch(error => cleanupFailure ||= error)
-            try { state.releaseWorkspace() } catch (error) { cleanupFailure ||= error }
+            if (!cleanupFailure) await rm(state.options.stateHome, { force: true, recursive: true }).catch(error => cleanupFailure ||= error)
+            if (!cleanupFailure) {
+              try { state.releaseWorkspace() } catch (error) { cleanupFailure ||= error }
+            }
           }
           retryDestroy = Boolean(cleanupFailure)
           if (!failure) failure = cleanupFailure

@@ -591,6 +591,8 @@ describe("createCrabboxRuntime", () => {
         // SAFETY: the preceding assertion verifies the captured value is an Error.
         expect((failure as Error).message).toContain("Crabbox state lease was lost");
         await expect(session.destroy?.()).rejects.toThrow("Crabbox state lease was lost");
+        const remaining = await readdir(stateRoot);
+        expect(remaining.filter((name) => name.endsWith(".lock") || name.startsWith(".vitehub-owner-"))).toEqual([]);
       },
     );
   }, 30_000);
