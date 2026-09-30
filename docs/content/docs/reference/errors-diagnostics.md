@@ -107,6 +107,8 @@ interface AgentPublicError {
   details?: {
     capability?: string
     category?: string
+    resetAt?: string
+    resetText?: string
     retryAfter?: number
   }
   requestId?: string
@@ -128,8 +130,14 @@ private response data.
 | `AUTHENTICATION_REQUIRED`, `RATE_LIMIT_*`, `LLM_GATE_REJECTED`, `CAPABILITY_*`, `TRANSCRIPTION_*` | ViteHub recognized a public application or Capability failure. |
 | `INTERNAL` | The failure has no approved public mapping. The message stays generic. |
 
-The mapper includes only bounded identifiers, categories, retry delays, and
-request IDs. It replaces unknown errors with a context-specific `INTERNAL`
+`PROVIDER_QUOTA_EXHAUSTED` carries the provider's reset time when the failure
+text says `try again at <time>.`. `resetText` keeps the provider's wording, for
+example `Sep 15th, 2026 1:23 AM`. `resetAt` is the same time as an ISO 8601
+timestamp when it parses as a date. A time without a zone is read in the
+server's local time zone.
+
+The mapper includes only bounded identifiers, categories, retry delays, reset
+times, and request IDs. It replaces unknown errors with a context-specific `INTERNAL`
 message instead of copying `error.message`.
 
 ## Diagnostics sources

@@ -126,6 +126,10 @@ export type AgentPublicErrorCode =
 export interface AgentPublicErrorDetails {
   capability?: string
   category?: string
+  /** Provider quota reset time as an ISO 8601 timestamp, when `resetText` parses as a date. */
+  resetAt?: string
+  /** Provider quota reset time as the provider wrote it, for example `Sep 15th, 2026 1:23 AM`. */
+  resetText?: string
   retryAfter?: number
 }
 
@@ -160,6 +164,22 @@ function publicError(
   return { code, ...(details ? { details } : {}), error }
 }
 
+// Codex and similar providers report "... try again at Sep 15th, 2026 1:23 AM." in the failure text.
+// A date without a zone is read in the server's local time zone, the same clock the provider process used.
+function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefined {
+  const resetText = hasRuntimeType(message, "string") ? message.match(/try again at ([A-Za-z0-9 ,:/+-]{1,64})\./i)?.[1]?.trim() : undefined
+  if (!resetText) return
+  const time = Date.parse(resetText.replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, "$1"))
+  const details: AgentPublicErrorDetails = { resetText }
+  if (Number.isFinite(time)) details.resetAt = new Date(time).toISOString()
+  return details
+}
+
+function quotaExhausted(...messages: unknown[]): AgentPublicError {
+  const details = messages.map(quotaResetDetails).find(Boolean)
+  return publicError("PROVIDER_QUOTA_EXHAUSTED", "AI provider quota is exhausted.", details)
+}
+
 function aiSdkProviderPublicError(error: unknown): AgentPublicError | undefined {
   const retry = readAgentErrorProperty(error, "name") === "AI_RetryError"
     ? readAgentErrorProperty(error, "lastError")
@@ -190,7 +210,7 @@ function aiSdkProviderPublicError(error: unknown): AgentPublicError | undefined 
     return publicError("PROVIDER_AUTHENTICATION_FAILED", "AI provider credentials were rejected.")
   }
   if (status === 402 || quota) {
-    return publicError("PROVIDER_QUOTA_EXHAUSTED", "AI provider quota is exhausted.")
+    return quotaExhausted(readAgentErrorProperty(nested, "message"), readAgentErrorProperty(retry, "message"))
   }
   if (status === 429) {
     return publicError("PROVIDER_RATE_LIMITED", "AI provider is temporarily rate limited. Try again later.")
@@ -210,7 +230,7 @@ export function toAgentPublicError(error: unknown, context: AgentPublicErrorCont
       const message = readAgentErrorProperty(error, "message")
       if (hasRuntimeType(message, "string")
         && /usage limit|quota (?:is )?(?:exhausted|exceeded)|insufficient (?:quota|credits)|credit balance.*(?:low|exhausted)|spend(?:ing)? limit|spend.?cap|(?:billing|spending) budget (?:is )?exceeded/i.test(message)) {
-        return publicError("PROVIDER_QUOTA_EXHAUSTED", "AI provider quota is exhausted.")
+        return quotaExhausted(message)
       }
     }
     const viteHubError = getViteHubErrorShape(error)

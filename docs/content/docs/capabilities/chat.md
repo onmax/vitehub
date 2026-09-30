@@ -79,7 +79,7 @@ For adapter-backed delivery, inspect the Channel-generated webhook registrations
 | `fallbackStreamingPlaceholderText` | `string \| string[] \| null \| function` | inherited | Placeholder text while streaming starts. Arrays pick one entry per Agent Invocation; empty arrays skip the placeholder. |
 | `loading` | `{ text: string \| string[] \| null \| function; updates?: "commentary"; intervalMs?: number }` | none | Post a loading message and use manual delivery. This cannot be combined with `stream` or `commentary`; see [Channels](/docs/agents/channels) for the update lifecycle. |
 | `final` | `{ delivery: "new-message" }` | inherited | Post the finish-hook reply separately before removing the loading message. |
-| `errorFallbackText` | `string \| null \| function` | inherited | Fallback message when chat handling fails. |
+| `errorFallbackText` | `string \| null \| function` | inherited | Fallback message when chat handling fails. A function receives `error`, `publicError`, and `defaultText`, the message ViteHub sends when this option is not set. |
 
 ## Related pages
 

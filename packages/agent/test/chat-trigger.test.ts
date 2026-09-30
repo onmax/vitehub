@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import { agentDiagnostics } from "../src/agent-diagnostics.ts"
 import { toAgentPublicError } from "../src/agent-error.ts"
@@ -39,6 +39,48 @@ describe("chat error fallback", () => {
     expect(fallback).toContain("AI provider usage limit")
     expect(fallback).toContain("Sep 15th, 2026 1:23 AM.")
     expect(fallback).toContain("chatgpt.com/codex/settings/usage")
+  })
+
+  it("exposes provider quota reset times in public error details", () => {
+    const error = agentDiagnostics.AGENT_R0726({ message: "You've hit your usage limit. Upgrade to Pro or try again at Sep 15th, 2026 1:23 AM." })
+    const publicError = toAgentPublicError(error, "http")
+
+    expect(publicError).toMatchObject({ code: "PROVIDER_QUOTA_EXHAUSTED", details: { resetText: "Sep 15th, 2026 1:23 AM" } })
+    expect(publicError.details?.resetAt).toBe(new Date(2026, 8, 15, 1, 23).toISOString())
+  })
+
+  it("keeps an unparseable reset time as text only", () => {
+    const error = agentDiagnostics.AGENT_R0726({ message: "Usage limit reached. Try again at the next billing cycle." })
+
+    expect(toAgentPublicError(error, "http").details).toEqual({ resetText: "the next billing cycle" })
+    expect(toAgentPublicError(agentDiagnostics.AGENT_R0726({ message: "Quota exhausted" }), "http").details).toBeUndefined()
+  })
+
+  it("reads reset times from AI SDK quota errors", () => {
+    const error = {
+      data: { error: { code: "insufficient_quota", message: "You exceeded your quota. Try again at 2026-09-15T01:23:00Z." } },
+      name: "AI_APICallError",
+      statusCode: 429,
+    }
+
+    expect(toAgentPublicError(error, "http").details).toEqual({ resetAt: "2026-09-15T01:23:00.000Z", resetText: "2026-09-15T01:23:00Z" })
+  })
+
+  it("passes the default fallback text to custom fallback functions", async () => {
+    const error = agentDiagnostics.AGENT_R0726({ message: "You've hit your usage limit. Try again at Sep 15th, 2026 1:23 AM." })
+    const publicError = toAgentPublicError(error, "invocation")
+    const errorFallbackText = vi.fn(({ defaultText }: { defaultText: string }) => `${defaultText} Buy credits.`)
+    const fallback = await resolveChatErrorFallbackText({ errorFallbackText }, { error, publicError } as never)
+
+    expect(fallback).toBe("The AI provider usage limit has been reached. Usage should reset Sep 15th, 2026 1:23 AM. Buy credits.")
+    await expect(resolveChatErrorFallbackText({ errorFallbackText: ({ defaultText }) => defaultText }, {
+      error: new Error("private"),
+      publicError: { code: "PROVIDER_UNAVAILABLE", error: "AI provider is temporarily unavailable. Try again later.", requestId: "req-1" },
+    } as never)).resolves.toBe("AI provider is temporarily unavailable. Try again later. Reference: req-1.")
+    await expect(resolveChatErrorFallbackText({ errorFallbackText: ({ defaultText }) => defaultText }, {
+      error: new Error("private"),
+      publicError: { code: "INTERNAL", error: "Internal error." },
+    } as never)).resolves.toBe("Sorry, I couldn't process that message.")
   })
 
   it.each([
