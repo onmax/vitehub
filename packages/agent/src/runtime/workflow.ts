@@ -23,6 +23,7 @@ import {
   withAgentChannelDeliveryOwnershipVerifier,
 } from "../internal/channel-delivery.ts"
 import { agentWorkflowExecutionContextKey } from "../internal/workflow-execution.ts"
+import { markParsedAgentWorkflowInput } from "../internal/workflow-parsed-input.ts"
 import { agentWorkflowRetryRegistrar } from "../internal/workflow-retry.ts"
 import { isRuntimeBoolean, isRuntimeFunction, isRuntimeNumber, isRuntimeObject, isRuntimeString, isRuntimeSymbol } from "../internal/runtime-value.ts"
 
@@ -42,8 +43,6 @@ import type {
 import type { WorkflowExecutionContext, WorkflowProvider } from "@vite-hub/workflow"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 export { workspaceAgentWithSourceRoot }
-
-export const parsedAgentWorkflowInputDataKey: symbol = Symbol.for("vitehub.agent.workflow.parsedInputData")
 
 export function agentWithColocatedSkills<Agent>(agent: Agent, sources: Parameters<typeof decodeColocatedAgentSkills>[0]): Agent {
   return withColocatedAgentSkills(agent, decodeColocatedAgentSkills(sources))
@@ -366,9 +365,6 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
         abortSignal: payload.input?.abortSignal ? AbortSignal.any([payload.input.abortSignal, channelOwnership.abortSignal]) : channelOwnership.abortSignal,
       }
     : { ...payload.input }
-  if (payload.parsedInputData === true) {
-    Object.defineProperty(workflowInput, parsedAgentWorkflowInputDataKey, { value: agent })
-  }
 
   let channelDeliveryStatus: "completed" | "failed" = "failed"
   let channelDeliveryJournaled = !channelDelivery
@@ -397,6 +393,9 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
       && !hasParsedAgentMessageMeta(agent, restoredWorkflowInput, runtimeContext.run)
     if (payload.resolvedInvoker && !derivedInvokerNeedsResolution) {
       restoredWorkflowInput = restoreResolvedAgentInvokerInput(restoredWorkflowInput)
+    }
+    if (payload.parsedInputData === true) {
+      markParsedAgentWorkflowInput(restoredWorkflowInput, agent)
     }
     const inlineResult = await runAgentInline(
       agent,

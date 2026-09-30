@@ -37,6 +37,7 @@ import { parseStandardSchema } from "@vite-hub/internal/http-request"
 import { agentResultKind, agentStreamErrorSymbol, appendLatestFinalText, finalTextFromAgentOutput, hasTraceableStreamResult, isAsyncIterable, resolveAgentUsageRecord, streamAgentOutputToEvents, toAgentRunResult, toAgentStreamEvent, usageRecordFromStreamChunk } from "./agent-output.ts"
 import { defineChatCapability, durableChatErrorFallbackTimeout, getAgentChatContext, getChatCapabilityOptions, isDurableChatErrorFallbackEffect, resolveChatMessageContextInstructions, resolveChatMessageRunMetadata, resolveDurableChatErrorFallbackIntents } from "./chat-trigger.ts"
 import { agentWorkflowExecutionContextKey } from "./internal/workflow-execution.ts"
+import { consumeParsedAgentWorkflowInput } from "./internal/workflow-parsed-input.ts"
 import { parsedAgentMessageMetaState, parseAgentMessageMeta, withParsedAgentMessageMeta } from "./internal/message-meta.ts"
 import type { ParsedAgentMessageMetaState } from "./internal/message-meta.ts"
 import {
@@ -3918,7 +3919,7 @@ async function createAgentInvocationContext<
   invocationTools?: AgentToolSet,
 ): Promise<AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS>> {
   const startedAt = Date.now()
-  const parsedInputDefinition = Reflect.get(input, Symbol.for("vitehub.agent.workflow.parsedInputData"))
+  const inputDataParsed = consumeParsedAgentWorkflowInput(input, definition)
   const resolvedContext = createResolvedRuntimeContext(context)
   const invocationContext = createAgentInvocationContextStore(input.context)
   await parseAgentMessageMeta(definition, invocationContext, context.run)
@@ -3974,7 +3975,7 @@ async function createAgentInvocationContext<
   let failureTraced = false
   const telemetryContentTraceLogWrapped = initialTelemetryUsesContent || mayResolveContentTelemetry
   try {
-    if (parsedInputDefinition !== definition) {
+    if (!inputDataParsed) {
       input = await parseAgentInputData(internalDefinition, input)
     }
     const boundRunEvents = bindAgentRunEvents(definition?.runEvents, tracedRuntimeContext)

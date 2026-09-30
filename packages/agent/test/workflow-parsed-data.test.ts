@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { defineAgent, runAgentInline, startAgentInvocation, workflow } from "../src/index.ts"
 import { setAgentWorkflowRuntimeLoaders } from "../src/internal/workflow-runtime-loaders.ts"
-import { parsedAgentWorkflowInputDataKey, runAgentWorkflowDefinition } from "../src/runtime/workflow.ts"
+import { runAgentWorkflowDefinition } from "../src/runtime/workflow.ts"
 
 vi.mock("#vitehub/agent/registry", () => ({ default: {} }))
 
@@ -124,7 +124,7 @@ describe("durable Agent data handoff", () => {
       payload: { input },
       provider: "cloudflare",
     }, async (definition, context, workflowInput) => {
-      expect(Reflect.get(context, parsedAgentWorkflowInputDataKey)).toBeUndefined()
+      expect(Reflect.get(context, Symbol.for(marker))).toBeUndefined()
       return runAgentInline(definition, context, workflowInput)
     })
 
@@ -189,5 +189,68 @@ describe("durable Agent data handoff", () => {
     expect(nestedResults).toEqual([{ count: 3 }])
     expect(validate).toHaveBeenCalledTimes(2)
     expect(run).toHaveBeenCalledTimes(2)
+  })
+
+  it("rejects caller-forged parsed input markers", async () => {
+    const run = vi.fn(() => "invalid")
+    const agent = defineAgent({ data: v.string(), driver: { run }, runtime: false })
+    const input = { data: 1 as never, [Symbol.for("vitehub.agent.workflow.parsedInputData")]: agent }
+
+    await expect(runAgentInline(agent, {
+      memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn(),
+    }, input)).rejects.toThrow("Invalid Agent input data")
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it("consumes the parsed input exemption for one invocation", async () => {
+    const validate = vi.fn((value: string) => Number(value))
+    const data = v.object({ count: v.pipe(v.string(), v.transform(validate)) })
+    const run = vi.fn(({ input }: { input: { data?: unknown } }) => input.data)
+    const agent = defineAgent({ data, driver: { run }, runtime: false })
+    const parsedData = v.parse(data, { count: "2" })
+
+    const result = await runAgentWorkflowDefinition(agent, {
+      id: "one-shot-agent-data",
+      name: "one-shot-agent-data",
+      payload: { input: { data: parsedData }, parsedInputData: true },
+      provider: "cloudflare",
+    }, async (definition, context, input) => {
+      const output = await runAgentInline(definition, context, input)
+      await expect(runAgentInline(definition, context, input)).rejects.toThrow("Invalid Agent input data")
+      return output
+    })
+
+    expect(result).toEqual({ count: 2 })
+    expect(validate).toHaveBeenCalledOnce()
+    expect(run).toHaveBeenCalledOnce()
+  })
+
+  it.each(["metadata", "invoker", "both"])("preserves parsed data after restoring %s", async (restoration) => {
+    const validate = vi.fn((value: string) => Number(value))
+    const data = v.object({ count: v.pipe(v.string(), v.transform(validate)) })
+    const run = vi.fn(({ input }: { input: { data?: unknown } }) => input.data)
+    const agent = defineAgent({
+      data,
+      driver: { run },
+      messages: { meta: v.object({ label: v.string() }), metaRevision: "data-v1" },
+      runtime: false,
+    })
+    const parsedData = v.parse(data, { count: "2" })
+
+    const result = await runAgentWorkflowDefinition(agent, {
+      id: "restored-agent-data",
+      name: "restored-agent-data",
+      payload: {
+        input: { data: parsedData, context: { channel: { meta: { label: "parsed" } } } },
+        parsedInputData: true,
+        ...(restoration !== "invoker" ? { parsedMessageMeta: { revision: "data-v1" } } : {}),
+        ...(restoration !== "metadata" ? { resolvedInvoker: true } : {}),
+      },
+      provider: "cloudflare",
+    }, runAgentInline)
+
+    expect(result).toEqual({ count: 2 })
+    expect(validate).toHaveBeenCalledOnce()
+    expect(run).toHaveBeenCalledOnce()
   })
 })
