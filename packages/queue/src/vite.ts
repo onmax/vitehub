@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 
 import { getViteMode } from "@vite-hub/internal/build/mode"
-import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, contributeProviderDeploymentOutput, createDefaultCloudflareOutputRoot, createDefaultVercelOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
 import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
@@ -184,6 +184,12 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   let validatesNitroDefinitions = false
   let serverDirs: string[] | undefined
+  const queueOutputRoot = () => {
+    const rootDir = resolved?.root ?? process.cwd()
+    const outputDir = (resolved as (ResolvedConfig & { nitro?: { output?: { dir?: unknown } } }) | undefined)?.nitro?.output?.dir
+    if (typeof outputDir === "string") return resolve(rootDir, outputDir)
+    return hosting === "cloudflare" ? createDefaultCloudflareOutputRoot(rootDir) : createDefaultVercelOutputRoot(rootDir)
+  }
 
   return {
     name: "@vite-hub/queue/vite",
@@ -197,6 +203,21 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
             return inspectQueueDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
           },
         }],
+        providerOutput: queue === false || nitroQueue === false
+          ? []
+          : [
+              hosting === "cloudflare"
+                ? {
+                    description: "Generated Cloudflare Queue provider config",
+                    owner: "queue",
+                    path: resolve(queueOutputRoot(), "wrangler.json"),
+                  }
+                : {
+                    description: "Generated Vercel Queue provider config",
+                    owner: "queue",
+                    path: resolve(queueOutputRoot(), "config.json"),
+                  },
+            ],
       }),
       cli: async () => {
         return {
