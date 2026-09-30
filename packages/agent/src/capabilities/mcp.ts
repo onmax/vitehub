@@ -47,8 +47,14 @@ const connectionConfigSchema = v.looseObject({ connection: v.string(), transport
 
 const jsonRpcRequestSchema = v.object({
   method: v.string(),
-  params: v.optional(v.looseObject({ name: v.optional(v.string()) })),
+  params: v.optional(v.looseObject({ arguments: v.optional(v.unknown()), name: v.optional(v.string()) })),
 })
+
+/** The arguments of a `tools/call` request, as the key that binds an approval to its run. */
+function toolCallArguments(init: RequestInit | undefined): string | undefined {
+  const message = v.safeParse(jsonRpcRequestSchema, parseJsonBody(init?.body))
+  return message.success && message.output.method === "tools/call" ? JSON.stringify(message.output.params?.arguments ?? {}) : undefined
+}
 
 function parseJsonBody(body: RequestInit["body"]): unknown {
   if (!v.is(v.string(), body)) return undefined
@@ -90,11 +96,13 @@ function withMcpConnection(context: AgentCapabilityContext, server: string, conf
     throw agentDiagnostics.AGENT_R0082({ message: `[vitehub] mcp({ servers }) server "${server}" uses a connection, so it requires an http or sse transport config without authProvider.` })
   }
   const connection = useAgentConnection(context, name.output, "mcp")
-  // Approved tool runs that have not sent their `tools/call` yet, by Operation. Each request uses one grant.
+  // Approved tool runs that have not sent their `tools/call` yet, keyed by Operation and exact arguments.
+  // A run with other arguments cannot use them. Runs with equal arguments were approved with the same content.
   const approvals = new Map<string, Array<{ used: boolean }>>()
   const request = (init: RequestInit | undefined): AgentConnectionFetchOptions => {
     const options = mcpConnectionRequest(server, init)
-    const grant = options.tool ? approvals.get(options.operation)?.find(entry => !entry.used) : undefined
+    const args = options.tool ? toolCallArguments(init) : undefined
+    const grant = args === undefined ? undefined : approvals.get(`${options.operation}\n${args}`)?.find(entry => !entry.used)
     if (!grant) return options
     grant.used = true
     return { ...options, approved: true }
@@ -109,10 +117,15 @@ function withMcpConnection(context: AgentCapabilityContext, server: string, conf
   }
   return {
     binding: {
-      approve: (operation) => {
+      approve: (operation, input) => {
+        const key = `${operation}\n${JSON.stringify(input ?? {})}`
         const grant = { used: false }
-        approvals.set(operation, [...(approvals.get(operation) ?? []), grant])
-        return () => approvals.set(operation, (approvals.get(operation) ?? []).filter(entry => entry !== grant))
+        approvals.set(key, [...(approvals.get(key) ?? []), grant])
+        return () => {
+          const remaining = (approvals.get(key) ?? []).filter(entry => entry !== grant)
+          if (remaining.length) approvals.set(key, remaining)
+          else approvals.delete(key)
+        }
       },
       connection,
       operation: tool => mcpToolOperation(server, tool),
