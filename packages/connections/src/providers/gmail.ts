@@ -34,6 +34,12 @@ export interface GmailMessageHeader {
   value: string
 }
 
+/** Body of a message part that Gmail stores separately. `data` is base64url. */
+export interface GmailAttachment {
+  data?: string
+  size?: number
+}
+
 export interface GmailMessagePart {
   body?: { attachmentId?: string, data?: string, size?: number }
   filename?: string
@@ -103,6 +109,7 @@ const readScopes = [readonlyScope, modifyScope]
 
 /** Typed Gmail REST v1 Operations. Ids are the access patterns, for example `gmail.messages.*`. */
 export const gmailOperations: {
+  attachmentsGet: Operation<{ id: string, messageId: string }, GmailAttachment, "read">
   draftsCreate: Operation<{ raw: string, threadId?: string }, GmailDraft, "write">
   historyList: Operation<{ historyTypes?: Array<"labelAdded" | "labelRemoved" | "messageAdded" | "messageDeleted">, labelId?: string, maxResults?: number, pageToken?: string, startHistoryId: string }, GmailHistoryList, "read">
   labelsCreate: Operation<GmailLabelInput, GmailLabel, "write">
@@ -116,6 +123,10 @@ export const gmailOperations: {
   profileGet: Operation<void, GmailProfile, "read">
   watch: Operation<{ labelFilterBehavior?: "exclude" | "include", labelIds?: string[], topicName: string }, GmailWatchResponse, "write">
 } = {
+  attachmentsGet: operation("gmail.messages.attachments.get", "read", readScopes, input => ({
+    method: "GET",
+    url: `${api}/messages/${path(input.messageId)}/attachments/${path(input.id)}`,
+  })),
   draftsCreate: operation("gmail.drafts.create", "write", [composeScope, modifyScope], input => ({
     body: { message: { raw: input.raw, ...(input.threadId ? { threadId: input.threadId } : {}) } },
     method: "POST",
@@ -164,6 +175,7 @@ export interface GmailClient<TDryRun extends boolean | undefined = boolean | und
     patch: Call<Ops["labelsPatch"], TDryRun>
   }
   messages: {
+    attachments: { get: Call<Ops["attachmentsGet"], TDryRun> }
     get: Call<Ops["messagesGet"], TDryRun>
     list: Call<Ops["messagesList"], TDryRun>
     modify: Call<Ops["messagesModify"], TDryRun>
@@ -183,7 +195,7 @@ export function gmail<TDryRun extends boolean | undefined>(connection: Connectio
     drafts: { create: run(ops.draftsCreate) },
     history: { list: run(ops.historyList) },
     labels: { create: run(ops.labelsCreate), get: run(ops.labelsGet), list: run(ops.labelsList), patch: run(ops.labelsPatch) },
-    messages: { get: run(ops.messagesGet), list: run(ops.messagesList), modify: run(ops.messagesModify), trash: run(ops.messagesTrash) },
+    messages: { attachments: { get: run(ops.attachmentsGet) }, get: run(ops.messagesGet), list: run(ops.messagesList), modify: run(ops.messagesModify), trash: run(ops.messagesTrash) },
     profile: { get: run(ops.profileGet) },
     watch: run(ops.watch),
   }

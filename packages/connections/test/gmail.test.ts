@@ -38,13 +38,16 @@ describe("gmail", () => {
     await mail.messages.get({ format: "metadata", id: "msg/1", metadataHeaders: ["Subject"] })
     await mail.messages.modify({ addLabelIds: ["L1"], id: "msg-1", removeLabelIds: ["UNREAD"] })
     await mail.messages.trash({ id: "msg-2" })
+    await mail.messages.attachments.get({ id: "att/1", messageId: "msg-3" })
 
     expect(calls.map(call => [call.id, call.effect])).toEqual([
       ["gmail.messages.list", "read"],
       ["gmail.messages.get", "read"],
       ["gmail.messages.modify", "write"],
       ["gmail.messages.trash", "write"],
+      ["gmail.messages.attachments.get", "read"],
     ])
+    expect(calls[4]!.request).toEqual({ method: "GET", url: `${api}/messages/msg-3/attachments/att%2F1` })
     expect(calls[0]!.request).toEqual({
       method: "GET",
       query: { includeSpamTrash: undefined, labelIds: ["INBOX", "UNREAD"], maxResults: 10, pageToken: undefined, q: "from:a@example.com" },
@@ -101,7 +104,7 @@ describe("gmail", () => {
   it("serializes repeated query values through the runtime", async () => {
     const upstream = mockFetch(() => Response.json({ messages: [] }))
     const { name, runtime, store } = setupRuntime({ fetch: upstream.fetch, name: "gmail" })
-    await store.write({ name, provider: "google", tokens: tokenSet() })
+    await store.write({ name, provider: "fake", tokens: tokenSet() })
 
     await runtime.call(name, gmailOperations.messagesList, { labelIds: ["INBOX", "UNREAD"], maxResults: 5 }, { actor: { id: "server", kind: "service" } })
     expect(upstream.calls[0]!.url).toBe(`${api}/messages?labelIds=INBOX&labelIds=UNREAD&maxResults=5`)

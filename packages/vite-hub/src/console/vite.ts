@@ -58,7 +58,12 @@ type ConsoleNitroConfig = {
 export type ConsoleOptions = (
   | { access: "auth", auth?: ConsoleAuthConfig, exposure?: never, invoke?: boolean }
   | { access?: never, exposure: "host-managed", invoke?: boolean }
-) & { databaseUrl?: string, observations?: AgentInvocationsOptions["observations"] }
+) & {
+  databaseUrl?: string
+  /** Lets Console users connect, refresh, disconnect, and set keys of Connections. Default: `false`. `console: true` enables it. */
+  manageConnections?: boolean
+  observations?: AgentInvocationsOptions["observations"]
+}
 
 interface ConsoleVitePluginOptions {
   blobStores?: readonly string[]
@@ -197,6 +202,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   let fixture: string | undefined
   let cliDiscovery = false
   let invoke = false
+  let manageConnections = false
   let databaseUrl: string | undefined
   let observations: AgentInvocationsOptions["observations"]
   let consoleAuthHandlers: Awaited<ReturnType<typeof writeConsoleAuthHandlers>> | undefined
@@ -205,7 +211,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   const refreshConsoleCatalog = serializeConsoleRefresh(async () => {
     if (!generatedPlugin || !projectRoot || !root) return
     const catalog = await discoverConsoleBuildCatalog({ databaseDiscoveryRoot, discoveryRoot: root, projectRoot, rateLimitDiscoveryRoot, rateLimitScanDirs, sandboxDiscoveryRoot: root, scheduleDiscoveryRoot, sections, serverDirs, workspaceDiscoveryRoot })
-    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, databaseUrl, Boolean(consoleAuthHandlers))
+    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, databaseUrl, Boolean(consoleAuthHandlers), manageConnections)
     if (options.invocationRootState) updateConsoleInvocationRootState(options.invocationRootState, projectRoot, identity)
   })
 
@@ -316,6 +322,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       databaseUrl = (configured === true ? undefined : configured.databaseUrl) ?? options.databaseUrl
       observations = configured === true ? undefined : configured.observations
       invoke = !fixture && (configured === true || configured.invoke === true)
+      manageConnections = !fixture && (configured === true || configured.manageConnections === true)
       generatedPlugin = resolveGeneratedConsolePlugin(root, fixture, options.invocationRootState)
       if (fixture && options.invocationRootState) {
         configureConsoleFixtureLifecycle(options.invocationRootState, generatedPlugin, refreshConsoleCatalog)
@@ -339,6 +346,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
           undefined,
           databaseUrl,
           Boolean(consoleAuthHandlers),
+          manageConnections,
         )
       }
       // SAFETY: Nitro extends Vite's user config with this documented top-level configuration object.

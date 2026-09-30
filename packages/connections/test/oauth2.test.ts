@@ -23,6 +23,12 @@ describe("oauth2", () => {
     expect(oauth2(options()).id).toBe("oauth2")
   })
 
+  it("rejects authorization parameters that ViteHub sets for each flow", () => {
+    for (const key of ["client_id", "code_challenge", "code_challenge_method", "redirect_uri", "response_type", "scope", "state"]) {
+      expect(() => oauth2(options({ authorizationParams: { [key]: "x" } }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: `provider.authorizationParams.${key}` } }))
+    }
+  })
+
   it("builds a PKCE authorization URL with extra parameters", async () => {
     const provider = oauth2(options({ authorizationParams: { prompt: "consent" } }))
     const url = new URL(await provider.authorizationUrl({ codeChallenge: "challenge", redirectUri: "https://app.example/cb", state: "state" }, { fetch: mockFetch(() => new Response(null)).fetch }))
@@ -56,10 +62,19 @@ describe("oauth2", () => {
     const token = await provider.exchange({ code: "code", codeVerifier: "verifier", redirectUri: "https://app.example/cb" }, { fetch: upstream.fetch })
     const call = upstream.mock.mock.calls[0]!
     const headers = new Headers(call[1]?.headers)
-    expect(headers.get("authorization")).toBe(`Basic ${btoa("client%20id:secret%3Avalue")}`)
+    // RFC 6749 form encoding: a space is `+`.
+    expect(headers.get("authorization")).toBe(`Basic ${btoa("client+id:secret%3Avalue")}`)
     expect(upstream.calls[0]!.body).not.toContain("client_secret")
     expect(token).toMatchObject({ accessToken: "new", scopes: ["read", "write"], tokenType: "Bearer" })
     expect(token.expiresAt).toBeGreaterThan(Date.now())
+  })
+
+  it("encodes non-ASCII Basic credentials as UTF-8", async () => {
+    const upstream = mockFetch(() => Response.json({ access_token: "new" }))
+    const provider = oauth2(options({ client: () => ({ clientId: "clïent", clientSecret: "sécret" }), clientAuth: "basic" }))
+
+    await provider.exchange({ code: "code", codeVerifier: "verifier", redirectUri: "https://app.example/cb" }, { fetch: upstream.fetch })
+    expect(new Headers(upstream.mock.mock.calls[0]![1]?.headers).get("authorization")).toBe(`Basic ${btoa("cl%C3%AFent:s%C3%A9cret")}`)
   })
 
   it("keeps the previous refresh token, scopes, and account on refresh", async () => {
@@ -99,9 +114,24 @@ describe("oauth2", () => {
     const provider = oauth2(options({ revokeUrl: "https://auth.example/revoke" }))
 
     await provider.revoke!(tokenSet(), { fetch: upstream.fetch })
-    expect(upstream.calls[0]).toMatchObject({ body: `token=${encodeURIComponent(tokenSet().refreshToken!)}`, method: "POST", url: "https://auth.example/revoke" })
+    expect(upstream.calls[0]).toMatchObject({ method: "POST", url: "https://auth.example/revoke" })
+    expect(Object.fromEntries(new URLSearchParams(upstream.calls[0]!.body))).toEqual({
+      client_id: "client id",
+      client_secret: "secret:value",
+      token: tokenSet().refreshToken,
+      token_type_hint: "refresh_token",
+    })
     upstream.mock.mockImplementation(async () => new Response(null, { status: 503 }))
     await expectCode(provider.revoke!(tokenSet(), { fetch: upstream.fetch }), "CONNECTIONS_PROVIDER_FAILED")
     expect(oauth2(options()).revoke).toBeUndefined()
+  })
+
+  it("authenticates the revocation request with HTTP basic when configured", async () => {
+    const upstream = mockFetch(() => new Response(null, { status: 200 }))
+    const provider = oauth2(options({ clientAuth: "basic", revokeUrl: "https://auth.example/revoke" }))
+
+    await provider.revoke!(tokenSet({ refreshToken: undefined }), { fetch: upstream.fetch })
+    expect(new Headers(upstream.mock.mock.calls[0]![1]?.headers).get("authorization")).toBe(`Basic ${btoa("client+id:secret%3Avalue")}`)
+    expect(Object.fromEntries(new URLSearchParams(upstream.calls[0]!.body))).toEqual({ token: tokenSet().accessToken, token_type_hint: "access_token" })
   })
 })

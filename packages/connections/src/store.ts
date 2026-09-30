@@ -46,8 +46,8 @@ export interface ConnectionsStore {
   /** Takes the refresh lease when the revision is current and no lease is active. */
   lease: (name: string, revision: string, now: number, until: number) => Promise<boolean>
   openPending: (ticket: string, now: number) => Promise<PendingConnection | undefined>
-  /** Clears the lease and sets a status without a new token. */
-  release: (name: string, status: ConnectionStatus, lastError?: string) => Promise<void>
+  /** Clears the lease and sets a status without a new token. Only changes the grant at `revision`. */
+  release: (name: string, revision: string, status: ConnectionStatus, lastError?: string) => Promise<void>
   tokens: (name: string) => Promise<{ grant: StoredGrant, tokens: ConnectionTokenSet } | undefined>
   /** Writes a new token set. With `expectedRevision`, only replaces that revision. */
   write: (input: { expectedRevision?: string, name: string, provider: string, tokens: ConnectionTokenSet }) => Promise<StoredGrant>
@@ -175,7 +175,9 @@ export function createConnectionsStore(options: { db: ConnectionsDatabase, encry
     },
     async append(activity) {
       await initialize()
-      await db.run(sql`INSERT INTO vitehub_connection_activity (name, id, payload) VALUES (${activity.connection}, ${activity.id}, ${JSON.stringify(activity)})`)
+      // A long route path must not store a row that `activity()` cannot read back.
+      const value = v.parse(activityPayload, { ...activity, actor: { ...activity.actor, id: activity.actor.id.slice(0, 512) } })
+      await db.run(sql`INSERT INTO vitehub_connection_activity (name, id, payload) VALUES (${value.connection}, ${value.id}, ${JSON.stringify(value)})`)
     },
     async consumePending(state, now) {
       await initialize()
@@ -209,9 +211,9 @@ export function createConnectionsStore(options: { db: ConnectionsDatabase, encry
       if (row === undefined) return
       return readPending(row, v.parse(pendingRow, row).state)
     },
-    async release(name, nextStatus, lastError) {
+    async release(name, revision, nextStatus, lastError) {
       await initialize()
-      await db.run(sql`UPDATE vitehub_connection_grants SET lease_until = NULL, status = ${nextStatus}, last_error = ${lastError ?? null}, updated_at = ${new Date().toISOString()} WHERE name = ${name}`)
+      await db.run(sql`UPDATE vitehub_connection_grants SET lease_until = NULL, status = ${nextStatus}, last_error = ${lastError ?? null}, updated_at = ${new Date().toISOString()} WHERE name = ${name} AND revision = ${revision}`)
     },
     async tokens(name) {
       const row = await readRow(name)

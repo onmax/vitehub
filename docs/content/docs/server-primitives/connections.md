@@ -148,7 +148,7 @@ Agent tools record every call, reads included. MCP protocol messages are recorde
 
 - Grants are sealed with AES-GCM and the encryption key. Each row stores the key id. With a different key, the status is `needs-reconnect`.
 - The connect flow uses PKCE (`S256`), a single-use ticket that expires after 10 minutes, and a `state` cookie. Tokens never go to the browser or the CLI.
-- Connect, callback, and management routes exist only when the Console is enabled. Console Auth protects them in production.
+- Connect, callback, and management routes exist only when the Console is enabled. Console Auth protects them in production. With an explicit production access contract, the Console is read-only for Connections until you set `console: { manageConnections: true }`. See [Manage Connections](/docs/development/console#manage-connections).
 - Concurrent refreshes use a database lease, so only one request refreshes a rotating refresh token.
 
 ## Configuration options
@@ -184,6 +184,8 @@ The CLI calls the management route of a running development server with the Cons
 | `CONNECTIONS_MISSING` | The Connection is not connected. |
 | `CONNECTIONS_NEEDS_RECONNECT` | The provider rejected the refresh token. |
 | `CONNECTIONS_KEY_MISMATCH` | The grant was sealed with a different key. |
+
+When you change the provider of a Connection, the stored grant belongs to the old provider. The status becomes `needs-reconnect` with `lastError: 'CONNECTIONS_PROVIDER_CHANGED'`, and ViteHub never sends that grant to the new provider. Reconnect the Connection.
 | `CONNECTIONS_DENIED`, `CONNECTIONS_APPROVAL_REQUIRED` | Access rules blocked the call. |
 | `CONNECTIONS_PROVIDER_FAILED` | The provider returned an error. `details.status` has the HTTP status. |
 | `CONNECTIONS_UNAVAILABLE` | Another request holds the refresh lease. Try again. |

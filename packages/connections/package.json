@@ -64,6 +64,7 @@
     "vitest": "catalog:tooling"
   },
   "peerDependencies": {
+    "@vite-hub/database": "workspace:*",
     "vite": "catalog:vite-compat"
   },
   "peerDependenciesMeta": {

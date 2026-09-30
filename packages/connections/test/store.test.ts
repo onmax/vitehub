@@ -111,9 +111,27 @@ describe("createConnectionsStore", () => {
     const grant = await store.write({ name: "gmail", provider: "google", tokens: tokenSet() })
     await store.lease("gmail", grant.revision, Date.now(), Date.now() + 30_000)
 
-    await store.release("gmail", "needs-reconnect", "CONNECTIONS_NEEDS_RECONNECT")
+    await store.release("gmail", grant.revision, "needs-reconnect", "CONNECTIONS_NEEDS_RECONNECT")
     expect(await store.grant("gmail")).toMatchObject({ lastError: "CONNECTIONS_NEEDS_RECONNECT", status: "needs-reconnect" })
     expect((await store.grant("gmail"))?.leaseUntil).toBeUndefined()
+  })
+
+  it("does not let a stale release change a newer grant", async () => {
+    const { store } = setup()
+    const old = await store.write({ name: "gmail", provider: "google", tokens: tokenSet() })
+    await store.write({ name: "gmail", provider: "google", tokens: tokenSet({ accessToken: "reconnected" }) })
+
+    await store.release("gmail", old.revision, "needs-reconnect", "CONNECTIONS_NEEDS_RECONNECT")
+    expect(await store.grant("gmail")).toMatchObject({ status: "active" })
+    expect((await store.grant("gmail"))?.lastError).toBeUndefined()
+  })
+
+  it("keeps activity readable when an actor id is longer than 512 characters", async () => {
+    const { store } = setup()
+    const route = `GET /api/${"x".repeat(600)}`
+    await store.append({ action: "call", actor: { id: route, kind: "route" }, connection: "gmail", id: "act_long", outcome: "denied", timestamp: new Date().toISOString() })
+    const [event] = await store.activity({})
+    expect(event?.actor.id).toBe(route.slice(0, 512))
   })
 
   it("reports a key mismatch for grants sealed with another key", async () => {
