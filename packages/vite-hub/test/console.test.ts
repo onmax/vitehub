@@ -61,7 +61,7 @@ import { createUsageSummary, invocationUsage } from "../src/console/runtime/serv
 
 import { runAgent } from "@vite-hub/agent"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "@vite-hub/agent/server"
-import { agentWithColocatedSkills } from "@vite-hub/agent/runtime/workflow"
+import { agentWithColocatedSkills, workspaceAgentWithSourceRoot } from "@vite-hub/agent/runtime/workflow"
 import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 
 import type { AgentInvocations, AgentRuntimeContext } from "@vite-hub/agent"
@@ -1941,18 +1941,18 @@ describe("Agent invocation console", () => {
     expect(labeller.name).toBeUndefined()
   })
 
-  it("records the discovered name on the source of a colocated-Skills clone", async () => {
+  it.each([false, true])("records the discovered name on the source of a Skills clone with workspace decoration %s", async (withWorkspace) => {
     const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
     installConsoleInvocationFallback(invocations, process.cwd())
-    const labeller = defineAgent({ driver: { run: () => "labelled" }, runtime: false })
-    const decorated = agentWithColocatedSkills(labeller, {
+    const labeller = defineAgent({ driver: { run: () => "labelled" }, runtime: false, ...(withWorkspace ? { workspace: {} } : {}) })
+    const skillsClone = agentWithColocatedSkills(labeller, {
       "__vitehubAgentSkill:.agents/skills/review/SKILL.md": {
-        content: new TextEncoder().encode("# Review\n"),
-        materialize: "startup",
-        mount: "",
-        workspacePath: ".agents/skills/review/SKILL.md",
+        content: btoa("# Review\n"),
+        encoding: "base64",
       },
     })
+    const decorated = withWorkspace ? workspaceAgentWithSourceRoot(skillsClone, process.cwd()) : skillsClone
+    if (withWorkspace) expect(decorated).not.toBe(skillsClone)
     expect(installConsoleAgentDefinitions([
       { definition: { default: decorated }, fallbackName: "labeller" },
     ], { invocations })).toEqual(["labeller"])

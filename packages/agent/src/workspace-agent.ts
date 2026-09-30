@@ -1,3 +1,4 @@
+import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { inheritAgentLayerOptions } from "./agent-layers.ts"
 import { registeredWorkspaceAgentNames } from "./internal/workspace-agent-registration.ts"
 import { agentInstructionSources, resolveAgentInstructions } from "./agent-instructions.ts"
@@ -303,6 +304,7 @@ export function workspaceAgentWithSourceRoot<Agent>(agent: Agent, sourceRootDir:
     ...workspaceDefinitionFromOptions(workspaceOptions as never),
     __vitehubWorkspaceAgentOptions: workspaceOptions,
   }
+  Object.defineProperty(decoratedAgent, agentDefinitionSourceSymbol, { configurable: true, value: workspaceAgent })
   inheritAgentCapacity(workspaceAgent, decoratedAgent)
   inheritAgentLayerOptions(workspaceAgent, decoratedAgent, {
     workspace: decoratedWorkspace,
