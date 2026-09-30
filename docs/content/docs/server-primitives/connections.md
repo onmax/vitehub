@@ -118,7 +118,7 @@ printf %s "$EXECUTOR_API_KEY" | vitehub connections set-key executor
 | --- | --- | --- |
 | `origins` | required | API origins that may receive the key. See [Provider origins](#provider-origins). |
 | `header` | `'authorization'` | Request header that carries the key. |
-| `scheme` | `'Bearer'` for `authorization`, none for other headers | Text before the key in the header value. |
+| `scheme` | `'Bearer'` for `authorization`, none for other headers | Text before the key in the header value. Set `''` to send the bare key. |
 | `id` | `'api-key'` | Provider label in the Console. It cannot contain `:`. |
 | `verify` | None | `(key, { fetch, event }) => Promise<false \| { account? }>`. Checks a new key before ViteHub stores it. Return `false` to reject the key. `account` is shown in the Console. |
 
@@ -169,7 +169,7 @@ export default defineConnection({
 })
 ```
 
-An origin is `https://host`, `https://host:port`, or `https://*.host` for subdomains. `http` is accepted for local servers. The `userInfoUrl` of `oauth2()` receives the access token, so its origin must be in `origins` too.
+An origin is `https://host`, `https://host:port`, or `https://*.host` for subdomains. `http` is accepted only for loopback hosts such as `localhost` and `127.0.0.1`. The `userInfoUrl` of `oauth2()` receives the access token, so its origin must be in `origins` too.
 
 ## Access rules
 

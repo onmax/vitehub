@@ -38,11 +38,16 @@ describe("key()", () => {
     expect(key({ header: "X-Api-Key", id: "executor" })).toEqual({ header: "x-api-key", id: "executor", kind: "api-key", origins: ["https://api.example"], scopes: [] })
   })
 
+  it("sends a bare key with an empty scheme", () => {
+    expect(key({ scheme: "" })).not.toHaveProperty("scheme")
+  })
+
   it("rejects header names and schemes that are not HTTP tokens", () => {
     expect(() => key({ header: "x-api-key\r\nx-other" })).toThrow("Invalid Connection request.")
     expect(() => key({ header: "" })).toThrow("Invalid Connection request.")
     expect(() => key({ scheme: "Bearer token" })).toThrow("Invalid Connection request.")
     expect(() => key({ id: "api-key:foo" })).toThrow("Invalid Connection request.")
+    expect(() => key({ origins: ["http://api.example.com"] })).toThrow("Invalid Connection request.")
     expect(() => apiKey({ origins: [] })).toThrow("Invalid Connection request.")
   })
 

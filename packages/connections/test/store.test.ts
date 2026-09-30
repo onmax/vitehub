@@ -143,6 +143,16 @@ describe("createConnectionsStore", () => {
     await expectCode(other.tokens("gmail"), "CONNECTIONS_KEY_MISMATCH")
   })
 
+  it("snapshots a grant with its tokens, and without them for another key", async () => {
+    const db = createDatabase()
+    const store = createConnectionsStore({ db, encryptionKey: testKey(1) })
+    const grant = await store.write({ name: "gmail", provider: "google", tokens: tokenSet() })
+    expect(await store.snapshot("gmail")).toEqual({ grant, tokens: tokenSet({ expiresAt: expect.any(Number) }) })
+    const other = await createConnectionsStore({ db, encryptionKey: testKey(2) }).snapshot("gmail")
+    expect(other).toEqual({ grant: expect.objectContaining({ keyMatches: false, revision: grant.revision }) })
+    expect(await store.snapshot("missing")).toBeUndefined()
+  })
+
   it("deletes grants", async () => {
     const { store } = setup()
     const grant = await store.write({ name: "gmail", provider: "google", tokens: tokenSet() })

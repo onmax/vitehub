@@ -30,10 +30,10 @@ interface McpToolDrift {
 /** Connection that authorizes one MCP server. Each discovered tool gets a policy for its Operation. */
 export interface McpToolServerConnection {
   /**
-   * Lets the next `tools/call` request for this Operation pass the approval of the tool run that started it.
-   * Call the returned function when the run ends, so an unused approval never reaches a later run.
+   * Lets the `tools/call` request with this Operation and these exact arguments pass the approval of the
+   * approved run. Call the returned function when the run ends, so an unused approval never reaches a later run.
    */
-  approve: (operation: string) => () => void
+  approve: (operation: string, input: unknown) => () => void
   connection: AgentConnection
   operation: (toolName: string) => { effect: AgentConnectionEffect, id: string }
 }
@@ -322,7 +322,7 @@ export function defineMcpToolCapability<
             ...(binding && operation
               ? {
                   async execute(input: unknown, execution: AgentToolExecutionContext | undefined) {
-                    const release = binding.connection.approval(input).has(operation.id) ? binding.approve(operation.id) : undefined
+                    const release = binding.connection.approval(input).has(operation.id) ? binding.approve(operation.id, input) : undefined
                     try {
                       return await definition.execute?.(input, execution)
                     }

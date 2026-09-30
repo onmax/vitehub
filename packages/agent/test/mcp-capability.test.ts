@@ -305,17 +305,24 @@ describe("mcp capability", () => {
 
   it("passes an approved MCP tool run to its tools/call request only", async () => {
     let transportFetch: typeof globalThis.fetch | undefined
-    const callTool = async (id: number) => transportFetch?.("https://executor.test/mcp", { body: JSON.stringify({ id, jsonrpc: "2.0", method: "tools/call", params: { name: "execute" } }), method: "POST" })
+    const callTool = async (args: unknown) => transportFetch?.("https://executor.test/mcp", { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: args, name: "execute" } }), method: "POST" })
+    let release: (() => void) | undefined
+    const paused = new Promise<void>(resolve => (release = resolve))
     const createMCPClient = vi.fn(async (config: { transport: { fetch: typeof globalThis.fetch } }) => {
       transportFetch = config.transport.fetch
-      return createClient({ execute: { execute: vi.fn(async () => { await callTool(1); return "ok" }) } })
+      return createClient({ execute: { execute: vi.fn(async (input: { pause?: boolean }) => {
+        if (input.pause) await paused
+        await callTool(input)
+        return "ok"
+      }) } })
     })
     vi.doMock("@ai-sdk/mcp", () => ({ createMCPClient }))
     const connections = {
       decide: vi.fn(async () => "require-approval" as const),
-      fetch: vi.fn(async (_name: string, _url: string | URL, _init: RequestInit | undefined, _options: unknown) => new Response("{}")),
+      fetch: vi.fn(async (_name: string, _url: string | URL, init: RequestInit | undefined, _options: unknown) => new Response(String(init?.body ?? ""))),
       record: vi.fn(async () => {}),
     }
+    const approvedCalls = () => connections.fetch.mock.calls.map(([, , init, options]) => [JSON.parse(String(init?.body)).params.arguments, (options as { approved?: boolean }).approved === true])
     try {
       const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
       const { mcp } = await import("../src/capabilities.ts")
@@ -325,15 +332,23 @@ describe("mcp capability", () => {
       }, {})
       const tool = resolved.tools?.mcp_executor_execute
       if (typeof tool?.policy !== "function" || !tool.execute) throw new Error("expected a Connection tool")
-      const input = { code: "1 + 1" }
-      await expect(tool.policy({ input, name: "mcp_executor_execute" })).resolves.toBe("require-approval")
+
+      // Run A is approved and pauses before its tools/call. A request with other arguments cannot use A's grant.
+      const approvedInput = { code: "approved", pause: true }
+      await expect(tool.policy({ input: approvedInput, name: "mcp_executor_execute" })).resolves.toBe("require-approval")
       // SAFETY: The MCP tool wrapper does not read the execution options.
-      await tool.execute(input, {} as never)
-      // A request outside an approved run, and a second run, are not approved.
-      await callTool(2)
+      const runA = tool.execute(approvedInput, {} as never)
+      await callTool({ code: "other" })
+      release?.()
+      await runA
+      // A later run with the same content is not approved either.
       // SAFETY: The MCP tool wrapper does not read the execution options.
-      await tool.execute({ ...input }, {} as never)
-      expect(connections.fetch.mock.calls.map(([, , , options]) => (options as { approved?: boolean }).approved === true)).toEqual([true, false, false])
+      await tool.execute({ code: "approved" }, {} as never)
+      expect(approvedCalls()).toEqual([
+        [{ code: "other" }, false],
+        [{ code: "approved", pause: true }, true],
+        [{ code: "approved" }, false],
+      ])
       await resolved.close()
     }
     finally {

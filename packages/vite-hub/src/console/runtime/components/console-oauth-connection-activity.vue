@@ -6,6 +6,7 @@ import {
   connectionActivityListSchema,
   requestConnectionsManagement,
 } from "../client/connections-management";
+import { encodeAgentRouteParam } from "../console-route";
 
 const pageSize = 50;
 const props = defineProps<{ endpoint: string; name: string }>();
@@ -88,7 +89,7 @@ onMounted(() => load());
             class="underline hover:text-highlighted"
             :to="{
               name: 'vitehub-console-invocation',
-              params: { agent: event.actor.id, invocation: event.invocationId },
+              params: { agent: encodeAgentRouteParam(event.actor.id), invocation: event.invocationId },
             }"
             >{{ event.invocationId }}</RouterLink
           ><template v-else>{{ event.invocationId }}</template>
