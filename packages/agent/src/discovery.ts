@@ -530,6 +530,19 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return names
   }
 
+  const functionParameterNames = new Map<number, Set<string>>()
+  for (const body of functionScopes) {
+    const parameters = openingDelimiters.get(body - 1)
+    if (parameters !== undefined) functionParameterNames.set(body, callbackBindingNames(parameters, body - 1))
+  }
+
+  function isFunctionParameter(index: number): boolean {
+    for (let scope = tokenScopes[index]; scope !== undefined; scope = scopeParents.get(scope)) {
+      if (functionParameterNames.get(scope)?.has(tokens[index])) return true
+    }
+    return false
+  }
+
   function patternOpening(close: number): number | undefined {
     let depth = 0
     for (let index = close; index >= 0; index--) {
@@ -541,13 +554,21 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
 
-  function recordDestructuringAliases(pattern: number, end: number, value: number) {
-    const names = callbackBindingNames(pattern, end)
+  function recordDestructuringAliases(pattern: number, end: number, value: number, failClosed = true) {
+    const names = [...callbackBindingNames(pattern, end)]
     const targets = containerAliasTargets(value, tokens, true)
-    for (const name of names) {
+    if (names.length !== targets.length) {
+      if (!failClosed) return
+      for (const name of names) mutatedBindings.add(name)
+      return
+    }
+    for (let index = 0; index < names.length; index++) {
+      const name = names[index]!
+      const target = targets[index]
+      if (target === undefined) continue
       const aliases = assignedAliases.get(name) ?? new Set<string>()
-      for (const target of targets) aliases.add(target)
-      if (aliases.size) assignedAliases.set(name, aliases)
+      aliases.add(target)
+      assignedAliases.set(name, aliases)
     }
   }
 
@@ -577,15 +598,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         else if (["]", "}"].includes(tokens[cursor])) nesting--
         cursor++
       } while (cursor < tokens.length && nesting > 0)
-      const targets = ["=", "of"].includes(tokens[cursor]) ? containerAliasTargets(cursor + 1, tokens, true) : []
+      if (["=", "of"].includes(tokens[cursor])) recordDestructuringAliases(binding + 1, cursor, cursor + 1, false)
       for (let index = binding + 2; index < cursor; index++) {
         if (tokens[index] !== "=" || ["=", ">"].includes(tokens[index + 1]) || tokens[index - 1] === "=") continue
-        targets.push(...containerAliasTargets(0, tokens.slice(index + 1, cursor), true))
-      }
-      for (const name of names) {
+        const targets = containerAliasTargets(0, tokens.slice(index + 1, cursor), true)
+        if (targets.length === 0) continue
+        const name = [...names].find(candidate => tokens.slice(binding + 1, index).includes(candidate))
+        if (name === undefined) continue
         const aliases = assignedAliases.get(name) ?? new Set<string>()
         for (const target of targets) aliases.add(target)
-        if (aliases.size) assignedAliases.set(name, aliases)
+        assignedAliases.set(name, aliases)
       }
     }
   }
@@ -602,7 +624,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     for (let cursor = i - 1; !deletion && tokens[cursor] === "("; cursor--) {
       deletion = tokens[cursor - 1] === "delete"
     }
-    if (propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion) mutatedBindings.add(name)
+    if ((propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion)
+      && !isFunctionParameter(i)) mutatedBindings.add(name)
 
     const initializer = declaratorInitializers.get(i) ?? (tokens[i + 1] === "=" ? i + 2 : undefined)
     if (initializer !== undefined) {
@@ -642,7 +665,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   for (let index = 0; index < tokens.length; index++) {
     if (tokens[index] === "=" && ["]", "}"].includes(tokens[index - 1] ?? "")) {
       const pattern = patternOpening(index - 1)
-      if (pattern !== undefined && [undefined, "(", ")", ";", "{", "}"].includes(tokens[pattern - 1])) {
+      if (pattern !== undefined && [undefined, "(", ")", ";", "{", "}", "="].includes(tokens[pattern - 1])) {
         recordDestructuringAliases(pattern, index, index + 1)
       }
       continue
@@ -944,8 +967,18 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
     const binding = visibleDeclaration(index)
     if (binding !== undefined) {
-      if (destructuredBindings.has(binding)) return index
       if (mutatedBindings.has(tokens[index]!)) return index
+      if (destructuredBindings.has(binding)) {
+        const aliases = assignedAliases.get(tokens[index]!)
+        if (aliases?.size === 1) {
+          const target = declarations.get([...aliases][0]!)
+          if (target !== undefined) {
+            const resolved = resolveReference(target, seen, preserveCalls)
+            if (factoryCall(resolved, "channelHelper") !== undefined) return resolved
+          }
+        }
+        return index
+      }
       if (binding > index) return index
       const declaratorInitializer = declaratorInitializers.get(binding + 1)
       if (declaratorInitializer !== undefined) return resolveReference(declaratorInitializer, seen, preserveCalls)

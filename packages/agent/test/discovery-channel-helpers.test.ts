@@ -491,6 +491,29 @@ it.each([
   expect(definition?.workspace).toBe("review")
 })
 
+it("ignores mutations of a shadowed Channel binding", async () => {
+  const files = {
+    "portal.ts": 'import { github } from "vite-hub/agent/channels"; export const portal = github({ pullRequest: false }); function log(portal) { portal.capabilities = [] }',
+  }
+  const definition = await discover('import { defineAgent } from "vite-hub/agent"; import { portal } from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })', files)
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it("preserves positional destructuring aliases", async () => {
+  const files = {
+    "portal.ts": 'import { github } from "vite-hub/agent/channels"; const plainChannel = github({ pullRequest: false }); const ownedChannel = github({ pullRequest: true }); const [plainAlias, ownedAlias] = [plainChannel, ownedChannel]; plainAlias.capabilities = []; export { ownedAlias as default }',
+  }
+  const definition = await discover('import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })', files)
+  expect(definition?.workspace).toBe("review")
+})
+
+it("tracks destructuring assignment inside an initializer", async () => {
+  const files = {
+    "portal.ts": 'import { github } from "vite-hub/agent/channels"; const options = { pullRequest: false }; let alias; const ignored = [alias] = [options]; alias.pullRequest = true; export default github(options)',
+  }
+  await expect(discover('import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })', files)).rejects.toThrow("opaque Channel")
+})
+
 it.each([
   ["opaque spread", 'const extra = makeChannels(); export default defineAgent({ channels: { github: { pullRequest: false }, ...extra } })'],
   ["opaque computed key", 'const key = getChannelName(); export default defineAgent({ channels: { [key]: github({ pullRequest: true }) } })'],
