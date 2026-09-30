@@ -56,6 +56,35 @@ describe("chat error fallback", () => {
     expect(toAgentPublicError(agentDiagnostics.AGENT_R0726({ message: "Quota exhausted" }), "http").details).toBeUndefined()
   })
 
+  it.each([
+    ["Sep. 15, 2026 1:23 AM", 1],
+    ["Sep. 15, 2026 1:23 a.m", 1],
+    ["Sep. 15, 2026 1:23 p.m", 13],
+  ])("preserves dotted date abbreviations in quota reset text: %s", async (resetText, hour) => {
+    const error = agentDiagnostics.AGENT_R0726({ message: `Usage limit reached. Try again at ${resetText}. Please upgrade your plan.` })
+    const publicError = toAgentPublicError(error, "http")
+
+    expect(publicError.details).toEqual({
+      resetText,
+      resetAt: new Date(2026, 8, 15, hour, 23).toISOString(),
+    })
+    expect(await resolveChatErrorFallbackText(undefined, { error, publicError } as never))
+      .toBe(`The AI provider usage limit has been reached. Usage should reset ${resetText}.`)
+  })
+
+  it("preserves dotted meridiem before the reset time zone", () => {
+    const error = {
+      data: { error: { code: "insufficient_quota", message: "Try again at Sep. 15, 2026 1:23 p.m. UTC. Please upgrade." } },
+      name: "AI_APICallError",
+      statusCode: 429,
+    }
+
+    expect(toAgentPublicError(error, "http").details).toEqual({
+      resetText: "Sep. 15, 2026 1:23 p.m. UTC",
+      resetAt: "2026-09-15T13:23:00.000Z",
+    })
+  })
+
   it("reads reset times from AI SDK quota errors", () => {
     const error = {
       data: { error: { code: "insufficient_quota", message: "You exceeded your quota. Try again at 2026-09-15T01:23:00Z." } },

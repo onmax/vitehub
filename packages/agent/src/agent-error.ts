@@ -167,11 +167,14 @@ function publicError(
 // Codex and similar providers report "... try again at Sep 15th, 2026 1:23 AM." in the failure text.
 // A date without a zone is read in the server's local time zone, the same clock the provider process used.
 function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefined {
+  // A month abbreviation before the day, or a meridiem before its zone, has an internal period.
   const resetText = hasRuntimeType(message, "string")
-    ? message.match(/try again at ([A-Za-z0-9 ,:/+.-]{1,64}?)(?=\.(?:\s|$))/i)?.[1]?.trim()
+    ? message.match(/try again at ([A-Za-z0-9 ,:/+.-]{1,64}?)(?=\.(?:\s|$))(?!\.\s+(?:\d|UTC\b|GMT\b))/i)?.[1]?.trim()
     : undefined
   if (!resetText) return
-  const time = Date.parse(resetText.replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, "$1"))
+  const time = Date.parse(resetText
+    .replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, "$1")
+    .replace(/\b([ap])\.m\.?/gi, "$1m"))
   const details: AgentPublicErrorDetails = { resetText }
   if (Number.isFinite(time)) details.resetAt = new Date(time).toISOString()
   return details
