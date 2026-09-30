@@ -2,7 +2,7 @@ import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { afterAll, describe, expect, it } from "vitest"
 import { createDefaultCloudflareOutputRoot, createDefaultNetlifyOutputRoot, withProviderDeploymentOutputLock } from "@vite-hub/internal/build/deployment-output"
@@ -33,6 +33,42 @@ afterAll(async () => {
 })
 
 describe("schedule provider output", () => {
+  it("inlines each build's public URL and mounted base in Netlify functions", async () => {
+    const projects = await Promise.all([
+      { origin: "https://first.example", base: "/first/" },
+      { origin: "https://second.example", base: "/second/" },
+      { origin: undefined, base: "/" },
+    ].map(async ({ origin, base }) => {
+      const rootDir = await createTempProject("vitehub-schedule-netlify-url-")
+      await writeFile(join(rootDir, "src", "cleanup.schedule.ts"), [
+        "import { defineSchedule } from '@vite-hub/schedule'",
+        "import { resolvePublicUrl, consoleInvocationUrl } from '@vite-hub/runtime'",
+        "export default defineSchedule({ cron: '0 0 * * *', handler: () => {",
+        "  const origin = resolvePublicUrl({ agentName: 'worker' })",
+        "  globalThis.scheduleUrl = origin ? consoleInvocationUrl(origin, 'worker', 'invocation') : undefined",
+        "} })",
+      ].join("\n"), "utf8")
+      await generateProviderOutputs({
+        clientOutDir: "dist/client",
+        rootDir,
+        bundleAlias: { "@vite-hub/runtime": fileURLToPath(import.meta.resolve("@vite-hub/runtime")) },
+        bundleDefines: {
+          __VITEHUB_PUBLIC_URL__: JSON.stringify(origin ? { url: origin } : undefined) ?? "undefined",
+          __VITEHUB_APP_BASE_URL__: JSON.stringify(base),
+        },
+      })
+      return { rootDir, origin, base }
+    }))
+    for (const { rootDir, origin, base } of projects) {
+      const file = join(createDefaultNetlifyOutputRoot(rootDir), "functions/vitehub-schedule-cleanup.mjs")
+      const handler = await import(pathToFileURL(file).href)
+      const result = await handler.default(new Request("https://request.example"))
+      expect(result.status).toBe(204)
+      expect(Reflect.get(globalThis, "scheduleUrl")).toBe(origin ? `${origin}${base}_vitehub/agents/worker/invocations/invocation` : undefined)
+    }
+    Reflect.deleteProperty(globalThis, "scheduleUrl")
+  })
+
   it("does not publish Schedule output after finalization is canceled", async () => {
     const rootDir = await createTempProject("vitehub-schedule-output-canceled-")
     const controller = new AbortController()
@@ -150,7 +186,9 @@ describe("schedule provider output", () => {
     expect(await readFile(vercelFunction, "utf8")).toContain("executeStaticSchedule")
     expect(await readFile(vercelFunction, "utf8")).not.toContain("setWorkflowRuntimeRegistry")
     expect(existsSync(join(rootDir, ".vercel", "output", "functions", "api", "vitehub", "schedules", "vercel", "agent-turn.func"))).toBe(false)
-    await expect(readFile(netlifyFunction, "utf8")).resolves.toContain("export const config = {")
+    const netlifyModule = await import(pathToFileURL(netlifyFunction).href)
+    expect(netlifyModule.config.schedule).toBe("0 0 * * *")
+    expect((await netlifyModule.default(new Request("https://schedule.example"))).status).toBe(204)
     expect(existsSync(join(createDefaultNetlifyOutputRoot(rootDir), "functions", "vitehub-schedule-agent-turn.mjs"))).toBe(false)
     await expect(readFile(netlifyFunction, "utf8")).resolves.toContain("schedule: \"0 0 * * *\"")
     await expect(readFile(netlifyFunction, "utf8")).resolves.toContain("executeStaticSchedule")

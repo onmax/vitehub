@@ -16,6 +16,8 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({
 import { agentWithColocatedInstructions, defineAgent } from "../src/index.ts";
 import { babysitter } from "../src/presets/babysitter.ts";
 import { createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
+import * as githubRuns from "../src/server/github-pull-requests.ts";
+import { agentInvocationId } from "../src/invocations.ts";
 import type { GitHubHost } from "../src/server/github.ts";
 
 const roots: string[] = [];
@@ -176,6 +178,7 @@ async function fixture(autoMerge = false) {
   };
   const errors = vi.fn();
   const agent = agentWithColocatedInstructions(defineAgent({
+    name: "babysitter",
     preset: "babysitter",
     presets: { babysitter },
     options: { filter: { labels: { allow: ["repair"] } }, autoMerge },
@@ -290,6 +293,30 @@ async function fixture(autoMerge = false) {
 }
 
 describe("Babysitter preset runtime", () => {
+  it.each([
+    { url: "https://agents.example.test" },
+    { agents: { babysitter: "https://agents.example.test" } },
+  ])("links the session to the worker Agent invocation with config %j", async (config) => {
+    vi.stubGlobal("__VITEHUB_PUBLIC_URL__", config);
+    const createRun = vi.spyOn(githubRuns, "createGitHubPullRequestRun");
+    const f = await fixture();
+    try {
+      await f.reconcile();
+      expect(createRun).toHaveBeenCalledOnce();
+      const options = createRun.mock.calls[0]![2];
+      expect(options.agentName).toBe("babysitter-worker");
+      const run = await createRun.mock.results[0]!.value;
+      expect(run.activity?.links).toEqual([{
+        label: "Current session",
+        url: `https://agents.example.test/_vitehub/agents/babysitter-worker/invocations/${await agentInvocationId(options.runId, "babysitter-worker")}`,
+      }]);
+    } finally {
+      f.runtime.inbox.close();
+      vi.unstubAllGlobals();
+      createRun.mockRestore();
+    }
+  });
+
   it("allows the metadata tool to clear the pull request body", async () => {
     const f = await fixture();
     f.choose("updatePullRequest", { body: "" });

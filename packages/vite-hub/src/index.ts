@@ -28,7 +28,7 @@ import { hubWorkspace } from "@vite-hub/workspace/vite"
 import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { finalizeDeploymentPlanOutput } from "@vite-hub/internal/build/deployment-plan-output"
 import { finalizeDenoDeploymentOutput } from "@vite-hub/internal/build/deno-runtime-packages"
-import { createNoExternalMerger, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS, type ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS, type ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
 import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 
 import { viteHubTypesPlugin } from "./internal/types.ts"
@@ -723,7 +723,7 @@ function normalizePublicUrl(value: string): string {
   return url.origin
 }
 
-const mergeRuntimeNoExternal = createNoExternalMerger("@vite-hub/runtime")
+const addRuntimeNoExternal = createNoExternalAddition("@vite-hub/runtime")
 
 function publicUrlPlugin(publicUrl: ViteHubOptions["publicUrl"]): Plugin {
   return {
@@ -744,7 +744,9 @@ function publicUrlPlugin(publicUrl: ViteHubOptions["publicUrl"]): Plugin {
     },
     configEnvironment(name, config) {
       // The shared URL helper reads the public URL and app base defines, so server code must inline it.
-      if (isServerEnvironment(name, config)) return { resolve: { noExternal: mergeRuntimeNoExternal(config.resolve?.noExternal) } }
+      if (!isServerEnvironment(name, config)) return
+      const noExternal = addRuntimeNoExternal(config.resolve?.noExternal)
+      if (noExternal) return { resolve: { noExternal } }
     },
   }
 }

@@ -593,6 +593,10 @@ export async function createNetlifyScheduleFunctionOutputs(options: {
 }
 
 async function writeNetlifyScheduleFunctions(options: {
+  bundleAlias?: Record<string, string>
+  bundleDefines?: Record<string, string>
+  bundleExternal?: string[]
+  sourceRootDir?: string
   definitions: DiscoveredScheduleDefinition[]
   outputRoot: string
   registryFile: string
@@ -626,7 +630,26 @@ async function writeNetlifyScheduleFunctions(options: {
   else {
     await mkdir(stagedFunctionRoot, { recursive: true })
     options.signal?.throwIfAborted()
-    await Promise.all(outputs.map(async output => writeFile(output.file, output.source, { encoding: "utf8", signal: options.signal })))
+    await Promise.all(outputs.map(async (output) => {
+      const wrapperFile = `${output.file}.source.mjs`
+      await writeFile(wrapperFile, output.source, { encoding: "utf8", signal: options.signal })
+      try {
+        await bundleEsmEntry(wrapperFile, output.file, {
+          alias: options.bundleAlias,
+          define: options.bundleDefines,
+          external: options.bundleExternal,
+          format: "esm",
+          platform: "node",
+          plugins: [createScheduleDefinitionAliasPlugin()],
+          rootDir: options.sourceRootDir ?? options.rootDir,
+          signal: options.signal,
+          workingDir: options.sourceRootDir ?? options.rootDir,
+        })
+      }
+      finally {
+        await rm(wrapperFile, { force: true })
+      }
+    }))
   }
   await publishProviderSourcesToDeploymentOutputs({
     destinations: [{
@@ -878,6 +901,10 @@ export async function generateProviderOutputsWithinLock(options: GenerateProvide
     }, crons)
     options.signal?.throwIfAborted()
     await writeNetlifyScheduleFunctions({
+      bundleAlias: options.bundleAlias,
+      bundleDefines: options.bundleDefines,
+      bundleExternal: options.bundleExternal,
+      sourceRootDir: options.sourceRootDir,
       definitions: artifacts.definitions,
       outputRoot: createDefaultNetlifyOutputRoot(options.rootDir),
       registryFile: artifacts.registryFile,
