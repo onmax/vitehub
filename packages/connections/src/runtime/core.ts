@@ -391,19 +391,17 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     async disconnect(name, lifecycle) {
       const value = await definition(name)
       const db = store(lifecycle.event)
-      const stored = await db.tokens(name).catch((error: unknown) => {
-        if (isConnectionError(error, "key_mismatch")) return undefined
-        throw error
-      })
+      // Snapshot the grant first. A connect that finishes during revocation writes a newer revision, which stays.
+      const initial = await db.grant(name)
+      const stored = initial?.keyMatches ? await db.tokens(name) : undefined
       let revokeError: string | undefined
       // Only the provider that issued the grant may receive it for revocation.
-      if (stored && stored.grant.provider === value.provider.id && value.provider.revoke) {
+      if (stored && stored.grant.revision === initial?.revision && stored.grant.provider === value.provider.id && value.provider.revoke) {
         await value.provider.revoke(stored.tokens, providerContext(lifecycle.event)).catch((error: unknown) => {
           revokeError = errorCode(error)
         })
       }
-      const grant = stored?.grant ?? await db.grant(name)
-      if (grant) await db.deleteGrant(name, grant.revision)
+      if (initial) await db.deleteGrant(name, initial.revision)
       await record({ action: "disconnect", actor: lifecycle.actor, connection: name, outcome: "succeeded", ...(revokeError ? { error: revokeError } : {}) }, lifecycle.event)
       return summary(name, value, undefined)
     },
