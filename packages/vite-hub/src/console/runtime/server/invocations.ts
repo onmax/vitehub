@@ -161,8 +161,8 @@ export function createConsoleInvocations(projectRoot: string, observations?: Age
       observations,
       store: createLibsqlAgentInvocationStore({
         client,
-        maxAgeMs: retention?.maxAgeMs ?? false,
-        maxRecords: retention?.maxRecords ?? false,
+        maxAgeMs: retention?.maxAgeMs === undefined ? false : retention.maxAgeMs,
+        maxRecords: retention?.maxRecords === undefined ? false : retention.maxRecords,
       }),
     })
   }

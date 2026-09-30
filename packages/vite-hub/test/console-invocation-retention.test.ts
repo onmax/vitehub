@@ -78,6 +78,15 @@ async function generatedInstallation(retention: AgentInvocationRetentionOptions)
 }
 
 describe("Console invocation journal retention", () => {
+  it.each(["maxAgeMs", "maxRecords"] as const)("rejects null %s directly and after Vite code generation", async (limit) => {
+    const retention: AgentInvocationRetentionOptions = {}
+    Reflect.set(retention, limit, null)
+
+    expect(() => createConsoleInvocations(directory, undefined, url, retention)).toThrow("must be a positive safe integer or false")
+    const install = await generatedInstallation(retention)
+    expect(install).toThrow("must be a positive safe integer or false")
+  })
+
   it.each([
     { maxAgeMs: Number.NaN },
     { maxAgeMs: Number.POSITIVE_INFINITY },
