@@ -271,7 +271,7 @@ export default defineAgent({
 
 Set `messages.commentary: 'message'` only when the Driver emits explicit commentary phases for public progress. Commentary is hidden by default; ViteHub never publishes reasoning as progress.
 
-ViteHub posts the Agent's final text by default. An `agent:finish` hook may add more replies with `event.reply()`. ViteHub skips a hook reply whose text is the same as the final text, so a hook does not post the answer twice. Use `messages.delivery: 'manual'` when finish hooks own all replies; ViteHub then posts no final text.
+ViteHub posts the Agent's final text by default. An `agent:finish` hook may add more replies with `event.reply()`. After successful final delivery, ViteHub skips a text-only hook reply whose trimmed text is the same as the final text. Replies with artifacts, attachments, or files still post. If automatic final delivery fails, the hook reply remains available as a fallback. Use `messages.delivery: 'manual'` when finish hooks own all replies; ViteHub then posts no final text.
 
 With `messages.loading` or manual delivery, a generated Workflow may carry the reply across a durable boundary when the Channel and host support it. An explicit `messages.timeout` bounds inline execution and the durable handoff's typing indicator, but it does not cap the durable Agent Workflow. `steer` queues overlapping messages and preserves that Workflow handoff. Other overlap policies such as `serial`, `drop`, `queue`, and `reject` remain inline and cannot be combined with required durable delivery.
 

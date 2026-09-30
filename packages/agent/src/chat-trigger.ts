@@ -3,7 +3,7 @@ import { defineCapability } from "./capability-runtime.ts"
 import { createChatMessageTriggerInput } from "./chat-message-input.ts"
 import { readAgentErrorProperty, toAgentPublicError } from "./agent-error.ts"
 import { createReplyDeliveryEffectIntent, defineFinishEffect } from "./delivery-effects.ts"
-import { chatFinalReplyIntent, chatFinalReplyMode, setChatFinalReplyText } from "./internal/chat-finish-delivery.ts"
+import { chatFinalReplyIntent, chatFinalReplyMode } from "./internal/chat-finish-delivery.ts"
 import { agentWorkflowExecutionContextKey } from "./internal/workflow-execution.ts"
 import { agentInvokerLabel } from "./invoker.ts"
 
@@ -236,7 +236,6 @@ function chatFinalReply<TRuntimeConfig extends AgentRuntimeConfig>() {
   const effect = defineFinishEffect<TRuntimeConfig>((context) => {
     const text = context.text?.trim()
     if (!text) return
-    setChatFinalReplyText(context.context, text)
     if (chatFinalReplyMode(context.input) !== "pending") return
     return context.reply(text, { intent: chatFinalReplyIntent })
   })

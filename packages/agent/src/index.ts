@@ -61,7 +61,7 @@ import {
   telegram as builtInTelegram,
   webChat as builtInWebChat,
 } from "./channels.ts"
-import { registerMessageChannelDeferredReplyTrace, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
+import { registerMessageChannelDeferredReplyTrace, setChatFinalReplyText, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
 import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, createAgentInvocationContextStore } from "./invocation-context.ts"
 import { bindAgentRunEvents, type AgentRunEventPublisher } from "./run-events.ts"
 import { bindAgentInvocations, type AgentInvocationJournal } from "./invocations.ts"
@@ -5784,6 +5784,7 @@ async function finishAgentInvocation<
             })
           })
           setChatFinishPrimaryReplyTrace(chatFinish, async (capture) => {
+            if (!capture.error && !capture.skipped && finishEvent.text?.trim()) setChatFinalReplyText(context.context, finishEvent.text.trim())
             await traceAgentChannelDeliveryEffect(toTraceContext(context), {
               kind: "reply",
               payload: "",
