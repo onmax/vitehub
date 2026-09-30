@@ -66,6 +66,19 @@ describe("chat error fallback", () => {
     expect(toAgentPublicError(error, "http").details).toEqual({ resetAt: "2026-09-15T01:23:00.000Z", resetText: "2026-09-15T01:23:00Z" })
   })
 
+  it("preserves fractional seconds in AI SDK quota reset times", () => {
+    const error = {
+      data: { error: { code: "insufficient_quota", message: "You exceeded your quota. Try again at 2026-09-15T01:23:00.123Z." } },
+      name: "AI_APICallError",
+      statusCode: 429,
+    }
+
+    expect(toAgentPublicError(error, "http").details).toEqual({
+      resetAt: "2026-09-15T01:23:00.123Z",
+      resetText: "2026-09-15T01:23:00.123Z",
+    })
+  })
+
   it("passes the default fallback text to custom fallback functions", async () => {
     const error = agentDiagnostics.AGENT_R0726({ message: "You've hit your usage limit. Try again at Sep 15th, 2026 1:23 AM." })
     const publicError = toAgentPublicError(error, "invocation")
