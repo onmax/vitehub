@@ -301,7 +301,9 @@ function stripeSignatureTolerance(signature: AgentWebhookRegistrationDefinition[
 
 // Verifies `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">`. Any matching `v1` passes, as during secret rotation.
 async function verifyStripeSignature(secret: string, header: string, rawBody: Uint8Array, toleranceSeconds: number): Promise<boolean> {
+  if (!Number.isFinite(toleranceSeconds) || toleranceSeconds < 0) return false
   let timestamp: string | undefined
+  let signatureCount = 0
   const signatures: string[] = []
   for (const part of header.split(",")) {
     const separator = part.indexOf("=")
@@ -309,10 +311,16 @@ async function verifyStripeSignature(secret: string, header: string, rawBody: Ui
     const key = part.slice(0, separator).trim()
     const value = part.slice(separator + 1).trim()
     if (key === "t") timestamp = value
-    else if (key === "v1") signatures.push(value)
+    else if (key === "v1") {
+      // Bound unauthenticated cryptographic work while allowing secret rotation.
+      if (++signatureCount > 32) return false
+      if (/^[a-f0-9]{64}$/.test(value)) signatures.push(value)
+    }
   }
   if (!timestamp || !/^\d+$/.test(timestamp) || !signatures.length) return false
-  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > toleranceSeconds) return false
+  const timestampSeconds = Number(timestamp)
+  if (!Number.isSafeInteger(timestampSeconds)) return false
+  if (Math.floor(Date.now() / 1000) - timestampSeconds > toleranceSeconds) return false
   const prefix = new TextEncoder().encode(`${timestamp}.`)
   const payload = new Uint8Array(prefix.length + rawBody.length)
   payload.set(prefix)

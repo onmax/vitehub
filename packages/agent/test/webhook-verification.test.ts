@@ -316,6 +316,14 @@ describe("agent webhook verification", () => {
       .resolves.toMatchObject({ verified: true })
   })
 
+  it("bounds stripe-sha256 signature candidates", async () => {
+    const body = "{\"id\":\"evt_1\"}"
+    const timestamp = Math.floor(Date.now() / 1000)
+    const candidates = Array.from({ length: 33 }, () => `v1=${"0".repeat(64)}`).join(",")
+    await expect(verifyAgentWebhookRequest(stripeRegistration(), stripeRequest(`t=${timestamp},${candidates}`, body)))
+      .rejects.toMatchObject({ statusCode: 401 })
+  })
+
   it("rejects stale stripe-sha256 timestamps", async () => {
     const body = "{\"id\":\"evt_1\"}"
     const stale = stripeSignature("secret-token", body, Math.floor(Date.now() / 1000) - 301)
@@ -329,6 +337,22 @@ describe("agent webhook verification", () => {
     await expect(verifyAgentWebhookRequest(stripeRegistration({ preset: "stripe-sha256", toleranceSeconds: 600 }), stripeRequest(older, body)))
       .resolves.toMatchObject({ verified: true })
     await expect(verifyAgentWebhookRequest(stripeRegistration({ preset: "stripe-sha256", toleranceSeconds: 60 }), stripeRequest(older, body)))
+      .rejects.toMatchObject({ statusCode: 401 })
+  })
+
+  it("uses integer-second maximum-age semantics", async () => {
+    const body = "{\"id\":\"evt_1\"}"
+    const now = Math.floor(Date.now() / 1000)
+    await expect(verifyAgentWebhookRequest(stripeRegistration({ preset: "stripe-sha256", toleranceSeconds: 0 }), stripeRequest(stripeSignature("secret-token", body, now), body)))
+      .resolves.toMatchObject({ verified: true })
+    await expect(verifyAgentWebhookRequest(stripeRegistration({ preset: "stripe-sha256", toleranceSeconds: 0 }), stripeRequest(stripeSignature("secret-token", body, now + 60), body)))
+      .resolves.toMatchObject({ verified: true })
+  })
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1])("rejects invalid signature tolerance %s", async toleranceSeconds => {
+    const body = "{\"id\":\"evt_1\"}"
+    const header = stripeSignature("secret-token", body)
+    await expect(verifyAgentWebhookRequest(stripeRegistration({ preset: "stripe-sha256", toleranceSeconds }), stripeRequest(header, body)))
       .rejects.toMatchObject({ statusCode: 401 })
   })
 
@@ -346,6 +370,7 @@ describe("agent webhook verification", () => {
     ["a missing v1 signature", `t=${Math.floor(Date.now() / 1000)}`],
     ["a non-numeric timestamp", `t=soon,v1=${"0".repeat(64)}`],
     ["a GitHub-style header", `sha256=${"0".repeat(64)}`],
+    ["an invalid-length signature", `t=${Math.floor(Date.now() / 1000)},v1=bad`],
   ])("rejects stripe-sha256 headers with %s", async (_label, header) => {
     await expect(verifyAgentWebhookRequest(stripeRegistration(), stripeRequest(header)))
       .rejects.toMatchObject({ statusCode: 401 })

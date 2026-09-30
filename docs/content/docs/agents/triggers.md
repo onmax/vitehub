@@ -155,8 +155,8 @@ Add `webhooks` to the Channel to receive the Trigger over HTTP. `secretHeader` n
 | --- | --- |
 | not set | The header equals `secretToken`. |
 | `'github-sha256'` | `sha256=<hex HMAC-SHA256 of the raw body>` |
-| `'stripe-sha256'` | `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">`. Any matching `v1` passes. The timestamp must be within 300 seconds of the server clock. |
-| `{ preset: 'stripe-sha256', toleranceSeconds }` | The same format with another timestamp tolerance in seconds. |
+| `'stripe-sha256'` | `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">`. Any matching `v1` passes, with at most 32 candidates per header. The maximum timestamp age is 300 integer seconds. Future timestamps pass the age check. |
+| `{ preset: 'stripe-sha256', toleranceSeconds }` | The same format with another maximum age in seconds. The tolerance must be finite and non-negative. With `0`, current-second and future timestamps pass; older timestamps fail. |
 | `{ verify({ header, rawBody, request, secret }) }` | Your function returns `true` for a valid delivery. |
 
 ```ts [server/agents/support.ts]
