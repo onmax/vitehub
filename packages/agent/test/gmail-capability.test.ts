@@ -209,6 +209,18 @@ describe("gmail capability", () => {
     expect(runtime.decide.mock.calls.map(([, , op]) => op.id)).toEqual(["gmail.messages.get", "gmail.messages.attachments.get"])
   })
 
+  it("decodes text with the charset of its MIME part", async () => {
+    const latin1 = btoa(String.fromCharCode(0x47, 0x72, 0xFC, 0xDF, 0x65)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
+    const part = (charset: string) => ({ body: { data: latin1 }, headers: [{ name: "Content-Type", value: `text/plain; charset="${charset}"` }], mimeType: "text/plain" })
+    const { primitive } = connections({
+      responses: { "gmail.messages.get": input => ({ ...message, payload: input.id === "unknown" ? part("x-unknown") : part("ISO-8859-1") }) },
+    })
+    const readTools = await tools(gmail(), primitive)
+    expect(await run(readTools.gmail_read, { id: "m1" })).toMatchObject({ text: "Grüße" })
+    // An unknown charset falls back to UTF-8 instead of failing.
+    expect(await run(readTools.gmail_read, { id: "unknown" })).toMatchObject({ text: expect.any(String) })
+  })
+
   it("rejects an unexpected Gmail response", async () => {
     const { primitive } = connections({ responses: { "gmail.messages.get": () => ({ id: 1 }) } })
     await expect(run((await tools(gmail(), primitive)).gmail_read, { id: "m1" })).rejects.toThrow("unexpected Gmail response")
