@@ -2109,7 +2109,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     return
   }
   let body = messageChannelReplyBody(context)
-  // ViteHub posts the final text once. A finish hook reply with the same text is skipped.
+  // Skip matching non-streaming text-only hook replies after confirmed final delivery.
   const finalText = context.effect.intent === chatFinalReplyIntent ? undefined : chatFinalReplyText(context.context)
   const payload = context.effect.payload
   const textOnly = !artifacts.length && (!isRecord(payload) || (payload.attachments === undefined && payload.files === undefined))
