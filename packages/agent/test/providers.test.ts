@@ -10472,6 +10472,59 @@ describe("server helpers", () => {
     }
   })
 
+  it("reconciles a timed-out invocation whose Driver settles on a later timer", async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { defineAgent } = await import("../src/index.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-late-reconciliation-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const releaseLock = vi.spyOn(state, "releaseLock")
+    // A Driver that owns a child process settles only after the process exits,
+    // not in the same microtask as the abort.
+    const run = vi.fn(async ({ input }: { input: { abortSignal?: AbortSignal } }) => {
+      await new Promise<never>((_resolve, reject) => {
+        input.abortSignal?.addEventListener("abort", () => {
+          setTimeout(() => reject(input.abortSignal?.reason), 5_000)
+        }, { once: true })
+      })
+    })
+    const agent = defineAgent({ driver: { run } })
+    await state.connect()
+    await state.enqueueWebhookDelivery({
+      concurrencyKey: "review:late",
+      concurrencyGroup: "review:default",
+      concurrencyLimit: 1,
+      deliveryId: "delivery-late-reconciliation",
+      enqueuedAt: Date.now(),
+      invocation: { input: { prompt: "persisted" } },
+      leaseTtlMs: 3_600_000,
+      request: { body: "{}", headers: {}, method: "POST", url: "https://example.com" },
+      scope: "webhook:review:github:late:",
+      webhookId: "missing-registration",
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const stop = createChannelWebhookRouteHandler(agent as never).resume({
+      agentName: "review",
+      webhookState: state,
+    })
+
+    try {
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      await vi.advanceTimersByTimeAsync(900_000)
+      await vi.advanceTimersByTimeAsync(10_000)
+      await vi.waitFor(() => expect(releaseLock).toHaveBeenCalled())
+      expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining("did not reach a terminal state"))
+    } finally {
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+      consoleError.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it("retries a rehydration-required delivery when replay handles the request", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
     const { defineAgent } = await import("../src/index.ts")

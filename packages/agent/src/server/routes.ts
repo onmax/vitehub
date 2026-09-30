@@ -998,6 +998,7 @@ const defaultWebhookQueueRetryMs = 1_000
 const maxWebhookQueueAttempts = 3
 const maxWebhookQueueExecutionMs = 900_000
 const maxWebhookLateReconciliationMs = 60_000
+const webhookLateReconciliationPollMs = 1_000
 
 function positiveWebhookConcurrencyLimit(value: number | undefined): number | undefined {
   if (value === undefined) return
@@ -1444,6 +1445,10 @@ async function executeQueuedWebhookDelivery(
         }
         inspection = undefined
         if (result?.outcome === "available" && result.invocation && ["completed", "failed", "cancelled"].includes(result.invocation.status)) return true
+        // In-process inspect() resolves as a microtask. Polling without a timer
+        // wait starves the event loop, so the aborted run can never settle and
+        // every race retains a reaction on `deadline` until the heap is exhausted.
+        await Promise.race([new Promise(resolve => setTimeout(resolve, webhookLateReconciliationPollMs)), deadline])
       }
     } finally {
       if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
