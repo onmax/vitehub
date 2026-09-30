@@ -10,6 +10,7 @@ const summary: ConnectionSummary = {
   account: "owner@example.com",
   expiresAt: "2026-09-29T12:00:00.000Z",
   name: "gmail",
+  origins: ["https://*.googleapis.com"],
   provider: "google",
   scopes: [],
   status: "active",

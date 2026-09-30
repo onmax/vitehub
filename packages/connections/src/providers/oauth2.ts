@@ -1,6 +1,7 @@
 import * as v from "valibot"
 
 import { connectionError } from "../errors.ts"
+import { assertConnectionOrigins } from "../origins.ts"
 
 import type {
   ConnectionOAuthClient,
@@ -22,6 +23,11 @@ export interface OAuth2ProviderOptions {
   clientAuth?: "basic" | "body"
   /** Provider identifier shown in the Console. Default: `"oauth2"`. */
   id?: string
+  /**
+   * API origins that may receive the access token, for example `["https://api.example.com"]`.
+   * `https://*.example.com` matches subdomains. Calls to other origins fail.
+   */
+  origins: readonly string[]
   revokeUrl?: string
   scopes: readonly string[]
   tokenUrl: string
@@ -68,6 +74,7 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionProvider {
   if (!options.authorizationUrl || !options.tokenUrl || !options.scopes.length) {
     throw connectionError("invalid", { path: "provider" })
   }
+  const origins = assertConnectionOrigins(options.origins)
   for (const key of Object.keys(options.authorizationParams ?? {})) {
     if (reservedAuthorizationParams.has(key)) throw connectionError("invalid", { path: `provider.authorizationParams.${key}` })
   }
@@ -140,6 +147,7 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionProvider {
   return {
     id: options.id ?? "oauth2",
     kind: "oauth2",
+    origins,
     scopes: options.scopes,
     async authorizationUrl(input, context) {
       const { id } = await client(context)

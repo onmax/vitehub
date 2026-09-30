@@ -9,6 +9,7 @@ function options(overrides: Partial<OAuth2ProviderOptions> = {}): OAuth2Provider
   return {
     authorizationUrl: "https://auth.example/authorize?existing=1",
     client: () => ({ clientId: "client id", clientSecret: { unseal: () => "secret:value" } }),
+    origins: ["https://api.example"],
     scopes: ["read", "write"],
     tokenUrl: "https://auth.example/token",
     ...overrides,

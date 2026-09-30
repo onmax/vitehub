@@ -33,6 +33,7 @@ function setup(access: ConnectionsAccess | null = admin) {
       authorizationUrl: "https://auth.example/authorize",
       client: () => ({ clientId: "client-id", clientSecret }),
       id: "example",
+      origins: ["https://api.example"],
       revokeUrl: "https://auth.example/revoke",
       scopes: ["openid", "email", "test.read"],
       tokenUrl: "https://auth.example/token",
@@ -158,6 +159,38 @@ describe("Connections management route", () => {
 })
 
 describe("Connections connect routes", () => {
+  it("keeps connect and callback closed for callers without admin access", async () => {
+    const { handler, runtime, store } = setup()
+    const { state } = await startConnect(handler)
+    const viewerHandler = createConnectionsHandler({ authenticate: async () => viewer, runtime })
+    const denied = await viewerHandler(callback({ code: "code", state }, `vitehub_connection_state=${state}`))
+    expect(denied.status).toBe(403)
+    expect((await viewerHandler(new Request(`${base}/gmail/connect?ticket=x`))).status).toBe(403)
+    const anonymous = createConnectionsHandler({ authenticate: async () => null, runtime: setup().runtime })
+    expect((await anonymous(new Request(`${base}/gmail/connect?ticket=x`))).status).toBe(401)
+    expect(await store.grant("gmail")).toBeUndefined()
+  })
+
+  it("reports a completed connect as connected when the activity insert fails", async () => {
+    const context = setup()
+    const failing = createConnectionsHandler({
+      authenticate: async () => admin,
+      returnTo: context.returnTo,
+      runtime: { ...context.runtime, record: async () => { throw new Error("activity store down") } },
+    })
+    const { state } = await startConnect(failing)
+    const originalRun = context.db.run.bind(context.db)
+    // SAFETY: The spy keeps the database contract and only fails activity inserts.
+    vi.spyOn(context.db, "run").mockImplementation(((query: Parameters<typeof context.db.run>[0]) =>
+      JSON.stringify(query).includes("INSERT INTO vitehub_connection_activity") ? Promise.reject(new Error("activity store down")) : originalRun(query)) as typeof context.db.run)
+
+    const response = await failing(callback({ code: "code", state }, `vitehub_connection_state=${state}`))
+    expect(response.headers.get("location")).toBe("/settings?connection=gmail&outcome=connected")
+    expect(await context.store.grant("gmail")).toMatchObject({ status: "active" })
+    // The insert really failed: no connect activity exists.
+    expect(await context.runtime.activity({ connection: "gmail" })).toEqual([])
+  })
+
   it("completes the connect and callback flow", async () => {
     const { handler, returnTo, runtime, upstream } = setup()
     const { authorizationUrl, response, state } = await startConnect(handler)

@@ -114,6 +114,27 @@ Options:
 | `audit` | `'changes'` | `'changes'` records writes, denials, skipped calls, and failures. `'all'` also records reads. |
 | `trace` | None | `traceId`, `invocationId`, `runId`, and `tool` to link activity to a trace. |
 
+## Provider origins
+
+Each provider declares the API origins that may receive its credential. `call` and `fetch` fail with `CONNECTIONS_ORIGIN_NOT_ALLOWED` for any other origin, and ViteHub records the attempt as denied. `google()` allows `https://*.googleapis.com`. Set `origins` for `oauth2()`:
+
+```ts [server/connections/crm.ts]
+import { defineConnection, oauth2 } from 'vite-hub/connections'
+
+export default defineConnection({
+  provider: oauth2({
+    authorizationUrl: 'https://crm.example.com/oauth/authorize',
+    client: ({ event }) => useServerEnv(event).crm,
+    id: 'crm',
+    origins: ['https://api.crm.example.com'],
+    scopes: ['contacts.read'],
+    tokenUrl: 'https://crm.example.com/oauth/token',
+  }),
+})
+```
+
+An origin is `https://host`, `https://host:port`, or `https://*.host` for subdomains. `http` is accepted for local servers.
+
 ## Access rules
 
 `access` has rules for `server`, `routes` (by route id such as `POST /api/sync`), and `agents` (by Agent id). A route without its own rule uses `server`. Each rule has `allow`, `approve`, and `deny` lists of Operation id patterns. `*` matches any characters.
@@ -172,8 +193,9 @@ The CLI calls the management route of a running development server with the Cons
 | `CONNECTIONS_MISSING` | The Connection is not connected. |
 | `CONNECTIONS_NEEDS_RECONNECT` | The provider rejected the refresh token. |
 | `CONNECTIONS_KEY_MISMATCH` | The grant was sealed with a different key. |
-
-When you change the provider of a Connection, the stored grant belongs to the old provider. The status becomes `needs-reconnect` with `lastError: 'CONNECTIONS_PROVIDER_CHANGED'`, and ViteHub never sends that grant to the new provider. Reconnect the Connection.
 | `CONNECTIONS_DENIED`, `CONNECTIONS_APPROVAL_REQUIRED` | Access rules blocked the call. |
+| `CONNECTIONS_ORIGIN_NOT_ALLOWED` | The request URL is not in the provider `origins`. ViteHub did not send the credential. |
 | `CONNECTIONS_PROVIDER_FAILED` | The provider returned an error. `details.status` has the HTTP status. |
 | `CONNECTIONS_UNAVAILABLE` | Another request holds the refresh lease. Try again. |
+
+When you change the provider of a Connection, the stored grant belongs to the old provider. The status becomes `needs-reconnect` with `lastError: 'CONNECTIONS_PROVIDER_CHANGED'`, and ViteHub never sends that grant to the new provider. Reconnect the Connection.
