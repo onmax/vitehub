@@ -6,6 +6,7 @@ import { createClient } from "@libsql/client"
 import { createConnectionsRuntime } from "@vite-hub/connections/server"
 import { H3 } from "h3"
 import { drizzle } from "drizzle-orm/libsql"
+import { createNitro } from "nitro/builder"
 import * as v from "valibot"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -18,6 +19,7 @@ import { installConsoleSections } from "../src/console/runtime/server/sections.t
 import { assertConsoleProductionAccess, consoleVitePlugin } from "../src/console/vite.ts"
 
 import type { ResolvedAuthViteConfig } from "@vite-hub/auth"
+import type { NitroEventHandler } from "nitro/types"
 import type { ConnectionDefinition } from "@vite-hub/connections"
 import type { ConsoleInvocationScope } from "../src/console/internal.ts"
 
@@ -226,7 +228,7 @@ describe("Console Connections", () => {
     expect(() => addConsoleRpcHandler(nitro, "/runtime", { connections: true })).toThrow("Connections handler")
   })
 
-  it("registers the routes from the Console Vite plugin when the section is on", async () => {
+  it.each(["/", "/portal/"])("dispatches mounted Connections through Nitro with server base %s", async (serverBase) => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-connections-host-"))
     try {
       await writeFile(join(root, "package.json"), "{}\n")
@@ -234,14 +236,40 @@ describe("Console Connections", () => {
       const configHook = plugin.config
       if (!configHook) throw new TypeError("Expected a console config hook.")
       const configHandler = "handler" in configHook ? configHook.handler : configHook
-      const config: { base: string, nitro?: { handlers: Array<{ method?: string, route: string }>, plugins: string[], publicAssets: Array<{ baseURL: string }> }, root: string } = { base: "/portal/", root }
+      const config: { base: string, nitro?: { baseURL?: string, handlers: Array<{ handler: string, method?: NitroEventHandler["method"], route: string }>, plugins: string[], publicAssets?: Array<{ baseURL?: string }> }, root: string } = { base: "/portal/", nitro: { baseURL: serverBase, handlers: [], plugins: [] }, root }
       await Reflect.apply(configHandler, {}, [config, { command: "build", mode: "production" }])
       const routes = config.nitro?.handlers.map(handler => handler.route) ?? []
-      expect(routes).toContain("/portal/_vitehub/**")
-      expect(routes).toContain("/portal/_vitehub/rpc/**")
-      expect(routes).toContain("/portal/api/_vitehub/console/client.js")
-      expect(routes).toEqual(expect.arrayContaining(["/portal/_vitehub/connections/manage", "/portal/_vitehub/connections/:name/connect", "/portal/_vitehub/connections/:name/callback"]))
-      expect(config.nitro?.publicAssets).toEqual(expect.arrayContaining([expect.objectContaining({ baseURL: "/portal/_vitehub/assets" })]))
+      const registrationBase = serverBase === "/" ? "/portal" : ""
+      expect(routes).toContain(`${registrationBase}/_vitehub/**`)
+      expect(routes).toContain(`${registrationBase}/_vitehub/rpc/**`)
+      expect(routes).toContain(`${registrationBase}/api/_vitehub/console/client.js`)
+      expect(routes).toEqual(expect.arrayContaining([`${registrationBase}/_vitehub/connections/manage`, `${registrationBase}/_vitehub/connections/:name/connect`, `${registrationBase}/_vitehub/connections/:name/callback`]))
+      expect(config.nitro?.publicAssets).toEqual(expect.arrayContaining([expect.objectContaining({ baseURL: `${registrationBase}/_vitehub/assets` })]))
+      const nitro = await createNitro({ baseURL: serverBase, compatibilityDate: "2026-09-30", handlers: config.nitro?.handlers, logLevel: 0, rootDir: root, scanDirs: [], serverDir: false })
+      try {
+        installConsoleSections(root, ["connections"])
+        const connections = runtime()
+        installConsoleConnections(root, { baseURL: "/portal/", manage: true, runtime: () => connections })
+        const dispatch = (request: Request) => {
+          const match = nitro.routing.routes.match(request.method, new URL(request.url).pathname)
+          const matched = Array.isArray(match) ? match : match ? [match] : []
+          expect(matched.some(handler => handler.handler?.endsWith("/connections-route.js"))).toBe(true)
+          return connectionsRoute({ req: request })
+        }
+        const start = await dispatch(manage({ action: "start", name: "example" }, "/portal"))
+        const { url } = await start.json() as { url: string }
+        const connect = await dispatch(new Request(url))
+        const state = new URL(connect.headers.get("location") ?? "").searchParams.get("state")
+        const cookie = /vitehub_connection_state=([^;]*)/.exec(connect.headers.get("set-cookie") ?? "")?.[1]
+        expect(connect.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections/example")
+        const callback = await dispatch(new Request(`${origin}/portal/_vitehub/connections/example/callback?code=abc&state=${state}`, { headers: { cookie: `vitehub_connection_state=${cookie}` } }))
+        expect(callback.headers.get("location")).toBe("/portal/_vitehub/connections?connection=example&result=connected")
+        expect(nitro.routing.routes.match("GET", "/portal/_vitehub/connections")).toBeDefined()
+        expect(nitro.routing.routes.match("GET", "/_vitehub/connections")).toBeUndefined()
+      }
+      finally {
+        await nitro.close()
+      }
       const generated = await readFile(config.nitro?.plugins[0] ?? "", "utf8")
       expect(generated).toContain(`installConsoleConnections(${JSON.stringify(root)}, {"baseURL":"/portal/"})`)
     }

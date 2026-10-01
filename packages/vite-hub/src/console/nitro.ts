@@ -1,10 +1,18 @@
 import { join } from "node:path"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
-import { consoleAuthPath } from "./auth-path.ts"
+import { consoleAuthMountBase } from "./auth-path.ts"
 import { viteHubErrorDiagnostics } from "../error-diagnostics.ts"
 
-export function addConsoleRpcHandler(nitro: { handlers?: Array<{ handler: string; route: string }> }, consoleRuntimeRoot: string, options: { baseURL?: string; connections?: boolean } = {}): void {
-  const mount = (path: string) => consoleAuthPath(options.baseURL ?? "/", path)
+/** Route prefixes are relative to Nitro's global server base. */
+export function consoleNitroMountBase(baseURL = "/", nitroBaseURL = "/"): string {
+  const mount = consoleAuthMountBase(baseURL)
+  const server = consoleAuthMountBase(nitroBaseURL)
+  return server && (mount === server || mount.startsWith(`${server}/`)) ? mount.slice(server.length) : mount
+}
+
+export function addConsoleRpcHandler(nitro: { baseURL?: string; handlers?: Array<{ handler: string; route: string }> }, consoleRuntimeRoot: string, options: { baseURL?: string; connections?: boolean } = {}): void {
+  const registrationBase = consoleNitroMountBase(options.baseURL, nitro.baseURL)
+  const mount = (path: string) => `${registrationBase}${path}`
   const route = mount("/_vitehub/rpc/**")
   const handler = join(consoleRuntimeRoot, "server/rpc.js")
   const kit = createNitroServerKit(nitro)

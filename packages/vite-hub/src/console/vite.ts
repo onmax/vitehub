@@ -22,7 +22,7 @@ import { serializeConsoleRefresh } from "./refresh.ts"
 import { createConsoleCliNamespace } from "./cli.ts"
 import { consoleFixtureEnvironmentVariable, consoleFixtureRevision, readConsoleFixture } from "./fixture.ts"
 import { bindConsoleInvocationsIdentity, createConsoleInvocationsIdentity, releaseConsoleInvocationsBinding } from "./internal.ts"
-import { addConsoleRpcHandler } from "./nitro.ts"
+import { addConsoleRpcHandler, consoleNitroMountBase } from "./nitro.ts"
 import { viteHubErrorDiagnostics } from "../error-diagnostics.ts"
 import { resolveConsoleJournal, type ConsoleJournal } from "../storage-config.ts"
 
@@ -51,6 +51,7 @@ export function resolveGeneratedConsolePlugin(
 }
 
 type ConsoleNitroConfig = {
+  baseURL?: string
   handlers?: Array<{ handler: string, method?: string, route: string }>
   plugins?: string[]
   publicAssets?: Array<{ baseURL?: string, dir: string, fallthrough?: boolean }>
@@ -394,19 +395,20 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
           )
         : []
       const kit = createNitroServerKit(nitro)
+      const registrationBase = consoleNitroMountBase(baseURL, nitro.baseURL)
       for (const handler of [
         { handler: join(consoleRuntimeRoot, "server/status.get.js"), route: "/api/_vitehub/console/status", method: "get" },
         { handler: join(consoleRuntimeRoot, "server/usage.get.js"), route: "/api/_vitehub/console/usage", method: "get" },
         ...(consoleAuthHandlers?.signIn ? [{ handler: consoleAuthHandlers.signIn, route: "/_vitehub/sign-in", method: "get" }] : []),
         { handler: join(consoleRuntimeRoot, "server/page.get.js"), route: "/_vitehub" },
         { handler: join(consoleRuntimeRoot, "server/page.get.js"), route: "/_vitehub/**" },
-      ]) kit.addHandler({ ...handler, route: consoleAuthPath(baseURL, handler.route) })
+      ]) kit.addHandler({ ...handler, route: consoleAuthPath(registrationBase, handler.route) })
       kit.addHandler({
         handler: consoleAuthHandlers?.client ?? join(consoleRuntimeRoot, "server/client.get.js"),
-        route: consoleAuthPath(baseURL, "/api/_vitehub/console/client.js"),
+        route: consoleAuthPath(registrationBase, "/api/_vitehub/console/client.js"),
         method: "get",
       })
-      if (consoleAuthHandlers?.route) kit.addHandler({ handler: consoleAuthHandlers.route, route: consoleAuthPath(baseURL, "/api/_vitehub/console/auth/**") })
+      if (consoleAuthHandlers?.route) kit.addHandler({ handler: consoleAuthHandlers.route, route: consoleAuthPath(registrationBase, "/api/_vitehub/console/auth/**") })
       if (consoleAuthHandlers) kit.addHandler({ handler: consoleAuthHandlers.middleware, middleware: true, route: "/**" })
       addConsoleRpcHandler(kit.config, consoleRuntimeRoot, { baseURL, connections: sections.includes("connections") })
       if (Array.isArray(kit.config.plugins)) {
@@ -414,9 +416,9 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         kit.config.plugins.splice(0, kit.config.plugins.length, ...plugins)
       }
       kit.addPlugin(generatedPlugin)
-      const publicAssets = Array.isArray(nitro.publicAssets) ? nitro.publicAssets.filter((asset) => asset?.baseURL !== consoleAuthPath(baseURL, "/_vitehub/assets")) : []
+      const publicAssets = Array.isArray(nitro.publicAssets) ? nitro.publicAssets.filter((asset) => asset?.baseURL !== consoleAuthPath(registrationBase, "/_vitehub/assets")) : []
       publicAssets.push({
-        baseURL: consoleAuthPath(baseURL, "/_vitehub/assets"),
+        baseURL: consoleAuthPath(registrationBase, "/_vitehub/assets"),
         dir: consolePublicRoot,
         fallthrough: false,
       })
