@@ -67,6 +67,22 @@ describe("workflow CLI arguments", () => {
     expect(invalid.status).toBe(1)
     expect(JSON.parse(invalid.stdout).error.message).toContain("run")
     expect(invalid.stderr).toBe("")
+    const preload = join(cwd, "fetch.mjs")
+    await writeFile(preload, `globalThis.fetch = async (_url, init) => {
+      if (init?.method !== "POST") return Response.json({ root: process.cwd(), runtime: "nitro" });
+      const request = JSON.parse(init.body);
+      if (request.operation === "start" && request.input === -1) return Response.json({ run: { id: "negative-run", provider: "vercel", status: "queued", workflow: "welcome" } });
+      if (request.operation === "resume" && request.payload === -1) return Response.json({ signal: { id: "negative-signal", provider: "vercel" } });
+      throw new Error("The CLI changed the negative scalar.");
+    };`)
+    for (const [operation, target, flag] of [["start", "welcome", "--input"], ["resume", "tok", "--payload"]] as const) {
+      const negative = spawnSync(process.execPath, ["--import", preload, cli, "workflow", operation, target, flag, "-1", "--json"], { cwd, encoding: "utf8", timeout: 30_000 })
+      expect(negative.status).toBe(0)
+      expect(JSON.parse(negative.stdout)).toEqual(operation === "start"
+        ? { run: { id: "negative-run", provider: "vercel", status: "queued", workflow: "welcome" } }
+        : { signal: { id: "negative-signal", provider: "vercel" } })
+      expect(negative.stderr).toBe("")
+    }
   })
 
   it("parses each command", () => {
@@ -118,6 +134,48 @@ describe("workflow CLI arguments", () => {
 })
 
 describe("workflow CLI commands", () => {
+  it.each((["start", "resume"] as const).flatMap(operation =>
+    ["-1", "-0.25", "-1e-3", "-1E+2", "-1 "].map(value => ({ operation, value })),
+  ))("sends separate negative JSON scalars for $operation: $value", async ({ operation, value }) => {
+    const output = createContext()
+    const flag = operation === "start" ? "--input" : "--payload"
+    const body = operation === "start"
+      ? { run: { id: "run-1", provider: "vercel", status: "queued", workflow: "welcome" } }
+      : { signal: { id: "signal-1", provider: "vercel", status: "resolved", token: "tok" } }
+    const server = devServer(() => Response.json(body))
+    expect(await runWorkflowCli(operation, [operation === "start" ? "welcome" : "tok", flag, value, "--json"], output.context, { fetch: server.fetch })).toBe(0)
+    expect(server.posts).toEqual([operation === "start"
+      ? { input: JSON.parse(value), operation, workflow: "welcome" }
+      : { operation, payload: JSON.parse(value), token: "tok" }])
+    expect(JSON.parse(output.stdout())).toEqual(body)
+    expect(output.stderr()).toBe("")
+  })
+
+  it.each(["start", "resume"] as const)("validates malformed negative JSON for %s before discovery", async operation => {
+    const output = createContext()
+    const fetch = vi.fn()
+    const flag = operation === "start" ? "--input" : "--payload"
+    expect(await runWorkflowCli(operation, ["target", flag, "-1bad", "--json"], output.context, { fetch })).toBe(1)
+    expect(JSON.parse(output.stdout()).error.message).toContain(`Invalid JSON for ${flag}`)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["start", "--input", "--json"],
+    ["start", "--input", "--url"],
+    ["resume", "--payload", "--json"],
+    ["get", "--workflow", "-1"],
+    ["get", "--workflow", "--json"],
+  ] as const)("preserves missing values for %s %s %s", async (operation, flag, next) => {
+    const args = ["target", flag, next, "--json"]
+    expect(() => parseWorkflowCliArgs(operation, args, {})).toThrow(expect.objectContaining({ code: "WORKFLOW_R0031" }))
+    const output = createContext()
+    const fetch = vi.fn()
+    expect(await runWorkflowCli(operation, args, output.context, { fetch })).toBe(1)
+    expect(JSON.parse(output.stdout()).error.code).toBe("WORKFLOW_INVALID_ARGUMENT")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it.each([{ run: { id: "bad" } }, { signal: { id: 42, provider: "vercel" } }])("rejects malformed operation views %j", async (body) => {
     const output = createContext()
     const server = devServer(() => Response.json(body))

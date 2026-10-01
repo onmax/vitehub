@@ -88,9 +88,9 @@ interface PendingJsonValue {
   value: string
 }
 
-function readOptionValue(args: string[], index: number, flag: string): string {
+function readOptionValue(args: string[], index: number, flag: string, jsonValue = false): string {
   const value = args[index + 1]
-  if (value === undefined || (value.startsWith("-") && value !== "-")) {
+  if (value === undefined || (value.startsWith("-") && value !== "-" && !(jsonValue && /^-\d/.test(value)))) {
     throw workflowErrorDiagnostics.WORKFLOW_R0031({ message: `Missing value for ${flag}.` })
   }
   return value
@@ -132,7 +132,7 @@ export function parseWorkflowCliArgs(operation: WorkflowDevOperation, args: stri
       continue
     }
     if (valueFlag && arg === valueFlag) {
-      parsed.pendingJson = { flag: valueFlag, value: readOptionValue(args, index, arg) }
+      parsed.pendingJson = { flag: valueFlag, value: readOptionValue(args, index, arg, true) }
       index += 1
       continue
     }
