@@ -12,7 +12,27 @@ Connections need the ViteHub [Database](/docs/server-primitives/database). Token
 
 ## Enable Connections
 
-Install the owner package with `pnpm add @vite-hub/connections`. Add its Vite plugin alongside the ViteHub Database plugin.
+Enable `database` and `connections` in the ViteHub configuration. ViteHub discovers the Connection Definitions and uses its Database to store grants and activity.
+
+```ts [vite.config.ts]
+import { defineConfig } from 'vite'
+import { vitehub } from 'vite-hub'
+
+export default defineConfig({
+  plugins: [vitehub({ preset: 'node', database: true, connections: true })],
+})
+```
+
+In Nuxt, use the same options under `vitehub`.
+
+```ts [nuxt.config.ts]
+export default defineNuxtConfig({
+  modules: ['vite-hub/nuxt'],
+  vitehub: { preset: 'node', database: true, connections: true },
+})
+```
+
+For a standalone owner-package integration, install `@vite-hub/connections` and add `hubConnections()` alongside the Database plugin. Set `database` to the module that exports `db`.
 
 ```ts [vite.config.ts]
 import { defineConfig } from 'vite'
@@ -21,7 +41,7 @@ import { hubConnections } from '@vite-hub/connections/vite'
 
 export default defineConfig({
   plugins: [
-    vitehub({ database: true }),
+    vitehub({ preset: 'node', database: true }),
     hubConnections({ database: 'vite-hub/database/drizzle' }),
   ],
 })

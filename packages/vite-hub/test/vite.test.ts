@@ -693,7 +693,8 @@ describe("vitehub", () => {
       management: { actor: "./server/connections-auth.ts" },
       projectRoot: "/app",
     })
-    expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
+    expect(() => vitehub({ connections: true, preset: "node" })).toThrowError(expect.objectContaining({ code: "VITE_HUB_R0124" }))
+    expect(() => vitehub({ connections: { management: { actor: "./server/connections-auth.ts" } }, database: true, preset: "node" })).toThrowError(expect.objectContaining({ code: "VITE_HUB_R0126" }))
     expect(integrationMocks.hubKv).toHaveBeenLastCalledWith({ driver: "cloudflare-kv-binding" })
     expect(integrationMocks.hubSandbox).toHaveBeenLastCalledWith({
       provider: "cloudflare",
