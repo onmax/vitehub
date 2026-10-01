@@ -19,6 +19,7 @@ import {
 } from "../console-route";
 import { consoleSectionRouteName, isConsoleSectionId } from "../sections";
 import App from "./app.vue";
+import { deferLucideIcons } from "./icons";
 import { createConsoleSectionLoader, loadConsoleNavigation, subscribeConsoleNavigation } from "./sections";
 
 const sectionsBase = "/api/_vitehub/console/sections";
@@ -227,8 +228,14 @@ router.beforeEach(async (to) => {
 router.afterEach((to) => {
   document.title = String(to.meta.title ?? "ViteHub Console");
 });
+deferLucideIcons();
 createApp(App)
   .use(router)
   .use(ui, { router: () => router.currentRoute.value })
   .use(createViteHubUI())
   .mount("#app");
+
+// KaTeX styles embed their fonts. Load them after the first render instead of in the blocking stylesheet.
+const loadMathStyles = () => void import("katex/dist/katex.min.css");
+if ("requestIdleCallback" in window) window.requestIdleCallback(loadMathStyles, { timeout: 2_000 });
+else setTimeout(loadMathStyles, 0);
