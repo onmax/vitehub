@@ -464,14 +464,8 @@ function deploymentPlugins(
   envPlugin: EnvVitePlugin | undefined,
 ): Plugin[] {
   let deployCommandOwned = false
-  let resolvedBuildConfig: { alias: ViteAlias[], conditions: string[], extensions: string[], hasScheduleIntegration: boolean, mainFields: string[], preserveSymlinks: boolean } = {
-    alias: [],
-    conditions: [],
-    extensions: [],
-    hasScheduleIntegration: false,
-    mainFields: [],
-    preserveSymlinks: false,
-  }
+  type ResolvedBuildConfig = { alias: ViteAlias[], conditions: string[], extensions: string[], hasScheduleIntegration: boolean, mainFields: string[], preserveSymlinks: boolean }
+  const resolvedBuildConfigs = new WeakMap<object, { current: ResolvedBuildConfig }>()
   let providerOutput: ReturnType<typeof useProviderOutputCatalog> | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   const deploymentEnvPlugin = { current: envPlugin }
@@ -595,8 +589,13 @@ function deploymentPlugins(
               throw viteHubErrorDiagnostics.VITE_HUB_R0082({ message: "[vitehub] vitehub preset " + JSON.stringify(plan.preset) + " conflicts with " + name + "=" + JSON.stringify(value) + "." })
             }
           }
+          const buildConfigRef: { current: ResolvedBuildConfig } = {
+            current: { alias: [], conditions: [], extensions: [], hasScheduleIntegration: false, mainFields: [], preserveSymlinks: false },
+          }
+          const module = deploymentNitroModule(plan, services, identity, requestedServices.includes("sandbox"), () => deployCommandOwned, () => buildConfigRef.current)
+          resolvedBuildConfigs.set(module, buildConfigRef)
           nitro.modules = [
-            deploymentNitroModule(plan, services, identity, requestedServices.includes("sandbox"), () => deployCommandOwned, () => resolvedBuildConfig),
+            module,
             ...(Array.isArray(nitro.modules) ? nitro.modules : []),
           ]
           if (plan.output.packaging === "deno-node-modules") {
@@ -649,7 +648,7 @@ function deploymentPlugins(
       },
       configResolved(config) {
         const serverResolve = resolveServerOptions(config)
-        resolvedBuildConfig = {
+        const buildConfig: ResolvedBuildConfig = {
           alias: (serverResolve.alias ?? []).map(alias => ({
             customResolver: alias.customResolver !== undefined,
             find: alias.find,
@@ -660,6 +659,11 @@ function deploymentPlugins(
           hasScheduleIntegration: config.plugins?.some(plugin => plugin.name === "@vite-hub/schedule/vite") ?? false,
           mainFields: serverResolve.mainFields,
           preserveSymlinks: serverResolve.preserveSymlinks,
+        }
+        const nitroConfig = cloneRecord((config as { nitro?: unknown }).nitro)
+        for (const module of Array.isArray(nitroConfig.modules) ? nitroConfig.modules : []) {
+          const buildConfigRef = resolvedBuildConfigs.get(module)
+          if (buildConfigRef) buildConfigRef.current = buildConfig
         }
         providerOutput = useProviderOutputCatalog(config)
         if (plan.preset === "cloudflare") {
