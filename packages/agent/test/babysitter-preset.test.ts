@@ -331,6 +331,24 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
+  it("keeps an unconfirmed direct merge fenced for reconciliation", async () => {
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      const result = await command(args, request);
+      if (args.includes("-X") && args.includes("PUT") && args.some((arg) => arg.endsWith("/merge"))) {
+        return { ...result, stdout: JSON.stringify({ merged: false, message: "Not mergeable" }) };
+      }
+      return result;
+    });
+    try {
+      await f.reconcile();
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeDefined();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).not.toBe("terminal");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("does not directly merge when feedback changes during the live readiness read", async () => {
     const f = await fixture(false, false, { merge: "direct" });
     const command = f.command.getMockImplementation()!;

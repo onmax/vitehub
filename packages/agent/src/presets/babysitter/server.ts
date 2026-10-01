@@ -283,7 +283,17 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         return "blocked";
       }
       // GitHub rejects the merge when the head no longer matches sha.
-      await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000 });
+      const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000, signal });
+      let response: unknown;
+      try {
+        response = JSON.parse(result.stdout);
+      } catch {
+        response = undefined;
+      }
+      if (!response || typeof response !== "object" || (response as Record<string, unknown>).merged !== true) {
+        schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "GitHub did not confirm the pull request was merged" });
+        return "blocked";
+      }
     } catch (error) {
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
       return "blocked";
