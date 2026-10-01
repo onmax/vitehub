@@ -220,7 +220,9 @@ async function handleRelayConnection(
   }
   const inputForwarding = new AbortController()
   const forwardInput = pipeRelayInput(socket, input, stdin, mapText, inputForwarding.signal)
-  void forwardInput.catch(() => undefined)
+  // A broken stdin transport can otherwise leave a provider blocked waiting for input.
+  // Terminate the child so its wait settles and the relay can report the failure.
+  void forwardInput.catch(() => child.kill().catch(() => undefined))
   let stderrBytes = 0
   let stderrTail = Buffer.alloc(0)
   const forward = (stream: ReadableStream<Uint8Array>, type: number) => forwardStream(stream, async (chunk) => {
