@@ -1051,7 +1051,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
   // A reassigned global freeze helper cannot be trusted for static inspection.
-  // Record direct, computed, and property descriptor writes before recognizing any
+  // Record direct, computed, Reflect.set, and property descriptor writes before recognizing any
   // Object.freeze call as value-preserving.
   for (let index = 0; index < tokens.length; index++) {
     const objectEnd = intrinsicObjectEnd(index)
@@ -1060,7 +1060,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const member = memberAccess(receiverEnd - 1)
     if (objectEnd !== undefined && member?.name === "freeze" && assignmentOperator(member.end)) mutatedBindings.add("Object")
     const call = member === undefined ? undefined : memberCallEnd(member.end - 1, index)
-    if ((member?.name === "defineProperty" || (objectEnd !== undefined && member?.name === "defineProperties")) && call !== undefined && tokens[call] === "(") {
+    if ((member?.name === "defineProperty" || (objectEnd !== undefined && member?.name === "defineProperties") || (objectEnd === undefined && member?.name === "set")) && call !== undefined && tokens[call] === "(") {
       const target = resolveReference(call + 1, new Set(), true)
       const targetEnd = intrinsicObjectEnd(target)
       if (targetEnd === undefined || tokens[targetEnd] !== ",") continue
@@ -1103,7 +1103,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (["=", "of"].includes(tokens[cursor]!)) initializer = cursor + 1
     }
     if (initializer === undefined) continue
-    while (tokens[initializer] === "(") initializer++
+    while (tokens[initializer] === "(" || tokens[initializer] === "await") initializer++
     const call = memberCallEnd(initializer)
     if (opaqueCalls.has(call) && !trustedCalls.has(call)) {
       for (const name of destructuredBindings.get(binding) ?? [tokens[binding]!]) opaqueResultBindings.add(name)

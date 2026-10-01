@@ -1079,6 +1079,12 @@ it.each([
   'globalThis["Object"]["defineProperty"](globalThis["Object"], "freeze", { value: value => ({ pullRequest: true }) });',
   'Object.defineProperty(globalThis.Object, "freeze", { value: value => ({ pullRequest: true }) });',
   'globalThis.Object.defineProperty(Object, "freeze", { value: value => ({ pullRequest: true }) });',
+  'Reflect.set(Object, "freeze", () => ({ pullRequest: true }));',
+  'Reflect["set"](Object, "freeze", () => ({ pullRequest: true }));',
+  '(Reflect).set(Object, "freeze", () => ({ pullRequest: true }));',
+  '(Reflect.set)(Object, "freeze", () => ({ pullRequest: true }));',
+  'globalThis.Reflect.set(globalThis.Object, "freeze", () => ({ pullRequest: true }));',
+  'globalThis["Reflect"]["set"](globalThis["Object"], "freeze", () => ({ pullRequest: true }));',
   'Reflect.defineProperty(Object, "freeze", { value: value => ({ pullRequest: true }) });',
   'Reflect["defineProperty"](Object, "freeze", { value: value => ({ pullRequest: true }) });',
   '(Reflect).defineProperty(Object, "freeze", { value: value => ({ pullRequest: true }) });',
@@ -1097,6 +1103,10 @@ it.each([
   'const globalThis = { Object: { freeze() {} } }; globalThis.Object.freeze = value => value;',
   'const globalThis = { Object: { freeze() {} } }; globalThis.Object["freeze"] = value => value;',
   'function configure(globalThis) { globalThis["Object"]["freeze"] = value => value; }',
+  'const Reflect = { set() {} }; Reflect.set(Object, "freeze", {});',
+  'function configure(Reflect) { Reflect.set(Object, "freeze", {}); }',
+  'function configure(Object) { Reflect.set(Object, "freeze", {}); }',
+  'Reflect.set(Object, "other", true);',
   'const Reflect = { defineProperty() {} }; Reflect.defineProperty(Object, "freeze", {});',
   'function configure(Reflect) { Reflect["defineProperty"](Object, "freeze", {}); }',
   'const globalThis = { Reflect: { defineProperty() {} } }; globalThis.Reflect.defineProperty(Object, "freeze", {});',
@@ -1295,6 +1305,14 @@ it.each([
   }
 })
 
+it.each(["await getOptions()", "(await (getOptions()))"])("keeps read-only awaited helper results stateless: %s", async expression => {
+  const source = `${imports} const options = { pullRequest: false }; const getOptions = () => options; const alias = ${expression}; const enabled = alias.pullRequest; export default github(options)`
+  expect((await discover(source.replace("export default github(options)", "export default defineAgent({ channels: { custom: github(options) } })")))?.workspace).toBeUndefined()
+  expect((await discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": source,
+  }))?.workspace).toBeUndefined()
+})
+
 it.each([
   'const wrapper = { get options() { return options } }; wrapper.options.pullRequest = true',
   'const wrapper = { get options() { return options } }; wrapper.options.enable()',
@@ -1313,6 +1331,12 @@ it.each([
 })
 
 it.each([
+  'const getOptions = () => options; const alias = await getOptions(); alias.pullRequest = true',
+  'const getOptions = () => options; const alias = (await getOptions()); alias.pullRequest = true',
+  'const getOptions = () => options; const alias = await (getOptions()); alias.pullRequest = true',
+  'const getOptions = () => options; const alias = ((await (getOptions()))); alias.pullRequest = true',
+  'const getOptions = () => options; let alias; alias = await getOptions(); alias.pullRequest = true',
+  'const getOptions = () => ({ value: options }); const { value: alias } = await getOptions(); alias.pullRequest = true',
   'const getOptions = () => options; getOptions().pullRequest = true',
   'function getOptions() { return options }; getOptions()["pullRequest"] = true',
   'const getOptions = () => ({ nested: options }); getOptions().nested.pullRequest = true',
