@@ -37,9 +37,30 @@ import { agentRouteUsesParam, defaultAgentChatRoute, normalizeAgentRoute } from 
 import { hasRuntimeType } from "./internal/runtime-type.ts"
 import { readColocatedAgentInstructions } from "./vite/colocated-agent-instructions.ts"
 import { readColocatedAgentSkills, resolveColocatedAgentSkillsRoot } from "./vite/colocated-agent-skills.ts"
+
+function invalidateAgentDevModules(server: ViteDevServer, ids: readonly string[], prefixes: readonly string[] = []): void {
+  const matches = (id: string | null) => {
+    const normalized = id?.replace(/\\/g, "/")
+    return normalized && (ids.includes(normalized) || prefixes.some(prefix => normalized.startsWith(prefix)))
+  }
+  for (const [id, module] of server.moduleGraph.idToModuleMap) {
+    if (matches(id) || matches(module.id)) server.moduleGraph.invalidateModule(module)
+  }
+  for (const environment of Object.values(server.environments ?? {})) {
+    let invalidated = false
+    for (const [id, module] of environment.moduleGraph.idToModuleMap) {
+      if (matches(id) || matches(module.id)) {
+        environment.moduleGraph.invalidateModule(module)
+        invalidated = true
+      }
+    }
+    if (invalidated && environment.config.consumer === "server") environment.hot.send({ type: "full-reload" })
+  }
+}
+
 export { readColocatedAgentSkills } from "./vite/colocated-agent-skills.ts"
 
-import type { Plugin, ResolvedConfig, UserConfig } from "vite"
+import type { Plugin, ResolvedConfig, UserConfig, ViteDevServer } from "vite"
 import type { ProviderDeploymentOutputWriter, ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import type { ViteHubDefinitionSummary, ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import type { CloudflareAgentStateMigration, CloudflareAgentStateRollupTarget, CloudflareAgentStateTarget } from "./cloudflare.ts"
@@ -2801,12 +2822,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
             await writeGeneratedAgentOutputs(resolved)
             const root = resolveViteHubGeneratedRoot(resolved)
             const registryPrefix = join(root, dirname(generatedAgentRegistryCatalog)).replace(/\\/g, "/") + "/"
-            for (const module of server.moduleGraph.idToModuleMap.values()) {
-              const id = module.id?.replace(/\\/g, "/")
-              if (id === join(root, generatedAgentRegistry).replace(/\\/g, "/") || id?.startsWith(registryPrefix)) {
-                server.moduleGraph.invalidateModule(module)
-              }
-            }
+            invalidateAgentDevModules(server, [join(root, generatedAgentRegistry).replace(/\\/g, "/")], [registryPrefix])
           }
         })().catch(error => server.config.logger.error(`[vitehub] Failed to refresh Agent discovery: ${String(error)}`)).finally(() => { discoveryRefresh = undefined })
       }
@@ -2882,10 +2898,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           ].map(handler => join(root, handler).replace(/\\/g, "/")))
         }
       }
-      for (const id of moduleIds) {
-        const module = context.server.moduleGraph.getModuleById(id)
-        if (module) context.server.moduleGraph.invalidateModule(module)
-      }
+      invalidateAgentDevModules(context.server, moduleIds)
     },
     async transform(code, id) {
       if (agent === false || !resolved?.root) return

@@ -50,6 +50,18 @@ afterEach(() => {
 })
 
 describe("Agent Invocations Nitro dev handler", () => {
+  it("continues past an unrelated journal failure", async () => {
+    const healthy = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const owning = { ...healthy, cancel: vi.fn(async (id: string) => ({ id, outcome: "terminal" as const, status: "completed" as const })) }
+    const failing = { ...healthy, cancel: vi.fn(async () => { throw new Error("Unavailable journal") }) }
+    registry.first = async () => ({ default: defineAgent({ invocations: failing, driver: { run: () => "done" } }) })
+    registry.second = async () => ({ default: defineAgent({ invocations: owning, driver: { run: () => "done" } }) })
+    const response = await handleAgentInvocationsDevRequest(devRequest({ id: "healthy-id", operation: "cancel" }))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ outcome: "terminal" })
+    expect(owning.cancel).toHaveBeenCalledWith("healthy-id")
+  })
+
   it("cancels a running Invocation through the application registry", async () => {
     modelGenerate.mockImplementation(async (input: { abortSignal?: AbortSignal }) => await new Promise((_resolve, reject) => {
       const signal = input.abortSignal

@@ -1807,6 +1807,13 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         if (!await ensureCreated()) return false
         const claim = await boundedStoreOperation(() => store.claim(recordId, claimId, CLAIM_LEASE_MS, force ? { replaceExisting: true } : undefined))
         ownsRecord = claim === true
+        if (ownsRecord) {
+          const latest = await boundedStoreOperation(() => store.getSummary(recordId))
+          if (latest && latest !== storeOperationTimedOut) {
+            readCancellationRequest(latest)
+            if (terminalStatus(latest.status)) finished = true
+          }
+        }
         if (ownsRecord && finished) {
           await boundedStoreOperation(() => store.release(recordId, claimId))
           ownsRecord = false
@@ -2021,7 +2028,6 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         async finish(status, error) {
           if (finished || finishing) return
           finishing = true
-          stopWatchingCancellation()
           const finishingObservations = [activeObservation, ...pendingObservations]
           const observationDeadline = Date.now() + limits.flushTimeoutMs
           while (observationWrite && Date.now() < observationDeadline) {
@@ -2084,6 +2090,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               await markTruncated(bindOptions.terminalTakeover)
             }
             finished = true
+            stopWatchingCancellation()
             stopHeartbeat()
             if (ownsRecord) await write(() => boundedStoreOperation(() => store.release(recordId, claimId)))
             ownsRecord = false
@@ -2108,6 +2115,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               await finishOnce()
             }
             if (!finished) {
+              stopWatchingCancellation()
               stopHeartbeat()
               if (ownsRecord) await write(() => boundedStoreOperation(() => store.release(recordId, claimId)))
               ownsRecord = false
@@ -2160,7 +2168,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         watchCancellation(driver) {
           if (finished || finishing || unregisterCancellation) return
           if (!driver.enforced) cancelNotEnforcedBy = driver.name
-          unregisterCancellation = registerAgentInvocationCancellation(recordId, { abort: requestCancellation, driver })
+          unregisterCancellation = registerAgentInvocationCancellation(store, recordId, { abort: requestCancellation, driver: () => runningRequested ? driver : undefined })
         },
       }
     },
@@ -2196,8 +2204,8 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const timestamp = new Date().toISOString()
       // Persist the request first, so a run in another process and a later bind of this record read it.
       const flagged = await store.update(id, { cancelRequestedAt: timestamp, timestamp })
-      const local = abortLocalAgentInvocation(id, createAgentInvocationCancellationError(id))
-      const current = flagged ?? await store.getSummary(id)
+      const local = abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
+      let current = await store.getSummary(id) ?? flagged
       if (!current) return { id, outcome: "not-found" }
       if (terminalStatus(current.status)) return { id, outcome: "terminal", status: current.status }
       if (local.aborted) {
@@ -2209,30 +2217,11 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           status: current.status,
         }
       }
-      // No run in this process holds the Invocation. A free claim means that no live run holds it anywhere.
-      const claimId = `cancel_${createInvocationId()}`
-      if (await store.claim(id, claimId, CLAIM_LEASE_MS)) {
-        try {
-          const record = await store.get(id)
-          // Record the same `agent.invocation.cancelled` event that a cancelled run writes.
-          const observation: TraceEventLogEntry | undefined = record
-            ? {
-                name: "agent.invocation.cancelled",
-                sequence: record.observations.reduce((maximum, entry) => Math.max(maximum, entry.sequence), record.titleSequence ?? 0) + 1,
-                timestamp,
-                trace: { id: record.traceId },
-                type: "run",
-              }
-            : undefined
-          const cancelled = await store.update(id, { cancelRequestedAt: timestamp, ...(observation ? { observation } : {}), status: "cancelled", timestamp }, claimId)
-          if (cancelled && terminalStatus(cancelled.status)) {
-            return { id, outcome: cancelled.status === "cancelled" ? "cancelled" : "terminal", status: cancelled.status }
-          }
-        }
-        finally {
-          await store.release(id, claimId)
-        }
-      }
+      // Lease availability and a pending record cannot prove that no Driver started.
+      // The durable request is terminalized by an execution owner that observes it.
+      current = await store.getSummary(id)
+      if (!current) return { id, outcome: "not-found" }
+      if (terminalStatus(current.status)) return { id, outcome: "terminal", status: current.status }
       if (!current.cancelRequestedAt) return { id, outcome: "unavailable", status: current.status }
       return {
         delivery: "journal",

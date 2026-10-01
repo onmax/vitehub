@@ -156,13 +156,14 @@ describe("Agent Invocation cancel", () => {
     const store = createMemoryAgentInvocationStore()
     const owner = defineAgentInvocations({ store })
     const run = runAgent(defineAgent({ driver: modelDriver, invocations: owner }), runtime("remote-cancel"), { prompt: "Wait." })
+    const rejection = expect(run).rejects.toThrow("Cancellation was requested")
     const { id } = await recordWithStatus(owner, "remote-cancel", "running")
 
     // Another instance shares only the store. It writes the same flag that its cancel() writes.
     await store.update(id, { cancelRequestedAt: new Date().toISOString(), timestamp: new Date().toISOString() })
     await vi.advanceTimersByTimeAsync(10_000)
 
-    await expect(run).rejects.toThrow("Cancellation was requested")
+    await rejection
     expect((await owner.get(id))?.status).toBe("cancelled")
   })
 
@@ -185,14 +186,146 @@ describe("Agent Invocation cancel", () => {
     const timestamp = new Date().toISOString()
     await store.create({ createdAt: timestamp, id, observations: [], status: "pending", traceId: "trace-queued", updatedAt: timestamp })
 
-    expect(await invocations.cancel(id)).toEqual({ id, outcome: "cancelled", status: "cancelled" })
+    expect(await invocations.cancel(id)).toMatchObject({ id, outcome: "requested", status: "pending" })
     const record = await invocations.get(id)
-    expect(record?.status).toBe("cancelled")
-    expect(record?.observations.map(entry => entry.name)).toEqual(["agent.invocation.cancelled"])
+    expect(record?.status).toBe("pending")
+    expect(record?.cancelRequestedAt).toEqual(expect.any(String))
 
     const driver = vi.fn(() => "Done.")
     await expect(runAgent(defineAgent({ driver: { run: driver }, invocations }), runtime("queued-cancel"), { prompt: "Late worker" })).rejects.toThrow()
     expect(driver).not.toHaveBeenCalled()
+    expect((await invocations.get(id))?.status).toBe("cancelled")
+  })
+
+  it("stops startup when cancellation wins its initial claim", async () => {
+    const backing = createMemoryAgentInvocationStore()
+    const entered = deferred()
+    const release = deferred()
+    let waiting = true
+    const store = {
+      ...backing,
+      async claim(...args: Parameters<typeof backing.claim>) {
+        if (waiting && !args[1].startsWith("cancel_")) {
+          waiting = false
+          entered.resolve()
+          await release.promise
+        }
+        return await backing.claim(...args)
+      },
+    }
+    const invocations = defineAgentInvocations({ store })
+    const driver = vi.fn(() => "Must not run")
+    const running = runAgent(defineAgent({ invocations, driver: { run: driver } }), runtime("startup-cancel"), {})
+    const rejection = expect(running).rejects.toThrow()
+    await entered.promise
+    const id = await agentInvocationId("startup-cancel")
+    expect(await invocations.cancel(id)).toMatchObject({ outcome: "requested" })
+    release.resolve()
+    await rejection
+    expect(driver).not.toHaveBeenCalled()
+  })
+
+  it("isolates matching Invocation IDs across independent stores", async () => {
+    const firstRelease = deferred<string>()
+    const secondRelease = deferred<string>()
+    let firstSignal: AbortSignal | undefined
+    let secondSignal: AbortSignal | undefined
+    const first = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const second = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const firstRun = runAgent(defineAgent({ invocations: first, driver: { run: ({ input }) => { firstSignal = input.abortSignal; return firstRelease.promise } } }), runtime("same-id"), {})
+    const secondRun = runAgent(defineAgent({ invocations: second, driver: { run: ({ input }) => { secondSignal = input.abortSignal; return secondRelease.promise } } }), runtime("same-id"), {})
+    const { id } = await recordWithStatus(first, "same-id", "running")
+    await recordWithStatus(second, "same-id", "running")
+    await vi.waitFor(() => expect(secondSignal).toBeDefined())
+    await first.cancel(id)
+    expect(firstSignal?.aborted).toBe(true)
+    expect(secondSignal?.aborted).toBe(false)
+    firstRelease.resolve("First")
+    secondRelease.resolve("Second")
+    await Promise.all([firstRun, secondRun])
+  })
+
+  it("does not terminalize running work after its lease expires", async () => {
+    const backing = createMemoryAgentInvocationStore()
+    const store = {
+      ...backing,
+      claim: (...args: Parameters<typeof backing.claim>) => backing.claim(args[0], args[1], 1, args[3]),
+    }
+    const invocations = defineAgentInvocations({ store })
+    const release = deferred<string>()
+    const started = deferred()
+    const run = runAgent(defineAgent({ invocations, driver: { run: () => {
+      started.resolve()
+      return release.promise
+    } } }), runtime("expired-owner"), {})
+    await started.promise
+    const { id } = await recordWithStatus(invocations, "expired-owner", "running")
+    await new Promise(resolve => setTimeout(resolve, 5))
+    expect(await invocations.cancel(id)).toMatchObject({ outcome: "requested", status: "running" })
+    expect((await invocations.get(id))?.status).toBe("running")
+    release.resolve("Done.")
+    await expect(run).resolves.toBe("Done.")
+    expect((await invocations.get(id))?.status).toBe("completed")
+  })
+
+  it("keeps local cancellation observable while terminal persistence waits", async () => {
+    const backing = createMemoryAgentInvocationStore()
+    const entered = deferred()
+    const release = deferred()
+    const store = {
+      ...backing,
+      async update(...args: Parameters<typeof backing.update>) {
+        if (args[1].status === "completed") {
+          entered.resolve()
+          await release.promise
+        }
+        return await backing.update(...args)
+      },
+    }
+    const invocations = defineAgentInvocations({ store })
+    let signal: AbortSignal | undefined
+    const run = runAgent(defineAgent({ invocations, driver: { run: ({ input }) => {
+      signal = input.abortSignal
+      return "Done."
+    } } }), runtime("finishing-cancel"), {})
+    await entered.promise
+    const id = await agentInvocationId("finishing-cancel")
+    try {
+      expect(await invocations.cancel(id)).toMatchObject({ delivery: "local", outcome: "requested", status: "running" })
+      expect(signal?.aborted).toBe(true)
+    }
+    finally {
+      release.resolve()
+    }
+    await expect(run).resolves.toBe("Done.")
+    expect((await invocations.get(id))?.status).toBe("completed")
+  })
+
+  it("reports a concurrent terminal transition after storing the request", async () => {
+    const backing = createMemoryAgentInvocationStore()
+    const requested = deferred()
+    const requestRelease = deferred()
+    const driverRelease = deferred<string>()
+    const store = {
+      ...backing,
+      async update(...args: Parameters<typeof backing.update>) {
+        const result = await backing.update(...args)
+        if (args[1].cancelRequestedAt) {
+          requested.resolve()
+          await requestRelease.promise
+        }
+        return result
+      },
+    }
+    const invocations = defineAgentInvocations({ store })
+    const run = runAgent(defineAgent({ invocations, driver: { run: () => driverRelease.promise } }), runtime("terminal-race"), {})
+    const { id } = await recordWithStatus(invocations, "terminal-race", "running")
+    const cancel = invocations.cancel(id)
+    await requested.promise
+    driverRelease.resolve("Done.")
+    await run
+    requestRelease.resolve()
+    expect(await cancel).toEqual({ id, outcome: "terminal", status: "completed" })
   })
 
   it("reports missing Invocations", async () => {

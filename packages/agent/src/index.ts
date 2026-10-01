@@ -7295,6 +7295,7 @@ async function executeAgentInvocation<
     }
     if (preparedInvocation?.handledResponse) {
       await invocationJournal?.running()
+      input.abortSignal?.throwIfAborted()
       await activity?.update("running")
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
     }
@@ -7316,6 +7317,7 @@ async function executeAgentInvocation<
     await invocationJournal?.running()
     await activity?.update("running")
     try {
+      input.abortSignal?.throwIfAborted()
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
     }
     catch (error) {
@@ -7333,6 +7335,7 @@ async function executeAgentInvocation<
   }
   try {
     await invocationJournal?.running()
+    input.abortSignal?.throwIfAborted()
     await activity?.update("running")
     return await executeAgentInvocationWithCapacityLease(agent, context, input, {
       ...options,

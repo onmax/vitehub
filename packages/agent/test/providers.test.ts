@@ -904,6 +904,11 @@ describe("agent Vite plugin", () => {
         [join(root, ".vitehub/nitro/schedule/runtime-registry.js"), nitroRegistryModule],
         [join(root, ".vitehub/agent/chat-webhook-route.ts"), generatedRouteModule],
       ])
+      const nitroAgentRegistry = { id: join(root, ".vitehub/agent/registry.mjs") }
+      const nitroModules = new Map([[nitroAgentRegistry.id, nitroAgentRegistry]])
+      const invalidateNitroModule = vi.fn()
+      const reloadNitro = vi.fn()
+      const environments = { nitro: { config: { consumer: "server" }, hot: { send: reloadNitro }, moduleGraph: { idToModuleMap: nitroModules, invalidateModule: invalidateNitroModule } } }
       const getModuleById = vi.fn((id: string) => modules.get(id))
       const invalidateModule = vi.fn()
       // SAFETY: The plugin under test produced this hook, so the test invokes its documented callable shape.
@@ -911,9 +916,11 @@ describe("agent Vite plugin", () => {
 
       await handleHotUpdate({
         file: join(root, "backend/agents/digest.ts"),
-        server: { config: { root }, moduleGraph: { idToModuleMap: modules, getModuleById, invalidateModule } },
+        server: { environments, config: { root }, moduleGraph: { idToModuleMap: modules, getModuleById, invalidateModule } },
       })
 
+      expect(invalidateNitroModule).toHaveBeenCalledWith(nitroAgentRegistry)
+      expect(reloadNitro).toHaveBeenCalledWith({ type: "full-reload" })
       expect(invalidateModule).toHaveBeenCalledWith(registryModule)
       expect(invalidateModule).toHaveBeenCalledWith(targetsModule)
       expect(invalidateModule).toHaveBeenCalledWith(nitroRegistryModule)
@@ -921,7 +928,7 @@ describe("agent Vite plugin", () => {
       invalidateModule.mockClear()
       await handleHotUpdate({
         file: join(root, "backend/agents/digest/skills/review/SKILL.md"),
-        server: { config: { root }, moduleGraph: { idToModuleMap: modules, getModuleById, invalidateModule } },
+        server: { environments, config: { root }, moduleGraph: { idToModuleMap: modules, getModuleById, invalidateModule } },
       })
 
       expect(invalidateModule).toHaveBeenCalledWith(registryModule)
@@ -9350,6 +9357,70 @@ describe("server helpers", () => {
       await rm(stateDir, { force: true, recursive: true })
     }
   }, 15_000)
+
+  it("retries an unrelated webhook failure after a historical cancellation request", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { github } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createMemoryAgentInvocationStore, defineAgentInvocations } = await import("../src/server.ts")
+    const { agentInvocationId } = await import("../src/invocations.ts")
+    const store = createMemoryAgentInvocationStore()
+    const invocations = defineAgentInvocations({ store })
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-cancel-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    const retry = vi.spyOn(state, "retryWebhookDelivery")
+    const run = vi.fn(async () => {
+      const id = await agentInvocationId("historical-cancel", "review")
+      await store.update(id, { cancelRequestedAt: new Date().toISOString(), timestamp: new Date().toISOString() })
+      throw new Error("Unrelated provider failure")
+    })
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          triggers: {
+            webhook: {
+              invoke: () => ({
+                input: { prompt: "Review the pull request." },
+                run: { runId: "historical-cancel" },
+                webhook: { concurrencyLimit: 1, deliveryId: "delivery-cancel" },
+              }),
+            },
+          },
+          webhooks: { secretToken: false },
+        }),
+      },
+      driver: { run },
+      invocations,
+      name: "review",
+    })
+
+    try {
+      // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+      const response = await createChannelWebhookRouteHandler(agent as never)(
+        new Request("https://example.com/api/github/webhook", {
+          body: "{}",
+          headers: {
+            "content-type": "application/json",
+            "x-github-delivery": "delivery-cancel",
+            "x-github-event": "pull_request",
+          },
+          method: "POST",
+        }),
+        "github",
+        { agentName: "review", webhookState: state },
+      )
+
+      expect(response.status).toBe(200)
+      await vi.waitFor(() => expect(retry).toHaveBeenCalledOnce(), { timeout: 10_000 })
+      expect(run).toHaveBeenCalledOnce()
+      expect(complete).not.toHaveBeenCalled()
+    } finally {
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
 
   it("scopes active webhook steering to the resolved state backend", async () => {
     const { defineAgent } = await import("../src/index.ts")

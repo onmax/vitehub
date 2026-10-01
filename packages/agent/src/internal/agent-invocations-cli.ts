@@ -198,7 +198,7 @@ async function requestCancel(parsed: ParsedArgs, id: string, context: AgentInvoc
   const rootDir = context.rootDir ?? process.cwd()
   const server = await discoverViteHubDevServer<AgentInvocationsDevDiscovery>({
     endpoint: cancelEndpoint,
-    fetch: fetchImpl,
+    fetch: (input, init) => fetchImpl(input, { ...init, signal: AbortSignal.timeout(timeout) }),
     isCompatibleRoot: isCompatibleAgentDevServerRoot,
     rootDir,
     serverUrl: parsed.url,

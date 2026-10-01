@@ -15,7 +15,7 @@ export interface AgentInvocationCancellationDriver {
 
 interface AgentInvocationCancellationHandle {
   abort: (reason: unknown) => void
-  driver?: AgentInvocationCancellationDriver
+  driver?: () => AgentInvocationCancellationDriver | undefined
 }
 
 export interface LocalAgentInvocationCancellation {
@@ -27,12 +27,16 @@ const cancellationHandlesKey = Symbol.for("vitehub.agentInvocationCancellations"
 
 export const agentInvocationCancellationCode = "AGENT_R0970"
 
-function handles(): Map<string, Set<AgentInvocationCancellationHandle>> {
+function handles(owner: object): Map<string, Set<AgentInvocationCancellationHandle>> {
   const root = globalThis as typeof globalThis & Record<symbol, unknown>
   const existing = root[cancellationHandlesKey]
-  if (existing instanceof Map) return existing as Map<string, Set<AgentInvocationCancellationHandle>>
-  const registry = new Map<string, Set<AgentInvocationCancellationHandle>>()
-  root[cancellationHandlesKey] = registry
+  const owners = existing instanceof WeakMap ? existing as WeakMap<object, Map<string, Set<AgentInvocationCancellationHandle>>> : new WeakMap<object, Map<string, Set<AgentInvocationCancellationHandle>>>()
+  root[cancellationHandlesKey] = owners
+  let registry = owners.get(owner)
+  if (!registry) {
+    registry = new Map<string, Set<AgentInvocationCancellationHandle>>()
+    owners.set(owner, registry)
+  }
   return registry
 }
 
@@ -40,8 +44,8 @@ function handles(): Map<string, Set<AgentInvocationCancellationHandle>> {
  * Registers the abort handle of a running journaled Invocation in this process.
  * The registry lives on `globalThis`, so separate module instances in one process share it.
  */
-export function registerAgentInvocationCancellation(id: string, handle: AgentInvocationCancellationHandle): () => void {
-  const registry = handles()
+export function registerAgentInvocationCancellation(owner: object, id: string, handle: AgentInvocationCancellationHandle): () => void {
+  const registry = handles(owner)
   const entries = registry.get(id) ?? new Set<AgentInvocationCancellationHandle>()
   entries.add(handle)
   registry.set(id, entries)
@@ -54,10 +58,10 @@ export function registerAgentInvocationCancellation(id: string, handle: AgentInv
 }
 
 /** Aborts every run in this process that holds the journaled Invocation. */
-export function abortLocalAgentInvocation(id: string, reason: unknown): LocalAgentInvocationCancellation {
-  const entries = [...handles().get(id) ?? []]
+export function abortLocalAgentInvocation(owner: object, id: string, reason: unknown): LocalAgentInvocationCancellation {
+  const entries = [...handles(owner).get(id) ?? []]
   for (const entry of entries) entry.abort(reason)
-  const notEnforcedBy = entries.find(entry => entry.driver && !entry.driver.enforced)?.driver?.name
+  const notEnforcedBy = entries.map(entry => entry.driver?.()).find(driver => driver && !driver.enforced)?.name
   return { aborted: entries.length > 0, ...(notEnforcedBy ? { notEnforcedBy } : {}) }
 }
 

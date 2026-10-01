@@ -1380,7 +1380,7 @@ async function queuedWebhookInvocationCancelled(
   if (!runId || !isRuntimeRecord(agent) || !isAgentInvocations(agent.invocations)) return false
   const agentName = (hasRuntimeType(agent.name, "string") && agent.name) || routeAgentIdentity(handlerOptions)?.name
   const summary = await agent.invocations.getSummary(await agentInvocationId(runId, agentName)).catch(() => undefined)
-  return Boolean(summary?.cancelRequestedAt)
+  return Boolean(summary?.cancelRequestedAt && error instanceof Error && (error.name === "AbortError" || error.name === "CanceledError"))
 }
 
 async function executeQueuedWebhookDelivery(
@@ -1637,6 +1637,7 @@ async function executeQueuedWebhookDelivery(
           }
           throw error
         })
+        invocationRunId ??= controller.id
         const result = awaitAgentInvocationResult(controller)
         const settlement = result.then(async (output) => {
           if (!isWorkflowRun(output) || output.status !== "queued") await runContext.flushWaitUntil?.()

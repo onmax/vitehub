@@ -355,12 +355,12 @@ if (result.notEnforcedBy) console.warn(`Cancel requested, not enforced by ${resu
 | `outcome` | Meaning |
 | --- | --- |
 | `requested` | A live run received the request. `delivery: 'local'` means a run in this process stopped. `delivery: 'journal'` means the process that holds the Invocation reads the request at its next claim renewal, within 10 seconds. |
-| `cancelled` | No live run held the Invocation, so the journal recorded `cancelled` and an `agent.invocation.cancelled` observation. A later run with the same run ID stops before its Driver starts. |
+| `cancelled` | An execution owner observed cancellation and recorded `cancelled` with an `agent.invocation.cancelled` observation. |
 | `terminal` | The Invocation already finished. `status` has its final state. |
 | `not-found` | The journal has no Invocation with this id. |
 | `unavailable` | The store did not keep the request and no run in this process holds the Invocation. |
 
-A cancel request aborts the Invocation abort signal. That signal stops the Driver capacity wait, the Driver run, tool calls, queued webhook executions, and scheduled turns. A cancelled queued webhook delivery completes without a retry. The record then moves to `cancelled` through the usual `agent.invocation.cancelled` event.
+A cancel request aborts the Invocation abort signal. That signal stops the Driver capacity wait, the Driver run, tool calls, queued webhook executions, and scheduled turns. A webhook failure caused by cancellation completes its delivery without a retry. An unrelated failure still retries, even if the Invocation has a historical cancellation request. The record then moves to `cancelled` through the usual `agent.invocation.cancelled` event.
 
 | Driver | Cancel |
 | --- | --- |
@@ -487,3 +487,7 @@ it rejects an active lease, a closed PR, or an outdated head. It records the res
 reason separately and preserves already credited evidence IDs. Keep these operations
 behind the application's operator authorization. Do not call reset on every webhook
 or deployment. The inbox cannot prove an application's evidence or authorization.
+
+An expired execution lease does not prove that its Driver stopped. Cancellation of an unowned running Invocation remains a durable request until the execution owner observes it.
+
+Cancellation of an unowned pending Invocation remains a durable request. A later worker reads the request before starting its Driver and records cancellation. Pending journal status alone does not prove that an earlier Driver never started.

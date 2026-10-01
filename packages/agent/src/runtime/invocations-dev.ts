@@ -43,10 +43,15 @@ async function registeredInvocationJournals(): Promise<AgentInvocations[]> {
 
 async function cancelInJournals(journals: readonly AgentInvocations[], id: string): Promise<AgentInvocationCancelResult> {
   let result: AgentInvocationCancelResult = { id, outcome: "not-found" }
+  let failure: unknown
   for (const journal of journals) {
-    result = await journal.cancel(id)
-    if (result.outcome !== "not-found") return result
+    try {
+      result = await journal.cancel(id)
+      if (result.outcome !== "not-found") return result
+    }
+    catch (error) { failure ??= error }
   }
+  if (failure) throw failure
   return result
 }
 
