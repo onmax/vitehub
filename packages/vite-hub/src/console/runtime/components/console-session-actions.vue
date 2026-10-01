@@ -29,6 +29,9 @@ const confirmOpen = ref(false);
 const rerunUnavailable: Record<string, string> = {
   "invocation-not-terminal": "Rerun is available after the session finishes",
   "replay-metadata-unavailable": "Rerun is unavailable: the session has no complete replay metadata",
+  "input-has-context": "Rerun is unavailable: this session received trusted invocation context",
+  "input-has-run-metadata": "Rerun is unavailable: this session received runtime run metadata",
+  "input-has-timeout": "Rerun is unavailable: this session received a timeout",
   "input-has-invoker": "Rerun is unavailable: this session received a direct invoker identity",
   "input-has-options": "Rerun is unavailable: this session received call options",
   "input-has-data": "Rerun is unavailable: this session received structured input",

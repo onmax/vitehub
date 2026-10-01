@@ -45,6 +45,9 @@ const APPENDED_OBSERVATION_ATTRIBUTE = "vitehub.observation.appended"
 const CANONICAL_TRACE_ATTRIBUTE_KEYS = new Set([
   "input.replay.version",
   "input.hasInvoker",
+  "input.hasContext",
+  "input.hasRunMetadata",
+  "input.hasTimeout",
   "input.hasData",
   "input.hasOptions",
   "input.hasMessages",
@@ -846,8 +849,8 @@ function boundedObservation(
   const payload = boundedObservationPayload(observation.payload, payloadBudget, builtIns)
   const canonicalAttributes: Record<string, unknown> = {}
   if (observation.name === "agent.invocation.start") {
-    if (observation.attributes?.["input.replay.version"] === 1) canonicalAttributes["input.replay.version"] = 1
-    for (const key of ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages"]) {
+    if (observation.attributes?.["input.replay.version"] === 2) canonicalAttributes["input.replay.version"] = 2
+    for (const key of ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout"]) {
       const value = observation.attributes?.[key]
       if (hasRuntimeType(value, "boolean")) canonicalAttributes[key] = value
     }
@@ -978,6 +981,12 @@ export type AgentInvocationRerunUnavailableReason =
   | "input-truncated"
   /** The Invocation received messages or attachments, which the journal does not keep for replay. */
   | "input-has-messages"
+  /** Trusted input context cannot be reconstructed from the captured prompt and profile. */
+  | "input-has-context"
+  /** Semantic run metadata is not retained by the rerun input. */
+  | "input-has-run-metadata"
+  /** The original Invocation set a timeout. */
+  | "input-has-timeout"
 
 export type AgentInvocationRerunInput =
   | {
@@ -1004,9 +1013,12 @@ export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "o
   if (attributes["input.hasMessages"] === true || attributes["input.messages"] !== undefined) return { available: false, reason: "input-has-messages" }
   const prompt = attributes["input.prompt"]
   if (!hasRuntimeType(prompt, "string") || !prompt.trim()) return { available: false, reason: "input-not-captured" }
-  if (attributes["input.replay.version"] !== 1 || ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages"]
+  if (attributes["input.replay.version"] !== 2 || ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout"]
     .some(key => !hasRuntimeType(attributes[key], "boolean"))) return { available: false, reason: "replay-metadata-unavailable" }
   if (attributes["input.hasInvoker"] === true) return { available: false, reason: "input-has-invoker" }
+  if (attributes["input.hasContext"] === true) return { available: false, reason: "input-has-context" }
+  if (attributes["input.hasRunMetadata"] === true) return { available: false, reason: "input-has-run-metadata" }
+  if (attributes["input.hasTimeout"] === true) return { available: false, reason: "input-has-timeout" }
   const invokerProfileId = attributes["agent.invoker.profile.id"]
   return { available: true, ...hasRuntimeType(invokerProfileId, "string") && invokerProfileId ? { invokerProfileId } : {}, prompt }
 }
@@ -1826,7 +1838,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const identity = observationIdentity(observation)
       if (!redacted) return
       const inputRedacted = observation.name === "agent.invocation.start"
-        && ["input.prompt", "input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt"]
+        && ["input.prompt", "input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout"]
           .some(key => observation.attributes?.[key] !== redacted.attributes?.[key])
       return {
         ...redacted,

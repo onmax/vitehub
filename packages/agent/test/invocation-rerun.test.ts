@@ -19,7 +19,7 @@ function runtime(runId: string) {
   }
 }
 
-async function journaled(input: Parameters<typeof runAgent>[2], options: Partial<AgentInvocationsOptions> = {}, resolve?: () => { id: string, kind: "user", label: string }, profileId = "reviewer") {
+async function journaled(input: Parameters<typeof runAgent>[2], options: Partial<AgentInvocationsOptions> = {}, resolve?: () => { id: string, kind: "user", label: string }, profileId = "reviewer", runMetadata: Partial<NonNullable<Parameters<typeof runAgent>[1]["run"]>> = {}) {
   const invocations = defineAgentInvocations({ metadataContent: ["input.messages", "input.prompt"], ...options, store: createMemoryAgentInvocationStore() })
   const agent = defineAgent({
     data: v.unknown(),
@@ -29,7 +29,7 @@ async function journaled(input: Parameters<typeof runAgent>[2], options: Partial
     runtime: false,
   })
   const runId = `rerun-${Math.random().toString(36).slice(2)}`
-  await runAgent(agent, runtime(runId), input)
+  await runAgent(agent, { ...runtime(runId), run: { runId, ...runMetadata } }, input)
   await vi.waitFor(async () => {
     expect(await invocations.getByRunId(runId)).toMatchObject({ status: "completed" })
   })
@@ -37,7 +37,7 @@ async function journaled(input: Parameters<typeof runAgent>[2], options: Partial
 }
 
 const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
-  attributes: { "input.replay.version": 1, "input.hasInvoker": false, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false, ...attributes },
+  attributes: { "input.replay.version": 2, "input.hasContext": false, "input.hasRunMetadata": false, "input.hasTimeout": false, "input.hasInvoker": false, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false, ...attributes },
   name: "agent.invocation.start",
   sequence: 1,
   timestamp: new Date(0).toISOString(),
@@ -45,6 +45,21 @@ const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
 })
 
 describe("agentInvocationRerunInput", () => {
+  it("rejects replay that drops trusted input context", async () => {
+    const record = await journaled({ context: { trustedScope: "customer-a" }, prompt: "Hi" })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-context" })
+  })
+
+  it.each([{ channelId: "telegram" }, { origin: "trigger" }, { threadId: "customer-a" }, { annotations: { scope: "customer-a" } }])("rejects replay that drops semantic run metadata %j", async (runMetadata) => {
+    const record = await journaled({ prompt: "Hi" }, {}, undefined, "reviewer", runMetadata)
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-run-metadata" })
+  })
+
+  it("rejects replay that drops the Invocation timeout", async () => {
+    const record = await journaled({ prompt: "Hi", timeout: 1_000 })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-timeout" })
+  })
+
   it("keeps replay provenance when observation bounds remove other metadata", async () => {
     for (const direct of [false, true]) {
       const record = await journaled({ ...(direct ? { context: { invoker: { id: "direct-owner", kind: "person" } } } : {}), prompt: "Hi" }, {
@@ -53,7 +68,7 @@ describe("agentInvocationRerunInput", () => {
           : observation,
       })
       const attributes = record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes
-      expect(attributes).toMatchObject({ "input.replay.version": 1, "input.hasInvoker": direct, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false })
+      expect(attributes).toMatchObject({ "input.replay.version": 2, "input.hasInvoker": direct, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false })
       expect(agentInvocationRerunInput(record).available).toBe(false)
     }
   })
@@ -81,7 +96,7 @@ describe("agentInvocationRerunInput", () => {
 
   it("does not trust an injected profile observation context", async () => {
     const record = await journaled({ context: { "agent.invoker.profile.id": "reviewer" }, prompt: "Hi" })
-    expect(agentInvocationRerunInput(record)).toEqual({ available: true, prompt: "Hi" })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-context" })
   })
 
   it("does not treat resolved invoker identities as profile selectors", () => {
@@ -136,8 +151,8 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
   })
 
-  it.each(["input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt"])("rejects replay when redaction changes %s", async (key) => {
-    for (const replacement of [undefined, key === "agent.invoker.profile.id" ? "other-profile" : key === "input.replay.version" ? 2 : key !== "input.hasPrompt"]) {
+  it.each(["input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout"])("rejects replay when redaction changes %s", async (key) => {
+    for (const replacement of [undefined, key === "agent.invoker.profile.id" ? "other-profile" : key === "input.replay.version" ? 1 : key !== "input.hasPrompt"]) {
       const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Original prompt" }, {
         redact: observation => observation.name === "agent.invocation.start"
           ? { ...observation, attributes: { ...observation.attributes, [key]: replacement } }
