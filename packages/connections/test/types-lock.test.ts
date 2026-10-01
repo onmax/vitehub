@@ -137,3 +137,46 @@ it("keeps a newly acquired live lock when a second stale waiter resumes", async 
     await rm(root, { force: true, recursive: true });
   }
 });
+
+it("reclaims a dead owner's lock when its recorded PID belongs to another live process", async () => {
+  const root = await mkdtemp(join(tmpdir(), "vitehub-connections-reused-pid-"));
+  const directory = join(root, ".vitehub/connections-types.json.lock");
+  const script = join(root, "owner.mjs");
+  await writeFile(script, `
+    import fs from "node:fs/promises";
+    import { syncBuiltinESMExports } from "node:module";
+    const originalWrite = fs.writeFile;
+    fs.writeFile = async (...args) => {
+      if (String(args[0]) === ${JSON.stringify(join(root, "api/.vitehub/types/connections.d.ts"))}) {
+        process.send({ phase: "acquired" });
+        await new Promise(() => {});
+      }
+      return await originalWrite(...args);
+    };
+    syncBuiltinESMExports();
+    const { hubConnections } = await import(${JSON.stringify(new URL("../dist/vite.js", import.meta.url).href)});
+    await hubConnections({ projectRoot: "api" }).api.prepareTypes({ projectRoot: ${JSON.stringify(root)} });
+  `);
+  const original = fork(script, [], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  try {
+    await waitForMessage(original, "acquired");
+    const guards = await readdir(directory);
+    expect(guards).toHaveLength(1);
+    const guard = join(directory, guards[0]!);
+    const owner = JSON.parse(await readFile(guard, "utf8")) as { pid: number; ipc: boolean; host: string };
+    expect(owner.ipc).toBe(true);
+    expect(owner.pid).toBe(original.pid);
+    await stop(original);
+    // Simulate OS PID reuse with an unrelated process that remains alive throughout recovery.
+    await writeFile(guard, JSON.stringify({ ...owner, pid: process.pid }));
+    expect(() => process.kill(process.pid, 0)).not.toThrow();
+    const { hubConnections } = await import("../src/vite.ts");
+    await hubConnections({ projectRoot: "api" }).api!.prepareTypes({ projectRoot: root });
+    await expect(readFile(join(root, "api/.vitehub/types/connections.d.ts"), "utf8")).resolves.toBeTruthy();
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+    await expect(readFile(join(root, "api/.vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await stop(original);
+    await rm(root, { force: true, recursive: true });
+  }
+});
