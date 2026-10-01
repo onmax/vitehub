@@ -1,10 +1,17 @@
 import { execFileSync } from "node:child_process"
+import * as childProcess from "node:child_process"
+import { EventEmitter } from "node:events"
+import { PassThrough } from "node:stream"
 import { access, readFile, readdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("#vitehub/agent/registry", () => ({ default: {} }))
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>()
+  return { ...original, spawn: vi.fn(original.spawn) }
+})
 
 const inspectProvider = vi.hoisted(() => vi.fn())
 vi.mock("@t3tools/provider-runtime", () => ({ inspectProvider, createProviderRuntime: vi.fn(), createSqliteProviderRuntimeSessionStore: vi.fn() }))
@@ -23,7 +30,11 @@ const ready = () => ({
   enabled: true, installed: true, status: "ready", version: "1", checkedAt: new Date().toISOString(),
   auth: { status: "authenticated" }, usageLimits: { checkedAt: new Date().toISOString(), windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 25 }] },
 })
-afterEach(() => vi.resetAllMocks())
+afterEach(() => {
+  vi.resetAllMocks()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 describe("provider inspection", () => {
   it("groups identical credentials without disclosing them and caches only that scope", async () => {
@@ -31,6 +42,8 @@ describe("provider inspection", () => {
     const options = { provider: "codex" as const, credentials: '{"OPENAI_API_KEY":"fake-same-account"}' }
     const first = await inspectAgentProvider(options, context())
     const second = await inspectAgentProvider(options, { ...context(), agentIdentity: { name: "other" } })
+    const preflight = await inspectAgentProvider(options, context(), { checkRequirements: false })
+    expect(preflight.account).toEqual(first.account)
     expect(second.account).toEqual(first.account)
     expect(second.agent).toBe("other")
     expect(JSON.stringify(second)).not.toContain("fake-same-account")
@@ -89,6 +102,60 @@ describe("provider inspection", () => {
 
     const unchecked = await inspectAgentProvider({ provider: "codex" }, context())
     expect(unchecked).not.toHaveProperty("missingCommands")
+  })
+
+  it("selects one launcher target for requirements and the provider probe", async () => {
+    let selections = 0
+    const launch = vi.fn(({ command }: { command: string }) => ({
+      command: ++selections === 1 ? "sh" : "vitehub-wrong-runner",
+      args: ["-c", 'exec "$@"', "runner-a", command],
+    }))
+    inspectProvider.mockImplementation(async options => {
+      expect(execFileSync(options.settings.binaryPath, ["-e", 'process.stdout.write("same-runner")'], { encoding: "utf8" })).toBe("same-runner")
+      return ready()
+    })
+
+    const status = await inspectAgentProvider({ provider: "codex", providerSettings: { binaryPath: process.execPath }, launch, requirements: ["sh"] }, context())
+    expect(launch).toHaveBeenCalledOnce()
+    expect(status).toMatchObject({ missingCommands: [], readiness: "ready" })
+  })
+
+  it("redacts exact Driver environment values from requirement failures", async () => {
+    const secret = "bare-private-driver-value"
+    const launch = () => ({ command: process.execPath, args: ["-e", 'process.stderr.write(process.env.DRIVER_SECRET);process.exit(1)', "--"] })
+    const failure = await inspectAgentProvider({ provider: "codex", env: { DRIVER_SECRET: secret }, launch, requirements: ["sh"] }, context()).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect(String(failure)).toContain("[REDACTED]")
+    expect(String(failure)).not.toContain(secret)
+  })
+
+  it("returns missing Windows commands instead of rejecting status", async () => {
+    vi.stubGlobal("process", Object.create(process, { platform: { value: "win32" } }))
+    const spawn = vi.mocked(childProcess.spawn).mockImplementation((_command, args) => {
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() })
+      queueMicrotask(() => child.emit("close", args?.[0] === "missing" ? 1 : 0))
+      // SAFETY: The lookup only uses these ChildProcess streams and lifecycle events.
+      return child as never
+    })
+    inspectProvider.mockResolvedValue(ready())
+
+    const status = await inspectAgentProvider({ provider: "codex", requirements: ["available", "missing"] }, context())
+    expect(status).toMatchObject({ readiness: "unavailable", missingCommands: ["missing"] })
+    expect(spawn.mock.calls.map(call => [call[0], call[1]])).toEqual([["where.exe", ["available"]], ["where.exe", ["missing"]]])
+  })
+
+  it("skips command probes for invocation preflight without caching them as checked", async () => {
+    inspectProvider.mockResolvedValue(ready())
+    const launch = vi.fn(({ command }: { command: string }) => ({ command, args: [] }))
+    const options = { provider: "codex" as const, credentials: '{"OPENAI_API_KEY":"preflight-test-account"}', launch, requirements: ["vitehub-missing-command"] }
+    const preflight = await inspectAgentProvider(options, context(), { checkRequirements: false })
+    expect(preflight).not.toHaveProperty("missingCommands")
+    expect(launch.mock.calls[0]?.[0].command).toBe("/fake/codex")
+
+    const inspection = await inspectAgentProvider(options, context())
+    expect(inspection).toMatchObject({ missingCommands: ["vitehub-missing-command"], readiness: "unavailable" })
+    expect(launch).toHaveBeenCalledTimes(2)
+    expect(launch.mock.calls[1]?.[0].command).toBe("sh")
   })
 
   it("uses the configured launcher from its resolved working directory, then cleans it", async () => {
@@ -175,6 +242,7 @@ describe("invocation preflight", () => {
     await expect(runAgentInline(agent, { runtime: "unknown", memo: (_key, create) => create(), waitUntil: task => void task.catch(() => {}) }, { prompt: "hello" }))
       .rejects.toMatchObject({ code: "AGENT_R0726", fix: expect.stringContaining("spending limit") })
     expect(status).toHaveBeenCalledTimes(1)
+    expect(status).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ checkRequirements: false }))
     expect(prepare).not.toHaveBeenCalled()
     expect(close).not.toHaveBeenCalled()
   })

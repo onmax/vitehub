@@ -1364,7 +1364,7 @@ export interface AgentProviderStatus {
   stale: boolean
   installed?: boolean
   authenticated?: boolean
-  /** Commands from `driver.requirements` that the Driver shell cannot find. Present when requirements are set. */
+  /** Commands from `driver.requirements` that the Driver shell cannot find. Present when requirements are checked. */
   missingCommands?: string[]
   reason?: string
   usageLimits?: AgentProviderUsageLimits
@@ -1389,7 +1389,8 @@ export interface AgentProviderDriverOptions<
   providerSettings?: Record<string, unknown>
   /**
    * Commands the Driver shell needs, such as `git`, `gh`, or `unzip`.
-   * `status()` checks them where the Driver runs, through `driver.launch` when it is set.
+   * `status()` checks them where the Driver runs. With `driver.launch`, a resolver is required
+   * and inspection selects one shell launcher for command checks and provider health.
    */
   requirements?: readonly string[]
   /** SQLite file used to persist provider session cursors across process restarts. */
@@ -1634,7 +1635,11 @@ export interface AgentDefinition<
   runtime?: AgentRuntimeBinding
   runEvents?: AgentRunEvents
   /** Inspect provider credentials and quota without creating an invocation or sending a prompt. */
-  status?(context: AgentRuntimeContext<TRuntimeConfig>, options?: { abortSignal?: AbortSignal }): Promise<AgentProviderStatus>
+  status?(context: AgentRuntimeContext<TRuntimeConfig>, options?: {
+    abortSignal?: AbortSignal
+    /** Defaults to true. Invocation preflight sets false to avoid repeating command checks. */
+    checkRequirements?: boolean
+  }): Promise<AgentProviderStatus>
   resolve(context: AgentRuntimeContext<TRuntimeConfig>): Promise<AgentAdapter<CALL_OPTIONS>>
   run?(context: AgentRunContext<TRuntimeConfig, CALL_OPTIONS, WorkspaceName, TContextValues>): MaybePromise<Response | AgentRunResult | AsyncIterable<StreamEvent> | unknown>
   uiMessageStream?: AgentUIMessageStreamProjectionResolver<TRuntimeConfig, CALL_OPTIONS, TContextValues>

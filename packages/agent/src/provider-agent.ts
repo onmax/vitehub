@@ -1156,35 +1156,36 @@ const providerStatusCache = new WeakMap<object, Map<string, AgentProviderStatus>
 const providerRequirementScript = 'for command do command -v "$command" >/dev/null 2>&1 || printf "%s\\n" "$command"; done'
 
 /** Return the required commands that the Driver shell cannot find, checked where the Driver runs. */
-async function missingProviderCommands<TRuntimeConfig extends AgentRuntimeConfig>(
-  options: ProviderAgentAdapterOptions<TRuntimeConfig>,
-  context: AgentProviderCredentialContext<TRuntimeConfig>,
+async function missingProviderCommands(
+  requirements: readonly string[],
+  launch: AgentProviderLaunchCommand | undefined,
   environment: NodeJS.ProcessEnv,
   cwd: string,
   signal: AbortSignal | undefined,
 ): Promise<string[]> {
-  const requirements = [...new Set(options.requirements || [])]
-  if (!requirements.length) return []
-  const args = ["-c", providerRequirementScript, "sh", ...requirements]
-  const launch = options.launch === undefined
-    ? undefined
-    : normalizedProviderLaunch(await waitForProviderOperation(resolveRuntimeValue(options.launch, {
-        ...context, command: "sh", cwd, environment: Object.freeze({ ...environment }), requiredEnvironment: [],
-      }), signal))
-  const command = launch?.command ?? (process.platform === "win32" ? "where.exe" : "sh")
-  const argv = launch ? [...launch.args || [], ...args] : process.platform === "win32" ? requirements : args
-  return await new Promise((resolve, reject) => {
-    const child = spawn(command, argv, { cwd, env: environment, signal, stdio: ["ignore", "pipe", "pipe"] })
-    let stdout = ""
-    let stderr = ""
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = `${stderr}${chunk}`.slice(-4_096) })
-    child.once("error", reject)
-    child.once("close", (code) => {
-      if (code === 0) return resolve(launch || process.platform !== "win32" ? stdout.split("\n").map(line => line.trim()).filter(line => requirements.includes(line)) : [])
-      reject(new Error(`[vitehub] The Driver requirement check exited with ${code ?? "a signal"}. ${redactProviderDiagnostic(stderr.trim(), environment, Object.keys(environment))}`.trim()))
+  const commands = [...new Set(requirements)]
+  if (!commands.length) return []
+  const windows = !launch && process.platform === "win32"
+  async function check(args: string[]): Promise<string[]> {
+    return await new Promise((resolve, reject) => {
+      const child = spawn(launch?.command ?? (windows ? "where.exe" : "sh"), [...launch?.args || [], ...args], {
+        cwd, env: environment, signal, stdio: ["ignore", "pipe", "pipe"],
+      })
+      let stdout = ""
+      let stderr = ""
+      child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
+      child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = `${stderr}${chunk}`.slice(-4_096) })
+      child.once("error", reject)
+      child.once("close", (code) => {
+        if (windows && code === 1) return resolve(args)
+        if (code === 0) return resolve(windows ? [] : stdout.split("\n").map(line => line.trim()).filter(line => commands.includes(line)))
+        reject(new Error(`[vitehub] The Driver requirement check exited with ${code ?? "a signal"}. ${redactProviderDiagnostic(stderr.trim(), environment, Object.keys(environment))}`.trim()))
+      })
     })
-  })
+  }
+  return windows
+    ? (await Promise.all(commands.map(command => check([command])))).flat()
+    : await check(["-c", providerRequirementScript, "sh", ...commands])
 }
 const recentProviderQuotaFailures = new Map<string, { message: string, expiresAt: number }>()
 
@@ -1192,8 +1193,11 @@ const recentProviderQuotaFailures = new Map<string, { message: string, expiresAt
 export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeConfig>(
   options: ProviderAgentAdapterOptions<TRuntimeConfig>,
   context: AgentProviderCredentialContext<TRuntimeConfig>,
+  inspectionOptions: { checkRequirements?: boolean } = {},
 ): Promise<AgentProviderStatus> {
   const signal = context.abortSignal
+  const checkRequirements = inspectionOptions.checkRequirements !== false
+  const requirements = checkRequirements ? options.requirements || [] : []
   let home: CodexCredentialHome | undefined
   let root: string | undefined
   try {
@@ -1208,7 +1212,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
         readiness: "unavailable", reason: recent.message,
       }
       if (recent) recentProviderQuotaFailures.delete(home.scope)
-      const cached = providerStatusCache.get(options)?.get(home.scope)
+      const cached = providerStatusCache.get(options)?.get(`${home.scope}:${requirements.length > 0}`)
       if (cached && Date.now() - Date.parse(cached.checkedAt) < 30_000) return { ...cached, agent: context.agentIdentity?.name ?? "agent" }
     }
     const overrides = options.env === undefined ? undefined : normalizedProviderEnvironment(await waitForProviderOperation(resolveRuntimeValue(options.env, context), signal))
@@ -1220,18 +1224,23 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
     }, options.provider)
     const binary = options.providerSettings?.binaryPath ?? resolveInstalledProviderExecutable(options.provider)
     let binaryPath = binary
+    let requirementLaunch: AgentProviderLaunchCommand | undefined
     if (options.launch !== undefined) {
       root = await mkdtemp(join(tmpdir(), "vitehub-provider-inspection-"))
       const command = hasRuntimeType(binary, "string") && binary.trim() ? binary : options.provider === "codex" ? "codex" : "claude"
       const launch = normalizedProviderLaunch(await waitForProviderOperation(resolveRuntimeValue(options.launch, {
-        ...context, command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: home ? ["CODEX_HOME"] : [],
+        ...context, command: requirements.length ? "sh" : command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: home ? ["CODEX_HOME"] : [],
       }), signal))
       signal?.throwIfAborted()
-      binaryPath = (await materializeProviderLauncher(root, launch, providerSecretEnvironmentKeys(overrides, []), root)).path
+      requirementLaunch = requirements.length ? launch : undefined
+      const providerLaunch = requirements.length
+        ? { ...launch, args: [...launch.args || [], "-c", 'exec "$@"', "sh", command] }
+        : launch
+      binaryPath = (await materializeProviderLauncher(root, providerLaunch, providerSecretEnvironmentKeys(overrides, []), root)).path
     }
     const launchArgs = [options.providerSettings?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
     signal?.throwIfAborted()
-    const missingCommands = await missingProviderCommands(options, context, environment, root || process.cwd(), signal)
+    const missingCommands = await missingProviderCommands(requirements, requirementLaunch, environment, root || process.cwd(), signal)
     signal?.throwIfAborted()
     const snapshot = await inspectProvider({
       provider: options.provider, environment, signal,
@@ -1245,7 +1254,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       agent: context.agentIdentity?.name ?? "agent", provider: options.provider,
       ...(home?.scope ? { account: { id: home.scope, kind: "credential" as const } } : {}),
       checkedAt: snapshot.checkedAt, stale: false, installed: snapshot.installed, authenticated, readiness,
-      ...(options.requirements?.length ? { missingCommands } : {}),
+      ...(requirements.length ? { missingCommands } : {}),
       reason: missingCommands.length ? `Driver commands are missing: ${missingCommands.join(", ")}.` : exhausted ? "Subscription quota is exhausted." : !snapshot.installed ? "Provider executable is unavailable." : authenticated === false ? "Provider is signed out." : readiness === "unknown" ? "Provider readiness could not be fully verified." : "Reported subscription quota is available. Workspace spending limits are not reported by this provider probe.",
       ...(snapshot.usageLimits ? { usageLimits: {
         checkedAt: snapshot.usageLimits.checkedAt,
@@ -1256,7 +1265,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
     if (home?.scope) {
       const cache = providerStatusCache.get(options) ?? new Map<string, AgentProviderStatus>()
       if (cache.size >= 128) cache.clear()
-      cache.set(home.scope, result)
+      cache.set(`${home.scope}:${requirements.length > 0}`, result)
       providerStatusCache.set(options, cache)
     }
     return result

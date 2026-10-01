@@ -128,7 +128,7 @@ ViteHub resolves `env` once, then gives `launch` the selected environment, provi
 
 Agent inspection reports whether `env` and `launch` are static or dynamic without resolving either value.
 
-Set `requirements` to the commands that the provider's own shell needs, for example `['git', 'gh', 'unzip', 'apply_patch']`. `agent.status()` checks each command with `command -v` where the Driver runs. With `launch`, the check starts through the same wrapper, so an SSH runner is checked on the runner. Missing commands make the status `unavailable` and appear in `status.missingCommands` and `status.reason`. Invocations do not repeat the check.
+Set `requirements` to the commands that the provider's own shell needs, for example `['git', 'gh', 'unzip', 'apply_patch']`. `agent.status()` checks each command with `command -v` where the Driver runs, or `where.exe` for a local Windows Driver. With `launch`, requirements need a resolver. Status inspection resolves it once with `command: 'sh'` and runs both command checks and the provider probe through that target, so an SSH runner is checked on the runner. Missing commands make the status `unavailable` and appear in `status.missingCommands` and `status.reason`. Invocations do not repeat the check.
 
 Threads resume with the provider's opaque cursor. ViteHub normalizes assistant text, reasoning, native and Capability tool activity, approvals, provider questions, usage, warnings, errors, and terminal state into Agent Invocation events.
 
