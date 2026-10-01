@@ -1,5 +1,7 @@
 /// <reference path="../virtual-module.d.ts" />
 
+import * as v from "valibot"
+
 import { kv as kvConfig } from "#vitehub/kv/config"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { redactInspectionText } from "@vite-hub/internal/inspect"
@@ -136,13 +138,10 @@ function readPositiveInteger(body: object, name: string): number | undefined {
   return value
 }
 
-function readTTL(body: object): number | undefined {
-  const value: unknown = Reflect.get(body, "ttl")
-  if (value === undefined) return
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    throw new KVDevRequestError("ttl must be a positive number.", 400)
-  }
-  return value
+function readTTL(body: unknown): number | undefined {
+  const parsed = v.safeParse(v.object({ ttl: v.optional(v.pipe(v.number(), v.finite(), v.gtValue(0))) }), body)
+  if (!parsed.success) throw new KVDevRequestError("ttl must be a positive number.", 400)
+  return parsed.output.ttl
 }
 
 async function readBody(request: Request): Promise<KVDevRequestBody> {
