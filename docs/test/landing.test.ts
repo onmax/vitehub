@@ -137,7 +137,7 @@ describe("landing page", () => {
       new URL("../app/components/landing/Primitives.vue", import.meta.url),
       "utf8",
     );
-    expect(primitives).toContain('@click="replay += 1"');
+    expect(primitives).toContain("Replay scenes");
     expect(installCommand).toContain(
       `:class="activeTab === 'package' ? 'w-[16.5rem]' : 'w-0'"`,
     );

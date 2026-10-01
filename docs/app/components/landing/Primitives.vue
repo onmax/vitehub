@@ -48,6 +48,13 @@ function offset(index: number) {
               aria-hidden="true"
             />
           </NuxtLink>
+          <button
+            type="button"
+            class="mt-3 inline-flex min-h-10 items-center text-sm font-medium text-highlighted underline decoration-dotted underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+            @click="replay += 1"
+          >
+            Replay scenes
+          </button>
         </div>
       </div>
 
@@ -55,7 +62,6 @@ function offset(index: number) {
         ref="grid"
         class="mt-10 grid grid-cols-2 gap-px border border-default bg-[var(--ui-border)] sm:grid-cols-3 lg:mt-12 lg:grid-cols-6"
         role="list"
-        @click="replay += 1"
       >
         <li v-for="(primitive, index) in landingPrimitives" :key="`${primitive.id}-${replay}`" class="min-w-0 bg-default">
           <NuxtLink
