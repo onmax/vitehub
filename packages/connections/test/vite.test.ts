@@ -195,11 +195,11 @@ describe("hubConnections", () => {
     await expect(readFile(join(root, "api/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
   });
 
-  it("retires a previous custom output when changing the configured root", async () => {
+  it("retains previous custom output until cleanup when changing the configured root", async () => {
     const root = await createTempProject();
     await hubConnections({ projectRoot: "packages/old" }).api.prepareTypes({ projectRoot: root });
     await hubConnections({ projectRoot: "packages/new" }).api.prepareTypes({ projectRoot: root });
-    await expect(readFile(join(root, "packages/old/.vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(root, "packages/old/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
     await expect(readFile(join(root, "packages/new/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
   });
 
@@ -236,5 +236,18 @@ describe("hubConnections", () => {
     await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: firstRoot });
 
     await expect(readFile(join(secondRoot, "packages/api/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+  });
+
+  it("retains both roots when preparation runs concurrently", async () => {
+    const root = await createTempProject();
+    await Promise.all([
+      hubConnections({ projectRoot: "packages/one" }).api.prepareTypes({ projectRoot: root }),
+      hubConnections({ projectRoot: "packages/two" }).api.prepareTypes({ projectRoot: root }),
+    ]);
+
+    const manifest = JSON.parse(await readFile(join(root, ".vitehub/connections-types.json"), "utf8")) as Array<{ root: string }>;
+    expect(manifest.map(entry => entry.root).sort()).toEqual(["packages/one", "packages/two"]);
+    await expect(readFile(join(root, "packages/one/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+    await expect(readFile(join(root, "packages/two/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
   });
 });

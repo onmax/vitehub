@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { lstat, readFile, rm } from "node:fs/promises"
+import { lstat, mkdir, readFile, rm } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path";
 
 import * as v from "valibot";
@@ -28,10 +28,12 @@ const noExternalAddition = createNoExternalAddition("@vite-hub/connections");
 // Keep prior output ownership with the project so cleanup works after a restart.
 const generatedTypesManifest = ".vitehub/connections-types.json";
 const generatedTypesPath = ".vitehub/types/connections.d.ts";
-const generatedTypesManifestSchema = v.object({
+const generatedTypesManifestEntrySchema = v.object({
   root: v.pipe(v.string(), v.check(root => !isAbsolute(root))),
   hash: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
 });
+const generatedTypesManifestSchema = v.array(generatedTypesManifestEntrySchema);
+const generatedTypesManifestLock = ".vitehub/connections-types.json.lock";
 
 async function removeLegacyDefaultTypes(root: string): Promise<void> {
   const file = resolve(root, generatedTypesPath);
@@ -54,27 +56,70 @@ async function readOptionalFile(file: string): Promise<string | undefined> {
   }
 }
 
+async function withManifestLock<T>(root: string, action: () => Promise<T>): Promise<T> {
+  await mkdir(resolve(root, ".vitehub"), { recursive: true });
+  const lock = resolve(root, generatedTypesManifestLock);
+  for (;;) {
+    try {
+      await mkdir(lock, { recursive: false });
+      try {
+        return await action();
+      } finally {
+        await rm(lock, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+      await new Promise<void>(resolve => setTimeout(resolve, 5));
+    }
+  }
+}
+
 async function removeTrackedTypes(root: string, retainedRoot?: string): Promise<void> {
-  const manifest = resolve(root, generatedTypesManifest);
-  const content = await readOptionalFile(manifest);
-  if (content === undefined) return;
-  let input: unknown;
-  try {
-    input = JSON.parse(content);
-  } catch (error) {
-    if (error instanceof SyntaxError) return;
-    throw error;
-  }
-  const parsed = v.safeParse(generatedTypesManifestSchema, input);
-  if (!parsed.success) return;
-  const trackedRoot = resolve(root, parsed.output.root);
-  if (trackedRoot === retainedRoot) return;
-  const file = resolve(trackedRoot, generatedTypesPath);
-  const previous = await readOptionalFile(file);
-  if (previous !== undefined && typeHash(previous) === parsed.output.hash && (await lstat(file)).isFile()) {
-    await rm(file, { force: true });
-  }
-  await rm(manifest, { force: true });
+  await withManifestLock(root, async () => {
+    const manifest = resolve(root, generatedTypesManifest);
+    const content = await readOptionalFile(manifest);
+    if (content === undefined) return;
+    let input: unknown;
+    try {
+      input = JSON.parse(content);
+    } catch (error) {
+      if (error instanceof SyntaxError) return;
+      throw error;
+    }
+    const parsed = v.safeParse(generatedTypesManifestSchema, Array.isArray(input) ? input : [input]);
+    if (!parsed.success) return;
+    const entries = parsed.output.filter(entry => resolve(root, entry.root) !== retainedRoot);
+    for (const entry of entries) {
+      const file = resolve(resolve(root, entry.root), generatedTypesPath);
+      const previous = await readOptionalFile(file);
+      if (previous !== undefined && typeHash(previous) === entry.hash && (await lstat(file)).isFile()) {
+        await rm(file, { force: true });
+      }
+    }
+    await rm(manifest, { force: true });
+  });
+}
+
+async function recordGeneratedTypes(root: string, projectRoot: string, hash: string): Promise<void> {
+  await withManifestLock(root, async () => {
+    const manifest = resolve(root, generatedTypesManifest);
+    const content = await readOptionalFile(manifest);
+    let input: unknown = [];
+    if (content !== undefined) {
+      try {
+        input = JSON.parse(content);
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+    }
+    const parsed = v.safeParse(generatedTypesManifestSchema, Array.isArray(input) ? input : input ? [input] : []);
+    const entries = parsed.success ? parsed.output : [];
+    const next = [
+      ...entries.filter(entry => resolve(root, entry.root) !== projectRoot),
+      { root: relative(root, projectRoot), hash },
+    ];
+    await writeFileIfChanged(manifest, JSON.stringify(next));
+  });
 }
 
 export interface ConnectionsVitePluginOptions {
@@ -159,6 +204,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
   let serverDirs: string[] | undefined;
   let defaultProjectRoot = resolveViteHubProjectRoot(process.cwd())
   let projectRoot = process.cwd();
+  let generatedRoot: string | undefined;
   let nitroRegistryFile: string | undefined;
 
   function refresh(): DiscoveredConnectionDefinition[] {
@@ -169,7 +215,6 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
   }
 
   async function refreshGeneratedFiles(): Promise<void> {
-    await removeTrackedTypes(defaultProjectRoot, projectRoot)
     if (projectRoot !== defaultProjectRoot) await removeLegacyDefaultTypes(defaultProjectRoot)
     await Promise.all([
       writeFileIfChanged(
@@ -180,10 +225,8 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
         ? [writeFileIfChanged(nitroRegistryFile, renderRegistry(definitions, database))]
         : []),
     ]);
-    await writeFileIfChanged(resolve(defaultProjectRoot, generatedTypesManifest), JSON.stringify({
-      root: relative(defaultProjectRoot, projectRoot),
-      hash: typeHash(renderRegistryTypes(definitions)),
-    }));
+    await recordGeneratedTypes(defaultProjectRoot, projectRoot, typeHash(renderRegistryTypes(definitions)));
+    generatedRoot = projectRoot;
   }
 
   return {
