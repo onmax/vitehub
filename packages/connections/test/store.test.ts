@@ -116,3 +116,35 @@ it("updates Connection metadata atomically at the token revision", async () => {
   }
   finally { client.close() }
 })
+
+it.each(["pending", "executed"] as const)("paginates %s approvals without skipping or repeating entries", async (status) => {
+  const client = createClient({ url: ":memory:" })
+  try {
+    const store = createDatabaseConnectionStore({ db: drizzle(client), encryptionKey: new Uint8Array(32).fill(9) })
+    for (let index = 0; index < 205; index++) {
+      await store.approvals.create({
+        id: `approval-${index}`,
+        name: "mail",
+        actor: "agent:test",
+        action: "mail.write",
+        input: {},
+        status,
+        createdAt: "2026-09-30T00:00:00.000Z",
+      })
+    }
+    await store.approvals.create({ id: "other-connection", name: "calendar", actor: "agent:test", action: "calendar.write", input: {}, status, createdAt: "2026-09-30T00:00:00.000Z" })
+    const first = await store.approvals.list({ name: "mail", status })
+    expect(first.approvals.map(approval => approval.id)).toEqual(Array.from({ length: 100 }, (_, index) => `approval-${204 - index}`))
+    expect(first.nextCursor).toBe("approval-105")
+    const second = await store.approvals.list({ name: "mail", status, before: first.nextCursor })
+    expect(second.approvals.map(approval => approval.id)).toEqual(Array.from({ length: 100 }, (_, index) => `approval-${104 - index}`))
+    expect(second.nextCursor).toBe("approval-5")
+    const last = await store.approvals.list({ name: "mail", status, before: second.nextCursor })
+    expect(last.approvals.map(approval => approval.id)).toEqual(["approval-4", "approval-3", "approval-2", "approval-1", "approval-0"])
+    expect(last.nextCursor).toBeUndefined()
+    if (status === "pending") expect(await store.approvals.pendingCounts(["mail", "calendar"])).toEqual({ mail: 205, calendar: 1 })
+  }
+  finally {
+    client.close()
+  }
+})

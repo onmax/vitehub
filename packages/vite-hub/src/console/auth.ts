@@ -1,5 +1,6 @@
 import type { AuthAccessAuthorize, AuthDefinition, AuthDefinitionInput, AuthResolvedDefinitionOptions, AuthRuntimeConfiguration, AuthRuntimeContext, AuthSignInConfiguration } from "@vite-hub/auth"
 import { createAuthForRequest } from "@vite-hub/auth/server"
+import * as v from "valibot"
 import { consoleAuthPath } from "./auth-path.ts"
 
 export const consoleAuthBasePath = "/api/_vitehub/console/auth"
@@ -223,4 +224,20 @@ export function createConsoleAuthDefinition(input: ConsoleAuthDefinition, mountB
       }
     },
   } as AuthDefinition<AuthDefinitionInput>
+}
+
+const consoleSessionSchema = v.object({ user: v.object({ id: v.pipe(v.string(), v.minLength(1)) }) })
+
+/** The part of a ViteHub Auth instance that reads the signed-in session. */
+export interface ConsoleSessionReader {
+  api: { getSession: (input: { headers: Headers }) => Promise<unknown> }
+}
+
+/**
+ * Identify the signed-in Console user as `user:<id>`, for example for Connections management activity.
+ * Returns `undefined` when the request has no session. Session lookup errors propagate so that an action is never recorded for the wrong user.
+ */
+export async function consoleSessionActor(auth: ConsoleSessionReader, request: Pick<Request, "headers">): Promise<string | undefined> {
+  const session = v.safeParse(consoleSessionSchema, await auth.api.getSession({ headers: request.headers }))
+  return session.success ? `user:${session.output.user.id}` : undefined
 }

@@ -348,7 +348,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("retargets a stacked PR to the default branch after its parent merged there", async () => {
-    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
+    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { sha: "c".repeat(40), ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
     const f = await fixture(false, false, { base: "feat/parent", parents });
     try {
       await f.reconcile();
@@ -359,7 +359,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("keeps a stacked PR on its base while the parent is unmerged or landed elsewhere", async () => {
-    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "feat/grandparent" } }];
+    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { sha: "c".repeat(40), ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "feat/grandparent" } }];
     const f = await fixture(false, false, { base: "feat/parent", parents });
     try {
       await f.reconcile();
@@ -421,6 +421,50 @@ describe("Babysitter preset runtime", () => {
       createProviderRuntime.mockClear();
       await f.reconcile().catch(() => {});
       expect(createProviderRuntime).not.toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("does not retry a provider failure after updating GitHub metadata", async () => {
+    const f = await fixture(false, false, { providerRetryDelayMs: 1 });
+    f.choose("updatePullRequest", { title: "Repaired title" });
+    const implementation = createProviderRuntime.getMockImplementation()!;
+    createProviderRuntime.mockImplementation(async (...args) => {
+      const runtime = await implementation(...args);
+      return { ...runtime, events: {
+        async *[Symbol.asyncIterator]() {
+          for await (const event of runtime.events) {
+            yield event;
+            throw new Error("429 Too Many Requests");
+          }
+        },
+      } };
+    });
+    try {
+      await f.reconcile().catch(() => {});
+      expect(f.passes).toHaveLength(1);
+      expect(f.command.mock.calls.filter(([args]) => args.includes("PATCH"))).toHaveLength(1);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("resets the exhausted Babysitter budget only for new repair evidence", async () => {
+    const f = await fixture();
+    const feedback = (id: number) => f.runtime.inbox.ingest(`budget-feedback-${id}`, "issue_comment", {
+      repository: { full_name: "acme/app" }, action: "created", issue: { number: 12, pull_request: {} },
+      comment: { id, body: `Repair finding ${id}`, user: { login: "reviewer" } },
+    });
+    try {
+      await f.reconcile();
+      for (const id of [1, 2]) { await feedback(id); await f.reconcile(); }
+      expect((await f.runtime.inbox.get("acme/app", 12))?.progressBudget?.exhausted).toBe(true);
+      await f.runtime.inbox.ingest("budget-pending", "status", {
+        repository: { full_name: "acme/app" }, sha: f.pr().head.sha, context: "test", state: "pending",
+      });
+      await f.reconcile();
+      expect(f.passes).toHaveLength(3);
+      await feedback(3);
+      await f.reconcile();
+      expect(f.passes).toHaveLength(4);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.progressBudget?.count).toBe(1);
     } finally { await f.runtime.inbox.close(); }
   });
 

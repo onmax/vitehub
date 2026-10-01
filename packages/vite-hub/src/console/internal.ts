@@ -4,7 +4,7 @@ import type { BlobStorage } from "@vite-hub/blob"
 import type { RuntimeDatabaseEntry } from "@vite-hub/database/drizzle"
 import type { KVStorage } from "@vite-hub/kv"
 import type { ScheduleDefinitionRegistry } from "@vite-hub/schedule"
-import type { ConsoleDefinitionCatalog } from "./runtime/definitions.ts"
+import type { ConsoleSectionCatalog } from "./runtime/definitions.ts"
 import type { ConsoleSectionId } from "./runtime/sections.ts"
 
 export const consoleDefinitionsKey: unique symbol = Symbol.for("vitehub.console.definitions")
@@ -52,8 +52,8 @@ type ConsoleInvocationsByRoot = {
 }
 
 type ConsoleDefinitionsByRoot = {
-  get(key: string): ConsoleDefinitionCatalog | undefined
-  set(key: string, value: ConsoleDefinitionCatalog): unknown
+  get(key: string): ConsoleSectionCatalog | undefined
+  set(key: string, value: ConsoleSectionCatalog): unknown
   readonly size: number
 }
 
@@ -110,7 +110,7 @@ type ConsoleDatabaseByRoot = {
 
 type ConsoleInvocationRegistry = Record<
   symbol,
-  AgentInvocations | boolean | ConsoleBlobByRoot | ConsoleBlobInspection | ConsoleDatabaseByRoot | ConsoleDatabaseInspection | ConsoleDefinitionCatalog | ConsoleDefinitionsByRoot | string | readonly ConsoleSectionId[] | ConsoleInvocationsByRoot | ConsoleInvocationIdentitiesByRoot | ConsoleKVByRoot | ConsoleKVInspection | ConsoleEnvByRoot | ConsoleEnvInspection | ConsoleSchedulesByRoot | ScheduleDefinitionRegistry | ConsoleSectionsByRoot | undefined
+  AgentInvocations | boolean | ConsoleBlobByRoot | ConsoleBlobInspection | ConsoleDatabaseByRoot | ConsoleDatabaseInspection | ConsoleSectionCatalog | ConsoleDefinitionsByRoot | string | readonly ConsoleSectionId[] | ConsoleInvocationsByRoot | ConsoleInvocationIdentitiesByRoot | ConsoleKVByRoot | ConsoleKVInspection | ConsoleEnvByRoot | ConsoleEnvInspection | ConsoleSchedulesByRoot | ScheduleDefinitionRegistry | ConsoleSectionsByRoot | undefined
 >
 
 type ConsoleInvocationIdentitiesByRoot = {
@@ -146,7 +146,7 @@ export type ConsoleInvocationScope = {
   [consoleDatabaseKey]?: ConsoleDatabaseInspection
   [consoleDatabaseRegistryKey]?: ConsoleDatabaseByRoot
   [consoleDatabaseRootKey]?: string
-  [consoleDefinitionsKey]?: ConsoleDefinitionCatalog
+  [consoleDefinitionsKey]?: ConsoleSectionCatalog
   [consoleDefinitionsRegistryKey]?: ConsoleDefinitionsByRoot
   [consoleDefinitionsRootKey]?: string
   [consoleInvocationsKey]?: AgentInvocations
@@ -462,14 +462,14 @@ export function installConsoleInvocationFallback(
 
 export function installConsoleDefinitionScope(
   projectRoot: string,
-  catalog: ConsoleDefinitionCatalog,
+  catalog: ConsoleSectionCatalog,
   scope: ConsoleInvocationScope = defaultConsoleInvocationScope(),
-): ConsoleDefinitionCatalog {
+): ConsoleSectionCatalog {
   scope[consoleDefinitionsRootKey] = projectRoot
   scope[consoleDefinitionsKey] = catalog
   const registry = processRegistry(scope)
   if (registry) {
-    const catalogs = definitionsByRoot(registry[consoleDefinitionsRegistryKey]) ?? new Map<string, ConsoleDefinitionCatalog>()
+    const catalogs = definitionsByRoot(registry[consoleDefinitionsRegistryKey]) ?? new Map<string, ConsoleSectionCatalog>()
     catalogs.set(projectRoot, catalog)
     registry[consoleDefinitionsRegistryKey] = catalogs
     registry[consoleDefinitionsKey] = catalog
@@ -479,13 +479,13 @@ export function installConsoleDefinitionScope(
 
 export function resolveConsoleDefinitions(
   scope: ConsoleInvocationScope = defaultConsoleInvocationScope(),
-): ConsoleDefinitionCatalog | undefined {
+): ConsoleSectionCatalog | undefined {
   const root = scope[consoleDefinitionsRootKey]
   const registered = definitionsByRoot(processRegistry(scope)?.[consoleDefinitionsRegistryKey])
   if (root) return registered?.get(root) ?? scope[consoleDefinitionsKey]
   if (registered && registered.size > 1) return scope[consoleDefinitionsKey]
   // SAFETY: installConsoleDefinitionScope is the only writer for this process registry key.
-  return (processRegistry(scope)?.[consoleDefinitionsKey] as ConsoleDefinitionCatalog | undefined)
+  return (processRegistry(scope)?.[consoleDefinitionsKey] as ConsoleSectionCatalog | undefined)
     ?? scope[consoleDefinitionsKey]
 }
 

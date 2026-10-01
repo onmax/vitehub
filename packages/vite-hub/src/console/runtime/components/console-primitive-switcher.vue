@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { createAuthClient } from "@vite-hub/auth/vue";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, shallowRef } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
+import type { ConsoleNavigation } from "../client/sections";
 import type { ConsoleSectionId } from "../sections";
-import { loadConsoleNavigation } from "../client/sections";
+import { loadConsoleNavigation, resolveConsoleSectionDetails } from "../client/sections";
 import { resolveConsoleRouteName } from "../console-route";
 import { consoleSectionDetails } from "../sections";
 
@@ -18,6 +19,7 @@ const route = useRoute();
 const router = useRouter();
 const navigationFailed = ref(false);
 const sections = ref<ConsoleSectionId[]>([]);
+const installedNavigation = shallowRef<ConsoleNavigation>();
 const signedIn = ref(false);
 const signingOut = ref(false);
 const signOutFailed = ref(false);
@@ -30,12 +32,17 @@ const signOutLabel = computed(() => (accessIdentity.value?.label ? `Sign out ${a
 const items = computed(() =>
   sections.value
     .filter((section) => section !== "usage" && !props.exclude?.includes(section))
-    .map((section) => ({ id: section, ...consoleSectionDetails[section] })),
+    .flatMap((section) => {
+      const details = resolveConsoleSectionDetails(installedNavigation.value, section);
+      return details ? [{ id: section, ...details }] : [];
+    }),
 );
 
 async function openSection(section: ConsoleSectionId): Promise<void> {
+  const details = resolveConsoleSectionDetails(installedNavigation.value, section);
+  if (!details) return;
   await router.push({
-    name: resolveConsoleRouteName(route.name, consoleSectionDetails[section].routeName),
+    name: resolveConsoleRouteName(route.name, details.routeName),
   });
 }
 
@@ -46,6 +53,7 @@ async function loadSections(): Promise<void> {
     navigationFailed.value = true;
     return;
   }
+  installedNavigation.value = navigation;
   sections.value = navigation.sections;
   if (navigation.auth === "cloudflare-access") void loadAccessIdentity();
   else if (navigation.auth) void loadAuthSession();

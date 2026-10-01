@@ -118,16 +118,15 @@ const babysitterIntake = defineChannel("babysitter-github", {
 });
 
 /** A repair workflow. Connections, provider settings and host resources stay in the application. */
-export type BabysitterAgent = ConfiguredAgentDefinition<
-  BabysitterOptions,
-  AgentDefinition<
-    AgentRuntimeConfig,
-    unknown,
-    AgentInvokerProfile,
-    AgentInvocationContextValues,
-    BabysitterPassResult
-  >
->;
+type BabysitterDefinition = AgentDefinition<
+  AgentRuntimeConfig,
+  unknown,
+  AgentInvokerProfile,
+  AgentInvocationContextValues,
+  BabysitterPassResult
+> & { reviewChecks: string[] };
+
+export type BabysitterAgent = ConfiguredAgentDefinition<BabysitterOptions, BabysitterDefinition>;
 
 export const babysitter: BabysitterAgent = defineAgent({
   options: {
@@ -141,7 +140,7 @@ export const babysitter: BabysitterAgent = defineAgent({
     concurrency: 1,
     autoMerge: false,
   },
-  configure: ({ driver, merge, autoMerge, concurrency }) => {
+  configure: ({ driver, merge, reviewChecks, autoMerge, concurrency }) => {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
       throw new TypeError("[vitehub] Babysitter concurrency must be a positive integer.");
     }
@@ -150,7 +149,7 @@ export const babysitter: BabysitterAgent = defineAgent({
     }
     // Validate merge settings when the Agent is defined, not on the first PR.
     resolveBabysitterMerge(merge, autoMerge);
-    return withAgentProcessHost(defineAgent({
+    const definition = defineAgent({
       description: "Repair selected pull requests and wait for their checks and reviews.",
       // Signed GitHub deliveries feed the PR inbox. They never start the Agent directly.
       channels: { github: babysitterIntake },
@@ -162,6 +161,7 @@ export const babysitter: BabysitterAgent = defineAgent({
         },
         output: { schema: babysitterPassResultSchema },
       },
-    }), babysitterHost);
+    });
+    return withAgentProcessHost(Object.assign(definition, { reviewChecks }), babysitterHost);
   },
 });

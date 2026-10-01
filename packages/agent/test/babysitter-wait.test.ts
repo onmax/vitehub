@@ -57,6 +57,22 @@ describe("Babysitter check waits", () => {
     expect(shouldKeepWaiting(await parked(s => { s.wait = { ...s.wait!, headSha: "b".repeat(40) } }), "unknown", policy)).toBe(true);
   });
 
+  it("keeps repeated status failures parked when their record ID changes", async () => {
+    const snapshot = await parked(s => {
+      s.statuses.deploy = { id: 1, sha: head, context: "deploy", state: "failure" };
+      s.wait = { headSha: head, ...createCheckWait(s, policy) };
+    });
+    snapshot.statuses.deploy = { ...snapshot.statuses.deploy, id: 2 };
+    expect(shouldKeepWaiting(snapshot, "failed", policy)).toBe(true);
+  });
+
+  it.each(["cancelled", "stale"])("wakes for a new %s check", async conclusion => {
+    const snapshot = await parked(s => {
+      s.checks["check_run:2"] = { id: 2, name: "test", head_sha: head, status: "completed", conclusion, app: { id: 5 } };
+    });
+    expect(shouldKeepWaiting(snapshot, "failed", policy)).toBe(false);
+  });
+
   it("recognizes external gates in a park result", () => {
     expect(isExternalWaitResult("Checks are still running.")).toBe(true);
     expect(isExternalWaitResult("Waiting for review webhooks.")).toBe(true);
@@ -75,10 +91,13 @@ describe("Babysitter required checks", () => {
 });
 
 describe("Babysitter stacked PRs", () => {
-  const pr = { number: 7, base: { ref: "feat/parent", repo: { full_name: repository, default_branch: "main", owner: { login: "acme" } } } };
-  const parent = (state: string, merged: boolean, base: string) => ({ state, merged_at: merged ? "2026-10-01T00:00:00Z" : null, head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: base } });
+  const pr = { number: 7, base: { sha: "b".repeat(40), ref: "feat/parent", repo: { full_name: repository, default_branch: "main", owner: { login: "acme" } } } };
+  const parent = (state: string, merged: boolean, base: string) => ({ state, merged_at: merged ? "2026-10-01T00:00:00Z" : null, head: { sha: "b".repeat(40), ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: base } });
   it("retargets only after the parent merged into the default branch", () => {
     expect(stackRetargetBase(pr, [parent("closed", true, "main")])).toBe("main");
+    const historic = parent("closed", true, "main");
+    historic.head.sha = "c".repeat(40);
+    expect(stackRetargetBase(pr, [historic, parent("closed", false, "main")])).toBeUndefined();
     expect(stackRetargetBase(pr, [parent("open", false, "main")])).toBeUndefined();
     expect(stackRetargetBase(pr, [parent("closed", false, "main")])).toBeUndefined();
     expect(stackRetargetBase(pr, [parent("closed", true, "feat/grandparent")])).toBeUndefined();

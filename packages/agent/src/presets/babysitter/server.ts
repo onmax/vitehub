@@ -103,7 +103,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   });
   const waitPolicy: BabysitterWaitPolicy = {
     workerAuthors: new Set(activityAuthors.flatMap(author => [author.toLowerCase(), `${author.toLowerCase().replace(/\[bot\]$/, "")}[bot]`])),
-    pendingReviewChecks: new Set((presetOptions.reviewChecks ?? []).map(name => name.toLowerCase())),
+    pendingReviewChecks: new Set((baseAgent.reviewChecks ?? presetOptions.reviewChecks ?? []).map(name => name.toLowerCase())),
     wakeWhenReady: merge.mode === "direct",
   };
   const schedulerEvent = (name: string, properties: Record<string, unknown> = {}) =>
@@ -221,10 +221,17 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
    * Merges a PR that inbox evidence, the merge policy, and GitHub's live state all report ready.
    * Returns false, and the PR gets a normal pass, on any doubt.
    */
-  async function mergeReadyPullRequest(claim: Claim, owner: Record<string, unknown>): Promise<boolean> {
+  async function mergeReadyPullRequest(claim: Claim, owner: Record<string, unknown>, signal: AbortSignal): Promise<boolean> {
     if (merge.mode !== "direct") return false;
     const { snapshot } = claim;
     const { repository, number } = snapshot;
+    // A recovered claim may still represent an interrupted merge whose outcome
+    // has not been proven by a closed live read. Keep it out of the repair pass
+    // until hydration clears the fence.
+    if (await pullRequestInbox.hasMergeIntent(claim)) {
+      await pullRequestInbox.release(claim);
+      return true;
+    }
     const base = snapshot.pr?.base?.ref;
     if (!base) return false;
     const policy = await requiredChecks.read(repository, base);
@@ -238,21 +245,65 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: decision.reason });
       return false;
     }
+    let mergedHead = decision.head;
     try {
-      const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".");
-      const current = liveMergeReadiness(live, decision.head);
+      // Refresh review threads and atomically revalidate the claim after all
+      // readiness checks. A webhook received during this read invalidates the
+      // claim, so newly arrived feedback cannot be merged accidentally.
+      const threads = await readThreads(repository, number, signal);
+      if (!(await pullRequestInbox.hydrate(claim, { threads, threadsHydrated: true, feedbackRefresh: false }))) return false;
+      const currentSnapshot = claim.snapshot;
+      const currentPolicy = await requiredChecks.read(repository, base);
+      const currentEvaluation = evaluateGitHubRequiredChecks(currentPolicy, snapshotCheckEvidence(currentSnapshot));
+      decision = directMergeReadiness(currentSnapshot, currentEvaluation.state);
+      if (!decision.ready) {
+        schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: decision.reason });
+        return false;
+      }
+      const head = decision.head;
+      mergedHead = head;
+      if (merge.ready) {
+        const ready = await merge.ready({ repository, number, head, snapshot: structuredClone(currentSnapshot), requiredChecks: currentEvaluation.state });
+        if (ready !== true) {
+          schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: ready });
+          return false;
+        }
+      }
+      const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", signal);
+      const current = liveMergeReadiness(live, head);
       if (!current.ready) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: current.reason });
         return false;
       }
+      if (await pullRequestInbox.hasMergeIntent(claim)) {
+        await pullRequestInbox.release(claim);
+        return true;
+      }
       // GitHub rejects the merge when the head no longer matches sha.
-      await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000 });
+      const merged = await pullRequestInbox.merge(claim, async () => {
+        const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${head}`], { repository, timeout: 60_000, signal });
+        const response: unknown = JSON.parse(result.stdout);
+        return Boolean(response && hasRuntimeType(response, "object") && "merged" in response && response.merged === true);
+      }, `Merged ${head} directly: required checks passed and review threads were resolved.`);
+      if (!merged) {
+        if (await pullRequestInbox.hasPersistedMergeIntent(repository, number)) {
+          await pullRequestInbox.release(claim);
+          return true;
+        }
+        schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "inbox claim changed or GitHub did not merge the pull request" });
+        return false;
+      }
     } catch (error) {
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
+      const pending = await pullRequestInbox.get(repository, number);
+      if (pending?.mergeIntent) {
+        await pullRequestInbox.release(claim);
+        // The next owner must read GitHub before dispatching any repair.
+        return true;
+      }
       return false;
     }
-    await pullRequestInbox.finish(claim, { text: `Merged ${decision.head} directly: required checks passed and review threads were resolved.`, terminal: true });
-    schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: decision.head, avoided_invocation: true });
+    schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: mergedHead, avoided_invocation: true });
     return true;
   }
 
@@ -264,12 +315,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   }
 
   /** Retries a provider rate limit three times, then blocks admission for an hour. */
-  async function runWithProviderRetry<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  async function runWithProviderRetry<T>(run: () => Promise<T>, signal: AbortSignal, canRetry: () => boolean = () => true): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try {
         return await run();
       } catch (error) {
-        if (isAbortError(error) || !isProviderRateLimit(error)) throw error;
+        if (isAbortError(error) || !isProviderRateLimit(error) || !canRetry()) throw error;
         if (attempt === 3) {
           await pullRequestInbox.setMeta("provider-quota-blocked-until", Date.now() + 60 * 60_000);
           throw error;
@@ -382,6 +433,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     await pullRequestInbox.recoverLeases();
     try {
       await evaluateWaits();
+      for (const snapshot of await pullRequestInbox.summary()) {
+        if (snapshot.dirty && !snapshot.wait && snapshot.head && snapshot.progressBudget?.exhausted
+          && snapshot.progressBudget.head === snapshot.head
+          && snapshot.reasons.some(reason => reason !== "no-progress-budget-exhausted")) {
+          await pullRequestInbox.resetProgressBudget(snapshot.repository, snapshot.number, snapshot.head, "New repair evidence arrived after exhaustion.");
+        }
+      }
     } catch (error) {
       schedulerError("babysitter.wait.evaluate.failed", error);
     }
@@ -453,6 +511,15 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             await pullRequestInbox.release(inboxClaim);
             return;
           }
+          // A merge intent is a durable fence. Hydration clears it only after
+          // a closed PR read proves the external merge completed. Keep a
+          // recovered or superseded claim out of the repair path while the
+          // outcome is still inconclusive, even when its lease identity has
+          // changed since the intent was recorded.
+          if (await pullRequestInbox.hasPersistedMergeIntent(repository, number)) {
+            await pullRequestInbox.release(inboxClaim);
+            return;
+          }
           if (!pullRequestInbox.eligible(repository, inboxClaim.snapshot.pr)) {
             await pullRequestInbox.finish(inboxClaim, {
               text: "PR closed or outside the configured filter.",
@@ -467,7 +534,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             schedulerEvent("babysitter.stack.retargeted", { ...owner, ...retargeted });
             return;
           }
-          if (merge.mode === "direct" && (await mergeReadyPullRequest(inboxClaim, owner))) return;
+          if (merge.mode === "direct" && (await mergeReadyPullRequest(inboxClaim, owner, passSignal))) return;
           const pullRequest = snapshotPullRequest(inboxClaim.snapshot);
           const webhookSnapshot = inboxClaim.snapshot;
           await github.withPullRequestCheckout(
@@ -510,9 +577,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   throw new DOMException("Pull request evidence changed.", "AbortError");
                 }
               };
+              let externalOperationStarted = false;
               const operationHost: Pick<GitHubHost, "command" | "ensureGraphQLBudget"> = {
                 command: async (args, request) => {
                   await assertLease();
+                  if ((args.includes("-X") || args.includes("--method")) && !args.includes("GET")
+                    || args.some(arg => /^query=\s*mutation\b/.test(arg))) externalOperationStarted = true;
                   return await github.command(args, request);
                 },
                 ensureGraphQLBudget: async (...args) => {
@@ -647,7 +717,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   messages: [createMessage({ role: "user", text: userMessage })],
                 },
                 { schedule: { ...schedule, runId }, output: "drained" },
-              ), abortSignal);
+              ), abortSignal, () => !pushSucceeded && !externalOperationStarted);
               const validated = babysitterPassResultSchema["~standard"].validate(result);
               if ("issues" in validated)
                 throw new Error("Babysitter returned an invalid pass result.");
