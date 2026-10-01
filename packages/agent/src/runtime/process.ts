@@ -239,6 +239,8 @@ export function createAgentProcessHosts(options: {
   dataDir?: string
   /** Defaults to starting only when NODE_ENV is production or VITEHUB_AGENT_PROCESS_HOSTS is "1". */
   enabled?: boolean
+  /** First delay before a host that failed to start is created again. Doubles up to 30 minutes. Defaults to 1 minute. */
+  retryMs?: number
 }): {
   start(): void
   close(): Promise<void>
@@ -252,38 +254,49 @@ export function createAgentProcessHosts(options: {
   let closed = false
   // A development server with production credentials must not repair real PRs by accident.
   const enabled = options.enabled ?? (process.env.NODE_ENV === "production" || process.env.VITEHUB_AGENT_PROCESS_HOSTS === "1")
+  const retries = new Map<string, ReturnType<typeof setTimeout>>()
+  const retryMs = options.retryMs ?? 60_000
+  const startHost = async (agentName: string, attempt: number): Promise<void> => {
+    retries.delete(agentName)
+    if (closed) return
+    const { getAgentFromRegistry } = await import("../index.ts")
+    const { getAgentProcessHostContribution } = await import("../agent-process-host.ts")
+    const { join } = await import("node:path")
+    try {
+      const agent = await getAgentFromRegistry(agentName, options.registry)
+      const contribution = getAgentProcessHostContribution(agent)
+      if (!contribution) {
+        failures.set(agentName, "The Agent has no process host contribution.")
+        return
+      }
+      const host = await contribution.create({ agentName, agent, state: options.state(), dataDir: join(options.dataDir ?? ".vitehub/agents", agentName) })
+      if (closed) {
+        await host.close()
+        return
+      }
+      failures.delete(agentName)
+      hosts.set(agentName, host)
+      host.start()
+    }
+    catch (error) {
+      failures.set(agentName, error instanceof Error ? error.message : String(error))
+      console.error(`[vitehub] Agent process host "${agentName}" did not start.`, error)
+      // A provider outage at boot, such as an unavailable GitHub API, must not stop the host until the next deploy.
+      const delay = Math.min(retryMs * 2 ** attempt, 30 * 60_000)
+      const timer = setTimeout(() => { void startHost(agentName, attempt + 1) }, delay)
+      timer.unref?.()
+      retries.set(agentName, timer)
+    }
+  }
   return {
     start() {
       if (starting || closed || !enabled) return
-      starting = (async () => {
-        const { getAgentFromRegistry } = await import("../index.ts")
-        const { getAgentProcessHostContribution } = await import("../agent-process-host.ts")
-        const { join } = await import("node:path")
-        for (const agentName of options.names) {
-          try {
-            const agent = await getAgentFromRegistry(agentName, options.registry)
-            const contribution = getAgentProcessHostContribution(agent)
-            if (!contribution) {
-              failures.set(agentName, "The Agent has no process host contribution.")
-              continue
-            }
-            const host = await contribution.create({ agentName, agent, state: options.state(), dataDir: join(options.dataDir ?? ".vitehub/agents", agentName) })
-            if (closed) {
-              await host.close()
-              return
-            }
-            hosts.set(agentName, host)
-            host.start()
-          }
-          catch (error) {
-            failures.set(agentName, error instanceof Error ? error.message : String(error))
-            console.error(`[vitehub] Agent process host "${agentName}" did not start.`, error)
-          }
-        }
-      })()
+      starting = Promise.all(options.names.map(agentName => startHost(agentName, 0))).then(() => undefined)
     },
     async close() {
       closed = true
+      for (const timer of retries.values()) clearTimeout(timer)
+      retries.clear()
       await starting
       await Promise.all([...hosts.values()].map(host => host.close()))
     },

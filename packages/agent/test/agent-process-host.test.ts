@@ -68,6 +68,20 @@ describe("createAgentProcessHosts", () => {
     expect(host.closed).toBe(1)
   })
 
+  it("creates a host again after a failed start", async () => {
+    const host = fakeHost()
+    const create = vi.fn().mockRejectedValueOnce(new Error("GitHub App request /app failed with 503.")).mockResolvedValue(host)
+    const hosts = createAgentProcessHosts({ names: ["worker"], enabled: true, retryMs: 5, registry: {
+      worker: async () => ({ default: withAgentProcessHost(defineAgent({ name: "worker", driver: { run: () => "" } }), { create }) }),
+    }, state: () => ({ extension: vi.fn() }) })
+    hosts.start()
+    await vi.waitFor(() => expect(host.started).toBe(1))
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(hosts.status()).toBe("accepting")
+    expect((await hosts.health()).status).toBe("healthy")
+    await hosts.close()
+  })
+
   it("does not start outside production unless enabled", async () => {
     vi.stubEnv("NODE_ENV", "development")
     vi.stubEnv("VITEHUB_AGENT_PROCESS_HOSTS", "")
