@@ -1,6 +1,6 @@
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { getMessageText } from "../messages.ts"
-import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 import { importServerEnvModule } from "./server-env.ts"
 
 import type { AskAnswers, AskEntry, AskQuestion, AskQuestions } from "../ask.ts"
@@ -73,15 +73,11 @@ async function typesafeOptions(context: AskRequestContext) {
   } as const
 }
 
-function toEntry(value: unknown): AskEntry {
-  if (value === undefined || value === null) return null
-  if (hasRuntimeType(value, "string")) return value
-  if (hasRuntimeType(value, "number")) return Number.isFinite(value) ? value : null
-  if (hasRuntimeType(value, "boolean")) return value
-  // JSON round trip drops functions and undefined values, like the request body would.
+function toEntry(value: unknown): AdvocaatEntry {
+  // Normalize each entry root to the SDK contract, preserving scalars inside JSON structures.
   const serialized = JSON.stringify(value)
-  // advocaat uses null as empty state and does not accept undefined in its public types.
-  return serialized === undefined ? null : JSON.parse(serialized)
+  const parsed: AskEntry = serialized === undefined ? null : JSON.parse(serialized)
+  return hasRuntimeType(parsed, "number") || hasRuntimeType(parsed, "boolean") ? String(parsed) : parsed
 }
 
 function invalidQuestion(name: string) {
@@ -109,19 +105,20 @@ function validateQuestionCriteria(name: string, question: AskQuestion): void {
 }
 
 function toAdvocaatQuestion(name: string, question: AskQuestion): AdvocaatQuestion {
-  // advocaat's declaration omits scalar JSON values even though its runtime accepts them.
-  // Keep the public Jev contract's number and boolean values intact at this boundary.
+  validateQuestionCriteria(name, question)
+  const instructions = toEntry(question.instructions)
   switch (question.type) {
     case "chance":
-      // SAFETY: The installed SDK accepts scalar JSON entries; its declarations omit numbers and booleans.
-      return asUnknownBoundary({ criteria: question.criteria, instructions: question.instructions, type: "noul" }) as AdvocaatQuestion
+      return { criteria: question.criteria ? Object.fromEntries(Object.entries(question.criteria).map(([key, value]) => [key, toEntry(value)])) : undefined, instructions, type: "noul" }
     case "choice":
-    case "score":
-    case "if":
     case "switch":
-      validateQuestionCriteria(name, question)
-      // SAFETY: Runtime SDK dispatch preserves these scalar criteria and instructions.
-      return asUnknownBoundary(question) as AdvocaatQuestion
+      return { ...question, instructions, criteria: Object.fromEntries(Object.entries(question.criteria).map(([key, value]) => [key, toEntry(value)])) }
+    case "score": {
+      const [first, second, ...rest] = question.criteria
+      return { ...question, instructions, criteria: [toEntry(first), toEntry(second), ...rest.map(toEntry)] }
+    }
+    case "if":
+      return { ...question, instructions }
   }
   throw invalidQuestion(name)
 }
@@ -146,8 +143,14 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
   }))
   const advocaat = await loadAdvocaat()
   const options = await typesafeOptions(context)
-  // SAFETY: The SDK serializes scalar JSON state unchanged, as the installed-SDK regression verifies.
-  const answers = await advocaat.ask(asUnknownBoundary(toEntry(state)) as AdvocaatEntry, wire, { ...options, signal: context.abortSignal })
+  const answers = await advocaat.ask(toEntry(state), wire, { ...options, signal: context.abortSignal })
   // SAFETY: advocaat answers under the same keys, with the answer shapes that AskAnswers describes for each question type.
-  return answers as AskAnswers<Q>
+  const result = Object.fromEntries(Object.entries(answers).map(([name, answer]) => {
+    const question = questions[name]
+    // Score legends describe the public criteria, before SDK entry normalization.
+    return [name, question?.type === "score" && answer.type === "score"
+      ? { ...answer, legend: Object.fromEntries(question.criteria.map((level, index) => [String(index), level])) }
+      : answer]
+  }))
+  return result as AskAnswers<Q>
 }

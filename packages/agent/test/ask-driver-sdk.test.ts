@@ -10,12 +10,12 @@ vi.mock("../src/internal/server-env.ts", () => ({
 afterEach(() => vi.unstubAllGlobals())
 
 describe("Ask through the installed advocaat SDK", () => {
-  it.each([0, 42, false, true, { toJSON: () => 0 }, { toJSON: () => false }])("preserves scalar state %j through the SDK boundary", async (state) => {
+  it.each([0, 42, false, true, { toJSON: () => 0 }, { toJSON: () => false }])("converts scalar state %j to text for the SDK Entry contract", async (state) => {
     const fetch = vi.fn(async (_input: Parameters<typeof globalThis.fetch>[0], _init?: Parameters<typeof globalThis.fetch>[1]) => Response.json({ answers: { accepted: { type: "noul", noul: 0.75 } } }))
     vi.stubGlobal("fetch", fetch)
     await expect(askJev({}, state, { accepted: ask.if("Accept it?", { threshold: 0.5 }) })).resolves.toEqual({ accepted: true })
     expect(fetch).toHaveBeenCalledOnce()
-    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({ state: JSON.parse(JSON.stringify(state)), questions: { accepted: { type: "noul", instructions: "Accept it?" } }, model: "jev-latest" })
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({ state: String(JSON.parse(JSON.stringify(state))), questions: { accepted: { type: "noul", instructions: "Accept it?" } }, model: "jev-latest" })
   })
 
   it("preserves scalar question entries, nested JSON, answer shapes, and score legends", async () => {
@@ -24,7 +24,7 @@ describe("Ask through the installed advocaat SDK", () => {
       chance: { type: "noul", noul: 0.25 },
       choice: { type: "choice", choice: "yes", confidence: 0.8, probabilities: { no: 0.1, yes: 0.9 } },
       switch: { type: "choice", choice: "yes", confidence: 0.8, probabilities: { no: 0.1, yes: 0.9 } },
-      score: { type: "score", score: 1, confidence: 0.8, probabilities: { 0: 0.1, 1: 0.9, 2: 0 }, legend: { 0: 0, 1: false, 2: nested } },
+      score: { type: "score", score: 1, confidence: 0.8, probabilities: { 0: 0.1, 1: 0.9, 2: 0 }, legend: { 0: "0", 1: "false", 2: nested } },
     }
     const fetch = vi.fn(async (_input: Parameters<typeof globalThis.fetch>[0], _init?: Parameters<typeof globalThis.fetch>[1]) => Response.json({ answers }))
     vi.stubGlobal("fetch", fetch)
@@ -39,10 +39,10 @@ describe("Ask through the installed advocaat SDK", () => {
     expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
       state: nested,
       questions: {
-        chance: { criteria: { true: 0, false: false }, instructions: false, type: "noul" },
-        choice: { criteria: { no: false, yes: nested }, instructions: 0, type: "choice" },
-        switch: { type: "choice", instructions: true, criteria: { no: 0, yes: true } },
-        score: { criteria: [0, false, nested], instructions: false, type: "score" },
+        chance: { criteria: { true: "0", false: "false" }, instructions: "false", type: "noul" },
+        choice: { criteria: { no: "false", yes: nested }, instructions: "0", type: "choice" },
+        switch: { type: "choice", instructions: "true", criteria: { no: "0", yes: "true" } },
+        score: { criteria: ["0", "false", nested], instructions: "false", type: "score" },
       },
       model: "jev-latest",
     })

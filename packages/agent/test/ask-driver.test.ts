@@ -98,10 +98,10 @@ describe("ask Driver", () => {
     expect(askState({}, undefined, [])).toBeNull()
   })
 
-  it.each([42, true, false])("preserves scalar Invocation data (%j) for Jev", async (data) => {
+  it.each([42, true, false])("converts scalar Invocation data (%j) to SDK text", async (data) => {
     await askRuntime.askJev({}, data, { value: ask.if("Is it true?", { threshold: 0.5 }) })
 
-    expect(askJev).toHaveBeenLastCalledWith(data, expect.any(Object), expect.any(Object))
+    expect(askJev).toHaveBeenLastCalledWith(String(data), expect.any(Object), expect.any(Object))
   })
 
   it.each([-0.1, 1.1, Number.NEGATIVE_INFINITY])("rejects the invalid probability threshold %s", (threshold) => {
