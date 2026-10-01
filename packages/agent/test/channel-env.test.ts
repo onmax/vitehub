@@ -17,7 +17,7 @@ function uses(source: string) {
 }
 
 describe("built-in Channel discovery", () => {
-  it.each(["tele\\u0067ram", "tele\\u{67}ram"])("decodes escaped identifier Channel keys: %s", (key) => {
+  it.each(["tele\\u0067ram", "tele\\u{67}ram", "\\u0074elegram"])("decodes escaped identifier Channel keys: %s", (key) => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
       export default defineAgent({ channels: { ${key}: {} } })
