@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { createWorkflowDevPluginModule, workflowDevGeneratedDir } from "../src/internal/dev-registry.ts"
 import * as devRegistry from "../src/internal/dev-registry.ts"
 import { hubWorkflow } from "../src/vite.ts"
+import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 
 import type { ResolvedWorkflowOptions, WorkflowModuleOptions } from "../src/types.ts"
 
@@ -189,6 +190,25 @@ describe("Workflow dev registry", () => {
 
     const registry = await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs"), "utf8")
     expect(registry).toContain("custom-server/workflows/custom.ts")
+    expect(registry).not.toContain("server/workflows/welcome.ts")
+  })
+
+  it("uses final server directories from configResolved", async () => {
+    const projectRoot = await createApp()
+    const serverRoot = join(projectRoot, "final-server")
+    await mkdir(join(serverRoot, "workflows"), { recursive: true })
+    await writeFile(join(serverRoot, "workflows/final.ts"), workflowModule("final"))
+    const plugin = hubWorkflow({ provider: "vercel" })
+    const hook = plugin.config
+    if (!hook || typeof hook === "function") throw new TypeError("Expected config object hook")
+    await (hook.handler as unknown as ConfigHook)({ root: projectRoot }, { command: "serve", mode: "development" })
+    await (plugin.configResolved as (config: unknown) => Promise<void>)({
+      root: projectRoot,
+      [VITEHUB_SERVER_DIRS]: [serverRoot],
+    })
+
+    const registry = await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs"), "utf8")
+    expect(registry).toContain("final-server/workflows/final.ts")
     expect(registry).not.toContain("server/workflows/welcome.ts")
   })
 

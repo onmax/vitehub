@@ -270,6 +270,9 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       hasFinalNitroEnvironment = Boolean(config.environments?.nitro)
       providerOutput = useProviderOutputCatalog(config)
       workflow = config.workflow ?? workflow
+      // Later config hooks may replace the server directories after this plugin's pre-config hook.
+      // Keep development discovery and production provider output aligned with the final config.
+      serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       if (devRootDir) {
         const projectRoot = Reflect.get(config, VITEHUB_PROJECT_ROOT)
         // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Later Vite hooks may change the authoritative project root.
