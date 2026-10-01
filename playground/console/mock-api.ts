@@ -133,6 +133,7 @@ const definitions = {
       ],
       file: "server/schedules/nightly-release-notes.ts",
       name: "nightly-release-notes",
+      runnable: true,
       source: "server-schedules",
     },
     {
