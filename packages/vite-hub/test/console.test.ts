@@ -2112,7 +2112,7 @@ describe("Agent invocation console", () => {
       await vi.waitFor(async () => {
         await expect(definition.invocations?.get(withoutProfile.id)).resolves.toMatchObject({ status: "completed" })
       })
-      const defaultDetail = await invocationHandler(detailEvent(withoutProfile.id))
+      const defaultDetail = await getConsoleInvocationDetail(detailEvent(withoutProfile.id))
       expect(defaultDetail.invocation.actions?.rerun).toEqual({ available: true, prompt: "Use the default invoker." })
 
       blocked = true
