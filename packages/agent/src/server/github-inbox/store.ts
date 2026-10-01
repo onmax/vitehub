@@ -566,9 +566,13 @@ export class PullRequestInbox {
         const pr = normalizePullRequest(patch.pr)
         if (s.pr && stamp(pr) < stamp(s.pr)) return false
         patch = { ...patch, pr }
-        // A fresh PR read resolves an interrupted merge before another action.
-        delete s.mergeIntent
-        delete claim.snapshot.mergeIntent
+        // Only a closed PR proves that an interrupted merge completed. Keep
+        // the fence for stale or inconclusive open reads so another claim
+        // cannot issue a second merge request.
+        if (pr.state === 'closed') {
+          delete s.mergeIntent
+          delete claim.snapshot.mergeIntent
+        }
       }
       Object.assign(s, patch)
       if (s.pr && !this.eligible(s.repository, s.pr)) s.status = 'terminal'

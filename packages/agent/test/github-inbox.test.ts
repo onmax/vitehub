@@ -348,6 +348,24 @@ test('an interrupted merge forces live hydration after expired lease recovery', 
   assert.equal((await inbox.get(repository, 7))?.status, 'terminal')
 })
 
+test('an inconclusive open read keeps an interrupted merge fenced', async t => {
+  let now = 0
+  const inbox = new PullRequestInbox({ path: ':memory:', repositories: [repository], clock: () => now })
+  t.onTestFinished(() => inbox.close())
+  await inbox.seed(repository, pr())
+  const [claim] = await inbox.claim(1); assert.ok(claim)
+  await assert.rejects(inbox.merge(claim, async () => { throw new Error('response lost after merge') }, 'merged'))
+  now = 3 * 60 * 60_000
+  await inbox.recoverLeases()
+  const [recovered] = await inbox.claim(1); assert.ok(recovered)
+  assert.equal(await inbox.hydrate(recovered, { pr: pr({ updated_at: '2026-09-13T11:00:00Z' }), refresh: false }), true)
+  assert.ok((await inbox.get(repository, 7))?.mergeIntent)
+  await inbox.release(recovered)
+  let retried = false
+  assert.equal(await inbox.merge((await inbox.claim(1))[0], async () => { retried = true; return true }, 'again'), false)
+  assert.equal(retried, false)
+})
+
 test('merge finalization preserves feedback delivered during the GitHub request', async t => {
   const inbox = memory(t); await inbox.seed(repository, pr())
   const [claim] = await inbox.claim(1); assert.ok(claim)
