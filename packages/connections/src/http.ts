@@ -36,6 +36,7 @@ const actionSchema = v.variant("action", [
   v.object({ action: v.literal("activity"), before: v.optional(id), name }),
   v.object({
     action: v.literal("approvals"),
+    before: v.optional(id),
     name: v.optional(name),
     status: v.optional(v.picklist(["approved", "denied", "executed", "failed", "pending"])),
   }),
