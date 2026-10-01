@@ -1069,6 +1069,7 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
       const workflowName = resolveAgentWorkflowName(agent, binding, context)
       const handle = await getAgentWorkflowHandle<TRuntimeConfig, unknown, unknown>(agent, workflowName, Boolean(context.agentIdentity))
       const recoveryConfig = (await loadAgentWorkflowRuntimeStateModule()).getWorkflowRuntimeConfig()
+      // SAFETY: the private symbol is only set by the replay reservation path on this runtime context.
       const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
       // Native Vercel Workflows assign their own run IDs. A pending replay
       // reservation therefore cannot be matched to a provider run after the
