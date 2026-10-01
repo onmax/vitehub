@@ -353,12 +353,16 @@ function htmlToText(html: string): string {
     .replace(/&(amp|gt|lt|nbsp|quot|#39);/g, (_match, entity: string) => htmlEntities[entity] ?? " ")
 }
 
+function messageBodyPart(parts: GmailApiPart[]): GmailApiPart | undefined {
+  const candidates = parts.filter(part => !part.filename && (part.body?.data || part.body?.attachmentId))
+  return candidates.find(part => part.mimeType === "text/plain") ?? candidates.find(part => part.mimeType === "text/html")
+}
+
 function bodyText(parts: GmailApiPart[], limit: number): string {
-  const text = (mimeType: string) => parts.find(part => part.mimeType === mimeType && !part.filename && part.body?.data)?.body?.data
-  const plain = text("text/plain")
-  const html = plain ? undefined : text("text/html")
-  const decoded = plain ? decodeBase64Url(plain) : html ? htmlToText(decodeBase64Url(html)) : ""
-  return decoded
+  const part = messageBodyPart(parts)
+  const data = part?.body?.data
+  const decoded = data ? decodeBase64Url(data) : ""
+  return (part?.mimeType === "text/html" ? htmlToText(decoded) : decoded)
     .replace(/\r\n?/g, "\n")
     .replace(/[ \t\f\v]+/g, " ")
     .replace(/ *\n */g, "\n")
@@ -421,8 +425,13 @@ function messageDate(internalDate: string | undefined, header: string | undefine
   return sent && !Number.isNaN(sent.getTime()) ? sent.toISOString() : ""
 }
 
-function toGmailMessage(message: v.InferOutput<typeof apiMessageSchema>, bodyLimit: number): GmailMessage {
+async function toGmailMessage(client: GmailClient, message: v.InferOutput<typeof apiMessageSchema>, bodyLimit: number): Promise<GmailMessage> {
   const parts = flattenParts(message.payload)
+  const part = messageBodyPart(parts)
+  if (!part?.body?.data && part?.body?.attachmentId) {
+    const attachment = await gmailRequest(client, v.object({ data: v.string() }), { method: "GET", path: `messages/${encodeURIComponent(message.id)}/attachments/${encodeURIComponent(part.body.attachmentId)}` })
+    part.body.data = attachment.data
+  }
   const headers = headerMap(parts)
   return {
     attachments: parts.flatMap(part => part.filename
@@ -444,14 +453,15 @@ function toGmailMessage(message: v.InferOutput<typeof apiMessageSchema>, bodyLim
 
 /** Reads one message. Returns `undefined` when Gmail no longer has it. */
 export async function getGmailMessage(client: GmailClient, id: string, bodyLimit: number): Promise<GmailMessage | undefined> {
+  let message: v.InferOutput<typeof apiMessageSchema>
   try {
-    const message = await gmailRequest(client, apiMessageSchema, { method: "GET", path: `messages/${encodeURIComponent(id)}`, query: { format: "full" } })
-    return toGmailMessage(message, bodyLimit)
+    message = await gmailRequest(client, apiMessageSchema, { method: "GET", path: `messages/${encodeURIComponent(id)}`, query: { format: "full" } })
   }
   catch (error) {
     if (gmailErrorStatus(error) === 404) return undefined
     throw error
   }
+  return await toGmailMessage(client, message, bodyLimit)
 }
 
 /** Reads messages in order with bounded concurrency. Deleted messages are skipped. */
@@ -465,7 +475,12 @@ export async function getGmailMessages(client: GmailClient, ids: readonly string
 
 export async function getGmailThread(client: GmailClient, threadId: string, bodyLimit: number): Promise<GmailMessage[]> {
   const thread = await gmailRequest(client, threadSchema, { method: "GET", path: `threads/${encodeURIComponent(threadId)}`, query: { format: "full" } })
-  return (thread.messages || []).map(message => toGmailMessage(message, bodyLimit))
+  const messages = thread.messages || []
+  const result: GmailMessage[] = []
+  for (let start = 0; start < messages.length; start += messageFetchConcurrency) {
+    result.push(...await Promise.all(messages.slice(start, start + messageFetchConcurrency).map(message => toGmailMessage(client, message, bodyLimit))))
+  }
+  return result
 }
 
 /** Formats a message as the default Invocation prompt. */

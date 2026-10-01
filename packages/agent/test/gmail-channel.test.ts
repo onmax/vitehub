@@ -12,11 +12,12 @@ import { defineAgent, runAgentTrigger } from "../src/index.ts"
 import { inspectMessageChannelInstructions } from "../src/internal/channels.ts"
 import { getAgentChannelSyncDefinition } from "../src/internal/channel-sync.ts"
 import { runAgentChannelSyncCli } from "../src/internal/channel-sync-cli.ts"
-import { gmailMessageSchema, gmailSettings, splitAddresses, verifyGoogleOidcToken, syncGmailMailbox, gmailClientFromSettings } from "../src/internal/gmail-channel.ts"
+import { getGmailMessage, getGmailThread, gmailMessagePrompt, gmailMessageSchema, gmailSettings, splitAddresses, verifyGoogleOidcToken, syncGmailMailbox, gmailClientFromSettings } from "../src/internal/gmail-channel.ts"
 import { createChannelWebhookRouteHandler } from "../src/server/internal.ts"
 import { channelMessageRunId, createMemoryAgentInvocationStore, defineAgentInvocations, replayChannel } from "../src/server.ts"
 
 import type { Lock, StateAdapter } from "chat"
+import type { GmailClient } from "../src/internal/gmail-channel.ts"
 import type { AgentRuntimeContext } from "../src/types.ts"
 
 const audience = "https://mail.example.com/api/_vitehub/agents/labeller/webhooks/gmail"
@@ -541,6 +542,37 @@ describe("gmail() Channel", () => {
     expect(prompts).toEqual(expired ? ["m1", "m3", "m2"] : ["m1", "m2"])
     expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("startHistoryId"))).toEqual(["100", "100"])
     if (expired) expect(google.calls.filter(call => call.path === "messages").map(call => call.query.get("pageToken"))).toEqual([null, "page-2", null, "page-2"])
+  })
+
+  it.each(["text/plain", "text/html"])("loads an attachment-backed %s body before applying its limit", async mimeType => {
+    const encoded = base64Url(mimeType === "text/html" ? "<p>Full émail body</p>" : "Full émail body")
+    const message = { id: "m/1", threadId: "thread-1", snippet: "Short preview", payload: { mimeType: "multipart/mixed", parts: [
+      { mimeType, body: { attachmentId: "body/1" } },
+      { mimeType: "text/html", body: { data: base64Url("<p>Alternative body</p>") } },
+      { mimeType: "text/plain", filename: "private.txt", body: { attachmentId: "private-file" } },
+    ] } }
+    const client = vi.fn<GmailClient>(async request => {
+      if (request.path === "messages/m%2F1") return message
+      if (request.path === "threads/thread-1") return { id: "thread-1", messages: [message] }
+      if (request.path === "messages/m%2F1/attachments/body%2F1") return { data: encoded }
+      throw new Error(`Unexpected request: ${request.path}`)
+    })
+    const loaded = await getGmailMessage(client, "m/1", 10)
+    expect(loaded?.body).toBe("Full émail")
+    expect(gmailMessagePrompt(loaded!)).toContain("Full émail")
+    expect(gmailMessagePrompt(loaded!)).not.toContain("Short preview")
+    expect((await getGmailThread(client, "thread-1", 10))[0]?.body).toBe("Full émail")
+    expect(client.mock.calls.filter(([request]) => request.path.includes("/attachments/")).map(([request]) => request.path)).toEqual([
+      "messages/m%2F1/attachments/body%2F1", "messages/m%2F1/attachments/body%2F1",
+    ])
+  })
+
+  it("propagates an attachment-body fetch failure instead of treating the message as deleted", async () => {
+    const client: GmailClient = async request => {
+      if (request.path === "messages/m1") return { id: "m1", threadId: "thread-1", payload: { mimeType: "text/plain", body: { attachmentId: "body-1" } } }
+      throw Object.assign(new Error("Body attachment is unavailable"), { status: 404 })
+    }
+    await expect(getGmailMessage(client, "m1", 100)).rejects.toThrow("Body attachment is unavailable")
   })
 
   it("preserves filename metadata for inline Gmail attachments", async () => {
