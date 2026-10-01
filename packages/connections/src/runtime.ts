@@ -1,6 +1,7 @@
 import * as v from "valibot"
 
 import { ConnectionError, isConnectionError, isEnvBridgeError } from "./errors.ts"
+import { isConnectionDefinition } from "./definition.ts"
 import { CONNECTION_NAME_MAX_LENGTH, isConnectionReadMethod } from "./types.ts"
 import { connectionActions, decide, envActor, providerApis } from "./policy.ts"
 
@@ -49,7 +50,7 @@ interface CallContext {
   definition: ConnectionDefinition
   name: string
   options: UseConnectionOptions
-  onDispatch?: () => void
+  providerExecution?: { dispatched: boolean, rejected: boolean }
 }
 
 interface ProviderRequest {
@@ -91,30 +92,6 @@ export interface ConnectionsRuntime {
   revoke: (input: { actor?: string, name: string }) => Promise<ConnectionInspection>
 }
 
-const connectionValue = v.union([v.string(), v.function()])
-const accessRuleSchema = v.object({
-  read: v.optional(v.boolean()),
-  write: v.optional(v.union([v.boolean(), v.literal("approve"), v.array(v.string())])),
-  approve: v.optional(v.boolean()),
-})
-const definitionSchema = v.looseObject({
-  provider: v.looseObject({
-    id: v.string(),
-    authorizationEndpoint: v.string(),
-    tokenEndpoint: v.string(),
-    clientId: connectionValue,
-    clientSecret: v.optional(connectionValue),
-    account: v.function(),
-    apis: v.record(v.string(), v.object({
-      rootUrl: v.string(),
-      methods: v.record(v.string(), v.tuple([v.string(), v.string(), v.boolean()])),
-      highRisk: v.optional(v.array(v.string())),
-    })),
-  }),
-  scopes: v.array(v.string()),
-  api: v.optional(v.record(v.string(), v.array(v.string()))),
-  access: v.optional(v.record(v.string(), accessRuleSchema)),
-})
 const storedTokenSchema = v.object({
   grantId: v.optional(v.string()),
   accountId: v.optional(v.string()),
@@ -136,10 +113,6 @@ const approvalInputSchema = v.variant("kind", [
   v.object({ grantId: v.optional(v.string()), input: v.unknown(), kind: v.literal("method") }),
   v.object({ grantId: v.optional(v.string()), body: v.optional(v.string()), headers: v.optional(v.record(v.string(), v.string())), kind: v.literal("fetch"), method: v.string(), redirect: v.optional(v.picklist(["error", "follow", "manual"])), url: v.string() }),
 ])
-
-function isDefinition(value: unknown): value is ConnectionDefinition {
-  return v.is(definitionSchema, value)
-}
 
 async function resolveValue(value: ConnectionValue | undefined): Promise<string | undefined> {
   return v.is(v.string(), value) || value === undefined ? value : await value()
@@ -256,14 +229,14 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   async function loadDefinition(name: string): Promise<ConnectionDefinition | undefined> {
     const entry = Object.hasOwn(options.definitions, name) ? options.definitions[name] : undefined
     if (!entry) return undefined
-    if (isDefinition(entry)) return entry
+    if (isConnectionDefinition(entry)) return entry
     if (!v.is(v.function(), entry)) return undefined
     let loaded = definitions.get(name)
     if (!loaded) {
       loaded = entry().then((module) => {
-        if (isDefinition(module)) return module
+        if (isConnectionDefinition(module)) return module
         const parsedModule = v.safeParse(v.object({ default: v.unknown() }), module)
-        return parsedModule.success && isDefinition(parsedModule.output.default) ? parsedModule.output.default : undefined
+        return parsedModule.success && isConnectionDefinition(parsedModule.output.default) ? parsedModule.output.default : undefined
       }).then((result) => {
         if (!result) definitions.delete(name)
         return result
@@ -519,13 +492,21 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
               authorization: `${current.tokenType === "bearer" ? "Bearer" : current.tokenType} ${current.accessToken}`,
             }
             if (providerRequest.json && providerRequest.body !== undefined && !Object.keys(headers).some(key => key.toLowerCase() === "content-type")) headers["content-type"] = "application/json"
-            context.onDispatch?.()
+            if (providerRequest.write && context.providerExecution) {
+              context.providerExecution.dispatched = true
+              context.providerExecution.rejected = false
+            }
             return request(providerRequest.url, {
               body: providerRequest.body,
               headers,
               method: providerRequest.method,
               redirect: init.redirect,
               signal: init.signal,
+            }).then(response => {
+              if (providerRequest.write && context.providerExecution) {
+                context.providerExecution.rejected = response.status >= 400 && response.status < 500 && response.status !== 408
+              }
+              return response
             })
           }
           let response = await call(token)
@@ -765,7 +746,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       }
       const accountId = previous?.success ? previous.output.accountId ?? state?.accountId : state?.status === "revoked" ? undefined : state?.accountId
       if (accountId && (!account || accountId !== account.id)) {
-        throw new ConnectionError("invalid", account ? `Connection "${name}" belongs to another account. Revoke it before you connect a different account.` : `Provider "${loaded.provider.id}" did not identify the account. The existing Connection was not replaced.`, { details: { connection: name } })
+        throw new ConnectionError("invalid", account ? `Connection "${name}" belongs to another account. Confirm the provider outcome and repair the mutation lease before revoking or connecting again.` : `Provider "${loaded.provider.id}" did not identify the account. The existing Connection was quarantined.`, { details: { connection: name } })
       }
       const token = toStoredToken(response, previous?.success ? previous.output : undefined, [
         ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),
@@ -834,7 +815,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     let releaseLease = true
     let providerFailure: ConnectionError | undefined
     let providerRevoked = false
-    let markerPersisted = false
+    let leasedRevision: string | undefined
     try {
       const stored = await connections.secrets.inspect(key)
       let revision: string | null = null
@@ -846,6 +827,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         }
         revision = await connections.bridge.use(envContext(actor), key, "revoke", async (secret, metadata) => {
           if (!metadata?.revision) throw new ConnectionError("invalid", "Connection revocation requires the Env Bridge to provide the leased token revision.")
+          leasedRevision = metadata.revision
           let token: StoredToken | undefined
           try {
             token = parseToken(secret.unseal(), input.name)
@@ -873,7 +855,6 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
           // Keep the mutation lease until the revoked marker and metadata are durable.
           releaseLease = false
           const replacement = await connections.bridge.replace(envContext(actor), { expectedRevision: metadata.revision, key, value: JSON.stringify({ revoked: true }) })
-          markerPersisted = true
           return replacement.revision
         })
       }
@@ -883,8 +864,15 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     }
     catch (error) {
       if (providerRevoked) {
-        const current = await connections.secrets.inspect(key).catch(() => undefined)
-        await setStatus(input.name, { status: markerPersisted ? "revoked" : "reauth_required" }, current?.revision ?? null).catch(() => undefined)
+        await (async () => {
+          const current = await connections.secrets.read(key)
+          if (!current?.revision) return
+          const value: unknown = JSON.parse(current.value)
+          const revoked = v.is(v.object({ revoked: v.literal(true) }), value)
+          if (!revoked && current.revision !== leasedRevision) return
+          const persisted = await setStatus(input.name, { status: revoked ? "revoked" : "reauth_required" }, current.revision)
+          if (revoked && persisted) releaseLease = true
+        })().catch(() => undefined)
       }
       throw providerFailure ?? error
     }
@@ -931,7 +919,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         .then(active => { if (!active) leaseAbort.abort(new ConnectionError("invalid", "Approval execution lease was lost.")) })
         .catch((error: unknown) => leaseAbort.abort(error))
     }, APPROVAL_EXECUTION_TTL_MS / 3)
-    let dispatched = false
+    const providerExecution = { dispatched: false, rejected: false }
     try {
       const stored = v.parse(approvalInputSchema, approval.input)
       const loaded = await definition(approval.name)
@@ -939,13 +927,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         actor: approval.actor,
         approved: true,
         approvedGrantId: stored.grantId,
+        providerExecution,
         definition: loaded,
         name: approval.name,
         options: {
           traceId: approval.traceId,
           invocationId: approval.invocationId,
         },
-        onDispatch: () => { dispatched = true },
       }
       let result: unknown
       if (stored.kind === "fetch") {
@@ -970,13 +958,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return output
     }
     catch (error) {
-      const code = signal.aborted || (dispatched && !(isConnectionError(error) && error.reason === "provider"))
-        ? "CONNECTION_EXECUTION_UNKNOWN"
-        : isConnectionError(error)
-          ? error.code
-          : "CONNECTION_FAILED"
-      await connections.approvals.transition(input.id, "approved", "failed", { error: code })
-      throw error
+      const uncertain = signal.aborted || (providerExecution.dispatched && !providerExecution.rejected)
+      const failure = uncertain
+        ? new ConnectionError("execution_unknown", "The provider may have completed this write. Check the provider before requesting another approval.", { details: { action: approval.action, connection: approval.name }, requestId: input.id })
+        : error
+      const code = isConnectionError(failure) ? failure.code : "CONNECTION_FAILED"
+      await connections.approvals.transition(input.id, "approved", "failed", { error: code }).catch(() => undefined)
+      throw failure
     }
     finally {
       clearInterval(heartbeat)

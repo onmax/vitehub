@@ -56,6 +56,7 @@ Package-contributed namespaces appear only when their package is enabled. For ex
 | `vitehub agent dev`         | Available      | Agent Package                                     | Talk to a discovered Agent through a running Vite Development Server.                     |
 | `vitehub agent invocations` | Available      | Agent Package                                     | List, inspect, or follow records in the application's Agent Invocation journal. Delete or prune terminal records.           |
 | `vitehub channels history`  | Available      | Agent Package                                     | Download one deployed conversation and its attachments.                                   |
+| `vitehub channels replay` | Available | Agent Package | Send past Channel messages from a Channel history through its trigger. |
 | `vitehub channels sync`     | Available      | Agent Package                                     | Inspect or apply provider-owned webhook registrations for a deployed stage.               |
 | `vitehub connections`       | Available      | Connections Package                               | Connect OAuth accounts, list Connections, read activity, and approve or deny writes.      |
 | `vitehub console dev`       | Available      | Console integration                               | Start the app's development command with deterministic Console fixture data.              |
@@ -226,6 +227,38 @@ A Telegram direct-message Channel infers its thread when the adapter allows exac
 
 The export can only contain history available through the Chat SDK adapter or its configured State Adapter. Telegram's Bot API cannot backfill arbitrary old messages, so its durable fallback uses the configured `threadHistory` window, which defaults to 100 messages retained for seven days. Export before that window expires when the archive is intended for recovery.
 
+## Replay Channel history
+
+`channels replay` sends past messages from a Channel's [`history`](/docs/agents/channels#replay-channel-history) Collection through the Channel trigger. Each message starts one Invocation, and messages that were replayed before are skipped.
+
+```sh
+pnpm vitehub channels replay --agent labeller --channel mailbox --folder inbox --dry-run --limit 20
+```
+
+```txt [Output]
+completed m1
+completed m2
+skipped   m3 (existing)
+Replayed 2, skipped 1, failed 0. Dry run: Channel message writes were recorded, not sent.
+More history remains. Continue with --cursor Im0zIg
+```
+
+| Option | Use |
+| --- | --- |
+| `--agent <name>` | Agent that owns the Channel. Required. |
+| `--channel <name>` | Channel name in the Agent's `channels`. Required. |
+| `--url <url>` | Deployed Console URL. Without it, the command uses the running Vite Development Server. |
+| `--server <url>` | Vite Development Server URL. Defaults to `VITEHUB_DEV_SERVER_URL` or `http://localhost:5173`. |
+| `--dry-run` | Record Channel message writes in the Invocation trace instead of sending them. |
+| `--force` | Replay messages that already have an Invocation. Each gets a new Invocation ID. |
+| `--limit <n>` | Read at most `n` history messages. |
+| `--cursor <cursor>` | Continue a stopped or limited replay. |
+| `--filter <key=value>` | Add a history query value. Repeat a key for several values. |
+| `--<key> <value>` | Set a history query key that the query schema declares. |
+
+The command reads the history query schema first. When the schema converts to JSON Schema, which Zod 4 and Valibot schemas do, `--help` with `--agent` and `--channel` lists its keys as flags, and an unknown flag fails before replay starts. Other schemas accept `--filter key=value`. Array query fields receive an array even for one value, such as `--label work` or `--filter label=work`; repeat the key to add more values. The server always validates the query with the same schema.
+
+With `--url`, the command posts to `/_vitehub/channels/replay` on the deployment. That route requires the [Console](/docs/development/console#replay-channel-history) with invocation enabled, and it is protected like every other Console route. Set `VITEHUB_CONSOLE_AUTHORIZATION` to an `Authorization` header value that the Console access policy accepts, or `VITEHUB_CONSOLE_COOKIE` to a signed-in Console session cookie. For Cloudflare Access, set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to a service token. The command forwards them as `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Each request replays at most 10 messages, so progress appears while a long replay runs, and the command prints a cursor when history remains.
 ## Manage Connections
 
 `vitehub connections` calls the Connections management API of a running app. It uses `http://localhost:5173` unless you pass `--url` or set `VITEHUB_CONNECTIONS_URL`.

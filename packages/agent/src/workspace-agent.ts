@@ -209,6 +209,19 @@ export function workspaceDefinitionWithAutoCommitRules(definition: WorkspaceDefi
   return { ...definition, rules: mergeWorkspaceCommitRules(definition.rules, commit) }
 }
 
+/**
+ * Reports whether an explicit Agent Workspace `commit: false` leaves no commit to resolve.
+ * The Workspace definition, its plugins, and Capability contributions can still add commit rules.
+ */
+export function workspaceAutoCommitDisabled(definition: WorkspaceDefinition, commit: boolean | string | undefined): boolean {
+  if (commit !== false) return false
+  if (definition.commit === true || hasRuntimeType(definition.commit, "string")) return false
+  let rules: WorkspaceRules = {}
+  for (const plugin of definition.plugins ?? []) rules = { ...rules, ...plugin?.rules }
+  rules = { ...rules, ...definition.rules }
+  return !Object.values(rules).some(rule => Boolean(rule?.commit))
+}
+
 function isWorkspaceReference(workspace: WorkspaceAgentWorkspaceConfig): workspace is { mode?: AgentCapabilityMode, name: string } {
   return hasRuntimeType(workspace, "object")
     && workspace !== null
@@ -789,6 +802,7 @@ function providerResolverKind(value: unknown): "dynamic" | "static" {
 function providerMetadata(driver: {
   credentialProfile?: string
   credentials?: unknown
+  cwd?: unknown
   env?: unknown
   launch?: unknown
   model?: string
@@ -807,6 +821,7 @@ function providerMetadata(driver: {
   return {
     ...(driver.credentialProfile ? { credentialProfile: driver.credentialProfile } : {}),
     ...(driver.credentials !== undefined ? { credentials: true } : {}),
+    ...(driver.cwd !== undefined ? { cwd: providerResolverKind(driver.cwd) } : {}),
     ...(driver.env !== undefined ? { environment: providerResolverKind(driver.env) } : {}),
     ...(driver.launch !== undefined ? { launch: providerResolverKind(driver.launch) } : {}),
     ...(driver.model ? { model: driver.model } : {}),

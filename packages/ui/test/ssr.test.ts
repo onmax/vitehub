@@ -3,6 +3,8 @@ import { renderToString } from "@vue/server-renderer";
 import { describe, expect, it } from "vitest";
 import { AgentChat } from "../src/components/agent-chat.ts";
 import { AgentMarkdown } from "../src/components/agent-markdown.ts";
+import html from "@comark/vue/plugins/html";
+import type { ComarkPlugin } from "@comark/vue";
 import { AgentInvocation, AgentInvocationInspector } from "../src/components/agent-invocation.ts";
 import { AgentInvocationList } from "../src/components/agent-invocation-list.ts";
 import { createViteHubUI } from "../src/config.ts";
@@ -40,7 +42,27 @@ describe("UI server rendering", () => {
 
     const html = await renderToString(app);
     expect(customPluginRuns).toBe(1);
-    expect(html).toContain("katex");
+    expect(html).toContain("vh-math-fallback");
+  });
+
+  it.each(["task-list", "components", "attributes", "alert", "frontmatter"])("replaces the %s Markdown default with the caller's plugin", async (name) => {
+    const plugin: ComarkPlugin = {
+      name,
+      pre(state) {
+        state.markdown = state.markdown.replace("Original", "Overridden");
+      },
+    };
+    const app = createSSRApp({
+      render: () => h(AgentMarkdown, {
+        plugins: [plugin],
+        value: "Original\n\nInline $x$",
+      }),
+    });
+
+    const output = await renderToString(app);
+    expect(output).toContain("Overridden");
+    expect(output).not.toContain("Original");
+    expect(output).toContain("vh-math-fallback");
   });
 
   it("does not render raw HTML from Agent messages", async () => {
@@ -54,6 +76,20 @@ describe("UI server rendering", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain('onmouseover="');
     expect(html).toContain("message");
+  });
+
+  it("keeps raw HTML disabled when callers request the HTML plugin", async () => {
+    const app = createSSRApp({
+      render: () => h(AgentMarkdown, {
+        options: { html: true },
+        plugins: [html()],
+        value: '<script>globalThis.__vitehubXss = true</script>message',
+      }),
+    });
+
+    const output = await renderToString(app);
+    expect(output).not.toContain("<script>");
+    expect(output).toContain("message");
   });
 
   it("preserves non-HTML Markdown defaults", async () => {

@@ -4,7 +4,6 @@ import { rm } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { discoverAgentDefinitionEntries } from "@vite-hub/agent/vite"
 import { resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
@@ -52,7 +51,7 @@ export function resolveGeneratedConsolePlugin(
 type ConsoleNitroConfig = {
   handlers?: Array<{ handler: string, method?: string, route: string }>
   plugins?: string[]
-  publicAssets?: Array<{ baseURL?: string, dir: string, fallthrough?: boolean }>
+  publicAssets?: Array<{ baseURL?: string, dir: string, fallthrough?: boolean, maxAge?: number }>
   [key: string]: unknown
 }
 
@@ -171,13 +170,6 @@ export function assertConsoleProductionAccess(
   if (missing.length) {
     throw viteHubErrorDiagnostics.VITE_HUB_B0006({ message: `[vitehub] Console Auth access must configure an authorize callback for ${missing.map(target => target.route).join(" and ")}.` })
   }
-}
-
-export function discoverConsoleAgentNames(
-  root: string,
-  serverDirs: string[] = [join(root, "server")],
-): string[] {
-  return discoverAgentDefinitionEntries(root, serverDirs).map(agent => agent.name)
 }
 
 export function generatedConsolePluginRegistration(value: string): boolean {
@@ -410,6 +402,8 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         baseURL: "/_vitehub/assets",
         dir: consolePublicRoot,
         fallthrough: false,
+        // Every Console asset name contains a content hash.
+        maxAge: 60 * 60 * 24 * 365,
       })
 
       consoleConfig.nitro = { ...kit.config, publicAssets }

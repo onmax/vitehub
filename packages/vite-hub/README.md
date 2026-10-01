@@ -32,6 +32,8 @@ On a Node host with persistent storage, set `dataDir` once. Enabled Agent State,
 
 Set `publicUrl` to the public origin of the deployed application, for example `vitehub({ preset: "node", publicUrl: "https://agents.example.com" })`. Console invocation links, GitHub activity links, telemetry session links, and the default Auth base URL use it. A function receives each discovered Agent name. It applies to builds. In `vite dev`, request-bound Console and Auth flows use the request origin. GitHub activity and telemetry links have no request-origin fallback. Use the GitHub Channel `activity.publicUrl` override or the evlog `sessionUrl` callback to supply links in development.
 
+Set `observability: { service }` to export Agent telemetry, failed request logs, and papercut reports through evlog. ViteHub registers the evlog Nitro module, adds the telemetry Capability to every Agent, and reports exporter status in the Console. Read the instance with `useObservability()` from `vite-hub/agent/observability`. See [Observability](https://vitehub.dev/docs/agents/observability).
+
 Explicit store paths, remote URLs, and disabled services remain authoritative. Set `console.databaseUrl` to preserve an existing journal location; `VITEHUB_CONSOLE_DATABASE_URL` remains a runtime override. Changing paths does not migrate existing data.
 
 ## Run a complete first result
@@ -143,7 +145,7 @@ Built-in Agent Drivers and Box runtimes are selected by literal or tagged values
 
 ## Invoke Agents from the Console
 
-The Console **Usage** page provides session history with date, Agent, status, and search filters. Open a row to inspect that session in the existing Agents view. History keeps completed, failed, and cancelled Agent Invocations visible even when token or cost evidence is unavailable. Totals use the same filters as the history table. See [Session history and usage](https://vitehub.dev/docs/console/usage) for the identity, coverage, and pagination contract.
+The Console **Usage** page provides session history with date, Agent, status, and search filters. Open a row to inspect that session in the existing Agents view. History keeps completed, failed, and cancelled Agent Invocations visible even when token or cost evidence is unavailable. Totals use the same filters as the history table. See [Session history](https://vitehub.dev/docs/development/console#session-history) for the identity, coverage, and pagination contract.
 
 Set `console: { access: "auth", auth: { ... }, invoke: true }` for an independent Console session, `console: { access: "auth", auth: { provider: "cloudflare-access" } }` to verify a Cloudflare Access token on each Console request, `console: { access: "auth", invoke: true }` to reuse the Primary Auth Definition, or `console: { exposure: "host-managed", invoke: true }` when host middleware protects all `/_vitehub/**` and `/api/_vitehub/console/**` routes. Explicit access configurations keep invocation disabled by default. The development shorthand `console: true` enables invocation. Invocation also enables the Schedules page **Run now** button and `POST /_vitehub/schedules/run` for Static Schedule Definitions that set `manual: true`; see [Run Schedules on demand](https://vitehub.dev/docs/development/console#run-schedules-on-demand).
 
@@ -159,6 +161,6 @@ The D1 journal supports Drizzle queries and atomic writes through `console.resol
 
 ## Console images
 
-The Console accepts up to ten PNG, JPEG, WebP, or GIF images per message, within a combined 10 MiB limit. Configure durable Blob storage to keep the bytes, and content-enabled Invocation storage to keep message references. Agents can return published Blob image URLs in Markdown. See [Console usage](https://vitehub.dev/docs/console/usage).
+The Console accepts up to ten PNG, JPEG, WebP, or GIF images per message, within a combined 10 MiB limit. Configure durable Blob storage to keep the bytes, and content-enabled Invocation storage to keep message references. Agents can return published Blob image URLs in Markdown. See [Image upload boundaries](https://vitehub.dev/docs/development/console#image-upload-boundaries).
 
 Console image uploads require invocation to be enabled. The Console fixes the Agent, route, and invoker profile when submission starts, so switching Agents during an upload cannot redirect the input. Uploads without a usable Blob serving URL are removed before the request fails.
