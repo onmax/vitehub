@@ -724,6 +724,17 @@ describe("framework package contract", () => {
     expect(consoleCss).toContain("vitehub-console");
     expect(consoleCss).toContain("--ui-bg:#fdfdfd");
     expect(consoleCss).toContain("--ui-text:#27272a");
+    // The blocking stylesheet and entry script exclude KaTeX fonts and the full Lucide set.
+    expect(consoleCss).not.toContain("KaTeX_");
+    expect(consoleClient).not.toContain('"alarm-clock-check":{');
+    const consoleMathCssFiles = globSync("dist/console/runtime/public/console/assets/katex-*.css", { cwd: packageRoot });
+    expect(consoleMathCssFiles).toHaveLength(1);
+    const consoleMathCss = readFileSync(`${packageRoot}/${consoleMathCssFiles[0]}`, "utf8");
+    expect(consoleMathCss).toContain("data:font/woff2;base64,");
+    expect(consoleMathCss).not.toMatch(/data:font\/(?:woff|ttf);/);
+    expect(
+      globSync("dist/console/runtime/public/console/chunks/icons-*.js", { cwd: packageRoot }).map(file => readFileSync(`${packageRoot}/${file}`, "utf8")).join(""),
+    ).toContain('"alarm-clock-check":{');
     expect(
       globSync("dist/console/runtime/public/console/chunks/*.js", { cwd: packageRoot }).length,
     ).toBeGreaterThan(0);
