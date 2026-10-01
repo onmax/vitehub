@@ -48,6 +48,18 @@ describe("vitehub channels replay", () => {
     expect(channelReplayQuery(parseChannelReplayArgs(["--filter", "color=red"]), undefined)).toEqual({ color: "red" })
   })
 
+  it("keeps prototype-named query keys as own values", () => {
+    const query = channelReplayQuery(
+      parseChannelReplayArgs(["--__proto__", "proto", "--filter", "__proto__=again", "--constructor", "ctor", "--toString", "string"]),
+      { properties: { ["__proto__"]: {}, constructor: {}, toString: {} } },
+    )
+
+    expect(Object.hasOwn(query, "__proto__")).toBe(true)
+    expect(query["__proto__"]).toEqual(["proto", "again"])
+    expect(query.constructor).toBe("ctor")
+    expect(query.toString).toBe("string")
+  })
+
   it.each(["agent", "channel", "cursor", "filter", "limit", "server", "url", "dry-run", "force", "help"])("uses --filter for the reserved query key %s", (name) => {
     expect(channelReplayQueryHelp({ properties: { [name]: { type: "string" } } })).toEqual([`  --filter ${name}=<string>`])
     expect(channelReplayQuery(parseChannelReplayArgs(["--filter", `${name}=value`]), { properties: { [name]: { type: "string" } } })).toEqual({ [name]: "value" })

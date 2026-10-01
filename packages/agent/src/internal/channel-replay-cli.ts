@@ -215,8 +215,12 @@ export function channelReplayQuery(parsed: Pick<ParsedChannelReplayArgs, "filter
   }
   const query: Record<string, string | string[]> = {}
   for (const [name, value] of [...parsed.queryFlags, ...parsed.filters]) {
-    const current = query[name]
-    query[name] = current === undefined ? value : [...(Array.isArray(current) ? current : [current]), value]
+    // Query keys come from user supplied schema and flags. Define each key as
+    // an own property so names such as `__proto__` cannot invoke Object's
+    // prototype setter or accidentally read an inherited value.
+    const current = Object.hasOwn(query, name) ? query[name] : undefined
+    const next = current === undefined ? value : [...(Array.isArray(current) ? current : [current]), value]
+    Object.defineProperty(query, name, { configurable: true, enumerable: true, value: next, writable: true })
   }
   return query
 }
