@@ -207,6 +207,8 @@ export interface ViteHubNitroDevServer extends ViteHubDevEndpointServer {
 }
 
 export interface ViteHubNitroDevForwardOptions extends ViteHubDevEndpointGuard {
+  /** Trusted headers added only when forwarding to the runtime. Incoming headers are not copied. */
+  runtimeHeaders?: Readonly<Record<string, string>>
   /** Nitro `baseURL`. Nitro routes use this prefix. Read on each request. */
   nitroBaseURL?: () => string | undefined
   /** Nitro route of the dev-only handler, for example `/_vitehub/schedule/dev`. */
@@ -276,9 +278,12 @@ export async function forwardViteHubDevRequestToNitro(
 ): Promise<Response> {
   const environment = findViteHubNitroDevEnvironment(server)
   if (!environment) return unavailableResponse(options)
+  const headers = new Headers(options.runtimeHeaders)
+  headers.set("content-type", "application/json")
+  headers.set(options.header, options.headerValue)
   return await environment.dispatchFetch(new Request(`http://localhost${viteHubNitroRuntimeRoute(options.runtimeRoute, options.nitroBaseURL?.())}`, {
     body: await readRequestBody(req),
-    headers: { "content-type": "application/json", [options.header]: options.headerValue },
+    headers,
     method: "POST",
   }))
 }
