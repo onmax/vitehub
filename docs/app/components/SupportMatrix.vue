@@ -606,7 +606,7 @@ const sections = reactive<{ anchor?: string; label: string; rows: MatrixRow[] }[
           local: cell("none", "Local providers do not need hosted resource provisioning."),
           cloudflare: cell(
             "package",
-            "ViteHub can provision R2 buckets, D1 databases, and Cloudflare Queues.",
+            "ViteHub can provision R2 buckets, D1 databases, KV namespaces, and Cloudflare Queues.",
           ),
           vercel: cell(
             "package",
@@ -871,7 +871,7 @@ onBeforeUnmount(() => clearTimeout(proofRefreshTimer));
           Workflow, and Workspace run in the live playground. Browser and Agent have package-owned
           output outside the nightly run. Enabled integrations compose the Worker,
           <code>wrangler.json</code>, bindings, callbacks, and runtime modules. ViteHub can
-          provision R2 buckets, D1 databases, and Cloudflare Queues.
+          provision R2 buckets, D1 databases, KV namespaces, and Cloudflare Queues.
         </li>
         <li>
           <strong>Vercel:</strong> Blob, Database, KV, Queue, Sandbox, Schedule, Workflow, and

@@ -1,7 +1,6 @@
 import { hasRuntimeType, isRuntimeObject, runtimeType } from "./internal/runtime-type.ts"
 import { getViteHubErrorShape } from "@vite-hub/runtime"
 import { publishedDeliveryArtifactsFromUnknown } from "./delivery-artifacts.ts"
-import { readAgentUsageMetadata } from "./internal/agent-usage-metadata.ts"
 import { isAsyncIterable } from "./internal/stream-result.ts"
 import { finalChannelOutputSelectedSymbol } from "./internal/final-channel-output.ts"
 import { synthesizedAgentOutputSymbol } from "./internal/synthesized-agent-output.ts"
@@ -273,20 +272,6 @@ function mergedRunMetadata(...values: unknown[]): Partial<AgentRunMetadata> | un
   return Object.keys(metadata).length ? metadata : undefined
 }
 
-function credentialSourceFromMetadata(metadata: unknown): AgentUsageRecord["credentialSource"] | undefined {
-  if (!isRecord(metadata) || !isRecord(metadata.credentialSource)) return
-  const source = metadata.credentialSource.source
-  const label = metadata.credentialSource.label
-  if (source !== undefined && !hasRuntimeType(source, "string")) return
-  if (label !== undefined && !hasRuntimeType(label, "string")) return
-  if (source === undefined && label === undefined) return
-  return {
-    ...(label ? { label } : {}),
-    // SAFETY: Agent output normalization establishes the asserted stream result contract.
-    ...(source ? { source: source as NonNullable<AgentUsageRecord["credentialSource"]>["source"] } : {}),
-  }
-}
-
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return isRecord(value) && hasRuntimeType(value.then, "function")
 }
@@ -405,11 +390,9 @@ function usageRecordFromUsage(
   const modelMetadata = modelMetadataFromResult(metadataSource) ?? modelMetadataFromResult(fallbackMetadataSource)
   const response = responseFromResult(metadataSource) ?? responseFromResult(fallbackMetadataSource)
   const latency = latencyFromResult(metadataSource) ?? latencyFromResult(fallbackMetadataSource)
-  const credentialSource = credentialSourceFromMetadata(readAgentUsageMetadata(metadataSource, fallbackMetadataSource))
   const cost = providerCostFromResult(metadataSource) ?? providerCostFromResult(fallbackMetadataSource)
   return {
     ...(cost ? { cost } : {}),
-    ...(credentialSource ? { credentialSource } : {}),
     ...(latency ? { latency } : {}),
     ...modelMetadata,
     ...(response ? { response } : {}),
@@ -436,7 +419,7 @@ function withFallbackUsageMetadata(
   }
   const response = record.response ?? (compound ? undefined : responseFromResult(fallbackMetadataSource))
   const latency = record.latency ?? (compound ? undefined : latencyFromResult(fallbackMetadataSource))
-  const credentialSource = record.credentialSource ?? (compound ? undefined : credentialSourceFromMetadata(readAgentUsageMetadata(record, fallbackMetadataSource)))
+  const credentialSource = record.credentialSource
   const runMetadata = mergedRunMetadata(run, readableProperty(record, "run"))
   const provider = record.provider ?? (compound ? undefined : modelMetadata?.provider)
   return model || provider || transport || cost || response || latency || credentialSource || runMetadata
