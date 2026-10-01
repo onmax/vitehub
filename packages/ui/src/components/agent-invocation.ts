@@ -1178,7 +1178,7 @@ function inspectorExecution(configuration: AgentInvocationConfiguration) {
   const model = configuration.driver?.model;
   const modelId = model?.id;
   const maker = invocationModelMaker(modelId);
-  const provider = invocationBrand(model?.provider ?? configuration.driver?.provider) ?? maker;
+  const provider = invocationBrand(model?.provider ?? configuration.driver?.provider);
   const runtime = configuration.runtime?.name;
   if (!modelId && !provider && (!runtime || runtime === "unknown")) return null;
   return h("div", { class: "vh-invocation-inspector__group vh-invocation-inspector__group--execution" }, [

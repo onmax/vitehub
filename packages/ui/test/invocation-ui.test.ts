@@ -3758,7 +3758,8 @@ describe("Agent Invocation UI", () => {
       },
     } });
     expect(namespacedModel.get(".vh-invocation-inspector__group--execution").text()).toContain("GPT 5");
-    expect(namespacedModel.get(".vh-invocation-inspector__group--execution").text()).toContain("OpenAI");
+    expect(namespacedModel.get(".vh-invocation-execution__model-icon").attributes("data-brand")).toBe("openai");
+    expect(namespacedModel.find(".vh-invocation-execution__provider").exists()).toBe(false);
 
     const compact = mount(AgentInvocationInspector, {
       props: { invocation, showStatus: false, showTimeline: false },
@@ -3997,6 +3998,14 @@ describe("Agent Invocation UI", () => {
       const readOnly = mount(AgentToolList, { props: { calls: { db_query: 2 }, tools: [{ name: "db_query" }] } });
       expect(readOnly.find("button").exists()).toBe(false);
       expect(readOnly.get(".vh-agent-tool-list__count").text()).toBe("2 calls");
+    });
+
+    it.each(["gpt-5.6", "openai/gpt-5"])("keeps the provider unknown for %s when no provider was recorded", (id) => {
+      const invocation = conversation();
+      invocation.configuration = { driver: { model: { id } } };
+      const wrapper = mount(AgentInvocationInspector, { props: { invocation } });
+      expect(wrapper.get(".vh-invocation-execution__model-icon").attributes("data-brand")).toBe("openai");
+      expect(wrapper.find(".vh-invocation-execution__provider").exists()).toBe(false);
     });
 
     it("recognizes model makers and providers", () => {
