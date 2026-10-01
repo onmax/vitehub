@@ -174,6 +174,7 @@ describe("chat error fallback", () => {
     "Feb 29, 2026 1:23 AM",
     "Feb 30, 2026 1:23 AM UTC",
     "Apr. 31st, 2026 1:23 p.m. PST",
+    "Sep 15, 0000 1:23 PM UTC",
     "Secret 15, 2026 1:23 AM",
   ])("omits private or invalid reset text: %s", async (reset) => {
     const message = `Quota exhausted. Try again at ${reset}.`

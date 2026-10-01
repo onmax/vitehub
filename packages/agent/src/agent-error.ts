@@ -182,6 +182,9 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
     ? Number(isoDate[2]) - 1
     : ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(namedDate?.[1]?.slice(0, 3).toLowerCase() ?? "")
   const day = Number(isoDate?.[3] ?? namedDate?.[2])
+  // Date.parse applies legacy 1900-based conversion to named years below 100.
+  // Reject them rather than publishing an instant for a different calendar year.
+  if (namedDate && year < 100) return
   const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
   const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month]
   // Date.parse normalizes overflow days, so validate the provider's calendar date first.
