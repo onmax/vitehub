@@ -46,6 +46,7 @@ const CANONICAL_TRACE_ATTRIBUTE_KEYS = new Set([
   "input.replay.version",
   "input.promptChanged",
   "input.hasInvoker",
+  "input.hasResolvedInvoker",
   "input.hasContext",
   "input.hasRunMetadata",
   "input.hasTimeout",
@@ -853,7 +854,7 @@ function boundedObservation(
   const canonicalAttributes: Record<string, unknown> = {}
   if (observation.name === "agent.invocation.start") {
     if (observation.attributes?.["input.replay.version"] === 5) canonicalAttributes["input.replay.version"] = 5
-    for (const key of ["input.promptChanged", "input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"]) {
+    for (const key of ["input.promptChanged", "input.hasInvoker", "input.hasResolvedInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"]) {
       const value = observation.attributes?.[key]
       if (hasRuntimeType(value, "boolean")) canonicalAttributes[key] = value
     }
@@ -1027,10 +1028,11 @@ export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "o
   if (attributes["input.hasMessages"] === true || attributes["input.messages"] !== undefined) return { available: false, reason: "input-has-messages" }
   const prompt = attributes["input.prompt"]
   if (!hasRuntimeType(prompt, "string") || !prompt.trim()) return { available: false, reason: "input-not-captured" }
-  if (attributes["input.replay.version"] !== 5 || ["input.promptChanged", "input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"]
+  if (attributes["input.replay.version"] !== 5 || ["input.promptChanged", "input.hasInvoker", "input.hasResolvedInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"]
     .some(key => !hasRuntimeType(attributes[key], "boolean"))) return { available: false, reason: "replay-metadata-unavailable" }
   if (attributes["input.promptChanged"] === true) return { available: false, reason: "input-prompt-changed" }
   if (attributes["input.hasInvoker"] === true) return { available: false, reason: "input-has-invoker" }
+  if (attributes["input.hasResolvedInvoker"] === true) return { available: false, reason: "input-has-invoker" }
   if (attributes["input.hasContext"] === true) return { available: false, reason: "input-has-context" }
   if (attributes["input.hasAbortSignal"] === true) return { available: false, reason: "input-has-abort-signal" }
   if (attributes["input.hasRunMetadata"] === true) return { available: false, reason: "input-has-run-metadata" }
@@ -1855,7 +1857,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const identity = observationIdentity(observation)
       if (!redacted) return
       const inputRedacted = observation.name === "agent.invocation.start"
-        && ["input.prompt", "input.replay.version", "input.promptChanged", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"]
+        && ["input.prompt", "input.replay.version", "input.promptChanged", "input.hasInvoker", "input.hasResolvedInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"]
           .some(key => observation.attributes?.[key] !== redacted.attributes?.[key])
       return {
         ...redacted,

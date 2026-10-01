@@ -38,7 +38,7 @@ async function journaled(input: Parameters<typeof runAgent>[2], options: Partial
 }
 
 const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
-  attributes: { "input.replay.version": 5, "input.promptChanged": false, "input.hasContext": false, "input.hasRunMetadata": false, "input.hasTimeout": false, "input.hasAbortSignal": false, "input.hasDryRun": false, "input.hasInvoker": false, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false, ...attributes },
+  attributes: { "input.replay.version": 5, "input.promptChanged": false, "input.hasContext": false, "input.hasRunMetadata": false, "input.hasTimeout": false, "input.hasAbortSignal": false, "input.hasDryRun": false, "input.hasInvoker": false, "input.hasResolvedInvoker": false, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false, ...attributes },
   name: "agent.invocation.start",
   sequence: 1,
   timestamp: new Date(0).toISOString(),
