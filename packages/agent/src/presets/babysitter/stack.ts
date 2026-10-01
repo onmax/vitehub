@@ -34,6 +34,6 @@ export function stackRetargetBase(pr: GitHubPullRequestRecord, baseBranchPulls: 
   // An open parent still owns the base branch.
   if (parents.some(parent => String(field(parent, "state")).toLowerCase() === "open")) return undefined;
   // A parent merged into another stale branch did not land; retargeting would add its unlanded change.
-  if (!parents.some(parent => Boolean(field(parent, "merged_at")) && field(parent, "base", "ref") === defaultBranch)) return undefined;
+  if (!parents.some(parent => field(parent, "head", "sha") === baseSha && Boolean(field(parent, "merged_at")) && field(parent, "base", "ref") === defaultBranch)) return undefined;
   return defaultBranch;
 }

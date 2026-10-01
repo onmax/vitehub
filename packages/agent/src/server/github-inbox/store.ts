@@ -317,10 +317,6 @@ export class PullRequestInbox {
     if (s.generation === s.handled) s.dirtyAt = this.clock()
     s.generation++; s.nextAt = 0; s.attempts = 0
     s.revision = (s.revision ?? 0) + 1
-    const head = s.pr?.head?.sha
-    if (head && s.progressBudget?.head === head && s.progressBudget.exhausted) {
-      s.progressBudget = { ...s.progressBudget, count: 0, exhausted: false, resetReason: reason }
-    }
     if (!s.lease) s.status = s.wait ? 'waiting' : 'ready'
     s.reasons = [...new Set([...s.reasons, reason])]
   }
@@ -496,7 +492,7 @@ export class PullRequestInbox {
           || event === 'status' && payload.state === 'pending'
         const wake = (changed || !s.pr) && !pendingCi
         if (wake) this.dirty(s, `${event}:${payload.action ?? check?.conclusion ?? payload.state ?? 'updated'}`)
-        else if (changed && !pendingCi) s.revision = (s.revision ?? 0) + 1
+        else if (changed) s.revision = (s.revision ?? 0) + 1
         const exhausted = s.progressBudget?.exhausted && s.progressBudget.head === s.pr?.head?.sha
         const eligible = this.eligible(repository, s.pr)
         if (s.pr && !eligible) {
@@ -672,7 +668,12 @@ export class PullRequestInbox {
       return true
     })
   }
-  async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> }): Promise<boolean> {
+  /**
+   * Finishes a claimed pass. A `wait` without `headSha` binds to the claimed head and requires
+   * unchanged evidence. A wait with `headSha`, such as the head of a repair push, keeps later events
+   * unhandled, so `waitsToEvaluate()` returns the PR and the host decides whether they need work.
+   */
+  async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> & { headSha?: string } }): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token) return false
@@ -696,7 +697,7 @@ export class PullRequestInbox {
       if (result.wait) {
         if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
         if (s.status === 'terminal' || !s.pr?.head?.sha || s.pr.head.sha !== claim.snapshot.pr?.head?.sha
-          || s.generation !== claim.generation || (s.revision ?? 0) !== (claim.snapshot.revision ?? 0)) {
+          || s.generation !== claim.generation) {
           s.lease = null; s.leaseUntil = 0
           if (s.status !== 'terminal') { s.status = 'ready'; s.nextAt = 0 }
           await this.put(tx, s)
@@ -721,6 +722,40 @@ export class PullRequestInbox {
         s.status = 'waiting'; s.nextAt = 0; s.reasons = ['no-progress-budget-exhausted']
       }
       await this.put(tx, s); return true
+    })
+  }
+  private recordProgress(s: Snapshot, claim: Claim, progress: ProgressOutcome | undefined): void {
+    const head = s.pr?.head?.sha
+    if (progress?.kind === 'verified') requireEvidence(progress.evidence)
+    const previous = s.progressBudget?.head === head ? s.progressBudget : undefined
+    const limit = previous?.limit ?? this.budgets.noProgress
+    if (progress && head && head === claim.snapshot.pr?.head?.sha && limit !== undefined) {
+      const creditedEvidence = previous?.creditedEvidence ?? []
+      const verified = progress.kind === 'verified' && !creditedEvidence.includes(progress.evidence)
+      const count = verified ? 0 : (previous?.count ?? 0) + 1
+      s.progressBudget = { head, limit, count, exhausted: count >= limit,
+        evidence: verified ? progress.evidence : previous?.evidence,
+        creditedEvidence: verified ? [...creditedEvidence, progress.evidence] : creditedEvidence,
+        resetReason: previous?.resetReason }
+    }
+  }
+  /** Waiting PRs that received events since the host last evaluated their wait. */
+  async waitsToEvaluate(): Promise<Snapshot[]> {
+    if (!this.repositories.length) return []
+    const repositories = this.repositoryFilter()
+    const rows = await this.read(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql}
+      AND waiting=1 AND status<>'terminal' AND lease IS NULL AND generation>handled ORDER BY dirty_at, number`, [this.scope, ...repositories.args])
+    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value))))
+  }
+  /** Records that the host evaluated a wait's new events and the wait still holds. */
+  async acknowledgeWait(observed: Snapshot): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, observed.repository, observed.number)
+      if (!s?.wait || s.lease || s.status === 'terminal' || s.generation !== observed.generation
+        || (s.revision ?? 0) !== (observed.revision ?? 0)) return false
+      s.handled = s.generation; s.reasons = []
+      await this.put(tx, s)
+      return true
     })
   }
   /** Re-evaluate structured evidence outside an Agent invocation before calling this method. */

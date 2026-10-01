@@ -168,7 +168,9 @@ test('pending status does not wake but invalidates in-flight stale hydration', a
   assert.equal((await inbox.get(repository, 7))!.generation, claim.generation)
   assert.equal(await inbox.hydrate(claim, { statuses: {} }), false)
   assert.equal((await inbox.get(repository, 7))?.statuses.deploy?.state, 'pending')
-  await inbox.finish(claim, { text: 'wait' }); assert.equal((await inbox.claim(1)).length, 0)
+  assert.equal(await inbox.finish(claim, { text: 'wait', wait: { reason: 'checks', evidenceKey: 'pending' } }), true)
+  assert.equal((await inbox.get(repository, 7))?.wait?.headSha, 'a')
+  assert.equal((await inbox.claim(1)).length, 0)
 })
 test('thread reconcile preserves concurrent webhook and only wakes on changed evidence', async t => {
   const inbox = memory(t); await inbox.seed(repository, pr()); await inbox.finish((await inbox.claim(1))[0]!, { text: 'wait' })
