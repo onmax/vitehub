@@ -1,6 +1,6 @@
 import { createRuntimeContext } from "@vite-hub/runtime"
 
-import { AgentInvocationClaimConflict, exclusiveAgentInvocation, inheritedAgentInvocationClaim, type AgentInvocationJournal, pendingAgentInvocationAnnotation } from "./invocations.ts"
+import { AgentInvocationClaimConflict, exclusiveAgentInvocation, inheritedAgentInvocationClaim, type AgentInvocationJournal, pendingAgentInvocationAnnotation, pendingAgentInvocationAnnotations } from "./invocations.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { agentErrorMessage } from "./agent-error.ts"
 import { isResolvedAgentTriggerHandledInvocation, resolveAgentTriggerInvocation, reserveAgentChannelItem, runAgent } from "./index.ts"
@@ -189,10 +189,13 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
       if (!options.force && invocations) reservation = await reserveAgentChannelItem(agent, itemRuntime)
       const invocation = await resolveAgentTriggerInvocation(agent, itemRuntime, triggerId, item)
       if (isResolvedAgentTriggerHandledInvocation(invocation)) { await reservation?.finish("completed"); return { id, key, reason: "handled", status: "skipped" } }
-      if (reservation && invocation.run) await reservation.setRunMetadata(invocation.run)
+      const run = { ...runtime.run, ...invocation.run, runId: id }
+      if (reservation && !await reservation.setRunMetadata({ ...run, annotations: pendingAgentInvocationAnnotations(run.annotations) })) {
+        throw new Error("Could not persist the claimed Invocation run metadata.")
+      }
       const token = await reservation?.handoffClaim()
       if (reservation && !token) throw new Error("Could not transfer the Invocation execution claim.")
-      const output = await runAgent(agent, { ...itemRuntime, ...(token ? { [inheritedAgentInvocationClaim]: token } : {}), run: { ...runtime.run, ...invocation.run, runId: id } }, {
+      const output = await runAgent(agent, { ...itemRuntime, ...(token ? { [inheritedAgentInvocationClaim]: token } : {}), run }, {
         ...invocation.input,
         ...(options.dryRun ? { dryRun: true } : {}),
       })

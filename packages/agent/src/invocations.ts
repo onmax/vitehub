@@ -117,14 +117,14 @@ export interface AgentInvocationStoreUpdateInput {
   /** Append with a stable observation identity and a sequence assigned atomically by the store. */
   appendObservation?: Omit<TraceEventLogEntry, "sequence">
   annotations?: AgentInvocationRecord["annotations"]
-  channelId?: string
   capabilityIds?: readonly string[]
+  channelId?: string
+  origin?: string
+  threadId?: string
   error?: AgentInvocationRecord["error"]
   observation?: TraceEventLogEntry
   observationsTruncated?: boolean
   status?: AgentInvocationRecordStatus
-  origin?: string
-  threadId?: string
   timestamp: string
 }
 
@@ -290,7 +290,8 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   releaseClaim(): Promise<void>
   running(): Promise<void>
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
-  setRunMetadata(metadata: Pick<AgentRunMetadata, "channelId" | "origin" | "threadId">): Promise<void>
+  /** Persist resolved run metadata while this journal owns the execution claim. */
+  setRunMetadata(run: AgentRunMetadata): Promise<boolean>
 }
 
 function cloneObservation(observation: TraceEventLogEntry): TraceEventLogEntry {
@@ -1271,9 +1272,6 @@ export function applyAgentInvocationStoreUpdate(
       : {}),
     ...(capabilityIds.length ? { capabilityIds } : {}),
     ...(input.error ? { error: input.error } : {}),
-    ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
-    ...(input.origin !== undefined ? { origin: input.origin } : {}),
-    ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
     ...(title ? { title } : {}),
     ...(titleUpdated ? { titleSequence: input.observation!.sequence } : {}),
     observations: retained.observations,
@@ -1286,6 +1284,12 @@ export function applyAgentInvocationStoreUpdate(
     ...(status === "cancelled" && !isAppend && !record.cancelledAt ? { cancelledAt: input.timestamp } : {}),
     status,
     updatedAt: input.timestamp > record.updatedAt ? input.timestamp : record.updatedAt,
+  }
+  for (const field of ["channelId", "origin", "threadId"] as const) {
+    if (!Object.hasOwn(input, field)) continue
+    const value = input[field]
+    if (value) updated[field] = boundedString(value)
+    else delete updated[field]
   }
   if (Object.hasOwn(input, "annotations")) {
     const annotations = normalizeAnnotations(input.annotations)
@@ -2277,12 +2281,13 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           if (finished || finishing) return
           await update({ annotations: normalizeAnnotations(annotations), timestamp: new Date().toISOString() })
         },
-        async setRunMetadata(metadata) {
-          if (finished || finishing) return
-          await update({
-            ...(metadata.channelId !== undefined ? { channelId: metadata.channelId } : {}),
-            ...(metadata.origin !== undefined ? { origin: metadata.origin } : {}),
-            ...(metadata.threadId !== undefined ? { threadId: metadata.threadId } : {}),
+        async setRunMetadata(run) {
+          if (finished || finishing) return false
+          return await update({
+            annotations: normalizeAnnotations(run.annotations),
+            channelId: run.channelId,
+            origin: run.origin,
+            threadId: run.threadId,
             timestamp: new Date().toISOString(),
           })
         },

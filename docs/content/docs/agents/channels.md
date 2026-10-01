@@ -190,6 +190,8 @@ export default defineEventHandler(async (event) => {
 
 Each item gets the Invocation run ID `channel-replay:<channel>:<key>`. Replay skips an item that already has an Invocation with that ID, so a stopped replay can run again safely. This needs an Invocation journal: configure `invocations` or enable the [Console](/docs/development/console). Pass `force: true` to replay handled items again; each forced item gets a new ID. Pass `dryRun: true` to [record Channel message writes](#dry-run) instead of sending them. Dry runs use `channel-replay-dry-run:` IDs, so they never block a later live replay.
 
+Replay persists the trigger's run metadata on the claimed Invocation before execution. Its `annotations`, `channelId`, `origin`, and `threadId` therefore appear in the journal and Console. The trigger's supplied values override inherited host metadata. A failed metadata write fails the item before Driver execution or Workflow dispatch.
+
 An inline Agent runs each item before it reads the next one and reports it as `completed`. An Agent with a [Workflow runtime](/docs/agents/invocations) starts one durable Workflow run per item and reports it as `started`. A trigger error, such as invalid item input, marks that item `failed`, and replay continues.
 
 Built-in Channels do not provide `history`. The Telegram Bot API cannot read past messages. Slack, Discord, Teams, and GitHub history are not built in; define a custom Channel with a history Collection when you need them.

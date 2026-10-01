@@ -53,7 +53,7 @@ function mailbox(options: { maxLimit?: number, triggerRun?: { channelId?: string
         invoke: (_context, email) => ({
           input: { prompt: email.subject },
           message: { id: email.id },
-          ...(options.triggerRun ? { run: options.triggerRun } : {}),
+          ...(options.triggerRun ? { run: { runId: "trigger-run", ...options.triggerRun } } : {}),
         }),
       }),
     },

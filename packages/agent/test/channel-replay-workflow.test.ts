@@ -32,12 +32,13 @@ it("reserves concurrent Workflow replays before activity and hands the journal t
         input: v.object({ id: v.string() }),
         invoke: async () => {
           entered++
-          return { input: { prompt: "hello" }, run: { runId: "trigger-run", channelId: "mailbox", activity: { target: { message: "m1" } } } }
+          return { input: { prompt: "hello" }, run: { runId: "trigger-run", channelId: "mailbox", origin: "history-trigger", threadId: "message-thread", annotations: { trigger: "history" }, activity: { target: { message: "m1" } } } }
         },
       }),
     },
   })
   const providerRun = vi.fn(async (payload: { invocationClaimToken?: string }, options: { id: string }) => {
+    expect(await invocations.getByRunId(options.id, "replay-workflow")).toMatchObject({ channelId: "mailbox", origin: "history-trigger", threadId: "message-thread", annotations: { trigger: "history" } })
     const workerJournal = await bindAgentInvocations(invocations, { ...runtime, run: { runId: options.id } }, { agentName: "replay-workflow", replaceClaimToken: payload.invocationClaimToken })
     expect(workerJournal?.claimStatus).toBe("owned")
     await workerJournal?.running()
