@@ -67,3 +67,12 @@ export async function requestConnectionsManagement<T extends v.BaseSchema<unknow
   if (!response.ok) throw new ConsoleRequestError(response.status, await errorMessage(response))
   return v.parse(schema, await response.json())
 }
+
+/** Load pending decisions separately so recent history cannot hide older pending calls. */
+export async function loadConnectionApprovals(endpoint: string, name: string): Promise<{ history: ConsoleConnectionApproval[], pending: ConsoleConnectionApproval[] }> {
+  const [history, waiting] = await Promise.all([
+    requestConnectionsManagement(endpoint, "approvals", connectionApprovalsSchema, { name }),
+    requestConnectionsManagement(endpoint, "approvals", connectionApprovalsSchema, { name, status: "pending" }),
+  ])
+  return { history: history.approvals, pending: waiting.approvals }
+}

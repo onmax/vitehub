@@ -1166,7 +1166,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         const authAccess = options.console !== true && options.console.access === "auth"
         const actorSource = options.console !== true && options.console.access === "auth" && options.console.auth
           ? "console-auth"
-          : authAccess && options.auth ? "app-auth" : "none"
+          : authAccess && (nuxt.options.vite?.auth ?? options.auth) ? "app-auth" : "none"
         const consoleAlias = (config.alias ??= {}) as Record<string, string>
         consoleAlias[consoleConnectionsActorId] = await writeConsoleConnectionsActor(viteRoot, actorSource)
       }
