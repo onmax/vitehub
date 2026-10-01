@@ -2,7 +2,7 @@ import { existsSync } from "node:fs"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
 import { createServer } from "node:http"
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
