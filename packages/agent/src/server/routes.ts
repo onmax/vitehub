@@ -329,6 +329,8 @@ interface QueuedChatFinishMessage {
   callbacks: ChatFinishDeliveryCallback[]
   directCallback?: ChatFinishDeliveryCallback
   message: AgentChatMessage
+  shouldSkip?: () => boolean
+  continueOnError?: boolean
 }
 
 type AgentChatQueuedFinishExtension = AgentChatFinishExtension & ChatFinishDeliveryRegistrar & {
@@ -4623,11 +4625,13 @@ function createChatFinishExtension(
   const messages: QueuedChatFinishMessage[] = []
   const extension: AgentChatQueuedFinishExtension = {
     [chatFinishMessagesKey]: messages,
-    [chatFinishDeliveryRegistrarKey]: (message, callback) => {
+    [chatFinishDeliveryRegistrarKey]: (message, callback, options) => {
       const queued = messages.findLast(candidate => candidate.callbacks.length === 0 && Object.is(candidate.message, message))
       if (!queued) return false
       queued.directCallback = undefined
       queued.callbacks.push(callback)
+      queued.shouldSkip = options?.shouldSkip
+      queued.continueOnError = options?.continueOnError
       return true
     },
     provider: chatRegistrationOrigin(registration),
@@ -4775,6 +4779,11 @@ async function flushChatFinishExtensionMessages(
     else if (callbacks.length) captureStaticChatFinishMessage(message, capture)
     try {
       abortSignal?.throwIfAborted()
+      if (queued.shouldSkip?.()) {
+        capture.skipped = "Same text as the final reply."
+        await settleChatFinishDeliveryCallbacks(callbacks, capture)
+        continue
+      }
       if (abortSignal && isAsyncIterable(message)) {
         message = manualDelivery.placeholder ? await collectAbortableChatMessage(message, abortSignal) : abortableChatMessage(message, abortSignal)
       }
@@ -4841,6 +4850,8 @@ async function flushChatFinishExtensionMessages(
     catch (error) {
       capture.error = error instanceof Error ? error.message : String(error)
       await settleChatFinishDeliveryCallbacks(callbacks, capture)
+      // A failed automatic final reply must leave the queued finish-hook fallback deliverable.
+      if (queued.continueOnError && index + 1 < messages.length && !abortSignal?.aborted) continue
       const skippedCapture: ChatFinishDeliveryCapture = {
         content: "",
         skipped: `Skipped after an earlier queued reply failed: ${capture.error}`,
@@ -5342,17 +5353,18 @@ async function handleChatSdkMessage(
         // SAFETY: The owning Agent runtime boundary establishes the asserted representation before this value is used.
         state: "chat" as const,
       }
+      const workflowContext = {
+        ...resolvedInvocationInput.context,
+        [agentChannelDeliveryWorkflowContextKey]: workflowBinding,
+        [finalChannelOutputContextKey]: true,
+        [requireAgentWorkflowContextKey]: true,
+      }
+      if (!manualDelivery) Object.assign(workflowContext, { [chatFinalReplyContextKey]: "pending" satisfies ChatFinalReplyMode })
       // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
       let workflowInput = withResolvedAgentInvokerInput(
         {
           ...resolvedInvocationInput,
-          context: {
-            ...resolvedInvocationInput.context,
-            [agentChannelDeliveryWorkflowContextKey]: workflowBinding,
-            ...(manualDelivery ? {} : { [chatFinalReplyContextKey]: "pending" satisfies ChatFinalReplyMode }),
-            [finalChannelOutputContextKey]: true,
-            [requireAgentWorkflowContextKey]: true,
-          },
+          context: workflowContext,
         },
         invoker,
       ) as AgentRunInput
