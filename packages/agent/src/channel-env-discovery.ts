@@ -125,12 +125,15 @@ function staticOptionKeys(tokens: string[], start: number, empty: string, typesc
   if (tokens[start] === empty) return new Set()
   if (tokens[start] !== "{") return undefined
   const keys = new Set<string>()
-  return visitObjectProperties(tokens, start, (key, value, method) => {
+  if (!visitObjectProperties(tokens, start, (key, value, method) => {
     const omitted = value === undefined
       ? key === "botToken" && !method
       : isUndefinedValue(tokens, value, new Set([",", "}"])) || (key === "botToken" && canResolveUndefined(tokens, value))
     if (!omitted && (key !== "adapter" || (method || (value !== undefined && isStaticAdapter(tokens, value))))) keys.add(key)
-  }) ? keys : undefined
+  })) return undefined
+  const after = closingDelimiter(tokens, start) + 1
+  if (["as", "satisfies"].includes(tokens[after]!) && !isValueEnd(tokens, after, new Set([",", ")", "}"]))) return undefined
+  return keys
 }
 
 /**
@@ -395,13 +398,19 @@ function isValueEnd(tokens: string[], after: number, terminators: ReadonlySet<st
   if (!["as", "satisfies"].includes(tokens[after]!)) return false
   let depth = 0
   let conditionalType = false
+  let conditionalTypeBranch = false
   for (let i = after + 1; i < tokens.length; i++) {
     const token = tokens[i]!
     if (depth === 0 && token === "," && !terminators.has(token)) return false
     if (depth === 0 && token === "?") {
       if (!conditionalType) return false
+      conditionalTypeBranch = true
     }
     if (depth === 0 && token === "extends") conditionalType = true
+    if (depth === 0 && token === ":" && conditionalTypeBranch) {
+      conditionalType = false
+      conditionalTypeBranch = false
+    }
     if (["+", "*", "/", "%"].includes(token) || (["|", "&", "?"].includes(token) && tokens[i + 1] === token)) return false
     if (token === "<") { i = skipTypeArguments(tokens, i) - 1; continue }
     if (["(", "[", "{"].includes(token)) depth++
