@@ -900,6 +900,13 @@ function resolveAgentWorkflowRuntimeBinding<
   return agent.runtime && agent.runtime.kind === "workflow" ? agent.runtime : undefined
 }
 
+function canDispatchAgentWorkflow(
+  binding: AgentWorkflowRuntimeBinding | undefined,
+  context: AgentRuntimeContext,
+): binding is AgentWorkflowRuntimeBinding {
+  return Boolean(binding && (!("discoveryDefault" in binding) || context.agentIdentity))
+}
+
 function resolveAgentWorkflowName<TRuntimeConfig extends AgentRuntimeConfig>(
   agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
   binding: AgentWorkflowRuntimeBinding,
@@ -1064,7 +1071,7 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
     throw new Error("Could not acquire the Invocation execution claim.")
   }
   const binding = resolveAgentWorkflowRuntimeBinding<TRuntimeConfig>(agent)
-  if (binding && !("discoveryDefault" in binding && !context.agentIdentity) && !journal.createdNew) {
+  if (canDispatchAgentWorkflow(binding, context) && !journal.createdNew) {
     try {
       const workflowName = resolveAgentWorkflowName(agent, binding, context)
       const handle = await getAgentWorkflowHandle<TRuntimeConfig, unknown, unknown>(agent, workflowName, Boolean(context.agentIdentity))
@@ -1111,7 +1118,7 @@ async function runAgentAsWorkflow<
 ): Promise<StartedAgentWorkflow<CALL_OPTIONS, AgentWorkflowOutput<TOutput>> | undefined> {
   const binding = resolveAgentWorkflowRuntimeBinding<TRuntimeConfig>(agent)
   const cloudflareEnv = context.cloudflare?.env || getCloudflareEnv(context)
-  if (!binding || ("discoveryDefault" in binding && !context.agentIdentity)) return undefined
+  if (!canDispatchAgentWorkflow(binding, context)) return undefined
   // SAFETY: Replay sets this private boolean marker on its runtime; other runtimes may omit it.
   const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
   let activity = exclusive ? undefined : hasAgentDefinition(agent) ? createActiveAgentActivity(agent, context) : undefined
