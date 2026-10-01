@@ -9,6 +9,7 @@ import { requestConsole } from "../src/console/runtime/client/request.ts"
 const { callConsoleFixture } = await vi.importActual<{
   callConsoleFixture: (origin: string, payload: unknown) => Promise<unknown>
 }>("../../../playground/console/rpc.ts")
+const { consoleMockAPI } = await vi.importActual<{ consoleMockAPI: () => Plugin }>("../../../playground/console/mock-api.ts")
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -34,7 +35,6 @@ it("loads Console data through the playground's stateless RPC endpoint", async (
 })
 
 it("rejects invalid deletion bodies in the playground without deleting the record", async () => {
-  const { consoleMockAPI } = await vi.importActual<{ consoleMockAPI: () => Plugin }>("../../../playground/console/mock-api.ts")
   const use = vi.fn<(handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => Promise<void>) => void>()
   const configure = consoleMockAPI().configureServer
   if (typeof configure !== "function") throw new Error("Missing playground server hook")
