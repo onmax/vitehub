@@ -246,6 +246,7 @@ describe("framework package contract", () => {
       "./console/auth/cloudflare-access",
       "./console/auth/inline",
       "./console/blob",
+      "./console/connections",
       "./console/database",
       "./console/definitions",
       "./console/env",

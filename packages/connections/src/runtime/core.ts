@@ -75,8 +75,8 @@ export interface ConnectionsRuntime {
   open: (input: { event?: unknown, name: string, ticket: string }) => Promise<{ authorizationUrl: string, state: string }>
   record: (activity: Omit<ConnectionActivity, "id" | "timestamp">, event?: unknown) => Promise<void>
   refresh: (name: string, options: ConnectionLifecycleOptions) => Promise<ConnectionSummary>
-  /** Creates a single-use connect ticket. `origin` is the public origin of the app. */
-  start: (name: string, options: ConnectionLifecycleOptions & { origin: string }) => Promise<{ expiresAt: string, url: string }>
+  /** Creates a single-use connect ticket. `origin` is the public origin of the app. `basePath` overrides the mounted route path. */
+  start: (name: string, options: ConnectionLifecycleOptions & { basePath?: string, origin: string }) => Promise<{ expiresAt: string, url: string }>
 }
 
 function isDefinition(value: unknown): value is ConnectionDefinition {
@@ -461,20 +461,21 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     async start(name, lifecycle) {
       await definition(name)
       const origin = new URL(lifecycle.origin).origin
+      const connectBasePath = (lifecycle.basePath ?? basePath).replace(/\/$/, "")
       const ticket = randomToken()
       const expiresAt = Date.now() + pendingTtlMs
       await store(lifecycle.event).createPending({
         actor: lifecycle.actor,
         expiresAt,
         name,
-        redirectUri: `${origin}${basePath}/${encodeURIComponent(name)}/callback`,
+        redirectUri: `${origin}${connectBasePath}/${encodeURIComponent(name)}/callback`,
         state: randomToken(),
         ticket,
         verifier: randomToken(),
       })
       return {
         expiresAt: new Date(expiresAt).toISOString(),
-        url: `${origin}${basePath}/${encodeURIComponent(name)}/connect?ticket=${ticket}`,
+        url: `${origin}${connectBasePath}/${encodeURIComponent(name)}/connect?ticket=${ticket}`,
       }
     },
   }

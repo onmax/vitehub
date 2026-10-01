@@ -9,7 +9,8 @@ import { consoleAppConfig } from "./src/console/app.config";
 const clientRoot = resolve(import.meta.dirname, "src/console/runtime/client");
 
 export default defineConfig({
-  base: "/_vitehub/assets/",
+  // Resolve lazy chunks from the served bundle URL, including application mounts.
+  base: "./",
   resolve: {
     alias: {
       "vite-hub/agent/vue": resolve(import.meta.dirname, "../agent/src/vue.ts"),

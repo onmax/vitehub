@@ -37,6 +37,8 @@ function renderConsoleNitroPlugin(
   observations?: AgentInvocationsOptions["observations"],
   journal?: ConsoleJournal,
   independentAuth: ConsoleAuthMode | false = false,
+  manageConnections = false,
+  baseURL = "/",
 ): string {
   const definitions = agents.map((agent, index) => {
     const skills = readColocatedAgentSkills(agent.handler)
@@ -78,12 +80,14 @@ function renderConsoleNitroPlugin(
         ]
       : []),
     ...(sections.includes("env") ? [`import { describeServerEnv } from "#vitehub/env/description"`, `import { installConsoleEnv } from "vite-hub/console/env"`] : []),
+    ...(sections.includes("connections") ? [`import { installConsoleConnections } from "vite-hub/console/connections"`] : []),
     ...agents.map((agent, index) => `import * as vitehubConsoleAgent${index} from ${JSON.stringify(pathToFileURL(agent.handler).href)}`),
     `installConsoleSections(${JSON.stringify(projectRoot)}, ${JSON.stringify(sections)}${independentAuth ? `, ${JSON.stringify(independentAuth)}` : ""})`,
     ...(blobEnabled
       ? [`installConsoleBlob(${JSON.stringify(projectRoot)}, vitehubConsoleBlob, ${JSON.stringify(blobStores)})`]
       : []),
     ...(sections.includes("env") ? [`installConsoleEnv(${JSON.stringify(projectRoot)}, describeServerEnv(), async request => { try { return await (await import("#vitehub/env/server")).manageServerEnv(request) } catch { return Response.json({ message: "Env management is unavailable." }, { status: 503, headers: { "cache-control": "no-store" } }) } })`] : []),
+    ...(sections.includes("connections") ? [`installConsoleConnections(${JSON.stringify(projectRoot)}${manageConnections || baseURL !== "/" ? `, ${JSON.stringify({ ...(manageConnections ? { manage: true } : {}), ...(baseURL !== "/" ? { baseURL } : {}) })}` : ""})`] : []),
     `installConsoleProjectName(${JSON.stringify(projectRoot)}, ${JSON.stringify(resolveConsoleProjectNameFromRoot(projectRoot))})`,
     ...(definitionsEnabled ? [`installConsoleDefinitions(${JSON.stringify(projectRoot)}, ${JSON.stringify(catalog.definitions)})`] : []),
     ...(databaseEnabled
@@ -120,6 +124,8 @@ export async function writeConsoleNitroPlugin(
   active: () => boolean = () => true,
   journal?: ConsoleJournal,
   independentAuth: ConsoleAuthMode | false = false,
+  manageConnections = false,
+  baseURL = "/",
 ): Promise<string> {
   const snapshot = fixture ? readConsoleFixture(fixture) : undefined
   const identity = createConsoleInvocationsIdentity(
@@ -129,7 +135,7 @@ export async function writeConsoleNitroPlugin(
     runtimeBinding,
   )
   if (!active()) return identity
-  const contents = renderConsoleNitroPlugin(projectRoot, sections, agents, catalog, blobStores, kvStores, fixture, snapshot, runtimeBinding, invoke, observations, journal, independentAuth)
+  const contents = renderConsoleNitroPlugin(projectRoot, sections, agents, catalog, blobStores, kvStores, fixture, snapshot, runtimeBinding, invoke, observations, journal, independentAuth, manageConnections, baseURL)
   if (await readFile(file, "utf8").catch(() => undefined) !== contents) {
     await mkdir(resolve(file, ".."), { recursive: true })
     await writeFile(file, contents, "utf8")

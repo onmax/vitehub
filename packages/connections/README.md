@@ -81,7 +81,7 @@ setConnectionsRuntime(createConnectionsRuntime({
 
 ## Connect an account
 
-`createConnectionsHandler()` from `@vite-hub/connections/http` handles the management route and the OAuth connect and callback routes. It does not add authentication. The ViteHub Console mounts it under `/_vitehub/connections` behind Console Auth. Mount it only behind your own admin guard.
+`createConnectionsHandler()` from `@vite-hub/connections/http` handles the management route and the OAuth connect and callback routes. It does not add authentication. The ViteHub Console mounts it under `/_vitehub/connections` behind Console Auth. Mount it only behind your own admin guard. Set `basePath` when mounting the handler at a different path. The handler uses that path for connect URLs, callback URLs, and the state cookie. Direct `runtime.start()` calls can also set `basePath` for the connect flow.
 
 ## Understand storage and security limits
 

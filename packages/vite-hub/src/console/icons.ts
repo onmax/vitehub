@@ -100,6 +100,7 @@ export const consoleIcons: readonly string[] = [
   "ph:magnifying-glass-minus-light",
   "ph:mouse-left-click-light",
   "ph:note-pencil-light",
+  "ph:plugs-connected-light",
   "ph:robot-light",
   "ph:share-network-light",
   "ph:squares-four-light",

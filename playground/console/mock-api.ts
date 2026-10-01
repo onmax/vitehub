@@ -10,6 +10,7 @@ import {
 } from "../../packages/vite-hub/src/console/runtime/server/usage.ts"
 import { consoleSearchExcerpt } from "../../packages/vite-hub/src/console/runtime/server/search.ts"
 
+import type { ConnectionActivity, ConnectionSummary } from "../../packages/connections/src/types.ts"
 import type { Plugin } from "vite"
 import databaseFixture from "./database.fixture.json" with { type: "json" }
 import fixtureDocument from "./console.fixture.json" with { type: "json" }
@@ -22,7 +23,7 @@ for (const record of fixture.invocations) {
   store.create(input)
 }
 const invocations = defineAgentInvocations({ content: "content", store })
-const sections = ["env", "agents", "usage", "database", "kv", "workflows", "queues"] as const
+const sections = ["env", "connections", "agents", "usage", "database", "kv", "workflows", "queues"] as const
 const definitions = {
   queues: [
     {
@@ -73,6 +74,65 @@ const kvStores = {
     ["session:interface-engineer", { active: true, invocationId: "ainv_console_navigation" }],
   ]),
 } as const
+
+const connections = new Map<string, ConnectionSummary>([
+  ["google", {
+    access: {
+      agents: { "interface-engineer": { allow: ["gmail.messages.*", "gmail.labels.list"], approve: ["gmail.drafts.create"] } },
+      server: { allow: ["gmail.*"] },
+    },
+    account: "owner@example.com",
+    connectedAt: "2026-09-28T09:12:00.000Z",
+    description: "Gmail for the release inbox.",
+    expiresAt: "2026-09-29T10:12:00.000Z",
+    name: "google",
+    origins: ["https://*.googleapis.com"],
+    provider: "google",
+    scopes: ["https://www.googleapis.com/auth/gmail.modify"],
+    status: "active",
+  }],
+  ["github", {
+    access: { agents: { "release-engineer": { allow: ["github.repos.*"], deny: ["github.repos.delete"] } } },
+    name: "github",
+    origins: ["https://api.github.com"],
+    provider: "oauth2",
+    scopes: ["repo"],
+    status: "disconnected",
+  }],
+])
+const connectionActivity: ConnectionActivity[] = [
+  { action: "call", actor: { id: "interface-engineer", kind: "agent" }, connection: "google", durationMs: 184, effect: "read", id: "cact_004", invocationId: "ainv_console_navigation", operation: "gmail.messages.list", outcome: "succeeded", status: 200, target: "gmail.googleapis.com/gmail/v1/users/me/messages", timestamp: "2026-09-28T10:04:00.000Z", tool: "gmail_search" },
+  { action: "call", actor: { id: "interface-engineer", kind: "agent" }, connection: "google", effect: "write", id: "cact_003", invocationId: "ainv_console_navigation", operation: "gmail.drafts.create", outcome: "approval-required", timestamp: "2026-09-28T10:03:00.000Z", tool: "gmail_draft" },
+  { action: "call", actor: { id: "/api/labels", kind: "route" }, connection: "google", durationMs: 97, effect: "write", id: "cact_002", operation: "gmail.messages.modify", outcome: "succeeded", status: 200, target: "gmail.googleapis.com/gmail/v1/users/me/messages/18f/modify", timestamp: "2026-09-28T09:40:00.000Z" },
+  { action: "connect", actor: { id: "console", kind: "user" }, connection: "google", id: "cact_001", outcome: "succeeded", timestamp: "2026-09-28T09:12:00.000Z" },
+]
+
+// Synthetic Connections management. The playground has no provider, so "start" returns to the Console as if consent succeeded.
+async function handleConnections(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  const input = Object(await body(request))
+  const action = Reflect.get(input, "action")
+  const name = String(Reflect.get(input, "name") ?? "")
+  if (action === "list") return json(response, { admin: true, connections: [...connections.values()] })
+  const connection = connections.get(name)
+  if (!connection) return json(response, { message: `Unknown Connection ${name}.` }, 400)
+  if (action === "inspect") return json(response, { connection })
+  if (action === "activity") return json(response, { events: connectionActivity.filter(event => event.connection === name) })
+  if (action === "start") {
+    connections.set(name, { ...connection, account: connection.account ?? "owner@example.com", connectedAt: new Date().toISOString(), status: "active" })
+    return json(response, { expiresAt: new Date(Date.now() + 300_000).toISOString(), url: `/_vitehub/connections?connection=${encodeURIComponent(name)}&result=connected` })
+  }
+  if (action === "refresh") {
+    const next = { ...connection, expiresAt: new Date(Date.now() + 3_600_000).toISOString() }
+    connections.set(name, next)
+    return json(response, { connection: next })
+  }
+  if (action === "disconnect") {
+    const next: ConnectionSummary = { access: connection.access, name, origins: connection.origins, provider: connection.provider, scopes: connection.scopes, status: "disconnected" }
+    connections.set(name, next)
+    return json(response, { connection: next })
+  }
+  json(response, { message: "Unsupported Connections action." }, 400)
+}
 
 function json(response: ServerResponse, value: unknown, status = 200): void {
   response.statusCode = status
@@ -364,6 +424,10 @@ export function consoleMockAPI(): Plugin {
             response.statusCode = 302
             response.setHeader("location", "/_vitehub/")
             response.end()
+            return
+          }
+          if (url.pathname === "/_vitehub/connections/manage" && request.method === "POST") {
+            await handleConnections(request, response)
             return
           }
           if (await handleAPI(request, response, url)) return
