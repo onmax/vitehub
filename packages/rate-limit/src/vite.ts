@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { randomUUID } from "node:crypto"
 import { resolve } from "node:path"
 
@@ -238,7 +239,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
         nitroBaseURL: () => {
           // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
           const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
-          return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
+          return v.is(v.string(), baseURL) ? baseURL : process.env.NITRO_APP_BASE_URL
         },
       })
     },

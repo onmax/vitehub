@@ -1,6 +1,18 @@
+import * as v from "valibot"
 import { normalizeRateLimitPolicy } from "./policy.ts"
 
-import type { CreateRateLimiterOptions, RateLimitDecision, RateLimitDriverCapabilities, RateLimitDriverResult, RateLimiter } from "./types.ts"
+import type {
+  CreateRateLimiterOptions,
+  RateLimitConsumeInput,
+  RateLimitDecision,
+  RateLimitDriverCapabilities,
+  RateLimitDriverInput,
+  RateLimitDriverPeekResult,
+  RateLimitDriverResult,
+  RateLimiter,
+  RateLimitPeekResult,
+  ResolvedRateLimitPolicy,
+} from "./types.ts"
 import { rateLimitErrorDiagnostics } from "./error-diagnostics.ts"
 
 function resolveDriverCapabilities(options: CreateRateLimiterOptions): RateLimitDriverCapabilities {
@@ -73,6 +85,36 @@ function assertDriverSupportsPolicy(options: CreateRateLimiterOptions, capabilit
   }
 }
 
+function normalizePeekResult(result: RateLimitDriverPeekResult, policy: ResolvedRateLimitPolicy): RateLimitPeekResult {
+  if (!v.is(v.object({ used: v.pipe(v.number(), v.integer(), v.minValue(0)) }), result)) {
+    throw rateLimitErrorDiagnostics.RATE_LIMIT_R0037({ message: "[vitehub] Rate Limit driver peek() must return an object with a non-negative integer used count." })
+  }
+  const resetAt = result.resetAt
+  if (resetAt !== undefined && (!Number.isFinite(resetAt) || resetAt <= 0)) {
+    throw rateLimitErrorDiagnostics.RATE_LIMIT_R0037({ message: "[vitehub] Rate Limit driver peek() resetAt must be a positive timestamp." })
+  }
+  return {
+    limit: policy.limit,
+    remaining: Math.max(0, policy.limit - result.used),
+    ...(resetAt === undefined ? {} : { resetAt }),
+    status: "known",
+    used: result.used,
+    windowMs: policy.windowMs,
+  }
+}
+
+function unsupportedReason(driverName: string, operation: "peek" | "reset"): string {
+  return operation === "peek"
+    ? `The "${driverName}" Rate Limit driver cannot read a counter without consuming a token.`
+    : `The "${driverName}" Rate Limit driver cannot reset a counter.`
+}
+
+function assertKey(input: RateLimitConsumeInput, operation: "peek" | "reset"): void {
+  if (!input || !v.is(v.string(), input.key) || input.key.length === 0) {
+    throw rateLimitErrorDiagnostics.RATE_LIMIT_R0038({ message: `[vitehub] Rate Limiter ${operation}() requires a non-empty key.` })
+  }
+}
+
 export function createRateLimiter(options: CreateRateLimiterOptions): RateLimiter {
   if (!options.driver || typeof options.driver.consume !== "function") {
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0029({ message: "[vitehub] createRateLimiter() requires a Rate Limit driver." })
@@ -81,18 +123,20 @@ export function createRateLimiter(options: CreateRateLimiterOptions): RateLimite
   const capabilities = resolveDriverCapabilities(options)
   assertDriverSupportsPolicy(options, capabilities, policy.windowMs)
 
+  const driverInput = (input: RateLimitConsumeInput): RateLimitDriverInput => ({
+    key: input.key,
+    limit: policy.limit,
+    name: options.name,
+    windowMs: policy.windowMs,
+  })
+
   return {
     capabilities,
     async consume(input) {
-      if (!input || typeof input.key !== "string" || input.key.length === 0) {
+      if (!input || !v.is(v.string(), input.key) || input.key.length === 0) {
         throw rateLimitErrorDiagnostics.RATE_LIMIT_R0030({ message: "[vitehub] Rate Limiter consume() requires a non-empty key." })
       }
-      const [error, result] = await options.driver.consume({
-        key: input.key,
-        limit: policy.limit,
-        name: options.name,
-        windowMs: policy.windowMs,
-      })
+      const [error, result] = await options.driver.consume(driverInput(input))
       if (error) {
         return {
           allowed: policy.failure === "allow",
@@ -104,6 +148,25 @@ export function createRateLimiter(options: CreateRateLimiterOptions): RateLimite
       }
       return normalizeDriverResult(result, policy.limit, policy.windowMs)
     },
+    async peek(input) {
+      assertKey(input, "peek")
+      const driver = options.driver
+      if (!v.is(v.function(), driver.peek)) {
+        return { limit: policy.limit, reason: unsupportedReason(driver.name, "peek"), status: "unsupported", windowMs: policy.windowMs }
+      }
+      const [error, result] = await driver.peek(driverInput(input))
+      if (error) return { cause: error.cause ?? error, limit: policy.limit, status: "unavailable", windowMs: policy.windowMs }
+      return normalizePeekResult(result, policy)
+    },
     policy,
+    async reset(input) {
+      assertKey(input, "reset")
+      const driver = options.driver
+      if (!v.is(v.function(), driver.reset)) {
+        return { reason: unsupportedReason(driver.name, "reset"), status: "unsupported" }
+      }
+      const [error] = await driver.reset(driverInput(input))
+      return error ? { cause: error.cause ?? error, status: "unavailable" } : { status: "reset" }
+    },
   }
 }
