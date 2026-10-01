@@ -33,6 +33,8 @@ export default defineConnection({
 });
 ```
 
+Connection names may include punctuation, spaces, Unicode, and nested paths. They must not exceed 501 characters, including path separators, so the default Env key fits its 512-character limit.
+
 ## Call the API
 
 ```ts
@@ -44,7 +46,7 @@ const { labels = [] } = await gmail.users.labels.list({ userId: "me" });
 
 The client exposes only the methods selected in `api`. GET methods are reads and other methods are writes. Denied calls throw `ConnectionError` with code `CONNECTION_DENIED`. Writes that need approval throw `CONNECTION_APPROVAL_REQUIRED` and create an approval.
 
-`useConnection().fetch()` calls provider catalog origins with the Connection token. Its `ConnectionFetchInit` body accepts a string for approval replay. Encode form parameters with `URLSearchParams.toString()` and set the form content type.
+`useConnection().fetch()` calls provider catalog origins with the Connection token. `ConnectionFetchInit` accepts `method`, `headers`, `redirect`, `signal`, and a string `body` for approval replay. Encode form parameters with `URLSearchParams.toString()` and set the form content type.
 
 ## Use a custom store
 

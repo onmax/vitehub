@@ -4,7 +4,7 @@ import { promisify } from "node:util"
 
 import { expect, it } from "vitest"
 
-const frameworkRoot = fileURLToPath(new URL("../../vite-hub", import.meta.url))
+const frameworkRoot = fileURLToPath(new URL("../", import.meta.url))
 
 it.each(["@vite-hub/connections/http", "vite-hub/connections/http"])("imports the published HTTP contract through %s", async (specifier) => {
   const source = `

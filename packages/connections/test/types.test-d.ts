@@ -31,6 +31,15 @@ describe("Connection types", () => {
     expectTypeOf<Parameters<Client["fetch"]>[1]>().toEqualTypeOf<ConnectionFetchInit | undefined>()
     const text: ConnectionFetchInit = { body: "label=INBOX", method: "POST" }
     expectTypeOf(text.body).toEqualTypeOf<string | undefined>()
+    // @ts-expect-error Integrity is not dispatched or replayed by Connections.
+    const integrity: ConnectionFetchInit = { integrity: "sha256-example" }
+    // @ts-expect-error Cache policy is not part of the Connection fetch contract.
+    const cache: ConnectionFetchInit = { cache: "no-store" }
+    // @ts-expect-error Referrer policy is not part of the Connection fetch contract.
+    const referrer: ConnectionFetchInit = { referrerPolicy: "no-referrer" }
+    expectTypeOf(integrity).toEqualTypeOf<ConnectionFetchInit>()
+    expectTypeOf(cache).toEqualTypeOf<ConnectionFetchInit>()
+    expectTypeOf(referrer).toEqualTypeOf<ConnectionFetchInit>()
     // @ts-expect-error Encode form parameters to a string before dispatch.
     const form: ConnectionFetchInit = { body: new URLSearchParams() }
     // @ts-expect-error Multipart bodies cannot be persisted for approval replay.

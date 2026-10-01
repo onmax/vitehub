@@ -21,6 +21,31 @@ function base64Url(bytes: ArrayBuffer): string {
 }
 
 describe("connect", () => {
+  it("rejects oversized custom names before provider token exchange", async () => {
+    const test = createTestRuntime()
+    const name = "n".repeat(502)
+    const runtime = createConnectionsRuntime({ definitions: { [name]: mailConnection() }, fetch: test.provider.fetch, store: test.store })
+    expect(await rejection(runtime.authorize({ name, redirectUri: "http://localhost/callback" }))).toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(test.provider.calls).toHaveLength(0)
+  })
+
+  it.each(["rejected", "invalid"])("retries unsuccessful definition loaders (%s)", async (failure) => {
+    let calls = 0
+    const loader = vi.fn(async () => {
+      calls += 1
+      if (calls === 1) {
+        if (failure === "rejected") throw new Error("Module temporarily unavailable")
+        return { default: {} }
+      }
+      return { default: mailConnection() }
+    })
+    const test = createTestRuntime(loader)
+    await expect(test.runtime.inspect("mail")).rejects.toThrow()
+    expect(await test.runtime.inspect("mail")).toMatchObject({ name: "mail", status: "disconnected" })
+    await test.runtime.inspect("mail")
+    expect(loader).toHaveBeenCalledTimes(2)
+  })
+
   it("builds a PKCE authorization URL and stores the exchanged token", async () => {
     const test = createTestRuntime()
     const { state, url } = await test.runtime.authorize({ name: "mail", redirectUri: "http://127.0.0.1:8976/callback" })
@@ -405,6 +430,35 @@ describe("calls", () => {
     expect(new Set(tokens).size).toBe(1)
   })
 
+  it.each([
+    { error: "temporarily_unavailable", status: 400 },
+    { error: "temporarily_unavailable", status: 429 },
+    { error: "server_error", status: 500 },
+  ])("keeps explicit transient refresh failures retryable ($status)", async ({ error, status }) => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    test.provider.tokenResponses.push({ body: { error }, status })
+    const client = test.runtime.client("mail", {})
+    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_PROVIDER", status })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
+    test.provider.valid = new Set(["access-after-outage"])
+    test.provider.tokenResponses.push({ body: { access_token: "access-after-outage", expires_in: 3600 } })
+    await client.call("mail.labels.list", { userId: "me" })
+    expect(test.provider.calls.at(-1)?.headers.get("authorization")).toBe("Bearer access-after-outage")
+  })
+
+  it("requires reauthorization when a refresh response does not confirm a token", async () => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    test.provider.tokenResponses.push({ body: {} })
+    const client = test.runtime.client("mail", {})
+    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_PROVIDER" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "reauth_required" })
+    const calls = test.provider.calls.length
+    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(test.provider.calls).toHaveLength(calls)
+  })
+
   it("marks the Connection for reauthorization after invalid_grant", async () => {
     const test = createTestRuntime()
     await connect(test)
@@ -437,6 +491,13 @@ describe("calls", () => {
     const serialized = JSON.stringify({ activity, error, message: (error as Error).message, stack: (error as Error).stack })
     for (const secret of [ACCESS_TOKEN, "access-2", REFRESH_TOKEN, CLIENT_SECRET]) expect(serialized).not.toContain(secret)
     expect(activity.some(entry => entry.operation === "mail.labels.list" && entry.outcome === "failed")).toBe(true)
+  })
+
+  it.each([["patch", "patch"], ["Egg", "Egg"], ["gEt", "GET"]])("uses Fetch method normalization for %s", async (method, expected) => {
+    const test = createTestRuntime(mailConnection({ server: { read: true, write: ["fetch"] } }))
+    await connect(test)
+    await test.runtime.client("mail", {}).fetch("https://mail.example.com/mail/v1/users/me/labels", { method })
+    expect(test.provider.calls.at(-1)?.method).toBe(expected)
   })
 
   it("sends fetch only to catalog origins", async () => {
@@ -553,6 +614,17 @@ describe("dry run", () => {
 })
 
 describe("approvals", () => {
+  it("preserves extension method casing in approval replay", async () => {
+    const test = createTestRuntime(mailConnection({ "agent:labeller": { write: ["fetch"] } }))
+    await connect(test)
+    const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller" }).fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { method: "Egg" }))
+    expect(error).toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
+    const id = isConnectionError(error) ? error.requestId! : ""
+    expect(await test.runtime.approvals({ status: "pending" })).toEqual([expect.objectContaining({ input: expect.objectContaining({ method: "Egg" }) })])
+    await test.runtime.approve({ id })
+    expect(test.provider.calls.at(-1)?.method).toBe("Egg")
+  })
+
   it("preserves Accept when replaying an approved fetch", async () => {
     const test = createTestRuntime(mailConnection({ "agent:labeller": { write: ["fetch"] } }))
     await connect(test)

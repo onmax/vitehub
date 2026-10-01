@@ -52,6 +52,15 @@ describe("discoverConnectionDefinitions", () => {
     expect(discoverConnectionDefinitions({ rootDir: root })[0]?.name).toBe("n".repeat(129))
   })
 
+  it("limits nested names to the default Env key capacity", async () => {
+    const root = await createTempProject()
+    const name = ["a".repeat(166), "b".repeat(166), "c".repeat(167)].join("/")
+    await touch(root, `server/connections/${name}.ts`)
+    expect(discoverConnectionDefinitions({ rootDir: root })[0]?.name).toBe(name)
+    await touch(root, `server/connections/${name}d.ts`)
+    expect(() => discoverConnectionDefinitions({ rootDir: root })).toThrow("exceeds 501 characters")
+  })
+
   it("returns no definitions without a connections directory", async () => {
     const root = await createTempProject()
     await touch(root, "server/channels/alerts.ts")

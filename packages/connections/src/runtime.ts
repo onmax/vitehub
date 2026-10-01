@@ -1,6 +1,7 @@
 import * as v from "valibot"
 
 import { ConnectionError, isConnectionError, isEnvBridgeError } from "./errors.ts"
+import { CONNECTION_NAME_MAX_LENGTH } from "./types.ts"
 import { connectionActions, decide, envActor, providerApis } from "./policy.ts"
 
 import type { EnvAccessContext, EnvActivity } from "@vite-hub/env/bridge"
@@ -268,6 +269,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   }
 
   async function definition(name: string): Promise<ConnectionDefinition> {
+    if (name.length > CONNECTION_NAME_MAX_LENGTH) {
+      throw new ConnectionError("invalid", `Connection names must not exceed ${CONNECTION_NAME_MAX_LENGTH} characters so their Env keys fit the 512-character limit.`, { details: { connection: name } })
+    }
     const loaded = await loadDefinition(name)
     if (!loaded) throw new ConnectionError("invalid", `No Connection Definition was discovered for "${name}".`, { details: { connection: name } })
     return loaded
@@ -403,14 +407,15 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         continue
       }
       let dispatched = false
+      let rejected = false
       let releaseLease = true
       try {
         if ((await connections.secrets.read(key))?.revision !== stored.revision) continue
-        return await refreshLeasedToken(name, definition, latest, stored.revision, () => { dispatched = true })
+        return await refreshLeasedToken(name, definition, latest, stored.revision, () => { dispatched = true }, () => { rejected = true })
       }
       catch (error) {
         // Keep the lease if a rotated grant cannot be saved or quarantined durably.
-        if (dispatched) releaseLease = await setStatus(name, { status: "reauth_required" }, stored.revision).catch(() => false)
+        if (dispatched && !rejected) releaseLease = await setStatus(name, { status: "reauth_required" }, stored.revision).catch(() => false)
         throw error
       }
       finally {
@@ -419,18 +424,23 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     }
   }
 
-  async function refreshLeasedToken(name: string, definition: ConnectionDefinition, latest: StoredToken, tokenRevision: string, onDispatch: () => void): Promise<StoredToken> {
+  async function refreshLeasedToken(name: string, definition: ConnectionDefinition, latest: StoredToken, tokenRevision: string, onDispatch: () => void, onRejected: () => void): Promise<StoredToken> {
     const connections = await getStore()
     const key = tokenKey(name)
     let response: ConnectionTokenResponse
     let dispatched = false
+    let responded = false
     try {
-      response = await tokenRequest(definition, { grant_type: "refresh_token", refresh_token: latest.refreshToken! }, AbortSignal.timeout(REFRESH_WAIT_MS), () => { dispatched = true; onDispatch() })
+      response = await tokenRequest(definition, { grant_type: "refresh_token", refresh_token: latest.refreshToken! }, AbortSignal.timeout(REFRESH_WAIT_MS), () => { dispatched = true; onDispatch() }, () => { responded = true })
     }
     catch (error) {
       if (!dispatched) throw error
+      if (responded && isConnectionError(error) && error.reason === "provider") {
+        // A definite rejection leaves the refresh grant intact and retryable.
+        onRejected()
+        throw error
+      }
       // A failed request can have rotated the provider grant before its response was lost.
-      if (isConnectionError(error) && error.reason === "provider") throw error
       if (!await setStatus(name, { status: "reauth_required" }, tokenRevision)) return await readCurrentToken(name)
       if (isConnectionError(error) && error.reason === "reauth_required") {
         throw new ConnectionError("reauth_required", `Connection "${name}" must be connected again. Run \`vitehub connections connect ${name}\`.`, { details: { connection: name } })
@@ -603,8 +613,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
 
   async function callFetch(context: CallContext, input: string | URL, init: ConnectionFetchInit = {}): Promise<Response | undefined> {
     const url = new URL(input)
-    const method = init.method ?? "GET"
-    const write = method.toUpperCase() !== "GET" && method.toUpperCase() !== "HEAD"
+    const method = new Request(url, { method: init.method ?? "GET" }).method
+    const write = method !== "GET" && method !== "HEAD"
     const allowed = Object.values(providerApis(context.definition)).some(catalog => url.origin === new URL(catalog.rootUrl).origin)
     if (!allowed) throw new ConnectionError("invalid", `Connection "${context.name}" does not send its token to ${url.origin}.`, { details: { connection: context.name } })
     if (init.body !== undefined && init.body !== null && !v.is(v.string(), init.body)) {

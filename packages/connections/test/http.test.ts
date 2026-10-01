@@ -38,7 +38,7 @@ describe("createConnectionsHandler", () => {
     expect(getRuntime).not.toHaveBeenCalled();
   });
 
-  it.each(["team/mail", "n".repeat(129), "sales+ops", "team/客户 inbox"])("manages discovered names through JSON and web authorization (%s)", async (name) => {
+  it.each(["team/mail", "n".repeat(129), "sales+ops", "team/客户 inbox", ["a".repeat(166), "b".repeat(166), "c".repeat(167)].join("/")])("manages discovered names through JSON and web authorization (%s)", async (name) => {
     const test = createTestRuntime();
     const runtime = createConnectionsRuntime({
       definitions: { [name]: mailConnection() },
@@ -74,6 +74,7 @@ describe("createConnectionsHandler", () => {
       actor: () => "user:local",
       runtime: () => test.runtime,
     });
+    expect((await handler(post({ action: "inspect", name: "n".repeat(502) }))).status).toBe(400);
     expect(
       (await handler(post({ action: "list" }, { origin: "https://attacker.example.com" }))).status,
     ).toBe(403);
