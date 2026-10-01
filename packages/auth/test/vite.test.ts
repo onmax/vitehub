@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url"
 import { afterEach, describe, expect, it } from "vitest"
 import { createServer, mergeConfig, resolveConfig } from "vite"
 
-import { AUTH_DEFINITION_ID, AUTH_SERVER_ID, hubAuth } from "../src/vite.ts"
+import { AUTH_DEFINITION_ID, AUTH_SERVER_ID, createAuthNitroConfig, hubAuth } from "../src/vite.ts"
 
 const tempDirs: string[] = []
 const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url))
@@ -185,6 +185,7 @@ describe("hubAuth", () => {
 
     expect(nitro.cloudflare.wrangler.secrets.required).toEqual(["VITEHUB_TOKEN"])
     expect(nitro.plugins).toEqual(["/app/plugin.ts"])
+    expect(createAuthNitroConfig(hubAuth(), { nitro: inlineConfig.nitro, projectRoot: root })).toEqual(nitro)
     expect(nitro.handlers).toEqual([middleware, { handler: resolve(root, ".vitehub/auth/route.ts"), route: "/api/auth/**" }])
     expect(resolved.server.watch?.ignored).toEqual(["**/dist/**", "**/.vitehub/**"])
     expect(resolved.ssr.noExternal).toEqual(["existing", "@vite-hub/auth"])

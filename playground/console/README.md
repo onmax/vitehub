@@ -16,9 +16,11 @@ The `Log breakfast` session covers a Channel reply that the run delivered withou
 The `Inspect MCP tools and title` session provides synthetic server groups, tool contracts, skipped and empty servers, and a completed Title view for the Capabilities tab.
 
 The Agent Invocation records live in `console.fixture.json`. `mock-api.ts` adds
-the read-only Usage, KV, Workflow, Queue, Schedule, and search responses needed by the
-Console. The `sync-inbox` Schedule returns a synthetic successful run for
-**Run now**; it does not execute a handler. `rpc.ts` serves the Console's stateless RPC endpoint from those local fixture
+the read-only Usage, Blob, Database, KV, Rate Limit, Sandbox, Workspace,
+Workflow, Queue, Schedule, and search responses needed by the Console, so every
+Console section renders. The `sync-inbox` Schedule returns a synthetic successful
+run for **Run now**; it does not execute a handler. `rpc.ts` serves the Console's
+stateless RPC endpoint from those local fixture
 routes. Usage filters and pagination use the real usage aggregation code.
 This playground does not change the Console routes generated for Vite
 or Nuxt applications.

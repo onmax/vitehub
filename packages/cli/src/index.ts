@@ -57,6 +57,8 @@ export interface RunViteHubCliOptions {
   args?: string[]
   cwd?: string
   env?: NodeJS.ProcessEnv
+  /** Namespaces that run without loading the project config, for example inside a deployed container. */
+  runtimeNamespaces?: ViteHubCliCommandNamespace[]
   loadConfig?: (rootDir: string, command: ConfigEnv["command"]) => Promise<ViteHubCliLoadedConfig>
   loadNuxtViteConfig?: (rootDir: string, command: ConfigEnv["command"]) => Promise<{ plugins: readonly unknown[], root?: string } | undefined>
   spawn?: ViteHubCliSpawn
@@ -212,6 +214,10 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
   const cwd = options.cwd || process.cwd()
   const env = options.env || process.env
   const stderr = options.stderr || process.stderr
+  const spawn = options.spawn || defaultSpawn
+  const runtimeNamespace = options.runtimeNamespaces?.find(namespace => namespace.name === args[0] && namespace.name !== "inspect")
+  if (runtimeNamespace) return await runNamespace(runtimeNamespace, args, { cwd, env, rootDir: cwd, spawn, stderr, stdout })
+
   const command = args[0] === "inspect" && args[1] === "provider-output" ? "build" : "serve"
   const config = await (options.loadConfig || loadViteConfig)(cwd, command)
   const nuxtConfig = config.vitehubConfigResolved
@@ -223,13 +229,14 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
     ...(await collectViteHubCliNamespaces(plugins)).filter(namespace => namespace.name !== "inspect"),
     createInspectNamespace(plugins),
     createProvisionNamespace(plugins),
+    ...(options.runtimeNamespaces ?? []).filter(namespace => namespace.name !== "inspect"),
   ]
 
   const context: ViteHubCliContext = {
     cwd,
     env,
     rootDir,
-    spawn: options.spawn || defaultSpawn,
+    spawn,
     stderr,
     stdout,
   }
@@ -247,6 +254,11 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
     return 1
   }
 
+  return await runNamespace(namespace, args, context)
+}
+
+async function runNamespace(namespace: ViteHubCliCommandNamespace, args: string[], context: ViteHubCliContext): Promise<number> {
+  const { stderr, stdout } = context
   const featureName = args[1]
   if (!featureName || args[1] === "-h" || args[1] === "--help") {
     writeNamespaceHelp(namespace, stdout)
