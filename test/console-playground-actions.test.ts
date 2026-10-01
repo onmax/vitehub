@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import { Readable } from "node:stream"
 import { describe, expect, it } from "vitest"
 
-import { consoleMockAPI } from "../../../playground/console/mock-api.ts"
+import { consoleMockAPI } from "../playground/console/mock-api.ts"
 
 async function invoke(body: string): Promise<{ body: unknown, status: number }> {
   let middleware: ((request: IncomingMessage, response: ServerResponse, next: () => void) => Promise<void>) | undefined
