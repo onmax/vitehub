@@ -150,6 +150,6 @@ Ask the Agent to report one papercut, then confirm that your store or PostHog pr
 
 - [OTLP](/docs/capabilities/otlp)
 - [Agent instructions](/docs/agents/instructions)
-- [evlog](/docs/agents/evlog)
+- [Observability](/docs/agents/observability)
 - [Custom capabilities](/docs/capabilities/custom-capabilities)
 - [Official capabilities](/docs/capabilities/official-capabilities)
