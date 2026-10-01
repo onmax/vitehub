@@ -829,7 +829,7 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
       for (const id of batch) {
         const message = messages.get(id)
         let failed = false
-        if (message && (retrying || progress.mode !== "recovery" || message.labelIds.includes("INBOX"))) {
+        if (message && (retrying || message.labelIds.includes("INBOX"))) {
           await renew()
           const result = await sync.dispatch([message])
           log("messages.dispatched", { failed: result.failed, processed: result.processed, skipped: result.skipped })
@@ -855,7 +855,7 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
         // Only an expired history request triggers recovery, not a dispatch failure.
         const page = await gmailRequest(client, historyListSchema, {
           method: "GET", path: "history",
-          query: { historyTypes: "messageAdded", labelId: gmailWatchLabelIds[0], pageToken: progress.pageToken, startHistoryId: cursor },
+          query: { historyTypes: "messageAdded", pageToken: progress.pageToken, startHistoryId: cursor },
         }).catch(async (error: unknown) => {
           if (await restartExpiredPageToken(error)) return null
           if (gmailErrorStatus(error) !== 404) throw error

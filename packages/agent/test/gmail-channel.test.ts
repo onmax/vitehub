@@ -356,7 +356,9 @@ describe("gmail() Channel", () => {
     }
   })
 
-  it.each(["archive", "trash"] as const)("keeps recovery pagination stable when dispatch handlers %s messages", async action => {
+  it.each((["history", "recovery"] as const).flatMap(mode =>
+    (["archive", "trash"] as const).map(action => ({ mode, action })),
+  ))("keeps $mode pagination stable when dispatch handlers $action messages", async ({ mode, action }) => {
     const state = createLibsqlAgentState({ url: ":memory:" })
     await state.connect()
     try {
@@ -364,18 +366,20 @@ describe("gmail() Channel", () => {
       const mailbox = [apiMessage("m1", "First"), apiMessage("m2", "Second"), apiMessage("m3", "Third"), apiMessage("sent", "Sent")]
       mailbox[3]!.labelIds = ["SENT"]
       const delivered: string[] = []
-      const listings: Array<{ query: string, includeSpamTrash?: string | number | readonly string[] }> = []
+      const listings: Array<{ query: string, includeSpamTrash?: string | number | readonly string[], labelId?: string | number | readonly string[] }> = []
       const client: GmailClient = async request => {
-        if (request.path === "history") throw Object.assign(new Error("History expired"), { status: 404 })
+        if (request.path === "history" && mode === "recovery") throw Object.assign(new Error("History expired"), { status: 404 })
         if (request.path === "profile") return { emailAddress: "max@example.com", historyId: "300" }
-        if (request.path === "messages") {
+        if (request.path === "messages" || request.path === "history") {
           const query = String(request.query?.q || "")
-          listings.push({ query, includeSpamTrash: request.query?.includeSpamTrash })
+          listings.push({ query, includeSpamTrash: request.query?.includeSpamTrash, labelId: request.query?.labelId })
           const eligible = mailbox.filter(message => (!query.includes("in:inbox") || message.labelIds.includes("INBOX"))
-            && (request.query?.includeSpamTrash === "true" || !message.labelIds.includes("TRASH")))
+            && (!request.query?.labelId || message.labelIds.includes(String(request.query.labelId)))
+            && (request.path === "history" || request.query?.includeSpamTrash === "true" || !message.labelIds.includes("TRASH")))
           const offset = Number(request.query?.pageToken || 0)
           if (offset === 1) expect(delivered).toEqual(["m1"])
-          return { messages: eligible.slice(offset, offset + 1).map(message => ({ id: message.id })),
+          const messages = eligible.slice(offset, offset + 1).map(message => ({ id: message.id }))
+          return { ...(request.path === "history" ? { historyId: "300", history: [{ messagesAdded: messages.map(message => ({ message })) }] } : { messages }),
             ...(offset + 1 < eligible.length ? { nextPageToken: String(offset + 1) } : {}) }
         }
         const message = mailbox.find(message => request.path === `messages/${message.id}`)
@@ -395,8 +399,11 @@ describe("gmail() Channel", () => {
       expect(delivered).toEqual(["m1", "m2", "m3"])
       expect(await state.get("mail:history-id")).toBe("300")
       expect(listings).toHaveLength(4)
-      expect(listings[0]?.query).toMatch(/^after:\d+$/)
-      expect(listings.every(listing => listing.query === listings[0]?.query && listing.includeSpamTrash === "true")).toBe(true)
+      if (mode === "recovery") {
+        expect(listings[0]?.query).toMatch(/^after:\d+$/)
+        expect(listings.every(listing => listing.query === listings[0]?.query && listing.includeSpamTrash === "true")).toBe(true)
+      }
+      expect(listings.every(listing => listing.labelId === undefined)).toBe(true)
     }
     finally {
       await state.disconnect()
@@ -902,7 +909,7 @@ describe("gmail() Channel", () => {
 
     // The first sync with a topic starts the watch; later syncs keep it until it is due.
     expect(google.writes().filter(write => write === "POST watch")).toHaveLength(1)
-    expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("labelId"))).toEqual(["INBOX", "INBOX", "INBOX"])
+    expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("labelId"))).toEqual([null, null, null])
   })
 
   it.each(["history", "recovery"] as const)("journals %s messages before listing the next page and retries without duplicate Invocations", async mode => {
@@ -931,7 +938,7 @@ describe("gmail() Channel", () => {
         const pageToken = url.searchParams.get("pageToken")
         pages.push(pageToken)
         if (mode === "recovery") expect(url.searchParams.get("maxResults")).toBe("100")
-        else expect(url.searchParams.get("labelId")).toBe("INBOX")
+        else expect(url.searchParams.get("labelId")).toBeNull()
         const page = (ids: string[], nextPageToken?: string) => mode === "history"
           ? { history: [{ messagesAdded: ids.map(id => ({ message: { id } })) }], historyId: nextPageToken ? "110" : "300", ...(nextPageToken ? { nextPageToken } : {}) }
           : { messages: ids.map(id => ({ id })), ...(nextPageToken ? { nextPageToken } : {}) }
