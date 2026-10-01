@@ -1268,9 +1268,11 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       }
       if (recent) recentProviderQuotaFailures.delete(home.scope)
     }
-    // Without driver.credentials, every inspection uses the same host account. The empty scope caches it.
+    // Environment resolvers can select a different account on each inspection. Do not reuse a
+    // result until that environment has a stable credential scope.
     const statusScope = home ? home.scope : ""
-    const statusKey = statusScope === undefined ? undefined : `${statusScope}:${requirements.length > 0}`
+    const cacheable = options.credentials !== undefined || options.env === undefined
+    const statusKey = cacheable && statusScope !== undefined ? `${statusScope}:${requirements.length > 0}` : undefined
     if (statusKey !== undefined) {
       const cached = providerStatusCache.get(options)?.get(statusKey)
       if (cached && Date.now() - Date.parse(cached.checkedAt) < providerStatusCacheMs) return { ...cached, agent: context.agentIdentity?.name ?? "agent" }
@@ -2697,6 +2699,26 @@ async function* runProvider<
       })
       clearActiveWorkspaceCommands = setActiveAgentWorkspaceCommands(context.context, (command, args, execOptions) => {
         const execution = workspaceSession!.exec(command, args, execOptions)
+        activeWorkspaceCommands.add(execution)
+        void execution.finally(() => activeWorkspaceCommands.delete(execution)).catch(() => undefined)
+        return execution
+      })
+    }
+    else if (!ownsRoot && context.workspace) {
+      // In-place runs have no Workspace session, but capability commands still need to execute
+      // in the provider checkout. Bind them directly to the local host and map /workspace paths.
+      clearActiveWorkspaceCommands = setActiveAgentWorkspaceCommands(context.context, async (command, args, execOptions) => {
+        const requested = execOptions?.cwd || "/workspace"
+        const suffix = requested.replace(/^\/workspace(?:\/|$)/, "")
+        const cwd = resolve(root, suffix)
+        if (cwd !== root && !cwd.startsWith(`${root}/`)) throw new Error("[vitehub] Workspace command cwd must stay inside the provider checkout.")
+        const execution = localWorkspaceHost().exec(command, args, { ...execOptions, cwd }).then(result => ({
+          command,
+          args: args || [],
+          exitCode: result.code,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        }))
         activeWorkspaceCommands.add(execution)
         void execution.finally(() => activeWorkspaceCommands.delete(execution)).catch(() => undefined)
         return execution
