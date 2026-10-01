@@ -28,6 +28,7 @@
     "./runtime/vercel-hosted": "./dist/runtime/vercel-hosted.js",
     "./runtime/cloudflare-env": "./dist/runtime/cloudflare-env.js",
     "./http-request": "./dist/http-request.js",
+    "./inspect": "./dist/inspect.js",
     "./runtime/random": "./dist/runtime/random.js",
     "./runtime/time-zone": "./dist/runtime/time-zone.js",
     "./build/cloudflare": "./dist/build/cloudflare.js",
@@ -46,6 +47,7 @@
     "./build/user-entry": "./dist/build/user-entry.js",
     "./build/vite": "./dist/build/vite.js",
     "./nitro-kit": "./dist/nitro-kit.js",
+    "./vite-stage": "./dist/vite-stage.js",
     "./workspace-inventory": "./dist/workspace-inventory.js",
     "./test/e2e-live": "./src/test/e2e-live.mjs",
     "./package.json": "./package.json"

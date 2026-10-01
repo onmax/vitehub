@@ -1,8 +1,9 @@
+import { copyAgentInvocationCallerAbortSignal } from "./internal/invocation-input.ts"
 import { supportsSkillPersistence } from "./internal/skill-persistence.ts"
 import { markCapabilityInspection } from "./internal/capability-inspection.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
-import { resolveRuntimeValue } from "@vite-hub/runtime"
+import { resolveRuntimeValue, ViteHubError } from "@vite-hub/runtime"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 
 import { applyWorkspaceAccessWrapper, hasTrustedWorkspaceAccessScope, hasTrustedWorkspaceSourceResolutionDefinition, isTrustedSourceFreeInspection, workspaceOverrideSymbol } from "./access-runtime.ts"
@@ -82,12 +83,14 @@ export function trustGitHubPullRequestWorkspaceCapability<T extends object>(capa
   trustedGitHubPullRequestWorkspaceCapabilities.add(capability)
   return capability
 }
+export const capabilityFinishDeliveryEffectSymbol: unique symbol = Symbol("vitehub.agent.capabilityFinishDeliveryEffect")
 export const eagerFinishExtensionSymbol: unique symbol = Symbol("vitehub.agent.eagerFinishExtension")
 type InternalAgentCapabilityDefinition<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   Name extends WorkspaceName = WorkspaceName,
 > = AgentCapabilityDefinition<TRuntimeConfig, Name> & {
   [capabilityInvocationStartSymbol]?: (context: AgentCapabilityRuntimeContext<TRuntimeConfig, Name>) => MaybePromise<void>
+  [capabilityFinishDeliveryEffectSymbol]?: AgentChannelDeliveryFinishEffect
   [eagerFinishExtensionSymbol]?: boolean
   [workspaceMaterializationPathsSymbol]?: readonly string[]
   [workspacePersistencePathsSymbol]?: readonly string[]
@@ -447,13 +450,13 @@ function getRunMessages(input: AgentRunInput): Message[] {
 function normalizeRunInput(input: AgentRunInput): AgentRunInput {
   if (input.messages || Array.isArray(input.prompt) || input.message === undefined) return input
   const { message: _message, ...next } = input
-  return { ...next, messages: getRunMessages(input) }
+  return copyAgentInvocationCallerAbortSignal(input, { ...next, messages: getRunMessages(input) })
 }
 
 function withMessages(input: AgentRunInput, messages: Message[]): AgentRunInput {
-  if (input.messages) return { ...input, messages }
-  if (Array.isArray(input.prompt)) return { ...input, prompt: messages }
-  return { ...input, messages }
+  if (input.messages) return copyAgentInvocationCallerAbortSignal(input, { ...input, messages })
+  if (Array.isArray(input.prompt)) return copyAgentInvocationCallerAbortSignal(input, { ...input, prompt: messages })
+  return copyAgentInvocationCallerAbortSignal(input, { ...input, messages })
 }
 
 async function callHooks<
@@ -1217,7 +1220,14 @@ export async function resolveAgentCapabilities<
   const initialFinishDeliveryEffectProviders = invocationContext.get(channelDeliveryFinishEffectsContextKey) || []
   const registries: AgentCapabilityRegistries = {
     deliveryEffectIntents: [...initialDeliveryEffectIntents],
-    finishDeliveryEffectProviders: [...initialFinishDeliveryEffectProviders],
+    finishDeliveryEffectProviders: [
+      ...initialFinishDeliveryEffectProviders,
+      ...capabilities.flatMap(capability => {
+        // SAFETY: Internal Capabilities register completion requirements before input handling can return a Response.
+        const effect = (capability as InternalAgentCapabilityDefinition<TRuntimeConfig, Name>)[capabilityFinishDeliveryEffectSymbol]
+        return effect ? [effect] : []
+      }),
+    ],
     finishExtensionProviders: [],
     finalOutputRenderers: [],
     modelExecutionInstrumentation: [],
@@ -1242,6 +1252,16 @@ export async function resolveAgentCapabilities<
       kind,
       ...(uniqueNames.length ? { names: uniqueNames } : {}),
     })
+  }
+
+  function addCapabilityTools(value: AgentToolSet, capabilityId: string) {
+    for (const name of Object.keys(value)) {
+      if (tools && Object.hasOwn(tools, name) && (tools[name].metadata?.vitehubChannelDelivery === true || value[name]?.metadata?.vitehubChannelDelivery === true)) {
+        throw new ViteHubError("CHANNEL_DELIVERY_TOOL_CONFLICT", `[vitehub] Channel delivery tool "${name}" conflicts with an existing Capability tool.`, { details: { tool: name } })
+      }
+    }
+    recordDriverContribution("Capability tools", capabilityId, Object.keys(value))
+    tools = { ...tools, ...value }
   }
 
   function addFinishExtensionProvider(capabilityId: string, value: unknown | AgentFinishExtensionProvider, eager?: boolean) {
@@ -1487,8 +1507,7 @@ export async function resolveAgentCapabilities<
           tools: {
             add(value) {
               if (!value) return
-              recordDriverContribution("Capability tools", capability.id, Object.keys(value))
-              tools = { ...tools, ...value }
+              addCapabilityTools(value, capability.id)
             },
             transform(transform) {
               toolTransforms.push(transform)
@@ -1590,8 +1609,7 @@ export async function resolveAgentCapabilities<
           if (tools?.[cli.name]) {
             throw agentDiagnostics.AGENT_R0338({ message: `[vitehub] Capability CLI "${cli.name}" conflicts with an existing Agent tool.` })
           }
-          recordDriverContribution("Capability tools", capability.id, Object.keys(resolved))
-          tools = { ...tools, ...resolved }
+          addCapabilityTools(resolved, capability.id)
         }
       }
       if (invocationOptions.resolveTools !== false && capability.tools) {
@@ -1603,8 +1621,7 @@ export async function resolveAgentCapabilities<
               throw agentDiagnostics.AGENT_R0339({ message: `[vitehub] Capability tool "${name}" conflicts with an existing Capability CLI.` })
             }
           }
-          recordDriverContribution("Capability tools", capability.id, Object.keys(resolved))
-          tools = { ...tools, ...resolved }
+          addCapabilityTools(resolved, capability.id)
         }
       }
     }

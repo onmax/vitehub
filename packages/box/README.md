@@ -201,7 +201,7 @@ Crabbox requires either `cwd` or `checkout` and targets Linux/POSIX Static SSH h
 
 Commands must remain owned by their Box session. ViteHub adds the reserved `VITEHUB_BOX_SESSION` environment marker to commands and reclaims marked processes on the SSH target when the session closes, including children adopted by supervisors. Commands cannot override this marker through the `env` option. Supervisors that launch replacement processes must preserve it.
 
-Processes that discard the marker, such as children started with `env -i`, can escape cleanup and remain outside the v1 concurrency guarantee. A process that only references the Box directory is not owned by that Box. This cleanup does not add process isolation.
+The marker is read from each process's environment at launch. A process that starts with the marker remains owned by that Box, even if it later changes its environment. A process started without the marker is not owned by that Box, even if it references the Box directory. This cleanup does not add process isolation.
 
 ## Security boundary
 

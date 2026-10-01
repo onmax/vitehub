@@ -6,7 +6,7 @@
   <img alt="AI SDK" src="https://img.shields.io/badge/AI%20SDK-v7-111827?style=flat-square">
 </p>
 
-`@vite-hub/agent` defines Agents from files such as `server/agents/support/agent.ts`. Each Agent selects one Driver: an AI SDK model, a built-in coding provider, or application-owned `driver.run` logic.
+`@vite-hub/agent` defines Agents from files such as `server/agents/support/agent.ts`. Each Agent selects one Driver: an AI SDK model, a built-in coding provider, typed TypeSafe Jev questions, or application-owned `driver.run` logic.
 
 Keep the three pieces separate:
 
@@ -21,6 +21,8 @@ pnpm add @vite-hub/agent @vite-hub/workspace ai
 ```
 
 `ai` is required for model-backed drivers and AI SDK-powered capabilities such as model-backed `title()`, `chatSummary()`, `llmGate()`, and `transcribe()`. Agents with `driver.run` can bundle without installing `ai`.
+
+`driver.ask` requires the optional peer `advocaat`. ViteHub imports it only when an ask Driver or a Jev decision runs. When the application does not install it, the Agent Vite plugin keeps the import external, so other Agents still build.
 
 Add the AI SDK model provider you pass to `model`.
 
@@ -67,6 +69,30 @@ export default defineAgent({
   },
 });
 ```
+
+## Typed questions
+
+`driver.ask` answers typed questions with TypeSafe Jev in one request. The answers are the Invocation output, and `runAgent()` infers their type from the questions:
+
+```ts
+// server/agents/labeller.ts
+import { ask, defineAgent } from "@vite-hub/agent";
+
+export default defineAgent({
+  driver: {
+    ask: {
+      label: ask.choice("Which label fits this email?", { invoice: "Bills and receipts.", none: "No label fits." }),
+      urgent: ask.if("Does it need action today?"),
+    },
+  },
+});
+```
+
+Jev reads Invocation `data` when a caller sets it, else the prompt text, else the latest user message. `ask.choice()`, `ask.switch()`, `ask.score()`, `ask.chance()`, and `ask.if()` return plain question objects. `driver.ask` also accepts a function that returns the questions for each Invocation.
+
+`ask.if()` accepts a finite threshold from `0` to `1`, inclusive. It defaults to `0.5`.
+
+Credentials come from the Server Env group `typesafe`. Declare it with `typesafe: typesafeEnv()` from `@vite-hub/env`. `llmGate()` and `llmRoute()` on an ask Driver Agent use one Jev `ask.choice()` question when they have no `model` option. Their decisions include `probabilities` and no `reason`.
 
 ## Direct invocations
 
@@ -212,13 +238,16 @@ Pass `--json` for the structured inspection contract.
 ## Capabilities
 
 - A `webChat()` Channel exposes the Agent through the conventional `/api/_vitehub/agents/[agent]/chat` dispatcher. Use `webChat({ route: false })` when an Agent should not answer it, or `chat()` when an app-owned trigger needs Chat History and `chat.message` behavior without Channel-owned route exposure; see the [First Agent guide](https://vitehub.dev/docs/getting-started/first-agent).
+- `defineChannel(kind, { message })` declares the methods that `agent:finish` and `agent:error` hooks call through `event.message`, typed from the Agent's `channels`. Set `dryRun: true` in the Invocation input to record write methods in the trace instead of calling the provider; see [Act on the Channel message in hooks](https://vitehub.dev/docs/agents/channels#act-on-the-channel-message-in-hooks).
+- Built-in GitHub `webhook` and `dev` Triggers supply `{ repository, pullRequest, run, trigger }` as Channel message data. Custom `message.data` schemas must accept this pull request context.
 - `workspaceShell()` runs scoped shell/file work through [`@vite-hub/shell`](../shell/README.md).
 - `webSearch()` searches and reads the web with [Brave](https://brave.com/search/api/), [Exa](https://docs.exa.ai/), [Jina](https://jina.ai/en-US/reader/), [SearXNG](https://docs.searxng.org/dev/search_api.html), [SerpApi](https://serpapi.com/search-api), [SerpBase](https://serpbase.dev/docs), or [Tavily](https://docs.tavily.com/).
 - `openapi()` turns an allowed OpenAPI `operationId` subset into bounded HTTP tools, or into a generated Capability CLI when `cli` is set.
 - `transcribe()` uses the [AI SDK transcription API](https://ai-sdk.dev/v7/docs/reference/ai-sdk-core/transcribe); `openRouterTranscriptionModel()` provides OpenRouter transcription without consumer-owned HTTP handling.
 - `createTranscription()` composes remote asynchronous submission and completion through a provider-neutral driver; `elevenLabsScribe()` is the built-in Scribe v2 adapter.
-- `mcp()` connects tools from [Model Context Protocol](https://modelcontextprotocol.io/) servers through `@ai-sdk/mcp`. Transient transport failures skip the affected server and record `vitehub.mcp.warnings` in the Invocation input context. Authentication, configuration, cancellation, protocol, and integrity failures remain fatal. Executor failures remain fatal. Outside an Invocation, `callMcpTool(server, name, args)` from `@vite-hub/agent/mcp` calls one tool on the same server entry and returns `[error, value]`.
+- `mcp()` connects tools from [Model Context Protocol](https://modelcontextprotocol.io/) servers through `@ai-sdk/mcp`. Transient transport failures skip the affected server and record `vitehub.mcp.warnings` in the Invocation input context. Read them with `getMcpWarnings(input)`. Set `unavailableNotice: true` to append a notice to the final chat reply. Authentication, configuration, cancellation, protocol, and integrity failures remain fatal. Executor failures remain fatal. Outside an Invocation, `callMcpTool(server, name, args)` from `@vite-hub/agent/mcp` calls one tool on the same server entry and returns `[error, value]`.
 - `kv()`, `blob()`, `db()`, and `email()` expose [`@vite-hub/kv`](../kv/README.md), [`@vite-hub/blob`](../blob/README.md), [`@vite-hub/database`](../database/README.md), and [`@vite-hub/email`](../email/README.md).
+- `channelDelivery({ channel, options })` adds one `send_message` tool that sends through a Channel client from `useChannel()` to an application-selected recipient. Its name must be unique among Capability tools. It limits calls with `maxCalls` (default `1`) and can fail the Invocation with `required: true` when the Agent never sends.
 - `sandbox()` and `schedule()` expose [`@vite-hub/sandbox`](../sandbox/README.md) and [`@vite-hub/schedule`](../schedule/README.md).
 - `usage()` requests provider usage metadata, estimates missing cost from Models.dev, and exposes the normalized Agent Usage Record through its typed Finish Extension. Its `metadata.pricing` flag is false when `pricing: false` disables estimation.
 - `skills()`, `access()`, `memory()`, `fetch()`, `llmRoute()`, and `llmGate()` cover prompt skills, workspace scope, durable notes, HTTP reads, and pre-run decisions.
@@ -260,6 +289,12 @@ openapi({
 `spec` can be a callback when the OpenAPI document comes from the current Agent Invocation context. Request servers come from OpenAPI `servers`; use `server` only as an override escape hatch when the spec has no usable server.
 When `cli` is set, the operation tools are replaced by one CLI-named tool. ViteHub generates one subcommand per allowed operation, using the OpenAPI operation summary or description for command guidance.
 Capability `cli` can be a static command tree or an invocation resolver that returns `undefined` when the CLI should not be available. Generated command trees stay behind adapter-owned options such as `openapi({ cli })`, whose resolver may return `false` or `undefined` for the current invocation.
+
+## Channel Env
+
+Built-in Channels read credentials from `env.server.<channel>.<field>`. They read the host variable names only when Server Env does not declare the field. `discoverAgentChannelEnv({ rootDir, serverDirs })` from `@vite-hub/agent/vite` finds built-in Channel factory calls in Agent files and returns the fields to declare, with their host names, `secret` flag, and `required` flag. `vitehub({ agent })` passes the result to Server Env before `hubEnv()` builds the registry; application declarations win field by field. Explicit Channel options always win over Env.
+
+To give a built-in Channel Env, add its factory name and fields to `builtInChannelEnv` in `src/channel-env.ts`, then read each field with `channelEnvValue(channel, field, context)` when the option is omitted. Set `requiredUnless` to the option keys that make a field unnecessary; other fields stay optional. See the [Channel Env guide](https://vitehub.dev/docs/agents/channels#channel-env) for the current names.
 
 ## Error diagnostics
 
@@ -336,7 +371,7 @@ Provider Drivers get the mount as a real Git checkout of the exact head SHA, wit
 
 Set `defineAgent({ github })` to a GitHub identity such as `createGitHubHost()`. Provider Drivers receive its `access().env` (`GH_TOKEN`, `GITHUB_TOKEN`, a Git credential helper, and the commit identity) before `driver.env`, and the pull request checkout and `git()` use the same credentials. `github({ app: host })` uses the identity for Channel API calls and also sets `defineAgent({ github })` when it is omitted.
 
-For GitHub Channels, `activity: { publicUrl: 'https://agent.example.com' }` links pull request webhook activity to its ViteHub Console invocation. The URL must be the Agent's public Console origin. `activity: true` keeps application-supplied links. See the [GitHub Channel guide](../../docs/content/docs/agents/channels.md#publish-agent-activity-without-opening-a-chat).
+For GitHub Channels, `activity: true` links pull request webhook activity to its ViteHub Console invocation when `vitehub({ publicUrl })` is set. `activity: { publicUrl }` overrides the origin for one Channel. Without a public URL, the application supplies its own links. See the [GitHub Channel guide](../../docs/content/docs/agents/channels.md#publish-agent-activity-without-opening-a-chat).
 
 `pullRequest.reconcile.concurrencyLimit` sets the maximum concurrent reconciled webhook deliveries per repository and pull request. It defaults to `1`; set a positive integer such as `4` to run up to four deliveries for one PR together. Other PRs have separate limits. See the [GitHub Channel guide](../../docs/content/docs/agents/channels.md#reconcile-github-pull-requests).
 
@@ -345,6 +380,8 @@ For GitHub Channels, `activity: { publicUrl: 'https://agent.example.com' }` link
 `@vite-hub/agent/invocations/d1` exports `createD1AgentInvocationStore({ database })`. Pass a D1 binding or a resolver that returns the current request binding. The store creates its table with idempotent `d1AgentInvocationSchema()` statements on first use of each binding in an isolate. Set `migrate: false` to apply those statements through your own D1 migration tool instead.
 
 D1 batches and conditional writes preserve concurrent journal updates across Workers. Claims use the database clock. Terminal records use the same 30-day and 10,000-record retention defaults as the libSQL store. Pending and running records are retained. `maxAgeMs: false` and `maxRecords: false` disable each limit. `invocations.delete(id)` and `invocations.prune({ olderThanMs, dryRun })` remove terminal records on demand in both adapters; `vitehub agent invocations delete|prune` does the same for a SQLite or libSQL journal. An update rejects after 32 concurrent write conflicts. Use the journal's `redact` hook to remove sensitive values before any store receives them.
+
+`agentInvocationRerunInput(record)` returns the recorded prompt and Invoker Profile ID of a terminal record when the journal kept the complete prompt and selected profile ID. Pending and running records return `available: false` with the reason `invocation-not-terminal`. Otherwise it returns `available: false` with the reason: `input-not-captured`, `replay-metadata-unavailable`, `input-has-invoker`, `input-has-data`, `input-has-options`, `input-has-context`, `input-has-run-metadata`, `input-has-timeout`, `input-has-abort-signal`, `input-has-dry-run`, `input-prompt-changed`, `input-has-messages`, `input-redacted`, or `input-truncated`. Records without the current replay schema and invocations with a direct invoker or actor identity cannot be replayed. A resolver-derived Invoker without a selected Invoker Profile also returns `input-has-invoker`. A selected profile is resolved again when the new Invocation starts. Structured input, call options, extra context, runtime run metadata, timeouts, cancellation signals, dry-run mode, singular message inputs, and prompts changed by input preparation are not replayed. Redaction of the prompt, input-presence flags, or selected Invoker Profile disables replay. The Console uses it for its rerun action. `invocations.supportsDelete` reports whether the configured store implements deletion.
 
 D1 caps retained observations at 1,000,000 UTF-8 bytes to fit its 2 MB row limit. The adapter checks the complete row, preserves lifecycle fields and appended evidence when it removes excess ordinary observations, and rejects a row that still cannot fit. The resolved observation budget is stored with each record.
 
@@ -700,6 +737,10 @@ SQLite inbox, bounded GitHub discovery, claims, checkout preparation, repair
 passes and wake handling. Provide a configured Agent, GitHub host, inbox path,
 repositories and concurrency. In a ViteHub application, obtain the Agent through
 `getAgentFromRegistry("babysitter")` so discovery applies its colocated files. The Vite plugin binds `#vitehub/agent/registry` in Vite and Nitro to generated lazy loaders. Build output embeds colocated instructions and skills, so lookup works before any webhook handler loads and does not read Markdown from the deployed filesystem. Outside a ViteHub build, pass an explicit registry to `getAgentFromRegistry(name, registry)`.
+Pass `agentName: "babysitter"` to `createBabysitterRuntime` when the discovered
+definition has no explicit `name`. This selects its configured origin when
+`vitehub({ publicUrl })` uses the per-Agent function form. The runtime defaults
+to the definition's `name`; an explicit `publicUrl` takes precedence.
 Connect `reconcile` to a Process Agent Host, `inbox.ingest` to the signed GitHub
 webhook receiver, and `workload` to health inspection. Keep credentials, provider
 settings, host capacity, telemetry and deployment resources in the application.

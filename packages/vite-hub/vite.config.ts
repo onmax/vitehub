@@ -149,6 +149,10 @@ export default defineConfig({
         to: "dist/console/runtime/components",
       },
       {
+        from: "src/console/runtime/components/console-session-actions.vue",
+        to: "dist/console/runtime/components",
+      },
+      {
         from: "src/console/runtime/components/console-session-inspector.vue",
         to: "dist/console/runtime/components",
       },
@@ -235,8 +239,11 @@ export default defineConfig({
       ...distributionEntries,
       "src/console/runtime/console-route.ts",
       "src/console/runtime/client/invocation.ts",
+      "src/console/runtime/client/invocation-deletion.ts",
       "src/console/runtime/client/request.ts",
       "src/console/runtime/client/env-management.ts",
+      "src/console/runtime/client/env-status.ts",
+      "src/console/runtime/client/schedule-run.ts",
       "src/console/runtime/client/time.ts",
       "src/console/runtime/definitions.ts",
       "src/console/runtime/rpc.ts",
@@ -255,6 +262,7 @@ export default defineConfig({
       "src/console/runtime/server/env-manage.ts",
       "src/console/runtime/server/kv.get.ts",
       "src/console/runtime/server/page.get.ts",
+      "src/console/runtime/server/schedule-run.ts",
       "src/console/runtime/server/search.get.ts",
       "src/console/runtime/server/sections.get.ts",
       "src/console/runtime/server/usage.get.ts",
@@ -267,8 +275,11 @@ export default defineConfig({
         delete exports["./console/runtime/console-route"];
         delete exports["./console/runtime/client/sections"];
         delete exports["./console/runtime/client/invocation"];
+        delete exports["./console/runtime/client/invocation-deletion"];
         delete exports["./console/runtime/client/request"];
         delete exports["./console/runtime/client/env-management"];
+        delete exports["./console/runtime/client/env-status"];
+        delete exports["./console/runtime/client/schedule-run"];
         delete exports["./console/runtime/client/time"];
         delete exports["./console/runtime/definitions"];
         delete exports["./console/runtime/rpc"];
@@ -292,6 +303,7 @@ export default defineConfig({
         delete exports["./console/runtime/server/kv.get"];
         delete exports["./console/runtime/server/kv"];
         delete exports["./console/runtime/server/page.get"];
+        delete exports["./console/runtime/server/schedule-run"];
         delete exports["./console/runtime/server/search.get"];
         delete exports["./console/runtime/server/sections.get"];
         delete exports["./console/runtime/server/sections"];

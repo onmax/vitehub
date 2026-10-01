@@ -1,201 +1,196 @@
 ---
 title: Connections
-description: Connect provider accounts with OAuth 2, call their APIs with access rules, and record how routes and Agents use them.
-navigation.order: 4
+description: Connect an OAuth account once, then call its API from server code with typed methods, access rules, approvals, and activity.
+navigation.order: 3.2
 navigation.group: Application
-icon: i-lucide-plug
+icon: i-lucide-plug-zap
 ---
 
-Use Connections when server code or an Agent calls a provider API as one account that the app owns, for example one Gmail inbox.
+A Connection holds one OAuth grant for one provider account, for example a Google account for Gmail. Server code calls the provider API through the Connection. The Connection refreshes the token, checks the access rules, and records each call. Application code never reads the token.
 
-A Connection Definition in code declares the provider, the OAuth scopes, and the access rules. The [Console](/docs/development/console) connects, reconnects, refreshes, and disconnects the account at runtime. ViteHub stores the grant sealed in the app database, refreshes the access token, checks access before each call, and records activity.
+Connections need the ViteHub [Database](/docs/server-primitives/database). Tokens are stored encrypted through [Env Bridge](/docs/server-primitives/env-bridge).
 
-Use [Env](/docs/server-primitives/env) for static API keys. Connections do not replace Auth: they do not sign in users.
+## Enable Connections
 
-## Quick start
-
-::steps{level="3"}
-
-### Configure
-
-Connections need [Database](/docs/server-primitives/database) and a 32-byte encryption key.
+Install the owner package with `pnpm add @vite-hub/connections`. Add its Vite plugin alongside the ViteHub Database plugin.
 
 ```ts [vite.config.ts]
-import { vitehub } from 'vite-hub'
 import { defineConfig } from 'vite'
+import { vitehub } from 'vite-hub'
+import { hubConnections } from '@vite-hub/connections/vite'
 
 export default defineConfig({
-  plugins: [vitehub({ preset: 'node', console: true, database: true, connections: true })],
+  plugins: [
+    vitehub({ database: true }),
+    hubConnections({ database: 'vite-hub/database/drizzle' }),
+  ],
 })
 ```
 
-```bash [Terminal]
-# 32 random bytes, base64url
-node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
-```
+Set `VITEHUB_CONNECTIONS_KEY` to 32 random bytes in base64 or hex. Create one with `openssl rand -base64 32`. Keep the key in the host secret store. Tokens stored with one key cannot be read with another.
 
-Set the result as the secret `VITEHUB_CONNECTIONS_KEY` on the host. If the key changes, every Connection must be connected again.
+## Define a Connection
 
-### Define a Connection
-
-The file name is the Connection name. `google()` adds the `openid` and `email` scopes to show the connected account. Register an OAuth client at the provider with the redirect URI `<origin>/_vitehub/connections/<name>/callback`.
+Put each definition in `server/connections/<name>.ts`, or in a `*.connection.ts` file. The file name is the Connection name.
 
 ```ts [server/connections/google.ts]
-import { useServerEnv } from '#vitehub/env/server'
-import { defineConnection } from 'vite-hub/connections'
-import { google } from 'vite-hub/connections/google'
+import { defineConnection } from '@vite-hub/connections'
+import { google } from '@vite-hub/connections/google'
 
 export default defineConnection({
   provider: google({
-    // Server Env with { clientId: string, clientSecret: secret string }
-    client: ({ event }) => useServerEnv(event).google,
-    scopes: ['https://www.googleapis.com/auth/gmail.modify'],
+    clientId: () => process.env.GOOGLE_CLIENT_ID,
+    clientSecret: () => process.env.GOOGLE_CLIENT_SECRET,
   }),
+  scopes: ['https://www.googleapis.com/auth/gmail.modify'],
+  api: {
+    gmail: ['users.labels.*', 'users.messages.list', 'users.messages.get', 'users.messages.modify'],
+  },
   access: {
-    server: { allow: ['gmail.*'] },
-    agents: {
-      labeller: { allow: ['gmail.messages.*', 'gmail.labels.list'], approve: ['gmail.drafts.create'] },
-    },
+    'schedule:gmail': { read: true, write: ['gmail.users.messages.modify'] },
+    'agent:labeller': { read: true, write: 'approve' },
   },
 })
 ```
 
-### Connect the account
+| Field | Meaning |
+| --- | --- |
+| `provider` | The OAuth provider and its API catalogs. |
+| `scopes` | Scopes to request. Inspection reports declared scopes that the grant does not have. |
+| `api` | Methods to expose for each API. A trailing `.*` selects a subtree. Omit it to expose every method. |
+| `access` | Access rules by actor. Omit it to use the default policy. |
 
-Open the Console, select **Connections**, and select **Connect**. You can also print a single-use connect URL from the CLI while the development server runs:
+Create the Google OAuth client as a **Web application**. Add each redirect URI that you use:
 
-```bash [Terminal]
-vitehub connections connect google
+- `http://127.0.0.1:<port>/callback` for `vitehub connections connect --port <port>`.
+- `https://<your-app>/_vitehub/connections/callback` for Console connect.
+
+Google refresh tokens expire after 7 days while the OAuth consent screen is in **Testing** mode. Gmail scopes such as `gmail.modify` are restricted scopes. Publishing an app that uses them for other people needs Google verification.
+
+## Connect an account
+
+Start the development server, then run:
+
+```sh
+vitehub connections connect google --port 8976
 ```
 
-### Call the provider
+Connection state writes are conditional on the current encrypted token revision. Authorization-code exchange, refresh, and revoke share a durable per-Connection mutation lease. A callback waits for provider revocation to finish before it exchanges its code.
 
-```ts [server/api/labels.get.ts]
-import { useConnection } from 'vite-hub/connections'
-import { gmail } from 'vite-hub/connections/google'
+An expired unresolved lease blocks token mutations even after the token revision changes. Confirm that the old request can no longer affect the provider grant before repairing its lease in the application store. The default SQLite table is `vitehub_connection_refresh_leases`. Inspect its `name`, `owner`, `revision`, and `expires_at` columns, then remove only the confirmed former operation's `name` and `owner` row. Expiry alone does not permit removal. Connect again after repair.
 
-export default defineEventHandler(async (event) => {
-  const connection = useConnection('google', { event })
-  return await gmail(connection).labels.list()
-})
+The command prints the provider URL. Open it, grant access, and the loopback callback stores the token. A Connection has one account. To change the account, revoke the Connection first.
+
+In production, configure `hubConnections({ database: 'vite-hub/database/drizzle', management: { actor: './server/connections-actor.ts' } })`. The actor module must export a default function that checks the request's authenticated session and returns `user:<id>`, or `undefined` to deny access. `management: true` fails the production build because it has no authenticated identity resolver.
+
+Open `https://<your-app>/_vitehub/connections/connect/google` while signed in to your app. `vitehub connections connect google --url https://<your-app>` prints that URL.
+
+## Call the API
+
+```ts [server/tasks/label.ts]
+import { useConnection } from '@vite-hub/connections/server'
+
+const gmail = useConnection('google', { actor: 'schedule:gmail' }).gmail
+
+const { messages = [] } = await gmail.users.messages.list({ userId: 'me', q: 'is:unread' })
+for (const message of messages) {
+  await gmail.users.messages.modify({
+    userId: 'me',
+    id: message.id!,
+    requestBody: { addLabelIds: ['Label_1'] },
+  })
+}
 ```
 
-::
+Method inputs and responses come from the provider API description. Only methods selected in `api` exist on the client. Path parameters and query parameters are fields of the input. The JSON body is `requestBody`.
 
-## Public imports
+`fetch()` calls a URL on a catalog origin with the Connection token. Use it for endpoints that the catalog does not describe. The token is never sent to another origin. `ConnectionFetchInit` accepts `method`, `headers`, `redirect`, `signal`, and a string `body`. It preserves the method, headers, redirect mode, and body for approval replay. Encode form parameters with `URLSearchParams.toString()` and set `content-type` to `application/x-www-form-urlencoded`.
 
-| Import | Use |
-| --- | --- |
-| `defineConnection`, `oauth2`, `useConnection` from `vite-hub/connections` | Define a Connection, use a generic OAuth 2 provider, and call a Connection from server code. |
-| `google`, `gmail`, `gmailOperations` from `vite-hub/connections/google` | Google OAuth preset and typed Gmail REST Operations. |
-| `createConnectionsRuntime`, `useConnectionsRuntime` from `vite-hub/connections/server` | Runtime access for hosts and tests. |
-| `createConnectionsHandler` from `vite-hub/connections/http` | Management, connect, and callback routes. The Console mounts them. |
-| `hubConnections` from `@vite-hub/connections/vite` | Standalone Vite integration. |
-
-## Calls
-
-`useConnection(name, options)` returns a client:
-
-| Method | Behavior |
-| --- | --- |
-| `call(operation, input)` | Runs a typed Operation. An Operation has an `id`, an `effect` (`read` or `write`), and a `request(input)` builder. |
-| `fetch(url, init)` | Sends a request with the access token. `GET` and `HEAD` are reads with the id `fetch.get` or `fetch.head`. Other methods are writes. |
-| `status()` | Returns the Connection summary without tokens. |
-
-Each call checks access, gets a valid access token, and sends the request. ViteHub refreshes the token 60 seconds before it expires. When the provider returns `401`, ViteHub refreshes once and retries once. When the provider rejects the refresh token, the status changes to `needs-reconnect`.
-
-Options:
-
-| Option | Default | Description |
-| --- | --- | --- |
-| `event` | None | The request event. The route becomes the actor, for example `GET /api/labels`. |
-| `actor` | Route from `event`, else `{ id: 'server', kind: 'service' }` | The actor for access rules and activity. |
-| `dryRun` | `false` | Write Operations return `{ skipped: 'dry-run', operation }` and do not call the provider. `fetch` returns `204` with the `x-vitehub-connection-skipped` header. |
-| `audit` | `'changes'` | `'changes'` records writes, denials, skipped calls, and failures. `'all'` also records reads. |
-| `trace` | None | `traceId`, `invocationId`, `runId`, and `tool` to link activity to a trace. |
-
-## Provider origins
-
-Each provider declares the API origins that may receive its credential. `call` and `fetch` fail with `CONNECTIONS_ORIGIN_NOT_ALLOWED` for any other origin, and ViteHub records the attempt as denied. `google()` allows `https://*.googleapis.com`. Set `origins` for `oauth2()`:
-
-```ts [server/connections/crm.ts]
-import { defineConnection, oauth2 } from 'vite-hub/connections'
-
-export default defineConnection({
-  provider: oauth2({
-    authorizationUrl: 'https://crm.example.com/oauth/authorize',
-    client: ({ event }) => useServerEnv(event).crm,
-    id: 'crm',
-    origins: ['https://api.crm.example.com'],
-    scopes: ['contacts.read'],
-    tokenUrl: 'https://crm.example.com/oauth/token',
-  }),
-})
+```ts
+const response = await useConnection('google').fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile')
 ```
 
-An origin is `https://host`, `https://host:port`, or `https://*.host` for subdomains. `http` is accepted only for loopback hosts such as `localhost` and `127.0.0.1`. The `userInfoUrl` of `oauth2()` receives the access token, so its origin must be in `origins` too.
+Connection names must not exceed 501 characters, including path separators. Discovery rejects longer names before authorization, so their default Env keys fit the 512-character storage limit.
 
-## Access rules
+## Control access
 
-`access` has rules for `server`, `routes` (by route id such as `POST /api/sync`), and `agents` (by Agent id). A route without its own rule uses `server`. Each rule has `allow`, `approve`, and `deny` lists of Operation id patterns. `*` matches any characters.
+The actor comes from `useConnection(name, { actor })`. It defaults to `server`. Use a stable name for each caller, for example `schedule:gmail` or `agent:labeller`.
 
-ViteHub checks `deny` first, then `approve`, then `allow`. When no pattern matches, reads are allowed and writes are denied.
+GET methods are reads. Other methods are writes. Providers mark some writes as high risk, for example `gmail.users.messages.send`. A rule must name a high-risk write exactly. A subtree pattern does not match it.
 
-| Decision | Result |
+Without `access`:
+
+- Every actor can read.
+- Server code can call writes that are not high risk.
+- `agent:` actors need approval for each write.
+- High-risk writes and `fetch` writes are denied.
+
+With `access`, actors that are not listed are denied.
+
+| Rule | Effect |
 | --- | --- |
-| `allow` | The call runs. |
-| `require-approval` | The call fails with `CONNECTIONS_APPROVAL_REQUIRED`. Agent tools report it to the model. |
-| `deny` | The call fails with `CONNECTIONS_DENIED`. |
+| `read: true` | Allow reads. |
+| `write: ['gmail.users.messages.modify']` | Allow these writes. Patterns can end with `.*`. |
+| `write: true` | Allow every write that is not high risk. |
+| `write: 'approve'` | Allow writes that are not high risk after approval. |
+| `approve: true` | Require approval for each allowed write. It defaults to `true` for `agent:` actors. |
 
-## Activity
+Name `fetch` in `write` to allow `fetch()` writes.
 
-ViteHub stores activity in the `vitehub_connection_activity` table. Each entry has the actor, action (`call`, `connect`, `refresh`, `disconnect`), Operation id, effect, outcome, provider status, duration, target host and path, and trace ids. Activity never contains request bodies, response bodies, headers, or tokens.
+A denied call throws `ConnectionError` with code `CONNECTION_DENIED` and records a `denied` activity entry.
 
-Agent tools record every call, reads included. The Console shows activity for each Connection.
+## Approve writes
 
-## Storage and security
+A write that needs approval throws `ConnectionError` with code `CONNECTION_APPROVAL_REQUIRED`. `error.requestId` is the approval id. The approval stores the method and its input.
 
-- Grants are sealed with AES-GCM and the encryption key. Each row stores the key id. With a different key, the status is `needs-reconnect`.
-- The connect flow uses PKCE (`S256`), a single-use ticket that expires after 10 minutes, and a `state` cookie. Tokens never go to the browser or the CLI.
-- Connect, callback, and management routes exist only when the Console is enabled. Console Auth protects them in production.
-- Concurrent refreshes use a database lease, so only one request refreshes a rotating refresh token.
+```sh
+vitehub connections approvals
+vitehub connections approvals approve approval_3kq2...
+vitehub connections approvals deny approval_3kq2...
+```
 
-## Configuration options
+Approving runs the call once, as the actor that requested it. The access rules still apply. The approval then has status `executed` or `failed`. Execution has a five-minute abort deadline. An active execution renews its database lease every 100 seconds until the provider call settles. Recovery waits for that lease to expire, so concurrent inspection does not fail an active call. If a process stops during execution, the next approval inspection or approval attempt marks expired executions as `failed` with `CONNECTION_EXECUTION_UNKNOWN`. The provider may have completed the write. Check the provider before requesting another approval; the runtime never replays an interrupted execution.
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `database` | `'default'` | Database that stores grants and activity. |
-| `encryptionKey` | `env({ secret: true, optional: true, source: env.source('VITEHUB_CONNECTIONS_KEY') })` | Secret Env declaration for the key. It cannot use `env.provider()` or a default. |
-| `projectRoot` | Vite root | Where ViteHub discovers `server/connections/`. |
+## Preview writes
 
-`vitehub({ connections })` requires `database`. The Nuxt module does not support Connections yet.
+With `dryRun: true`, reads run and writes are skipped. Each skipped write is reported to `onEffect`. The method resolves to `undefined`. Denied writes still throw.
 
-## CLI
+```ts
+const effects: ConnectionEffect[] = []
+const gmail = useConnection('google', {
+  actor: 'schedule:gmail',
+  dryRun: true,
+  onEffect: effect => effects.push(effect),
+}).gmail
+```
 
-The CLI calls the management route of a running development server with the Console enabled. `--url` defaults to `VITEHUB_DEV_SERVER_URL`, then `http://localhost:5173`.
+## Inspect activity
 
-| Command | Description |
+Each call is an Env Bridge `use` operation on the key `connection/<name>`. Activity records the actor, the action id, the outcome, and optional `traceId` and `invocationId`. It does not record inputs, responses, or tokens.
+
+```sh
+vitehub connections list
+vitehub connections inspect google
+vitehub connections activity google
+```
+
+## Tokens and errors
+
+The Connection refreshes the access token when it expires within 60 seconds, and once after a `401` response. Concurrent refreshes in one runtime share one token request. When two runtimes refresh at the same time, the conditional write fails for one of them, and that runtime uses the stored token.
+
+| Code | Meaning |
 | --- | --- |
-| `vitehub connections list` | List Connections and their status. |
-| `vitehub connections status <name>` | Show one Connection. |
-| `vitehub connections activity [name]` | Show recent activity. |
-| `vitehub connections connect <name>` | Print a single-use connect URL. |
-| `vitehub connections refresh <name>` | Refresh the access token now. |
-| `vitehub connections disconnect <name>` | Revoke the grant at the provider and delete it. If revocation fails, ViteHub still deletes the local grant and records the error in the `disconnect` activity. Revoke the app at the provider then. |
+| `CONNECTION_REAUTH_REQUIRED` | The Connection is not connected, was revoked, or the provider rejected the refresh token. Connect it again. |
+| `CONNECTION_DENIED` | The access rules deny the call. |
+| `CONNECTION_APPROVAL_REQUIRED` | The call waits for approval. |
+| `CONNECTION_PROVIDER` | The provider returned an error. `error.status` is the HTTP status. |
+| `CONNECTION_INVALID` | The request or configuration is invalid. |
 
-## Errors
+`vitehub connections revoke google --confirm google` revokes the grant at the provider and replaces the stored token with a revoked marker.
 
-| Code | Cause |
-| --- | --- |
-| `CONNECTIONS_NOT_CONFIGURED` | The database or the encryption key is missing. |
-| `CONNECTIONS_INVALID` | The management or connect request is not valid, or the ticket or `state` does not match. |
-| `CONNECTIONS_NOT_FOUND` | No Connection Definition has this name. |
-| `CONNECTIONS_MISSING` | The Connection is not connected. |
-| `CONNECTIONS_NEEDS_RECONNECT` | The provider rejected the refresh token. |
-| `CONNECTIONS_KEY_MISMATCH` | The grant was sealed with a different key. |
-| `CONNECTIONS_DENIED`, `CONNECTIONS_APPROVAL_REQUIRED` | Access rules blocked the call. |
-| `CONNECTIONS_ORIGIN_NOT_ALLOWED` | The request URL is not in the provider `origins`. ViteHub did not send the credential. |
-| `CONNECTIONS_PROVIDER_FAILED` | The provider returned an error. `details.status` has the HTTP status. |
-| `CONNECTIONS_UNAVAILABLE` | Another request holds the refresh lease. Try again. |
+## Limits
 
-When you change the provider of a Connection, the stored grant belongs to the old provider. The status becomes `needs-reconnect` with `lastError: 'CONNECTIONS_PROVIDER_CHANGED'`, and ViteHub never sends that grant to the new provider. Reconnect the Connection.
+- The default store uses SQLite through the ViteHub Database.
+- One account per Connection.
+- The built-in provider is Google with the Gmail API.
+- The CLI uses the management API. It cannot reach a deployed app that requires host authentication, such as Cloudflare Access. Use Console connect for deployed apps.

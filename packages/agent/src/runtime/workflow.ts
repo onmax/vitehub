@@ -1,3 +1,4 @@
+import { setWorkflowJournalName } from "../internal/workflow-journal-name.ts"
 import { getActiveCloudflareEnv, getCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { createExecutionContext, getViteHubErrorShape } from "@vite-hub/runtime"
 
@@ -6,6 +7,7 @@ import { workspaceAgentWithSourceRoot } from "../workspace-agent.ts"
 import { decodeColocatedAgentSkills, withColocatedAgentSkills } from "../internal/colocated-agent-skills.ts"
 import { loadAgentWorkflowModule, loadAgentWorkflowRuntimeStateModule, loadConfiguredAgentWorkflowCapabilities } from "../internal/workflow-runtime-loaders.ts"
 import { agentInvocationRunId } from "../invocation-context.ts"
+import { markAgentInvocationCallerAbortSignal } from "../internal/invocation-input.ts"
 import { agentInvocationRecoveryTasks } from "../internal/invocation-recovery.ts"
 import { bindAgentInvocations } from "../invocations.ts"
 import { cloneWorkflowJsonValue, workflowBytesToBase64 } from "../internal/workflow-portability.ts"
@@ -49,9 +51,11 @@ export function agentWithColocatedSkills<Agent>(agent: Agent, sources: Parameter
 }
 
 export interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
+  journalAgentName?: string
   agentIdentity?: AgentHostIdentity
   capabilities?: Record<string, boolean>
   input?: AgentRunInput<CALL_OPTIONS>
+  callerAbortSignal?: boolean
   invocationRecovery?: {
     agentName?: string
     runId: string
@@ -324,6 +328,7 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
     ...createAgentRuntimeContext<TRuntimeConfig>(runtimeInput),
     runtimeConfig,
   }) as ResolvedAgentRuntimeContext<TRuntimeConfig>
+  if (payload.journalAgentName) setWorkflowJournalName(runtimeContext, agent, payload.journalAgentName)
   if (payload.run?.runId && payload.run.runId !== runId) {
     Object.defineProperty(runtimeContext, agentInvocationRunId, {
       enumerable: true,
@@ -397,6 +402,8 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
     if (payload.parsedInputData === true) {
       markParsedAgentWorkflowInput(restoredWorkflowInput, agent)
     }
+    markAgentInvocationCallerAbortSignal(restoredWorkflowInput,
+      isRuntimeBoolean(payload.callerAbortSignal) ? payload.callerAbortSignal : undefined)
     const inlineResult = await runAgentInline(
       agent,
       runtimeContext,

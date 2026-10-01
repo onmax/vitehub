@@ -1,3 +1,4 @@
+import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { inheritAgentLayerOptions } from "./agent-layers.ts"
 import { registeredWorkspaceAgentNames } from "./internal/workspace-agent-registration.ts"
 import { agentInstructionSources, resolveAgentInstructions } from "./agent-instructions.ts"
@@ -303,6 +304,7 @@ export function workspaceAgentWithSourceRoot<Agent>(agent: Agent, sourceRootDir:
     ...workspaceDefinitionFromOptions(workspaceOptions as never),
     __vitehubWorkspaceAgentOptions: workspaceOptions,
   }
+  Object.defineProperty(decoratedAgent, agentDefinitionSourceSymbol, { configurable: true, value: workspaceAgent })
   for (const key of [colocatedAgentSkillsSymbol, discoveredSkillsSetter]) {
     const descriptor = Object.getOwnPropertyDescriptor(workspaceAgent, key)
     if (descriptor) Object.defineProperty(decoratedAgent, key, descriptor)
@@ -559,6 +561,18 @@ function capabilityMetadataTool(capability: NormalizedCapability, options: { dri
       status: "available",
     }
   }
+  if (capability.id.startsWith("channel-delivery.")) {
+    const tool = capability.metadata?.tool
+    const name = hasRuntimeType(tool, "string") ? tool : undefined
+    if (!name) return undefined
+    return {
+      category: "capability",
+      description: "Deliver a message through the configured Channel.",
+      icon: "i-lucide-send",
+      name,
+      status: "available",
+    }
+  }
   return capability.tools
     ? {
         category: "capability",
@@ -602,7 +616,7 @@ function resolvedDriverExecutionAuthority<
   driver: ReturnType<typeof normalizeAgentDriver<TRuntimeConfig, CALL_OPTIONS>>,
   runtime?: AgentRuntimeName,
 ): ExecutionAuthority {
-  if (driver.kind === "model") return noExecutionAuthority
+  if (driver.kind === "model" || driver.kind === "ask") return noExecutionAuthority
   if (driver.kind === "provider" && (runtime === "cloudflare-agents" || runtime === "deno")) return noExecutionAuthority
   return driver.kind === "provider" ? staticDriverExecutionAuthority(driver) : unknownExecutionAuthority
 }
@@ -781,6 +795,7 @@ function providerMetadata(driver: {
   permissions: AgentInspectionProviderMetadata["permissions"]
   provider: string
   providerSettings?: Record<string, unknown>
+  requirements?: readonly string[]
   reasoningEffort?: AgentInspectionProviderMetadata["reasoningEffort"]
   reasoningSummary?: AgentInspectionProviderMetadata["reasoningSummary"]
   sessionStorePath?: string
@@ -798,6 +813,7 @@ function providerMetadata(driver: {
     permissions: driver.permissions,
     provider: driver.provider,
     ...(providerSettings.length ? { providerSettings } : {}),
+    ...(driver.requirements?.length ? { requirements: [...driver.requirements] } : {}),
     ...(driver.reasoningEffort ? { reasoningEffort: driver.reasoningEffort } : {}),
     ...(driver.reasoningSummary ? { reasoningSummary: driver.reasoningSummary } : {}),
     ...(driver.sessionStorePath ? { sessionStore: "sqlite" as const } : {}),
@@ -828,6 +844,7 @@ function staticDriverMetadata<
       provider: providerMetadata(driver),
     }
   }
+  if (driver.kind === "ask") return { executionAuthority: noExecutionAuthority, kind: "ask" }
   return { executionAuthority: unknownExecutionAuthority, kind: "run" }
 }
 
@@ -864,6 +881,7 @@ async function resolvedDriverMetadata<
       provider: providerMetadata(driver),
     }
   }
+  if (driver.kind === "ask") return { executionAuthority: noExecutionAuthority, kind: "ask" }
   return { executionAuthority: unknownExecutionAuthority, kind: "run" }
 }
 
@@ -928,7 +946,8 @@ function agentChannelMetadataInstructions<
   definition: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
 ): string[] {
   const settings = agentSettings(definition)
-  if (!settings || normalizeAgentDriver(settings).kind === "run") return []
+  const driverKind = settings ? normalizeAgentDriver(settings).kind : undefined
+  if (!driverKind || driverKind === "run" || driverKind === "ask") return []
   return inspectMessageChannelInstructions(definition.channels)
 }
 

@@ -527,6 +527,14 @@ it.each<[string, string, Record<string, string>]>([
   expect(definition?.workspace).toBe("review")
 })
 
+it("ignores a non-null assertion on an imported Channel", async () => {
+  const definition = await discover(
+    'import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal! } })',
+    { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export default github({ pullRequest: true })' },
+  )
+  expect(definition?.workspace).toBe("review")
+})
+
 it.each([
   "github({ get pullRequest() { return true } })",
   "github({ pullRequest: { get workspace() { return true } } })",

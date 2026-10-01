@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { resolveViteHubProjectRoot, VITEHUB_GENERATED_ROOT, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_PROJECT_ROOT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { describeDeploymentPlanOutput } from "@vite-hub/internal/build/deployment-plan-output"
 import { normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import hubAuthNuxt from "@vite-hub/auth/nuxt"
@@ -623,7 +624,7 @@ async function applyNitroConfig(
     command: nuxt.options.dev ? "serve" : "build",
     isPreview: false,
     isSsrBuild: true,
-    mode: nuxt.options.dev ? "development" : "production",
+    mode: nuxt.options.vite?.mode ?? (nuxt.options.dev ? "development" : "production"),
   } as const
   const serverDirs = nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined
   const generatedRoot = join(nuxt.options.buildDir, "vitehub")
@@ -915,6 +916,16 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   const consoleFixtureSnapshot = resolvedConsoleFixture ? readConsoleFixture(resolvedConsoleFixture) : undefined
   const plugins = [
     ...installedPlugins.filter(plugin => plugin.name !== "vite-hub/deployment-output"),
+    ...(nuxt.options.vitehubCliDiscovery ? [{
+      name: "vite-hub/deployment-inspect",
+      vitehub: {
+        inspect: () => {
+          // SAFETY: Nuxt's Nitro options use the public rootDir and output.dir configuration contract.
+          const nitro = nuxt.options.nitro as { rootDir?: string, output?: { dir?: string } } | undefined
+          return { providerOutput: describeDeploymentPlanOutput(plan, resolve(nitro?.rootDir ?? rootDir), nitro?.output?.dir) }
+        },
+      },
+    }] : []),
     ...(options.console
       ? [{
           name: "vite-hub/console-cli",

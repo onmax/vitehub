@@ -77,7 +77,7 @@ function isIdentifier(token: string | undefined): boolean {
 }
 
 // Keep literals as single tokens so their punctuation cannot change object depth.
-function tokenizeAgentSource(source: string) {
+export function tokenizeAgentSource(source: string): { tokens: string[], lineBreaks: Set<number> } {
   const tokens: string[] = []
   const lineBreaks = new Set<number>()
   let previousEnd = 0
@@ -1917,6 +1917,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   function channelOwnsWorkspace(channel: number, channelId?: string): boolean {
     let channelOptions = resolveReference(channel, new Set(), true)
+    // TypeScript non-null assertions have no runtime effect. Remove them
+    // before deciding whether a relative Channel import is inspectable.
+    while (tokens[channelOptions + 1] === "!") channelOptions++
     const moduleNamespace = moduleNamespaces.get(tokens[channelOptions])
     if (moduleNamespace && isModuleBinding(channelOptions)) {
       const member = memberAccess(channelOptions)

@@ -1,6 +1,6 @@
 ---
 title: Agent Drivers
-description: Choose model-backed, provider-backed, or application-owned Agent execution.
+description: Choose model-backed, provider-backed, question-backed, or application-owned Agent execution.
 navigation.order: 30
 navigation.group: Configure
 icon: i-lucide-cpu
@@ -13,8 +13,9 @@ An Agent Driver decides how one invocation runs. Choose the execution method tha
 | Model-backed | ViteHub runs a model and its Capability-contributed tool loop. |
 | Provider-backed | Codex or Claude Code runs the coding-agent loop, tools, approvals, and session. |
 | Custom run | Application code runs the entire operation. |
+| Ask | A fast decision model answers a fixed set of typed questions. |
 
-Built-in `"codex"` and `"claude-code"` values are provider-backed. Application-supplied Drivers use exactly one of `{ model }` or `{ run }`.
+Built-in `"codex"` and `"claude-code"` values are provider-backed. Application-supplied Drivers use exactly one of `{ model }`, `{ run }`, or `{ ask }`.
 
 ## Use a model-backed Driver
 
@@ -124,9 +125,20 @@ export default defineAgent({
 })
 ```
 
-ViteHub resolves `env` once, then gives `launch` the selected environment, provider executable, temporary working directory, and abort signal. The wrapper receives its configured arguments followed by the provider runtime arguments. ViteHub writes an owner-only temporary launcher outside the Workspace and removes it after the provider runtime stops. Launch wrappers require a POSIX host. They change process startup only; authorization, remote isolation, and wrapper credentials remain application-owned.
+ViteHub resolves `env` once, then gives `launch` the selected environment, executable to start in `command`, original provider executable in `providerCommand`, temporary working directory, and abort signal. Use `command` to construct wrapper arguments and `providerCommand` to select a provider-specific runner. They are equal during invocations. The wrapper receives its configured arguments followed by the provider runtime arguments. ViteHub writes an owner-only temporary launcher outside the Workspace and removes it after the provider runtime stops. Launch wrappers require a POSIX host. They change process startup only; authorization, remote isolation, and wrapper credentials remain application-owned.
 
 Agent inspection reports whether `env` and `launch` are static or dynamic without resolving either value.
+
+Set `requirements` to the commands that the provider's own shell needs, for example `['git', 'gh', 'unzip', 'apply_patch']`. `agent.status()` checks each command with `command -v` where the Driver runs, or `where.exe` for a local Windows Driver. With `launch`, requirements need a resolver. Status inspection resolves it once with `command: 'sh'`. Each provider probe checks the commands in that same shell before it starts the provider, so checking requirements does not allocate another runner. A status probe may execute the resolved launcher more than once for separate provider checks. If the launcher does not report command-check results, requirement readiness remains unknown. Missing commands make the status `unavailable` and appear in `status.missingCommands` and `status.reason`. Invocations do not repeat the check.
+
+Resolvers that route by the provider executable must use `providerCommand` before enabling `requirements`. During requirement inspection, `command` is `sh` and `providerCommand` still identifies the provider. An application-owned runner selector can use both fields:
+
+```ts
+launch: ({ command, providerCommand }) => ({
+  args: ['exec', '--', command],
+  command: selectRunnerForProvider(providerCommand),
+})
+```
 
 Threads resume with the provider's opaque cursor. ViteHub normalizes assistant text, reasoning, native and Capability tool activity, approvals, provider questions, usage, warnings, errors, and terminal state into Agent Invocation events.
 
@@ -144,6 +156,7 @@ Threads resume with the provider's opaque cursor. ViteHub normalizes assistant t
 | `launch` | Provider command wrapper or invocation-time resolver. Receives the provider executable, working directory, selected environment, and abort signal. |
 | `permissions` | `"ask"`, `"allow-edits"`, or `"allow-all"`; defaults to `"ask"`. Set `"allow-all"` explicitly to run provider actions without approval. |
 | `providerSettings` | Advanced settings passed to the embedded provider runtime. Explicit settings override the installed Codex executable fallback. |
+| `requirements` | Command names that `status()` checks where the Driver runs. Missing commands are reported in `missingCommands`. |
 | `sessionStorePath` | Optional SQLite file for provider session cursors. Enables thread continuation after a process restart on the same persistent host volume. |
 | `output` | Optional structured Agent output contract. |
 | `capacity` | Optional process-local static or adaptive concurrency and queue limits. |
@@ -208,6 +221,92 @@ export default defineAgent({
 The callback receives prepared input, messages, tools, Workspace access, invocation context, and the resolved Actor as both `actor` and `invoker`. A custom run callback may call a model internally, but ViteHub treats that execution and usage as application-owned behavior.
 
 Read [Instructions](/docs/agents/instructions) for model-facing behavior and [Workspace context](/docs/agents/workspace-context) for files and writeback.
+
+## Use an ask Driver
+
+Use `driver.ask` when the Agent only has to answer a few typed questions, such as a label or a score. The Driver sends every question to [TypeSafe Jev](https://typesafe.ai) in one request through the `advocaat` client. It does not run a chat model, tools, or instructions.
+
+Install the client. It is an optional peer dependency, so Agents without `driver.ask` bundle without it:
+
+```sh
+pnpm add advocaat
+```
+
+Declare the `typesafe` Server Env group with `typesafeEnv()`. The Driver always reads this group name:
+
+```ts [vite.config.ts]
+import { defineConfig } from 'vite'
+import { vitehub } from 'vite-hub'
+import { typesafeEnv } from 'vite-hub/env'
+
+export default defineConfig({
+  env: {
+    server: {
+      typesafe: typesafeEnv(),
+    },
+  },
+  plugins: [vitehub()],
+})
+```
+
+Build the questions with `ask`:
+
+```ts [server/agents/labeller.ts]
+import { ask, defineAgent } from 'vite-hub/agent'
+
+export default defineAgent({
+  driver: {
+    ask: {
+      label: ask.choice('Which Gmail label fits this email?', {
+        invoice: 'Bills, receipts, and payment requests.',
+        none: 'No label clearly fits.',
+      }),
+      urgent: ask.if('Does the email need action today?'),
+    },
+  },
+})
+```
+
+The answers are the Invocation output, and their type comes from the questions. The standalone `runAgent` overload returns a tuple, so destructure it before reading the result:
+
+```ts
+const [error, answers] = await runAgent(labeller, { prompt: 'Invoice 42' })
+if (error) throw error
+answers.label.choice // 'invoice' | 'none'
+answers.urgent // boolean
+```
+
+No output schema or parsing is necessary.
+
+Jev reads the Invocation `data` when a caller sets it, else the prompt text, else the latest user message. Pass a function to build the questions for each Invocation. It receives the same context as `driver.run`:
+
+```ts [server/agents/labeller.ts]
+import { useServerEnv } from '#vitehub/env/server'
+import { ask, defineAgent } from 'vite-hub/agent'
+
+export default defineAgent({
+  driver: {
+    ask: () => {
+      const labels = useServerEnv().labeller.labels.split(',')
+      return {
+        label: ask.choice('Which label fits?', Object.fromEntries(labels.map(label => [label, null]))),
+      }
+    },
+  },
+})
+```
+
+| Builder | Answer |
+| --- | --- |
+| `ask.choice(instructions, criteria)` | `{ choice, confidence, probabilities }`. `criteria` maps labels to descriptions, or is a list of 2 to 255 labels. |
+| `ask.switch(instructions, criteria)` | The selected label only. |
+| `ask.score(instructions, levels)` | `{ score, ratio, confidence, legend, probabilities }` for 2 to 10 ordered levels. |
+| `ask.chance(instructions, criteria?)` | `{ chance }`, the probability of yes. |
+| `ask.if(instructions, { threshold? })` | `true` when the probability of yes is above `threshold`. The threshold must be between `0` and `1` and defaults to `0.5`. |
+
+State, instructions, and criteria accept JSON values. Root numbers and booleans become text for the `advocaat` Entry contract. Numbers and booleans inside objects or arrays stay native. Score legends retain the original level descriptions.
+
+`driver.ask` accepts only `ask` and `capacity`. Missing `advocaat`, a missing `typesafe` group, and a missing TypeSafe API key fail the Invocation with a diagnostic. The Console and `vitehub agent info` show the Driver kind as `ask`. When an ask Driver Agent uses [`llmGate()`](/docs/capabilities/llm-gate) or [`llmRoute()`](/docs/capabilities/llm-route) without a `model`, the decision also uses Jev.
 
 ### Provider exit evidence
 

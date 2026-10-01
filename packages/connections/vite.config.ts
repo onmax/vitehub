@@ -5,7 +5,7 @@ export default defineConfig({
     tsconfig: "tsconfig.build.json",
     deps: {
       alwaysBundle: [/^@vite-hub\/internal/],
-      neverBundle: ["#vitehub/connections/runtime", "vite"],
+      neverBundle: ["#vitehub/connections/registry", "vite"],
       onlyBundle: false,
     },
     entry: [
@@ -13,14 +13,14 @@ export default defineConfig({
       "src/agent.ts",
       "src/google.ts",
       "src/http.ts",
-      "src/runtime/empty-runtime.ts",
+      "src/runtime/empty-registry.ts",
       "src/server.ts",
       "src/vite.ts",
     ],
     exports: {
       customExports(exports) {
         return Object.fromEntries(
-          Object.entries(exports).filter(([key]) => key !== "./runtime/empty-runtime"),
+          Object.entries(exports).filter(([key]) => key !== "./runtime/empty-registry"),
         )
       },
       inlinedDependencies: false,

@@ -37,7 +37,7 @@ export default defineAgent({
 })
 ```
 
-For application-supplied execution, use exactly one structural Driver variant: `{ model }` or `{ run }`.
+For application-supplied execution, use exactly one structural Driver variant: `{ model }`, `{ run }`, or [`{ ask }`](/docs/agents/agent-drivers#use-an-ask-driver).
 
 ## Add abilities and context
 
@@ -279,7 +279,7 @@ With the implicit discovery-default Workflow binding, direct `runAgent()` calls 
 | `messages` | Applies shared delivery, streaming, concurrency, session, and transcript settings to adapter Channels. |
 | `invoker` | Configures Agent Actor profiles and resolution using the current API name. |
 | `runtime` | Selects inline or Workflow-backed hosted execution. |
-| `hooks` | Observes input, completion, failure, Capability lifecycle, or hook execution. |
+| `hooks` | Observes input, completion, failure, Capability lifecycle, or hook execution. Finish and error hooks act on the triggering Channel message through [`event.message`](/docs/agents/channels#act-on-the-channel-message-in-hooks). |
 | `runEvents` | Publishes application-owned progress for an invocation with a stable run id. |
 | `name`, `description`, `version` | Adds explicit discovery and inspection metadata. |
 | `cli.capabilities` | Enables or disables Capability-contributed CLI commands. |
