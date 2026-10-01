@@ -48,6 +48,18 @@ function sentBody(fetch: ReturnType<typeof devServer>): unknown {
 }
 
 describe("KV review regressions", () => {
+  it.each([false, true])("reports interrupted error bodies with JSON %s", async json => {
+    const output = context()
+    const response = new Response(new ReadableStream({ start(controller) { controller.error(new Error("body interrupted")) } }), { status: 500 })
+    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json({ root: rootDir, runtime: "nitro" }))
+    await expect(runKVCli(["get", "a", ...(json ? ["--json"] : [])], output.context, { fetch })).resolves.toBe(1)
+    if (json) {
+      expect(JSON.parse(output.stdout.output()).error.message).toContain("body interrupted")
+      expect(output.stderr.output()).toBe("")
+    }
+    else expect(output.stderr.output()).toContain("body interrupted")
+  })
+
   it("applies the request timeout to discovery", async () => {
     const output = context()
     const fetch = vi.fn((_url: string | URL | Request, request?: RequestInit) => new Promise<Response>((_resolve, reject) => {
