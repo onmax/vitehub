@@ -178,7 +178,9 @@ function parseInspection(operation: RateLimitDevOperation, value: unknown): Rate
 }
 
 async function readFailure(response: Response): Promise<{ code?: string, message: string }> {
-  const text = await response.text()
+  let text: string
+  try { text = await response.text() }
+  catch (error) { return { message: `Could not read the Rate Limit error response: ${error instanceof Error ? error.message : String(error)}` } }
   try {
     const body: unknown = JSON.parse(text)
     const parsed = v.safeParse(v.object({ error: v.object({ code: v.optional(v.string()), message: v.string() }) }), body)
