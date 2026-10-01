@@ -146,6 +146,23 @@ describe("Runtime Schedule inspection", () => {
     expect(listRuns.mock.calls).toEqual([[{ scheduleId: "visible", runtimeOnly: true, limit: 10 }]])
   })
 
+  it("batches visible Console histories through the optional store method", async () => {
+    installTargets()
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "alpha", target: "report" })
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "beta", target: "report" })
+    await schedules.dynamic.create({ console: { enabled: false }, cron: "0 9 * * *", id: "hidden", target: "report" })
+    const store = createMemoryScheduleRunStore()
+    const listRuns = vi.fn(store.listRuns)
+    const listRunsBatch = vi.fn(async () => [[], []])
+    setScheduleRunStore({ ...store, listRuns, listRunsBatch })
+    await readScheduleConsoleRecords()
+    expect(listRuns).not.toHaveBeenCalled()
+    expect(listRunsBatch.mock.calls).toEqual([[[
+      { scheduleId: "alpha", runtimeOnly: true, limit: 10 },
+      { scheduleId: "beta", runtimeOnly: true, limit: 10 },
+    ]]])
+  })
+
   it("reads Console records with run history and hides records that opt out", async () => {
     installTargets()
     setScheduleWakeDriverActive(true)

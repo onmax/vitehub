@@ -191,9 +191,12 @@ interface RuntimeScheduleState {
 async function readRuntimeScheduleState(limit: number, visibleOnly = false): Promise<RuntimeScheduleState> {
   const records = (await getRuntimeScheduleStore().list()).filter(schedule => !visibleOnly || schedule.console?.enabled !== false)
   const runs = new Map<string, ScheduleRunRecord[]>()
-  for (const schedule of records) {
-    runs.set(schedule.id, await getScheduleRunStore().listRuns({ scheduleId: schedule.id, runtimeOnly: true, limit }))
-  }
+  const store = getScheduleRunStore()
+  const queries = records.map(schedule => ({ scheduleId: schedule.id, runtimeOnly: true, limit }))
+  const histories = store.listRunsBatch
+    ? await store.listRunsBatch(queries)
+    : await Promise.all(queries.map(query => store.listRuns(query)))
+  for (const [index, schedule] of records.entries()) runs.set(schedule.id, histories[index] ?? [])
   return { runs, schedules: [...records].sort((left, right) => left.id.localeCompare(right.id)) }
 }
 

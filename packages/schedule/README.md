@@ -246,3 +246,5 @@ When an update changes `input`, also supply `target`. When an update changes `ta
 Use `schedules.dynamic.create()` and `schedules.dynamic.update()` when names or stored input come from external data. The dynamic methods validate target eligibility and Schedule fields. They do not validate a target's business input. Validate that data in the application and again in a target that reads durable records.
 
 This is a breaking change: include the generated declarations for typed application calls, and move operational calls with unknown names to `schedules.dynamic`. There is no permissive string overload on typed creation.
+
+The built-in KV Run Store supports `listRunsBatch()` for several filtered histories. CLI lists and Console inspection share one fresh key snapshot per request and read each unindexed record once. Each new request sees runs written by other runtimes. Custom Run Stores can implement this optional method or keep `listRuns()`.

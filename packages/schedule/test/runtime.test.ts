@@ -889,6 +889,35 @@ describe("KV Schedule Run Store", () => {
     expect(await store.getRun("srun_runtime_actual_opaque%_29")).toEqual(latest[0])
   })
 
+  it("shares key enumeration and opaque legacy reads within each history batch", async () => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    for (let index = 0; index < 20; index++) {
+      const scheduledAt = new Date(Date.UTC(2026, 0, 1, 0, index))
+      for (const scheduleId of ["alpha", "beta"]) {
+        await store.createRun({ id: `opaque%_${scheduleId}_${index}`, scheduleId, target: "report", scheduledAt,
+          createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+      }
+    }
+    for (const key of await kvStore.keys("vitehub:schedule/schedule-run-index")) await kvStore.del(key)
+    const keys = vi.spyOn(kvStore, "keys")
+    const get = vi.spyOn(kvStore, "get")
+    const queries = ["alpha", "beta"].map(scheduleId => ({ scheduleId, limit: 1 }))
+    const results = await store.listRunsBatch!(queries)
+    expect(results.map(runs => runs[0]?.id)).toEqual(["opaque%_alpha_19", "opaque%_beta_19"])
+    expect(keys).toHaveBeenCalledTimes(2)
+    expect(get).toHaveBeenCalledTimes(40)
+    keys.mockClear()
+    get.mockClear()
+    await store.listRunsBatch!(queries)
+    expect(keys).toHaveBeenCalledTimes(2)
+    expect(get).toHaveBeenCalledTimes(2)
+    const scheduledAt = new Date("2026-02-01T00:00:00Z")
+    await createKVScheduleRunStore({ kvStore }).createRun({ id: "external_newest", scheduleId: "alpha", target: "report", scheduledAt,
+      createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+    expect((await store.listRunsBatch!(queries))[0]?.[0]?.id).toBe("external_newest")
+  })
+
   it("keeps all indexed matches when a filter has no limit", async () => {
     const store = createKVScheduleRunStore({ kvStore: createTestKVStore() })
     const scheduledAt = new Date("2026-05-23T09:00:00.000Z")

@@ -167,6 +167,8 @@ export interface ScheduleRunStore {
   getAttempt: (id: string) => Promise<ScheduleRunAttemptRecord | undefined> | ScheduleRunAttemptRecord | undefined
   getRun: (id: string) => Promise<ScheduleRunRecord | undefined> | ScheduleRunRecord | undefined
   listAttempts: (runId: string) => Promise<ScheduleRunAttemptRecord[]> | ScheduleRunAttemptRecord[]
+  /** Reads several histories using one request-scoped key snapshot when supported. */
+  listRunsBatch?: (options: ScheduleRunListOptions[]) => Promise<ScheduleRunRecord[][]> | ScheduleRunRecord[][]
   listRuns: (options?: ScheduleRunListOptions) => Promise<ScheduleRunRecord[]> | ScheduleRunRecord[]
   updateAttempt: (id: string, patch: Partial<Pick<ScheduleRunAttemptRecord, "completedAt" | "error" | "status">> & { updatedAt: Date }) => Promise<ScheduleRunAttemptRecord | undefined> | ScheduleRunAttemptRecord | undefined
   updateRun: (id: string, patch: Partial<Pick<ScheduleRunRecord, "attemptCount" | "completedAt" | "error" | "response" | "startedAt" | "status">> & { updatedAt: Date }) => Promise<ScheduleRunRecord | undefined> | ScheduleRunRecord | undefined
