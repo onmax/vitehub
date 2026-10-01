@@ -135,6 +135,23 @@ describe("KV review regressions", () => {
     expect(json.stderr.output()).toBe("")
   })
 
+  it.each(["1e-400", '{"rate":1e-400}', '[1e-400]'])("rejects JSON underflow before discovery: %s", async value => {
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runKVCli(["set", "a", value, "--json-value", "--json"], output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output()).error.message).toContain("underflow to zero")
+    expect(output.stderr.output()).toBe("")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each(["0", "0e-400", "0.000e400", "0.25", "5e-324"])("preserves representable JSON numbers: %s", async value => {
+    const output = context()
+    const fetch = devServer({ created: true, key: "a", store: "default", type: "number" })
+    await expect(runKVCli(["set", "a", value, "--json-value", "--json"], output.context, { fetch })).resolves.toBe(0)
+    expect(sentBody(fetch)).toMatchObject({ value: Number(value) })
+    expect(output.stderr.output()).toBe("")
+  })
+
   it("reports invalid binary payloads without throwing", async () => {
     const output = context()
     await expect(runKVCli(["get", "key", "--json"], output.context, { fetch: devServer({ encoding: "base64", found: true, key: "key", store: "default", value: "invalid!" }) })).resolves.toBe(1)
