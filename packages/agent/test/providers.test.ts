@@ -13,7 +13,12 @@ import { VITEHUB_GENERATED_ROOT, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DI
 import { mergeConfig, build as viteBuild } from "vite"
 import { describe, expect, it, vi } from "vitest"
 
+import { title } from "../src/capabilities.ts"
+import { http, telegram } from "../src/channels.ts"
+import { defineAgent } from "../src/index.ts"
 import { isRuntimeFunction, isRuntimeNumber, isRuntimeObject, isRuntimeString } from "../src/internal/runtime-value.ts"
+import { createChannelWebhookRouteHandler } from "../src/server/internal.ts"
+import { createLibsqlAgentState } from "../src/state/sqlite.ts"
 
 import type { AgentMessageDeliveryKind, AgentRunContext, AgentRunInput } from "../src/index.ts"
 import type { AgentChannelChatRouteStandardSchemaV1 } from "../src/server.ts"
@@ -485,9 +490,11 @@ describe("agent Vite plugin", () => {
     // SAFETY: The plugin under test produced this hook, so the test invokes its documented callable shape.
     const config = plugin.config as (config: { define?: Record<string, string>; root?: string; server?: { watch?: { ignored?: string | string[] } } }) => { define?: Record<string, string>; server?: { watch?: { ignored?: string[] } } }
 
-    expect(config({}).server?.watch?.ignored).toEqual(["**/.vitehub/**"])
-    expect(config({ server: { watch: { ignored: ["**/node_modules/**"] } } }).server?.watch?.ignored).toEqual(["**/node_modules/**", "**/.vitehub/**"])
-    expect(config({ server: { watch: { ignored: ["**/.vitehub/**"] } } }).server?.watch?.ignored).toEqual(["**/.vitehub/**"])
+    const watchIgnored = (input: { server?: { watch?: { ignored?: string[] } } }) => mergeConfig(input, config(input)).server?.watch?.ignored
+
+    expect(watchIgnored({})).toEqual(["**/.vitehub/**"])
+    expect(watchIgnored({ server: { watch: { ignored: ["**/node_modules/**"] } } })).toEqual(["**/node_modules/**", "**/.vitehub/**"])
+    expect(watchIgnored({ server: { watch: { ignored: ["**/.vitehub/**"] } } })).toEqual(["**/.vitehub/**"])
     expect(config({ root: "/repo/apps/web" }).define?.__VITEHUB_AGENT_APP_ROOT__).toBe(JSON.stringify("/repo/apps/web"))
     expect(config({ define: { __VITEHUB_AGENT_APP_ROOT__: "configured" }, root: "/repo/apps/web" }).define?.__VITEHUB_AGENT_APP_ROOT__).toBe("configured")
   })
@@ -495,6 +502,7 @@ describe("agent Vite plugin", () => {
   it("merges server noExternal", async () => {
     const { hubAgent } = await import("../src/vite.ts")
     const plugin = hubAgent()
+    const environment = { consumer: "server", resolve: { noExternal: ["existing", "@vite-hub/agent"] } }
 
     const hook = plugin.configEnvironment
     const result = isRuntimeFunction(hook)
@@ -502,20 +510,14 @@ describe("agent Vite plugin", () => {
           // SAFETY: This synthetic test input exercises a hook that does not inspect the omitted host-only context.
           {} as never,
           "ssr",
-          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
-          {
-            // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
-            consumer: "server",
-            resolve: { noExternal: ["existing"] },
-          } as never,
+          // SAFETY: This fixture supplies the environment fields read by the hook.
+          environment as never,
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           {} as never,
         )
       : undefined
 
-    expect(result).toMatchObject({
-      resolve: { noExternal: ["existing", "@vite-hub/agent", "@t3tools/provider-runtime"] },
-    })
+    expect(result ? mergeConfig(environment, result).resolve.noExternal : undefined).toEqual(["existing", "@vite-hub/agent", "@t3tools/provider-runtime"])
   })
 
   it("bundles the provider runtime into hosted Vite server output", async () => {
@@ -2649,13 +2651,34 @@ export default defineAgent({
         expect(webhookRoute).toContain("process.env.VITEHUB_AGENT_STATE_AUTH_TOKEN")
         expect(webhookRoute).toContain("process.env.VITEHUB_AGENT_STATE_URL")
         expect(webhookRoute).toContain("function chatStateFromLibsql()")
-        expect(webhookRoute).toContain("export function resumeWebhookQueues(waitUntil: AgentWaitUntil | undefined)")
+        expect(webhookRoute).toContain("export function resumeWebhookQueues(waitUntil: AgentWaitUntil | undefined, recoverInterruptedBefore?: number)")
         expect(webhookRoute).toContain("if (!runtimeUrl && !viteHubChatStateOptions.url) return async () => undefined")
-        expect(webhookRoute).toContain("handler.resume({ agentIdentity: agentIdentities[name], webhookState: viteHubChatStateResolver, waitUntil })")
+        expect(webhookRoute).toContain("handler.resume({ agentIdentity: agentIdentities[name], recoverInterruptedBefore, webhookState: chatStateFromLibsql(), waitUntil })")
         expect(webhookRoute).toContain("return async () => await Promise.all(stops.map(stop => stop()))")
-        expect(queuePlugin).toContain('import { resumeWebhookQueues, waitUntilFromEvent } from "./chat-webhook-route"')
-        expect(queuePlugin).toContain("nitroApp.hooks.hook('request', event => {")
-        expect(queuePlugin).toContain("waitUntil ||= waitUntilFromEvent(event)")
+        expect(queuePlugin).toContain('import { resumeWebhookQueues } from "./chat-webhook-route"')
+        expect(queuePlugin).not.toContain("nitroApp.hooks.hook('request'")
+        expect(queuePlugin).toContain("if (!import.meta.prerender) setTimeout(() => startWebhookQueues(startedAt), 0)")
+        const resumeWebhookQueues = vi.fn((_waitUntil: unknown, _before: number) => vi.fn())
+        const hooks = new Map<string, () => void>()
+        let startup: (() => void) | undefined
+        // Execute the generated plugin with an earlier process start and a deferred timer.
+        const install = new Function("resumeWebhookQueues", "performance", "setTimeout", "process", `${queuePlugin.replace(/^import .*\n/m, "").replace("export default ", "return ").replace("import.meta.prerender", "false")}`)(
+          resumeWebhookQueues,
+          { timeOrigin: Date.now() - 60_000 },
+          (callback: () => void) => { startup = callback },
+          undefined,
+        )
+        install({ hooks: { hook: (name: string, callback: () => void) => hooks.set(name, callback) } })
+        hooks.get("close")?.()
+        startup?.()
+        expect(resumeWebhookQueues).not.toHaveBeenCalled()
+        install({ hooks: { hook: (name: string, callback: () => void) => hooks.set(name, callback) } })
+        const pluginStartedAt = Date.now()
+        startup?.()
+        expect(resumeWebhookQueues).toHaveBeenCalledWith(undefined, expect.any(Number))
+        expect(resumeWebhookQueues.mock.calls[0]![1]).toBeLessThan(pluginStartedAt - 30_000)
+        hooks.get("close")?.()
+        expect(queuePlugin).toContain("stop = resumeWebhookQueues(waitUntil, recoverInterruptedBefore)")
         expect(queuePlugin).toContain("if (!stopping) stopping = stop?.()")
         expect(queuePlugin).toContain("if (stopping) waitUntil?.(stopping)")
         expect(queuePlugin).toContain("nitroApp.hooks.hook('close', shutdownWebhookQueues)")
@@ -2668,6 +2691,30 @@ export default defineAgent({
       } finally {
         await rm(root, { force: true, recursive: true })
       }
+    }
+  })
+
+  it("resumes generated Nitro webhook queues on the first webhook request on ephemeral hosts", async () => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const root = await mkdtemp(join(tmpdir(), "vitehub-agent-ephemeral-queue-plugin-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      await writeFile(join(root, "server", "agents", "support.ts"), "export default {}", "utf8")
+      const plugin = hubAgent({
+        providers: { state: { provider: "libsql", url: "libsql://state.example.com" } },
+      })
+      if (!isRuntimeFunction(plugin.configResolved)) throw new TypeError("Expected Agent configResolved hook.")
+      // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+      await plugin.configResolved.call({} as never, { command: "build", preset: "vercel", root } as never)
+
+      const queuePlugin = await readFile(join(root, ".vitehub/agent/webhook-queue-plugin.ts"), "utf8")
+      expect(queuePlugin).toContain('import { resumeWebhookQueues, waitUntilFromEvent } from "./chat-webhook-route"')
+      expect(queuePlugin).toContain("nitroApp.hooks.hook('request', event => {")
+      expect(queuePlugin).toContain("waitUntil ||= waitUntilFromEvent(event)")
+      expect(queuePlugin).toContain("    startWebhookQueues()")
+      expect(queuePlugin).not.toContain("setTimeout")
+    } finally {
+      await rm(root, { force: true, recursive: true })
     }
   })
 
@@ -5785,10 +5832,6 @@ describe("server helpers", () => {
   })
 
   it("settles ignored serial messages without rejecting the active request", async () => {
-    const { defineAgent } = await import("../src/index.ts")
-    const { telegram } = await import("../src/channels.ts")
-    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
-    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
     const stateDir = await mkdtemp(join(tmpdir(), "vitehub-ignored-serial-"))
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
     const adapter = createTestChatAdapter({ isDM: false })
@@ -5825,9 +5868,11 @@ describe("server helpers", () => {
       method: "POST",
     })
     const options = { agentName: "support" }
+    let first: ReturnType<typeof handler> | undefined
     try {
       await state.connect()
-      const first = handler(request(2030, true), "telegram", options)
+      first = handler(request(2030, true), "telegram", options)
+      void first.catch(() => undefined)
       await started.promise
       await expect(handler(request(2031, false), "telegram", options)).resolves.toMatchObject({ status: 200 })
       await expect(handler(request(2032, true), "telegram", options)).resolves.toMatchObject({ status: 200 })
@@ -5848,6 +5893,7 @@ describe("server helpers", () => {
       }
     } finally {
       release.resolve()
+      if (first) await Promise.allSettled([first])
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
     }
@@ -10419,6 +10465,84 @@ describe("server helpers", () => {
     }
   })
 
+  it.each(["adapter", "shared resolver"])("fails interrupted invocations before it resumes queued deliveries with a %s", async (stateKind) => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { github } = await import("../src/channels.ts")
+    const { agentInvocationId, createMemoryAgentInvocationStore, defineAgentInvocations } = await import("../src/server.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-interrupted-recovery-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const store = createMemoryAgentInvocationStore()
+    const invocations = defineAgentInvocations({ store })
+    const startedAt = "2026-09-30T10:00:00.000Z"
+    const resumedId = await agentInvocationId("run-resumed", "review")
+    for (const [id, agentName] of [["orphaned", "review"], [resumedId, "review"], ["other-agent", "other"]] as const) {
+      store.create({ agentName, createdAt: startedAt, id, observations: [], startedAt, status: "running", traceId: `trace-${id}`, updatedAt: startedAt })
+    }
+    const statusesAtRun: Record<string, string | undefined> = {}
+    const run = vi.fn(async () => {
+      for (const id of ["orphaned", resumedId, "other-agent"]) statusesAtRun[id] = (await invocations.get(id))?.status
+      return "resumed"
+    })
+    const agent = defineAgent({
+      ...(stateKind === "shared resolver"
+        ? {
+            channels: {
+              github: github({
+                triggers: { webhook: { invoke: () => ({ input: { prompt: "github delivery" } }) } },
+                webhooks: { secretToken: false },
+              }),
+            },
+          }
+        : {}),
+      driver: { run },
+      invocations,
+    })
+    const resolver = Object.assign(vi.fn((context: { webhook: { agentName: string; provider: string; stateKeyPrefix: string } }) => {
+      expect(context.webhook).toMatchObject({
+        agentName: "review",
+        provider: "github",
+        stateKeyPrefix: "webhook:review:github:github:",
+      })
+      return state
+    }), { ownsScope: false })
+    await state.connect()
+    await state.enqueueWebhookDelivery({
+      concurrencyGroup: "review:default",
+      concurrencyLimit: 1,
+      deliveryId: "delivery-interrupted",
+      enqueuedAt: Date.now(),
+      invocation: { input: { prompt: "persisted" }, run: { runId: "run-resumed" } },
+      leaseTtlMs: 30_000,
+      request: { body: "{}", headers: {}, method: "POST", url: "https://example.com" },
+      scope: "webhook:review:github:interrupted:",
+      webhookId: "missing-registration",
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const stop = createChannelWebhookRouteHandler(agent as never).resume({
+      agentName: "review",
+      recoverInterruptedBefore: Date.parse("2026-09-30T11:00:00.000Z"),
+      webhookState: stateKind === "shared resolver" ? resolver : state,
+    })
+
+    try {
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      if (stateKind === "shared resolver") expect(resolver).toHaveBeenCalled()
+      expect(statusesAtRun).toEqual({ "orphaned": "failed", [resumedId]: "running", "other-agent": "running" })
+      await expect(invocations.get("orphaned")).resolves.toMatchObject({
+        error: { message: "The host stopped before this Agent Invocation finished." },
+        status: "failed",
+      })
+      await vi.waitFor(async () => expect(await invocations.get(resumedId)).toMatchObject({ status: "completed" }))
+      await expect(invocations.get("other-agent")).resolves.toMatchObject({ status: "running" })
+    } finally {
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
   it("expires a queued webhook invocation that exceeds the execution deadline", async () => {
     vi.useFakeTimers()
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
@@ -10460,6 +10584,73 @@ describe("server helpers", () => {
       await vi.waitFor(() => expect(complete).toHaveBeenCalled())
       expect(retry).not.toHaveBeenCalled()
     } finally {
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+      consoleError.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it("yields while it reconciles a late webhook invocation until the reconciliation deadline", async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { defineAgent } = await import("../src/index.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-late-reconciliation-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const releaseLock = vi.spyOn(state, "releaseLock")
+    // The run ignores abort, so its invocation stays running after the execution deadline.
+    const run = vi.fn(() => new Promise<never>(() => undefined))
+    const agent = defineAgent({ driver: { run } })
+    await state.connect()
+    await state.enqueueWebhookDelivery({
+      concurrencyKey: "review:late",
+      concurrencyGroup: "review:default",
+      concurrencyLimit: 1,
+      deliveryId: "delivery-late-reconciliation",
+      enqueuedAt: Date.now(),
+      invocation: { input: { prompt: "persisted" } },
+      leaseTtlMs: 3_600_000,
+      request: { body: "{}", headers: {}, method: "POST", url: "https://example.com" },
+      scope: "webhook:review:github:late:",
+      webhookId: "missing-registration",
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const stop = createChannelWebhookRouteHandler(agent as never).resume({
+      agentName: "review",
+      webhookState: state,
+    })
+    // A reconciliation loop that never waits for a timer starves the event loop.
+    // Park a deadline after 1,000 races against it, so a regression fails the
+    // assertions below instead of exhausting the heap.
+    const race = Promise.race.bind(Promise)
+    const races = new Map<unknown, number>()
+    const raceSpy = vi.spyOn(Promise, "race").mockImplementation((values) => {
+      const entries = [...values]
+      const count = (races.get(entries.at(-1)) ?? 0) + 1
+      races.set(entries.at(-1), count)
+      return count < 1_000 ? race(entries) : new Promise(() => undefined)
+    })
+
+    try {
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      await vi.advanceTimersByTimeAsync(900_000)
+      const scheduled = vi.fn()
+      setTimeout(scheduled, 5_000)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(scheduled).toHaveBeenCalledOnce()
+      expect(Math.max(...races.values())).toBeLessThan(100)
+      expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining("did not reach a terminal state"))
+      expect(releaseLock).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(55_000)
+      await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith(
+        '[vitehub] Late webhook invocation "delivery-late-reconciliation" did not reach a terminal state within 60000ms; releasing its retained concurrency fence.',
+      ))
+      await vi.waitFor(() => expect(releaseLock).toHaveBeenCalled())
+    } finally {
+      raceSpy.mockRestore()
       await stop()
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
@@ -11061,13 +11252,7 @@ describe("server helpers", () => {
   })
 
   it("delivers state-backed Chat SDK titles once per thread across handler recreation", async () => {
-    const { defineAgent } = await import("../src/index.ts")
-    const { title } = await import("../src/capabilities.ts")
-    const { http } = await import("../src/channels.ts")
-    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
-    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
-    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-title-once-"))
-    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const state = createLibsqlAgentState({ url: "file::memory:" })
     const setThreadTitle = vi.fn(async () => undefined)
     const execute = vi.fn(({ text }: { text: string }) => `Title: ${text}`)
     const run = vi.fn(() => "ok")
@@ -11109,7 +11294,6 @@ describe("server helpers", () => {
       await expect(state.get("chat:mini:channel:channel-title:telegram:789:delivered")).resolves.toBe(true)
     } finally {
       await state.disconnect()
-      await rm(stateDir, { force: true, recursive: true })
     }
   })
 
@@ -12763,13 +12947,8 @@ describe("server helpers", () => {
   })
 
   it.each([false, true])("settles every coalesced direct-message receipt with failure=%s", async (failInvocation) => {
-    const { defineAgent } = await import("../src/index.ts")
     const { readAgentChannelDeliveries, resumeAgentChannelDeliveryMessage } = await import("../src/internal/channel-delivery.ts")
-    const { telegram } = await import("../src/channels.ts")
-    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
-    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
-    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-chat-queue-receipts-"))
-    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const state = createLibsqlAgentState({ url: "file::memory:" })
     const adapter = createTestChatAdapter()
     const run = vi.fn(({ messages }) => {
       if (failInvocation && messages.at(-1)?.parts.some((part: { type?: string; text?: string }) => part.type === "text" && part.text === "B")) throw new Error("coalesced invocation failed")
@@ -12813,7 +12992,6 @@ describe("server helpers", () => {
       }
     } finally {
       await state.disconnect()
-      await rm(stateDir, { force: true, recursive: true })
     }
   })
 
@@ -13409,6 +13587,57 @@ describe("server helpers", () => {
       expect(observedTimeout).toBeUndefined()
     } finally {
       release()
+      resetWorkflowRuntime()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
+  it.each([false, true])("posts the final text from a durable Agent Workflow with a loading message, automatic post fails: %s", { timeout: 60_000 }, async (automaticPostFails) => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const { resetWorkflowRuntime, setWorkflowRuntimeConfig } = await import("@vite-hub/workflow/runtime/state")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-chat-loading-workflow-state-"))
+    const state = Object.assign(createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` }), { workflowCustody: true })
+    const adapter = createTestChatAdapter()
+    if (automaticPostFails) adapter.postMessage.mockRejectedValueOnce(new Error("automatic final post failed"))
+    const waitUntilTasks: Array<Promise<unknown>> = []
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages: { loading: { text: "Loading…" }, state },
+        }),
+      },
+      driver: { run: () => "Durable answer" },
+      hooks: {
+        "agent:finish": event => [event.reply(event.text!), event.reply("Durable follow-up")],
+      },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    setWorkflowRuntimeConfig({ provider: "vercel" })
+
+    try {
+      await state.connect()
+      const response = await handler(chatWebhookRequest(91_219), "telegram", {
+        agentIdentity: { name: "calories" },
+        cloudflare: { env: {} },
+        waitUntil: (task) => waitUntilTasks.push(task),
+      })
+
+      expect(response.status).toBe(200)
+      await Promise.all(waitUntilTasks)
+      await vi.waitFor(() => {
+        expect(adapter.postMessage).toHaveBeenCalledWith("telegram:456", { markdown: "Durable follow-up" })
+      })
+      expect(adapter.postMessage).toHaveBeenCalledTimes(automaticPostFails ? 3 : 2)
+      if (automaticPostFails) expect(adapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "Durable answer" })
+      expect(adapter.postMessage).toHaveBeenNthCalledWith(1, "telegram:456", { markdown: "Durable answer" })
+    } finally {
       resetWorkflowRuntime()
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
@@ -14456,7 +14685,7 @@ describe("server helpers", () => {
     }
   })
 
-  it.each(["completed", "failed"] as const)("retries a restored primary %s journal before settling ownership", async (settlementStatus) => {
+  it.each(["completed", "failed"] as const)("retries a restored primary %s journal before settling ownership", { timeout: 30_000 }, async (settlementStatus) => {
     const { defineAgent } = await import("../src/index.ts")
     const { runAgentWorkflowDefinition } = await import("../src/runtime/workflow.ts")
     const { telegram } = await import("../src/channels.ts")
@@ -14521,7 +14750,7 @@ describe("server helpers", () => {
           async () => "stale",
         ),
       ).resolves.toBeUndefined()
-      await vi.waitFor(() => expect(createBatch).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() => expect(createBatch).toHaveBeenCalledTimes(2), { timeout: 10_000 })
       expect(workflowIds[1]).not.toBe(workflowIds[0])
       const recoveredRunId = workflowPayloads[1]?.run?.runId
       expect(recoveredRunId).toEqual(expect.stringMatching(/,"telegram:456","telegram:91151"\]$/))
@@ -16097,6 +16326,11 @@ describe("server helpers", () => {
     const stateDir = await mkdtemp(join(tmpdir(), "vitehub-chat-steer-ambiguous-start-"))
     const state = Object.assign(createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` }), { workflowCustody: true })
     const adapter = createTestChatAdapter()
+    const driverStarted = deferred<void>()
+    const replayBlocked = deferred<void>()
+    const recoveredRetryStarted = deferred<void>()
+    const overlappingHandoffBlocked = deferred<void>()
+    const pending: Promise<unknown>[] = []
     const workflowPayloads: Array<{ input?: AgentRunInput }> = []
     let acceptRecoveredRetry!: () => void
     const recoveredRetryBlocked = new Promise<void>((resolve) => {
@@ -16109,12 +16343,14 @@ describe("server helpers", () => {
     const driverSignals: AbortSignal[] = []
     const runs = vi.fn(async ({ input }: { input: AgentRunInput }) => {
       if (input.abortSignal) driverSignals.push(input.abortSignal)
+      driverStarted.resolve()
       await blocked
       return "internal output"
     })
     const createBatch = vi.fn(async ([{ params }]: Array<{ params: { input?: AgentRunInput } }>) => {
       workflowPayloads.push(params)
       if (createBatch.mock.calls.length === 3) {
+        recoveredRetryStarted.resolve()
         await recoveredRetryBlocked
         return [{ id: "recovered-retry", status: async () => ({ status: "queued" }) }]
       }
@@ -16137,6 +16373,7 @@ describe("server helpers", () => {
       [getCloudflareWorkflowBindingName("calories")]: { createBatch, get: vi.fn() },
     }
     setWorkflowRuntimeConfig({ provider: "cloudflare" })
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] })
 
     try {
       await state.connect()
@@ -16159,7 +16396,7 @@ describe("server helpers", () => {
           }
         | undefined
       expect(binding?.steer).toBeDefined()
-      binding!.steer!.ttlMs = 400
+      binding!.steer!.ttlMs = 1_000
       expect(await state.queueDepth(binding!.steer!.pendingQueue)).toBe(1)
       // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
       expect(await state.extendLock(binding!.steer!.lock as never, binding!.steer!.ttlMs)).toBe(true)
@@ -16182,6 +16419,11 @@ describe("server helpers", () => {
       vi.spyOn(state, "acquireLock").mockImplementation((threadId, ttlMs) => {
         const acquisition = originalAcquireLock(threadId, ttlMs)
         if (threadId === handoffLock) handoffAcquisitions.push(acquisition)
+        void acquisition.then((lock) => {
+          if (lock) return
+          if (threadId.includes(":execution:")) replayBlocked.resolve()
+          if (threadId === handoffLock) overlappingHandoffBlocked.resolve()
+        }, () => undefined)
         return acquisition
       })
       // SAFETY: This synthetic test input exercises a hook that does not inspect the omitted host-only context.
@@ -16189,17 +16431,22 @@ describe("server helpers", () => {
         (value) => ({ value }),
         (error) => ({ error }),
       )
-      await vi.waitFor(() => expect(runs).toHaveBeenCalledOnce(), { timeout: 10_000 })
+      pending.push(firstExecution)
+      await driverStarted.promise
+      expect(runs).toHaveBeenCalledOnce()
       // SAFETY: This synthetic test input exercises a hook that does not inspect the omitted host-only context.
       const replay = runAgentWorkflowDefinition(agent as never, workflow, inline as never).then(
         (value) => ({ value }),
         (error) => ({ error }),
       )
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      pending.push(replay)
+      await replayBlocked.promise
       expect(runs).toHaveBeenCalledOnce()
       const originalScopeToken = binding!.steer!.lock.token
       let originalExecutionToken: string | undefined
       const originalExtendLock = state.extendLock.bind(state)
+      const renewalWrites: Array<ReturnType<typeof originalExtendLock>> = []
+      const handoffRenewals: Array<ReturnType<typeof originalExtendLock>> = []
       const extendLock = vi.spyOn(state, "extendLock").mockImplementation(async (lock, ttlMs) => {
         if (lock.threadId.includes(":execution:") && originalExecutionToken === undefined) {
           originalExecutionToken = lock.token
@@ -16208,34 +16455,47 @@ describe("server helpers", () => {
           await state.releaseLock(lock)
           return false
         }
-        return await originalExtendLock(lock, ttlMs)
+        const renewal = originalExtendLock(lock, ttlMs)
+        renewalWrites.push(renewal)
+        if (lock.threadId === handoffLock) handoffRenewals.push(renewal)
+        return await renewal
       })
-      await vi.waitFor(
-        () => expect(driverSignals[0]?.aborted).toBe(true),
-        { timeout: binding!.steer!.ttlMs * 5 },
-      )
+      const ownershipLost = new Promise<void>(resolve => driverSignals[0]!.addEventListener("abort", () => resolve(), { once: true }))
+      await vi.advanceTimersByTimeAsync(binding!.steer!.ttlMs / 2)
+      await ownershipLost
+      expect(driverSignals[0]?.aborted).toBe(true)
 
-      await vi.waitFor(() => expect(createBatch).toHaveBeenCalledTimes(3), { timeout: binding!.steer!.ttlMs * 5 })
-      await vi.waitFor(() => expect(handoffAcquisitions).toHaveLength(1))
+      await vi.advanceTimersByTimeAsync(10)
+      await recoveredRetryStarted.promise
+      expect(createBatch).toHaveBeenCalledTimes(3)
+      expect(handoffAcquisitions).toHaveLength(1)
       await expect(handoffAcquisitions[0]).resolves.not.toBeNull()
-      await new Promise((resolve) => setTimeout(resolve, binding!.steer!.ttlMs * 2))
+      const originalHandoffExpiresAt = (await handoffAcquisitions[0])!.expiresAt
+      for (let renewal = 0; renewal < 4; renewal++) {
+        const previousWrites = renewalWrites.length
+        const previousHandoffRenewals = handoffRenewals.length
+        await vi.advanceTimersByTimeAsync(binding!.steer!.ttlMs / 2)
+        await Promise.all(renewalWrites.slice(previousWrites))
+        expect(handoffRenewals).toHaveLength(previousHandoffRenewals + 1)
+        await expect(handoffRenewals.at(-1)).resolves.toBe(true)
+      }
+      expect(Date.now()).toBeGreaterThan(originalHandoffExpiresAt)
       const overlappingDelivery = handler(chatWebhookRequest(91_145), "telegram", {
         agentIdentity: { name: "calories" },
         cloudflare: { env },
       })
-      await vi.waitFor(
-        async () => {
-          const acquisitions = await Promise.all(handoffAcquisitions)
-          expect(acquisitions.slice(1)).toContain(null)
-        },
-        { timeout: binding!.steer!.ttlMs * 5 },
-      )
+      pending.push(overlappingDelivery)
+      void overlappingDelivery.catch(() => undefined)
+      await overlappingHandoffBlocked.promise
+      const acquisitions = await Promise.all(handoffAcquisitions)
+      expect(acquisitions.slice(1)).toContain(null)
       acceptRecoveredRetry()
+      const replayOutcome = await replay
+      await vi.advanceTimersByTimeAsync(10)
       await overlappingDelivery
       expect(createBatch).toHaveBeenCalledTimes(3)
       expect(await state.queueDepth(binding!.steer!.queue)).toBe(1)
 
-      const replayOutcome = await replay
       expect(replayOutcome).toEqual({ value: undefined })
       release()
       const firstOutcome = await firstExecution
@@ -16258,12 +16518,18 @@ describe("server helpers", () => {
     } finally {
       acceptRecoveredRetry()
       release()
-      setActiveCloudflareEnv(undefined)
-      resetWorkflowRuntime()
-      await state.disconnect()
-      await rm(stateDir, { force: true, recursive: true })
+      try {
+        await vi.runOnlyPendingTimersAsync()
+        await Promise.allSettled(pending)
+      } finally {
+        vi.useRealTimers()
+        setActiveCloudflareEnv(undefined)
+        resetWorkflowRuntime()
+        await state.disconnect()
+        await rm(stateDir, { force: true, recursive: true })
+      }
     }
-  }, 15_000)
+  }, 30_000)
 
   it("restarts pending steer input when terminal settlement cannot read its delivery", async () => {
     const { blob } = await import("../src/capabilities.ts")
@@ -16716,6 +16982,18 @@ describe("server helpers", () => {
     const adapter = createTestChatAdapter()
     let runs = 0
     const acceptance = deferred<void>()
+    const ownerBlocked = deferred<void>()
+    const driverStarted = deferred<void>()
+    const steeringStarted = deferred<void>()
+    const pending: Promise<unknown>[] = []
+    const reconciliationTasks: Promise<unknown>[] = []
+    const acquireLock = state.acquireLock.bind(state)
+    vi.spyOn(state, "acquireLock").mockImplementation(async (key, ttlMs) => {
+      const lock = await acquireLock(key, ttlMs)
+      if (key.endsWith(":owner") && !lock) ownerBlocked.resolve()
+      return lock
+    })
+    let remoteOwner: Awaited<ReturnType<typeof state.acquireLock>> = null
     let steeredPrompt: string | undefined
     let releaseFirst!: () => void
     const firstReleased = new Promise<void>(resolve => { releaseFirst = resolve })
@@ -16730,6 +17008,7 @@ describe("server helpers", () => {
       driver: {
         async run(context) {
           runs += 1
+          driverStarted.resolve()
           const runId = ownedAgentInvocationControlId(context)
           if (!runId) throw new Error("Expected a Channel-owned invocation control ID")
           expect(runId).toBe(context.run?.runId)
@@ -16737,6 +17016,7 @@ describe("server helpers", () => {
             async sendInput(input, options) {
               if (options.mode !== "steer") return "unsupported"
               steeredPrompt = input.messages?.map(message => message.parts.find(part => typeof part === "string" || part.type === "text") && message.parts.map(part => typeof part === "string" ? part : "text" in part ? part.text : "").join("")).join("\n")
+              steeringStarted.resolve()
               if (failInvocation || lateAcceptance) releaseFirst()
               if (lateAcceptance) await acceptance.promise
               return lateResult ?? "accepted"
@@ -16770,16 +17050,25 @@ describe("server helpers", () => {
 
     try {
       await state.connect()
-      const remoteOwner = await state.acquireLock("chat:calories:telegram:inline-steer:agent:owner", 60_000)
+      vi.useFakeTimers()
+      remoteOwner = await state.acquireLock("chat:calories:telegram:inline-steer:agent:owner", 60_000)
       if (!remoteOwner) throw new Error("Expected a simulated remote inline owner lock")
       const first = handler(request(91_106), "telegram", { agentIdentity: { name: "calories" } })
+      pending.push(first)
       const firstResult = failInvocation
         ? expect(first).rejects.toThrow("steered invocation failed")
         : expect(first).resolves.toMatchObject({ status: 200 })
-      await new Promise(resolve => setTimeout(resolve, 75))
+      pending.push(firstResult)
+      void firstResult.catch(() => undefined)
+      await ownerBlocked.promise
+      await vi.advanceTimersByTimeAsync(0)
       expect(runs).toBe(0)
       await state.releaseLock(remoteOwner)
-      await vi.waitFor(() => expect(runs).toBe(1))
+      remoteOwner = null
+      await vi.advanceTimersByTimeAsync(50)
+      await driverStarted.promise
+      expect(runs).toBe(1)
+      const pollingTimer = vi.spyOn(globalThis, "setTimeout")
       const otherInvoker = handler(new Request("https://example.com/api/_vitehub/agents/support/webhooks/channel", {
         body: JSON.stringify({ update_id: 91_108, message: {
           chat: { id: 458, type: "private" },
@@ -16789,48 +17078,60 @@ describe("server helpers", () => {
         } }),
         method: "POST",
       }), "telegram", { agentIdentity: { name: "calories" } })
-      await new Promise(resolve => setTimeout(resolve, 75))
+      pending.push(otherInvoker)
+      let otherInvokerSettled = false
+      void otherInvoker.then(() => { otherInvokerSettled = true }, () => { otherInvokerSettled = true })
+      try {
+        await vi.waitFor(() => expect(pollingTimer.mock.calls.some(([, delay]) => delay === 50)).toBe(true), { interval: 1 })
+      } finally {
+        pollingTimer.mockRestore()
+      }
+      expect(otherInvokerSettled).toBe(false)
       expect(runs).toBe(1)
       expect(steeredPrompt).toBeUndefined()
-      const reconciliationTasks: Promise<unknown>[] = []
       const followUpStartedAt = Date.now()
       const followUp = handler(request(91_107, 457), "telegram", {
         agentIdentity: { name: "calories" },
         ...(cloudflareDeadline ? { runtime: "cloudflare-agents" as const, cloudflare: { env: {} } } : {}),
         ...(noHost ? {} : { waitUntil: (task: Promise<unknown>) => { reconciliationTasks.push(task) } }),
       })
+      pending.push(followUp)
+      void followUp.catch(() => undefined)
+      await steeringStarted.promise
       if (lateAcceptance) {
         // Completion and owner release must not wait for the in-flight handler.
         await firstResult
         await expect(otherInvoker).resolves.toMatchObject({ status: 200 })
         expect(steeredPrompt).toBe("hello")
         if (timeoutAcceptance) {
+          // Only the confirmation deadline advances; SQLite work uses real I/O.
+          await vi.advanceTimersByTimeAsync(cloudflareDeadline ? 15_000 : 500)
           // The response finishes while the host retains reconciliation custody.
           await expect(followUp).resolves.toMatchObject({ status: 200 })
           const timedOut = await handler.deliveries(request(91_107, 457), "telegram", { agentIdentity: { name: "calories" } })
           expect(timedOut.find(delivery => delivery.sourceId === "91107")?.status).toBe("failed")
           if (noHost) {
             // A local non-streaming flush must not include the second 500 ms wait.
-            expect(Date.now() - followUpStartedAt).toBeLessThan(900)
+            expect(Date.now() - followUpStartedAt).toBe(500)
             expect(reconciliationTasks).toHaveLength(0)
           } else {
             expect(reconciliationTasks.length).toBeGreaterThan(0)
             let custodySettled = false
             void Promise.all(reconciliationTasks).then(() => { custodySettled = true })
-            await new Promise(resolve => setTimeout(resolve, 0))
+            await vi.advanceTimersByTimeAsync(0)
             expect(custodySettled).toBe(false)
           }
         }
         if (cloudflareDeadline) {
           // Custody expires 30 seconds after request start, not registration.
           expect(Date.now() - followUpStartedAt).toBeLessThan(20_000)
-          await new Promise(resolve => setTimeout(resolve, Math.max(0, followUpStartedAt + (delayedEvidence ? 27_500 : 26_000) - Date.now())))
+          await vi.advanceTimersByTimeAsync(Math.max(0, followUpStartedAt + (delayedEvidence ? 27_500 : 26_000) - Date.now()))
         }
         if (afterReconciliationDeadline) {
-          await new Promise(resolve => setTimeout(resolve, Math.max(0, followUpStartedAt + 1_200 - Date.now())))
+          await vi.advanceTimersByTimeAsync(Math.max(0, followUpStartedAt + 1_200 - Date.now()))
           let custodySettled = false
           void Promise.all(reconciliationTasks).then(() => { custodySettled = true })
-          await new Promise(resolve => setTimeout(resolve, 0))
+          await vi.advanceTimersByTimeAsync(0)
           expect(custodySettled).toBe(false)
         }
         delayEvidenceWrites = delayedEvidence === true
@@ -16839,7 +17140,7 @@ describe("server helpers", () => {
           await evidenceStarted.promise
           let custodySettled = false
           void Promise.all(reconciliationTasks).then(() => { custodySettled = true })
-          await new Promise(resolve => setTimeout(resolve, Math.max(0, followUpStartedAt + (cloudflareDeadline ? 29_000 : 1_250) - Date.now())))
+          await vi.advanceTimersByTimeAsync(Math.max(0, followUpStartedAt + (cloudflareDeadline ? 29_000 : 1_250) - Date.now()))
           expect(custodySettled).toBe(false)
           evidenceReleased.resolve()
         }
@@ -16859,7 +17160,7 @@ describe("server helpers", () => {
       if (neverAccepts) {
         let custodySettled = false
         void Promise.all(reconciliationTasks).then(() => { custodySettled = true })
-        await new Promise(resolve => setTimeout(resolve, cloudflareDeadline ? 0 : 600))
+        await vi.advanceTimersByTimeAsync(cloudflareDeadline ? 0 : 600)
         expect(custodySettled).toBe(false)
         // Simulate the Driver terminating without acceptance to release test custody.
         acceptance.reject(new Error("Driver stopped before confirmation"))
@@ -16873,7 +17174,7 @@ describe("server helpers", () => {
       if (lateAcceptance) await vi.waitFor(async () => {
         const settled = await handler.deliveries(request(91_107, 457), "telegram", { agentIdentity: { name: "calories" } })
         expect(settled.find(delivery => delivery.sourceId === "91107")?.events.filter(event => event.type === "completed" || event.type === "failed").map(event => event.type)).toEqual(timeoutAcceptance ? ["failed", failInvocation ? "failed" : "completed"] : [failInvocation ? "failed" : "completed"])
-      })
+      }, { interval: 0 })
       const deliveries = await handler.deliveries(request(91_107, 457), "telegram", { agentIdentity: { name: "calories" } })
       const followUpDelivery = deliveries.find(delivery => delivery.sourceId === "91107")
       const outcome = failInvocation ? "failed" : "completed"
@@ -16885,8 +17186,13 @@ describe("server helpers", () => {
       expect(steeredPrompt).toBe("hello")
     } finally {
       evidenceReleased.resolve()
-      if (!neverAccepts) acceptance.resolve()
+      acceptance.resolve()
       releaseFirst()
+      if (remoteOwner) await state.releaseLock(remoteOwner)
+      await vi.advanceTimersByTimeAsync(50)
+      await Promise.allSettled(pending)
+      await Promise.allSettled(reconciliationTasks)
+      vi.useRealTimers()
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
     }
@@ -17535,7 +17841,7 @@ describe("server helpers", () => {
     }
   })
 
-  it("limits refreshed inline steering history to each waiting message", async () => {
+  it("limits refreshed inline steering history to each waiting message", { timeout: 30_000 }, async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { telegram } = await import("../src/channels.ts")
     const { registerAgentInvocationInputHandler } = await import("../src/internal/agent-invocation-control.ts")
@@ -17585,11 +17891,11 @@ describe("server helpers", () => {
       pending.push(handler(chatWebhookRequest(91_120, 456, "A"), "telegram"))
       await started.promise
       pending.push(handler(chatWebhookRequest(91_121, 456, "B"), "telegram"))
-      await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(1))
+      await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(1), { timeout: 10_000 })
       const laterMessages = ["C", "D", "E"]
       for (const [index, text] of laterMessages.entries()) {
         pending.push(handler(chatWebhookRequest(91_122 + index, 456, text), "telegram"))
-        await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(index + 2))
+        await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(index + 2), { timeout: 10_000 })
       }
       release.resolve()
       expect((await Promise.all(pending)).map(response => response.status)).toEqual([200, 200, 200, 200, 200])
@@ -18094,6 +18400,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: {
               text: "Loading…",
@@ -18156,6 +18463,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: { intervalMs: 1_000, text: "Loading…", updates: "commentary" },
           },
@@ -18476,6 +18784,163 @@ describe("server helpers", () => {
     })
   })
 
+  it("replaces the loading message with the final text by default", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const adapter = createTestChatAdapter()
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages: {
+            loading: { text: "Loading…" },
+          },
+        }),
+      },
+      driver: { run: () => "Final answer" },
+      hooks: {
+        "agent:finish": event => [event.reply(" Final answer\n"), event.reply("Dashboard link")],
+      },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+
+    const response = await handler(chatWebhookRequest(91_216), "telegram")
+
+    expect(response.status).toBe(200)
+    expect(adapter.postMessage).toHaveBeenCalledTimes(3)
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(1, "telegram:456", "Loading…")
+    expect(adapter.deleteMessage).toHaveBeenCalledWith("telegram:456", "sent-1")
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "Final answer" })
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(3, "telegram:456", { markdown: "Dashboard link" })
+    expect(adapter.deleteMessage.mock.invocationCallOrder[0]).toBeLessThan(adapter.postMessage.mock.invocationCallOrder[1]!)
+  })
+
+  it("preserves artifacts on a finish hook reply with the final text", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const adapter = createTestChatAdapter()
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages: { loading: { text: "Loading…" } },
+        }),
+      },
+      driver: { run: () => "Final answer" },
+      hooks: {
+        "agent:finish": event => event.reply(event.text!, {
+          artifacts: [{ path: "/report.pdf", url: "https://example.com/report.pdf", placement: "link" }],
+        }),
+      },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+
+    const response = await handler(chatWebhookRequest(91_219), "telegram")
+
+    expect(response.status).toBe(200)
+    expect(adapter.postMessage).toHaveBeenCalledTimes(3)
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "Final answer" })
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(3, "telegram:456", {
+      markdown: expect.stringContaining("https://example.com/report.pdf"),
+    })
+  })
+
+  it("delivers the same-text finish hook fallback when the automatic final post fails", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const adapter = createTestChatAdapter()
+    adapter.postMessage
+      .mockImplementationOnce(async threadId => ({ id: "loading", threadId }))
+      .mockRejectedValueOnce(new Error("automatic final post failed"))
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages: { loading: { text: "Loading…" } },
+        }),
+      },
+      driver: { run: () => "Final answer" },
+      hooks: { "agent:finish": event => event.reply(event.text!) },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+
+    const response = await handler(chatWebhookRequest(91_220), "telegram")
+
+    expect(response.status).toBe(200)
+    expect(adapter.postMessage).toHaveBeenCalledTimes(3)
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "Final answer" })
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(3, "telegram:456", { markdown: "Final answer" })
+    await expect(adapter.postMessage.mock.results[2]!.value).resolves.toMatchObject({ threadId: "telegram:456" })
+  })
+
+  it("posts the final text as a new message before removing the loading message", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const adapter = createTestChatAdapter()
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages: {
+            final: { delivery: "new-message" },
+            loading: { text: "Loading…" },
+          },
+        }),
+      },
+      driver: { run: () => "Final answer" },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+
+    const response = await handler(chatWebhookRequest(91_217), "telegram")
+
+    expect(response.status).toBe(200)
+    expect(adapter.postMessage).toHaveBeenCalledTimes(2)
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "Final answer" })
+    expect(adapter.deleteMessage).toHaveBeenCalledWith("telegram:456", "sent-1")
+    expect(adapter.postMessage.mock.invocationCallOrder[1]).toBeLessThan(adapter.deleteMessage.mock.invocationCallOrder[0]!)
+  })
+
+  it("does not repeat the final text when a finish hook replies with it after streaming", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const adapter = createTestChatAdapter()
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages: { stream: false },
+        }),
+      },
+      driver: { run: () => "Final answer" },
+      hooks: {
+        "agent:finish": event => [event.reply(event.text!), event.reply("Follow-up")],
+      },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+
+    const response = await handler(chatWebhookRequest(91_218), "telegram")
+
+    expect(response.status).toBe(200)
+    expect(adapter.postMessage).toHaveBeenCalledTimes(2)
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(1, "telegram:456", { markdown: "Final answer" })
+    expect(adapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "Follow-up" })
+  })
+
   it("keeps the posted final reply when loading-message deletion fails", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { telegram } = await import("../src/channels.ts")
@@ -18488,6 +18953,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: { text: "Analyzing photo…" },
           },
@@ -18525,6 +18991,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: { text: "Loading…", updates: "commentary" },
           },
@@ -18559,6 +19026,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: { text: "Loading…", updates: "commentary" },
           },
@@ -18602,6 +19070,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
           messages: {
+            delivery: "manual",
             final: { delivery: "new-message" },
             loading: { text: "Loading…" },
           },

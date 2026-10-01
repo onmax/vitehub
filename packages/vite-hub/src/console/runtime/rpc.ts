@@ -22,6 +22,7 @@ export const consoleRpcMethods = {
   invocationCapabilities: "vitehub:console:invocation-capabilities",
   invocations: "vitehub:console:invocations",
   kv: "vitehub:console:kv",
+  scheduleRun: "vitehub:console:schedule-run",
   search: "vitehub:console:search",
   sections: "vitehub:console:sections",
   status: "vitehub:console:status",
@@ -39,11 +40,3 @@ export interface ConsoleRpcInput {
 }
 
 export type ConsoleRpcResult = { ok: true; value: unknown } | { message: string; ok: false; status: number }
-
-export type ConsoleRpcFunctions = {
-  [Method in ConsoleRpcMethod]: (input: ConsoleRpcInput) => Promise<ConsoleRpcResult>
-}
-
-declare module "devframe" {
-  interface DevframeRpcServerFunctions extends ConsoleRpcFunctions {}
-}

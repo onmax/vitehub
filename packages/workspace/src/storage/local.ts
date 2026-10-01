@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { constants, createReadStream, createWriteStream } from "node:fs"
 import { Readable, Transform } from "node:stream"
-import { relative } from "node:path"
+import { join, relative, resolve, sep } from "node:path"
 import { pipeline } from "node:stream/promises"
 import { setTimeout as delay } from "node:timers/promises"
 
@@ -339,6 +339,7 @@ async function walk(
   })
 
   for (const dirent of dirents) {
+    if (dirent.isSymbolicLink()) continue
     const absolute = `${current}/${dirent.name}`
     if (privatePaths.some(path => !relative(path, absolute))) continue
     const path = normalizeWorkspacePath(relative(root, absolute))
@@ -386,8 +387,6 @@ class LocalWorkspaceStore implements WorkspaceStore {
   #baseline: WorkspaceSnapshot | undefined
   #files = new Map<string, { version: string, value: Pick<WorkspaceFile, "mediaType" | "metadata"> }>()
   #fileMetadataRoot: string
-  #meta = new Map<string, unknown>()
-  #metaLoaded = false
   #metaPath: string
 
   constructor(public root: string) {
@@ -544,6 +543,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   async #readFile(path: string): Promise<WorkspaceFile | undefined> {
     const { readFile } = await import("node:fs/promises")
     const absolute = resolveInside(this.root, path)
+    await this.#assertPathComponents(path)
     const bytes = await readFile(absolute).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined
       throw error
@@ -582,7 +582,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
     const backup = `${tempRoot}/${randomUUID()}.bak`
     await reclaimCommittedBackups(tempRoot)
     const normalized = normalizeWorkspacePath(path)
-    await this.#assertWritableAncestors(normalized)
+    await this.#assertPathComponents(normalized)
     const bytes = contentToBytes(file.content)
     const digest = await sha256(bytes)
     const existing = await this.#stat(normalized)
@@ -626,20 +626,22 @@ class LocalWorkspaceStore implements WorkspaceStore {
     }
   }
 
-  async #assertWritableAncestors(path: string): Promise<void> {
+  async #assertPathComponents(path: string, includeTarget = true): Promise<void> {
     const { lstat } = await import("node:fs/promises")
-    const { dirname } = await import("node:path")
-    let current = dirname(resolveInside(this.root, path))
-    const root = await import("node:path").then(({ resolve }) => resolve(this.root))
-    while (current !== root) {
-      const relation = relative(root, current)
-      if (relation === "" || relation === ".." || relation.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || (process.platform === "win32" && /^[A-Za-z]:/.test(relation))) break
+    const root = resolve(this.root)
+    const parts = relative(root, resolveInside(root, path)).split(sep).filter(Boolean)
+    if (!includeTarget) parts.pop()
+    let current = root
+    // Check from the root so inspecting a child never follows an unchecked link.
+    // The configured root is trusted; concurrent external writers need OS isolation.
+    for (const part of parts) {
+      current = join(current, part)
       const info = await lstat(current).catch((error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT") return undefined
         throw error
       })
-      if (info?.isSymbolicLink()) throw workspaceError(`[vitehub] Refusing to write through symbolic-link ancestor: ${path}.`)
-      current = dirname(current)
+      if (!info) return
+      if (info.isSymbolicLink()) throw workspaceError(`[vitehub] Refusing to access symbolic-link Workspace path: ${path}.`)
     }
   }
 
@@ -648,6 +650,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async #writeFileStream(path: string, file: WorkspaceStreamFile): Promise<WorkspaceStat & { digest: string }> {
+    await this.#assertPathComponents(path)
     file = { ...file, metadata: assertFileMetadata(path, file.metadata) }
     const { dirname } = await import("node:path")
     const { mkdir, rename, rm } = await import("node:fs/promises")
@@ -730,6 +733,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async #list(prefix: string, options: ListOptions, includeDigest: boolean): Promise<WorkspaceEntry[]> {
+    await this.#assertPathComponents(prefix)
     const normalizedPrefix = normalizeWorkspacePath(prefix)
     const current = normalizedPrefix ? resolveInside(this.root, normalizedPrefix) : this.root
     const privatePaths = [this.#fileMetadataRoot, this.#metaPath]
@@ -777,6 +781,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
     const { stat } = await import("node:fs/promises")
     const normalized = normalizeWorkspacePath(path)
     const absolute = resolveInside(this.root, normalized)
+    await this.#assertPathComponents(normalized)
     const info = await stat(absolute, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined
       throw error
@@ -797,14 +802,24 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async mkdir(path: string, options: MkdirOptions = {}): Promise<void> {
-    const { mkdir } = await import("node:fs/promises")
-    await mkdir(resolveInside(this.root, path), { recursive: options.recursive ?? true })
+    await withWorkspacePathLock(this.root, path, async () => {
+      const { mkdir } = await import("node:fs/promises")
+      await this.#assertPathComponents(path)
+      await mkdir(resolveInside(this.root, path), { recursive: options.recursive ?? true })
+    })
   }
 
   async removeEmptyDirectory(path: string): Promise<void> {
     await withWorkspacePathLock(this.root, path, async () => {
-      const { rmdir } = await import("node:fs/promises")
-      await rmdir(resolveInside(this.root, path)).catch((error: NodeJS.ErrnoException) => {
+      const { lstat, rmdir } = await import("node:fs/promises")
+      await this.#assertPathComponents(path, false)
+      const absolute = resolveInside(this.root, path)
+      const info = await lstat(absolute).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error
+      })
+      // Windows rmdir can remove a directory junction instead of rejecting it.
+      if (!info || info.isSymbolicLink()) return
+      await rmdir(absolute).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error
       })
     })
@@ -816,6 +831,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
 
   async #rm(path: string, options: RmOptions = {}): Promise<void> {
     const { lstat, mkdir, open, rm, rmdir } = await import("node:fs/promises")
+    await this.#assertPathComponents(path, false)
     const normalized = normalizeWorkspacePath(path)
     const metadata = await this.#prepareMetadataDirectories(normalized, false)
     const marker = this.#removalMarker(normalized)
@@ -894,14 +910,15 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async getMeta(key: string): Promise<unknown> {
-    await this.#loadMeta()
-    return this.#meta.get(key)
+    return (await this.#readMeta()).get(key)
   }
 
   async setMeta(key: string, value: unknown): Promise<void> {
-    await this.#loadMeta()
-    this.#meta.set(key, value)
-    await this.#writeMeta()
+    await withWorkspacePathLock(this.root, ".vitehub/metadata", async () => {
+      const metadata = await this.#readMeta()
+      metadata.set(key, value)
+      await this.#writeMeta(metadata)
+    })
   }
 
   async #createSnapshot(name?: string): Promise<WorkspaceSnapshot> {
@@ -922,27 +939,25 @@ class LocalWorkspaceStore implements WorkspaceStore {
     }
   }
 
-  async #loadMeta() {
-    if (this.#metaLoaded) return
-    this.#metaLoaded = true
+  async #readMeta(): Promise<Map<string, unknown>> {
     const { readFile } = await import("node:fs/promises")
     const content = await readFile(this.#metaPath, "utf8").catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined
       throw error
     })
-    if (!content) return
+    if (!content) return new Map()
     const value: unknown = JSON.parse(content)
-    if (!value || Object(value) !== value || Array.isArray(value)) return
-    this.#meta = new Map(Object.entries(Object(value)))
+    if (!value || Object(value) !== value || Array.isArray(value)) return new Map()
+    return new Map(Object.entries(Object(value)))
   }
 
-  async #writeMeta() {
+  async #writeMeta(metadata: Map<string, unknown>) {
     const { dirname } = await import("node:path")
     const { mkdir, rename, rm, writeFile } = await import("node:fs/promises")
     const temp = `${this.#metaPath}.${randomUUID()}.tmp`
     await mkdir(dirname(this.#metaPath), { recursive: true })
     try {
-      await writeFile(temp, JSON.stringify(Object.fromEntries(this.#meta), null, 2))
+      await writeFile(temp, JSON.stringify(Object.fromEntries(metadata), null, 2))
       await rename(temp, this.#metaPath)
     }
     catch (error) {
