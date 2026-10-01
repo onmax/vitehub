@@ -30,11 +30,16 @@ export interface ScheduleDevEndpointOptions {
 export async function registerScheduleDevEndpoint(server: ScheduleDevServer, options: ScheduleDevEndpointOptions = {}): Promise<() => Promise<void>> {
   const rootDir = server.config.root
   const { serverId, token } = await createViteHubDevToken(rootDir, scheduleDevTokenNamespace, options.serverId)
-  const close = () => removeViteHubDevToken(rootDir, { namespace: scheduleDevTokenNamespace, serverId })
+  let activeToken: string | undefined = token
+  let closePromise: Promise<void> | undefined
+  const close = () => {
+    activeToken = undefined
+    return closePromise ??= removeViteHubDevToken(rootDir, { namespace: scheduleDevTokenNamespace, serverId })
+  }
   server.httpServer?.once("close", () => { void close().catch(() => {}) })
   try {
     registerViteHubNitroDevEndpoint(server, {
-      authorize: async request => request.headers[viteHubDevTokenHeader] === token
+      authorize: async request => request.headers[viteHubDevTokenHeader] === activeToken
         && request.headers[scheduleDevTokenServerHeader] === serverId
         ? undefined : new Response("Forbidden Schedule Dev token.", { status: 403 }),
       discovery: { root: rootDir, scheduleDevTokenServerId: serverId },

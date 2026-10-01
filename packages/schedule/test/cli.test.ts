@@ -385,7 +385,7 @@ function fakeServer(environments?: Record<string, unknown>) {
     environments,
     middlewares: { use: handler => middlewares.push(handler) },
   }
-  return { middlewares, server }
+  return { middlewares, server, httpServer }
 }
 
 async function call(middleware: Middleware, init: { body?: string, headers?: Record<string, string>, method: string }) {
@@ -455,5 +455,21 @@ describe("Schedule dev endpoint", () => {
     expect(operation.headers["cache-control"]).toBe("no-store")
     expect(JSON.parse(operation.body)).toEqual({ body: "{\"operation\":\"list\"}", url: `http://localhost/app${scheduleDevRuntimeRoute}` })
     expect(dispatchFetch.mock.calls[0]?.[0].headers.get(scheduleDevHeader)).toBe(scheduleDevHeaderValue)
+  })
+
+  it("revokes the Vite token as soon as the server starts closing", async () => {
+    const { middlewares, server, httpServer } = fakeServer()
+    await registerScheduleDevEndpoint(server)
+
+    const discovery = JSON.parse((await call(middlewares[0]!, { headers: guard, method: "GET" })).body)
+    const privateGuard = {
+      ...guard,
+      [scheduleDevTokenServerHeader]: discovery.scheduleDevTokenServerId,
+      [viteHubDevTokenHeader]: (await readViteHubDevToken(rootDir, { namespace: scheduleDevTokenNamespace, serverId: discovery.scheduleDevTokenServerId }))!,
+    }
+
+    httpServer.emit("close")
+
+    expect(await call(middlewares[0]!, { body: "{\"operation\":\"list\"}", headers: { ...privateGuard, "content-type": "application/json" }, method: "POST" })).toMatchObject({ body: "Forbidden Schedule Dev token.", status: 403 })
   })
 })
