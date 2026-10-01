@@ -18,10 +18,12 @@ export interface AgentInvocationCancellationDriver {
 interface AgentInvocationCancellationHandle {
   abort: (reason: unknown) => void
   driver?: () => AgentInvocationCancellationDriver | undefined
+  ownerId: string
 }
 
 export interface LocalAgentInvocationCancellation {
   aborted: boolean
+  ownerIds: readonly string[]
   notEnforcedBy?: string
 }
 
@@ -79,7 +81,7 @@ export function abortLocalAgentInvocation(owner: AgentInvocationStore, id: strin
   const entries = [...handles(owner).get(id) ?? []]
   for (const entry of entries) entry.abort(reason)
   const notEnforcedBy = entries.map(entry => entry.driver?.()).find(driver => driver && !driver.enforced)?.name
-  return { aborted: entries.length > 0, ...(notEnforcedBy ? { notEnforcedBy } : {}) }
+  return { aborted: entries.length > 0, ownerIds: entries.map(entry => entry.ownerId), ...(notEnforcedBy ? { notEnforcedBy } : {}) }
 }
 
 export function agentInvocationCancellationDriver(driver: { kind: "model" | "provider" | "run", provider?: string }): AgentInvocationCancellationDriver {

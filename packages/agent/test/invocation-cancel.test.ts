@@ -342,6 +342,115 @@ describe("Agent Invocation cancel", () => {
     }
   })
 
+  it.each(["durable", "pending"] as const)("preserves a replacement custom Driver's $0 warning when cancelling a stale local model", async warning => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    let modelSignal: AbortSignal | undefined
+    let customSignal: AbortSignal | undefined
+    modelGenerate.mockImplementation(async (input: { abortSignal?: AbortSignal }) => {
+      modelSignal = input.abortSignal
+      return await untilAborted(modelSignal)
+    })
+    const backing = createMemoryAgentInvocationStore()
+    const store = { ...backing, claim: (...args: Parameters<typeof backing.claim>) => backing.claim(args[0], args[1], 1, args[3]) }
+    const owner = defineAgentInvocations({ store })
+    const replacementStore = { ...backing, update: (...args: Parameters<typeof backing.update>) => {
+      if (warning === "pending" && args[1].status === "running" && args[1].cancelNotEnforcedBy === "run") throw new Error("Replacement warning unavailable")
+      return backing.update(...args)
+    } }
+    const replacement = defineAgentInvocations({ store: replacementStore })
+    const runId = `stale-model-replacement-warning-${warning}`
+    const first = runAgent(defineAgent({ driver: modelDriver, invocations: owner }), runtime(runId), { prompt: "Wait." })
+    const firstSettled = first.then(result => result, error => error)
+    const { id } = await recordWithStatus(owner, runId, "running")
+    await vi.waitFor(() => expect(modelSignal).toBeDefined())
+    await new Promise(resolve => setTimeout(resolve, 5))
+    const release = deferred<string>()
+    const started = deferred()
+    const second = runAgent(defineAgent({ invocations: replacement, driver: { run: ({ input }) => {
+      customSignal = input.abortSignal
+      started.resolve()
+      return release.promise
+    } } }), runtime(runId), {})
+    const secondSettled = second.then(result => result, error => error)
+    try {
+      await started.promise
+      await vi.waitFor(async () => expect(await backing.getSummary(id)).toMatchObject(warning === "durable"
+        ? { cancelNotEnforcedBy: "run" }
+        : { cancelWarningPending: true }))
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(modelSignal?.aborted).toBe(false)
+      expect(customSignal?.aborted).toBe(false)
+      vi.useFakeTimers()
+      const cancellation = owner.cancel(id).then(result => result, error => error)
+      if (warning === "durable") {
+        expect(await cancellation).toMatchObject({ delivery: "local", notEnforcedBy: "run", outcome: "requested", status: "running" })
+      }
+      else {
+        await vi.advanceTimersByTimeAsync(5_000)
+        expect(await cancellation).toMatchObject({ code: "AGENT_R0974" })
+      }
+      expect(modelSignal?.aborted).toBe(true)
+      expect(customSignal?.aborted).toBe(false)
+      expect((await backing.getSummary(id))?.cancelRequestedAt).toBeDefined()
+    }
+    finally {
+      abortLocalAgentInvocation(store, id, new Error("Cancellation was requested during fixture cleanup"))
+      release.resolve("Replacement result")
+      await Promise.all([firstSettled, secondSettled])
+    }
+  })
+
+  it("verifies a replacement pending marker after a local custom setup owner loses its lease", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    const backing = createMemoryAgentInvocationStore()
+    const store = { ...backing, claim: (...args: Parameters<typeof backing.claim>) => backing.claim(args[0], args[1], 1, args[3]) }
+    const owner = defineAgentInvocations({ store })
+    const entered = deferred()
+    const releaseSetup = deferred()
+    const originalDriver = vi.fn(() => "Must not dispatch")
+    let firstSignal: AbortSignal | undefined
+    let secondSignal: AbortSignal | undefined
+    const runId = "stale-custom-setup-replacement"
+    const first = runAgent(defineAgent({ invocations: owner, driver: { run: originalDriver }, hooks: { "agent:input": async context => {
+      firstSignal = context.input.abortSignal
+      entered.resolve()
+      await releaseSetup.promise
+    } } }), runtime(runId), {})
+    const firstSettled = first.then(result => result, error => error)
+    await entered.promise
+    const id = await agentInvocationId(runId)
+    await new Promise(resolve => setTimeout(resolve, 5))
+    const releaseDriver = deferred<string>()
+    const started = deferred()
+    const replacement = defineAgentInvocations({ store: { ...backing, update: (...args: Parameters<typeof backing.update>) => {
+      if (args[1].status === "running" && args[1].cancelNotEnforcedBy === "run") throw new Error("Replacement warning unavailable")
+      return backing.update(...args)
+    } } })
+    const second = runAgent(defineAgent({ invocations: replacement, driver: { run: ({ input }) => {
+      secondSignal = input.abortSignal
+      started.resolve()
+      return releaseDriver.promise
+    } } }), runtime(runId), {})
+    const secondSettled = second.then(result => result, error => error)
+    try {
+      await started.promise
+      await vi.advanceTimersByTimeAsync(10_000)
+      vi.useFakeTimers()
+      const cancellation = owner.cancel(id).then(result => result, error => error)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(await cancellation).toMatchObject({ code: "AGENT_R0974" })
+      expect(firstSignal?.aborted).toBe(true)
+      expect(secondSignal?.aborted).toBe(false)
+      expect(originalDriver).not.toHaveBeenCalled()
+    }
+    finally {
+      abortLocalAgentInvocation(store, id, new Error("Cancellation was requested during fixture cleanup"))
+      releaseSetup.resolve()
+      releaseDriver.resolve("Replacement result")
+      await Promise.all([firstSettled, secondSettled])
+    }
+  })
+
   it.each([true, false])("aborts local work while propagating a failed initial journal read, enforced=%s", async enforced => {
     const failure = new Error("Synthetic initial journal read failure")
     const backing = createMemoryAgentInvocationStore()
@@ -781,12 +890,12 @@ describe("Agent Invocation cancel", () => {
     await journal?.finish("cancelled")
   })
 
-  it("refuses custom Driver dispatch when a reused pending record cannot persist its warning state", async () => {
+  it.each([false, true])("refuses custom Driver dispatch when a reused pending record cannot persist its warning state, previousOwner=%s", async previousOwner => {
     const backing = createMemoryAgentInvocationStore()
     const runId = "reused-pending-warning-failure"
     const id = await agentInvocationId(runId)
     const timestamp = new Date().toISOString()
-    await backing.create({ createdAt: timestamp, id, observations: [], status: "pending", traceId: runId, updatedAt: timestamp })
+    await backing.create({ ...(previousOwner ? { cancelWarningPending: true, cancelWarningOwnerId: "previous-owner" } : {}), createdAt: timestamp, id, observations: [], status: "pending", traceId: runId, updatedAt: timestamp })
     const store = { ...backing, update: (...args: Parameters<typeof backing.update>) => args[1].status === "running" ? undefined : backing.update(...args) }
     const driver = vi.fn(() => "Must not start")
     const invocations = defineAgentInvocations({ store })
@@ -1059,7 +1168,7 @@ describe("Agent Invocation cancel", () => {
       rejectClaims = false
       await journal.setAnnotations({ source: "renewal" })
       expect(journal.abortSignal.aborted).toBe(true)
-      expect(abortLocalAgentInvocation(store, id, new Error("obsolete owner"))).toEqual({ aborted: false })
+      expect(abortLocalAgentInvocation(store, id, new Error("obsolete owner"))).toEqual({ aborted: false, ownerIds: [] })
       await journal.finish("cancelled")
       expect(await backing.get(id)).toEqual(terminalRecord)
     }

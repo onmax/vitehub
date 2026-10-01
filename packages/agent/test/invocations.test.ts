@@ -52,13 +52,16 @@ describe("Agent Invocations", () => {
     const timestamp = new Date().toISOString()
     const id = `pending-dispatch-${backend}`
     try {
-      await store.create({ cancelWarningPending: true, createdAt: timestamp, id, observations: [], status: "pending", traceId: id, updatedAt: timestamp })
+      await store.create({ cancelWarningOwnerId: "original-owner", cancelWarningPending: true, createdAt: timestamp, id, observations: [], status: "pending", traceId: id, updatedAt: timestamp })
       await store.update(id, { cancelRequestedAt: timestamp, timestamp })
-      expect(await store.getSummary(id)).toMatchObject({ cancelRequestedAt: timestamp, cancelWarningPending: true })
+      expect(await store.getSummary(id)).toMatchObject({ cancelRequestedAt: timestamp, cancelWarningOwnerId: "original-owner", cancelWarningPending: true })
       expect(await store.claim(id, "owner", 30_000)).toBe(true)
+      await store.update(id, { cancelWarningOwnerId: "replacement-owner", cancelWarningPending: true, timestamp }, "owner")
+      expect(await store.getSummary(id)).toMatchObject({ cancelWarningOwnerId: "replacement-owner", cancelWarningPending: true })
       await store.update(id, { cancelNotEnforcedBy: "run", cancelWarningPending: false, status: "running", timestamp }, "owner")
       expect(await store.getSummary(id)).toMatchObject({ cancelNotEnforcedBy: "run", status: "running" })
       expect(await store.getSummary(id)).not.toHaveProperty("cancelWarningPending")
+      expect(await store.getSummary(id)).not.toHaveProperty("cancelWarningOwnerId")
     }
     finally { client?.close() }
   })

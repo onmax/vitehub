@@ -70,6 +70,8 @@ export interface AgentInvocationRecord {
   cancelNotEnforcedBy?: string
   /** True while the custom Driver dispatch state has not been durably verified. */
   cancelWarningPending?: boolean
+  /** Execution owner whose custom Driver dispatch is unverified. */
+  cancelWarningOwnerId?: string
   /** Time of the first cancellation request. The run that holds the Invocation reads it within the claim renewal interval. */
   cancelRequestedAt?: string
   channelId?: string
@@ -129,6 +131,8 @@ export interface AgentInvocationStoreUpdateInput {
   cancelNotEnforcedBy?: string | null
   /** Whether custom Driver dispatch is unverified. `false` clears the pending state. */
   cancelWarningPending?: boolean
+  /** Execution owner for the pending custom Driver marker. */
+  cancelWarningOwnerId?: string
   /** Requests cancellation. Stores ignore it on terminal records. */
   cancelRequestedAt?: string
   capabilityIds?: readonly string[]
@@ -1262,9 +1266,16 @@ export function applyAgentInvocationStoreUpdate(
     if (driver) updated.cancelNotEnforcedBy = driver
     else delete updated.cancelNotEnforcedBy
   }
+  if (input.cancelWarningPending) {
+    if (input.cancelWarningOwnerId) updated.cancelWarningOwnerId = boundedString(input.cancelWarningOwnerId)
+    else delete updated.cancelWarningOwnerId
+  }
   if (Object.hasOwn(input, "cancelWarningPending")) {
     if (input.cancelWarningPending) updated.cancelWarningPending = true
-    else delete updated.cancelWarningPending
+    else {
+      delete updated.cancelWarningPending
+      delete updated.cancelWarningOwnerId
+    }
   }
   return updated
 }
@@ -1725,6 +1736,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const agentName = bindOptions.agentName || context.agentIdentity?.name
       const recordId = await agentInvocationId(runId, agentName)
       const claimId = createInvocationId()
+      const cancellationOwnerId = createInvocationId()
       const traceId = await boundedIdentity(context.trace?.id || runId)
       const annotations = normalizeAnnotations(context.run?.annotations)
       let writes = Promise.resolve()
@@ -1815,7 +1827,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               finished = terminalStatus(result.record.status)
               boundToTerminalRecord = finished
               created = true
-              cancellationWarningPrepared = result.record.cancelWarningPending === true
+              cancellationWarningPrepared = (result.record.cancelWarningPending === true && result.record.cancelWarningOwnerId === cancellationOwnerId)
                 || (result.record.cancelNotEnforcedBy !== undefined && result.record.cancelNotEnforcedBy === cancellationDriver?.name)
               readCancellationRequest(result.record)
             }
@@ -1891,7 +1903,10 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           traceId,
           updatedAt: now,
       }
-      if (bindOptions.cancellationDriver?.enforced === false) createInput.cancelWarningPending = true
+      if (bindOptions.cancellationDriver?.enforced === false) {
+        createInput.cancelWarningPending = true
+        createInput.cancelWarningOwnerId = cancellationOwnerId
+      }
       await ensureCreated()
       if (!bindOptions.deferClaim) await renew()
       const baseTraceLog = context.traceLog || createTraceEventLog()
@@ -2103,7 +2118,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             .map(observationPersistenceKey)
           pendingObservations.length = 0
           if (runningRequested && !runningPersisted) {
-            runningPersisted = await update({ cancelNotEnforcedBy: cancelNotEnforcedBy ?? null, cancelWarningPending: cancellationDriver?.enforced === false && !driverDispatched, status: "running", timestamp: new Date().toISOString() })
+            runningPersisted = await update({ cancelNotEnforcedBy: cancelNotEnforcedBy ?? null, cancelWarningPending: cancellationDriver?.enforced === false && !driverDispatched, cancelWarningOwnerId: cancellationOwnerId, status: "running", timestamp: new Date().toISOString() })
           }
           const failure = errorDetails(error)
           for (const observation of pendingOutcomes.slice(0, -1)) {
@@ -2204,6 +2219,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             runningPersisted = await update({
               cancelNotEnforcedBy: cancelNotEnforcedBy ?? null,
               cancelWarningPending: cancellationDriver?.enforced === false && !driverDispatched,
+              cancelWarningOwnerId: cancellationOwnerId,
               status: "running",
               timestamp: new Date().toISOString(),
             })
@@ -2254,7 +2270,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           if (finished || finishing) return
           if (unregisterCancellation) return await cancellationRegistration
           cancellationDriver = driver
-          unregisterCancellation = registerAgentInvocationCancellation(store, recordId, { abort: requestCancellation, driver: () => driverDispatched ? driver : undefined })
+          unregisterCancellation = registerAgentInvocationCancellation(store, recordId, { abort: requestCancellation, driver: () => driverDispatched ? driver : undefined, ownerId: cancellationOwnerId })
           // A lost lease stops writes, but the stale Driver still needs journal cancellation.
           cancellationPolling = setInterval(() => { void pollCancellationRequest().catch(() => undefined) }, CLAIM_RENEW_INTERVAL_MS)
           unrefTimer(cancellationPolling)
@@ -2325,11 +2341,14 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       let current = await store.getSummary(id) ?? flagged
       if (!current) return { id, outcome: "not-found" }
       if (terminalStatus(current.status)) return terminalResult(current, local)
-      if (local.aborted) {
+      // Only the local execution owner identified by the pending marker can verify its own abort.
+      const locallyVerifiedPending = current.cancelWarningOwnerId !== undefined && local.ownerIds.includes(current.cancelWarningOwnerId)
+      if (local.aborted && (!current.cancelWarningPending || current.cancelNotEnforcedBy || local.notEnforcedBy || locallyVerifiedPending)) {
+        const notEnforcedBy = local.notEnforcedBy || current.cancelNotEnforcedBy
         return {
           delivery: "local",
           id,
-          ...(local.notEnforcedBy ? { notEnforcedBy: local.notEnforcedBy } : {}),
+          ...(notEnforcedBy ? { notEnforcedBy } : {}),
           outcome: "requested",
           status: current.status,
         }
@@ -2347,12 +2366,12 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         const summary = await boundedStoreOperation(() => store.getSummary(id), Math.min(STORE_OPERATION_TIMEOUT_MS, Math.max(0, verificationDeadline - Date.now())))
         if (summary && summary !== storeOperationTimedOut) current = summary
       }
-      if (terminalStatus(current.status)) return terminalResult(current)
+      if (terminalStatus(current.status)) return terminalResult(current, local)
       if (!current.cancelRequestedAt) return { id, outcome: "unavailable", status: current.status }
       return {
-        delivery: "journal",
+        delivery: local.aborted ? "local" : "journal",
         id,
-        ...(current.cancelNotEnforcedBy && current.status === "running" ? { notEnforcedBy: current.cancelNotEnforcedBy } : {}),
+        ...(current.cancelNotEnforcedBy ? { notEnforcedBy: current.cancelNotEnforcedBy } : {}),
         outcome: "requested",
         status: current.status,
       }

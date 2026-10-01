@@ -365,6 +365,8 @@ The Development Server command `vitehub agent invocations cancel <id>` checks al
 
 If the durable request write fails, cancellation still aborts a local run and propagates the storage error. This does not create a durable request for other processes.
 
+A local abort can signal a stale execution owner after lease replacement. Cancellation results also retain the current journal owner's durable Driver warning. The pending marker includes `cancelWarningOwnerId`, which identifies its execution owner. A local handle for another owner must verify that marker before reporting success. Custom stores preserve both pending fields; clearing `cancelWarningPending` also clears its owner ID.
+
 An observed cancel request aborts the Invocation abort signal. That signal stops the Driver capacity wait, the Driver run, tool calls, queued webhook executions, and scheduled turns. A webhook failure caused by cancellation completes its delivery without a retry. An unrelated failure still retries, even if the Invocation has a historical cancellation request. The record then moves to `cancelled` through the usual `agent.invocation.cancelled` event.
 
 | Driver | Cancel |

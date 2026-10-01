@@ -49,13 +49,16 @@ describe("D1 Agent Invocation store", () => {
 
   it("preserves and clears pending dispatch verification", async () => {
     const journal = store()
-    await journal.create(invocation("pending-dispatch", { cancelWarningPending: true }))
+    await journal.create(invocation("pending-dispatch", { cancelWarningOwnerId: "original-owner", cancelWarningPending: true }))
     await journal.update("pending-dispatch", { cancelRequestedAt: timestamp, timestamp })
-    expect(await journal.getSummary("pending-dispatch")).toMatchObject({ cancelRequestedAt: timestamp, cancelWarningPending: true })
+    expect(await journal.getSummary("pending-dispatch")).toMatchObject({ cancelRequestedAt: timestamp, cancelWarningOwnerId: "original-owner", cancelWarningPending: true })
     expect(await journal.claim("pending-dispatch", "owner", 30_000)).toBe(true)
+    await journal.update("pending-dispatch", { cancelWarningOwnerId: "replacement-owner", cancelWarningPending: true, timestamp }, "owner")
+    expect(await journal.getSummary("pending-dispatch")).toMatchObject({ cancelWarningOwnerId: "replacement-owner", cancelWarningPending: true })
     await journal.update("pending-dispatch", { cancelNotEnforcedBy: "run", cancelWarningPending: false, status: "running", timestamp }, "owner")
     expect(await journal.getSummary("pending-dispatch")).toMatchObject({ cancelNotEnforcedBy: "run", status: "running" })
     expect(await journal.getSummary("pending-dispatch")).not.toHaveProperty("cancelWarningPending")
+    expect(await journal.getSummary("pending-dispatch")).not.toHaveProperty("cancelWarningOwnerId")
   })
 
   it("requires an explicit migration and resolves the request binding once per operation", async () => {
