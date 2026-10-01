@@ -114,7 +114,8 @@ describe("SQLite invocation Capability projection", () => {
     expect(plans[0]).toContain("USING COVERING INDEX vitehub_agent_invocations_agent_name_capability_ids (agent_name=? AND capability_ids>?)")
     expect(plans[1]).toContain("SCAN vitehub_agent_invocations USING COVERING INDEX vitehub_agent_invocations_agent_name_capability_ids")
     for (const plan of plans.slice(2)) {
-      expect(plan).toContain("USING INDEX vitehub_agent_invocations_agent_name_triggered_by (agent_name=?)")
+      expect(plan).toContain("SCAN vitehub_agent_invocations USING INDEX vitehub_agent_invocations_triggered_by_agent_name")
+      expect(plan).not.toContain("vitehub_agent_invocations_agent_name_sequence")
       expect(plan).not.toMatch(/^SCAN vitehub_agent_invocations$/m)
     }
   })

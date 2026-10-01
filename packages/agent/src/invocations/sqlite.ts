@@ -412,11 +412,11 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
         WHERE agent_name IS NULL OR agent_name = ''`)
       // Tables from older versions store summary and capability_ids after the large record column.
       // Reading those values from the row walks every overflow page of record, so filter lists read them from these indexes.
-      // Partial indexes keep the query planner from choosing them for Invocation list queries.
+      // Invocation list queries cannot use either index: one is partial, and the other starts with the label.
       await client.execute(`CREATE INDEX IF NOT EXISTS ${table}_agent_name_capability_ids
         ON ${table} (agent_name, capability_ids) WHERE capability_ids IS NOT NULL`)
-      await client.execute(`CREATE INDEX IF NOT EXISTS ${table}_agent_name_triggered_by
-        ON ${table} (agent_name, ${triggeredByProjection()}) WHERE ${triggeredByProjection()} IS NOT NULL`)
+      await client.execute(`CREATE INDEX IF NOT EXISTS ${table}_triggered_by_agent_name
+        ON ${table} (${triggeredByProjection()}, agent_name)`)
       await client.execute(`CREATE TABLE IF NOT EXISTS ${table}_claims (
         id TEXT PRIMARY KEY,
         claim_id TEXT NOT NULL,
@@ -697,14 +697,15 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
       await initialize()
       const selectedAgent = agentName?.trim()
       const triggeredBy = triggeredByProjection()
-      // Equality lookups on agent_name read the label from the expression index. Only legacy rows without agent_name read the row.
+      // The planner prefers agent_name_sequence for the Agent filter, which evaluates the label from every row.
+      // INDEXED BY reads the label from the expression index instead. Only legacy rows without agent_name read the row.
+      const labels = `SELECT ${triggeredBy} AS triggered_by FROM ${table} INDEXED BY ${table}_triggered_by_agent_name
+        WHERE ${triggeredBy} IS NOT NULL`
       const rows = selectedAgent
-        ? `SELECT ${triggeredBy} AS triggered_by FROM ${table} WHERE agent_name = ? AND ${triggeredBy} IS NOT NULL
+        ? `${labels} AND agent_name = ?
           UNION ALL SELECT ${triggeredBy} FROM ${table}
             WHERE (agent_name IS NULL OR agent_name = '') AND json_extract(record, '$.agentName') = ?`
-        : `SELECT ${triggeredBy} AS triggered_by FROM ${table}
-            WHERE agent_name IN (SELECT DISTINCT agent_name FROM ${table} WHERE agent_name IS NOT NULL) AND ${triggeredBy} IS NOT NULL
-          UNION ALL SELECT ${triggeredBy} FROM ${table} WHERE agent_name IS NULL AND ${triggeredBy} IS NOT NULL`
+        : labels
       const result = await client.execute({
         args: selectedAgent ? [selectedAgent, selectedAgent] : [],
         sql: `SELECT DISTINCT triggered_by FROM (${rows}) WHERE trim(triggered_by) <> '' ORDER BY triggered_by`,
