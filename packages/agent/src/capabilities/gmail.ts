@@ -204,7 +204,12 @@ function textDecoder(charset: string) {
 /** Charset of a MIME part from its `Content-Type` header, for example `ISO-8859-1`. Default: UTF-8. */
 function partCharset(part: GmailPart): string {
   const contentType = headers(part, ["Content-Type"])["content-type"] ?? ""
-  return /;\s*charset="?([^";\s]+)"?/i.exec(contentType)?.[1] ?? "utf-8"
+  // Consume whole parameters so semicolons and charset text inside a quoted value are not delimiters.
+  const parameters = /;\s*([^\s;=]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;\s]+))/g
+  for (const parameter of contentType.matchAll(parameters)) {
+    if (parameter[1]?.toLowerCase() === "charset") return (parameter[2] ?? parameter[3] ?? "utf-8").replace(/\\(.)/g, "$1")
+  }
+  return "utf-8"
 }
 
 function encodeHeader(value: string): string {

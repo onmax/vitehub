@@ -221,6 +221,23 @@ describe("gmail capability", () => {
     expect(await run(readTools.gmail_read, { id: "unknown" })).toMatchObject({ text: expect.any(String) })
   })
 
+  it("reads MIME charset parameters without matching text inside quoted values", async () => {
+    const encoded = (text: string) => btoa(text).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
+    const { primitive } = connections({ responses: { "gmail.messages.get": input => ({
+      ...message,
+      payload: {
+        mimeType: "text/plain",
+        body: { data: input.id === "quoted" ? encoded(String.fromCharCode(0xC3, 0xBC)) : encoded(String.fromCharCode(0xFC)) },
+        headers: [{ name: "Content-Type", value: input.id === "quoted"
+          ? 'text/plain; name="notes; charset=ISO-8859-1"; charset=UTF-8'
+          : 'text/plain; charset = "ISO-8859-1"' }],
+      },
+    }) } })
+    const readTools = await tools(gmail(), primitive)
+    expect(await run(readTools.gmail_read, { id: "quoted" })).toMatchObject({ text: "ü" })
+    expect(await run(readTools.gmail_read, { id: "spaces" })).toMatchObject({ text: "ü" })
+  })
+
   it("rejects an unexpected Gmail response", async () => {
     const { primitive } = connections({ responses: { "gmail.messages.get": () => ({ id: 1 }) } })
     await expect(run((await tools(gmail(), primitive)).gmail_read, { id: "m1" })).rejects.toThrow("unexpected Gmail response")

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks"
 import * as v from "valibot"
 
 import { defineMcpToolCapability, sanitizeMcpMetadata } from "../internal/mcp-tool-capability.ts"
@@ -50,12 +51,6 @@ const jsonRpcRequestSchema = v.object({
   params: v.optional(v.looseObject({ arguments: v.optional(v.unknown()), name: v.optional(v.string()) })),
 })
 
-/** The arguments of a `tools/call` request, as the key that binds an approval to its run. */
-function toolCallArguments(init: RequestInit | undefined): string | undefined {
-  const message = v.safeParse(jsonRpcRequestSchema, parseJsonBody(init?.body))
-  return message.success && message.output.method === "tools/call" ? JSON.stringify(message.output.params?.arguments ?? {}) : undefined
-}
-
 function parseJsonBody(body: RequestInit["body"]): unknown {
   if (!v.is(v.string(), body)) return undefined
   try {
@@ -96,14 +91,14 @@ function withMcpConnection(context: AgentCapabilityContext, server: string, conf
     throw agentDiagnostics.AGENT_R0082({ message: `[vitehub] mcp({ servers }) server "${server}" uses a connection, so it requires an http or sse transport config without authProvider.` })
   }
   const connection = useAgentConnection(context, name.output, "mcp")
-  // Approved tool runs that have not sent their `tools/call` yet, keyed by Operation and exact arguments.
-  // A run with other arguments cannot use them. Runs with equal arguments were approved with the same content.
-  const approvals = new Map<string, Array<{ used: boolean }>>()
+  // Each async tool execution owns its grant, even when concurrent calls have identical arguments.
+  const approvals = new AsyncLocalStorage<{ arguments: string, operation: string, used: boolean } | undefined>()
   const request = (init: RequestInit | undefined): AgentConnectionFetchOptions => {
     const options = mcpConnectionRequest(server, init)
-    const args = options.tool ? toolCallArguments(init) : undefined
-    const grant = args === undefined ? undefined : approvals.get(`${options.operation}\n${args}`)?.find(entry => !entry.used)
-    if (!grant) return options
+    const grant = approvals.getStore()
+    const message = v.safeParse(jsonRpcRequestSchema, parseJsonBody(init?.body))
+    if (!options.tool || !grant || grant.used || grant.operation !== options.operation
+      || !message.success || grant.arguments !== JSON.stringify(message.output.params?.arguments ?? {})) return options
     grant.used = true
     return { ...options, approved: true }
   }
@@ -117,14 +112,13 @@ function withMcpConnection(context: AgentCapabilityContext, server: string, conf
   }
   return {
     binding: {
-      approve: (operation, input) => {
-        const key = `${operation}\n${JSON.stringify(input ?? {})}`
-        const grant = { used: false }
-        approvals.set(key, [...(approvals.get(key) ?? []), grant])
-        return () => {
-          const remaining = (approvals.get(key) ?? []).filter(entry => entry !== grant)
-          if (remaining.length) approvals.set(key, remaining)
-          else approvals.delete(key)
+      execute: async (operation, input, approved, run) => {
+        const grant = approved ? { arguments: JSON.stringify(input ?? {}), operation, used: false } : undefined
+        try {
+          return await approvals.run(grant, run)
+        }
+        finally {
+          if (grant) grant.used = true
         }
       },
       connection,

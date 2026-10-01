@@ -308,10 +308,11 @@ describe("mcp capability", () => {
     const callTool = async (args: unknown) => transportFetch?.("https://executor.test/mcp", { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: args, name: "execute" } }), method: "POST" })
     let release: (() => void) | undefined
     const paused = new Promise<void>(resolve => (release = resolve))
+    let executions = 0
     const createMCPClient = vi.fn(async (config: { transport: { fetch: typeof globalThis.fetch } }) => {
       transportFetch = config.transport.fetch
-      return createClient({ execute: { execute: vi.fn(async (input: { pause?: boolean }) => {
-        if (input.pause) await paused
+      return createClient({ execute: { execute: vi.fn(async (input: { code: string }) => {
+        if (++executions === 1) await paused
         await callTool(input)
         return "ok"
       }) } })
@@ -333,11 +334,12 @@ describe("mcp capability", () => {
       const tool = resolved.tools?.mcp_executor_execute
       if (typeof tool?.policy !== "function" || !tool.execute) throw new Error("expected a Connection tool")
 
-      // Run A is approved and pauses before its tools/call. A request with other arguments cannot use A's grant.
-      const approvedInput = { code: "approved", pause: true }
+      // Run A is approved and pauses. An identical concurrent tool execution cannot consume its grant.
+      const approvedInput = { code: "approved" }
       await expect(tool.policy({ input: approvedInput, name: "mcp_executor_execute" })).resolves.toBe("require-approval")
       // SAFETY: The MCP tool wrapper does not read the execution options.
       const runA = tool.execute(approvedInput, {} as never)
+      await tool.execute({ code: "approved" }, {} as never)
       await callTool({ code: "other" })
       release?.()
       await runA
@@ -345,8 +347,9 @@ describe("mcp capability", () => {
       // SAFETY: The MCP tool wrapper does not read the execution options.
       await tool.execute({ code: "approved" }, {} as never)
       expect(approvedCalls()).toEqual([
+        [{ code: "approved" }, false],
         [{ code: "other" }, false],
-        [{ code: "approved", pause: true }, true],
+        [{ code: "approved" }, true],
         [{ code: "approved" }, false],
       ])
       await resolved.close()
