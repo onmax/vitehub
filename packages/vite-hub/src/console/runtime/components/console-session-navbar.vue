@@ -116,6 +116,7 @@ onBeforeUnmount(() => {
           </template>
         </UButton>
       </UTooltip>
+      <slot name="actions" />
       <UTooltip v-if="refreshable" text="Refresh session">
         <UButton
           icon="i-lucide-refresh-cw"

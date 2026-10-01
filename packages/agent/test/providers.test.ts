@@ -18931,6 +18931,43 @@ describe("server helpers", () => {
     expect(adapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "Follow-up" })
   })
 
+  it("appends the MCP unavailable notice to the final chat reply", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { mcp } = await import("../src/capabilities.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const unavailable = () => { throw Object.assign(new Error("fetch failed"), { statusCode: 503 }) }
+    const loadingAdapter = createTestChatAdapter()
+    const streamingAdapter = createTestChatAdapter()
+    const agent = (adapter: ReturnType<typeof createTestChatAdapter>, messages: Record<string, unknown>) => defineAgent({
+      capabilities: [mcp({ servers: { posthog: unavailable }, unavailableNotice: servers => `${servers.join(", ")} was unavailable.` })],
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages,
+        }),
+      },
+      driver: { run: () => "Final answer" },
+      hooks: { "agent:finish": event => event.reply(event.text!) },
+    })
+
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const loading = createChannelWebhookRouteHandler(agent(loadingAdapter, { loading: { text: "Loading…" } }) as never)
+    expect((await loading(chatWebhookRequest(91_222), "telegram")).status).toBe(200)
+    expect(loadingAdapter.postMessage).toHaveBeenCalledTimes(2)
+    expect(loadingAdapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", {
+      markdown: "Final answer\n\nposthog was unavailable.",
+    })
+
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const streaming = createChannelWebhookRouteHandler(agent(streamingAdapter, { stream: false }) as never)
+    expect((await streaming(chatWebhookRequest(91_221), "telegram")).status).toBe(200)
+    expect(streamingAdapter.postMessage).toHaveBeenCalledTimes(2)
+    expect(streamingAdapter.postMessage).toHaveBeenNthCalledWith(1, "telegram:456", { markdown: "Final answer" })
+    expect(streamingAdapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "posthog was unavailable." })
+  })
+
   it("keeps the posted final reply when loading-message deletion fails", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { telegram } = await import("../src/channels.ts")

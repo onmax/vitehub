@@ -84,7 +84,9 @@ If `console` is omitted or set to `false`, ViteHub does not register a Console p
 
 Open Env to search declared Server Env variables and filter by source. Select a variable to inspect its provider, secret flag, requirement, and whether a default is configured. Host environment includes process environment variables and host runtime bindings.
 
-The declaration list does not read secret values or check credential validity. It does not enumerate undeclared host variables. Values and defaults remain hidden. Update host values through the deployment configuration. Set `env: false` in ViteHub options to disable Env and its Console section.
+Select **Check status** to add a Status column from `inspectServerEnv()`. It shows whether each value is available, defaulted, missing, invalid, or failed in its provider. Red badges mark values that make `loadServerEnv()` fail. The check reads the Console server's environment and calls configured providers, so it runs only when you select it. It never returns values. Use `vitehub env check` for the same check in CI.
+
+The declaration list does not read secret values or check credential validity. It does not enumerate undeclared host variables. Values and defaults remain hidden. Update host values through the deployment configuration and provider values in their connected store. Set `env: false` in ViteHub options to disable Env and its Console section.
 
 For a provider variable, select **Manage credential** to open the provider's management view. The Console sends these requests to `POST /_vitehub/env/manage`. If the provider supports management, as an [Env Bridge](/docs/server-primitives/env-bridge) store does, the view shows only the operations that your grants allow: credential metadata, a masked preview, conditional replacement, and, for administrators, activity and access grants. Other providers are read-only in the Console, so manage their values in the connected store.
 
@@ -178,7 +180,7 @@ export default defineConfig({
 })
 ```
 
-Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `BETTER_AUTH_SECRET` in the server environment. `baseURL` is the public origin used for OAuth redirects; set it when a proxy terminates TLS. The GitHub callback URL is `https://agent.example.com/api/_vitehub/console/auth/callback/github`. For Nuxt apps mounted below `/`, ViteHub includes `app.baseURL` in the callback and redirects. Put `databasePath` on persistent storage. ViteHub creates its parent directory and makes the file readable only by its owner. Console Auth creates or updates its Better Auth tables before the first protected request. It refuses a missing database or secret. Application requests and channel requests keep their own authentication.
+Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `BETTER_AUTH_SECRET` in the server environment. `baseURL` is the public origin used for OAuth redirects. It defaults to `vitehub({ publicUrl })`, then the request origin; set one of them when a proxy terminates TLS. The GitHub callback URL is `https://agent.example.com/api/_vitehub/console/auth/callback/github`. For Nuxt apps mounted below `/`, ViteHub includes `app.baseURL` in the callback and redirects. Put `databasePath` on persistent storage. ViteHub creates its parent directory and makes the file readable only by its owner. Console Auth creates or updates its Better Auth tables before the first protected request. It refuses a missing database or secret. Application requests and channel requests keep their own authentication.
 
 For a custom provider or Better Auth server plugins, commit `vitehub/console/auth/server.ts` and use `console: { access: 'auth', auth: {} }`. The file can import `defineAuth` and export a Console definition:
 
@@ -368,9 +370,16 @@ const body = {
 
 History must contain valid ViteHub Messages with `user` or `assistant` roles and unique IDs. Parts must be `text`, `file`, `image`, or `audio`. The Console preserves message metadata and appends the new prompt as a user Message. It rejects malformed Messages, `system` or `tool` roles, and other parts before starting the Agent. This includes tool calls, tool results, and approval parts nested in user or assistant Messages. Omit `messages` for a prompt-only invocation. Each request creates a new invocation; history does not resume a previous runtime session.
 
-### Replay Channel history
+### Rerun and delete sessions
 
-The same `invoke` setting enables `POST /_vitehub/channels/replay`. [`vitehub channels replay --url`](/docs/development/cli#replay-channel-history) uses it to send past Channel messages through an Agent. The route is under `/_vitehub/**`, so the Console access policy protects it. It accepts only `application/json` requests, rejects a cross-origin `Origin` header, and replays at most 100 messages per request. With `invoke: false`, the route returns `404`.
+Rerun is available after the session completes, fails, or is cancelled.
+
+When `invoke` is enabled for an Agent, its session header shows two actions:
+
+- **Rerun** starts a new invocation with the recorded prompt and the same Invoker Profile. The action is available only when the journal kept the complete prompt. It is unavailable if the recorded Invoker Profile is no longer configured, for sessions that started with prior `messages` or attachments, for metadata-only journals, and for prompts that the journal truncated. Records without the current replay metadata and sessions with a direct invoker or actor identity are also unavailable. The tooltip gives the reason.
+- **Delete** removes a completed, failed, or cancelled session and its usage record after you confirm. It uses the same journal operation as `vitehub agent invocations delete`. Pending and running sessions cannot be deleted. Custom journals without `store.delete` show a disabled action with an explanation.
+
+The `vitehub:console:invocation` RPC operation returns these actions as `invocation.actions`. With `method: 'POST'` and the body `{ action: 'delete' }`, it deletes the record. It returns `403` when Console invocation is disabled for the Agent and `409` when the record is not terminal or the store does not support deletion. When invocation is disabled, the Console stays read-only and does not show the actions.
 
 
 Nuxt does not need an SEO module for the `X-Robots-Tag` default. If the app already uses `@nuxtjs/robots` or `@nuxtjs/seo`, add route metadata so its robots and sitemap modules also know that Console pages are not indexable:

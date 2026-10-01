@@ -138,7 +138,7 @@ export default defineAuth(({ env, requestOrigin }) => ({
 }))
 ```
 
-When `@vite-hub/env` is installed before Auth, the callback receives typed Server Env. `requestOrigin` lets same-origin apps avoid a separate auth URL variable.
+When `@vite-hub/env` is installed before Auth, the callback receives typed Server Env. `requestOrigin` lets same-origin apps avoid a separate auth URL variable. Without a `baseURL`, Auth uses `vitehub({ publicUrl })`, then the request origin.
 
 ## Server helpers
 

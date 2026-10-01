@@ -24,8 +24,7 @@ pnpm vitehub --help
 Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
-Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, and the Console integration contributes `console` when `console` is enabled. The framework contributes `types` and `box`, and the CLI includes the built-in `provision` namespace. `box` does not load the project config, so it also runs in a deployed container without Vite. This output comes from an app that enables `agent`, `console`, `database`, `schedule`, and `workspace`:
+Expected help lists available namespaces. The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Env contributes `env` when `hubEnv()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, and the Console integration contributes `console` when `console` is enabled. The framework contributes `types` and `box`, and the CLI includes the built-in `provision` namespace. `box` does not load the project config, so it also runs in a deployed container without Vite. This output comes from an app that enables `agent`, `console`, `database`, `env`, `schedule`, and `workspace`:
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
@@ -36,6 +35,7 @@ Available namespaces:
   agent        Agent development workflows.
   channels     External Channel registration workflows.
   db           Database development workflows.
+  env          Server Env inspection workflows.
   schedule     Run Static Schedule Definitions on demand.
   types        Generate ViteHub TypeScript declarations.
   provision    Idempotently create missing provider resources.
@@ -58,6 +58,8 @@ Package-contributed namespaces appear only when their package is enabled. For ex
 | `vitehub console dev`       | Available      | Console integration                               | Start the app's development command with deterministic Console fixture data.              |
 | `vitehub db generate`       | Available      | Database Package                                  | Refresh generated Database artifacts and generate Drizzle migrations.                     |
 | `vitehub db migrate`        | Available      | Database Package                                  | Refresh generated Database artifacts and apply Drizzle migrations.                        |
+| `vitehub env check` | Available | Env Package | Fail CI or a deploy step when Server Env would not load for a stage. |
+| `vitehub env inspect` | Available | Env Package | List declared Server Env variables and their status without values. |
 | `vitehub schedule run`      | Available      | Schedule Package                                  | Run a manual Static Schedule Definition now, locally or on a deployment.                  |
 | `vitehub workspace dev`     | Available      | Workspace Package                                 | Run commands through a Workspace Session exposed by a Compatible Vite Development Server. |
 | `vitehub types prepare`     | Available      | ViteHub Framework                                 | Prepare generated TypeScript declarations for editors and type checking.                  |
@@ -140,6 +142,33 @@ Use `--agent <name>` or `--channel <id>` to narrow a multi-Agent application. Sw
 Telegram exposes the registered URL and delivery errors through `getWebhookInfo`, but it does not return the configured secret token or allowed update list. The plan marks those fields as unverifiable. Use `--force` to reapply them when the URL already matches and credential or subscription configuration changed. Telegram accepts public webhook ports 443, 80, 88, and 8443; the CLI rejects other explicit ports before applying.
 
 `channels sync` owns only the provider's mechanical registration. The first Telegram synchronizer subscribes to message updates because that is the built-in Channel's supported inbound event. Admission rules, allowed users, secrets, and additional update types remain in the application. An app that needs a custom adapter, certificate, fixed IP, or connection policy must keep the provider lifecycle application-owned; an app-owned `adapter` is not a synchronization target.
+
+## Check Server Env
+
+`env inspect` and `env check` load the Vite config in the selected stage and call `inspectServerEnv()` from the generated Server Env module. They print each declared Server Env variable with its status, source, and required and secret flags. They never print values. Provider-backed declarations call the configured provider, so run the commands where the provider can authenticate.
+
+```bash [Terminal]
+pnpm vitehub env inspect --stage staging
+pnpm vitehub env check --stage production --json
+```
+
+`--stage <name>` loads Vite's stage-specific environment files, such as `.env.staging`, the same way `channels sync` does. Existing process environment values take precedence. Without `--stage`, the commands use the `development` mode.
+
+```txt [Output]
+Server Env (stage: production)
+
+VARIABLE       STATUS     SOURCE          REQUIRED  SECRET
+github.token   available  provider:vault  yes       yes
+webhookSecret  missing !  host env        yes       yes
+logLevel       defaulted  host env        no        no
+
+1 of 3 variables would make loadServerEnv() fail.
+Server Env check failed.
+```
+
+`env check` exits with `1` when `loadServerEnv()` would fail: a required value is missing, a value is invalid, or a provider failed. Missing optional values and defaulted values pass. `env inspect` reports the same data and exits with `0`. Both commands exit with `1` for unknown options.
+
+`--json` prints `{ entries, ok, stage }`. Each entry is a `ServerEnvInspectionEntry` with `path`, `source`, `provider`, `required`, `masked`, and `status`. The `path` field is absent when a declaration name is not safe to show.
 
 ## Download Channel history
 
@@ -389,6 +418,7 @@ CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm vitehub provision status
 | Symptom                                                   | Likely cause                                                                                                                                   | Fix                                                                                                       |
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `Unknown ViteHub CLI namespace`                           | The package Vite Integration is not installed or is disabled.                                                                                  | Add the package's `hubX()` plugin to `vite.config.ts`.                                                    |
+| `env check` reports `missing !` for a value in `.env.<stage>` | `--stage` is missing or names another mode. | Pass the stage whose env file holds the value, for example `--stage staging`. |
 | `Provision requires --provider cloudflare\|vercel`        | The provider flag is missing or misspelled.                                                                                                    | Pass a supported provider explicitly.                                                                     |
 | Provision fails before applying actions                   | Required provider credentials are missing.                                                                                                     | Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`, or set `VERCEL_TOKEN`.                            |
 | Provision dry-run reports no actions                      | A package plan skipped provider lookup because its read credentials are missing.                                                               | Supply the provider credentials to inspect existing resources; `--dry-run` still prevents `apply()`.      |

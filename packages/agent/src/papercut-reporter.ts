@@ -17,7 +17,7 @@ export interface PapercutReporterOptions {
   intervalMs?: number
   deliveryTimeoutMs?: number
   uuidNamespace?: string
-  sessionUrl?: (invocation: { agentName: string, id: string }) => string
+  sessionUrl?: (invocation: { agentName: string, id: string }) => string | undefined
   onError?: (error: unknown) => void
 }
 

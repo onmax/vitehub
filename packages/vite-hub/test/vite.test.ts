@@ -572,6 +572,7 @@ describe("vitehub", () => {
       "@vite-hub/markdown-template/vite",
       "vite-hub/deployment-preset",
       "vite-hub/deployment-output",
+      "vite-hub/public-url",
       "vite-hub/dependencies",
       "@vite-hub/env/vite",
       "@vite-hub/email/optional-peer-resolver",
@@ -597,8 +598,10 @@ describe("vitehub", () => {
       workspace: true,
     }))).toEqual([
       "@vite-hub/markdown-template/vite",
+      "vite-hub/agent-channel-env",
       "vite-hub/deployment-preset",
       "vite-hub/deployment-output",
+      "vite-hub/public-url",
       "vite-hub/dependencies",
       "@vite-hub/env/vite",
       "@vite-hub/auth/vite",
@@ -1426,6 +1429,61 @@ describe("vitehub", () => {
       mainFields: ["server", "module", "main"],
       preserveSymlinks: true,
     }))
+  })
+
+  it("keeps Deno bundle options scoped to each build when plugins are reused", async () => {
+    integrationMocks.finalizeDenoDeploymentOutput.mockClear()
+    const plugins = vitehub({ preset: "deno" })
+    const preset = dependencyPluginByName(plugins, "vite-hub/deployment-preset")
+    const output = dependencyPluginByName(plugins, "vite-hub/deployment-output")
+    const configs = await Promise.all(["first", "second"].map(async name => {
+      const config: Record<string, unknown> = { root: `/app/${name}` }
+      await callHook(preset.config, [config, { command: "build", mode: "production" }])
+      const resolved = await resolveConfig({
+        root: `/app/${name}`,
+        define: {
+          __VITEHUB_PUBLIC_URL__: JSON.stringify({ url: `https://${name}.example.com` }),
+          __VITEHUB_APP_BASE_URL__: JSON.stringify(`/${name}/`),
+        },
+        resolve: { alias: { "#build": `/app/${name}/index.ts` }, conditions: [name] },
+      }, "build", "production")
+      // SAFETY: The preset config hook installed the build's Nitro module.
+      const nitroConfig = config.nitro as { commands: Record<string, unknown>, modules: unknown[] }
+      const resolvedConfig = { ...resolved, nitro: { ...nitroConfig } }
+      callHook(output.configResolved, [resolvedConfig])
+      return { name, nitroConfig }
+    }))
+
+    // Compile only after both builds have resolved, including a cloned Nitro configuration.
+    await Promise.all(configs.map(async ({ name, nitroConfig }) => {
+      let compiled: (() => Promise<void>) | undefined
+      const nitro = {
+        hooks: { hook: (event: string, callback: () => Promise<void>) => {
+          if (event === "compiled") compiled = callback
+        } },
+        options: {
+          commands: nitroConfig.commands,
+          output: { dir: `/app/${name}/.output`, serverDir: `/app/${name}/.output/server` },
+          preset: "deno-deploy",
+          rootDir: `/app/${name}`,
+        },
+      }
+      // SAFETY: The preset prepends its deployment module to the module list.
+      const module = nitroConfig.modules[0] as (target: typeof nitro) => void
+      module(nitro)
+      if (!compiled) throw new TypeError("Expected the Deno output callback.")
+      await compiled()
+      expect(integrationMocks.finalizeDenoDeploymentOutput).toHaveBeenCalledWith(expect.objectContaining({
+        rootDir: `/app/${name}`,
+        alias: expect.arrayContaining([{ customResolver: false, find: "#build", replacement: `/app/${name}/index.ts` }]),
+        conditions: [name],
+        define: {
+          __VITEHUB_PUBLIC_URL__: JSON.stringify({ url: `https://${name}.example.com` }),
+          __VITEHUB_APP_BASE_URL__: JSON.stringify(`/${name}/`),
+        },
+      }))
+    }))
+    expect(integrationMocks.finalizeDenoDeploymentOutput).toHaveBeenCalledTimes(2)
   })
 
   it("composes deployment output through a Nitro module", async () => {

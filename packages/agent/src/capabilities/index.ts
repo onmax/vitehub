@@ -136,6 +136,7 @@ export {
   workspaceJsonlMemoryStore,
 } from "./memory.ts"
 export {
+  getMcpWarnings,
   mcp,
 } from "./mcp.ts"
 export {
@@ -364,6 +365,7 @@ export type {
   WorkspaceJsonlMemoryStoreOptions,
 } from "./memory.ts"
 export type {
+  McpAvailabilityWarning,
   McpCapabilityOptions,
   McpClient,
   McpClientConfig,

@@ -58,6 +58,7 @@ console.log(publicEnv.appName)
 | `loadServerEnv` from `#vitehub/env/server` | Load one immutable Server Env snapshot, including provider-backed values. |
 | `describeServerEnv` from `#vitehub/env/server` | List declaration metadata without reading host values or calling providers. |
 | `inspectServerEnv` from `#vitehub/env/server` | Inspect status-only Server Env metadata without returning values. |
+| `isBlockingServerEnvEntry` from `@vite-hub/env` | Check whether an inspection entry makes `loadServerEnv()` fail. |
 | `usePublicEnv` from `#vitehub/env/public` | Read generated Public Env from browser-safe code. |
 | `useServerEnv` from `#vitehub/env/server` | Read generated Server Env from server code. |
 | `SecretEnv` from `@vite-hub/env` or `@vite-hub/env/secret` | Represent Secret Env values that redact by default. |
@@ -179,6 +180,7 @@ The helpers also work in `env.public` and `env.define` with `mode: 'build'`.
 | --- | --- |
 | `env.source('NAME')` | Reads one host env variable. |
 | `env.source(['PRIMARY', 'FALLBACK'])` | Reads the first available env variable from a list. |
+| `env.source(['PRIMARY', 'FALLBACK'], { skipEmpty: true })` | Reads the first defined, non-empty env variable from a list. |
 | `env.custom(label, resolver)` | Resolves from a custom callback. |
 | `env.gitBranch()` | Reads the current Git branch. |
 | `env.gitCommit({ short })` | Reads the current Git commit. |
@@ -290,7 +292,9 @@ This GitHub token authenticates application-owned Source materialization; it is 
 
 `describeServerEnv()` returns declaration paths, source kinds, provider aliases, secret flags, required flags, whether a default exists, and the parsed value type such as `boolean` or `"draft" | "send"`. It never resolves values or calls provider `read()`. Use it for inventory. Default values, source variable names, provider keys, and provider module paths are omitted. The Console Env section uses this metadata and inherits Console access protection. A provider with Env Bridge management also offers masked previews and runtime replacement in its detail panel. Administrators can view persisted activity and manage per-credential grants. These controls additionally enforce the provider's authentication and permissions; host variables stay read-only.
 
-`inspectServerEnv()` uses the same provider load boundary and reports only declaration paths, source kinds, masking, and `available`, `defaulted`, `missing`, `invalid`, or `error` status. It never includes values, hashes, lengths, provider keys, or provider failure text. This is the safe primitive for future CLI and Console projections.
+`inspectServerEnv()` uses the same provider load boundary and reports only declaration paths, source kinds, provider aliases, masking, required flags, and `available`, `defaulted`, `missing`, `invalid`, or `error` status. It never includes values, hashes, lengths, provider keys, or provider failure text. Paths match `describeServerEnv()`. `isBlockingServerEnvEntry()` returns `true` for an entry that makes `loadServerEnv()` fail: a required value is missing, a value is invalid, or a provider failed.
+
+Check a stage from the terminal with `vitehub env inspect` or `vitehub env check`. `env check` exits with `1` for any blocking entry, so CI and deploy steps can run it before a release. Both commands load the stage's Vite env files and never print values. Read [CLI](/docs/development/cli#check-server-env) for options and output. The Console Env section shows the same status when you select **Check status**.
 
 Provider reads are read-only and receive the caller's abort signal. For managed credentials, [Env Bridge](/docs/server-primitives/env-bridge) adds conditional replacement, scoped access, and durable activity. Env resolution does not add watches, leases, or cross-request caches. Providers must not import the generated Server Env module; use the local `env` snapshot passed to `read()` for bootstrap credentials.
 
@@ -334,6 +338,8 @@ Add the generated type directory to `tsconfig.json` when the app wants field-lev
 ## Use Env with Agents
 
 Read application secrets through Server Env inside Agent and Capability callbacks. Don't pass secrets through Agent Invocation metadata or model-facing instructions.
+
+Built-in Agent Channels such as `telegram()` declare their credentials under `env.server.<channel>` when an Agent uses them. See [Channel Env](/docs/agents/channels#channel-env) for the names and how to rename one.
 
 Env is usually not an agent-facing Capability. Other Capabilities consume Server Env when they need credentials, provider tokens, or app-owned configuration.
 

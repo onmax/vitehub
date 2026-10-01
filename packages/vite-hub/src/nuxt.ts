@@ -623,7 +623,7 @@ async function applyNitroConfig(
     command: nuxt.options.dev ? "serve" : "build",
     isPreview: false,
     isSsrBuild: true,
-    mode: nuxt.options.dev ? "development" : "production",
+    mode: nuxt.options.vite?.mode ?? (nuxt.options.dev ? "development" : "production"),
   } as const
   const serverDirs = nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined
   const generatedRoot = join(nuxt.options.buildDir, "vitehub")

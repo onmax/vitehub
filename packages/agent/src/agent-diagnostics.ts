@@ -1485,6 +1485,10 @@ export const agentDiagnostics = defineDiagnostics({
       why: "[vitehub] Eve extensions must be compiled by the ViteHub Vite plugin.",
       fix: "Load the Agent Definition through a Vite host with the ViteHub Agent plugin installed.",
     },
+    AGENT_B0020: {
+      why: ({ root }: { root: string }) => `[vitehub] Cannot identify the owning Agent build for ${JSON.stringify(root)} because its environment does not uniquely match a resolved configuration.`,
+      fix: "Use a separate Agent plugin instance per build or preserve the resolved build options in each environment config.",
+    },
     AGENT_B0019: {
       why: ({ files }: { files: string[] }) => `[vitehub] Provider Agent Drivers ("codex" and "claude-code") cannot run in a Cloudflare Worker. Used in ${files.join(", ")}.`,
       fix: "Use a { model } or { run } Driver in Worker builds, or deploy Agents that use provider Drivers to a Node.js host.",

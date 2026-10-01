@@ -54,7 +54,7 @@ import type {
   PublishedAgentDeliveryArtifact,
 } from "./types.ts"
 import { defineMessageChannelInstructions } from "./internal/channels.ts"
-import { chatFinalReplyIntent, chatFinalReplyText, chatFinishDeliveryRegistrarKey, setChatFinalReplyText, setMessageChannelDeferredReplyTrace } from "./internal/chat-finish-delivery.ts"
+import { chatFinalReplyIntent, chatFinalReplyMode, chatFinalReplyText, chatFinishDeliveryRegistrarKey, setChatFinalReplyText, setMessageChannelDeferredReplyTrace } from "./internal/chat-finish-delivery.ts"
 import type { ChatFinishDeliveryRegistrar } from "./internal/chat-finish-delivery.ts"
 import { withAgentChannelSyncDefinition } from "./internal/channel-sync.ts"
 import { channelDeliveryHandlers } from "./internal/channel-delivery-handlers.ts"
@@ -62,9 +62,10 @@ import { withAgentChannelHistoryDefinition } from "./internal/channel-history.ts
 import { createTelegramChannelSyncProvider } from "./internal/telegram-channel-sync.ts"
 import type { AgentChannelChatRouteBody, AgentChannelChatRouteHandlerOptions } from "./server.ts"
 import type { TelegramAdapterConfig } from "@chat-adapter/telegram"
-import { encodeRouteSegment, resolveRuntimeValue } from "@vite-hub/runtime"
+import { consoleInvocationUrl, resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime"
 import type { Adapter, FileUpload } from "chat"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
+import { channelEnv, channelEnvValue } from "./channel-env.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 
 export const messageChannelTitleSupportContextKey = "channel.delivery.supportsTitle"
@@ -495,7 +496,8 @@ export interface GitHubPullRequestFilter {
 }
 
 export interface GitHubChannelActivityOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
-  publicUrl: MaybeResolvable<string, AgentCallbackContext<TRuntimeConfig>>
+  /** Public Console origin. Defaults to `vitehub({ publicUrl })`. */
+  publicUrl?: MaybeResolvable<string, AgentCallbackContext<TRuntimeConfig>>
 }
 
 export interface GitHubChannelOptions<
@@ -1335,44 +1337,8 @@ function cleanSecret(value: unknown): string | undefined {
   return hasRuntimeType(secret, "string") && secret.trim() ? secret.trim() : undefined
 }
 
-function runtimeEnv<TRuntimeConfig extends AgentRuntimeConfig>(
-  name: string,
-  context: AgentCallbackContext<TRuntimeConfig>,
-): unknown {
-  return context.cloudflare?.env?.[name]
-    ?? globalThis.process?.env?.[name]
-}
-
-const serverEnvModuleId = "#vitehub/env/server"
-
-async function githubEnv(event?: unknown): Promise<Record<string, unknown>> {
-  const processEnv = globalThis.process?.env
-  const fallback = processEnv
-    ? {
-        appId: processEnv.GITHUB_APP_ID,
-        appInstallationId: processEnv.GITHUB_APP_INSTALLATION_ID,
-        appPrivateKey: processEnv.GITHUB_APP_PRIVATE_KEY,
-        appPrivateKeyPath: processEnv.GITHUB_APP_PRIVATE_KEY_PATH,
-        token: processEnv.VITEHUB_GITHUB_TOKEN || processEnv.GH_TOKEN || processEnv.GITHUB_TOKEN,
-        webhookSecret: processEnv.GITHUB_WEBHOOK_SECRET,
-      }
-    : {}
-  try {
-    // hubEnv() rewrites the tagged import so Vite can resolve its generated module.
-    // SAFETY: The generated server env module exposes the optional useServerEnv entrypoint.
-    const module = await import(/* @vite-ignore */ /* @vitehub-env */ serverEnvModuleId) as { useServerEnv?: (event?: unknown) => unknown }
-    const env = module.useServerEnv?.(event)
-    const github = isRecord(env) && isRecord(env.github)
-      ? Object.fromEntries(Object.entries(env.github).filter(([, value]) => value !== undefined))
-      : {}
-    return {
-      ...fallback,
-      ...github,
-    }
-  }
-  catch {
-    return fallback
-  }
+async function githubEnv<TRuntimeConfig extends AgentRuntimeConfig>(context: GitHubAppContext<TRuntimeConfig>): Promise<Record<string, unknown>> {
+  return Object.fromEntries(Object.entries(await channelEnv("github", context)).filter(([, value]) => value !== undefined))
 }
 
 function githubAppOptions<TRuntimeConfig extends AgentRuntimeConfig>(
@@ -2156,6 +2122,9 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     return
   }
   let body = messageChannelReplyBody(context)
+  const deliveredFinalText = context.effect.intent === chatFinalReplyIntent && chatFinalReplyMode(context.input) === "pending"
+    ? context.finish?.text?.trim()
+    : undefined
   // Skip matching non-streaming text-only hook replies after confirmed final delivery.
   const finalText = context.effect.intent === chatFinalReplyIntent ? undefined : chatFinalReplyText(context.context)
   const payload = context.effect.payload
@@ -2188,7 +2157,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     const registrar = chat as AgentChatFinishExtension & ChatFinishDeliveryRegistrar
     if (registrar[chatFinishDeliveryRegistrarKey]) {
       setMessageChannelDeferredReplyTrace(context, callback => registrar[chatFinishDeliveryRegistrarKey]?.(message, async (capture) => {
-        if (context.effect.intent === chatFinalReplyIntent && body && !capture.error && !capture.skipped) setChatFinalReplyText(context.context, body.trim())
+        if (deliveredFinalText && !capture.error && !capture.skipped) setChatFinalReplyText(context.context, deliveredFinalText)
         await callback(capture)
       }, {
         continueOnError: context.effect.intent === chatFinalReplyIntent,
@@ -2203,7 +2172,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     : undefined
   if (adapter && context.run?.threadId) {
     await adapter.postMessage(adapter.channelIdFromThreadId(context.run.threadId), message)
-    if (context.effect.intent === chatFinalReplyIntent && body) setChatFinalReplyText(context.context, body.trim())
+    if (deliveredFinalText) setChatFinalReplyText(context.context, deliveredFinalText)
   }
 }
 
@@ -2645,8 +2614,8 @@ function telegramWebhookDefaults<TRuntimeConfig extends AgentRuntimeConfig>(
 ): AgentChannelDefinition<TRuntimeConfig>["webhooks"] {
   const defaults = {
     secretHeader: "x-telegram-bot-api-secret-token",
-    secretToken: (context: AgentCallbackContext<TRuntimeConfig>) =>
-      cleanSecret(runtimeEnv("TELEGRAM_WEBHOOK_SECRET_TOKEN", context)),
+    secretToken: async (context: AgentCallbackContext<TRuntimeConfig>) =>
+      cleanSecret(await channelEnvValue("telegram", "webhookSecret", context)),
   }
   if (webhooks === undefined || webhooks === true) return defaults
   if (webhooks === false) return false
@@ -2669,17 +2638,17 @@ function telegramAdapterResolver<TRuntimeConfig extends AgentRuntimeConfig>(
       webhookSecret,
     ] = await Promise.all([
       options.allowedUserIds === undefined ? undefined : resolveRuntimeValue(options.allowedUserIds, context),
-      options.apiBaseUrl === undefined ? undefined : resolveRuntimeValue(options.apiBaseUrl, context),
+      options.apiBaseUrl === undefined ? channelEnvValue("telegram", "apiBaseUrl", context) : resolveRuntimeValue(options.apiBaseUrl, context),
       options.apiUrl === undefined ? undefined : resolveRuntimeValue(options.apiUrl, context),
-      options.botToken === undefined ? runtimeEnv("TELEGRAM_BOT_TOKEN", context) : resolveRuntimeValue(options.botToken, context),
+      options.botToken === undefined ? channelEnvValue("telegram", "botToken", context) : resolveRuntimeValue(options.botToken, context),
       options.longPolling === undefined ? undefined : resolveRuntimeValue(options.longPolling, context),
       options.userName === undefined ? undefined : resolveRuntimeValue(options.userName, context),
-      options.webhookSecret === undefined ? runtimeEnv("TELEGRAM_WEBHOOK_SECRET_TOKEN", context) : resolveRuntimeValue(options.webhookSecret, context),
+      options.webhookSecret === undefined ? channelEnvValue("telegram", "webhookSecret", context) : resolveRuntimeValue(options.webhookSecret, context),
     ])
     const { createTelegramAdapter } = await import("@chat-adapter/telegram")
     return createTelegramAdapter({
       ...(allowedUserIds ? { allowedUserIds } : {}),
-      ...(apiBaseUrl ? { apiBaseUrl } : {}),
+      ...(apiBaseUrl ? { apiBaseUrl: cleanSecret(apiBaseUrl) } : {}),
       ...(apiUrl ? { apiUrl } : {}),
       ...(botToken ? { botToken: cleanSecret(botToken) } : {}),
       ...(longPolling ? { longPolling } : {}),
@@ -2710,7 +2679,7 @@ function discordAdapterResolver<TRuntimeConfig extends AgentRuntimeConfig>(
   }
   const options: DiscordAdapterOptions = input === true ? {} : input
   const { longContent, ...adapterOptions } = options
-  return async () => {
+  return async (context) => {
     let createDiscordAdapter: (options?: Record<string, unknown>) => Adapter
     try {
       ({ createDiscordAdapter } = await import("@chat-adapter/discord"))
@@ -2718,11 +2687,14 @@ function discordAdapterResolver<TRuntimeConfig extends AgentRuntimeConfig>(
     catch (error) {
       throw agentDiagnostics.AGENT_R0365({ message: "[vitehub] discord({ adapter: true }) requires @chat-adapter/discord to be installed.", cause: error })
     }
-    const botToken = cleanSecret(adapterOptions.botToken)
+    const applicationId = cleanSecret(adapterOptions.applicationId ?? await channelEnvValue("discord", "applicationId", context))
+    const botToken = cleanSecret(adapterOptions.botToken ?? await channelEnvValue("discord", "botToken", context))
+    const publicKey = cleanSecret(adapterOptions.publicKey ?? await channelEnvValue("discord", "publicKey", context))
     const adapter = createDiscordAdapter({
       ...adapterOptions,
+      ...(applicationId ? { applicationId } : {}),
       ...(botToken ? { botToken } : {}),
-      ...(adapterOptions.publicKey ? { publicKey: cleanSecret(adapterOptions.publicKey) } : {}),
+      ...(publicKey ? { publicKey } : {}),
     })
     addDiscordThreadTitleSupport(adapter, adapterOptions, botToken)
     if (longContent?.mode === "split") {
@@ -2912,17 +2884,16 @@ async function githubPullRequestMatchesFilter<TRuntimeConfig extends AgentRuntim
 async function githubActivitySessionLink<TRuntimeConfig extends AgentRuntimeConfig>(
   context: AgentChannelTriggerContext<TRuntimeConfig>,
   runId: string,
-  options: GitHubChannelActivityOptions<TRuntimeConfig>,
-): Promise<{ label: string, url: string }> {
+  options: GitHubChannelActivityOptions<TRuntimeConfig> = {},
+): Promise<{ label: string, url: string } | undefined> {
   const agentName = context.agentName || context.agentIdentity?.name
+  if (!options.publicUrl && !agentName) return
   if (!agentName) throw new Error("GitHub activity session links require an Agent identity.")
+  // The public URL callback uses the discovered name, while an explicit name identifies the invocation.
+  const publicUrl = options.publicUrl ? await resolveRuntimeValue(options.publicUrl, context) : resolvePublicUrl({ agentName: context.agentIdentity?.name || agentName })
+  if (!publicUrl) return
   const { agentInvocationId } = await import("./invocations.ts")
-  const id = await agentInvocationId(runId, agentName)
-  const publicUrl = await resolveRuntimeValue(options.publicUrl, context)
-  return {
-    label: "Current session",
-    url: new URL(`/_vitehub/agents/${encodeRouteSegment(agentName)}/invocations/${encodeURIComponent(id)}`, publicUrl).href,
-  }
+  return { label: "Current session", url: consoleInvocationUrl(publicUrl, agentName, await agentInvocationId(runId, agentName)) }
 }
 
 function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
@@ -2986,7 +2957,7 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
         const run = githubPullRequestRunMetadata(pullRequestContext, context.trigger.channelId)
         if (activity) {
           run.activity = {
-            links: activityOptions ? [await githubActivitySessionLink(context, run.runId, activityOptions)] : [],
+            links: [await githubActivitySessionLink(context, run.runId, activityOptions)].filter(link => link !== undefined),
             target: {
               issue: command.issueNumber,
               repository: command.repository,
@@ -3509,15 +3480,15 @@ export function telegram<
         options.botToken === undefined ? undefined : resolveRuntimeValue(options.botToken, context),
         secret === undefined ? undefined : resolveRuntimeValue(secret, context),
       ])
-      const resolvedBotToken = cleanSecret(botToken) || cleanSecret(runtimeEnv("TELEGRAM_BOT_TOKEN", context))
+      const resolvedBotToken = cleanSecret(botToken) || cleanSecret(await channelEnvValue("telegram", "botToken", context))
       if (!resolvedBotToken) {
         throw agentDiagnostics.AGENT_R0374({ message: "[vitehub] Telegram Channel synchronization requires telegram({ botToken }) or TELEGRAM_BOT_TOKEN." })
       }
       const resolvedSecretToken = secretToken === false
         ? undefined
-        : cleanSecret(secretToken) || cleanSecret(runtimeEnv("TELEGRAM_WEBHOOK_SECRET_TOKEN", context))
+        : cleanSecret(secretToken) || cleanSecret(await channelEnvValue("telegram", "webhookSecret", context))
       return createTelegramChannelSyncProvider({
-        apiBaseUrl: cleanSecret(apiUrl) || cleanSecret(apiBaseUrl) || cleanSecret(runtimeEnv("TELEGRAM_API_BASE_URL", context)),
+        apiBaseUrl: cleanSecret(apiUrl) || cleanSecret(apiBaseUrl) || cleanSecret(await channelEnvValue("telegram", "apiBaseUrl", context)),
         botToken: resolvedBotToken,
         mode: resolvedChannel.listener?.kind === "telegram-polling" || resolvedWebhooks === false
           ? "disabled"

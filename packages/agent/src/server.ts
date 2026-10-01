@@ -32,6 +32,7 @@ export type {
 export {
   AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE,
   agentInvocationId,
+  agentInvocationRerunInput,
   applyAgentInvocationStoreUpdate,
   createMemoryAgentInvocationStore,
   defineAgentInvocations,
@@ -47,6 +48,8 @@ export type {
   AgentInvocationPruneResult,
   AgentInvocationRecord,
   AgentInvocationRecordStatus,
+  AgentInvocationRerunInput,
+  AgentInvocationRerunUnavailableReason,
   AgentInvocationRetentionOptions,
   AgentInvocationSummary,
   AgentInvocations,

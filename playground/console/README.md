@@ -22,6 +22,10 @@ Console section renders. The `sync-inbox` Schedule returns a synthetic successfu
 run for **Run now**; it does not execute a handler. `rpc.ts` serves the Console's
 stateless RPC endpoint from those local fixture
 routes. Usage filters and pagination use the real usage aggregation code.
+Session details include rerun and delete actions. `Audit Console hierarchy`
+records its prompt, so rerun is enabled there. Delete removes a finished
+session until the server restarts. Rerun shows an error because the playground
+does not start Agents.
 This playground does not change the Console routes generated for Vite
 or Nuxt applications.
 
