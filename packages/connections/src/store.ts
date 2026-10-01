@@ -182,11 +182,14 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
       }
       if (legacyNames.has("vitehub_connection_pending")) {
         const key = await importSealKey(options.encryptionKey)
-        const rows = await db.all(sql`SELECT state, name, payload, expires_at, opened FROM vitehub_connection_pending`)
+        const now = Date.now()
+        const rows = await db.all(sql`SELECT state, name, payload, expires_at, opened FROM vitehub_connection_pending WHERE opened = 1 AND expires_at > ${now}`)
         for (const row of rows) {
           const pending = v.parse(legacyPendingRow, row)
           const value = v.parse(v.object({ actor: v.object({ id: v.string(), kind: v.string() }), redirectUri: v.string(), verifier: v.string() }), JSON.parse(await unseal(key, new TextEncoder().encode(JSON.stringify(["connection-pending", pending.state])), pending.payload)))
           await db.run(sql`INSERT INTO vitehub_connection_authorizations (state, name, actor, verifier, redirect_uri, expires_at) VALUES (${pending.state}, ${pending.name}, ${`${value.actor.kind}:${value.actor.id}`}, ${value.verifier}, ${value.redirectUri}, ${pending.expires_at}) ON CONFLICT (state) DO NOTHING`)
+          // Remove migrated rows so a consumed authorization cannot be restored on restart.
+          await db.run(sql`DELETE FROM vitehub_connection_pending WHERE state = ${pending.state}`)
         }
       }
       const columns = await db.all(sql`PRAGMA table_info(vitehub_connection_approvals)`)

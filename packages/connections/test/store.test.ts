@@ -39,10 +39,20 @@ it("migrates sealed grants and pending OAuth transactions from the legacy tables
     await db.run(sql`CREATE TABLE vitehub_connection_pending (state TEXT PRIMARY KEY, ticket TEXT NOT NULL, name TEXT NOT NULL, payload TEXT NOT NULL, expires_at INTEGER NOT NULL, opened INTEGER NOT NULL DEFAULT 0)`)
     await db.run(sql`INSERT INTO vitehub_connection_grants (name, provider, account, scopes, payload, key_id, revision, status, connected_at, updated_at) VALUES ('mail', 'google', 'account-1', '["mail.read"]', ${grantPayload}, 'legacy-key', 'legacy-revision', 'active', '2026-09-30T00:00:00.000Z', '2026-09-30T00:00:00.000Z')`)
     await db.run(sql`INSERT INTO vitehub_connection_pending (state, ticket, name, payload, expires_at, opened) VALUES ('legacy-state', 'legacy-ticket', 'mail', ${pendingPayload}, ${Date.now() + 60_000}, 1)`)
+    await db.run(sql`INSERT INTO vitehub_connection_pending (state, ticket, name, payload, expires_at, opened) VALUES ('unopened-state', 'unopened-ticket', 'mail', ${pendingPayload}, ${Date.now() + 60_000}, 0)`)
+    await db.run(sql`INSERT INTO vitehub_connection_pending (state, ticket, name, payload, expires_at, opened) VALUES ('expired-state', 'expired-ticket', 'mail', ${pendingPayload}, ${Date.now() - 1}, 1)`)
     const store = createDatabaseConnectionStore({ db, encryptionKey: key })
     expect(await store.secrets.read("connection/mail")).toMatchObject({ value: expect.stringContaining("legacy-access") })
     expect(await store.state.get("mail")).toMatchObject({ accountId: "account-1", status: "connected", scopes: ["mail.read"] })
     expect(await store.authorizations.take("legacy-state")).toMatchObject({ actor: "agent:agent-1", verifier: "legacy-verifier" })
+    expect(await store.authorizations.take("unopened-state")).toBeUndefined()
+    expect(await store.authorizations.take("expired-state")).toBeUndefined()
+    expect(await db.all(sql`SELECT state FROM vitehub_connection_pending ORDER BY state`)).toEqual([
+      { state: "expired-state" },
+      { state: "unopened-state" },
+    ])
+    const restarted = createDatabaseConnectionStore({ db, encryptionKey: key })
+    expect(await restarted.authorizations.take("legacy-state")).toBeUndefined()
   } finally {
     client.close()
   }
