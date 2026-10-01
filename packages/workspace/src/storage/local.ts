@@ -281,6 +281,25 @@ async function withFilesystemWriteLock<T>(lock: string, permissions: Pick<import
   })
 }
 
+async function withFilesystemWriterIntent<T>(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, operation: () => Promise<T>): Promise<T> {
+  // Publish intent before competing for the gate. Readers that observe this
+  // marker wait, so a writer cannot lose every gate race to new admissions.
+  const intents = `${lock}.writers`
+  const intent = `${intents}/${randomUUID()}`
+  await ensureLockDirectory(intents)
+  if (process.platform !== "win32") await applyMetadataPermissions(intents, permissions.mode & 0o770, permissions.gid)
+  await mkdir(intent, { mode: 0o700 })
+  try {
+    return await operation()
+  }
+  finally {
+    await rm(intent, { recursive: true, force: true })
+    await rmdir(intents).catch((error: NodeJS.ErrnoException) => {
+      if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code ?? "")) throw error
+    })
+  }
+}
+
 interface SharedReadLease {
   acquired: Promise<void>
   failure?: { error: unknown }
@@ -332,7 +351,10 @@ async function admitSharedReader(lock: string, permissions: Pick<import("node:fs
     batch.admitted = withFilesystemLock(`${lock}.gate`, permissions, description, async () => {
       readAdmissions.delete(lock)
       if (Date.now() >= batch.deadline) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
-      if (pendingWriters.has(lock)) return undefined
+      if (pendingWriters.has(lock) || await lstat(`${lock}.writers`).then(() => true).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false
+        throw error
+      })) return undefined
       let lease = sharedReadLeases.get(lock)
       if (!lease) {
         lease = await openSharedReadLease(lock, permissions, description)
@@ -388,14 +410,19 @@ async function withSharedFilesystemReadLock<T>(lock: string, permissions: Pick<i
     }
     // A writer in another process holds the gate while existing readers drain.
     // Do not extend their shared lease while that writer is waiting.
+    const writerIntent = await lstat(`${lock}.writers`).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined
+      throw error
+    })
     const gate = await lstat(`${lock}.gate`).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined
       throw error
     })
-    if (!gate && !pendingWriters.has(lock)) {
+    if (!writerIntent && !gate && !pendingWriters.has(lock)) {
       lease = await admitSharedReader(lock, permissions, description, deadline)
       if (lease) break
     }
+    if (writerIntent) await validateLockDirectory(`${lock}.writers`)
     if (gate) await validateLockDirectory(`${lock}.gate`)
     if (Date.now() >= deadline) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
     await delay(25)
@@ -454,7 +481,7 @@ async function withWorkspacePathLock<T>(root: string, path: string, operation: (
     const next = () => lock(index + 1)
     const description = `${readOnly ? "read" : "write"} Workspace path: ${lockedPath}`
     return !readOnly && index === paths.length - 1
-      ? await withPendingWriter(lockPath, () => withFilesystemWriteLock(lockPath, permissions, description, next))
+      ? await withPendingWriter(lockPath, () => withFilesystemWriterIntent(lockPath, permissions, () => withFilesystemWriteLock(lockPath, permissions, description, next)))
       : await withSharedFilesystemReadLock(lockPath, permissions, description, next)
   }
 
