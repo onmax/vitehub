@@ -51,7 +51,7 @@ describe("Email development outbox output", () => {
     const { definition } = await configure(plugin, root, "serve")
     const load = plugin.load
     if (!(load instanceof Function)) throw new Error("Expected the Email load hook")
-    const virtual: unknown = await load.call({}, "\0#vitehub/email/definition")
+    const virtual: unknown = await Reflect.apply(load, undefined, ["\0#vitehub/email/definition"])
     if (typeof virtual !== "string") throw new Error("Expected the virtual definition source")
     const file = join(root, "virtual-email.mjs")
     await writeFile(file, virtual)
