@@ -79,7 +79,6 @@
     "./agent/invocations/sqlite": "./dist/agent/invocations/sqlite.js",
     "./agent/mcp": "./dist/agent/mcp.js",
     "./agent/presets/babysitter": "./dist/agent/presets/babysitter.js",
-    "./agent/presets/babysitter/server": "./dist/agent/presets/babysitter/server.js",
     "./agent/presets/workspace": "./dist/agent/presets/workspace.js",
     "./agent/runtime/process": "./dist/agent/runtime/process.js",
     "./agent/server": "./dist/agent/server.js",

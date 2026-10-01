@@ -41,6 +41,8 @@ export interface BabysitterRuntimeOptions {
   inboxPath?: string;
   /** Inbox tables in shared SQL storage, for example `agentState.extension("babysitter")`. */
   inboxStorage?: PullRequestInboxStorage;
+  /** Separates this Agent's inbox in shared storage. Defaults to the Agent name. */
+  inboxScope?: string;
   repositories: string[];
   concurrency: number;
   /** Public Console origin. Defaults to `vitehub({ publicUrl })`. */
@@ -92,7 +94,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   // unverified names must never suppress activity feedback.
   const activityAuthors = verifiedHostIdentity ? [verifiedHostIdentity] : [];
   const pullRequestInbox = new PullRequestInbox({
-    ...(options.inboxStorage ? { storage: options.inboxStorage } : { path: options.inboxPath }),
+    ...(options.inboxStorage ? { storage: options.inboxStorage, scope: options.inboxScope ?? options.agentName ?? baseAgent.name ?? "" } : { path: options.inboxPath }),
     repositories: options.repositories,
     filter: presetOptions.filter,
     activityAuthors,

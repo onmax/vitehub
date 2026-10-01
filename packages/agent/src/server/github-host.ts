@@ -147,6 +147,70 @@ function appJwt(appId: number, privateKey: string): string {
   return `${data}.${createSign("RSA-SHA256").update(data).sign(privateKey).toString("base64url")}`
 }
 
+export interface GitHubAppEnvironment {
+  appId: number
+  privateKey: string
+  /** Fixed installation. Without it, each repository resolves its own installation. */
+  installationId?: number
+  /** Fallback token for repositories without an App installation. */
+  token?: string
+  userAgent?: string
+}
+
+/**
+ * GitHub App credentials for `createGitHubHost()` that resolve the installation of each
+ * repository from the App, and the App's bot identity for commits. Results are cached.
+ */
+export function createGitHubAppCredentials(app: GitHubAppEnvironment) {
+  const installations = new Map<string, Promise<number>>()
+  let identity: Promise<{ login: string, email: string }> | undefined
+  const request = async (path: string, signal?: AbortSignal): Promise<unknown> => {
+    const response = await fetch(`https://api.github.com${path}`, {
+      headers: { accept: "application/vnd.github+json", authorization: `Bearer ${appJwt(app.appId, app.privateKey)}`, "user-agent": app.userAgent || "vitehub" },
+      signal,
+    })
+    if (!response.ok) throw agentDiagnostics.AGENT_R0757({ message: `GitHub App request ${path} failed with ${response.status}.` })
+    return await response.json()
+  }
+  const installation = (repository: string, signal?: AbortSignal) => {
+    const key = owner(repository)
+    let pending = installations.get(key)
+    if (!pending) {
+      pending = request(`/repos/${repository}/installation`, signal).then((body) => {
+        const id = isRuntimeRecord(body) ? body.id : undefined
+        if (!hasRuntimeType(id, "number") || !Number.isSafeInteger(id) || id <= 0) throw agentDiagnostics.AGENT_R0757({ message: `GitHub App is not installed for ${repository}.` })
+        return id
+      })
+      // A failed lookup, for example before the App is installed, is retried on the next request.
+      pending.catch(() => installations.delete(key))
+      installations.set(key, pending)
+    }
+    return pending
+  }
+  return {
+    async credentials(context: GitHubHostCredentialContext): Promise<GitHubHostCredentials> {
+      if (!context.repository) return { token: app.token }
+      const installationId = app.installationId ?? await installation(context.repository, context.signal)
+      return { appId: app.appId, installationId, owner: owner(context.repository), privateKey: app.privateKey, token: app.token }
+    },
+    /** The App bot's login and noreply email, used as the commit author. */
+    async identity(): Promise<{ login: string, email: string }> {
+      identity ??= (async () => {
+        const body = await request("/app")
+        const slug = isRuntimeRecord(body) ? body.slug : undefined
+        if (!hasRuntimeType(slug, "string") || !slug) throw agentDiagnostics.AGENT_R0757({ message: "GitHub App response did not include a slug." })
+        const login = `${slug}[bot]`
+        const user = await fetch(`https://api.github.com/users/${encodeURIComponent(login)}`, { headers: { accept: "application/vnd.github+json", "user-agent": app.userAgent || "vitehub" } })
+        const userBody: unknown = user.ok ? await user.json() : undefined
+        const id = isRuntimeRecord(userBody) ? userBody.id : undefined
+        return { login, email: hasRuntimeType(id, "number") ? `${id}+${login}@users.noreply.github.com` : `${login}@users.noreply.github.com` }
+      })()
+      identity.catch(() => { identity = undefined })
+      return await identity
+    },
+  }
+}
+
 function owner(repository: string): string {
   return repository.split("/", 1)[0]!.toLowerCase()
 }

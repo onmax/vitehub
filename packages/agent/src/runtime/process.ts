@@ -7,6 +7,7 @@ import { shareAgentCapacityOptions } from "../internal/agent-capacity.ts"
 
 import type { AgentDriverCapacityOptions, AgentDriverCapacityQueueOptions, AgentDriverCapacitySample, AgentDriverCapacitySampleContext } from "../types.ts"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
+import { isRuntimeRecord } from "../internal/runtime-type.ts"
 
 export interface ProcessAgentCapacityOptions {
   concurrency: number
@@ -226,3 +227,84 @@ export async function createProcessAgentInvocations(
 
 export { createProcessAgentHost } from './process-host.ts'
 export type { ProcessAgentHost, ProcessAgentHostOptions } from './process-host.ts'
+
+/**
+ * Starts the process hosts that discovered Agents contribute, for example through the Babysitter
+ * preset. The generated Nitro plugin owns one instance per server process.
+ */
+export function createAgentProcessHosts(options: {
+  names: readonly string[]
+  registry: import("../types.ts").AgentRegistry
+  state: () => { extension(name: string): import("../state/sqlite.ts").SqliteAgentStateExtension }
+  dataDir?: string
+  /** Defaults to starting only when NODE_ENV is production or VITEHUB_AGENT_PROCESS_HOSTS is "1". */
+  enabled?: boolean
+}): {
+  start(): void
+  close(): Promise<void>
+  wake(reason?: string): void
+  status(): "starting" | "accepting" | "draining" | "drained" | "failed"
+  health(): Promise<{ status: "healthy" | "degraded", agents: Record<string, unknown> }>
+} {
+  const hosts = new Map<string, import("../agent-process-host.ts").AgentProcessHostInstance>()
+  const failures = new Map<string, string>()
+  let starting: Promise<void> | undefined
+  let closed = false
+  // A development server with production credentials must not repair real PRs by accident.
+  const enabled = options.enabled ?? (process.env.NODE_ENV === "production" || process.env.VITEHUB_AGENT_PROCESS_HOSTS === "1")
+  return {
+    start() {
+      if (starting || closed || !enabled) return
+      starting = (async () => {
+        const { getAgentFromRegistry } = await import("../index.ts")
+        const { getAgentProcessHostContribution } = await import("../agent-process-host.ts")
+        const { join } = await import("node:path")
+        for (const agentName of options.names) {
+          try {
+            const agent = await getAgentFromRegistry(agentName, options.registry)
+            const contribution = getAgentProcessHostContribution(agent)
+            if (!contribution) {
+              failures.set(agentName, "The Agent has no process host contribution.")
+              continue
+            }
+            const host = await contribution.create({ agentName, agent, state: options.state(), dataDir: join(options.dataDir ?? ".vitehub/agents", agentName) })
+            if (closed) {
+              await host.close()
+              return
+            }
+            hosts.set(agentName, host)
+            host.start()
+          }
+          catch (error) {
+            failures.set(agentName, error instanceof Error ? error.message : String(error))
+            console.error(`[vitehub] Agent process host "${agentName}" did not start.`, error)
+          }
+        }
+      })()
+    },
+    async close() {
+      closed = true
+      await starting
+      await Promise.all([...hosts.values()].map(host => host.close()))
+    },
+    wake(reason) {
+      for (const host of hosts.values()) host.wake(reason)
+    },
+    status() {
+      if (!enabled) return "drained"
+      const statuses = [...hosts.values()].map(host => host.status())
+      if (failures.size && !statuses.length) return "failed"
+      if (!statuses.length) return closed ? "drained" : "starting"
+      for (const status of ["failed", "draining", "starting", "accepting"] as const) if (statuses.includes(status)) return status
+      return "drained"
+    },
+    async health() {
+      const agents: Record<string, unknown> = {}
+      for (const [name, reason] of failures) agents[name] = { status: "degraded", reason }
+      for (const [name, host] of hosts) agents[name] = await host.health()
+      if (!enabled) for (const name of options.names) agents[name] = { status: "degraded", reason: "Process hosts start in production or with VITEHUB_AGENT_PROCESS_HOSTS=1." }
+      const degraded = Object.values(agents).some(agent => isRuntimeRecord(agent) && agent.status !== "healthy")
+      return { status: degraded ? "degraded" : "healthy", agents }
+    },
+  }
+}
