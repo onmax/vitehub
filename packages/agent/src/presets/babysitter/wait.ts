@@ -84,23 +84,31 @@ export function createCheckWait(observed: Snapshot, policy: Pick<BabysitterWaitP
  * passes; it never authorizes a merge.
  */
 export function shouldKeepWaiting(s: Snapshot, requiredChecks: GitHubRequiredCheckState, policy: BabysitterWaitPolicy): boolean {
+  return wakeReasons(s, requiredChecks, policy).length === 0;
+}
+
+/** Why a parked PR needs a model pass or a direct merge. Empty means it keeps waiting. */
+export function wakeReasons(s: Snapshot, requiredChecks: GitHubRequiredCheckState, policy: BabysitterWaitPolicy): string[] {
   const wait = s.wait;
-  if (!wait || s.pr?.state !== "open") return false;
+  if (!wait) return ["no-wait"];
+  if (s.pr?.state !== "open") return ["not-open"];
   // The synchronize event for a pushed head has not arrived yet.
-  if (wait.headSha !== s.pr.head?.sha) return true;
-  if (wait.evidenceKey !== repairContextKey(s, policy)) return false;
-  if (s.pr.mergeable === false || s.pr.mergeable_state === "dirty") return false;
-  if (s.threads.some(thread => thread.isResolved !== true)) return false;
+  if (wait.headSha !== s.pr.head?.sha) return [];
+  const reasons: string[] = [];
+  if (wait.evidenceKey !== repairContextKey(s, policy)) reasons.push("feedback-changed");
+  if (s.pr.mergeable === false || s.pr.mergeable_state === "dirty") reasons.push("merge-conflict");
+  if (s.threads.some(thread => thread.isResolved !== true)) reasons.push("unresolved-thread");
   const known = new Set(wait.knownFailures ?? []);
-  if (failureKeys(s).some(key => !known.has(key))) return false;
+  if (failureKeys(s).some(key => !known.has(key))) reasons.push("new-failure");
+  if (reasons.length) return reasons;
   // The same failures are not new repair work. A later green result wakes below.
-  if (requiredChecks === "failed") return true;
+  if (requiredChecks === "failed") return [];
   const reviewing = currentCheckSignals(s).some(signal => policy.pendingReviewChecks.has(String(signal.name).toLowerCase())
     && pending.has(String(signal.status ?? signal.state)));
-  if (reviewing || requiredChecks === "pending") return true;
-  if (requiredChecks === "passed") return !policy.wakeWhenReady;
+  if (reviewing || requiredChecks === "pending") return [];
+  if (requiredChecks === "passed") return policy.wakeWhenReady ? ["ready-to-merge"] : [];
   // Unknown policy cannot prove readiness. Feedback and new failures still wake the PR.
-  return true;
+  return [];
 }
 
 const externalWait = [

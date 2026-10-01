@@ -29,7 +29,7 @@ import { getAgentLayerOptions } from "../../agent-layers.ts";
 import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
 import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence } from "./merge.ts";
-import { createCheckWait, isExternalWaitResult, shouldKeepWaiting, type BabysitterWaitPolicy } from "./wait.ts";
+import { createCheckWait, isExternalWaitResult, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
 import { nonDefaultBase, stackRetargetBase } from "./stack.ts";
 
 export interface BabysitterRuntimeOptions {
@@ -341,13 +341,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   /** Wakes a parked PR only when its new events need a model pass or a direct merge. */
   async function evaluateWaits() {
     for (const snapshot of await pullRequestInbox.waitsToEvaluate()) {
-      const keep = shouldKeepWaiting(snapshot, await requiredCheckState(snapshot), waitPolicy);
+      const reasons = wakeReasons(snapshot, await requiredCheckState(snapshot), waitPolicy);
       const owner = { pullRequest: snapshot.number, repository: snapshot.repository };
-      if (keep) {
+      if (!reasons.length) {
         await pullRequestInbox.acknowledgeWait(snapshot);
         schedulerEvent("babysitter.wait.kept", { ...owner, head_sha: snapshot.pr?.head?.sha, avoided_invocation: true });
       } else if (await pullRequestInbox.wake(snapshot, `evaluated:${snapshot.generation}:${snapshot.revision ?? 0}`)) {
-        schedulerEvent("babysitter.wait.woken", owner);
+        schedulerEvent("babysitter.wait.woken", { ...owner, head_sha: snapshot.pr?.head?.sha, reasons });
       }
     }
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PullRequestInbox, type Snapshot } from "../src/server/github-inbox.ts";
-import { createCheckWait, isExternalWaitResult, shouldKeepWaiting, type BabysitterWaitPolicy } from "../src/presets/babysitter/wait.ts";
+import { createCheckWait, isExternalWaitResult, shouldKeepWaiting, wakeReasons, type BabysitterWaitPolicy } from "../src/presets/babysitter/wait.ts";
 import { snapshotCheckEvidence } from "../src/presets/babysitter/merge.ts";
 import { stackRetargetBase } from "../src/presets/babysitter/stack.ts";
 import { evaluateGitHubRequiredChecks } from "../src/server/github-required-checks.ts";
@@ -35,6 +35,19 @@ describe("Babysitter check waits", () => {
     expect(shouldKeepWaiting(await parked(s => { s.checks["check_run:2"] = { id: 2, name: "test", head_sha: head, status: "completed", conclusion: "failure", app: { id: 5 } } }), "failed", policy)).toBe(false);
     expect(shouldKeepWaiting(await parked(s => { s.pr!.mergeable_state = "dirty" }), "pending", policy)).toBe(false);
     expect(shouldKeepWaiting(await parked(s => { s.threads = [{ id: "T1", isResolved: false, comments: [] }] }), "pending", policy)).toBe(false);
+  });
+
+  it("names every reason a parked PR wakes", async () => {
+    expect(wakeReasons(await parked(), "pending", policy)).toEqual([]);
+    const snapshot = await parked(s => {
+      s.comments["9"] = { id: 9, body: "Please fix", user: { login: "reviewer" } };
+      s.threads = [{ id: "T1", isResolved: false, comments: [] }];
+      s.pr!.mergeable_state = "dirty";
+      s.checks["check_run:2"] = { id: 2, name: "test", head_sha: head, status: "completed", conclusion: "failure", app: { id: 5 } };
+    });
+    expect(wakeReasons(snapshot, "failed", policy)).toEqual(["feedback-changed", "merge-conflict", "unresolved-thread", "new-failure"]);
+    expect(wakeReasons(await parked(), "passed", { ...policy, wakeWhenReady: true })).toEqual(["ready-to-merge"]);
+    expect(wakeReasons(await parked(s => { delete s.wait }), "pending", policy)).toEqual(["no-wait"]);
   });
 
   it("ignores feedback from the worker's own identity", async () => {
