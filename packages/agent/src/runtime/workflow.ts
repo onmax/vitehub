@@ -8,7 +8,7 @@ import { decodeColocatedAgentSkills, withColocatedAgentSkills } from "../interna
 import { loadAgentWorkflowModule, loadAgentWorkflowRuntimeStateModule, loadConfiguredAgentWorkflowCapabilities } from "../internal/workflow-runtime-loaders.ts"
 import { agentInvocationRunId } from "../invocation-context.ts"
 import { agentInvocationRecoveryTasks } from "../internal/invocation-recovery.ts"
-import { bindAgentInvocations } from "../invocations.ts"
+import { bindAgentInvocations, inheritedAgentInvocationClaim } from "../invocations.ts"
 import { cloneWorkflowJsonValue, workflowBytesToBase64 } from "../internal/workflow-portability.ts"
 import { restoreResolvedAgentInvokerInput } from "../invoker.ts"
 import { hasParsedAgentMessageMeta, restoreParsedAgentMessageMeta } from "../internal/message-meta.ts"
@@ -51,6 +51,7 @@ export function agentWithColocatedSkills<Agent>(agent: Agent, sources: Parameter
 
 export interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
   journalAgentName?: string
+  invocationClaimToken?: string
   agentIdentity?: AgentHostIdentity
   capabilities?: Record<string, boolean>
   input?: AgentRunInput<CALL_OPTIONS>
@@ -332,6 +333,10 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
       enumerable: true,
       value: payload.run.runId,
     })
+  }
+
+  if (payload.invocationClaimToken) {
+    Object.defineProperty(runtimeContext, inheritedAgentInvocationClaim, { enumerable: true, value: payload.invocationClaimToken })
   }
 
   Object.defineProperty(runtimeContext, agentWorkflowExecutionContextKey, {

@@ -1,6 +1,6 @@
 import { createRuntimeContext } from "@vite-hub/runtime"
 
-import { AgentInvocationClaimConflict, exclusiveAgentInvocation } from "./invocations.ts"
+import { AgentInvocationClaimConflict, exclusiveAgentInvocation, pendingAgentInvocationAnnotation } from "./invocations.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { agentErrorMessage } from "./agent-error.ts"
 import { isResolvedAgentTriggerHandledInvocation, resolveAgentTriggerInvocation, runAgent } from "./index.ts"
@@ -177,7 +177,8 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
   const replayItem = async (item: unknown): Promise<ReplayChannelItem> => {
     const key = itemKey(history, item, channel)
     const stableId = channelReplayRunId(channel, key, options)
-    if (!options.force && await invocations?.getByRunId(stableId, agentName)) {
+    const existing = !options.force ? await invocations?.getByRunId(stableId, agentName) : undefined
+    if (existing && !(existing.status === "pending" && existing.annotations?.[pendingAgentInvocationAnnotation] === true)) {
       return { id: stableId, key, reason: "existing", status: "skipped" }
     }
     // A forced replay needs a new ID because the stable one already has an Invocation.

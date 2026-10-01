@@ -3,9 +3,10 @@ import * as v from "valibot"
 
 import { defineCollection } from "../../source/src/index.ts"
 import { defineChannel, defineChannelTrigger } from "../src/channels.ts"
-import { defineAgent, workflow } from "../src/index.ts"
+import { defineAgent, runAgentInline, workflow } from "../src/index.ts"
 import { setAgentWorkflowRuntimeLoaders } from "../src/internal/workflow-runtime-loaders.ts"
-import { bindAgentInvocations, createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/invocations.ts"
+import { bindAgentInvocations, createMemoryAgentInvocationStore, defineAgentInvocations, pendingAgentInvocationAnnotation } from "../src/invocations.ts"
+import { runAgentWorkflowDefinition } from "../src/runtime/workflow.ts"
 import { channelReplayRunId, replayChannel } from "../src/channel-replay.ts"
 
 afterEach(() => {
@@ -39,10 +40,12 @@ it("reserves concurrent Workflow replays before activity and hands the journal t
       }),
     },
   })
-  const providerRun = vi.fn(async (_payload: unknown, options: { id: string }) => {
-    const workerJournal = await bindAgentInvocations(invocations, { ...runtime, run: { runId: options.id } }, { agentName: "replay-workflow" })
+  const providerRun = vi.fn(async (payload: { invocationClaimToken?: string }, options: { id: string }) => {
+    const workerJournal = await bindAgentInvocations(invocations, { ...runtime, run: { runId: options.id } }, { agentName: "replay-workflow", replaceClaimToken: payload.invocationClaimToken })
     expect(workerJournal?.claimStatus).toBe("owned")
     await workerJournal?.running()
+    const duplicateWorker = await bindAgentInvocations(invocations, { ...runtime, run: { runId: options.id } }, { agentName: "replay-workflow", replaceClaimToken: payload.invocationClaimToken })
+    expect(duplicateWorker?.claimStatus).toBe("conflict")
     await workerJournal?.finish("completed")
     return { id: options.id, provider: "vercel", status: "completed", result: "done" }
   })
@@ -62,4 +65,66 @@ it("reserves concurrent Workflow replays before activity and hands the journal t
   expect(results.reduce((sum, result) => sum + result.skipped, 0)).toBe(1)
   expect(results.reduce((sum, result) => sum + result.failed, 0)).toBe(0)
   await expect(invocations.getByRunId(channelReplayRunId("mailbox", "m1"), "replay-workflow")).resolves.toMatchObject({ status: "completed" })
+})
+
+it("recovers an undispatched Workflow reservation after process loss and keeps confirmed dispatch skipped", async () => {
+  const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+  const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+  const channel = defineChannel("mailbox", {
+    history: { collection: defineCollection(async () => [{ id: "m1" }], { cursor: item => item.id, cursorSchema: v.string() }), key: item => item.id },
+    triggers: { received: defineChannelTrigger({ input: v.object({ id: v.string() }), invoke: () => ({ input: { prompt: "hello" } }) }) },
+  })
+  const providerRun = vi.fn(async (payload: { invocationClaimToken?: string }, options: { id: string }) => {
+    expect(payload.invocationClaimToken).toEqual(expect.any(String))
+    return { id: options.id, provider: "vercel", status: "queued" }
+  })
+  setAgentWorkflowRuntimeLoaders({
+    state: async () => ({ ...await import("@vite-hub/workflow/runtime/state"), getWorkflowRuntimeConfig: () => ({ provider: "openworkflow" as const }) }),
+    workflow: async () => ({ ...await import("@vite-hub/workflow"),
+      // SAFETY: The test only needs the Workflow run operation.
+      createWorkflow: () => ({ run: providerRun }) as never,
+    }),
+  })
+  const agent = defineAgent({ channels: { mailbox: channel }, driver: { run: () => "unused" }, invocations, name: "recover-workflow", runtime: workflow("recover-workflow") })
+  vi.useFakeTimers()
+  try {
+    const reservation = await bindAgentInvocations(invocations, { ...runtime, run: { runId: channelReplayRunId("mailbox", "m1"), annotations: { [pendingAgentInvocationAnnotation]: true } } }, { agentName: "recover-workflow", recoverPending: true })
+    expect(reservation?.claimStatus).toBe("owned")
+    // Simulate the reserving process exiting before provider dispatch, leaving its lease to expire.
+    await reservation?.handoffClaim()
+    expect((await replayChannel(agent, "mailbox", { runtime })).skipped).toBe(1)
+    await vi.advanceTimersByTimeAsync(30_001)
+    const results = await Promise.all([replayChannel(agent, "mailbox", { runtime }), replayChannel(agent, "mailbox", { runtime })])
+    expect(providerRun).toHaveBeenCalledOnce()
+    expect(results.reduce((sum, result) => sum + result.processed, 0)).toBe(1)
+    expect(results.reduce((sum, result) => sum + result.skipped, 0)).toBe(1)
+    await vi.advanceTimersByTimeAsync(30_001)
+    expect((await replayChannel(agent, "mailbox", { runtime })).skipped).toBe(1)
+    expect(providerRun).toHaveBeenCalledOnce()
+  } finally { vi.useRealTimers() }
+})
+
+it("adopts a dispatch claim in the real worker before Driver execution", async () => {
+  const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+  const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+  let release!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const running = new Promise<void>(resolve => { entered = resolve })
+  const driver = vi.fn(async () => { entered(); await gate; return "done" })
+  const agent = defineAgent({ driver: { run: driver }, invocations, name: "handoff-worker", runtime: false })
+  const reservation = await bindAgentInvocations(invocations, { ...runtime, run: { runId: "handoff-worker-run", annotations: { [pendingAgentInvocationAnnotation]: true } } }, { agentName: "handoff-worker", recoverPending: true })
+  const token = await reservation?.handoffClaim()
+  expect(token).toEqual(expect.any(String))
+  const context = { id: "handoff-worker-run", name: "handoff-worker", payload: { invocationClaimToken: token, input: { prompt: "hello" } }, provider: "openworkflow" as const }
+  const execution = runAgentWorkflowDefinition(agent, context, (definition, runtime, input) => runAgentInline(definition, runtime, input))
+  try {
+    await Promise.race([running, execution])
+    expect(await reservation?.handoffClaim()).toBeUndefined()
+    await reservation?.releaseClaim()
+    await expect(runAgentWorkflowDefinition(agent, context, (definition, runtime, input) => runAgentInline(definition, runtime, input))).rejects.toThrow("Invocation already exists or is claimed")
+    expect(driver).toHaveBeenCalledOnce()
+    release()
+    await execution
+  } finally { release(); await execution.catch(() => undefined) }
 })

@@ -3,6 +3,7 @@ import * as v from "valibot"
 
 import { defineCollection } from "../../source/src/index.ts"
 import { defineChannel, defineChannelTrigger } from "../src/channels.ts"
+import { pendingAgentInvocationAnnotation } from "../src/invocations.ts"
 import { defineAgent } from "../src/index.ts"
 import { channelReplayRunId, createMemoryAgentInvocationStore, defineAgentInvocations, describeChannelHistory, replayChannel } from "../src/server.ts"
 
@@ -159,6 +160,39 @@ describe("replayChannel()", () => {
     expect(second).toMatchObject({ processed: 0, skipped: 4 })
     expect(second.items.every(item => item.reason === "existing")).toBe(true)
     expect(label).not.toHaveBeenCalled()
+  })
+
+  it.each(["create", "claim"])("recovers an ambiguous %s reservation before retrying history replay", async operation => {
+    const store = createMemoryAgentInvocationStore()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let started!: () => void
+    const blocked = new Promise<void>(resolve => { started = resolve })
+    let delayed = false
+    const pause = async (name: string) => { if (name === operation && !delayed) { delayed = true; started(); await gate } }
+    const invocations = defineAgentInvocations({ store: {
+      ...store,
+      create: async (...args: Parameters<typeof store.create>) => { await pause("create"); return await store.create(...args) },
+      claim: async (...args: Parameters<typeof store.claim>) => { await pause("claim"); return await store.claim(...args) },
+    } })
+    const { agent, run, label } = labeller({ invocations })
+    const runtime = { memo: vi.fn(), run: { runId: "host-run", annotations: Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`tag${i}`, i])) }, runtime: "unknown" as const, waitUntil: () => {} }
+    vi.useFakeTimers()
+    const initial = replayChannel(agent, "mailbox", { limit: 1, runtime })
+    try {
+      await blocked
+      await vi.advanceTimersByTimeAsync(1_001)
+      expect((await initial).failed).toBe(1)
+      expect(run).not.toHaveBeenCalled()
+      release()
+      await vi.advanceTimersByTimeAsync(0)
+      expect((await invocations.getByRunId(channelReplayRunId("mailbox", "m1")))?.annotations?.[pendingAgentInvocationAnnotation]).toBe(true)
+      const retry = await replayChannel(agent, "mailbox", { limit: 1, runtime })
+      expect(retry).toMatchObject({ failed: 0, processed: 1, skipped: 0 })
+      expect(run).toHaveBeenCalledOnce()
+      expect(label).toHaveBeenCalledOnce()
+      expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).skipped).toBe(1)
+    } finally { release(); await initial; vi.useRealTimers() }
   })
 
   it("replays existing items again with force", async () => {
