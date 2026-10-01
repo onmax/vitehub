@@ -46,19 +46,27 @@ const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
 })
 
 describe("agentInvocationRerunInput", () => {
-  it.each([
-    "different text",
-    createMessage({ role: "user", text: "attached message", parts: [{ type: "file", mediaType: "text/plain", data: "attachment" }] }),
-  ])("rejects singular message input alongside a prompt: %s", async (message) => {
-    const record = await journaled({ message, prompt: "Hi" })
-    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-messages" })
-  })
-
   it("rejects an explicitly supplied empty messages array", async () => {
     const record = await journaled({ messages: [], prompt: "Hi" })
     expect(record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes).toMatchObject({
       "input.hasMessages": true,
     })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-messages" })
+  })
+
+
+  it("rejects an explicitly empty messages array alongside a prompt", async () => {
+    const record = await journaled({ messages: [], prompt: "Hi" }, { metadataContent: ["input.prompt"] })
+    expect(record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes)
+      .toMatchObject({ "input.hasMessages": true })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-messages" })
+  })
+
+  it.each([
+    "different text",
+    createMessage({ role: "user", text: "attached message", parts: [{ type: "file", mediaType: "text/plain", data: "attachment" }] }),
+  ])("rejects singular message input alongside a prompt: %s", async (message) => {
+    const record = await journaled({ message, prompt: "Hi" })
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-messages" })
   })
 
@@ -394,9 +402,13 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput(bounded)).toEqual({ available: false, reason: "input-truncated" })
   })
 
+  it.each(["pending", "running", "completed", "failed", "cancelled"] as const)("checks record status before rerun: %s", (status) => {
+    expect(agentInvocationRerunInput({ status, observations: [start({ "input.prompt": "Hi" })] })).toEqual(status === "pending" || status === "running"
+      ? { available: false, reason: "invocation-not-terminal" }
+      : { available: true, prompt: "Hi" })
+  })
+
   it("requires a complete start observation with a text prompt", () => {
-    expect(agentInvocationRerunInput({ status: "running", observations: [start({ "input.prompt": "Hi" })] }))
-      .toEqual({ available: false, reason: "invocation-not-terminal" })
     expect(agentInvocationRerunInput({ observations: [] })).toEqual({ available: false, reason: "input-not-captured" })
     expect(agentInvocationRerunInput({ observations: [start({ "input.prompt": "  " })] })).toEqual({ available: false, reason: "input-not-captured" })
     expect(agentInvocationRerunInput({ observations: [start({ "input.prompt": "Hi", [AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE]: true })] }))
