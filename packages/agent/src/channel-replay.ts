@@ -162,9 +162,16 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
   item: unknown,
 ): Promise<ReplayChannelItem> {
   const stableId = channelMessageRunId(run.channel, key, run)
-  const legacyId = `${run.dryRun ? "channel-replay-dry-run" : "channel-replay"}:${encodeURIComponent(run.channel)}:${encodeURIComponent(key)}`
+  // Predecessor replay IDs joined the raw Channel and key without escaping.
+  const legacyPrefix = run.dryRun ? "channel-replay-dry-run" : "channel-replay"
+  const legacyId = `${legacyPrefix}:${run.channel}:${key}`
   const legacy = !run.force ? await run.invocations?.getByRunId(legacyId, run.agentName) : undefined
-  if (legacy) return { id: stableId, key, reason: "existing", status: "skipped" }
+  if (legacy && (!legacy.channelId || legacy.channelId === run.channel)) {
+    if (!legacy.channelId && Object.keys(agentChannelOptions(run.agent)).some(channel => channel !== run.channel && legacyId.startsWith(`${legacyPrefix}:${channel}:`))) {
+      return { error: "Cannot identify the owning Channel of the legacy replay Invocation. Use force to replay this item explicitly.", id: stableId, key, status: "failed" }
+    }
+    return { id: stableId, key, reason: "existing", status: "skipped" }
+  }
   const existing = !run.force ? await run.invocations?.getByRunId(stableId, run.agentName) : undefined
   if (existing && !((existing.status === "pending" || existing.status === "running") && existing.annotations?.[pendingAgentInvocationAnnotation] === true)) {
     return { id: stableId, key, reason: "existing", status: "skipped" }

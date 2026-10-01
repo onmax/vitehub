@@ -402,8 +402,19 @@ export function splitAddresses(value: string | undefined): string[] {
   const addresses: string[] = []
   let current = ""
   let quoted = false
+  let escaped = false
   let angle = 0
   for (const character of value) {
+    if (quoted && escaped) {
+      current += character
+      escaped = false
+      continue
+    }
+    if (quoted && character === "\\") {
+      current += character
+      escaped = true
+      continue
+    }
     if (character === "\"") quoted = !quoted
     else if (!quoted && character === "<") angle += 1
     else if (!quoted && character === ">") angle = Math.max(0, angle - 1)

@@ -992,6 +992,23 @@ describe("gmail() Channel", () => {
     expect(requests).toEqual(["GET labels", "POST messages/m9/modify"])
   })
 
+  it.each([
+    String.raw`"Doe \"JD, Sr.\"" <jd@example.com>`,
+    String.raw`"Doe \\" <jd@example.com>`,
+    String.raw`"Doe \\\"JD, Sr.\"" <jd@example.com>`,
+  ])("preserves quoted pairs in address headers: %s", async address => {
+    const header = `${address}, max@example.com`
+    expect(splitAddresses(header)).toEqual([address, "max@example.com"])
+    const client: GmailClient = async () => ({ id: "m1", threadId: "thread-1", payload: { headers: [
+      { name: "To", value: header }, { name: "Cc", value: header },
+    ] } })
+    const message = await getGmailMessage(client, "m1", 100)
+    expect(message?.to).toEqual([address, "max@example.com"])
+    expect(message?.cc).toEqual([address, "max@example.com"])
+    expect(gmailMessagePrompt(message!)).toContain(`To: ${header}`)
+    expect(gmailMessagePrompt(message!)).toContain(`Cc: ${header}`)
+  })
+
   it("splits address headers outside quotes and angle brackets", () => {
     expect(splitAddresses("\"Doe, John\" <john@example.com>, <a,b@example.com>, max@example.com")).toEqual([
       "\"Doe, John\" <john@example.com>",

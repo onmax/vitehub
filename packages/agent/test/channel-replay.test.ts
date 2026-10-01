@@ -230,6 +230,7 @@ describe("replayChannel()", () => {
     { channelName: "mailbox", dryRun: false, key: "m1" },
     { channelName: "mail box:%", dryRun: false, key: "m 1:%" },
     { channelName: "mailbox", dryRun: true, key: "m1" },
+    { channelName: "mail box:%", dryRun: true, key: "m 1:%" },
   ])("preserves legacy replay journals for $channelName/$key, dry run: $dryRun", async ({ channelName, dryRun, key }) => {
     const invocations = memoryInvocations()
     const { channel, label } = mailbox()
@@ -237,7 +238,7 @@ describe("replayChannel()", () => {
     channel.history.key = () => key
     const run = vi.fn(() => "done")
     const agent = defineAgent({ channels: { [channelName]: channel }, driver: { run }, invocations, runtime: false })
-    const legacyId = `${dryRun ? "channel-replay-dry-run" : "channel-replay"}:${encodeURIComponent(channelName)}:${encodeURIComponent(key)}`
+    const legacyId = `${dryRun ? "channel-replay-dry-run" : "channel-replay"}:${channelName}:${key}`
     const journal = await bindAgentInvocations(invocations, { memo: vi.fn(), run: { runId: legacyId }, runtime: "unknown", waitUntil: () => {} })
     await journal?.running()
     await journal?.finish("completed")
@@ -246,6 +247,40 @@ describe("replayChannel()", () => {
     expect(label).not.toHaveBeenCalled()
     expect(await replayChannel(agent, channelName, { dryRun, force: true, limit: 1 })).toMatchObject({ processed: 1, skipped: 0 })
     if (dryRun) expect(await replayChannel(agent, channelName, { limit: 1 })).toMatchObject({ processed: 1, skipped: 0 })
+  })
+
+  it.each([
+    { channelName: "mailbox", key: "m 1", legacyKey: "m%201", named: false },
+    { channelName: "mailbox", key: "m1", legacyKey: "m1", named: true },
+  ])("keeps legacy replay identity scoped to the raw key and Agent: $key/$named", async ({ channelName, key, legacyKey, named }) => {
+    const invocations = memoryInvocations()
+    const { channel } = mailbox()
+    channel.history!.key = () => key
+    const run = vi.fn(() => "done")
+    const agent = defineAgent({ ...(named ? { name: "current" } : {}), channels: { [channelName]: channel }, driver: { run }, invocations, runtime: false })
+    const journal = await bindAgentInvocations(invocations, { memo: vi.fn(), run: { runId: `channel-replay:${channelName}:${legacyKey}` }, runtime: "unknown", waitUntil: () => {} }, named ? { agentName: "other" } : undefined)
+    await journal?.running()
+    await journal?.finish("completed")
+    expect(await replayChannel(agent, channelName, { limit: 1 })).toMatchObject({ processed: 1, skipped: 0, failed: 0 })
+    expect(run).toHaveBeenCalledOnce()
+  })
+
+  it.each(["a:b", undefined])("does not assign a colliding raw legacy ID to another Channel with owner %s", async owner => {
+    const invocations = memoryInvocations()
+    const { channel } = mailbox()
+    channel.history!.key = () => "b:c"
+    const run = vi.fn(() => "done")
+    const agent = defineAgent({ channels: { a: channel, "a:b": channel }, driver: { run }, invocations, runtime: false })
+    const journal = await bindAgentInvocations(invocations, { memo: vi.fn(), run: { runId: "channel-replay:a:b:c", ...(owner ? { channelId: owner } : {}) }, runtime: "unknown", waitUntil: () => {} })
+    await journal?.running()
+    await journal?.finish("completed")
+    const replay = await replayChannel(agent, "a", { limit: 1 })
+    expect(replay).toMatchObject(owner ? { processed: 1, skipped: 0, failed: 0 } : { processed: 0, skipped: 0, failed: 1 })
+    if (owner) expect(run).toHaveBeenCalledOnce()
+    else {
+      expect(run).not.toHaveBeenCalled()
+      expect(await replayChannel(agent, "a", { limit: 1, force: true })).toMatchObject({ processed: 1, failed: 0 })
+    }
   })
 
   it("keeps inline execution recoverable while its claim excludes concurrent replay", async () => {
