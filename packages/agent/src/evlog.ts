@@ -277,6 +277,7 @@ export interface AgentEvlogHost {
     hook(name: "evlog:drain", callback: (context: DrainContext) => void): unknown
     hook(name: "error", callback: (error: unknown, context: { event?: { req: Request & { context?: { requestId?: string } } } }) => void): unknown
     hook(name: "close", callback: () => Promise<void>): unknown
+    removeHook?(name: "request" | "evlog:drain" | "error" | "close", callback: unknown): unknown
   }
 }
 
@@ -286,22 +287,32 @@ export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { st
     return hasRuntimeType(value, "number") && Number.isInteger(value) ? value : undefined
   }
   return (host) => {
+    const installed: ["request" | "evlog:drain" | "error" | "close", unknown][] = []
     const started: { stop(): Promise<void> }[] = []
     let cleanupPromise: Promise<void> | undefined
     const cleanup = () => cleanupPromise ??= (async () => {
-      try { await Promise.allSettled(started.map(reporter => reporter.stop())) }
+      try {
+        await Promise.allSettled(started.map(reporter => reporter.stop()))
+      }
       finally {
         try { await telemetry.flush() }
-        finally { onClose?.() }
+        finally {
+          for (const [name, callback] of installed) host.hooks.removeHook?.(name, callback)
+          onClose?.()
+        }
       }
     })()
+    const register = (name: "request" | "evlog:drain" | "error" | "close", callback: unknown) => {
+      host.hooks.hook(name as never, callback as never)
+      installed.push([name, callback])
+    }
     try {
-      host.hooks.hook("request", event => {
+      register("request", event => {
         event.req.context ||= {}
         event.req.context.requestId ||= crypto.randomUUID()
       })
-      host.hooks.hook("evlog:drain", telemetry.drain)
-      host.hooks.hook("error", (error, context) => {
+      register("evlog:drain", telemetry.drain)
+      register("error", (error, context) => {
         const request = context.event?.req
         const status = statusCodeOf(error)
         const properties = {
@@ -323,10 +334,10 @@ export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { st
           reporter.start()
         }
       }
-      host.hooks.hook("close", cleanup)
+      register("close", cleanup)
     }
     catch (error) {
-      void cleanup()
+      void cleanup().catch(() => {})
       throw error
     }
   }

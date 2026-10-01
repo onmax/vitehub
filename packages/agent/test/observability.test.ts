@@ -333,9 +333,14 @@ it("cleans up telemetry when a later host attachment hook fails", async () => {
   const { useObservability } = await import("../src/observability.ts")
   const flush = vi.fn(async () => {})
   const plugin = installObservability({ service: "partial-attachment", exporter: { capture: async () => {}, exception: async () => {}, logs: async () => {}, flush } })
-  expect(() => plugin({ hooks: { hook(name) { if (name === "close") throw new Error("close hook failed") } } })).toThrow("close hook failed")
+  const removed: string[] = []
+  expect(() => plugin({ hooks: {
+    hook(name) { if (name === "close") throw new Error("close hook failed") },
+    removeHook(name) { removed.push(name) },
+  } })).toThrow("close hook failed")
   await new Promise(resolve => setTimeout(resolve, 10))
   expect(flush).toHaveBeenCalledOnce()
+  expect(removed).toEqual(["request", "evlog:drain", "error"])
   expect(() => useObservability()).toThrow("Observability is not configured")
 })
 
