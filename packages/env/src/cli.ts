@@ -99,8 +99,9 @@ async function inspectStage(input: EnvCliInspectInput, resolveProjectRoot: (vite
       const kit = await import(pathToFileURL(require.resolve("nuxt/kit")).href) as {
         loadNuxt: (options: { cwd: string, dev: true, envName: string, overrides: { devtools: { enabled: false }, vite: { mode: string }, vitehubCliDiscovery: true }, ready: true }) => Promise<{ close: () => Promise<void>, options: { vite?: import("vite").InlineConfig } }>
       }
+      const explicitEnv = { ...input.env }
       Object.assign(process.env, vite.loadEnv(input.stage, projectRoot, ""))
-      for (const [key, value] of Object.entries(input.env)) if (value !== undefined) process.env[key] = value
+      for (const [key, value] of Object.entries(explicitEnv)) if (value !== undefined) process.env[key] = value
       const nuxt = await kit.loadNuxt({ cwd: projectRoot, dev: true, envName: input.stage, overrides: { devtools: { enabled: false }, vite: { mode: input.stage }, vitehubCliDiscovery: true }, ready: true })
       try {
         const server = await vite.createServer({ ...nuxt.options.vite, ...config, configFile: false })
@@ -120,7 +121,7 @@ async function inspectStage(input: EnvCliInspectInput, resolveProjectRoot: (vite
   return await withViteStageServer(stageVite, input, async (server) => {
     // The Env plugin writes this module while the stage server resolves its config.
     // Nuxt reloads its stage-specific declarations before this server resolves config.
-    const modulePath = viteHubEnvServerModulePath(resolveProjectRoot(server.config.root))
+    const modulePath = viteHubEnvServerModulePath(server.config.root)
     const generated = await server.ssrLoadModule(pathToFileURL(modulePath).href)
     const inspect: unknown = generated.inspectServerEnv
     if (!v.is(v.function(), inspect)) throw envErrorDiagnostics.ENV_R0024({ message: `[vitehub] The generated Server Env module does not export inspectServerEnv(): ${modulePath}` })
