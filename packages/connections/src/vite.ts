@@ -30,6 +30,7 @@ const noExternalAddition = createNoExternalAddition("@vite-hub/connections");
 const generatedTypesManifest = ".vitehub/connections-types.json";
 const generatedTypesPath = ".vitehub/types/connections.d.ts";
 const generatedTypesOwnersManifest = ".vitehub/connections-types-owners.json";
+const generatedTypesOwnersRecoveryManifest = ".vitehub/connections-types-owners-recovery.json";
 const generatedTypesManifestEntrySchema = v.object({
   root: v.string(),
   hash: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
@@ -96,7 +97,22 @@ async function readManifest(root: string) {
 }
 
 async function readOwners(root: string) {
-  return await readTypesManifest(root, generatedTypesOwnersManifest, generatedTypesOwnerSchema);
+  const owners = await readTypesManifest(root, generatedTypesOwnersManifest, generatedTypesOwnerSchema);
+  if (owners?.length) return owners;
+  const recovery = await readTypesManifest(root, generatedTypesOwnersRecoveryManifest, generatedTypesOwnerSchema);
+  return recovery?.length ? recovery : owners;
+}
+
+async function writeOwners(root: string, owners: GeneratedTypesOwner[]): Promise<void> {
+  // Keep the complete shared owner list recoverable without scanning other app roots.
+  // Both files are replaced atomically under the target's ownership lock.
+  await writeTypesManifest(root, generatedTypesOwnersRecoveryManifest, owners);
+  await writeTypesManifest(root, generatedTypesOwnersManifest, owners);
+}
+
+async function removeOwners(root: string): Promise<void> {
+  await rm(resolve(root, generatedTypesOwnersManifest), { force: true });
+  await rm(resolve(root, generatedTypesOwnersRecoveryManifest), { force: true });
 }
 
 type GeneratedTypesEntry = v.InferOutput<typeof generatedTypesManifestEntrySchema>;
@@ -125,13 +141,13 @@ async function removeGeneratedOwner(target: string, origin: string): Promise<voi
     const file = resolve(target, generatedTypesPath);
     const previous = await readOptionalFile(file);
     if (remaining.length) {
-      await writeTypesManifest(target, generatedTypesOwnersManifest, remaining);
+      await writeOwners(target, remaining);
     } else {
       if (owners.length === 0) await removeLegacyDefaultTypes(target);
       if (previous !== undefined && removed.some(entry => typeHash(previous) === entry.hash) && (await lstat(file)).isFile()) {
         await rm(file, { force: true });
       }
-      await rm(resolve(target, generatedTypesOwnersManifest), { force: true });
+      await removeOwners(target);
     }
     const tracked = await readManifest(target);
     if (tracked) {
@@ -171,7 +187,7 @@ async function removeTrackedTypes(root: string): Promise<void> {
       const remaining = owners.filter(entry => resolve(target, entry.origin) !== root || isOtherProcessActive(entry));
       const removed = owners.filter(entry => !remaining.includes(entry));
       if (remaining.length) {
-        await writeTypesManifest(target, generatedTypesOwnersManifest, remaining);
+        await writeOwners(target, remaining);
         const currentOwners = remaining.filter(entry => resolve(target, entry.origin) === root);
         retained.push(...entries.filter(entry => resolve(root, entry.root) === target
           && currentOwners.some(owner => owner.owner.session === entry.owner?.session)));
@@ -179,7 +195,7 @@ async function removeTrackedTypes(root: string): Promise<void> {
         if (previous !== undefined && removed.some(entry => typeHash(previous) === entry.hash) && (await lstat(file)).isFile()) {
           await rm(file, { force: true });
         }
-        await rm(resolve(target, generatedTypesOwnersManifest), { force: true });
+        await removeOwners(target);
       }
     });
   }
@@ -202,7 +218,7 @@ async function recordGeneratedTypes(root: string, projectRoot: string, hash: str
 }
 
 async function recordGeneratedOwners(projectRoot: string, origin: string, hash: string, session: string, entries: GeneratedTypesOwner[]): Promise<void> {
-  await writeTypesManifest(projectRoot, generatedTypesOwnersManifest, [
+  await writeOwners(projectRoot, [
     // Every owner shares the declaration currently on disk, including a later writer's content.
     ...entries.filter(entry => !(resolve(projectRoot, entry.origin) === origin && entry.owner.session === session))
       .map(entry => ({ ...entry, hash })),

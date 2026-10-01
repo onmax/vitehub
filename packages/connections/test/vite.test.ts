@@ -239,13 +239,16 @@ describe("hubConnections", () => {
     await expect(readFile(firstFile)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.each(["missing", "malformed"])("preserves tracked declarations when shared ownership metadata is %s", async form => {
+  it.each(["missing", "malformed"])("preserves tracked declarations when both shared ownership copies are %s", async form => {
     const root = await createTempProject();
     const target = await createTempProject();
     await hubConnections({ projectRoot: target }).api.prepareTypes({ projectRoot: root });
     const owners = join(target, ".vitehub/connections-types-owners.json");
-    if (form === "missing") await rm(owners);
-    else await writeFile(owners, "{");
+    const recovery = join(target, ".vitehub/connections-types-owners-recovery.json");
+    for (const file of [owners, recovery]) {
+      if (form === "missing") await rm(file);
+      else await writeFile(file, "{");
+    }
     await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
     await expect(readFile(join(target, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
     await expect(readFile(join(root, ".vitehub/connections-types.json"))).resolves.toBeTruthy();
@@ -412,7 +415,7 @@ describe("hubConnections", () => {
     await expect(readFile(join(root, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
   });
 
-  it("preserves shared output when recovery cannot prove every owner", async () => {
+  it.each(["malformed", "missing"])("recovers %s shared metadata and retires output after the final owner", async (state) => {
     const firstRoot = await createTempProject();
     const secondRoot = await createTempProject();
     const sharedTarget = await createTempProject();
@@ -420,12 +423,27 @@ describe("hubConnections", () => {
 
     await hubConnections(options).api.prepareTypes({ projectRoot: firstRoot });
     await hubConnections(options).api.prepareTypes({ projectRoot: secondRoot });
-    await writeFile(join(sharedTarget, ".vitehub/connections-types-owners.json"), "{");
+    const ownersFile = join(sharedTarget, ".vitehub/connections-types-owners.json");
+    if (state === "malformed") await writeFile(ownersFile, "{");
+    else await rm(ownersFile);
 
     await hubConnections(options).api.prepareTypes({ projectRoot: firstRoot });
     await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: firstRoot });
+    await expect(readFile(join(firstRoot, ".vitehub/connections-types.json"))).rejects.toMatchObject({ code: "ENOENT" });
 
     await expect(readFile(join(sharedTarget, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+    // Cleanup must also recover the surviving owner without another preparation.
+    if (state === "malformed") await writeFile(ownersFile, "{");
+    else await rm(ownersFile);
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: secondRoot });
+    for (const file of [
+      join(sharedTarget, ".vitehub/types/connections.d.ts"),
+      ownersFile,
+      join(sharedTarget, ".vitehub/connections-types-owners-recovery.json"),
+      join(secondRoot, ".vitehub/connections-types.json"),
+    ]) {
+      await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
+    }
   });
 
   it("retires the default declaration when moving to a custom root", async () => {
