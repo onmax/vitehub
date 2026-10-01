@@ -47,10 +47,16 @@ export default async function channelReplayHandler(event: ConsoleRequestEvent): 
   catch {
     return replayError("Malformed Channel replay payload.", 400)
   }
-  if (!body || typeof body !== "object" || Array.isArray(body) || !("agent" in body) || typeof body.agent !== "string" || !body.agent.trim()) {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Request JSON is untyped until this boundary validates its object shape.
+  if (!body || typeof body !== "object" || Array.isArray(body) || !("agent" in body)) {
     return replayError("Channel replay requires an Agent name.", 400)
   }
-  const { agent: name, ...replay } = body
+  // SAFETY: the object guard above establishes a string-keyed JSON object.
+  const replayBody = body as Record<string, unknown>
+  const agentName = replayBody.agent
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The agent field is untyped request JSON until validated here.
+  if (typeof agentName !== "string" || !agentName.trim()) return replayError("Channel replay requires an Agent name.", 400)
+  const { agent: name, ...replay } = replayBody
   const agent = getConsoleAgentDefinition(name)
   if (!agent) return replayError("Channel replay is not available. Enable Console invocation for this Agent.", 404)
   const tasks = createRuntimeWaitUntilController({ forward: event.waitUntil })
