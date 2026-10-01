@@ -207,7 +207,7 @@ Every command accepts `--store <name>`, `--json`, `--url <url>` when Vite does n
 - `get` prints a string value as it is and other JSON values as formatted JSON. Binary values are written to stdout as bytes, or as base64 with `"encoding": "base64"` in `--json` output. A missing key exits with status 1.
 - `has` exits with status 0 when the key exists and 1 when it does not.
 - `set` writes a string. Add `--json-value` to parse the value as JSON. Use strings for integers outside JavaScript's safe integer range. A value that starts with `@` reads a UTF-8 file relative to the current directory. The output says if the key was created or updated. `--ttl <seconds>` sets an expiry and accepts positive fractional seconds. The `fs-lite` driver ignores TTL and Cloudflare KV rounds up to whole seconds with a minimum of 60 seconds, and Upstash requires at least one second and rounds accepted fractional TTLs up to whole seconds. The output reports the effective TTL and prints a notice when the driver ignores or changes the requested expiry.
-- `del` says if the key existed. Deleting a missing key changes nothing and exits with status 0.
+- `del` says if the key was found. Deleting a missing key changes nothing and exits with status 0.
 
 The KV storage deserializes stored strings that look like JSON, so a string such as `"2026"` can read back as the number `2026`. There is no `clear` command. Delete keys one at a time so that each change is explicit.
 

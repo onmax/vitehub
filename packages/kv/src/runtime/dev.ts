@@ -60,7 +60,7 @@ export interface KVDevSetResult {
 }
 
 export interface KVDevDeleteResult {
-  /** `true` when the key existed before the delete. */
+  /** `true` when the key was found before the delete. */
   deleted: boolean
   key: string
   store: string
@@ -282,7 +282,7 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
     case "del": {
       const key = requireKey(body)
       const existed = unwrap(await selected.storage.has(key))
-      if (existed) unwrap(await selected.storage.del(key))
+      unwrap(await selected.storage.del(key))
       const result: KVDevDeleteResult = { deleted: existed, key, store: selected.name }
       return result
     }

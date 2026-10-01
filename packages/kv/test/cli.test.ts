@@ -114,6 +114,15 @@ describe("KV review regressions", () => {
     expect(output.stderr.output()).toBe("No keys on this page.\nMore keys exist. Next page: --cursor next\n")
   })
 
+  it.each(["2147483648", "4294967296", "1e20", "1.5"])("rejects unsupported timeout before discovery: %s", async timeout => {
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runKVCli(["list", "--timeout", timeout, "--json"], output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message")
+    expect(output.stderr.output()).toBe("")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it("reports invalid binary payloads without throwing", async () => {
     const output = context()
     await expect(runKVCli(["get", "key", "--json"], output.context, { fetch: devServer({ encoding: "base64", found: true, key: "key", store: "default", value: "invalid!" }) })).resolves.toBe(1)
@@ -224,7 +233,7 @@ describe("vitehub kv", () => {
 
     const unchanged = context()
     await expect(runKVCli(["del", "greeting"], unchanged.context, { fetch: devServer({ deleted: false, key: "greeting", store: "default" }) })).resolves.toBe(0)
-    expect(unchanged.stdout.output()).toBe("Key greeting did not exist in store default. Nothing changed.\n")
+    expect(unchanged.stdout.output()).toBe("Key greeting was not found in store default. Deletion completed.\n")
 
     const json = context()
     await expect(runKVCli(["del", "greeting", "--json"], json.context, { fetch: devServer({ deleted: false, key: "greeting", store: "default" }) })).resolves.toBe(0)

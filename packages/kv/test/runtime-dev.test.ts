@@ -135,6 +135,16 @@ describe("KV dev runtime handler", () => {
     expect((await run({ key: "settings", operation: "has" })).body).toEqual({ exists: false, key: "settings", store: "default" })
   })
 
+  it("deletes an existing value despite a stale missing-key probe", async () => {
+    expect((await run({ key: "stale-delete", operation: "set", value: "remove me" })).status).toBe(200)
+    const has = vi.spyOn(kv, "has").mockResolvedValue([null, false])
+    try {
+      expect((await run({ key: "stale-delete", operation: "del" })).body).toEqual({ deleted: false, key: "stale-delete", store: "default" })
+      expect((await run({ key: "stale-delete", operation: "get" })).body).toMatchObject({ found: false })
+    }
+    finally { has.mockRestore() }
+  })
+
   it("accepts fractional TTLs and rejects empty stores without mutating default storage", async () => {
     expect((await run({ key: "fractional", operation: "set", ttl: 1.5, value: "x" })).status).toBe(200)
     expect((await run({ key: "empty-store", operation: "set", store: "", value: "x" })).status).toBe(400)
