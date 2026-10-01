@@ -24,6 +24,7 @@ import { createKVCloudflareProvisionStep } from "./provision.ts"
 import type { KVViteRuntimeConfig } from "./vite-config.ts"
 import type { KVModuleOptions, ResolvedKVModuleOptions } from "./types.ts"
 import type { ProviderJsonRecord } from "@vite-hub/internal/build/deployment-output"
+import type { ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import type { ViteHubCliContributor } from "@vite-hub/internal/cli"
 import type { ProvisionState } from "@vite-hub/internal/provision"
 import type { Plugin, ResolvedConfig } from "vite"
@@ -48,7 +49,7 @@ export interface KVVitePluginAPI {
 
 export type KVVitePlugin = Plugin & {
   api: KVVitePluginAPI
-  vitehub: { cli: () => Promise<ViteHubCliContributor> }
+  vitehub: ViteHubInspectionPluginMetadata & { cli: () => Promise<ViteHubCliContributor> }
   nitro: {
     name: string
     setup: (nitro: { options: NitroCloudflareKVTarget }) => void

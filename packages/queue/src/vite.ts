@@ -189,7 +189,7 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
     // SAFETY: Nitro adds this optional output config to Vite's resolved config; its directory remains unknown until checked below.
     const outputDir = (resolved as (ResolvedConfig & { nitro?: { output?: { dir?: unknown } } }) | undefined)?.nitro?.output?.dir
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Nitro output.dir is an unknown config value at this integration boundary; only strings are valid paths.
-    if (typeof outputDir === "string") return resolve(rootDir, outputDir)
+    if ((nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker) && typeof outputDir === "string") return resolve(rootDir, outputDir)
     return hosting === "cloudflare" ? createDefaultCloudflareOutputRoot(rootDir) : createDefaultVercelOutputRoot(rootDir)
   }
 

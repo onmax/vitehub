@@ -19,6 +19,7 @@ import {
 
 import type { BlobViteRuntimeConfig } from "./vite-config.ts"
 import type { BlobModuleOptions, BlobServeConfig } from "./types.ts"
+import type { ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import type { ViteHubCliContributor } from "@vite-hub/internal/cli"
 import type { ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import type { Plugin, ResolvedConfig } from "vite"
@@ -37,7 +38,7 @@ export interface BlobVitePluginAPI {
 }
 
 interface BlobProvisionContributingPlugin {
-  vitehub?: { cli?: () => Promise<ViteHubCliContributor> }
+  vitehub?: ViteHubInspectionPluginMetadata & { cli?: () => Promise<ViteHubCliContributor> }
 }
 
 export type BlobVitePlugin = Plugin & BlobProvisionContributingPlugin & { api: BlobVitePluginAPI }
@@ -289,7 +290,7 @@ export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBl
         }
       },
       inspect: () => {
-        if (!runtimeConfig || !blobCreatesProviderOutput(runtimeConfig.blob)) return
+        if (!runtimeConfig || !blobCreatesProviderOutput(runtimeConfig.blob) || cloudflareOwnedByNitro) return
         const projectRoot = resolveViteHubProjectRoot(resolved?.root ?? process.cwd())
         const functionName = resolveNitroVercelFunctionName(resolved ?? {}, "blob") ?? "__server.func"
         return {
