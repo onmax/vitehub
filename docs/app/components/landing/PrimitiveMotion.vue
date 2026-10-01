@@ -1,28 +1,21 @@
 <script setup lang="ts">
-const props = defineProps<{ name: string }>();
-
-const primitives = [
-  "workspace",
-  "kv",
-  "queue",
-  "workflow",
-  "schedule",
-  "sandbox",
-  "database",
-  "blob",
-  "auth",
-  "env",
-  "source",
-  "shell",
-];
-const delay = `${Math.max(0, primitives.indexOf(props.name)) * 60}ms`;
+const props = withDefaults(defineProps<{
+  name: string;
+  /** Run one scene. Remount the component to run it again. */
+  play?: boolean;
+  delay?: number;
+}>(), {
+  play: false,
+  delay: 0,
+});
 </script>
 
 <template>
   <svg
     viewBox="0 0 96 56"
     class="primitive-motion size-full"
-    :style="{ '--scene-delay': delay }"
+    :class="{ 'is-playing': props.play }"
+    :style="{ '--scene-delay': `${props.delay}ms` }"
     aria-hidden="true"
   >
     <template v-if="name === 'kv'">
@@ -157,8 +150,12 @@ const delay = `${Math.max(0, primitives.indexOf(props.name)) * 60}ms`;
 .target {
   animation-duration: var(--cycle);
   animation-delay: var(--scene-delay);
-  animation-iteration-count: infinite;
+  animation-iteration-count: 1;
   animation-fill-mode: both;
+}
+/* Scenes rest on their first frame until the landing page asks them to play. */
+.primitive-motion:not(.is-playing) * {
+  animation-play-state: paused;
 }
 .write {
   animation-name: arrive-right;

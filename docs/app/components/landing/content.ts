@@ -33,43 +33,57 @@ export const installOptions = {
   ],
 } as const;
 
-export const landingPaths = [
-  {
-    id: "agents",
-    name: "Agents",
-    description:
-      "Define one inspectable server actor, choose how it runs, and attach only the context and abilities it needs.",
-    tutorialPath: "/docs/getting-started/first-agent",
-    action: "Build your first Agent",
-    codeLabel: "server/agents/review.ts",
-    code: `import { defineAgent } from "vite-hub/agent"
-
-export default defineAgent({
-  description: "Reviews one repository change.",
-  driver: {
-    run({ prompt }) {
-      return { text: "Reviewing " + String(prompt ?? "the repository") + "." }
+export const agentStory = {
+  path: "server/agents/review.ts",
+  tutorialPath: "/docs/getting-started/first-agent",
+  code: [
+    'import { defineAgent } from "vite-hub/agent"',
+    'import { browser, skills } from "vite-hub/agent/capabilities"',
+    'import { github } from "vite-hub/agent/channels"',
+    "",
+    "export default defineAgent({",
+    '  description: "Reviews pull requests.",',
+    "  channels: { github: github({ pullRequest: true }) },",
+    '  driver: "codex",',
+    '  workspace: { mode: "write" },',
+    '  capabilities: [browser(), skills({ path: "./skills" })],',
+    "})",
+  ],
+  steps: [
+    {
+      id: "channel",
+      label: "Channel",
+      title: "A pull request opens",
+      description: "Channels start an Invocation from GitHub, Slack, HTTP, or web chat.",
+      lines: [2, 6],
+      to: "/docs/agents/channels",
     },
-  },
-})`,
-  },
-  {
-    id: "server-primitives",
-    name: "Server Primitives",
-    description:
-      "Use storage, queues, schedules, sandboxes, and more directly from ordinary server code.",
-    tutorialPath: "/docs/getting-started/first-server-primitive",
-    action: "Try a Server Primitive",
-    codeLabel: "server/api/settings.put.ts",
-    code: `import { kv } from "vite-hub/kv"
-
-export default defineEventHandler(async (event) => {
-  const [error] = await kv.set("settings", await readBody(event))
-  if (error) throw error
-  return { ok: true }
-})`,
-  },
-] as const;
+    {
+      id: "driver",
+      label: "Driver",
+      title: "Codex takes the run",
+      description: "Use Codex, Claude Code, an AI SDK model, or your own function.",
+      lines: [7],
+      to: "/docs/agents/agent-drivers",
+    },
+    {
+      id: "workspace",
+      label: "Workspace",
+      title: "It works in a real file tree",
+      description: "A persistent Workspace holds the repository between runs.",
+      lines: [8],
+      to: "/docs/agents/workspace-context",
+    },
+    {
+      id: "capabilities",
+      label: "Capabilities",
+      title: "It uses only what you grant",
+      description: "The Agent gets the browser and Skills you list. Nothing else.",
+      lines: [1, 9],
+      to: "/docs/capabilities",
+    },
+  ],
+} as const;
 
 export const landingPrimitives = [
   {

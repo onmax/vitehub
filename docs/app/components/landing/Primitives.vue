@@ -1,5 +1,28 @@
 <script setup lang="ts">
+import { useIntersectionObserver } from "@vueuse/core";
 import { landingPrimitives } from "./content";
+
+const grid = useTemplateRef<HTMLElement>("grid");
+const visible = ref(false);
+const replays = reactive<Record<string, number>>({});
+
+useIntersectionObserver(
+  grid,
+  ([entry]) => {
+    if (entry?.isIntersecting) {
+      visible.value = true;
+    }
+  },
+  { threshold: 0.35 },
+);
+
+// Remounting a scene restarts its single pass without a timer.
+function replay(id: string) {
+  if (!visible.value) {
+    return;
+  }
+  replays[id] = (replays[id] ?? 0) + 1;
+}
 </script>
 
 <template>
@@ -9,17 +32,18 @@ import { landingPrimitives } from "./content";
         class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.6fr)] lg:items-end lg:gap-16"
       >
         <h2
-          class="max-w-[13ch] text-4xl/10 font-semibold tracking-[-0.04em] text-highlighted text-balance sm:text-5xl/12 lg:text-6xl/14"
+          class="max-w-[16ch] text-3xl/9 font-semibold tracking-[-0.03em] text-highlighted text-balance sm:text-4xl/10"
         >
-          The primitives underneath.
+          Built on Server Primitives.
         </h2>
-        <div class="max-w-[38ch] lg:justify-self-end">
-          <p class="text-lg/8 text-muted">
-            Use them from Agents through Capabilities, or call them directly from server code.
+        <div class="max-w-[40ch] lg:justify-self-end">
+          <p class="text-base/7 text-muted">
+            Capabilities use the same storage, queue, and sandbox APIs that your routes can call
+            without an Agent.
           </p>
           <NuxtLink
             to="/docs/server-primitives"
-            class="group mt-4 inline-flex min-h-10 items-center gap-2 border-b border-highlighted font-medium text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+            class="group mt-3 inline-flex min-h-10 items-center gap-2 text-sm font-medium text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
           >
             Explore Server Primitives
             <UIcon
@@ -32,24 +56,32 @@ import { landingPrimitives } from "./content";
       </div>
 
       <ul
-        class="mt-12 grid gap-px border border-default bg-[var(--ui-border)] sm:grid-cols-2 lg:mt-16 lg:grid-cols-4"
+        ref="grid"
+        class="mt-10 grid grid-cols-2 gap-px border border-default bg-[var(--ui-border)] sm:grid-cols-3 lg:mt-12 lg:grid-cols-6"
         role="list"
       >
-        <li v-for="primitive in landingPrimitives" :key="primitive.id" class="min-w-0 bg-default">
+        <li v-for="(primitive, index) in landingPrimitives" :key="primitive.id" class="min-w-0 bg-default">
           <NuxtLink
             :to="primitive.to"
-            class="group flex h-full min-h-44 flex-col p-5 transition-colors duration-200 hover:bg-muted/35 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary sm:p-6"
+            class="group flex h-full flex-col gap-3 p-4 transition-colors duration-200 hover:bg-muted/35 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
+            @pointerenter="replay(primitive.id)"
+            @focus="replay(primitive.id)"
           >
             <div
-              class="h-16 w-full text-muted transition-colors duration-200 group-hover:text-highlighted"
+              class="h-10 w-full text-muted transition-colors duration-200 group-hover:text-highlighted"
             >
-              <LandingPrimitiveMotion :name="primitive.id" />
+              <LandingPrimitiveMotion
+                :key="replays[primitive.id] ?? 0"
+                :name="primitive.id"
+                :play="visible"
+                :delay="replays[primitive.id] ? 0 : index * 70"
+              />
             </div>
-            <div class="mt-auto pt-5">
-              <h3 class="font-medium text-highlighted">
+            <div>
+              <h3 class="text-sm font-medium text-highlighted">
                 {{ primitive.name }}
               </h3>
-              <p class="mt-1 text-sm text-muted">
+              <p class="mt-0.5 text-xs text-muted">
                 {{ primitive.description }}
               </p>
             </div>
