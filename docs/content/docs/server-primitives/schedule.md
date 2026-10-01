@@ -175,7 +175,7 @@ pnpm vitehub schedule run sync
 pnpm vitehub schedule run sync --url https://app.example.com
 ```
 
-With `--url`, the command posts to the deployed [Console](/docs/development/console#run-schedules-on-demand), so the deployment needs `console.invoke` and a Console credential. Read [CLI](/docs/development/cli#run-a-schedule-on-demand) for the credential variables. The Console Schedules page shows a **Run now** button for the same definitions.
+With `--url`, the command posts to the deployed [Console](/docs/development/console#start-agent-invocations), so the deployment needs `console.invoke` and a Console credential. Read [CLI](/docs/development/cli#run-a-schedule-on-demand) for the credential variables. The Console Schedules page shows a **Run now** button for the same definitions.
 
 Server code can use the Runtime Helper. In Vite server code, pass the generated registry:
 
