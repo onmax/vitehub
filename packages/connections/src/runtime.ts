@@ -727,7 +727,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         code_verifier: authorization.verifier,
         grant_type: "authorization_code",
         redirect_uri: authorization.redirectUri,
-      }, AbortSignal.timeout(REFRESH_WAIT_MS), () => { releaseLease = false }, () => { releaseLease = true })
+      }, AbortSignal.timeout(REFRESH_WAIT_MS), () => { releaseLease = false; quarantine = true }, () => { releaseLease = true; quarantine = false })
       // A successful exchange may already have replaced the provider grant. Keep
       // the mutation fenced until the replacement token and state are durable.
       releaseLease = false
@@ -830,6 +830,11 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const stored = await connections.secrets.inspect(key)
       let revision: string | null = null
       if (stored) {
+        if (!loaded.provider.revocationEndpoint) {
+          throw new ConnectionError("invalid", `Provider "${loaded.provider.id}" does not support token revocation.`, {
+            details: { connection: input.name },
+          })
+        }
         revision = await connections.bridge.use(envContext(actor), key, "revoke", async (secret, metadata) => {
           if (!metadata?.revision) throw new ConnectionError("invalid", "Connection revocation requires the Env Bridge to provide the leased token revision.")
           let token: StoredToken | undefined
@@ -837,11 +842,6 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
             token = parseToken(secret.unseal(), input.name)
           }
           catch {}
-          if (token && !loaded.provider.revocationEndpoint) {
-            throw new ConnectionError("invalid", `Provider "${loaded.provider.id}" does not support token revocation.`, {
-              details: { connection: input.name },
-            })
-          }
           if (token && loaded.provider.revocationEndpoint) {
             // A lost response can leave a grant-wide revoke running at the provider.
             releaseLease = false

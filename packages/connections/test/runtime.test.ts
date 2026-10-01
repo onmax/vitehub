@@ -189,7 +189,7 @@ describe("connect", () => {
 
   it("waits for refresh persistence before revoking the replacement token", async () => {
     const definition = mailConnection()
-    const test = createTestRuntime({ ...definition, provider: { ...definition.provider, revocationEndpoint: undefined } })
+    const test = createTestRuntime(definition)
     await connect(test, { expires_in: 1 })
     let enter!: () => void
     let resume!: () => void
