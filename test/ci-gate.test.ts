@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import { array, object, optional, parse, record, string } from "valibot"
 import { describe, expect, it } from "vitest"
@@ -26,6 +28,38 @@ function runGate(results: Record<string, { result: string }>, event = "pull_requ
 const successfulJobs = Object.fromEntries(jobNames.map(name => [name, { result: "success" }]))
 
 describe("CI merge gate", () => {
+  it("runs standalone Node tests once across Agent shards and preserves failures", () => {
+    const directory = mkdtempSync(join(tmpdir(), "vitehub-node-test-sharding-"))
+    const fixture = join(directory, "fixture.test.mjs")
+    const runner = new URL("../packages/agent/test/run-node-tests.mjs", import.meta.url)
+    const run = (shard: string) => spawnSync(process.execPath, [runner.pathname, fixture], {
+      encoding: "utf8",
+      env: { ...process.env, VITEHUB_TEST_SHARD: shard },
+    })
+    try {
+      writeFileSync(fixture, 'import { test } from "node:test"; test("shard fixture", () => {})')
+      for (const shard of ["", "1/3", "2/3", "3/3"]) {
+        const result = run(shard)
+        expect(result.status, result.stderr).toBe(0)
+        expect(result.stdout).toContain(`tests ${shard === "2/3" || shard === "3/3" ? 0 : 1}`)
+      }
+      writeFileSync(fixture, 'import { test } from "node:test"; test("failure", () => { throw new Error("fixture failure") })')
+      expect(run("1/3").status).not.toBe(0)
+    }
+    finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it("builds contracts and examples once before running either check", () => {
+    const commands = workflow.jobs["contracts-examples"]?.steps.flatMap(step => step.run ? [step.run] : [])
+    expect(commands).toEqual([
+      "vp run build",
+      "vp test --config vitest.config.ts --exclude test/docs-host-fixtures.test.ts",
+      "vp run --ignore-depends-on examples:verify",
+    ])
+  })
+
   it("uses read-only repository credentials for verification", () => {
     expect(workflow.permissions).toEqual({ contents: "read" })
   })

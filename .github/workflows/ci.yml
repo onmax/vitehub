@@ -96,13 +96,13 @@ jobs:
 
       # Run contracts first: examples:verify leaves generated example output
       # that the repository contract tests would scan.
+      - run: vp run build
+
       - name: Fast contracts
         if: ${{ github.event_name == 'pull_request' }}
-        run: |
-          vp run build
-          vp test --config vitest.config.ts --exclude test/docs-host-fixtures.test.ts
+        run: vp test --config vitest.config.ts --exclude test/docs-host-fixtures.test.ts
 
-      - run: vp run examples:verify
+      - run: vp run --ignore-depends-on examples:verify
 
   contract-tests:
     name: contract tests
