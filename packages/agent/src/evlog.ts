@@ -307,12 +307,12 @@ export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { st
       installed.push([name, callback])
     }
     try {
-      register("request", event => {
+      register("request", (event: { req: Request & { context?: { requestId?: string } } }) => {
         event.req.context ||= {}
         event.req.context.requestId ||= crypto.randomUUID()
       })
       register("evlog:drain", telemetry.drain)
-      register("error", (error, context) => {
+      register("error", (error: unknown, context: { event?: { req: Request & { context?: { requestId?: string } } } }) => {
         const request = context.event?.req
         const status = statusCodeOf(error)
         const properties = {

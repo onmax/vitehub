@@ -4,7 +4,6 @@ import { rm } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { discoverAgentDefinitionEntries } from "@vite-hub/agent/vite"
 import { resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
@@ -171,13 +170,6 @@ export function assertConsoleProductionAccess(
   if (missing.length) {
     throw viteHubErrorDiagnostics.VITE_HUB_B0006({ message: `[vitehub] Console Auth access must configure an authorize callback for ${missing.map(target => target.route).join(" and ")}.` })
   }
-}
-
-export function discoverConsoleAgentNames(
-  root: string,
-  serverDirs: string[] = [join(root, "server")],
-): string[] {
-  return discoverAgentDefinitionEntries(root, serverDirs).map(agent => agent.name)
 }
 
 export function generatedConsolePluginRegistration(value: string): boolean {

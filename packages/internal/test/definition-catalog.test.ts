@@ -15,7 +15,7 @@ import {
   writeFileIfChanged,
   writeRuntimeRegistryFile,
   writeRuntimeRegistryFiles,
-} from "../src/definition-discovery.ts"
+} from "../src/definition-catalog.ts"
 
 const dirs: string[] = []
 
