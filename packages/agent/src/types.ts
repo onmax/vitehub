@@ -2057,7 +2057,10 @@ export interface AgentMessageChannelSettings<TRuntimeConfig extends AgentRuntime
   dedupeTtlMs?: number
   delivery?: "automatic" | "manual"
   durable?: boolean
-  errorFallbackText?: string | null | ((context: AgentChatErrorHookArgs<TRuntimeConfig>) => MaybePromise<string | null | undefined>)
+  errorFallbackText?: string | null | ((context: AgentChatErrorHookArgs<TRuntimeConfig> & {
+    /** The text ViteHub sends when `errorFallbackText` is not set. */
+    defaultText: string
+  }) => MaybePromise<string | null | undefined>)
   fallbackStreamingPlaceholderText?: string | readonly string[] | null | ((context: AgentChatAgentHookArgs<TRuntimeConfig>) => MaybePromise<string | null | undefined>)
   final?: {
     delivery: "new-message"
