@@ -190,7 +190,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   const twoSha = await commit('two')
   const config = join(root, 'gitconfig')
   await writeFile(config, '')
-  await git(root, 'config', '--file', config, `url.file://${base}.insteadOf`, 'https://github.com/base/repo.git')
+  await git(root, 'config', '--file', config, `url.file://${base}.insteadOf`, 'https://github.com/base--owner/repo--name.git')
   vi.stubEnv('GIT_CONFIG_GLOBAL', config)
   vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
   vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
@@ -202,7 +202,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   const host = createGitHubHost(options)
 
   let firstPath = ''
-  await host.withPullRequestCheckout({ repository: 'base/repo', number: 1, headSha: oneSha, headRepository: 'base/repo', headRef: 'one' }, async ({ path }) => {
+  await host.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: oneSha, headRepository: 'base--owner/repo--name', headRef: 'one' }, async ({ path }) => {
     firstPath = path
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(oneSha)
     await mkdir(join(path, 'node_modules'), { recursive: true })
@@ -219,7 +219,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
 
   // A restarted process adopts the checkout that the previous process left in the pool.
   const restarted = createGitHubHost(options)
-  await restarted.withPullRequestCheckout({ repository: 'base/repo', number: 1, headSha: twoSha, headRepository: 'base/repo', headRef: 'two' }, async ({ path }) => {
+  await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: twoSha, headRepository: 'base--owner/repo--name', headRef: 'two' }, async ({ path }) => {
     expect(path).toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(twoSha)
     expect(await git(path, 'branch', '--show-current')).toBe('two')
@@ -230,10 +230,10 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     await expect(access(join(path, '.vitehub'))).rejects.toThrow()
     await expect(access(`${path}.meta.json`)).rejects.toThrow()
     await expect(git(path, 'config', 'core.fsmonitor')).rejects.toThrow()
-    expect(await git(path, 'config', 'remote.origin.pushurl')).toBe('https://github.com/base/repo.git')
+    expect(await git(path, 'config', 'remote.origin.pushurl')).toBe('https://github.com/base--owner/repo--name.git')
   })
   let secondPath = ''
-  await restarted.withPullRequestCheckout({ repository: 'base/repo', number: 2, headSha: oneSha }, async ({ path }) => {
+  await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: oneSha }, async ({ path }) => {
     secondPath = path
     expect(path).not.toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(oneSha)
@@ -243,7 +243,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   })
 
   // A checkout without a verified head leaves the pool.
-  await expect(restarted.withPullRequestCheckout({ repository: 'base/repo', number: 2, headSha: twoSha, headRepository: 'base/repo', headRef: 'one' }, async () => {
+  await expect(restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: twoSha, headRepository: 'base--owner/repo--name', headRef: 'one' }, async () => {
     throw new Error('must not run')
   })).rejects.toThrow('head changed')
   await expect(access(secondPath)).rejects.toThrow()

@@ -249,6 +249,20 @@ function createCheckoutPool(root: string) {
   const idle = new Map<string, string[]>()
   let adopted: Promise<void> | undefined
   const key = (repository: string, number: number) => `${repository}#${number}`
+  const encodeRepository = (repository: string) => repository.split('/').map(part => Buffer.from(part).toString('base64url')).join('--')
+  const decodeRepository = (value: string): string | undefined => {
+    const parts = value.split('--')
+    if (parts.length !== 2 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) return undefined
+    try {
+      const decoded = parts.map(part => Buffer.from(part, 'base64url').toString())
+      return decoded.every((part, index) => Buffer.from(part).toString('base64url') === parts[index])
+        ? decoded.join('/')
+        : undefined
+    }
+    catch {
+      return undefined
+    }
+  }
   const release = (repository: string, number: number, directory: string) => {
     const poolKey = key(repository, number)
     idle.set(poolKey, [...idle.get(poolKey) ?? [], directory])
@@ -256,8 +270,9 @@ function createCheckoutPool(root: string) {
   const adopt = () => adopted ??= (async () => {
     await mkdir(root, { recursive: true })
     for (const entry of await readdir(root, { withFileTypes: true })) {
-      const match = /^(.+?)--(.+?)-pr-(\d+)-[A-Za-z0-9]{6}$/.exec(entry.name)
-      if (entry.isDirectory() && match) release(`${match[1]}/${match[2]}`, Number(match[3]), join(root, entry.name))
+      const match = /^(.+)-pr-(\d+)-[A-Za-z0-9]{6}$/.exec(entry.name)
+      const repository = match ? decodeRepository(match[1]!) : undefined
+      if (entry.isDirectory() && repository && match) release(repository, Number(match[2]), join(root, entry.name))
     }
   })().catch((error: unknown) => {
     adopted = undefined
@@ -268,7 +283,7 @@ function createCheckoutPool(root: string) {
       await adopt()
       const directory = idle.get(key(repository, number))?.pop()
       if (directory) return { directory, reused: true }
-      return { directory: await mkdtemp(join(root, `${repository.replace("/", "--")}-pr-${number}-`)), reused: false }
+      return { directory: await mkdtemp(join(root, `${encodeRepository(repository)}-pr-${number}-`)), reused: false }
     },
     release,
   }
