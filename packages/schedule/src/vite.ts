@@ -19,6 +19,7 @@ import { createScheduleTargetsContents, SCHEDULE_TARGETS_ID } from "./targets-mo
 
 import type { Plugin, ResolvedConfig, UserConfig } from "vite"
 import type { ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import type { ViteHubCliContributingPlugin } from "@vite-hub/internal/cli"
 import type { ScheduleWorkflowRuntime } from "./internal/provider-output.ts"
 import type { ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
 import type { ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
@@ -577,9 +578,13 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
     return createScheduleTargetsContents(discoverViteSchedules(), { types: false })
   }
 
-  const plugin: Plugin = {
+  const plugin: Plugin & ViteHubCliContributingPlugin = {
     name: SCHEDULE_VITE_PLUGIN_NAME,
     enforce: "pre",
+    async configureServer(server) {
+      const { registerScheduleDevRunEndpoint } = await import("./dev-run.ts")
+      registerScheduleDevRunEndpoint(server)
+    },
     async config(config, env) {
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       const roots = resolveSchedulePluginRoots(config.root || process.cwd(), options)
@@ -749,6 +754,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
   // SAFETY: The implementation above supplies Vite's plugin hooks plus ViteHub's intentionally loose public hook index.
   const inspectable = plugin as ScheduleVitePlugin
   inspectable.vitehub = {
+    cli: async () => (await import("./cli.ts")).createScheduleCliContributor(),
     inspect: () => ({
       definitions: [{
         kind: "schedule",
