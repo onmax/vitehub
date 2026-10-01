@@ -802,6 +802,27 @@ function mergeNitroHandlers(nitro: NitroConfig, handlers: Array<{ handler: strin
   }
 }
 
+function guardAgentDevelopmentRoutes(nitro: NitroConfig, handlers: Array<{ route: string }>): NitroConfig {
+  if (!handlers.length) return nitro
+  const modules = Array.isArray(nitro.modules) ? nitro.modules : []
+  return {
+    ...nitro,
+    modules: [...modules, {
+      name: "vite-hub/agent-development-route-guard",
+      setup(runtime: {
+        hooks: { hook: (name: "build:before", callback: () => void) => void }
+        scannedHandlers: Array<{ route?: string, middleware?: boolean }>
+      }) {
+        runtime.hooks.hook("build:before", () => {
+          const scanned = runtime.scannedHandlers.flatMap(handler =>
+            hasRuntimeType(handler.route, "string") ? [{ route: handler.route, middleware: handler.middleware }] : [])
+          for (const handler of handlers) validateAgentStaticRoute(handler.route, scanned, "development invocation")
+        })
+      },
+    }],
+  }
+}
+
 function mergeNitroPlugins(nitro: NitroConfig, plugins: string[]): NitroConfig {
   if (plugins.length === 0) return nitro
   const existingPlugins = Array.isArray(nitro.plugins) ? nitro.plugins : []
@@ -3100,7 +3121,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         }
       }
       const mergedAgentNitro = (nitroContext ? mergeAgentNitroExternals : cloneNitroConfig)(mergeNitroPlugins(
-        mergeNitroHandlers(nitro, [...nitroHandlers, ...devNitroHandlers]),
+        guardAgentDevelopmentRoutes(mergeNitroHandlers(nitro, [...nitroHandlers, ...devNitroHandlers]), devNitroHandlers),
         [
           ...(installPreparation ? [join(generatedRoot, generatedAgentPreparationPlugin)] : []),
           ...(installWebhookQueue ? [join(generatedRoot, generatedAgentWebhookQueuePlugin)] : []),

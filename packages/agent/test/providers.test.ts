@@ -1705,6 +1705,69 @@ describe("agent Vite plugin", () => {
     expect(() => configHook.call({} as never, config, { command: "build", mode: "production" })).not.toThrow()
   })
 
+  it.each([
+    { version: 2, file: "routes/_vitehub/agent/invocations/dev.ts", command: "serve", conflict: true },
+    { version: 3, file: "routes/_vitehub/agent/invocations/dev.ts", command: "serve", conflict: true },
+    { version: 3, file: "routes/_vitehub/agent/[agent]/[action].ts", command: "serve", conflict: true },
+    { version: 3, file: "routes/_vitehub/agent/[...path].ts", command: "serve", conflict: true },
+    { version: 3, file: "middleware/log.ts", command: "serve", conflict: false },
+    { version: 3, file: "routes/health.ts", command: "serve", conflict: false },
+    { version: 3, file: "routes/_vitehub/agent/invocations/dev.ts", command: "build", conflict: false },
+  ] as const)("guards the development invocation route after Nitro $version scans $file during $command", { timeout: 30_000 }, async ({ version, file, command, conflict }) => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const root = await mkdtemp(join(tmpdir(), "vitehub-agent-dev-route-scan-"))
+    const serverDir = join(root, "server")
+    const existingModule = { setup: vi.fn() }
+    let close: (() => Promise<void>) | undefined
+    try {
+      const filename = join(serverDir, file)
+      await mkdir(dirname(filename), { recursive: true })
+      await writeFile(filename, "export default () => new Response('application route')")
+      const plugin = hubAgent()
+      if (!isRuntimeFunction(plugin.config)) throw new Error("Expected an Agent config hook")
+      // SAFETY: This fixture supplies the private Nitro context and existing modules read by the hook.
+      const result = await plugin.config.call({} as never, {
+        [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
+        root: hostedAgentRoot,
+        nitro: { modules: [existingModule] },
+      } as never, { command, mode: command === "serve" ? "development" : "production" })
+      // SAFETY: The Agent config hook preserves Nitro module and handler configuration.
+      const generated = (result as { nitro: { modules: unknown[], handlers: unknown[] } }).nitro
+      const options = {
+        rootDir: root,
+        ...(version === 2 ? { srcDir: serverDir } : { serverDir }),
+        scanDirs: [serverDir],
+        dev: command === "serve",
+        compatibilityDate: "2026-01-01" as const,
+        imports: false as const,
+        logLevel: 0,
+        // SAFETY: The hook emits Nitro modules and handlers accepted by both supported builders.
+        modules: generated.modules as NonNullable<Parameters<typeof import("nitropack").createNitro>[0]>["modules"] & NonNullable<Parameters<typeof import("nitro/builder").createNitro>[0]>["modules"],
+        handlers: generated.handlers as Array<{ handler: string, route: string }>,
+      }
+      const scan = version === 2
+        ? await (async () => {
+            const { createNitro } = await import("nitropack")
+            const nitro = await createNitro(options)
+            return { scannedHandlers: nitro.scannedHandlers, close: () => nitro.close(), check: () => nitro.hooks.callHook("build:before", nitro) }
+          })()
+        : await (async () => {
+            const { createNitro } = await import("nitro/builder")
+            const nitro = await createNitro(options)
+            return { scannedHandlers: nitro.scannedHandlers, close: () => nitro.close(), check: () => nitro.hooks.callHook("build:before", nitro) }
+          })()
+      close = scan.close
+      expect(existingModule.setup).toHaveBeenCalledOnce()
+      expect(scan.scannedHandlers).toContainEqual(expect.objectContaining({ handler: filename }))
+      const check = Promise.resolve().then(scan.check)
+      if (conflict) await expect(check).rejects.toThrow("development invocation route conflicts")
+      else await expect(check).resolves.toBeUndefined()
+    } finally {
+      await close?.()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it("preserves Nitro middleware alongside the development invocation route", async () => {
     const { hubAgent } = await import("../src/vite.ts")
     const plugin = hubAgent()
