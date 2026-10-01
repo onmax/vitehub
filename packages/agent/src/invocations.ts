@@ -949,6 +949,8 @@ export type AgentInvocationRerunUnavailableReason =
   | "input-not-captured"
   /** The Invocation received structured input, which the journal does not replay. */
   | "input-has-data"
+  /** The Invocation received call options, which the journal does not replay. */
+  | "input-has-options"
   /** The journal redactor changed the captured prompt. */
   | "input-redacted"
   /** The journal bounded the prompt, so it is incomplete. */
@@ -977,6 +979,7 @@ export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "o
   if (attributes[AGENT_INVOCATION_INPUT_PROMPT_TRUNCATED_ATTRIBUTE] === true
     || attributes[AGENT_INVOCATION_INPUT_PROMPT_TRUNCATED_ATTRIBUTE] === undefined && attributes[AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE] === true) return { available: false, reason: "input-truncated" }
   if (attributes["input.hasData"] === true) return { available: false, reason: "input-has-data" }
+  if (attributes["input.hasOptions"] === true) return { available: false, reason: "input-has-options" }
   if (attributes["input.hasMessages"] === true || attributes["input.messages"] !== undefined) return { available: false, reason: "input-has-messages" }
   const prompt = attributes["input.prompt"]
   if (!hasRuntimeType(prompt, "string") || !prompt.trim()) return { available: false, reason: "input-not-captured" }
