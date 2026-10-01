@@ -32,7 +32,6 @@ import {
   createStatusDeliveryEffectIntent,
 } from "./delivery-effects.ts"
 import { createExecutionContext, createRuntimeContext, createTraceEventLog, deriveTraceRuns, getViteHubErrorShape, isTraceContentAttributeKey, normalizeRuntimeDiagnosticError, traceEventsToOpenTelemetryLogRecords, traceEventsToOpenTelemetrySpans } from "@vite-hub/runtime"
-import { agentTelemetryTask } from "./internal/telemetry-task.ts"
 import { agentTelemetryWorkspaceSources, getAgentTelemetryConfiguration, safeAgentTelemetryMetadata, setAgentTelemetryConfiguration } from "./internal/agent-telemetry.ts"
 import { getCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { getAgentInvocationRecoveryWorkflowName } from "@vite-hub/internal/agent-workflow"
@@ -3899,7 +3898,6 @@ function scheduleAgentTelemetry<TRuntimeConfig extends AgentRuntimeConfig>(
   const task = Promise.resolve()
     .then(() => exportAgentTelemetryTraces(telemetry, runtime, context, agent, invocationId))
     .catch(error => reportAgentTelemetryFailure(error, runtime, agent, invocationId, "terminal"))
-  Object.defineProperty(task, agentTelemetryTask, { value: true })
   registerAgentBackgroundTask(runtime, task)
   return task
 }
@@ -3933,7 +3931,6 @@ function createAgentTelemetryScheduler<TRuntimeConfig extends AgentRuntimeConfig
     exports = exports
       .then(task)
       .catch(error => reportAgentTelemetryFailure(error, runtime, agent, invocationId, phase))
-    Object.defineProperty(exports, agentTelemetryTask, { value: true })
     registerAgentBackgroundTask(runtime, exports)
   }
   const flushLogs = () => {
