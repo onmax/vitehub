@@ -449,8 +449,10 @@ const agentTypeDiagnosticCodes = new Set([
   "AGENT_R0888",
   "AGENT_R0926",
   "AGENT_R0927",
+  "AGENT_R0930",
   "AGENT_R0924",
   "AGENT_R0925",
+  "AGENT_R0929",
 ])
 
 const dynamicError = {
@@ -1422,6 +1424,10 @@ export const agentDiagnostics = defineDiagnostics({
     AGENT_R0927: dynamicError,
     AGENT_R0924: dynamicError,
     AGENT_R0925: dynamicError,
+    AGENT_R0932: dynamicError,
+    AGENT_R0929: dynamicError,
+    AGENT_R0930: dynamicError,
+    AGENT_R0931: dynamicError,
     AGENT_R0001: {
       why: ({ name, available }: { name: string, available: string[] }) => formatUnknownAgentMessage(name, available, { prefix: true }),
       fix: "Use a discovered Agent name. Check the Agent Definition and the ViteHub Agent plugin configuration.",
@@ -1470,7 +1476,7 @@ export const agentDiagnostics = defineDiagnostics({
       why: ({ files }: { files: string[] }) => `[vitehub] Provider Agent Drivers ("codex" and "claude-code") cannot run in a Cloudflare Worker. Used in ${files.join(", ")}.`,
       fix: "Use a { model } or { run } Driver in Worker builds, or deploy Agents that use provider Drivers to a Node.js host.",
     },
-    AGENT_R0929: {
+    AGENT_R0933: {
       why: "[vitehub] Observability is not configured.",
       fix: "Set vitehub({ observability: { service } }) in the Vite config.",
     },

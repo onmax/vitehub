@@ -17,6 +17,7 @@ export { defineScheduledAgentTarget } from "./scheduled-turn.ts"
 export { observabilityStatus } from "../internal/observability-host.ts"
 export { agentGeneratedRuntimeError } from "./generated-runtime-error.ts"
 export { createAgentWebhookRequest } from "../internal/webhook-request.ts"
+export { markDiscoveredAgentName } from "../internal/discovered-agent-name.ts"
 export { markDiscoveredWorkspaceAgentDefinitionRegistered } from "../workspace-agent.ts"
 export type { AgentWebhookRequestInput } from "../internal/webhook-request.ts"
 export { setAgentWorkflowCapabilityLoaders, setAgentWorkflowRuntimeLoaders } from "../internal/workflow-runtime-loaders.ts"
@@ -44,3 +45,4 @@ export type {
 } from "./routes.ts"
 
 export { inheritAgentLayerOptions } from "../agent-layers.ts"
+export { decodeColocatedAgentSkills, withColocatedAgentSkills } from "../internal/colocated-agent-skills.ts"

@@ -87,6 +87,7 @@ describe("UI server rendering", () => {
       "UChatReasoning",
       "UChatTool",
       "UCollapsible",
+      "UIcon",
     ]) {
       expect(app.component(name), name).toBeDefined();
     }
