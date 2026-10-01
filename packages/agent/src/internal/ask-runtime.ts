@@ -118,7 +118,7 @@ function toAdvocaatQuestion(name: string, question: AskQuestion): AdvocaatQuesti
       return { ...question, instructions, criteria: [toEntry(first), toEntry(second), ...rest.map(toEntry)] }
     }
     case "if":
-      return { ...question, instructions }
+      return question
   }
   throw invalidQuestion(name)
 }
@@ -146,6 +146,7 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
   const answers = await advocaat.ask(toEntry(state), wire, { ...options, signal: context.abortSignal })
   // SAFETY: advocaat answers under the same keys, with the answer shapes that AskAnswers describes for each question type.
   const result = Object.fromEntries(Object.entries(answers).map(([name, answer]) => {
+    if (hasRuntimeType(answer, "string") || hasRuntimeType(answer, "boolean")) return [name, answer]
     const question = questions[name]
     // Score legends describe the public criteria, before SDK entry normalization.
     return [name, question?.type === "score" && answer.type === "score"

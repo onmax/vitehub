@@ -18,7 +18,7 @@ describe("Ask through the installed advocaat SDK", () => {
     expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({ state: String(JSON.parse(JSON.stringify(state))), questions: { accepted: { type: "noul", instructions: "Accept it?" } }, model: "jev-latest" })
   })
 
-  it("preserves scalar question entries, nested JSON, answer shapes, and score legends", async () => {
+  it("normalizes scalar entries while preserving nested JSON, answers, and original score legends", async () => {
     const nested = { amount: 42, enabled: false, values: [0, true] }
     const answers = {
       chance: { type: "noul", noul: 0.25 },
