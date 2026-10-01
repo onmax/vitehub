@@ -141,9 +141,16 @@ export async function startProviderBoxRelay(options: ProviderBoxRelayOptions): P
   })
   server.listen(socketPath)
   await once(server, "listening")
-  await chmod(socketPath, 0o600)
-  await writeFile(relayPath, relaySource(socketPath, token), { mode: 0o600 })
-  await writeFile(launcherPath, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(relayPath)} "$@"\n`, { mode: 0o700 })
+  try {
+    await chmod(socketPath, 0o600)
+    await writeFile(relayPath, relaySource(socketPath, token), { mode: 0o600 })
+    await writeFile(launcherPath, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(relayPath)} "$@"\n`, { mode: 0o700 })
+  }
+  catch (error) {
+    for (const socket of sockets) socket.destroy()
+    await new Promise<void>(resolve => server.close(() => resolve())).catch(() => undefined)
+    throw error
+  }
   let closing: Promise<void> | undefined
   return {
     launcher: launcherPath,
