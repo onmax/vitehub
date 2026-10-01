@@ -20,24 +20,26 @@ afterEach(() => {
   setAgentWorkflowRuntimeLoaders({ state: () => import("@vite-hub/workflow/runtime/state"), workflow: () => import("@vite-hub/workflow") })
 })
 
-function fixture(options: { rejectAcknowledgement?: boolean, failConfirmation?: boolean, executeWorker?: boolean, failIntent?: boolean, failRuntimeLoad?: boolean } = {}) {
+function fixture(options: { rejectAcknowledgement?: boolean, failConfirmation?: boolean, executeWorker?: boolean, failIntent?: boolean, failRuntimeLoad?: boolean, discoveryDefault?: boolean, inline?: boolean } = {}) {
   const name = "native-replay"
   const native = Object.assign(async () => "done", { workflowId: "workflow/native-replay" })
   const recoveryNative = Object.assign(async () => {}, { workflowId: "workflow/native-replay-recovery" })
   const memory = createMemoryAgentInvocationStore()
   let failConfirmation = Boolean(options.failConfirmation)
-  const invocations = defineAgentInvocations({ store: { ...memory, update(id, input, claimId) {
+  const store = { ...memory, update: memory.update }
+  store.update = (id, input, claimId) => {
     if (options.failIntent && input.workflow && !input.workflow.id) throw new Error("Intent unavailable")
     if (failConfirmation && input.annotations?.[pendingAgentInvocationAnnotation] === false) throw new Error("Confirmation unavailable")
     return memory.update(id, input, claimId)
-  } } })
+  }
+  const invocations = defineAgentInvocations({ store })
   const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {}, agentIdentity: { name } }
   const driver = vi.fn(() => "done")
   const channel = defineChannel("mailbox", {
     history: { collection: defineCollection(async () => [{ id: "m1" }], { cursor: item => item.id, cursorSchema: v.string() }), key: item => item.id },
     triggers: { received: defineChannelTrigger({ input: v.object({ id: v.string() }), invoke: () => ({ input: { prompt: "hello" } }) }) },
   })
-  const agent = defineAgent({ channels: { mailbox: channel }, driver: { run: driver }, invocations, name, runtime: workflow(name) })
+  const agent = defineAgent({ channels: { mailbox: channel }, driver: { run: driver }, invocations, name, ...(options.inline ? { runtime: false as const } : options.discoveryDefault ? {} : { runtime: workflow(name) }) })
   const runs = new Map<string, VercelRun>()
   const statuses = new Map<string, string>()
   const cancel = vi.fn(async (id: string) => { statuses.set(id, "cancelled") })
@@ -71,7 +73,7 @@ function fixture(options: { rejectAcknowledgement?: boolean, failConfirmation?: 
   })
   setAgentWorkflowRuntimeLoaders({ state: () => import("../../workflow/src/runtime/state.ts"), workflow: () => import("../../workflow/src/index.ts") })
   const primaryStarts = () => vi.mocked(start).mock.calls.filter(([handler]) => handler === native)
-  return { agent, cancel, driver, getRun, invocations, memory, name, primaryStarts, runs, runtime, start, allowConfirmation: () => { failConfirmation = false } }
+  return { agent, cancel, driver, getRun, invocations, memory, name, primaryStarts, runs, runtime, start, store, allowConfirmation: () => { failConfirmation = false } }
 }
 
 it("uses provider IDs with the real native Vercel adapter and omits caller IDs for primary and recovery starts", async () => {
@@ -163,4 +165,57 @@ it("starts independent forced native replays with fresh logical IDs and provider
   expect(secondJournal).toMatchObject({ status: "completed", workflow: { provider: "vercel", id: expect.stringMatching(/^wrun_/) } })
   expect(firstJournal?.workflow?.id).not.toBe(secondJournal?.workflow?.id)
   expect(test.driver).toHaveBeenCalledTimes(3)
+})
+
+
+it.each([false, true])("keeps discovery-default replay out of inline execution after native acceptance, lost acknowledgement=%s", async rejectAcknowledgement => {
+  const test = fixture({ discoveryDefault: true, failConfirmation: true, rejectAcknowledgement })
+  vi.useFakeTimers()
+  expect(await replayChannel(test.agent, "mailbox", { runtime: test.runtime })).toMatchObject(rejectAcknowledgement ? { failed: 1 } : { processed: 1 })
+  await vi.advanceTimersByTimeAsync(30_001)
+  test.allowConfirmation()
+  const { agentIdentity: _identity, ...runtime } = test.runtime
+  expect(await replayChannel(test.agent, "mailbox", { runtime })).toMatchObject({ skipped: 1, failed: 0, processed: 0 })
+  expect(test.driver).not.toHaveBeenCalled()
+  expect(test.primaryStarts()).toHaveLength(1)
+  const worker = test.primaryStarts()[0]![1][0] as Parameters<typeof runAgentWorkflowDefinition>[1]
+  await runAgentWorkflowDefinition(test.agent, { ...worker, id: "wrun_1", name: test.name, provider: "vercel" }, (definition, workerRuntime, input) => runAgentInline(definition, workerRuntime, input))
+  expect(test.driver).toHaveBeenCalledOnce()
+  expect(await test.invocations.getByRunId(channelReplayRunId("mailbox", "m1"), test.name)).toMatchObject({ status: "completed" })
+})
+
+it.each(["default", "false"])("executes a fresh %s runtime replay inline without a discovered identity", async mode => {
+  const test = fixture({ discoveryDefault: mode === "default", inline: mode === "false" })
+  const { agentIdentity: _identity, ...runtime } = test.runtime
+  expect(await replayChannel(test.agent, "mailbox", { runtime })).toMatchObject({ processed: 1, failed: 0 })
+  expect(test.driver).toHaveBeenCalledOnce()
+  expect(test.start).not.toHaveBeenCalled()
+})
+
+
+it("releases the replay claim when reading discovery-default dispatch intent fails", async () => {
+  const test = fixture({ discoveryDefault: true, failConfirmation: true })
+  vi.useFakeTimers()
+  expect(await replayChannel(test.agent, "mailbox", { runtime: test.runtime })).toMatchObject({ processed: 1 })
+  await vi.advanceTimersByTimeAsync(30_001)
+  const read = test.invocations.getByRunId.bind(test.invocations)
+  vi.spyOn(test.invocations, "getByRunId").mockImplementationOnce(read).mockRejectedValueOnce(new Error("Dispatch read unavailable"))
+  const release = vi.spyOn(test.store, "release")
+  const { agentIdentity: _identity, ...runtime } = test.runtime
+  expect(await replayChannel(test.agent, "mailbox", { runtime })).toMatchObject({ failed: 1, processed: 0 })
+  expect(release).toHaveBeenCalledOnce()
+  expect(test.driver).not.toHaveBeenCalled()
+  expect(test.primaryStarts()).toHaveLength(1)
+})
+
+
+it("does not execute an existing native dispatch inline after runtime is explicitly disabled", async () => {
+  const test = fixture({ failConfirmation: true })
+  vi.useFakeTimers()
+  expect(await replayChannel(test.agent, "mailbox", { runtime: test.runtime })).toMatchObject({ processed: 1 })
+  await vi.advanceTimersByTimeAsync(30_001)
+  const inline = defineAgent({ channels: test.agent.channels, driver: { run: test.driver }, invocations: test.invocations, name: test.name, runtime: false })
+  expect(await replayChannel(inline, "mailbox", { runtime: test.runtime })).toMatchObject({ skipped: 1, failed: 0, processed: 0 })
+  expect(test.driver).not.toHaveBeenCalled()
+  expect(test.primaryStarts()).toHaveLength(1)
 })

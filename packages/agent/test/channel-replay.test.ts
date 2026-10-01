@@ -363,7 +363,7 @@ describe("defineChannel({ history })", () => {
   })
 
   it("rejects ambiguous history on a raw AgentChannelDefinition", async () => {
-    const load = vi.fn(async () => ({ items: [], nextCursor: null }))
+    const load = vi.fn(async () => [{ id: "m1" }])
     const collection = defineCollection(load, {
       cursor: (item: { id: string }) => item.id,
       cursorSchema: v.string(),

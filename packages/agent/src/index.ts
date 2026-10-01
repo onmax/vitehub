@@ -1071,24 +1071,20 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
     throw new Error("Could not acquire the Invocation execution claim.")
   }
   const binding = resolveAgentWorkflowRuntimeBinding<TRuntimeConfig>(agent)
-  // A discovery-default Workflow cannot be reconciled without the discovered
-  // Agent identity. Never let an existing pending reservation fall through to
-  // inline execution while its provider run may still start after lease expiry.
-  if (binding && !canDispatchAgentWorkflow(binding, context) && !journal.createdNew) {
-    const stored = await agent.invocations.getByRunId(context.run?.runId || "", agentInvocationName(agent, context))
-    if (stored?.workflow) {
-      await journal.releaseClaim()
-      throw new AgentInvocationClaimConflict()
-    }
-  }
-  if (canDispatchAgentWorkflow(binding, context) && !journal.createdNew) {
+  if (!journal.createdNew) {
     try {
+      const stableId = context.run?.runId || ""
+      const stored = await agent.invocations.getByRunId(stableId, agentInvocationName(agent, context))
+      const dispatch = stored?.workflow
+      // Recorded dispatches remain durable work even if this caller cannot
+      // dispatch a Workflow, such as a discovery default without its identity.
+      if (!canDispatchAgentWorkflow(binding, context)) {
+        if (dispatch) throw new AgentInvocationClaimConflict()
+        return journal
+      }
       const workflowName = resolveAgentWorkflowName(agent, binding, context)
       const handle = await getAgentWorkflowHandle<TRuntimeConfig, unknown, unknown>(agent, workflowName, Boolean(context.agentIdentity))
       const recoveryConfig = (await loadAgentWorkflowRuntimeStateModule()).getWorkflowRuntimeConfig()
-      const stableId = context.run?.runId || ""
-      const stored = await agent.invocations?.getByRunId(stableId, agentInvocationName(agent, context))
-      const dispatch = stored?.workflow
       // Legacy reservations lack dispatch intent and may already have been accepted.
       if (!dispatch && recoveryConfig && recoveryConfig.provider === "vercel") throw new AgentInvocationClaimConflict()
       if (dispatch && (dispatch.provider !== (recoveryConfig && recoveryConfig.provider) || dispatch.name !== workflowName)) {
