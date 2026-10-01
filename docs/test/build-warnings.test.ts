@@ -6,13 +6,26 @@ import {
   buildWarningBudget,
 } from "../scripts/build.mjs";
 
+const zodRegexComment = "/** Anchors a pattern source. The interpolation lives here rather than at the call site because\n * esbuild will not drop a `@__PURE__` call whose own argument interpolates a variable, but it\n * will drop `anchor(dateSource)`. Keeping it inline pinned `date` into every bundle. */";
+const annotationConclusion = "contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.";
+
+function annotationWarning(source: string, comment: string, detailSource = source) {
+  return [
+    `[warn] ${source} (2457:0): A comment`,
+    "",
+    `"${comment}"`,
+    "",
+    `in "${detailSource}" ${annotationConclusion}`,
+  ].join("\n");
+}
+
 describe("docs build warning budget", () => {
   it("accepts every explicitly budgeted warning and known missing icon", () => {
     const warnings = [
       ...buildWarningBudget.flatMap((entry) =>
         Array.from({ length: entry.maximum }, () =>
-          entry.warningTokenRequired === false
-            ? `${entry.source ?? "known-source.js"} ${entry.text}`
+          entry.comment
+            ? annotationWarning(entry.source, entry.comment)
             : `[warn] ${entry.text}`,
         ),
       ),
@@ -123,14 +136,22 @@ describe("docs build warning budget", () => {
     )).toThrow("unbudgeted warning");
   });
 
-  it("ignores the wrapped header for a known Rollup annotation source", () => {
+  it("counts the complete CI Rollup warning once across a changing Nuxt chunk hash", () => {
+    const warning = annotationWarning("node_modules/.cache/nuxt/.nuxt/dist/server/_nuxt/dist-Dg8NDwTS.js", zodRegexComment);
+    const changedHash = annotationWarning("node_modules/.cache/nuxt/.nuxt/dist/server/_nuxt/dist-newHash.js", zodRegexComment);
+    expect(() => assertBuildWarningBudget(`${warning}\n${changedHash}`)).not.toThrow();
+    expect(() => assertBuildWarningBudget(`${warning}\n${changedHash}\n${warning}`)).toThrow("warning budget exceeded for Nuxt generated pure annotations: 3/2");
+  });
+
+  it("rejects unmatched, mismatched, and unrelated annotation headers", () => {
     const source = "node_modules/.cache/nuxt/.nuxt/dist/server/_nuxt/dist-Dg8NDwTS.js";
-    const output = [
+    for (const output of [
       `[warn] ${source} (2457:0): A comment`,
-      "\"/** known pure annotation */\"",
-      `in \"${source}\" contains an annotation that Rollup cannot interpret`,
-    ].join("\n");
-    expect(() => assertBuildWarningBudget(output)).not.toThrow();
+      annotationWarning(source, zodRegexComment, "unknown-package.js"),
+      annotationWarning(source, "/** unrelated annotation */"),
+      annotationWarning("zod@4.5.5/node_modules/zod/v4/core/regexes.js", zodRegexComment),
+      annotationWarning(source, zodRegexComment).replace('"/** Anchors', '[warn] unrelated warning\n"/** Anchors'),
+    ]) expect(() => assertBuildWarningBudget(output)).toThrow("unbudgeted warning");
   });
 
   it("does not ignore a wrapped annotation header from an unknown source", () => {
