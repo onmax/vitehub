@@ -37,7 +37,7 @@ Access rules check `deny`, then `approve`, then `allow`. When no pattern matches
 
 The low-level server runtime accepts `actor` and `approved` from trusted integration code. It does not authenticate callers or collect approvals. Set `approved` only after approval for the exact call and Operation, and never copy it from HTTP requests or Agent tool input. Agent Capabilities are trusted server code; their tool input is untrusted.
 
-Use `oauth2()` from `@vite-hub/connections` for other OAuth 2 providers. Its required `origins` option lists the API origins that may receive the token, for example `["https://api.example.com"]`. Calls to other origins fail with `CONNECTIONS_ORIGIN_NOT_ALLOWED`.
+Use `oauth2()` from `@vite-hub/connections` for other OAuth 2 providers. Its required `origins` option lists the API origins that may receive the token, for example `["https://api.example.com"]`. Calls to other origins fail with `CONNECTIONS_ORIGIN_NOT_ALLOWED`. OAuth `tokenUrl` and `revokeUrl` must use HTTPS. Plain HTTP is accepted only for loopback development endpoints.
 
 ## Call the provider
 

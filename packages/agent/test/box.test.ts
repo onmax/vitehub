@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process"
+import { once } from "node:events"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, relative } from "node:path"
@@ -29,6 +30,8 @@ const createSqliteProviderRuntimeSessionStore = vi.hoisted(() => vi.fn(async (pa
 
 vi.mock("@t3tools/provider-runtime", () => ({ createProviderRuntime, createSqliteProviderRuntimeSessionStore }))
 
+const openedBoxSession = vi.hoisted(() => ({ current: undefined as import("@vite-hub/box").BoxSession | undefined }))
+
 /** Error that Box session close reports after the real close. It simulates a failed cwd synchronization. */
 const boxCloseFailure = vi.hoisted(() => ({ error: undefined as Error | undefined }))
 vi.mock("@vite-hub/box", async (importOriginal) => {
@@ -39,6 +42,7 @@ vi.mock("@vite-hub/box", async (importOriginal) => {
       plan: box.plan,
       async open(openOptions) {
         const session = await box.open(openOptions)
+        openedBoxSession.current = session
         const error = boxCloseFailure.error
         if (!error) return session
         return {
@@ -68,6 +72,7 @@ afterEach(async () => {
   createProviderRuntime.mockClear()
   vi.unstubAllEnvs()
   boxCloseFailure.error = undefined
+  openedBoxSession.current = undefined
   await Promise.all(roots.splice(0).map(root => rm(root, { force: true, recursive: true })))
 })
 
@@ -308,6 +313,43 @@ describe("Agent Box relay", () => {
       localRoot: join(root, "local"),
     })).rejects.toMatchObject({ code: "EISDIR" })
     await vi.waitFor(() => expect(relayServers.at(-1)?.listening).toBe(false))
+  })
+
+  it("lets Agent cleanup kill a SIGTERM-resistant provider and sync its Box cwd", async () => {
+    const root = await temporaryRoot()
+    const workspace = join(root, "workspace")
+    await mkdir(workspace)
+    const threadId = "box-resistant-provider"
+    let launcher: ReturnType<typeof spawn> | undefined
+    let launcherClosed: Promise<unknown> | undefined
+    providerRuntime(threadId, async ({ cwd }) => {
+      const options = createProviderRuntime.mock.lastCall?.[0]
+      const script = "process.on('SIGTERM', () => {}); require('node:fs').writeFileSync('saved.txt', 'preserved'); process.stdout.write('ready'); setInterval(() => {}, 1000)"
+      launcher = spawn(String(options?.settings?.binaryPath), ["-e", script], { cwd, env: { ...options?.environment }, stdio: ["pipe", "pipe", "ignore"] })
+      launcherClosed = new Promise(resolve => launcher!.once("close", resolve))
+      await once(launcher.stdout!, "data")
+    })
+    const invocation = createProviderAgentAdapter<PullRequestOptions>({
+      box: { cwd: workspace, runtime: "trusted-host" },
+      provider: "codex",
+      providerSettings: { binaryPath: process.execPath },
+      // SAFETY: The fixture provides the provider invocation fields read by the adapter.
+    }).generate(invocationContext(threadId, { prompt: "review", options: { ref: "", sha: "", token: "" } }) as never)
+    let finished = false
+    let failure: unknown
+    const settled = Promise.resolve(invocation).then(() => { finished = true }, (error: unknown) => { failure = error; finished = true })
+    try {
+      await vi.waitFor(() => expect(finished).toBe(true), { timeout: 2000 })
+      expect(failure).toBeUndefined()
+      expect(await readFile(join(workspace, "saved.txt"), "utf8")).toBe("preserved")
+      await launcherClosed
+    }
+    finally {
+      await openedBoxSession.current?.close()
+      await settled
+      launcher?.kill("SIGKILL")
+      await launcherClosed
+    }
   })
 
   it("stops pulling Box output while the runtime consumer is paused", async () => {

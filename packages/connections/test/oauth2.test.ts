@@ -30,6 +30,20 @@ describe("oauth2", () => {
     expect(() => oauth2(options({ tokenUrl: "http://localhost:8787/token", revokeUrl: "http://127.0.0.1/revoke" }))).not.toThrow()
   })
 
+  it.each(["tokenUrl", "revokeUrl"] as const)("rejects plaintext non-loopback %s before resolving credentials", (endpoint) => {
+    const client = vi.fn(() => ({ clientId: "client", clientSecret: "private" }))
+    expect(() => oauth2(options({ client, [endpoint]: "http://auth.example/credential" }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: `provider.${endpoint}` } }))
+    expect(client).not.toHaveBeenCalled()
+  })
+
+  it.each(["http://localhost:8976", "http://127.0.0.1:8976", "http://[::1]:8976", "https://auth.example"])("accepts credential endpoints at %s", async (origin) => {
+    const upstream = mockFetch(() => Response.json({ access_token: "new", token_type: "Bearer" }))
+    const provider = oauth2(options({ tokenUrl: `${origin}/token`, revokeUrl: `${origin}/revoke` }))
+    await provider.exchange({ code: "code", codeVerifier: "verifier", redirectUri: "http://localhost/callback" }, { fetch: upstream.fetch })
+    await provider.revoke!(tokenSet(), { fetch: upstream.fetch })
+    expect(upstream.calls.map(call => call.url)).toEqual([`${origin}/token`, `${origin}/revoke`])
+  })
+
   it("rejects authorization parameters that ViteHub sets for each flow", () => {
     for (const key of ["client_id", "code_challenge", "code_challenge_method", "redirect_uri", "response_type", "scope", "state"]) {
       expect(() => oauth2(options({ authorizationParams: { [key]: "x" } }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: `provider.authorizationParams.${key}` } }))
