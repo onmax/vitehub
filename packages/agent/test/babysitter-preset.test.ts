@@ -672,6 +672,8 @@ describe("Babysitter preset runtime", () => {
     expect(f.passes[0]?.prompt).toContain("new-review-bot[bot]");
     expect(f.passes[0]?.instructions).toContain("Preserve the documented API contract.");
     expect(f.passes[0]?.instructions).not.toContain("{{{ instructions }}}");
+    // An open thread disables the wait, so the pass resolves fixed threads before it parks.
+    expect(f.passes[0]?.instructions).toContain("After pushing, resolve the review threads that push fixes, then stop");
     const environment = createProviderRuntime.mock.calls[0]?.[0].environment;
     expect(environment).not.toHaveProperty("GH_TOKEN");
     expect(environment).toHaveProperty("OPENAI_API_KEY", "provider-only");
