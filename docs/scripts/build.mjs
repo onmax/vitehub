@@ -109,7 +109,7 @@ export function assertBuildWarningBudget(output) {
       counts.set(annotationBudget.name, (counts.get(annotationBudget.name) ?? 0) + 1);
       continue;
     }
-    const header = /^\s*(?:\[warn(?:ing)?\]\s*)?(.+?) \(\d+:\d+\): A comment\s*$/i.exec(line);
+    const header = /^\s*(?:(?:\[warn(?:ing)?\]|warn(?:ing)?\b)\s*)?(.+?) \(\d+:\d+\): A comment\s*$/i.exec(line);
     if (header) {
       const source = header[1];
       const budget = buildWarningBudget.find(entry => entry.comment && (

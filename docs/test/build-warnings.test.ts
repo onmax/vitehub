@@ -143,6 +143,11 @@ describe("docs build warning budget", () => {
     expect(() => assertBuildWarningBudget(`${warning}\n${changedHash}\n${warning}`)).toThrow("warning budget exceeded for Nuxt generated pure annotations: 3/2");
   });
 
+  it.each([" WARN  ", "warning "])("accepts paired annotations with the plain %s logger prefix", prefix => {
+    const output = annotationWarning("node_modules/.cache/nuxt/.nuxt/dist/server/_nuxt/dist-CJ1DFSvj.js", zodRegexComment).replace("[warn] ", prefix);
+    expect(() => assertBuildWarningBudget(output)).not.toThrow();
+  });
+
   it("rejects unmatched, mismatched, and unrelated annotation headers", () => {
     const source = "node_modules/.cache/nuxt/.nuxt/dist/server/_nuxt/dist-Dg8NDwTS.js";
     for (const output of [
