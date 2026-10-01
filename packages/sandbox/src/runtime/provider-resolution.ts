@@ -122,9 +122,11 @@ export async function resolveSandboxBox(
   local: SandboxDefinitionOptions,
   context: { event?: SandboxEvent },
 ) {
+  // SAFETY: Both import paths resolve the provider-loader module contract.
   const providerLoader = await import('vitehub-sandbox-provider-loader').catch(() => {
-    const dynamicImport = new Function('specifier', 'return import(specifier)') as <T>(specifier: string) => Promise<T>
-    return dynamicImport<ProviderLoaderModule>('@vite-hub/sandbox/runtime/provider-loader')
+    // SAFETY: The generated provider-loader alias is unavailable only outside the generated runtime; dynamic import returns the requested module shape.
+    const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<ProviderLoaderModule>
+    return dynamicImport('@vite-hub/sandbox/runtime/provider-loader')
   }) as ProviderLoaderModule
   const runtimeProvider = await providerLoader.loadSandboxRuntimeProvider(provider)
   return await runtimeProvider.resolveSandboxBox({

@@ -197,6 +197,7 @@ export async function resolveSandboxRunner<TPayload = unknown, TResult = unknown
     throw sandboxErrorDiagnostics.SANDBOX_R0054({ message: `[vitehub] Sandbox "${name}" is invalid.` })
 
   const provider = await resolveSandboxProvider(config, definition)
+  // SAFETY: createSandboxRunner returns the generic runner whose run method is narrowed to this invocation's payload and result types.
   return await createSandboxRunner(name, definition, provider) as SandboxRunner & {
     run: (payload?: TPayload, options?: SandboxExecutionOptions) => Promise<TResult>
   }
