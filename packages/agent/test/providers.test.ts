@@ -648,7 +648,7 @@ describe("agent Vite plugin", () => {
       await configResolved({
         command: "serve",
         createResolver: () => async (id) => `/app/node_modules/${id}`,
-        plugins: [{ name: "@vite-hub/blob/vite" }, { name: "@vite-hub/database/vite" }, { name: "@vite-hub/email/vite" }, { name: "@vite-hub/kv/vite" }],
+        plugins: [{ name: "@vite-hub/blob/vite" }, { name: "@vite-hub/connections/vite" }, { name: "@vite-hub/database/vite" }, { name: "@vite-hub/email/vite" }, { name: "@vite-hub/kv/vite" }],
         root,
       })
 
@@ -657,12 +657,13 @@ describe("agent Vite plugin", () => {
 
       expect(registry).toContain("defineScheduledAgentTarget")
       expect(registry).toContain('import { blob as vitehubBlob } from "@vite-hub/blob"')
+      expect(registry).toContain('import { connections as vitehubConnections } from "@vite-hub/connections/agent"')
       expect(registry).toContain('import { agentDb as vitehubDb } from "@vite-hub/database/drizzle"')
       expect(registry).toContain('import { email as vitehubEmail } from "@vite-hub/email/server"')
       expect(registry).toContain('import { kv as vitehubKv } from "@vite-hub/kv"')
       expect(registry).toContain('import { schedules as vitehubSchedules } from "@vite-hub/schedule/runtime"')
       expect(registry).toContain(
-        '{ agentIdentity: {"name":"digest"}, capabilities: { blob: vitehubBlob, db: vitehubDb, email: vitehubEmail, kv: vitehubKv, schedule: { schedules: vitehubSchedules } } }',
+        '{ agentIdentity: {"name":"digest"}, capabilities: { blob: vitehubBlob, connections: vitehubConnections, db: vitehubDb, email: vitehubEmail, kv: vitehubKv, schedule: { schedules: vitehubSchedules } } }',
       )
       expect(registry).toContain('registry["agent/digest"]')
       expect(registry).toContain('vitehubAgentWithColocatedInstructions(vitehubResolveScheduledAgentModule(module), "Use digest instructions.\\n")')
@@ -1742,7 +1743,7 @@ describe("agent Vite plugin", () => {
           {
             // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
             command: "build",
-            plugins: [schedulePlugin],
+            plugins: [schedulePlugin, { name: "@vite-hub/connections/vite" }],
             root,
           } as never,
         )
@@ -1755,7 +1756,8 @@ describe("agent Vite plugin", () => {
         expect(route).toContain('import vitehubAgentScheduleRegistry from "#vitehub/schedule/registry"')
         expect(route).toContain('setScheduleRuntimeRegistry as vitehubSetScheduleRuntimeRegistry } from "@vite-hub/schedule/runtime"')
         expect(route).toContain("vitehubSetScheduleRuntimeRegistry(vitehubAgentScheduleRegistry)")
-        expect(route).toContain("const vitehubAgentRouteCapabilities = { schedule: { schedules: vitehubSchedules } }")
+        expect(route).toContain('import { connections as vitehubConnections } from "@vite-hub/connections/agent"')
+        expect(route).toContain("const vitehubAgentRouteCapabilities = { connections: vitehubConnections, schedule: { schedules: vitehubSchedules } }")
         expect(route).toContain("capabilities: vitehubAgentRouteCapabilities")
       }
 
