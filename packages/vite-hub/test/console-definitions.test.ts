@@ -103,6 +103,10 @@ afterEach(() => {
 })
 
 describe("Console definition inspection", () => {
+  it("returns 404 for an absent section when no catalog is installed", () => {
+    expect(() => definitionsHandler(event("?section=future"))).toThrow(expect.objectContaining({ statusCode: 404 }))
+  })
+
   it("returns the installed read-only Workflow Definition catalog", () => {
     installConsoleDefinitions("/project", catalog("release"))
 

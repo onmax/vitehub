@@ -1,5 +1,5 @@
 import { assertConsoleRequest, consoleRequestURL } from "./request.ts"
-import { getConsoleDefinitions } from "./definitions.ts"
+import { resolveConsoleDefinitions } from "../../internal.ts"
 import { isConsoleSectionId } from "../sections.ts"
 
 import type { ConsoleSectionContent } from "../definitions.ts"
@@ -19,7 +19,7 @@ export default function consoleDefinitionsHandler(event: ConsoleRequestEvent): C
   if (!isConsoleSectionId(section)) {
     throw requestError(400, "A valid definition section is required.")
   }
-  const catalog = getConsoleDefinitions().content
+  const catalog = resolveConsoleDefinitions()?.content ?? {}
   const content = Object.hasOwn(catalog, section) ? catalog[section] : undefined
   if (!content) throw requestError(404, "Definition section not found.")
   return { ...content, section }
