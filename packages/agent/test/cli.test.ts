@@ -1464,6 +1464,24 @@ describe("agent CLI", () => {
     }
   })
 
+  it.each(["completed", "failed", "cancelled"] as const)("reports the unenforced stale local abort when the journal is %s", async status => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-terminal-cancel-warning-"))
+    const result = { delivery: "local", id: "invocation-1", notEnforcedBy: "run", outcome: "terminal", status }
+    const fetchCancel = vi.fn<typeof fetch>(async (_url, init) => init?.method === "POST" ? Response.json(result) : Response.json({ root: rootDir, runtime: "nitro" }))
+    try {
+      for (const json of [false, true]) {
+        const stdout = stream()
+        const stderr = stream()
+        const exitCode = await runAgentInvocationsCli(["cancel", "invocation-1", ...(json ? ["--json"] : [])], { env: {}, rootDir, stderr, stdout }, { fetch: fetchCancel })
+        expect(exitCode).toBe(1)
+        expect(stderr.output()).toBe("")
+        if (json) expect(JSON.parse(stdout.output())).toEqual(result)
+        else expect(stdout.output()).toBe(`invocation-1 journal is ${status}; local abort requested, not enforced by run\n`)
+      }
+    }
+    finally { await rm(rootDir, { force: true, recursive: true }) }
+  })
+
   it("times out stalled Invocation cancellation discovery before posting", async () => {
     const stderr = stream()
     let signal: AbortSignal | null | undefined

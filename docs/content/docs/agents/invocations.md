@@ -355,11 +355,13 @@ if (result.notEnforcedBy) console.warn(`Cancel requested, not enforced by ${resu
 | `outcome` | Meaning |
 | --- | --- |
 | `requested` | The request was recorded or sent locally. `delivery: 'local'` means a run in this process received an aborted signal. `delivery: 'journal'` means the store retained the request for a current or future execution owner. Neither confirms that execution stopped. |
-| `terminal` | The Invocation already finished. `status` has its final state. |
+| `terminal` | The journal has a final state in `status`. A stale local Driver may still be active. Its abort delivery and any `notEnforcedBy` warning remain in the result. |
 | `not-found` | The journal has no Invocation with this id. |
 | `unavailable` | The store did not keep the request and no run in this process holds the Invocation. |
 
-An active execution owner reads journal requests at claim renewal, normally every 10 seconds. A crashed owner or expired lease does not prove that a Driver stopped. An orphaned record remains pending or running until execution recovery observes its request; cancellation does not recover orphaned work or promise a completion deadline. Repeating the request does not change that state. Read the final journal status to confirm cancellation.
+Active runs read journal requests every 10 seconds, including after a lost lease stops claim renewal. A crashed owner or expired lease does not prove that a Driver stopped. An orphaned record remains pending or running until execution recovery observes its request; cancellation does not recover orphaned work or promise a completion deadline. Repeating the request does not change that state. Read the final journal status to confirm cancellation.
+
+If the durable request write fails, cancellation still aborts a local run and propagates the storage error. This does not create a durable request for other processes.
 
 An observed cancel request aborts the Invocation abort signal. That signal stops the Driver capacity wait, the Driver run, tool calls, queued webhook executions, and scheduled turns. A webhook failure caused by cancellation completes its delivery without a retry. An unrelated failure still retries, even if the Invocation has a historical cancellation request. The record then moves to `cancelled` through the usual `agent.invocation.cancelled` event.
 

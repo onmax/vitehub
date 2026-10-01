@@ -206,7 +206,7 @@ export interface AgentInvocationCancelResult {
   notEnforcedBy?: string
   /**
    * `requested`: the request was recorded or sent locally; owner observation is unconfirmed.
-   * `terminal`: the Invocation already finished.
+   * `terminal`: the journal has a final state; a stale local Driver may still be active.
    * `not-found`: the journal has no Invocation with this id.
    * `unavailable`: the store did not keep the request and no run in this process holds the Invocation.
    */
@@ -1747,13 +1747,19 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const cancellation = new AbortController()
       let cancelNotEnforcedBy: string | undefined
       let unregisterCancellation: (() => void) | undefined
+      let cancellationPolling: ReturnType<typeof setInterval> | undefined
       const requestCancellation = (reason: unknown = createAgentInvocationCancellationError(recordId)) => {
         if (!cancellation.signal.aborted) cancellation.abort(reason)
       }
-      const readCancellationRequest = (record: Pick<AgentInvocationRecord, "cancelRequestedAt" | "status"> | undefined) => {
-        if (record?.cancelRequestedAt && (!terminalStatus(record.status) || record.status === "cancelled")) requestCancellation()
+      const readCancellationRequest = (record: Pick<AgentInvocationRecord, "cancelRequestedAt"> | undefined) => {
+        if (record?.cancelRequestedAt) requestCancellation()
+      }
+      const stopCancellationPolling = () => {
+        if (cancellationPolling !== undefined) clearInterval(cancellationPolling)
+        cancellationPolling = undefined
       }
       const stopWatchingCancellation = () => {
+        stopCancellationPolling()
         unregisterCancellation?.()
         unregisterCancellation = undefined
       }
@@ -1769,7 +1775,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const startHeartbeat = () => {
         if (finished || !ownsRecord || heartbeat !== undefined) return
         heartbeat = setInterval(() => {
-          void renew().then(pollCancellationRequest).catch(() => undefined)
+          void renew().catch(() => undefined)
         }, CLAIM_RENEW_INTERVAL_MS)
         unrefTimer(heartbeat)
       }
@@ -1822,13 +1828,15 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               if (!terminalWriteCommitted) {
                 boundToTerminalRecord = true
                 requestCancellation()
-                stopWatchingCancellation()
+                stopCancellationPolling()
+                // A custom callback can continue after abort, so retain its warning until it returns.
+                if (!cancelNotEnforcedBy) stopWatchingCancellation()
               }
             }
           }
         }
         if (ownsRecord && finished) {
-          stopWatchingCancellation()
+          if (!cancelNotEnforcedBy) stopWatchingCancellation()
           await boundedStoreOperation(() => store.release(recordId, claimId))
           ownsRecord = false
           stopHeartbeat()
@@ -2043,7 +2051,11 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           traceLog: journalTraceLog(baseTraceLog, observe, () => ++observationSequence, content, metadataContent, limits.maxStringLength, limits.maxCount),
         },
         async finish(status, error) {
-          if (finished || finishing) return
+          if (finished) {
+            stopWatchingCancellation()
+            return
+          }
+          if (finishing) return
           finishing = true
           const finishingObservations = [activeObservation, ...pendingObservations]
           const observationDeadline = Date.now() + limits.flushTimeoutMs
@@ -2121,7 +2133,10 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             }
             return true
           }
-          if (await finishOnce() || terminalRetry) return
+          if (await finishOnce() || finished || terminalRetry) {
+            if (finished) stopWatchingCancellation()
+            return
+          }
           const retryWork = (async () => {
             const deadline = Date.now() + TERMINAL_RETRY_TIMEOUT_MS
             while (!finished && Date.now() < deadline) {
@@ -2137,6 +2152,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               if (ownsRecord) await write(() => boundedStoreOperation(() => store.release(recordId, claimId)))
               ownsRecord = false
             }
+            else stopWatchingCancellation()
           })()
           const retry = retryWork.finally(async () => {
             if (!finished && terminalRetry === retry) {
@@ -2186,6 +2202,9 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           if (finished || finishing || unregisterCancellation) return
           cancelNotEnforcedBy = driver.enforced ? undefined : driver.name
           unregisterCancellation = registerAgentInvocationCancellation(store, recordId, { abort: requestCancellation, driver: () => runningRequested ? driver : undefined })
+          // A lost lease stops writes, but the stale Driver still needs journal cancellation.
+          cancellationPolling = setInterval(() => { void pollCancellationRequest().catch(() => undefined) }, CLAIM_RENEW_INTERVAL_MS)
+          unrefTimer(cancellationPolling)
         },
       }
     },
@@ -2218,16 +2237,35 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const summary = await store.getSummary(id)
       if (!summary) return { id, outcome: "not-found" }
       if (terminalStatus(summary.status)) {
-        abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
-        return { id, outcome: "terminal", status: summary.status }
+        const local = abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
+        return {
+          ...(local.aborted ? { delivery: "local" as const } : {}),
+          id,
+          ...(local.notEnforcedBy ? { notEnforcedBy: local.notEnforcedBy } : {}),
+          outcome: "terminal",
+          status: summary.status,
+        }
       }
       const timestamp = new Date().toISOString()
       // Persist the request first, so a run in another process and a later bind of this record read it.
-      const flagged = await store.update(id, { cancelRequestedAt: timestamp, timestamp })
-      const local = abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
+      let flagged: AgentInvocationRecord | undefined
+      let local: ReturnType<typeof abortLocalAgentInvocation>
+      try {
+        flagged = await store.update(id, { cancelRequestedAt: timestamp, timestamp })
+      }
+      finally {
+        // A failed durable request must still signal work in this process, while the write error propagates.
+        local = abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
+      }
       let current = await store.getSummary(id) ?? flagged
       if (!current) return { id, outcome: "not-found" }
-      if (terminalStatus(current.status)) return { id, outcome: "terminal", status: current.status }
+      if (terminalStatus(current.status)) return {
+        ...(local.aborted ? { delivery: "local" as const } : {}),
+        id,
+        ...(local.notEnforcedBy ? { notEnforcedBy: local.notEnforcedBy } : {}),
+        outcome: "terminal",
+        status: current.status,
+      }
       if (local.aborted) {
         return {
           delivery: "local",

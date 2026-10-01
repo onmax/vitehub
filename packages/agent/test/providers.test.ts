@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto"
 import { execFile } from "node:child_process"
 import { glob, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
+import { runInNewContext } from "node:vm"
 import { dirname, join, relative, resolve } from "node:path"
 import { clearTimeout as clearNodeTimeout, setTimeout as setNodeTimeout } from "node:timers"
 import { pathToFileURL } from "node:url"
@@ -9138,7 +9139,7 @@ describe("server helpers", () => {
     }
   })
 
-  it.each(["own", "child", "wrapped child", "aggregate own", "aggregate child"] as const)("scopes queued webhook cancellation to its %s invocation", async cancellationScope => {
+  it.each(["own", "child", "wrapped child", "aggregate own", "aggregate child", "foreign wrapped own", "foreign wrapped child", "foreign aggregate own", "foreign aggregate child"] as const)("scopes queued webhook cancellation to its %s invocation", async cancellationScope => {
     const { defineAgent } = await import("../src/index.ts")
     const { github } = await import("../src/channels.ts")
     const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
@@ -9149,10 +9150,12 @@ describe("server helpers", () => {
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
     const complete = vi.spyOn(state, "completeWebhookDelivery")
     const retry = vi.spyOn(state, "retryWebhookDelivery")
-    const ownCancellation = cancellationScope === "own" || cancellationScope === "aggregate own"
+    const ownCancellation = cancellationScope === "own" || cancellationScope.endsWith(" own")
     const cancelledId = await agentInvocationId(ownCancellation ? "queued-webhook-invocation" : "child-invocation", ownCancellation ? "review" : "child")
     const run = vi.fn(() => {
       const cancelled = createAgentInvocationCancellationError(cancelledId)
+      if (cancellationScope.startsWith("foreign wrapped")) throw runInNewContext("new Error('Foreign lifecycle failure', { cause: cancelled })", { cancelled })
+      if (cancellationScope.startsWith("foreign aggregate")) throw runInNewContext("new AggregateError([new Error('Cleanup failed'), cancelled], 'Foreign lifecycle failure')", { cancelled })
       if (cancellationScope === "aggregate own" || cancellationScope === "aggregate child") {
         throw new AggregateError([cancelled, new Error("Finish lifecycle failed")], "Invocation lifecycle failed")
       }

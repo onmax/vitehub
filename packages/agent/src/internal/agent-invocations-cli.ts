@@ -248,7 +248,9 @@ async function cancelFailureMessage(response: Response): Promise<string> {
 
 function cancelMessage(result: AgentInvocationCancelResult): string {
   if (result.outcome === "not-found") return `${result.id} not found`
-  if (result.outcome === "terminal") return `${result.id} already ${result.status ?? "finished"}`
+  if (result.outcome === "terminal") return result.notEnforcedBy
+    ? `${result.id} journal is ${result.status ?? "terminal"}; local abort requested, not enforced by ${result.notEnforcedBy}`
+    : `${result.id} already ${result.status ?? "finished"}`
   if (result.outcome === "unavailable") return `${result.id} cancel request was not recorded`
   if (result.notEnforcedBy) return `${result.id} cancel requested, not enforced by ${result.notEnforcedBy}`
   if (result.delivery === "journal") return `${result.id} cancel request recorded; execution stop is unconfirmed`
@@ -257,7 +259,7 @@ function cancelMessage(result: AgentInvocationCancelResult): string {
 
 function cancelExitCode(result: AgentInvocationCancelResult): number {
   if (result.outcome === "requested") return 0
-  return result.outcome === "terminal" && result.status === "cancelled" ? 0 : 1
+  return result.outcome === "terminal" && result.status === "cancelled" && !result.notEnforcedBy ? 0 : 1
 }
 
 function formatError(error: RuntimeDiagnosticError, indent = ""): string {

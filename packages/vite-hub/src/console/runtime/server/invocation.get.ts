@@ -80,7 +80,9 @@ export async function cancelConsoleInvocation(event: ConsoleRequestEvent): Promi
   if (!summary.agentName || !getConsoleAgentDefinition(summary.agentName)) throw actionError(403, "Cancelling this invocation requires Console invoke access for its Agent.")
   const result = await invocations.cancel(id)
   if (result.outcome === "not-found") throw notFound()
-  if (result.outcome === "terminal") throw actionError(409, "Only pending or running invocations can be cancelled.")
+  if (result.outcome === "terminal") throw actionError(409, result.notEnforcedBy
+    ? `Invocation journal is ${result.status ?? "terminal"}; local abort requested, not enforced by ${result.notEnforcedBy}.`
+    : "Only pending or running invocations can be cancelled.")
   if (result.outcome === "unavailable") throw actionError(503, "The invocation journal did not record the cancel request.")
   return result
 }

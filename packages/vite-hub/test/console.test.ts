@@ -2119,6 +2119,26 @@ describe("Agent invocation console", () => {
     }
   })
 
+  it.each(["completed", "failed", "cancelled"] as const)("keeps the custom Driver warning when Console cancellation sees a %s journal", async status => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-terminal-abort-"))
+    const backing = createMemoryAgentInvocationStore()
+    const invocations = defineAgentInvocations({ store: backing })
+    const id = "terminal-custom-abort"
+    const timestamp = new Date().toISOString()
+    await backing.create({ agentName: "support", createdAt: timestamp, id, observations: [], status, traceId: "trace", updatedAt: timestamp })
+    vi.spyOn(invocations, "cancel").mockResolvedValue({ delivery: "local", id, notEnforcedBy: "run", outcome: "terminal", status })
+    const definition = defineAgent({ driver: { run: () => "Done" }, invocations, name: "support" })
+    const method = "POST"
+    const url = `http://localhost/api/_vitehub/console/invocations/${id}`
+    const request = { headers: new Headers({ host: "localhost" }), method, node: { req: { method, socket: { remoteAddress: "127.0.0.1" }, url } }, req: { json: async () => ({ action: "cancel" }), method, url } } satisfies ConsoleRequestEvent
+    try {
+      installConsoleAgentDefinitions([{ definition: { default: definition }, fallbackName: "help" }], { invoke: true, projectRoot: root })
+      installConsoleInvocations(root, invocations)
+      await expect(invocationHandler(request)).rejects.toMatchObject({ statusCode: 409, statusMessage: `Invocation journal is ${status}; local abort requested, not enforced by run.` })
+    }
+    finally { await rm(root, { force: true, recursive: true }) }
+  })
+
   it("rejects disabled Agents, unknown profiles, and unsupported fields", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-invoke-validation-"))
     const definition = defineAgent({

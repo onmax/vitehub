@@ -1,6 +1,7 @@
 import type { AgentInvocationStore } from "../invocations.ts"
 import { Diagnostic } from "nostics"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
+import { isRuntimeRecord } from "./runtime-type.ts"
 
 /**
  * Agent Driver that runs a journaled Invocation, and whether ViteHub can stop it.
@@ -88,15 +89,14 @@ export function isAgentInvocationCancellationError(error: unknown, id?: string):
   while (pending.length > 0) {
     const current = pending.pop()
     try {
-      if (!(current instanceof Error) || seen.has(current)) continue
+      if (!isRuntimeRecord(current) || seen.has(current)) continue
       seen.add(current)
       if (current instanceof Diagnostic && current.code === agentInvocationCancellationCode
         && (id === undefined || Reflect.get(current, cancellationInvocationId) === id)) return true
       pending.push(current.cause)
-      if (current instanceof AggregateError) {
-        const errors: unknown = current.errors
-        if (Array.isArray(errors)) pending.push(...errors)
-      }
+      // Wrappers and aggregates may come from another realm; only the matched reason needs our identity.
+      const errors: unknown = current.errors
+      if (Array.isArray(errors)) pending.push(...errors)
     } catch {
       // An unreadable error must not replace the original Invocation failure.
     }

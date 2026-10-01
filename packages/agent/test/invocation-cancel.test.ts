@@ -236,6 +236,82 @@ describe("Agent Invocation cancel", () => {
     expect((await owner.get(id))?.status).toBe("cancelled")
   })
 
+  it.each(["completed", "failed", "cancelled"] as const)("keeps a stale model listening after nonterminal lease loss and replacement %s", async status => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    let signal: AbortSignal | undefined
+    modelGenerate.mockImplementation(async (input: { abortSignal?: AbortSignal }) => {
+      signal = input.abortSignal
+      return await untilAborted(signal)
+    })
+    const backing = createMemoryAgentInvocationStore()
+    const store = { ...backing, claim: (...args: Parameters<typeof backing.claim>) => backing.claim(args[0], args[1], 1, args[3]) }
+    const owner = defineAgentInvocations({ store })
+    const remote = defineAgentInvocations({ store: { ...backing } })
+    const run = runAgent(defineAgent({ driver: modelDriver, invocations: owner }), runtime(`stale-remote-cancel-${status}`), { prompt: "Wait." })
+    const rejection = expect(run).rejects.toThrow("Cancellation was requested")
+    const { id } = await recordWithStatus(owner, `stale-remote-cancel-${status}`, "running")
+    await vi.waitFor(() => expect(signal).toBeDefined())
+    try {
+      await new Promise(resolve => setTimeout(resolve, 5))
+      expect(await backing.claim(id, "replacement", 30_000)).toBe(true)
+      await vi.advanceTimersByTimeAsync(10_000)
+      // Losing the lease does not prove execution stopped and must not itself report cancellation.
+      expect(signal?.aborted).toBe(false)
+      expect(await remote.cancel(id)).toMatchObject({ delivery: "journal", outcome: "requested", status: "running" })
+      await backing.update(id, { status, timestamp: new Date().toISOString() })
+      const terminalRecord = await backing.get(id)
+      await backing.release(id, "replacement")
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(signal?.aborted).toBe(true)
+      await rejection
+      expect(await backing.get(id)).toEqual(terminalRecord)
+    }
+    finally {
+      await backing.release(id, "replacement")
+      abortLocalAgentInvocation(store, id, new Error("Cancellation was requested during fixture cleanup"))
+      await rejection
+    }
+  })
+
+  it.each([true, false])("aborts local work while propagating a failed cancel persistence write, enforced=%s", async enforced => {
+    const failure = new Error("Synthetic cancel persistence failure")
+    const backing = createMemoryAgentInvocationStore()
+    const store = { ...backing, update: (...args: Parameters<typeof backing.update>) => {
+      if (args[1].cancelRequestedAt) return Promise.reject(failure)
+      return backing.update(...args)
+    } }
+    const invocations = defineAgentInvocations({ store })
+    const release = deferred<string>()
+    let signal: AbortSignal | undefined
+    modelGenerate.mockImplementation(async (input: { abortSignal?: AbortSignal }) => {
+      signal = input.abortSignal
+      return await untilAborted(signal)
+    })
+    const custom = { run: async ({ input }: import("../src/types.ts").AgentRunContext) => {
+      signal = input.abortSignal
+      return await release.promise
+    } }
+    const runId = `failed-cancel-persistence-${enforced}`
+    const run = runAgent(defineAgent({ driver: enforced ? modelDriver : custom, invocations }), runtime(runId), { prompt: "Wait." })
+    const settled = enforced ? expect(run).rejects.toThrow("Cancellation was requested") : expect(run).resolves.toBe("Custom result")
+    const { id } = await recordWithStatus(invocations, runId, "running")
+    await vi.waitFor(() => expect(signal).toBeDefined())
+    try {
+      await expect(invocations.cancel(id)).rejects.toBe(failure)
+      expect(signal?.aborted).toBe(true)
+      expect((await backing.get(id))?.cancelRequestedAt).toBeUndefined()
+      if (!enforced) expect((await backing.get(id))?.status).toBe("running")
+      release.resolve("Custom result")
+      await settled
+      expect((await backing.get(id))?.status).toBe(enforced ? "cancelled" : "completed")
+    }
+    finally {
+      abortLocalAgentInvocation(store, id, new Error("Cancellation was requested during fixture cleanup"))
+      release.resolve("Custom result")
+      await settled
+    }
+  })
+
   it("delivers a cancel request through the journal when another instance holds the claim", async () => {
     const store = createMemoryAgentInvocationStore()
     const invocations = defineAgentInvocations({ store })
@@ -381,12 +457,61 @@ describe("Agent Invocation cancel", () => {
       await vi.advanceTimersByTimeAsync(10_000)
       expect(journal.abortSignal.aborted).toBe(false)
       await backing.update(id, { status, timestamp: new Date().toISOString() })
-      expect(await invocations.cancel(id)).toEqual({ id, outcome: "terminal", status })
+      expect(await invocations.cancel(id)).toEqual({ delivery: "local", id, outcome: "terminal", status })
       expect(journal.abortSignal.aborted).toBe(true)
       expect((await backing.get(id))?.status).toBe(status)
       expect((await backing.get(id))?.cancelRequestedAt).toBeUndefined()
     }
     finally { await journal.finish("cancelled") }
+  })
+
+  it.each((["completed", "failed", "cancelled"] as const).flatMap(status => [false, true].map(renewed => ({ renewed, status }))))("reports an unenforced local abort for an active custom run with a $status journal after renewal=$renewed", async ({ renewed, status }) => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    const backing = createMemoryAgentInvocationStore()
+    let rejectClaims = false
+    const store = { ...backing, claim: (...args: Parameters<typeof backing.claim>) => rejectClaims ? false : backing.claim(...args) }
+    const invocations = defineAgentInvocations({ store })
+    const release = deferred<string>()
+    let signal: AbortSignal | undefined
+    let ended = false
+    let activeTraceLog: import("../src/types.ts").AgentRuntimeContext["traceLog"]
+    const runId = `stale-custom-warning-${status}-${renewed}`
+    const run = runAgent(defineAgent({ invocations, driver: { run: async ({ input, traceLog }) => {
+      activeTraceLog = traceLog
+      signal = input.abortSignal
+      const result = await release.promise
+      ended = true
+      return result
+    } } }), runtime(runId), {})
+    const { id } = await recordWithStatus(invocations, runId, "running")
+    await vi.waitFor(() => expect(signal).toBeDefined())
+    try {
+      rejectClaims = true
+      await vi.advanceTimersByTimeAsync(10_000)
+      await backing.update(id, { status, timestamp: new Date().toISOString() })
+      const terminalRecord = await backing.get(id)
+      if (renewed) {
+        rejectClaims = false
+        await vi.advanceTimersByTimeAsync(10_000)
+        // Resume a journal write through the active run's Trace log to observe terminal renewal.
+        await activeTraceLog?.append({ name: "stale-owner-evidence", type: "run" })
+        await vi.waitFor(() => expect(signal?.aborted).toBe(true))
+      }
+      expect(await invocations.cancel(id)).toEqual({ delivery: "local", id, notEnforcedBy: "run", outcome: "terminal", status })
+      expect(signal?.aborted).toBe(true)
+      expect(ended).toBe(false)
+      expect(await backing.get(id)).toEqual(terminalRecord)
+      rejectClaims = false
+      release.resolve("Late custom result")
+      await expect(run).resolves.toBe("Late custom result")
+      expect(await backing.get(id)).toEqual(terminalRecord)
+      expect(await invocations.cancel(id)).toEqual({ id, outcome: "terminal", status })
+    }
+    finally {
+      rejectClaims = false
+      release.resolve("Late custom result")
+      await run
+    }
   })
 
   it.each(["completed", "failed", "cancelled"] as const)("aborts the stale Driver before unregistering after terminal renewal: %s", async status => {
