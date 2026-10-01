@@ -18,6 +18,18 @@ function providerRegistry() {
 }
 
 describe("Server Env providers", () => {
+  it("skips empty values only when ordered environment sources request it", async () => {
+    const registry = createRuntimeRegistry({
+      token: env({ source: env.source(["PRIMARY_TOKEN", "FALLBACK_TOKEN"], { skipEmpty: true }) }),
+      unchanged: env({ source: env.source(["PRIMARY_TOKEN", "FALLBACK_TOKEN"]) }),
+    })
+
+    const event = { env: { PRIMARY_TOKEN: "", FALLBACK_TOKEN: "fallback" } }
+    expect(resolveServerEnv(registry, event)).toEqual({ token: "fallback", unchanged: "" })
+    await expect(loadServerEnv(registry, event)).resolves.toEqual({ token: "fallback", unchanged: "" })
+    expect(() => resolveServerEnv(registry, { env: { PRIMARY_TOKEN: "", FALLBACK_TOKEN: "" } }).token).toThrow(expect.objectContaining({ code: "ENV_REQUIRED_MISSING" }))
+  })
+
   it("preserves __proto__ as an own key in every snapshot", async () => {
     const registry = createRuntimeRegistry({
       ["__proto__"]: { nested: env({ source: env.source("NESTED") }) },

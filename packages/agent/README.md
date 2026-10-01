@@ -290,6 +290,12 @@ openapi({
 When `cli` is set, the operation tools are replaced by one CLI-named tool. ViteHub generates one subcommand per allowed operation, using the OpenAPI operation summary or description for command guidance.
 Capability `cli` can be a static command tree or an invocation resolver that returns `undefined` when the CLI should not be available. Generated command trees stay behind adapter-owned options such as `openapi({ cli })`, whose resolver may return `false` or `undefined` for the current invocation.
 
+## Channel Env
+
+Built-in Channels read credentials from `env.server.<channel>.<field>`. They read the host variable names only when Server Env does not declare the field. `discoverAgentChannelEnv({ rootDir, serverDirs })` from `@vite-hub/agent/vite` finds built-in Channel factory calls in Agent files and returns the fields to declare, with their host names, `secret` flag, and `required` flag. `vitehub({ agent })` passes the result to Server Env before `hubEnv()` builds the registry; application declarations win field by field. Explicit Channel options always win over Env.
+
+To give a built-in Channel Env, add its factory name and fields to `builtInChannelEnv` in `src/channel-env.ts`, then read each field with `channelEnvValue(channel, field, context)` when the option is omitted. Set `requiredUnless` to the option keys that make a field unnecessary; other fields stay optional. See the [Channel Env guide](https://vitehub.dev/docs/agents/channels#channel-env) for the current names.
+
 ## Error diagnostics
 
 ViteHub-owned Agent configuration, build, and runtime defects use stable

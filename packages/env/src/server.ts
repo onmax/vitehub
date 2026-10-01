@@ -36,7 +36,7 @@ interface RuntimeEnvEntry {
   required: boolean
   schema?: EnvValueSchema
   secret: boolean
-  source: { kind: "env", label: string, name: string, names?: string[] }
+  source: { kind: "env", label: string, name: string, names?: string[], skipEmpty?: boolean }
 }
 
 interface RuntimeProviderEntry {
@@ -92,7 +92,7 @@ function runtimeEnv(event?: unknown): RuntimeEnv {
 
 function readRuntimeSource(entry: RuntimeEnvEntry, env: RuntimeEnv): { found: boolean, value?: unknown } {
   for (const name of entry.source.names || [entry.source.name]) {
-    if (Object.hasOwn(env, name) && typeof env[name] !== "undefined") {
+    if (Object.hasOwn(env, name) && typeof env[name] !== "undefined" && !(entry.source.skipEmpty && env[name] === "")) {
       return { found: true, value: env[name] }
     }
   }

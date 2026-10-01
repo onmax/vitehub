@@ -176,6 +176,8 @@ const githubToken = snapshot.githubToken.unseal()
 
 Each `loadServerEnv()` call batches requested keys once per provider and returns a fresh frozen snapshot. ViteHub does not cache across loads, so rotation appears on the next load. `useServerEnv()` stays synchronous for host-backed and literal values; provider-backed values require `loadServerEnv()` or `runWithServerEnv()`.
 
+`env.source(["PRIMARY_TOKEN", "FALLBACK_TOKEN"], { skipEmpty: true })` skips empty host values. Without `skipEmpty`, a defined empty string remains a value. Generated built-in Channel sources use `skipEmpty` to preserve their host fallback behavior.
+
 The generated `#vitehub/env/server` module is not blocked from client builds. Keep its imports in server-only entry points, and supply credentials through `env.source(...)` without literals or defaults; static values and defaults can be serialized into the generated module.
 
 `SecretEnv` renders as `<redacted>` in string conversion, JSON, and Node inspection. Call `unseal()` only at the provider boundary that needs the raw value. Redaction is type friction, not complete leak prevention: never return, log, trace, or place an unsealed value in Agent input.

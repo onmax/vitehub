@@ -33,6 +33,7 @@ import { VITEHUB_NITRO_CONFIG_CONTEXT, type ViteHubProviderImportContributor } f
 import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 
 import { viteHubTypesPlugin } from "./internal/types.ts"
+import { agentChannelEnvPlugin } from "./agent-channel-env.ts"
 import { consoleInvocationRootPlugin, consoleVitePlugin, type ConsoleOptions } from "./console/vite.ts"
 import { resolveConsoleSectionIds } from "./console/runtime/sections.ts"
 
@@ -760,6 +761,16 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
           ...options.env?.runtimeImports,
         },
       })
+  if (options.agent && envPlugin) {
+    // Read the root and declarations after ordinary config hooks. The pre plugin's
+    // post config hook declares Channel Env before this registry hook runs.
+    const configHook = envPlugin.config
+    if (configHook) envPlugin.config = {
+      order: "post",
+      handler: "handler" in configHook ? configHook.handler : configHook,
+    }
+    plugins.push(agentChannelEnvPlugin())
+  }
   plugins.push(...deploymentPlugins(plan, requestedServices, blobEnabled, manifestServices, options, envPlugin))
   const providerImportAliases: Record<string, string> = {}
   const configuredKV = options.kv && options.kv !== true ? options.kv : undefined

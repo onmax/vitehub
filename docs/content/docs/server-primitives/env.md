@@ -180,6 +180,7 @@ The helpers also work in `env.public` and `env.define` with `mode: 'build'`.
 | --- | --- |
 | `env.source('NAME')` | Reads one host env variable. |
 | `env.source(['PRIMARY', 'FALLBACK'])` | Reads the first available env variable from a list. |
+| `env.source(['PRIMARY', 'FALLBACK'], { skipEmpty: true })` | Reads the first defined, non-empty env variable from a list. |
 | `env.custom(label, resolver)` | Resolves from a custom callback. |
 | `env.gitBranch()` | Reads the current Git branch. |
 | `env.gitCommit({ short })` | Reads the current Git commit. |
@@ -337,6 +338,8 @@ Add the generated type directory to `tsconfig.json` when the app wants field-lev
 ## Use Env with Agents
 
 Read application secrets through Server Env inside Agent and Capability callbacks. Don't pass secrets through Agent Invocation metadata or model-facing instructions.
+
+Built-in Agent Channels such as `telegram()` declare their credentials under `env.server.<channel>` when an Agent uses them. See [Channel Env](/docs/agents/channels#channel-env) for the names and how to rename one.
 
 Env is usually not an agent-facing Capability. Other Capabilities consume Server Env when they need credentials, provider tokens, or app-owned configuration.
 
