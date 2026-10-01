@@ -108,6 +108,100 @@ A method declared as a function is a write. In a dry run, ViteHub does not call 
 
 The Console shows the recorded call, such as `label(["Receipts"])`. The call text is Invocation content. A stored Invocation keeps it only with `content: 'content'` or when `metadataContent` lists `channel.effect.content`. The Console store lists it.
 
+## Replay Channel history
+
+Add `history` to a Channel to run an Agent on messages that arrived before the Agent existed, or to run them again after a change. `history.collection` is a [Collection](/docs/server-primitives/source#expose-a-typed-collection). Each item has the shape of the Channel trigger input, so a replayed message takes the same trigger path as a live one. `history.key` returns a stable key for each item, such as the provider message ID. The built-in Channel helpers accept the same `history` options and infer the Collection item type in `history.key`.
+
+```ts [server/agents/labeller.ts]
+import { defineAgent } from 'vite-hub/agent'
+import { defineChannel, defineChannelTrigger } from 'vite-hub/agent/channels'
+import { defineCollection } from 'vite-hub/source'
+import * as v from 'valibot'
+import { applyLabels, listEmails } from '../lib/mailbox'
+
+const email = v.object({ id: v.string(), subject: v.string() })
+
+// Keep history Collections out of server/collections. That directory is a public read model.
+const inbox = defineCollection(async ({ cursor, limit, query }) => {
+  return await listEmails({ after: cursor, folder: query.folder, limit })
+}, {
+  cursor: message => message.id,
+  cursorSchema: v.string(),
+  querySchema: v.object({ folder: v.optional(v.picklist(['archive', 'inbox']), 'inbox') }),
+})
+
+const mailbox = defineChannel('mailbox', {
+  history: { collection: inbox, key: message => message.id },
+  message: {
+    data: v.object({ id: v.string() }),
+    methods: {
+      label: (context, labels: string[]) => applyLabels(context.message.id, labels),
+    },
+  },
+  messages: false,
+  triggers: {
+    received: defineChannelTrigger({
+      input: email,
+      invoke: (context, message) => ({
+        input: { prompt: `Choose one label for: ${message.subject}` },
+        message: { id: message.id },
+      }),
+    }),
+  },
+})
+
+export default defineAgent({
+  channels: { mailbox },
+  driver: { model: 'openai/gpt-5.1-mini' },
+  hooks: {
+    async 'agent:finish'(event) {
+      if (event.message?.channel === 'mailbox' && event.text) await event.message.label([event.text.trim()])
+    },
+  },
+})
+```
+
+Set `history.trigger` when the Channel has more than one trigger. Replay the history from the terminal with [`vitehub channels replay`](/docs/development/cli#replay-channel-history):
+
+```sh
+pnpm vitehub channels replay --agent labeller --channel mailbox --folder archive --dry-run
+```
+
+Or call `replayChannel()` from trusted server code:
+
+```ts [server/api/backfill.post.ts]
+import { replayChannel } from 'vite-hub/agent/server'
+import { getRuntimeContext } from 'vite-hub/runtime/h3'
+import labeller from '../agents/labeller'
+
+export default defineEventHandler(async (event) => {
+  await requireAdmin(event)
+  const { cursor } = await readBody<{ cursor?: string }>(event)
+  return await replayChannel(labeller, 'mailbox', {
+    cursor,
+    limit: 50,
+    query: { folder: 'inbox' },
+    runtime: getRuntimeContext(event),
+  })
+})
+```
+
+`replayChannel()` validates `query` with the Collection's query schema, then reads pages until it reaches `limit` or the end of the history. It returns `processed`, `skipped`, and `failed` counts, one entry per item, and `nextCursor`. Pass `nextCursor` as `cursor` to continue. It is `null` when no history remains.
+
+Each item gets the Invocation run ID `channel-replay:<channel>:<key>`. Replay skips an item that already has an Invocation with that ID, so a stopped replay can run again safely. This needs an Invocation journal: configure `invocations` or enable the [Console](/docs/development/console). Pass `force: true` to replay handled items again; each forced item gets a new ID. Pass `dryRun: true` to [record Channel message writes](#dry-run) instead of sending them. Dry runs use `channel-replay-dry-run:` IDs, so they never block a later live replay.
+
+Legacy native Vercel reservations without a `workflow` binding remain skipped because replay cannot determine whether the provider accepted them. Check the provider before using `force: true` to retry those items.
+
+Replay persists the trigger's run metadata on the claimed Invocation before execution. Its `annotations`, `channelId`, `origin`, and `threadId` therefore appear in the journal and Console. The trigger's supplied values override inherited host metadata. A failed metadata write fails the item before Driver execution or Workflow dispatch.
+
+Native Vercel replay retains the logical replay ID in the Invocation and stores the provider-assigned Workflow ID in `workflow`. Dispatch intent is persisted before submission. If acknowledgement is lost before a provider ID can be retained, replay reports the unknown outcome and blocks resubmission. The Workflow worker confirms its physical ID before Driver execution. Recovery and cancellation use the provider ID.
+
+A pending replay reservation for a discovery-default Workflow requires the discovered Agent identity to recover. Without that identity, replay skips the existing item, including legacy records without Workflow metadata, because a provider run may already have been accepted. Use the host runtime context for provider reconciliation. `runtime: false` permits inline retries for trigger preparation failures when no Workflow dispatch is recorded. Inline replay must persist the running state before execution. A later replay skips that Invocation if completion persistence fails. Fresh items can still execute inline without a discovered identity.
+
+An inline Agent runs each item before it reads the next one and reports it as `completed`. An Agent with a [Workflow runtime](/docs/agents/invocations) starts one durable Workflow run per item and reports it as `started`. A trigger error, such as invalid item input, marks that item `failed`, and replay continues.
+
+Built-in Channels do not provide `history`. The Telegram Bot API cannot read past messages. Slack, Discord, Teams, and GitHub history are not built in; define a custom Channel with a history Collection when you need them.
+
 ## Publish Agent activity without opening a chat
 
 Enable `activity` when an invocation should project its lifecycle into a Channel without treating that Channel as the Agent's conversation transport. With GitHub App webhooks enabled, ViteHub creates the authenticated app-owned comment on `pull_request.opened` unless `pullRequest.reconcile.events` explicitly excludes `opened`; later invocations reuse it. If that event is excluded, the first later invocation creates the comment. The comment claims work with a “Starting” row. One table lists the current and recent sessions, newest first, with links, status, GitHub relative start times, and completed durations. Normalized harness task checkboxes and the latest iteration result appear below it. Previous results stay under a collapsed section. The full transcript stays in the linked session when one is configured.
