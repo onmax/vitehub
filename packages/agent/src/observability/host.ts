@@ -30,8 +30,14 @@ export function installObservability(options: InstallObservabilityOptions): (hos
   }
   setHostObservability(observability)
   return (host) => {
-    telemetry.plugin(host, () => {
+    try {
+      telemetry.plugin(host, () => {
+        if (hostObservability() === observability) setHostObservability(undefined)
+      })
+    }
+    catch (error) {
       if (hostObservability() === observability) setHostObservability(undefined)
-    })
+      throw error
+    }
   }
 }

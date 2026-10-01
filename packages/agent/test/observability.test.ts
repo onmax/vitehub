@@ -312,6 +312,22 @@ it("clears host Observability when exporter shutdown flush rejects", async () =>
   for (const close of replacementClose) await close()
 })
 
+it("rolls back host Observability when host attachment fails", async () => {
+  const { installObservability } = await import("../src/observability/host.ts")
+  const { useObservability } = await import("../src/observability.ts")
+  const plugin = installObservability({ service: "failed-attachment" })
+  expect(() => plugin({ hooks: { hook() { throw new Error("hook failed") } } })).toThrow("hook failed")
+  expect(() => useObservability()).toThrow("Observability is not configured")
+
+  const closeHooks: Array<() => Promise<void>> = []
+  installObservability({ service: "retry" })({
+    hooks: {
+      hook(name, callback) { if (name === "close") closeHooks.push(callback) },
+    },
+  })
+  for (const close of closeHooks) await close()
+})
+
 it("preserves host ownership and replaces injected Capabilities after shutdown", async () => {
   const { useObservability } = await import("../src/observability.ts")
   const { installObservability } = await import("../src/observability/host.ts")
