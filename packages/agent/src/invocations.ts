@@ -37,7 +37,7 @@ const MAX_AGENT_CONFIGURATION_COLLECTION_ITEMS = 8 * 1024
 export const AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE = "vitehub.observation.truncated"
 const AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE = "vitehub.observation.id"
 const PROMPT_TRUNCATED_ATTRIBUTE = "input.prompt.truncated"
-const INVOKER_PROFILE_TRUNCATED_ATTRIBUTE = "agent.invoker.profileId.truncated"
+const INVOKER_PROFILE_TRUNCATED_ATTRIBUTE = "agent.invoker.profile.id.truncated"
 const APPENDED_OBSERVATION_ATTRIBUTE = "vitehub.observation.appended"
 const CANONICAL_TRACE_ATTRIBUTE_KEYS = new Set([
   AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE,
@@ -828,7 +828,7 @@ function boundedObservation(
   if (observation.name === "agent.invocation.start" && observation.attributes?.["input.prompt"] !== undefined) {
     canonicalAttributes[PROMPT_TRUNCATED_ATTRIBUTE] = observation.attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
   }
-  if (observation.name === "agent.invocation.start" && observation.attributes?.["agent.invoker.profileId"] !== undefined) {
+  if (observation.name === "agent.invocation.start" && observation.attributes?.["agent.invoker.profile.id"] !== undefined) {
     canonicalAttributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] = observation.attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] === true
   }
   if (identity !== undefined) canonicalAttributes[AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE] = identity
@@ -885,9 +885,9 @@ function boundedObservation(
     attributes[PROMPT_TRUNCATED_ATTRIBUTE] = attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
       || attributes["input.prompt"] !== observation.attributes["input.prompt"]
   }
-  if (observation.name === "agent.invocation.start" && observation.attributes?.["agent.invoker.profileId"] !== undefined && attributes) {
+  if (observation.name === "agent.invocation.start" && observation.attributes?.["agent.invoker.profile.id"] !== undefined && attributes) {
     attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] = attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] === true
-      || attributes["agent.invoker.profileId"] !== observation.attributes["agent.invoker.profileId"]
+      || attributes["agent.invoker.profile.id"] !== observation.attributes["agent.invoker.profile.id"]
   }
   return {
     ...observation,
@@ -963,7 +963,7 @@ export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "o
   if (attributes["input.hasMessages"] === true || attributes["input.messages"] !== undefined) return { available: false, reason: "input-has-messages" }
   const prompt = attributes["input.prompt"]
   if (!hasRuntimeType(prompt, "string") || !prompt.trim()) return { available: false, reason: "input-not-captured" }
-  const invokerProfileId = attributes["agent.invoker.profileId"]
+  const invokerProfileId = attributes["agent.invoker.profile.id"]
   return { available: true, ...hasRuntimeType(invokerProfileId, "string") && invokerProfileId ? { invokerProfileId } : {}, prompt }
 }
 

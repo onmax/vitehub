@@ -64,14 +64,14 @@ describe("agentInvocationRerunInput", () => {
   })
 
   it("does not trust an injected profile observation context", async () => {
-    const record = await journaled({ context: { "agent.invoker.profileId": "reviewer" }, prompt: "Hi" })
+    const record = await journaled({ context: { "agent.invoker.profile.id": "reviewer" }, prompt: "Hi" })
     expect(agentInvocationRerunInput(record)).toEqual({ available: true, prompt: "Hi" })
   })
 
   it("does not treat resolved invoker identities as profile selectors", () => {
     expect(agentInvocationRerunInput({ observations: [start({ "input.prompt": "Hi", "agent.invoker.id": "reviewer" })] }))
       .toEqual({ available: true, prompt: "Hi" })
-    expect(agentInvocationRerunInput({ observations: [start({ "input.prompt": "Hi", "agent.invoker.id": "resolved", "agent.invoker.profileId": "reviewer" })] }))
+    expect(agentInvocationRerunInput({ observations: [start({ "input.prompt": "Hi", "agent.invoker.id": "resolved", "agent.invoker.profile.id": "reviewer" })] }))
       .toEqual({ available: true, invokerProfileId: "reviewer", prompt: "Hi" })
   })
 

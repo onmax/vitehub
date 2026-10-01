@@ -2043,7 +2043,7 @@ describe("Agent invocation console", () => {
     let blocked = false
     const definition = defineAgent({
       driver: { run: () => blocked ? new Promise<string>(resolve => { release = resolve }) : "done" },
-      invoker: { profiles: [{ id: "support", kind: "person", label: "Support agent" }] },
+      invoker: { profiles: [{ id: "support", kind: "person", label: "Support agent" }], resolve: () => ({ id: "resolved-support", kind: "person" }) },
       name: "support",
     })
     const start = (prompt: string) => agentInvocationsHandler({
