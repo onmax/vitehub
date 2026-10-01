@@ -115,10 +115,10 @@ describe("Console Schedule runs", () => {
     expect(catalog.manualSchedules).toEqual([{ handler: join(root, "server/schedules/sync.ts"), name: "sync" }])
   })
 
-  it("marks runnable Schedule Definitions in the catalog", () => {
+  it("marks runnable Schedule Definitions in the catalog", async () => {
     installSchedules()
 
-    expect(definitionsHandler({ method: "GET", req: { method: "GET", url: "http://localhost/api/_vitehub/console/definitions?section=schedules" } })).toEqual({
+    expect(await definitionsHandler({ method: "GET", req: { method: "GET", url: "http://localhost/api/_vitehub/console/definitions?section=schedules" } })).toEqual({
       definitions: [{ ...scheduleSummary("sync"), runnable: true }, scheduleSummary("nightly")],
       kind: "definition-catalog",
       section: "schedules",

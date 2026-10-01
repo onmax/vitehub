@@ -73,7 +73,10 @@ export function getConsoleContributedSections(): readonly ConsoleContributedSect
   return resolveConsoleDefinitions()?.sections ?? []
 }
 
-/** Installs the Static Schedule Definitions that the Console may run. */
+/**
+ * Installs the Static Schedule Definitions that the Console may run.
+ * The generated Console plugin passes only `manual: true` definitions, and only with Console invocation enabled.
+ */
 export function installConsoleSchedules(projectRoot: string, registry: ScheduleDefinitionRegistry): ScheduleDefinitionRegistry {
   return installConsoleSchedulesScope(resolve(projectRoot), { ...registry })
 }
