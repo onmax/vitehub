@@ -1,7 +1,7 @@
 import { agentInvocationRerunInput } from "@vite-hub/agent"
 import * as v from "valibot"
 
-import { consoleAgentInvokerProfiles, getConsoleAgentDefinition } from "./agents.ts"
+import { getConsoleAgentDefinition } from "./agents.ts"
 import { getConsoleInvocations } from "./invocations.ts"
 import { assertConsoleRequest, consoleRequestJSON, consoleRequestURL } from "./request.ts"
 import { invocationUsage } from "./usage.ts"
@@ -61,13 +61,10 @@ function invocationActions(invocation: AgentInvocationRecord): ConsoleInvocation
   const agent = invocation.agentName ? getConsoleAgentDefinition(invocation.agentName) : undefined
   if (!agent) return
   const input = agentInvocationRerunInput(invocation)
-  const profile = input.available && input.invokerId
-    ? consoleAgentInvokerProfiles(agent).find(candidate => candidate.id === input.invokerId)
-    : undefined
   return {
     delete: { available: terminalStatuses.has(invocation.status) },
     rerun: input.available
-      ? { available: true, ...profile ? { invokerProfileId: profile.id } : {}, prompt: input.prompt }
+      ? { available: true, ...input.invokerProfileId ? { invokerProfileId: input.invokerProfileId } : {}, prompt: input.prompt }
       : input,
   }
 }

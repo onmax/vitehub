@@ -36,10 +36,12 @@ const MAX_AGENT_CONFIGURATION_ITEMS = 32 * 1024
 const MAX_AGENT_CONFIGURATION_COLLECTION_ITEMS = 8 * 1024
 export const AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE = "vitehub.observation.truncated"
 const AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE = "vitehub.observation.id"
+const PROMPT_TRUNCATED_ATTRIBUTE = "input.prompt.truncated"
 const APPENDED_OBSERVATION_ATTRIBUTE = "vitehub.observation.appended"
 const CANONICAL_TRACE_ATTRIBUTE_KEYS = new Set([
   AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE,
   APPENDED_OBSERVATION_ATTRIBUTE,
+  PROMPT_TRUNCATED_ATTRIBUTE,
   "vitehub.activity.owner",
   "vitehub.activity.phase",
   "vitehub.payload.summary",
@@ -821,6 +823,9 @@ function boundedObservation(
   }
   const payload = boundedObservationPayload(observation.payload, payloadBudget, builtIns)
   const canonicalAttributes: Record<string, unknown> = {}
+  if (observation.name === "agent.invocation.start" && observation.attributes?.["input.prompt"] !== undefined) {
+    canonicalAttributes[PROMPT_TRUNCATED_ATTRIBUTE] = observation.attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
+  }
   if (identity !== undefined) canonicalAttributes[AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE] = identity
   if (observation.attributes?.[APPENDED_OBSERVATION_ATTRIBUTE] === true) canonicalAttributes[APPENDED_OBSERVATION_ATTRIBUTE] = true
   if (observation.activity) {
@@ -871,6 +876,10 @@ function boundedObservation(
       attributes[AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE] = true
     }
   }
+  if (observation.name === "agent.invocation.start" && observation.attributes?.["input.prompt"] !== undefined && attributes) {
+    attributes[PROMPT_TRUNCATED_ATTRIBUTE] = attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
+      || attributes["input.prompt"] !== observation.attributes["input.prompt"]
+  }
   return {
     ...observation,
     name: boundedString(observation.name)!,
@@ -918,7 +927,7 @@ export async function agentInvocationId(runId: string, agentName?: string): Prom
 export type AgentInvocationRerunUnavailableReason =
   /** The journal has no start observation with a text prompt. */
   | "input-not-captured"
-  /** The journal bounded the start observation, so the prompt may be incomplete. */
+  /** The journal bounded the captured prompt. */
   | "input-truncated"
   /** The Invocation received messages or attachments, which the journal does not keep for replay. */
   | "input-has-messages"
@@ -926,8 +935,8 @@ export type AgentInvocationRerunUnavailableReason =
 export type AgentInvocationRerunInput =
   | {
     available: true
-    /** Invoker id recorded at start. It equals the Invoker Profile id when a profile was selected. */
-    invokerId?: string
+    /** Invoker Profile selected at start, independent of the resolved invoker identity. */
+    invokerProfileId?: string
     prompt: string
   }
   | { available: false, reason: AgentInvocationRerunUnavailableReason }
@@ -940,12 +949,13 @@ export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "o
   const start = record.observations.find(observation => observation.name === "agent.invocation.start")
   const attributes = start?.attributes
   if (!attributes) return { available: false, reason: "input-not-captured" }
-  if (attributes[AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE] === true) return { available: false, reason: "input-truncated" }
+  if (attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
+    || (attributes[PROMPT_TRUNCATED_ATTRIBUTE] === undefined && attributes[AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE] === true)) return { available: false, reason: "input-truncated" }
   if (attributes["input.hasMessages"] === true || attributes["input.messages"] !== undefined) return { available: false, reason: "input-has-messages" }
   const prompt = attributes["input.prompt"]
   if (!hasRuntimeType(prompt, "string") || !prompt.trim()) return { available: false, reason: "input-not-captured" }
-  const invokerId = attributes["agent.invoker.id"]
-  return { available: true, ...hasRuntimeType(invokerId, "string") && invokerId ? { invokerId } : {}, prompt }
+  const invokerProfileId = attributes["agent.invoker.profileId"]
+  return { available: true, ...hasRuntimeType(invokerProfileId, "string") && invokerProfileId ? { invokerProfileId } : {}, prompt }
 }
 
 function assertStore(store: AgentInvocationStore | undefined): asserts store is AgentInvocationStore {

@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 
+import { isRuntimeRecord } from "../../packages/agent/src/internal/runtime-type.ts"
+
 import { agentInvocationRerunInput, createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
 import { parseConsoleFixture } from "../../packages/vite-hub/src/console/fixture.ts"
 import {
@@ -248,6 +250,16 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
   if (path.startsWith("/api/_vitehub/console/invocations/")) {
     const id = decodeURIComponent(path.slice("/api/_vitehub/console/invocations/".length))
     if (request.method === "POST") {
+      let action: unknown
+      try { action = await body(request) }
+      catch {
+        json(response, { error: "Malformed invocation action." }, 400)
+        return true
+      }
+      if (!isRuntimeRecord(action) || Object.keys(action).length !== 1 || !("action" in action) || action.action !== "delete") {
+        json(response, { error: "Unsupported invocation action." }, 400)
+        return true
+      }
       const outcome = await invocations.delete(id)
       if (outcome === "deleted") json(response, { id, outcome })
       else if (outcome === "not-terminal") json(response, { error: "Only completed, failed, or cancelled invocations can be deleted." }, 409)

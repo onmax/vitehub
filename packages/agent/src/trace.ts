@@ -88,6 +88,7 @@ function invocationAttributes(
 ) {
   return {
     "agent.invoker.id": context.invoker.id,
+    "agent.invoker.profileId": context.context.get("agent.invoker.profileId"),
     "agent.invoker.kind": context.invoker.kind,
     "agent.invoker.label": agentInvokerLabel(context.invoker),
     "agent.run.id": context.run?.runId,
