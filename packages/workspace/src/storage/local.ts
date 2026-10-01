@@ -575,6 +575,26 @@ async function gitIgnoredWorkspacePaths(root: string): Promise<string[]> {
   return [".git", ...output.split("\0").filter(Boolean).map(path => path.replace(/\/$/, ""))]
 }
 
+/** Include ignore rules from Git roots that contain a non-root listing prefix. */
+async function gitIgnoredWorkspacePathsForPrefix(root: string, current: string, excluded: readonly string[]): Promise<string[]> {
+  const { relative, sep } = await import("node:path")
+  const relativePrefix = relative(root, current)
+  if (!relativePrefix || relativePrefix === "." || relativePrefix.startsWith(`..${sep}`)) return [...excluded]
+  const result = [...excluded]
+  let ancestor = root
+  let prefix = ""
+  for (const segment of relativePrefix.split(sep)) {
+    ancestor = `${ancestor}/${segment}`
+    prefix = prefix ? `${prefix}/${segment}` : segment
+    const dirents = await readdir(ancestor, { withFileTypes: true }).catch(() => [])
+    if (dirents.some(dirent => dirent.name.toLowerCase() === ".git")) {
+      const nestedExcluded = await gitIgnoredWorkspacePaths(ancestor)
+      result.push(...nestedExcluded.map(path => `${prefix}/${path}`))
+    }
+  }
+  return result
+}
+
 interface ProcessPathLockState {
   pendingWriters: number
   readers: number
@@ -1091,7 +1111,8 @@ class LocalWorkspaceStore implements WorkspaceStore {
     const current = normalizedPrefix ? resolveInside(this.root, normalizedPrefix) : this.root
     const privatePaths = [this.#fileMetadataRoot, this.#metaPath]
     // ignore: "git" hides .git and Git-ignored output such as dependencies from listings and snapshots.
-    const excluded = this.#ignoreGit ? [...options.exclude ?? [], ...await gitIgnoredWorkspacePaths(this.root)] : options.exclude
+    let excluded = this.#ignoreGit ? [...options.exclude ?? [], ...await gitIgnoredWorkspacePaths(this.root)] : options.exclude
+    if (this.#ignoreGit) excluded = await gitIgnoredWorkspacePathsForPrefix(this.root, current, excluded ?? [])
     const all = await walk(this.root, current, privatePaths, excluded, options.recursive === true)
     const filtered = all
       .filter((entry) => {
