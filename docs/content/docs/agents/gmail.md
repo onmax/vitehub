@@ -210,7 +210,7 @@ export default defineSchedule({
 2. The Channel acknowledges the push with `204` and continues in the background.
 3. It reads `history.list` from the stored history cursor and fetches each new Inbox message.
 4. It starts one Invocation per message through the `received` trigger. The Invocation run ID is `channel:<channel>:<message id>`. A terminal Invocation or confirmed Workflow dispatch is skipped. An active claim prevents concurrent execution. A claim for an unconfirmed pending Invocation remains retryable and does not allow the history cursor to advance.
-5. It stores the new cursor in the Channel's State Adapter after every message has an Invocation, so a failure retries the same history with the next push.
+5. It saves page tokens and remaining message IDs in the Channel's State Adapter as synchronization proceeds. The next push resumes unfinished work without fetching completed message bodies again. After every message has an Invocation, it stores the new history cursor and clears the saved progress in one transaction.
 
 Mailbox synchronization requires a State Adapter with `mutateWithLock(lock, mutations)`. The operation must check the stored lock token and expiry and apply cache writes or deletions in one transaction. ViteHub's memory, SQLite/libsql, and Cloudflare Durable Object adapters implement this contract. Custom adapters must implement `AtomicAgentStateLockAdapter`; a separate lease check followed by `set()` or `delete()` is insufficient. Cloudflare mailbox locks use the existing cache actor, preserving stored cursors and watch state even when other thread locks are sharded.
 
