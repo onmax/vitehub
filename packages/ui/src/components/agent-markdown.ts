@@ -41,21 +41,26 @@ export const AgentMarkdown = defineComponent({
     return () => {
       const parserOptions = { ...props.options };
       delete parserOptions.html;
-      // Comark keeps the first plugin with each name, so callers precede its defaults.
-      const plugins = [
-        markdownMath,
-        ...(props.plugins ?? []),
+      const builtInPlugins = [
         frontmatter(),
         alert(),
         taskList(),
         components(),
         attributes(),
-      ].filter(plugin => plugin.name !== "html");
+        markdownMath,
+      ];
+      const plugins = [...builtInPlugins];
+      for (const plugin of props.plugins ?? []) {
+        const index = plugins.findIndex(existing => existing.name === plugin.name);
+        if (index >= 0) plugins[index] = plugin;
+        else plugins.push(plugin);
+      }
+      const safePlugins = plugins.filter(plugin => plugin.name !== "html");
       return h(Markdown, {
         ...attrs,
         class: [defaults.markdown.class, attrs.class],
         components: { img: ImagePreview, math: AgentMath, ...props.components },
-        plugins,
+        plugins: safePlugins,
         options: { ...parserOptions, registerDefaultPlugins: false },
         streaming: props.streaming,
         value: props.value,

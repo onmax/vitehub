@@ -122,7 +122,7 @@ describe("replayChannel()", () => {
     })
     const response = await handleChannelReplayRequest(agent, await request.json())
     expect(response.status).toBe(400)
-    expect(await response.json()).toMatchObject({ message: expect.stringContaining("cursor") })
+    expect(await response.json()).toMatchObject({ code: "AGENT_R0936" })
     expect(load).not.toHaveBeenCalled()
     expect(run).not.toHaveBeenCalled()
     expect(label).not.toHaveBeenCalled()
