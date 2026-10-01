@@ -264,8 +264,6 @@ export async function resolveAgentInvoker<
   const selectedProfile = selectAgentInvokerProfile(profiles, input.context)
   if (selectedProfile) invocationContext.set("agent.invoker.profile.id", selectedProfile.id, { overwrite: true })
   const defaultInvoker = requestedInvoker || createFallbackAgentInvoker(run)
-  const selectedProfile = selectAgentInvokerProfile(profiles, input.context)
-  if (selectedProfile) invocationContext.set("agent.invoker.profile.id", selectedProfile.id, { overwrite: true })
   const selectedEmail = selectedProfile?.email || defaultInvoker.email
   let selectedInvoker: AgentInvoker | undefined
   if (selectedProfile) {
