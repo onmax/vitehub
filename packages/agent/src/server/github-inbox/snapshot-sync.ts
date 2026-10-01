@@ -168,11 +168,19 @@ const openPullRequestSchema = v.object({
 const openPullRequestsSchema = v.object({ repository: v.object({ pullRequests: v.object({
   nodes: v.array(openPullRequestSchema), pageInfo: v.object({ hasNextPage: v.boolean(), endCursor: v.nullish(v.string()) }),
 }) }) })
-type OpenPullRequest = v.InferOutput<typeof openPullRequestSchema>
+interface OpenPullRequestConnection { nodes: unknown[]; pageInfo?: { hasNextPage: boolean } }
+/** One open PR from the change detection query. */
+export interface OpenPullRequest {
+  number: number; title?: string | null; isDraft: boolean; headRefOid: string; headRefName: string; baseRefName: string; baseRefOid?: string | null
+  mergeable?: string | null; updatedAt: string; url: string; authorAssociation?: string | null; totalCommentsCount?: number | null
+  author?: { login: string } | null; headRepository?: { nameWithOwner: string } | null; labels: { nodes: Array<{ name: string }> }
+  commits: { nodes: Array<{ commit: { statusCheckRollup?: { state?: string | null; contexts: OpenPullRequestConnection } | null } }> }
+  latestReviews: OpenPullRequestConnection; reviewThreads: OpenPullRequestConnection
+}
 
 /** Row order and an UNKNOWN mergeability are not changes; the base SHA is left to push deliveries. */
 export function openPullRequestFingerprint(pr: OpenPullRequest): string {
-  const rows = (connection: v.InferOutput<typeof nodes> | undefined) =>
+  const rows = (connection: OpenPullRequestConnection | undefined) =>
     [...(connection?.nodes ?? []).map(node => JSON.stringify(node)).sort(), ...(connection?.pageInfo?.hasNextPage ? ['truncated'] : [])]
   const rollup = pr.commits.nodes[0]?.commit.statusCheckRollup
   return createHash('sha256').update(JSON.stringify({
