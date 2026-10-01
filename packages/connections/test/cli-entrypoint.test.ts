@@ -9,7 +9,7 @@ import { expect, it } from "vitest"
 
 it("pages approvals through the vitehub executable without JSON tips or prompts", async () => {
   const root = await mkdtemp(join(tmpdir(), "vitehub-connections-cli-page-"))
-  const base = { action: "mail.messages.modify", actor: "agent:mail", createdAt: "2026-09-29T08:00:00.000Z", name: "mail", status: "pending" }
+  const base = { action: "mail.messages.modify", actor: "agent:mail", createdAt: "2026-09-29T08:00:00.000Z", input: {}, name: "mail", status: "pending" }
   const requests: unknown[] = []
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = []
@@ -38,7 +38,7 @@ export default { plugins: [{ name: "connections-cli-test", vitehub: { cli: creat
       })
     })
     const first = await run(["--name", "mail", "--json"])
-    expect(first.status).toBe(0)
+    expect(first.status, first.stderr).toBe(0)
     expect(first.stderr).toBe("")
     const page = JSON.parse(first.stdout) as { approvals: unknown[], nextCursor: string }
     expect(page.approvals).toHaveLength(100)

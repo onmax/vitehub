@@ -271,7 +271,7 @@ const commands: Record<string, { description: string, run: Command, usage: strin
   },
   approvals: {
     description: "List, approve, or deny writes that wait for approval.",
-    usage: "vitehub connections approvals [approve|deny <id>] [--name <name>] [--status <status>] [--url <app>] [--json]",
+    usage: "vitehub connections approvals [approve|deny <id>] [--name <name>] [--status <status>] [--before <id>] [--url <app>] [--json]",
     async run(parsed, context, options) {
       const [subcommand, id] = parsed.positionals
       if (subcommand === "approve" || subcommand === "deny") {
@@ -287,12 +287,16 @@ const commands: Record<string, { description: string, run: Command, usage: strin
       }
       if (subcommand) throw new CliError(`Unknown approvals command: ${subcommand}.`)
       const name = flag(parsed, "--name")
-      const { approvals } = await request(parsed, options, {
+      const page = await request(parsed, options, {
         action: "approvals",
+        before: flag(parsed, "--before"),
         name,
         status: flag(parsed, "--status") ?? "pending",
-      }, v.looseObject({ approvals: v.array(approvalSchema) }))
-      write(context, parsed, approvals, () => approvals.length ? approvals.map(describeApproval).join("\n") : "No approvals.")
+      }, v.looseObject({ approvals: v.array(approvalSchema), nextCursor: v.optional(v.string()) }))
+      write(context, parsed, page, () => [
+        page.approvals.length ? page.approvals.map(describeApproval).join("\n") : "No approvals.",
+        ...(page.nextCursor ? [`Next page: repeat this command with --before ${page.nextCursor}.`] : []),
+      ].join("\n"))
     },
   },
   revoke: {

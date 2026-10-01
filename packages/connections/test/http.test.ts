@@ -157,7 +157,7 @@ describe("createConnectionsHandler", () => {
     expect(callback.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections;")
   })
 
-  it("exposes all pending approvals above the history limit", async () => {
+  it("pages pending approvals above the history limit", async () => {
     const test = createTestRuntime()
     for (let index = 0; index < 101; index++) {
       await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:mail", createdAt: new Date().toISOString(), id: `approval-${index}`, input: {}, name: "mail", status: "pending" })
@@ -165,11 +165,12 @@ describe("createConnectionsHandler", () => {
     const handler = createConnectionsHandler({ actor: () => "user:local", runtime: () => test.runtime })
     const response = await handler(post({ action: "approvals", name: "mail", status: "pending" }))
     // SAFETY: The local handler serializes the approval list from the real test store.
-    const result = await response.json() as { approvals: Array<{ id: string }> }
-    expect(result.approvals).toHaveLength(101)
-    expect(result.approvals.some(approval => approval.id === "approval-0")).toBe(true)
-    const older = await handler(post({ action: "approvals", before: "approval-100", name: "mail", status: "pending" }))
+    const result = await response.json() as { approvals: Array<{ id: string }>, nextCursor: string }
+    expect(result.approvals).toHaveLength(100)
+    expect(result.nextCursor).toBe("approval-1")
+    const older = await handler(post({ action: "approvals", before: result.nextCursor, name: "mail", status: "pending" }))
     expect(older.status).toBe(200)
+    expect(await older.json()).toMatchObject({ approvals: [{ id: "approval-0" }] })
     const denied = await handler(post({ action: "deny", id: "approval-0" }))
     expect(denied.status).toBe(200)
     expect(await test.store.approvals.get("approval-0")).toMatchObject({ status: "denied" })
