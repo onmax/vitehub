@@ -93,7 +93,8 @@ export default function createDenoKVDriver(options: ResolvedDenoKVStoreConfig = 
       kvPromise = undefined
     },
     async getItem(key) {
-      return (await (await open()).get(toDenoKey(key))).value ?? null
+      const entry = await (await open()).get(toDenoKey(key))
+      return entry.versionstamp === null ? null : entry.value
     },
     async getKeys(base = "") {
       return (await matchingKeys(base)).flatMap(key => fromDenoKey(key) ?? []).sort()

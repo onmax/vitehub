@@ -62,6 +62,8 @@ describe("KV review regressions", () => {
   it.each([
     ["set", "a", "b", "--ttl", "0", "--json"],
     ["set", "a", "@/missing-kv-input-file", "--json"],
+    ["set", "a", "--json-value", "--json", "--", "-0"],
+    ["set", "a", '{"nested":-0}', "--json-value", "--json"],
     ["set", "a", "1e400", "--json-value", "--json"],
     ["set", "a", '{"nested":1e400}', "--json-value", "--json"],
     ["list", "--cursor=", "--json"],
