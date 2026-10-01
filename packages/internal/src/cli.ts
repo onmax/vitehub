@@ -168,8 +168,9 @@ export function resolveViteHubDevServerUrl(env: NodeJS.ProcessEnv): string {
 }
 
 function parseViteHubDevTimeout(value: string, error: (message: string) => Error): number {
-  const timeout = Number.parseInt(value, 10)
-  if (!Number.isFinite(timeout) || timeout <= 0) throw error("--timeout must be a positive number.")
+  const timeout = Number(value)
+  if (!Number.isInteger(timeout) || timeout <= 0) throw error("--timeout must be a positive integer.")
+  if (timeout > 2_147_483_647) throw error("--timeout must be at most 2147483647 milliseconds.")
   return timeout
 }
 

@@ -309,7 +309,7 @@ function writeResult(result: KVCommandResult, context: KVCliContext): number {
       const value = result.value
       context.stdout.write(value.deleted
         ? `Deleted key ${value.key} from store ${value.store}.\n`
-        : `Key ${value.key} did not exist in store ${value.store}. Nothing changed.\n`)
+        : `Key ${value.key} was not found in store ${value.store}. Deletion completed.\n`)
       return 0
     }
   }
