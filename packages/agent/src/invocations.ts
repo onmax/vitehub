@@ -1816,7 +1816,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               boundToTerminalRecord = finished
               created = true
               cancellationWarningPrepared = result.record.cancelWarningPending === true
-                || result.record.cancelNotEnforcedBy === cancellationDriver?.name
+                || (result.record.cancelNotEnforcedBy !== undefined && result.record.cancelNotEnforcedBy === cancellationDriver?.name)
               readCancellationRequest(result.record)
             }
             else if (creationTask === task) {
