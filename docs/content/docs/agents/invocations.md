@@ -250,7 +250,12 @@ import { agentInvocationRerunInput } from 'vite-hub/agent'
 
 const record = await invocations.get(invocationId)
 const input = record ? agentInvocationRerunInput(record) : undefined
-if (input?.available) await runAgent(agent, context, { prompt: input.prompt })
+if (input?.available) {
+  await runAgent(agent, context, {
+    prompt: input.prompt,
+    context: { invokerProfileId: input.invokerProfileId },
+  })
+}
 ```
 
 The result has `available: false` and a `reason` when the record cannot reproduce its input: `input-not-captured` for a missing prompt, `input-has-messages` for prior Messages, or `input-truncated` for a bounded prompt. The journal keeps `input.prompt` only when `metadataContent` or `content: 'content'` includes it. When the start observation recorded an Invoker Profile, `invokerProfileId` holds its ID.
