@@ -12,7 +12,6 @@ import * as v from "valibot"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { consoleConnectionsKey, consoleConnectionsRegistryKey, consoleConnectionsRootKey, consoleSectionsKey, consoleSectionsRegistryKey, consoleSectionsRootKey, installConsoleConnectionsScope, resolveConsoleConnections } from "../src/console/internal.ts"
-import { addConsoleDevframeHandler } from "../src/console/nitro.ts"
 import { assertSecureKeyEndpoint, requestConnectionsManagement } from "../src/console/runtime/client/connections-management.ts"
 import { addConsoleRpcHandler } from "../src/console/nitro.ts"
 import { writeConsoleNitroPlugin } from "../src/console/plugin.ts"
@@ -36,7 +35,7 @@ afterEach(() => {
 })
 
 const origin = "https://app.test"
-const definition: ConnectionDefinition = {
+const definition = {
   provider: {
     authorizationUrl: async input => `https://auth.example/authorize?state=${input.state}`,
     exchange: async () => ({ accessToken: "synthetic-access", account: "owner@example.com", expiresAt: Date.now() + 3_600_000, scopes: ["test.read"], tokenType: "Bearer" }),
@@ -46,7 +45,7 @@ const definition: ConnectionDefinition = {
     refresh: async token => token,
     scopes: ["test.read"],
   },
-}
+} satisfies ConnectionDefinition
 
 function runtime() {
   const client = createClient({ url: ":memory:" })
