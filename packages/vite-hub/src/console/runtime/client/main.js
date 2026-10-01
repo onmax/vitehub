@@ -17,9 +17,9 @@ import {
   consoleDatabasesSchemaPath,
   consoleDatabasesTablePath,
 } from "../console-route";
-import { isConsoleSectionId } from "../sections";
+import { consoleSectionRouteName, isConsoleSectionId } from "../sections";
 import App from "./app.vue";
-import { createConsoleSectionLoader } from "./sections";
+import { createConsoleSectionLoader, loadConsoleNavigation, subscribeConsoleNavigation } from "./sections";
 
 const sectionsBase = "/api/_vitehub/console/sections";
 const capabilitiesBase = "/api/_vitehub/console/invocation-capabilities";
@@ -167,95 +167,35 @@ const router = createRouter({
         view: "data",
       },
     },
-    {
-      component: ConsoleDefinitions,
-      name: "vitehub-console-workflows",
-      path: "/workflows",
-      meta: { consoleSection: "workflows", title: "Workflows · ViteHub Console" },
-      props: {
-        agentsBase: "/api/_vitehub/console/agents",
-        definitionsBase: "/api/_vitehub/console/definitions",
-        kvBase: "/api/_vitehub/console/kv",
-        searchBase: "/api/_vitehub/console/search",
-        section: "workflows",
-        sectionsBase,
-      },
-    },
-    {
-      component: ConsoleDefinitions,
-      name: "vitehub-console-workspaces",
-      path: "/workspaces",
-      meta: { consoleSection: "workspaces", title: "Workspaces · ViteHub Console" },
-      props: {
-        agentsBase: "/api/_vitehub/console/agents",
-        definitionsBase: "/api/_vitehub/console/definitions",
-        kvBase: "/api/_vitehub/console/kv",
-        searchBase: "/api/_vitehub/console/search",
-        section: "workspaces",
-        sectionsBase,
-      },
-    },
-    {
-      component: ConsoleDefinitions,
-      name: "vitehub-console-sandboxes",
-      path: "/sandboxes",
-      meta: { consoleSection: "sandboxes", title: "Sandboxes · ViteHub Console" },
-      props: {
-        agentsBase: "/api/_vitehub/console/agents",
-        definitionsBase: "/api/_vitehub/console/definitions",
-        kvBase: "/api/_vitehub/console/kv",
-        searchBase: "/api/_vitehub/console/search",
-        section: "sandboxes",
-        sectionsBase,
-      },
-    },
-    {
-      component: ConsoleDefinitions,
-      name: "vitehub-console-rate-limits",
-      path: "/rate-limits",
-      meta: { consoleSection: "rate-limits", title: "Rate Limits · ViteHub Console" },
-      props: {
-        agentsBase: "/api/_vitehub/console/agents",
-        definitionsBase: "/api/_vitehub/console/definitions",
-        kvBase: "/api/_vitehub/console/kv",
-        searchBase: "/api/_vitehub/console/search",
-        section: "rate-limits",
-        sectionsBase,
-      },
-    },
-    {
-      component: ConsoleDefinitions,
-      name: "vitehub-console-queues",
-      path: "/queues",
-      meta: { consoleSection: "queues", title: "Queues · ViteHub Console" },
-      props: {
-        agentsBase: "/api/_vitehub/console/agents",
-        definitionsBase: "/api/_vitehub/console/definitions",
-        kvBase: "/api/_vitehub/console/kv",
-        searchBase: "/api/_vitehub/console/search",
-        section: "queues",
-        sectionsBase,
-      },
-    },
-    {
-      component: ConsoleDefinitions,
-      name: "vitehub-console-schedules",
-      path: "/schedules",
-      meta: { consoleSection: "schedules", title: "Schedules · ViteHub Console" },
-      props: {
-        agentsBase: "/api/_vitehub/console/agents",
-        definitionsBase: "/api/_vitehub/console/definitions",
-        kvBase: "/api/_vitehub/console/kv",
-        scheduleRunBase: "/api/_vitehub/console/schedule-run",
-        searchBase: "/api/_vitehub/console/search",
-        section: "schedules",
-        sectionsBase,
-      },
-    },
   ],
 });
 
 const loadSections = createConsoleSectionLoader(sectionsBase);
+
+/** Adds one route for each installed section that an owner package contributes. */
+function addContributedRoutes(navigation) {
+  for (const section of navigation.sections) {
+    const details = navigation.contributions[section];
+    const name = consoleSectionRouteName(section);
+    if (!details || router.hasRoute(name)) continue;
+    router.addRoute({
+      component: ConsoleDefinitions,
+      name,
+      path: `/${section}`,
+      meta: { consoleSection: section, title: `${details.label} · ViteHub Console` },
+      props: {
+        agentsBase: "/api/_vitehub/console/agents",
+        definitionsBase: "/api/_vitehub/console/definitions",
+        details,
+        scheduleRunBase: "/api/_vitehub/console/schedule-run",
+        kvBase: "/api/_vitehub/console/kv",
+        searchBase: "/api/_vitehub/console/search",
+        sectionsBase,
+      },
+    });
+  }
+}
+subscribeConsoleNavigation(sectionsBase, addContributedRoutes);
 
 const preferredColorScheme = window.matchMedia("(prefers-color-scheme: dark)");
 const applyPreferredColorScheme = ({ matches }) => {
@@ -264,7 +204,13 @@ const applyPreferredColorScheme = ({ matches }) => {
 applyPreferredColorScheme(preferredColorScheme);
 preferredColorScheme.addEventListener("change", applyPreferredColorScheme);
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
+  if (to.matched.length === 0) {
+    // Contributed section routes exist only after the navigation response arrives.
+    const navigation = await loadConsoleNavigation(sectionsBase);
+    if (navigation) addContributedRoutes(navigation);
+    return router.resolve(to.fullPath).matched.length > 0 ? to.fullPath : { name: "vitehub-console" };
+  }
   const section = to.meta.consoleSection;
   if (!isConsoleSectionId(section)) return;
   void loadSections().then((installed) => {

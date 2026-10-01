@@ -3,6 +3,7 @@ import { relativeDefinitionFile } from "@vite-hub/internal/inspect"
 import { discoverScheduleDefinitions } from "./discovery.ts"
 import { readRuntimeDefinitionCrons } from "./internal/provider-output.ts"
 
+import type { ViteHubConsoleSectionContribution } from "@vite-hub/internal/console"
 import type { ViteHubDefinitionField, ViteHubDefinitionSummary } from "@vite-hub/internal/inspect"
 import type { DiscoveredScheduleDefinition } from "./types.ts"
 
@@ -59,4 +60,17 @@ export async function inspectScheduleDefinitions(options: ScheduleInspectionOpti
     }
   }
   return definitions.map(definition => summarizeScheduleDefinition(options.projectRoot, definition, crons))
+}
+
+/** Console section that lists discovered Schedule Definitions. `vitehub inspect definitions` reads the same data. */
+export const scheduleConsoleSection: ViteHubConsoleSectionContribution<ScheduleInspectionOptions> = {
+  description: "Inspect discovered Schedule Definitions and static timing metadata.",
+  icon: "i-lucide-calendar-clock",
+  id: "schedules",
+  label: "Schedules",
+  read: inspectScheduleDefinitions,
+  view: {
+    kind: "definition-catalog",
+    notice: "Runtime-created Schedules and run history are not included in this build-time Definition catalog yet.",
+  },
 }

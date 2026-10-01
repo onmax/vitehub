@@ -24,7 +24,7 @@ import type { Plugin, ResolvedConfig } from "vite"
 import { queueErrorDiagnostics } from "./error-diagnostics.ts"
 
 export { discoverQueueDefinitions } from "./discovery.ts"
-export { inspectQueueDefinitions, type QueueInspectionOptions } from "./inspect.ts"
+export { inspectQueueDefinitions, type QueueInspectionOptions, queueConsoleSection } from "./inspect.ts"
 
 interface QueueProvisionContributingPlugin {
   vitehub?: {
