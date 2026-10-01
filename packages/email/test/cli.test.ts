@@ -68,6 +68,15 @@ const listResult = {
 }
 
 describe("Email discovery failure output", () => {
+  it.each([["show", "--json"], ["list", "--json", "--html"]])("returns JSON for outbox argument errors: %j", async (...args) => {
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runEmailOutboxCli(args, output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toEqual({ error: { message: expect.any(String) } })
+    expect(output.stderr.output()).toBe("")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it.each([{ flags: [] }, { flags: ["--json"] }])("reports malformed outbox rows with flags %j", async ({ flags }) => {
     const output = context()
     await expect(runEmailOutboxCli(["list", ...flags], output.context, { fetch: devServer({ ...listResult, messages: [{}] }) })).resolves.toBe(1)

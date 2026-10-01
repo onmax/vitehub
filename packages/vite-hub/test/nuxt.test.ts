@@ -320,6 +320,55 @@ describe("ViteHub Nuxt integration", () => {
     expect(Reflect.get(nuxt.options.vite, "__vitehubProjectRoot")).toBe(nuxt.options.rootDir)
   })
 
+  it("bundles the Console Email definition through the Nitro Email resolver", async () => {
+    const defaultPlugins = mocks.vitehub()
+    mocks.vitehub.mockReturnValueOnce([
+      defaultPlugins,
+      {
+        name: "@vite-hub/email/vite",
+        resolveId(id: string) {
+          if (id === "#vitehub/email/definition") return "\0vitehub-test-email-definition"
+        },
+        load(id: string) {
+          if (id === "\0vitehub-test-email-definition") return "export const outboxRuntimeId = 'email resolver reached'"
+        },
+      },
+    ])
+    const development = createNuxt(true)
+    await viteHubNuxtModule({ console: true, email: true, preset: "node" }, development.nuxt)
+    const nitroConfig = nitroOptions(development.nuxt)
+    await development.runNitroConfigHook(nitroConfig)
+    const rollupConfig = nitroConfig.rollupConfig as { plugins?: Plugin[] }
+    const resolver = rollupConfig.plugins?.find(plugin => plugin.name === "vite-hub/nuxt-runtime-resolver:@vite-hub/email/vite")
+    const resolveId = resolver?.resolveId
+    const load = resolver?.load
+    if (typeof resolveId !== "function" || typeof load !== "function") throw new TypeError("Expected Nitro Email resolver hooks.")
+    const generatedPlugin = "/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs"
+    expect(await readFile(generatedPlugin, "utf8")).toContain("#vitehub/email/definition")
+    const result = await build({
+      bundle: true,
+      entryPoints: [generatedPlugin],
+      format: "esm",
+      packages: "external",
+      platform: "node",
+      write: false,
+      plugins: [{
+        name: "nitro-email-resolver-test",
+        setup(pluginBuild) {
+          pluginBuild.onResolve({ filter: /^#vitehub\/email\/definition$/ }, async args => ({
+            path: String(await Reflect.apply(resolveId, {}, [args.path, undefined, {}, {}])),
+            namespace: "nitro-email",
+          }))
+          pluginBuild.onLoad({ filter: /.*/, namespace: "nitro-email" }, async args => ({
+            contents: String(await Reflect.apply(load, {}, [args.path])),
+            loader: "js",
+          }))
+        },
+      }],
+    })
+    expect(result.outputFiles?.[0]?.text).toContain("email resolver reached")
+  })
+
   it("resolves Blob and KV virtual runtime modules during Nitro bundling", async () => {
     let resolvedKv: unknown
     let resolvedBlob: unknown

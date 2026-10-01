@@ -142,6 +142,7 @@ function pluginOptionHasName(option: PluginOption, name: string): boolean {
 const nitroRuntimeResolverNames = new Set([
   "@vite-hub/auth/vite",
   "@vite-hub/blob/vite",
+  "@vite-hub/email/vite",
   "@vite-hub/kv/vite",
 ])
 

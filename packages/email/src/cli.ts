@@ -301,6 +301,8 @@ async function runOutboxCommand(command: OutboxCommand, args: string[], context:
     parsed = parseOutboxArgs(command, args, context.env)
   }
   catch (error) {
+    const terminator = args.indexOf("--")
+    if (args.slice(0, terminator < 0 ? args.length : terminator).includes("--json")) return writeFailure(true, context, { message: error instanceof Error ? error.message : String(error) })
     context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     writeOutboxUsage(command, context.stderr)
     return 1
