@@ -287,7 +287,11 @@ async function installConsole(
   const plugin = resolveGeneratedConsolePlugin(projectRoot, fixture, invocationRootState)
   installConsoleSections(projectRoot, sections, independentAuth)
   installConsoleProjectName(projectRoot, resolveConsoleProjectNameFromRoot(projectRoot))
-  if (installInvocations && nuxt.options.dev && sections.includes("agents") && !fixture) installConsoleInvocations(projectRoot, undefined, observations, journal && "databaseUrl" in journal ? journal.databaseUrl : undefined, journal && "d1Binding" in journal ? { binding: journal.d1Binding, env: async () => Reflect.get(await import("cloudflare:workers"), "env") as Record<string, unknown> } : undefined, retention)
+  if (installInvocations && nuxt.options.dev && sections.includes("agents") && !fixture) installConsoleInvocations(projectRoot, undefined, observations, journal && "databaseUrl" in journal ? journal.databaseUrl : undefined, journal && "d1Binding" in journal ? { binding: journal.d1Binding, env: async () => {
+    const workers = await import("cloudflare:workers")
+    // SAFETY: Cloudflare's Workers module exposes its runtime bindings through the documented env export.
+    return Reflect.get(workers, "env") as Record<string, unknown>
+  } } : undefined, retention)
   const routeRules = (nuxt.options.routeRules ??= {})
   for (const route of ["/_vitehub", "/_vitehub/**"]) {
     const rule = (routeRules[route] ??= {})

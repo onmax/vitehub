@@ -13,6 +13,15 @@ import { createConsoleInvocationsIdentity } from "./internal.ts"
 import { resolveConsoleProjectNameFromRoot } from "./project.ts"
 import { describeConsoleContributedSections, describeConsoleRuntimeReaders } from "./contributions.ts"
 import { installConsoleFixtureInvocations } from "./runtime/server/invocations.ts"
+
+function renderRetentionLimit(value: number | false | undefined): string {
+  if (value === undefined) return "undefined"
+  if (Number.isNaN(value)) return "NaN"
+  if (value === Number.POSITIVE_INFINITY) return "Infinity"
+  if (value === Number.NEGATIVE_INFINITY) return "-Infinity"
+  // Keep invalid non-serializable limits subject to runtime validation.
+  return JSON.stringify(value) ?? "null"
+}
 import type { ConsoleJournal } from "../storage-config.ts"
 
 function renderConsoleNitroPlugin(
@@ -100,7 +109,7 @@ function renderConsoleNitroPlugin(
             `const vitehubConsoleInvocations = installConsoleFixtureInvocations(${JSON.stringify(projectRoot)}, ${JSON.stringify(fixture)}, ${fixtureSource}, ${JSON.stringify(revision)}, ${JSON.stringify(runtimeBinding)})`,
             `installConsoleAgentDefinitions([${definitions}], { invocations: vitehubConsoleInvocations })`,
           ]
-        : [`installConsoleAgentDefinitions([${definitions}], { projectRoot: ${JSON.stringify(projectRoot)}${invoke ? ", invoke: true" : ""}${observations !== undefined ? `, observations: ${JSON.stringify(observations)}` : ""}${journal && "databaseUrl" in journal ? `, databaseUrl: ${JSON.stringify(journal.databaseUrl)}` : ""}${journal && "d1Binding" in journal ? `, d1: { binding: ${JSON.stringify(journal.d1Binding)}, env: async () => (await import("cloudflare:workers")).env }` : ""}${retention !== undefined ? `, retention: ${JSON.stringify(retention)}` : ""} })`]
+        : [`installConsoleAgentDefinitions([${definitions}], { projectRoot: ${JSON.stringify(projectRoot)}${invoke ? ", invoke: true" : ""}${observations !== undefined ? `, observations: ${JSON.stringify(observations)}` : ""}${journal && "databaseUrl" in journal ? `, databaseUrl: ${JSON.stringify(journal.databaseUrl)}` : ""}${journal && "d1Binding" in journal ? `, d1: { binding: ${JSON.stringify(journal.d1Binding)}, env: async () => (await import("cloudflare:workers")).env }` : ""}${retention !== undefined ? `, retention: { maxAgeMs: ${renderRetentionLimit(retention.maxAgeMs)}, maxRecords: ${renderRetentionLimit(retention.maxRecords)} }` : ""} })`]
       : []),
     ...(kvEnabled
       ? [`installConsoleKV(${JSON.stringify(projectRoot)}, vitehubConsoleKV, ${JSON.stringify(kvStores)})`]
