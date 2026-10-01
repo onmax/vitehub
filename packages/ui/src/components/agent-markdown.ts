@@ -59,7 +59,8 @@ export const AgentMarkdown = defineComponent({
     value: { default: "", type: String },
   },
   setup(props, { attrs }) {
-    const hasParentSuspense = Boolean(getCurrentInstance()?.suspense);
+    const instance = getCurrentInstance();
+    const hasParentSuspense = Boolean(instance && "suspense" in instance && instance.suspense);
     const defaults = useViteHubUI();
     return () => {
       const parserOptions = { ...props.options };
