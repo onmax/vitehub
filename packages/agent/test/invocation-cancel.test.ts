@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 const modelGenerate = vi.hoisted(() => vi.fn())
@@ -126,7 +127,7 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.get(id))?.status).toBe("completed")
   })
 
-  it.each(["unrelated", "reason", "wrapped-reason", "abort-error"] as const)("classifies a cancelled custom handler's %s rejection by its actual error", async (failureKind) => {
+  it.each(["unrelated", "foreign-unrelated", "reason", "wrapped-reason", "foreign-wrapped-reason", "abort-error", "foreign-abort-error"] as const)("classifies a cancelled custom handler's %s rejection by its actual error", async (failureKind) => {
     const release = deferred()
     const started = deferred()
     const failure = new Error("Independent handler failure")
@@ -140,6 +141,9 @@ describe("Agent Invocation cancel", () => {
         await release.promise
         if (failureKind === "reason") throw signal?.reason
         if (failureKind === "wrapped-reason") throw new Error("Handler stopped", { cause: signal?.reason })
+        if (failureKind === "foreign-wrapped-reason") throw runInNewContext("new Error('Outer stop', { cause: new Error('Inner stop', { cause: reason }) })", { reason: signal?.reason })
+        if (failureKind === "foreign-abort-error") throw runInNewContext("Object.assign(new Error('Handler stopped'), { name: 'AbortError' })")
+        if (failureKind === "foreign-unrelated") throw runInNewContext("new Error('Independent handler failure')")
         if (failureKind === "abort-error") throw new DOMException("Handler stopped", "AbortError")
         throw failure
       } },
@@ -153,8 +157,9 @@ describe("Agent Invocation cancel", () => {
     release.resolve()
     await rejected
     const record = await invocations.get(id)
-    expect(record?.status).toBe(failureKind === "unrelated" ? "failed" : "cancelled")
-    expect(record?.observations.some(entry => entry.name === "agent.invocation.cancelled")).toBe(failureKind !== "unrelated")
+    const cancelled = failureKind !== "unrelated" && failureKind !== "foreign-unrelated"
+    expect(record?.status).toBe(cancelled ? "cancelled" : "failed")
+    expect(record?.observations.some(entry => entry.name === "agent.invocation.cancelled")).toBe(cancelled)
     if (failureKind === "unrelated") expect(record?.error?.message).toBe(failure.message)
   })
 

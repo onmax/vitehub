@@ -5642,10 +5642,15 @@ function invocationFailureWasCancelled(error: unknown, signal: AbortSignal | und
   let current = error
   while (!seen.has(current)) {
     if (current === signal.reason) return true
-    if (!(current instanceof Error)) return false
-    if (current.name === "AbortError") return true
+    if (!isRuntimeRecord(current)) return false
     seen.add(current)
-    current = current.cause
+    try {
+      if (Reflect.get(current, "name") === "AbortError") return true
+      current = Reflect.get(current, "cause")
+    }
+    catch {
+      return false
+    }
   }
   return false
 }
