@@ -6427,6 +6427,43 @@ describe("agent message protocol", () => {
     await expect(useWorkspace(workspaceName, { mode: "write" }).diff()).resolves.toMatchObject({ entries: [] })
   })
 
+  it.each([
+    { commit: false, diffs: 0, snapshots: 0 },
+    { commit: true, diffs: 1, snapshots: 1 },
+  ])("diffs the Workspace for auto-commit only when commit can apply, commit: $commit", async ({ commit, diffs, snapshots }) => {
+    const { defineAgent, runAgent } = await import("../src/index.ts")
+    const { registerWorkspaceAgent } = await import("../src/server/workspace.ts")
+    const workspaceName = `agent-auto-commit-${String(commit)}-${Math.random().toString(36).slice(2)}`
+    let diff: ReturnType<typeof vi.spyOn> | undefined
+    let snapshot: ReturnType<typeof vi.spyOn> | undefined
+    const agent = registerWorkspaceAgent(defineAgent({
+      runtime: false,
+      workspace: {
+        commit,
+        mode: "write",
+        store: { provider: "memory" },
+      },
+      driver: { async run({ workspace }) {
+          // SAFETY: This test fixture intentionally constructs the exact writable Workspace contract.
+          const writableWorkspace = workspace as WritableWorkspaceFacade
+          await writableWorkspace.fs.writeFile("notes.md", "notes")
+          diff = vi.spyOn(writableWorkspace, "diff")
+          snapshot = vi.spyOn(writableWorkspace, "snapshot")
+          return { text: "ok" }
+        } },
+    }), { workspace: workspaceName })
+
+    await expect(runAgent(agent, {
+      agentIdentity: { name: "writer", workspace: workspaceName },
+      memo: vi.fn(),
+      runtime: "unknown",
+      waitUntil: vi.fn(),
+    }, {})).resolves.toMatchObject({ text: "ok" })
+
+    expect(diff).toHaveBeenCalledTimes(diffs)
+    expect(snapshot).toHaveBeenCalledTimes(snapshots)
+  })
+
   it("classifies Workspace auto-commit failures as ViteHub teardown", async () => {
     const { defineAgent, runAgent } = await import("../src/index.ts")
     const { defineWorkspace } = await import("@vite-hub/workspace")

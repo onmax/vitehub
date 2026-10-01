@@ -76,7 +76,16 @@ const storeOperationTimedOut = Symbol("vitehub.storeOperationTimedOut")
 export type AgentInvocationAnnotationValue = boolean | number | string | null
 export type AgentInvocationRecordStatus = AgentInvocationStatus
 
+export interface AgentInvocationWorkflowBinding {
+  name: string
+  provider: string
+  /** Absent while provider acknowledgement is unknown. */
+  id?: string
+}
+
 export interface AgentInvocationRecord {
+  /** Durable provider dispatch intent and acknowledged physical identity. */
+  workflow?: AgentInvocationWorkflowBinding
   agentName?: string
   annotations?: Record<string, AgentInvocationAnnotationValue>
   /** Capability IDs observed during this Invocation, including uses omitted from a truncated trace. */
@@ -132,10 +141,14 @@ export interface AgentInvocationStoreCreateResult {
 }
 
 export interface AgentInvocationStoreUpdateInput {
+  workflow?: AgentInvocationWorkflowBinding
   /** Append with a stable observation identity and a sequence assigned atomically by the store. */
   appendObservation?: Omit<TraceEventLogEntry, "sequence">
   annotations?: AgentInvocationRecord["annotations"]
   capabilityIds?: readonly string[]
+  channelId?: string
+  origin?: string
+  threadId?: string
   error?: AgentInvocationRecord["error"]
   observation?: TraceEventLogEntry
   observationsTruncated?: boolean
@@ -267,21 +280,50 @@ export interface AgentInvocations {
 interface BoundAgentInvocations extends AgentInvocations {
   [bindAgentInvocationsSymbol]<TRuntimeConfig extends AgentRuntimeConfig>(
     context: AgentRuntimeContext<TRuntimeConfig>,
-    options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean },
+    options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean, replaceClaimToken?: string, recoverPending?: boolean },
   ): Promise<AgentInvocationJournal<TRuntimeConfig>>
   [recoverInterruptedAgentInvocationsSymbol](options: Parameters<typeof failInterruptedAgentInvocations>[1]): Promise<number>
 }
 
+export const exclusiveAgentInvocation: unique symbol = Symbol("vitehub.exclusiveAgentInvocation")
+export const inheritedAgentInvocationClaim: unique symbol = Symbol("vitehub.inheritedAgentInvocationClaim")
+export const pendingAgentInvocationAnnotation = "vitehub.invocation.executionPending"
+
+export function pendingAgentInvocationAnnotations(input: AgentRunMetadata["annotations"]): NonNullable<AgentRunMetadata["annotations"]> {
+  const annotations: NonNullable<AgentRunMetadata["annotations"]> = { [pendingAgentInvocationAnnotation]: true }
+  for (const [key, value] of Object.entries(input || {})) {
+    if (key !== pendingAgentInvocationAnnotation) annotations[key] = value
+  }
+  return annotations
+}
+
+export class AgentInvocationClaimConflict extends Error {
+  constructor() {
+    super("Invocation already exists or is claimed.")
+    this.name = "AgentInvocationClaimConflict"
+  }
+}
+
 export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   configuration?: TraceEventContentPolicy
+  /** Whether this journal holds the store execution claim, lost it, or could not reach the store. */
+  readonly createdNew: boolean
+  readonly claimStatus?: "owned" | "conflict" | "unavailable"
   context: AgentRuntimeContext<TRuntimeConfig>
   /** The stored `traceId`, available after creation confirms the record identity. */
   traceId: string | undefined
   /** Wait for an asynchronous create attempt to resolve its stored identity. */
   ready(): Promise<void>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
-  running(): Promise<void>
+  handoffClaim(): Promise<string | undefined>
+  prepareWorkflowDispatch(binding: AgentInvocationWorkflowBinding): Promise<boolean>
+  confirmWorkflowDispatch(binding?: AgentInvocationWorkflowBinding): Promise<boolean>
+  releaseClaim(): Promise<void>
+  /** Persist the execution-start marker; false means execution must not begin. */
+  running(): Promise<boolean>
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
+  /** Persist resolved run metadata while this journal owns the execution claim. */
+  setRunMetadata(run: AgentRunMetadata): Promise<boolean>
 }
 
 function cloneObservation(observation: TraceEventLogEntry): TraceEventLogEntry {
@@ -314,6 +356,7 @@ function cloneSummary(record: AgentInvocationRecord): AgentInvocationSummary {
   const { observations: _observations, ...summary } = record
   return {
     ...summary,
+    ...(record.workflow ? { workflow: { ...record.workflow } } : {}),
     ...(record.annotations ? { annotations: { ...record.annotations } } : {}),
     ...(record.capabilityIds ? { capabilityIds: [...record.capabilityIds] } : {}),
     ...(record.observationLimits ? { observationLimits: { ...record.observationLimits } } : {}),
@@ -1354,6 +1397,7 @@ export function applyAgentInvocationStoreUpdate(
   }
   const updated: AgentInvocationRecord = {
     ...record,
+    ...(input.workflow ? { workflow: { ...input.workflow } } : {}),
     ...(configuredAnnotations
       ? { annotations: mergeConfigurationAnnotations(record.annotations, configuredAnnotations) }
       : {}),
@@ -1371,6 +1415,12 @@ export function applyAgentInvocationStoreUpdate(
     ...(status === "cancelled" && !isAppend && !record.cancelledAt ? { cancelledAt: input.timestamp } : {}),
     status,
     updatedAt: input.timestamp > record.updatedAt ? input.timestamp : record.updatedAt,
+  }
+  for (const field of ["channelId", "origin", "threadId"] as const) {
+    if (!Object.hasOwn(input, field)) continue
+    const value = input[field]
+    if (value) updated[field] = boundedString(value)
+    else delete updated[field]
   }
   if (Object.hasOwn(input, "annotations")) {
     const annotations = normalizeAnnotations(input.annotations)
@@ -1889,7 +1939,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
     },
     async [bindAgentInvocationsSymbol]<TRuntimeConfig extends AgentRuntimeConfig>(
       context: AgentRuntimeContext<TRuntimeConfig>,
-      bindOptions: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean } = {},
+      bindOptions: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean, replaceClaimToken?: string, recoverPending?: boolean } = {},
     ): Promise<AgentInvocationJournal<TRuntimeConfig>> {
       const runId = context.run?.runId || createInvocationId()
       const agentName = bindOptions.agentName || context.agentIdentity?.name
@@ -1902,12 +1952,16 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       let boundToTerminalRecord = false
       let finishing = false
       let ownsRecord = false
+      let claimUnavailable = true
       let limits = configuredObservationLimits
       let observationCount = 0
       let observationsTruncated = false
       let truncationPersisted = false
       let observationSequence = 0
       let created = false
+      let heartbeatRenewal: Promise<unknown> = Promise.resolve()
+      let workflowDispatchAllowed = false
+      let createdNew = false
       let creationTimedOut = false
       let creationTask: Promise<AgentInvocationStoreCreateResult | undefined> | undefined
       let runningPersisted = false
@@ -1931,7 +1985,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       }
       const startHeartbeat = () => {
         if (finished || !ownsRecord || heartbeat !== undefined) return
-        heartbeat = setInterval(() => { void renew() }, CLAIM_RENEW_INTERVAL_MS)
+        heartbeat = setInterval(() => { heartbeatRenewal = renew() }, CLAIM_RENEW_INTERVAL_MS)
         unrefTimer(heartbeat)
       }
       const ensureCreated = async (): Promise<boolean> => {
@@ -1949,6 +2003,8 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               invocationCapabilityIds(result.record).forEach(capabilityId => observedCapabilityIds.add(capabilityId))
               finished = terminalStatus(result.record.status)
               boundToTerminalRecord = finished
+              workflowDispatchAllowed = result.created || (result.record.status === "pending" && result.record.annotations?.[pendingAgentInvocationAnnotation] === true)
+              createdNew = result.created
               created = true
             }
             else if (creationTask === task) {
@@ -1971,7 +2027,17 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       }
       const renew = async (force = false): Promise<boolean> => {
         if (!await ensureCreated()) return false
-        const claim = await boundedStoreOperation(() => store.claim(recordId, claimId, CLAIM_LEASE_MS, force ? { replaceExisting: true } : undefined))
+        if ((bindOptions.requireNew && !createdNew) || (bindOptions.recoverPending && !workflowDispatchAllowed)) {
+          claimUnavailable = false
+          return false
+        }
+        const claimTask = Promise.resolve().then(() => store.claim(recordId, claimId, CLAIM_LEASE_MS, force ? { replaceExisting: true } : bindOptions.replaceClaimToken ? { replaceClaimToken: bindOptions.replaceClaimToken } : undefined))
+        const claim = await boundedStoreOperation(() => claimTask)
+        if (claim === storeOperationTimedOut) {
+          // An execution that never started must not leave a late claim blocking recovery.
+          void claimTask.then(owned => owned ? store.release(recordId, claimId) : undefined).catch(() => {})
+        }
+        claimUnavailable = claim !== true && claim !== false
         ownsRecord = claim === true
         if (ownsRecord && finished) {
           await boundedStoreOperation(() => store.release(recordId, claimId))
@@ -2177,6 +2243,46 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         writeNextObservation()
       }
       return {
+        get createdNew() { return createdNew },
+        get claimStatus() { return ownsRecord ? "owned" : claimUnavailable ? "unavailable" : "conflict" },
+        async handoffClaim() {
+          stopHeartbeat()
+          await heartbeatRenewal
+          if (!await renew()) return undefined
+          stopHeartbeat()
+          const token = await boundedStoreOperation(() => store.getClaimToken(recordId))
+          return token === storeOperationTimedOut ? undefined : token
+        },
+        async prepareWorkflowDispatch(binding) {
+          return await update({ workflow: binding, timestamp: new Date().toISOString() })
+        },
+        async confirmWorkflowDispatch(binding) {
+          let confirmed = false
+          // Renewing here would rotate the token already sent to the worker.
+          await write(async () => {
+            let record = await boundedStoreOperation(() => store.get(recordId))
+            if (!record || record === storeOperationTimedOut) return
+            if (binding) {
+              const associated = await boundedStoreOperation(() => store.update(recordId, {
+                workflow: binding,
+                timestamp: new Date().toISOString(),
+              }, claimId))
+              if (!associated || associated === storeOperationTimedOut) return
+              record = associated
+            }
+            const updated = await boundedStoreOperation(() => store.update(recordId, {
+              annotations: { ...record.annotations, [pendingAgentInvocationAnnotation]: false },
+              timestamp: new Date().toISOString(),
+            }, claimId))
+            confirmed = updated !== undefined && updated !== storeOperationTimedOut
+          })
+          return confirmed
+        },
+        async releaseClaim() {
+          stopHeartbeat()
+          if (ownsRecord) await write(() => boundedStoreOperation(() => store.release(recordId, claimId)))
+          ownsRecord = false
+        },
         configuration: options.configuration,
         get traceId() { return created ? traceId : undefined },
         async ready() {
@@ -2298,13 +2404,21 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           registerAgentInvocationRecovery(context, retry)
         },
         async running() {
-          if (finished) return
+          if (finished) return false
           runningRequested = true
           const markRunning = async () => {
-            runningPersisted = await update({ status: "running", timestamp: new Date().toISOString() })
+            // Clear the replay reservation before any Driver work starts. If a
+            // later terminal update is lost, the pending record still carries
+            // proof that execution began and cannot be retried as preparation.
+            runningPersisted = await update({
+              status: "running",
+              annotations: { ...normalizeAnnotations(context.run?.annotations), [pendingAgentInvocationAnnotation]: false },
+              timestamp: new Date().toISOString(),
+            })
             return runningPersisted
           }
-          if (await markRunning() || runningRetry) return
+          if (await markRunning()) return true
+          if (runningRetry) return false
           runningRetry = (async () => {
             const deadline = Date.now() + TERMINAL_RETRY_TIMEOUT_MS
             while (!finished && Date.now() < deadline) {
@@ -2317,10 +2431,21 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             }
           })()
           registerAgentInvocationRecovery(context, runningRetry)
+          return false
         },
         async setAnnotations(annotations) {
           if (finished || finishing) return
           await update({ annotations: normalizeAnnotations(annotations), timestamp: new Date().toISOString() })
+        },
+        async setRunMetadata(run) {
+          if (finished || finishing) return false
+          return await update({
+            annotations: normalizeAnnotations(run.annotations),
+            channelId: run.channelId,
+            origin: run.origin,
+            threadId: run.threadId,
+            timestamp: new Date().toISOString(),
+          })
         },
       }
     },
@@ -2464,7 +2589,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
 export async function bindAgentInvocations<TRuntimeConfig extends AgentRuntimeConfig>(
   invocations: AgentInvocations | undefined,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean },
+  options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean, replaceClaimToken?: string, recoverPending?: boolean },
 ): Promise<AgentInvocationJournal<TRuntimeConfig> | undefined> {
   if (!invocations) return
   // SAFETY: Invocation event normalization establishes the asserted invocation contract.

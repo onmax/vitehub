@@ -15,7 +15,6 @@
     "./arrays": "./dist/arrays.js",
     "./agent-workflow": "./dist/agent-workflow.js",
     "./definition-catalog": "./dist/definition-catalog.js",
-    "./definition-discovery": "./dist/definition-discovery.js",
     "./deployment": "./dist/deployment.js",
     "./dev-endpoint": "./dist/dev-endpoint.js",
     "./hosting": "./dist/hosting.js",
@@ -26,7 +25,6 @@
     "./source-scanner": "./dist/source-scanner.js",
     "./runtime/app": "./dist/runtime/app.js",
     "./runtime/cloudflare-hosted": "./dist/runtime/cloudflare-hosted.js",
-    "./runtime/hosted": "./dist/runtime/hosted.js",
     "./runtime/vercel-hosted": "./dist/runtime/vercel-hosted.js",
     "./runtime/cloudflare-env": "./dist/runtime/cloudflare-env.js",
     "./http-request": "./dist/http-request.js",
@@ -50,7 +48,6 @@
     "./build/vite": "./dist/build/vite.js",
     "./nitro-kit": "./dist/nitro-kit.js",
     "./vite-stage": "./dist/vite-stage.js",
-    "./workspace-inventory": "./dist/workspace-inventory.js",
     "./test/e2e-live": "./src/test/e2e-live.mjs",
     "./package.json": "./package.json"
   },
