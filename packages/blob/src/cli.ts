@@ -230,7 +230,7 @@ async function readUpload(path: string): Promise<{ data: string } | BlobCliFailu
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return v.is(v.record(v.string(), v.unknown()), value)
 }
 
 function formatSize(size: number | undefined): string {
@@ -349,18 +349,12 @@ function withTimeout(timeout: number | undefined): Pick<RequestInit, "signal"> {
   return timeout ? { signal: AbortSignal.timeout(timeout) } : {}
 }
 
+const fileHeaderSchema = v.object({ pathname: v.string(), store: v.string(), contentType: v.optional(v.string()) })
 function readFileHeader(response: Response, fallback: { pathname: string, store: string }, size: number): BlobDevFileHeader {
   const raw = response.headers.get(blobDevFileHeader)
   try {
-    const header: unknown = raw ? JSON.parse(decodeURIComponent(raw)) : undefined
-    if (isRecord(header) && typeof header.pathname === "string" && typeof header.store === "string") {
-      return {
-        ...(typeof header.contentType === "string" ? { contentType: header.contentType } : {}),
-        pathname: header.pathname,
-        size,
-        store: header.store,
-      }
-    }
+    const parsed = v.safeParse(fileHeaderSchema, raw ? JSON.parse(decodeURIComponent(raw)) : undefined)
+    if (parsed.success) return { ...parsed.output, size }
   }
   catch {
     // A missing or damaged header only removes the metadata. The bytes are still correct.
@@ -431,7 +425,7 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
   if (server.discovery.runtime !== "nitro") {
     return writeFailure(parsed, context, {
       code: "BLOB_DEV_RUNTIME_UNAVAILABLE",
-      message: typeof server.discovery.message === "string"
+      message: v.is(v.string(), server.discovery.message)
         ? server.discovery.message
         : "This Vite Development Server cannot reach the Blob runtime.",
     })

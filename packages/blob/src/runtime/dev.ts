@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { redactInspectionText, redactInspectionValue } from "@vite-hub/internal/inspect"
 // The package imports keep the Nitro module graph on the storage and runtime config that the generated Nitro plugin
@@ -104,7 +105,7 @@ export async function listBlobDevStores(): Promise<BlobDevStore[]> {
 
 function redactedMetadata(value: Record<string, string>): Record<string, unknown> {
   const redacted = redactInspectionValue({ ...value })
-  return redacted && typeof redacted === "object" && !Array.isArray(redacted) ? { ...redacted } : {}
+  return v.is(v.record(v.string(), v.unknown()), redacted) ? { ...redacted } : {}
 }
 
 /** Converts one Blob object to the metadata that the CLI prints. */
@@ -141,17 +142,17 @@ async function headOrUndefined(storage: BlobStorage, pathname: string): Promise<
   return unwrap(result)
 }
 
-function readString(body: object, name: string): string | undefined {
+function readString(body: Record<string, unknown>, name: string): string | undefined {
   const value: unknown = Reflect.get(body, name)
   if (value === undefined) return
-  if (typeof value !== "string") throw new BlobDevRequestError(`${name} must be a string.`, 400)
+  if (!v.is(v.string(), value)) throw new BlobDevRequestError(`${name} must be a string.`, 400)
   return value
 }
 
-function readPositiveInteger(body: object, name: string): number | undefined {
+function readPositiveInteger(body: Record<string, unknown>, name: string): number | undefined {
   const value: unknown = Reflect.get(body, name)
   if (value === undefined) return
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+  if (!v.is(v.pipe(v.number(), v.integer(), v.minValue(1)), value)) {
     throw new BlobDevRequestError(`${name} must be a positive integer.`, 400)
   }
   return value
@@ -159,17 +160,18 @@ function readPositiveInteger(body: object, name: string): number | undefined {
 
 async function readBody(request: Request): Promise<BlobDevRequestBody> {
   const body: unknown = await request.json().catch(() => undefined)
-  if (!body || typeof body !== "object" || Array.isArray(body)) throw new BlobDevRequestError("The Blob Dev request body is invalid.", 400)
-  const operation: unknown = Reflect.get(body, "operation")
+  const record = v.safeParse(v.record(v.string(), v.unknown()), body)
+  if (!record.success) throw new BlobDevRequestError("The Blob Dev request body is invalid.", 400)
+  const operation: unknown = Reflect.get(record.output, "operation")
   if (!isBlobDevOperation(operation)) throw new BlobDevRequestError("The Blob Dev request body is invalid.", 400)
   const parsed: BlobDevRequestBody = { operation }
-  const contentType = readString(body, "contentType")
-  const cursor = readString(body, "cursor")
-  const data = readString(body, "data")
-  const limit = readPositiveInteger(body, "limit")
-  const pathname = readString(body, "pathname")
-  const prefix = readString(body, "prefix")
-  const store = readString(body, "store")
+  const contentType = readString(record.output, "contentType")
+  const cursor = readString(record.output, "cursor")
+  const data = readString(record.output, "data")
+  const limit = readPositiveInteger(record.output, "limit")
+  const pathname = readString(record.output, "pathname")
+  const prefix = readString(record.output, "prefix")
+  const store = readString(record.output, "store")
   if (contentType) parsed.contentType = contentType
   if (cursor) parsed.cursor = cursor
   if (data !== undefined) parsed.data = data

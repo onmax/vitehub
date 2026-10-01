@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { randomUUID } from "node:crypto"
 
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
@@ -264,7 +265,7 @@ async function writeBlobDevHandler(file: string, importBase: string): Promise<vo
 function readNitroBaseURL(config: ResolvedConfig | undefined): string | undefined {
   const nitro: unknown = config ? Reflect.get(config, "nitro") : undefined
   const baseURL: unknown = isPlainObject(nitro) ? Reflect.get(nitro, "baseURL") : undefined
-  return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
+  return v.is(v.string(), baseURL) ? baseURL : process.env.NITRO_APP_BASE_URL
 }
 
 async function refreshBlobGeneratedFiles(root: string, blob: BlobViteRuntimeConfig["blob"], cloudflare: boolean, importBase = blobPackageName, provider?: "cloudflare" | "vercel"): Promise<void> {
