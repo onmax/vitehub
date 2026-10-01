@@ -141,6 +141,17 @@ describe("KV dev runtime handler", () => {
     expect((await run({ key: "empty-store", operation: "has" })).body).toMatchObject({ exists: false })
   })
 
+  it.each([0.001, 0.5])("rejects sub-second Upstash TTL without writing: %s", async ttl => {
+    const set = vi.spyOn(kv, "set").mockResolvedValue([null, undefined])
+    try {
+      const response = await handleKVDevRequest(devRequest({ key: "short", operation: "set", ttl, value: "x" }), [{ driver: "upstash", name: "default" }])
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({ error: { message: "Upstash TTL must be at least 1 second." } })
+      expect(set).not.toHaveBeenCalled()
+    }
+    finally { set.mockRestore() }
+  })
+
   it("rounds fractional Upstash TTL before storage and reports the effective seconds", async () => {
     const set = vi.spyOn(kv, "set").mockResolvedValue([null, undefined])
     try {
