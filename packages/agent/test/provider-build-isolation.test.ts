@@ -26,14 +26,18 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { force: true, recursive: true })))
 })
 
-it.each([true, false])("keeps Agent output in its owning catalog across environment clones with metadata %j", async (retainMetadata) => {
+it.each([
+  { retainMetadata: true, sameRoot: false },
+  { retainMetadata: false, sameRoot: false },
+  { retainMetadata: false, sameRoot: true },
+])("keeps Agent output in its owning catalog across environment clones %j", async ({ retainMetadata, sameRoot }) => {
   vi.stubEnv("VITEHUB_HOSTING", "netlify")
   const plugin = hubAgent({ providers: { state: { provider: "memory" } } })
   const configs: ResolvedConfig[] = []
   for (const name of ["first", "second"]) {
-    const root = await mkdtemp(join(tmpdir(), "vitehub-agent-build-isolation-"))
-    roots.push(root)
-    const server = join(root, "backend")
+    const root = sameRoot && roots[0] ? roots[0] : await mkdtemp(join(tmpdir(), "vitehub-agent-build-isolation-"))
+    if (!roots.includes(root)) roots.push(root)
+    const server = join(root, `backend-${name}`)
     await mkdir(join(server, "agents"), { recursive: true })
     await writeFile(join(server, "agents", `${name}.ts`), "export default {}\n")
     // SAFETY: This fixture supplies the resolved fields read by Agent output generation.
@@ -41,8 +45,8 @@ it.each([true, false])("keeps Agent output in its owning catalog across environm
       root, command: "build", plugins: [], build: { outDir: "dist" },
       resolve: { alias: [] }, [VITEHUB_SERVER_DIRS]: [server],
       define: {
-        __VITEHUB_PUBLIC_URL__: JSON.stringify({ url: `https://${name}.example.com` }),
-        __VITEHUB_APP_BASE_URL__: JSON.stringify(`/${name}/`),
+        __VITEHUB_PUBLIC_URL__: JSON.stringify({ url: `https://${sameRoot ? "shared" : name}.example.com` }),
+        __VITEHUB_APP_BASE_URL__: JSON.stringify(`/${sameRoot ? "shared" : name}/`),
       },
     } as unknown as ResolvedConfig
     configs.push(config)

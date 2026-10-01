@@ -3267,11 +3267,12 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       const environmentConfig = this?.environment?.config
       if (environmentConfig) {
         const candidates = scheduledBuildConfigsByRoot.get(environmentConfig.root) ?? []
-        const scheduledConfig = candidates.length === 1 ? candidates[0] : candidates.find(candidate =>
+        const sharedBuild = candidates.find(candidate => candidate.build === environmentConfig.build)
+        const scheduledConfig = sharedBuild ?? (candidates.length === 1 ? candidates[0] : candidates.find(candidate =>
           candidate.build.outDir === environmentConfig.build.outDir
           && candidate.define?.__VITEHUB_PUBLIC_URL__ === environmentConfig.define?.__VITEHUB_PUBLIC_URL__
           && candidate.define?.__VITEHUB_APP_BASE_URL__ === environmentConfig.define?.__VITEHUB_APP_BASE_URL__,
-        )
+        ))
         const scheduled = buildConfigs.get(environmentConfig) ?? (scheduledConfig && buildConfigs.get(scheduledConfig))
         buildConfigs.set(context, {
           agent: scheduled ? scheduled.agent : environmentConfig.agent ?? options,
