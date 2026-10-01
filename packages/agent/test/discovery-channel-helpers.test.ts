@@ -1122,6 +1122,23 @@ it.each([
 })
 
 it.each([
+  'const iterable = { *[Symbol.iterator]() { yield options } }; const [alias] = iterable; alias.pullRequest = true',
+  'const iterable = { *[Symbol.iterator]() { yield options } }; const [alias] = (iterable); const next = alias; next.pullRequest = true',
+  'const container = { get value() { return options } }; const { value: alias } = container; alias.pullRequest = true',
+])("rejects mutations through unresolved destructuring sources: %s", async mutation => {
+  const setup = `${imports} const options = { pullRequest: false }; ${mutation};`
+  await expect(discover(`${setup} export default defineAgent({ channels: { custom: github(options) } })`)).rejects.toThrow("opaque Channel")
+  await expect(discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": `${setup} export default github(options)`,
+  })).rejects.toThrow("opaque Channel")
+})
+
+it("preserves read-only unresolved destructuring sources", async () => {
+  const source = `${imports} const options = { pullRequest: false }; const iterable = { *[Symbol.iterator]() { yield options } }; const [alias] = iterable; const enabled = alias.pullRequest; export default defineAgent({ channels: { custom: github(options) } })`
+  expect((await discover(source))?.workspace).toBeUndefined()
+})
+
+it.each([
   ['options["other"].pullRequest', '{ other: settings }'],
   ['options.other["pullRequest"]', '{ other: settings }'],
   ['options["other"]["pullRequest"]', '{ other: settings }'],

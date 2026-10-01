@@ -694,6 +694,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
     const names = [...callbackBindingNames(pattern, end)]
     const targets = containerAliasTargets(value, tokens, true)
+    let source = value
+    while (tokens[source] === "(" || tokens[source] === "await") source++
+    // An identifier-backed iterable or getter may return captured values that
+    // cannot be recovered by tracing the container's literal members.
+    if (isIdentifier(tokens[source] ?? "") && !importedChannelNamespaces.has(tokens[source]!)) {
+      for (const name of names) opaqueDestructuredBindings.add(name)
+    }
     if (names.length !== targets.length) {
       if (!failClosed) return
       for (const name of names) mutatedBindings.add(name)
@@ -710,6 +717,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   const destructuredBindings = new Map<number, Set<string>>()
+  const opaqueDestructuredBindings = new Set<string>()
   const destructuredChannelHelpers = new Map<number, Map<string, { reference: number, helper: string }>>()
   const destructuredImportedHelpers = new Map<number, Map<string, number>>()
   const variableDeclarations = new Map<number, number>()
@@ -1079,7 +1087,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (!tagged && globalObjectReference(index) && tokens[index + 1] === "." && tokens[index + 2] === "freeze") trustedCalls.add(call)
     if (tokens[index - 1] !== "." && factories.some(name => factoryCall(index, name) === call)) trustedCalls.add(call)
   }
-  const opaqueResultBindings = new Set<string>()
+  const opaqueResultBindings = new Set<string>(opaqueDestructuredBindings)
   for (let binding = 0; binding < tokens.length; binding++) {
     if (tokens[binding - 1] === "." || (!destructuredBindings.has(binding) && visibleDeclaration(binding) === undefined)) continue
     let initializer = declaratorInitializers.get(binding)
