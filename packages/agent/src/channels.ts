@@ -72,6 +72,7 @@ import {
   gmailHistoryCollection,
   gmailMessagePrompt,
   gmailMessageSchema,
+  gmailMailboxAddress,
   gmailSettings,
   modifyGmailMessage,
   readGmailPush,
@@ -3387,6 +3388,10 @@ export function gmail<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeCo
           let client: GmailClient
           try {
             client = options.client ?? gmailClientFromSettings(settings, options.fetch)
+            const mailbox = await gmailMailboxAddress(client)
+            if (push.emailAddress.trim().toLowerCase() !== mailbox.trim().toLowerCase()) {
+              return Response.json({ accepted: false, reason: "Gmail notification belongs to another mailbox." }, { status: 400 })
+            }
           }
           catch (error) {
             return Response.json({ accepted: false, reason: error instanceof Error ? error.message : String(error) }, { status: 503 })

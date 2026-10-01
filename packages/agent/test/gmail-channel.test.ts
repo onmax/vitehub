@@ -7,10 +7,11 @@ import { defineAgent, runAgentTrigger } from "../src/index.ts"
 import { inspectMessageChannelInstructions } from "../src/internal/channels.ts"
 import { getAgentChannelSyncDefinition } from "../src/internal/channel-sync.ts"
 import { runAgentChannelSyncCli } from "../src/internal/channel-sync-cli.ts"
-import { gmailMessageSchema, gmailSettings, splitAddresses, verifyGoogleOidcToken } from "../src/internal/gmail-channel.ts"
+import { gmailMessageSchema, gmailSettings, splitAddresses, verifyGoogleOidcToken, syncGmailMailbox, gmailClientFromSettings } from "../src/internal/gmail-channel.ts"
 import { createChannelWebhookRouteHandler } from "../src/server/internal.ts"
 import { channelMessageRunId, createMemoryAgentInvocationStore, defineAgentInvocations, replayChannel } from "../src/server.ts"
 
+import type { Lock, StateAdapter } from "chat"
 import type { AgentRuntimeContext } from "../src/types.ts"
 
 const audience = "https://mail.example.com/api/_vitehub/agents/labeller/webhooks/gmail"
@@ -217,6 +218,94 @@ describe("gmail() Channel", () => {
     await expect(verifyGoogleOidcToken("not-a-token", expected)).resolves.toBe("malformed token")
   })
 
+  it.each([false, true])("renews a long mailbox sync and fences its cursor after lease loss: %s", async loseOwnership => {
+    const google = await createGoogle()
+    google.history.set("100", { historyId: "105", ids: ["m1", "m2"] })
+    const values = new Map<string, unknown>([["mail:history-id", "100"]])
+    let lock: Lock | undefined
+    let nextToken = 0
+    let lost = false
+    const extendLock = vi.fn(async (held: Lock, ttl: number) => {
+      if (lost || lock?.token !== held.token || lock.expiresAt <= Date.now()) return false
+      lock.expiresAt = Date.now() + ttl
+      return true
+    })
+    const adapter: unknown = {
+      acquireLock: async (key: string, ttl: number) => {
+        if (lock && lock.expiresAt > Date.now()) return null
+        lock = { expiresAt: Date.now() + ttl, threadId: key, token: String(++nextToken) }
+        return lock
+      },
+      delete: async (key: string) => { values.delete(key) },
+      extendLock,
+      get: async (key: string) => values.get(key) ?? null,
+      releaseLock: async (held: Lock) => { if (lock?.token === held.token) lock = undefined },
+      set: async (key: string, value: unknown) => { values.set(key, value) },
+    }
+    // SAFETY: This fixture implements the State methods used by mailbox synchronization, including lease ownership and expiry.
+    const state = adapter as StateAdapter
+    let release!: () => void
+    let started!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const running = new Promise<void>(resolve => { started = resolve })
+    const dispatch = vi.fn(async () => {
+      started()
+      await gate
+      return { failed: 0, items: [], nextCursor: null, processed: 1, skipped: 0 }
+    })
+    vi.useFakeTimers()
+    const sync = syncGmailMailbox({
+      bodyLimit: 1000,
+      client: gmailClientFromSettings({ clientId: "client", clientSecret: "secret", refreshToken: "refresh-token" }, google.fetch),
+      dispatch,
+      notificationHistoryId: "105",
+      state: { keyPrefix: "mail:", state },
+    })
+    try {
+      await Promise.race([running, sync])
+      expect(dispatch).toHaveBeenCalledOnce()
+      lost = loseOwnership
+      await vi.advanceTimersByTimeAsync(11 * 60_000)
+      expect(extendLock.mock.calls.length).toBeGreaterThan(2)
+      if (loseOwnership) {
+        expect(await state.acquireLock("mail:sync", 600_000)).not.toBeNull()
+        values.set("mail:history-id", "200")
+      } else expect(await state.acquireLock("mail:sync", 600_000)).toBeNull()
+      release()
+      if (loseOwnership) await expect(sync).rejects.toThrow("Lost ownership")
+      else await sync
+      expect(values.get("mail:history-id")).toBe(loseOwnership ? "200" : "105")
+      expect(dispatch).toHaveBeenCalledTimes(loseOwnership ? 1 : 2)
+    } finally {
+      release()
+      await sync.catch(() => undefined)
+      vi.useRealTimers()
+    }
+  })
+
+  it("drains handled webhook background work when no host waitUntil is supplied", async () => {
+    stubGmailEnv()
+    const google = await createGoogle()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const driver = vi.fn(async () => { await gate; return "ok" })
+    const agent = defineAgent({ channels: { gmail: gmail({ fetch: google.fetch }) }, driver: { run: driver }, name: "local-flush" })
+    const handler = createChannelWebhookRouteHandler(agent)
+    const push = async (historyId: number) => await handler(new Request(audience, {
+      body: JSON.stringify({ message: { data: base64Url(JSON.stringify({ emailAddress: "max@example.com", historyId })), messageId: String(historyId) }, subscription }),
+      headers: { authorization: `Bearer ${await google.token()}`, "content-type": "application/json" }, method: "POST",
+    }), "gmail", { agentName: "local-flush" })
+    expect((await push(100)).status).toBe(204)
+    google.history.set("100", { historyId: "105", ids: ["m1"] })
+    let returned = false
+    const response = push(105).then(value => { returned = true; return value })
+    try {
+      await vi.waitFor(() => expect(driver).toHaveBeenCalledOnce())
+      expect(returned).toBe(false)
+    } finally { release() }
+    expect((await response).status).toBe(204)
+  })
+
   it("starts one Invocation per new Inbox message from a Pub/Sub push and never runs one twice", async () => {
     stubGmailEnv()
     const google = await createGoogle()
@@ -238,11 +327,11 @@ describe("gmail() Channel", () => {
       name: "labeller",
     })
     const handler = createChannelWebhookRouteHandler(agent)
-    const push = async (historyId: string, options: { authorization?: string, subscription?: string, onResponse?: () => void } = {}) => {
+    const push = async (historyId: string, options: { authorization?: string, subscription?: string, emailAddress?: string, onResponse?: () => void } = {}) => {
       const tasks: Promise<unknown>[] = []
       const response = await handler(new Request(audience, {
         body: JSON.stringify({
-          message: { data: base64Url(JSON.stringify({ emailAddress: "max@example.com", historyId: Number(historyId) })), messageId: `pubsub-${historyId}` },
+          message: { data: base64Url(JSON.stringify({ emailAddress: options.emailAddress ?? "max@example.com", historyId: Number(historyId) })), messageId: `pubsub-${historyId}` },
           subscription: options.subscription ?? subscription,
         }),
         headers: { authorization: options.authorization ?? `Bearer ${await google.token()}`, "content-type": "application/json" },
@@ -256,6 +345,9 @@ describe("gmail() Channel", () => {
     // Unauthenticated and foreign pushes change nothing.
     expect((await push("100", { authorization: "Bearer forged" })).status).toBe(401)
     expect((await push("100", { subscription: "projects/example/subscriptions/other" })).status).toBe(400)
+
+    expect((await push("999", { emailAddress: "other@example.com" })).status).toBe(400)
+    expect(google.calls.filter(call => call.path === "history")).toHaveLength(0)
 
     // The first notification starts the cursor. Earlier mail belongs to replay.
     expect((await push("100")).status).toBe(204)

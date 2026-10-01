@@ -7391,6 +7391,7 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
           const invocation = await resolveAgentTriggerInvocation(agent as never, context as never, trigger.id, input)
           if (isResolvedAgentTriggerHandledInvocation(invocation)) {
             await recordChannelDeliveryEvidence(channelDelivery, { type: "accepted" })
+            if (!waitUntil) await context.flushWaitUntil?.()
             return await observeHandledChannelDeliveryResponse(invocation.response, channelDelivery)
           }
           if (invocation.webhook?.busy === "steer" && (invocation.webhook.concurrencyKey === undefined || invocation.webhook.concurrencyLimit === undefined)) {

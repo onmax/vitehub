@@ -667,7 +667,7 @@ const notificationSchema = v.object({
 })
 
 export type GmailPushResult =
-  | { historyId: string, ok: true }
+  | { emailAddress: string, historyId: string, ok: true }
   | { ok: false, reason: string, status: 400 | 401 | 503 }
 
 /** Authenticates a Pub/Sub push request and reads the Gmail notification from it. */
@@ -693,7 +693,7 @@ export async function readGmailPush(input: unknown, settings: GmailSettings, fet
   }
   const parsedNotification = v.safeParse(notificationSchema, notification)
   if (!parsedNotification.success) return { ok: false, reason: "Invalid Gmail notification.", status: 400 }
-  return { historyId: parsedNotification.output.historyId, ok: true }
+  return { emailAddress: parsedNotification.output.emailAddress, historyId: parsedNotification.output.historyId, ok: true }
 }
 
 // Mailbox synchronization
@@ -745,10 +745,15 @@ export interface GmailMailboxSync {
   topic?: string
 }
 
-async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string): Promise<void> {
+export async function gmailMailboxAddress(client: GmailClient): Promise<string> {
+  return (await gmailRequest(client, profileSchema, { method: "GET", path: "profile" })).emailAddress
+}
+
+async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew: () => Promise<void>): Promise<void> {
   const { client, state } = sync
   const cursor = await state.state.get<string>(cursorKey)
   if (!cursor) {
+    await renew()
     await state.state.set(cursorKey, sync.notificationHistoryId)
     log("cursor.initialized", { historyId: sync.notificationHistoryId })
     return
@@ -772,12 +777,16 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string): Promi
     changes = { historyId, ids }
   }
   const messages = await getGmailMessages(client, changes.ids, sync.bodyLimit)
-  if (messages.length) {
-    const result = await sync.dispatch(messages)
+  let failed = false
+  for (const message of messages) {
+    await renew()
+    const result = await sync.dispatch([message])
     log("messages.dispatched", { failed: result.failed, processed: result.processed, skipped: result.skipped })
-    if (result.failed) return
+    failed ||= result.failed > 0
   }
-  // Advance the cursor after every message has an Invocation, so a failure retries the same history.
+  if (failed) return
+  // Advance the cursor only while this worker still owns the mailbox lease.
+  await renew()
   await state.state.set(cursorKey, changes.historyId)
 }
 
@@ -799,15 +808,29 @@ export async function syncGmailMailbox(sync: GmailMailboxSync): Promise<void> {
     if (!lock) return
   }
   for (;;) {
+    const heldLock = lock
+    let ownershipLost = false
+    const renew = async () => {
+      if (ownershipLost || !await state.extendLock(heldLock, syncLockTtlMs)) {
+        ownershipLost = true
+        throw new Error("Lost ownership of the Gmail mailbox lease.")
+      }
+    }
+    let renewalTask = Promise.resolve()
+    const timer = setInterval(() => {
+      renewalTask = renewalTask.then(renew).catch(() => { ownershipLost = true })
+    }, syncLockTtlMs / 3)
     try {
       do {
+        await renew()
         await state.delete(pendingKey)
-        await syncMailboxOnce(sync, cursorKey)
-        await state.extendLock(lock, syncLockTtlMs)
+        await syncMailboxOnce(sync, cursorKey, renew)
       } while (await state.get(pendingKey) !== null)
     }
     finally {
-      await state.releaseLock(lock)
+      clearInterval(timer)
+      await renewalTask
+      await state.releaseLock(heldLock)
     }
     if (await state.get(pendingKey) === null) break
     lock = await state.acquireLock(lockKey, syncLockTtlMs)
