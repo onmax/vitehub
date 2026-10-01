@@ -610,6 +610,8 @@ async function writeNetlifyScheduleFunctions(options: {
   const includedSourcesDir = relative(functionRoot, netlifySourcesDir).replace(/\\/g, "/")
   const stagedFunctionRoot = `${functionRoot}.pending`
   const backupFunctionRoot = `${functionRoot}.previous`
+  const stagedSourcesDir = `${netlifySourcesDir}.pending`
+  const backupSourcesDir = `${netlifySourcesDir}.previous`
   try {
     await rm(stagedFunctionRoot, { force: true, recursive: true })
     await cp(functionRoot, stagedFunctionRoot, { force: true, recursive: true }).catch((error: NodeJS.ErrnoException) => {
@@ -658,31 +660,54 @@ async function writeNetlifyScheduleFunctions(options: {
       destinations: [{
         files: outputs.map(output => output.file),
         runtimeSourcesDir: relative(options.rootDir, netlifySourcesDir).replace(/\\/g, "/"),
-        sourcesDir: netlifySourcesDir,
+        sourcesDir: stagedSourcesDir,
       }],
       publishedSourcesDir,
       signal: options.signal,
     })
+    if (existsSync(stagedSourcesDir)) {
+      await rebasePublishedProviderSourceLinks(stagedSourcesDir, stagedSourcesDir, netlifySourcesDir)
+    }
     options.signal?.throwIfAborted()
-    rmSync(backupFunctionRoot, { force: true, recursive: true })
+    const publications = [
+      { live: netlifySourcesDir, staged: stagedSourcesDir, backup: backupSourcesDir, movedPrevious: false, installed: false },
+      { live: functionRoot, staged: stagedFunctionRoot, backup: backupFunctionRoot, movedPrevious: false, installed: false },
+    ]
+    for (const publication of publications) {
+      rmSync(publication.backup, { force: true, recursive: true })
+    }
     try {
-      renameSync(functionRoot, backupFunctionRoot)
+      for (const publication of publications) {
+        if (existsSync(publication.live)) {
+          renameSync(publication.live, publication.backup)
+          publication.movedPrevious = true
+        }
+        if (existsSync(publication.staged)) {
+          renameSync(publication.staged, publication.live)
+          publication.installed = true
+        }
+      }
     }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
-    try {
-      renameSync(stagedFunctionRoot, functionRoot)
-      rmSync(backupFunctionRoot, { force: true, recursive: true })
-    }
-    catch (error) {
-      if (existsSync(backupFunctionRoot)) renameSync(backupFunctionRoot, functionRoot)
+      const failures: unknown[] = [error]
+      for (const publication of publications.toReversed()) {
+        try {
+          if (publication.installed) rmSync(publication.live, { force: true, recursive: true })
+          if (publication.movedPrevious) renameSync(publication.backup, publication.live)
+        }
+        catch (restoreError) {
+          failures.push(restoreError)
+        }
+      }
+      if (failures.length > 1) throw new AggregateError(failures, "Netlify Schedule publication rollback failed")
       throw error
     }
-    if (outputs.length === 0) await removeEmptyDirectories(functionRoot, options.rootDir)
+    // Publication is committed. Cleanup must not turn successful output into a failed generation.
+    await Promise.all(publications.map(publication => rm(publication.backup, { force: true, recursive: true }).catch(() => undefined)))
+    if (outputs.length === 0) await removeEmptyDirectories(functionRoot, options.rootDir).catch(() => undefined)
   }
   finally {
-    await rm(stagedFunctionRoot, { force: true, recursive: true })
+    await Promise.all([stagedFunctionRoot, stagedSourcesDir].map(directory => rm(directory, { force: true, recursive: true }).catch(() => undefined)))
   }
 }
 
