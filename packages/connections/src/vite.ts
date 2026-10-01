@@ -1,4 +1,5 @@
 import { createRequire } from "node:module"
+import { rm } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
 import { createRuntimeEnvRegistry, env } from "@vite-hub/env/vite"
@@ -242,5 +243,19 @@ export function hubConnections(options: ConnectionsVitePluginOptions & InternalC
     load(id) {
       if (id === resolvedConnectionsRuntimeId) return renderRuntime(definitions, renderOptions)
     },
+  }
+}
+
+/** Remove generated declarations when a host disables Connections. */
+export function hubConnectionsTypesCleanup(): Plugin {
+  const prepareTypes = async (options: { projectRoot: string }): Promise<void> => {
+    const root = resolveViteHubProjectRoot(options.projectRoot)
+    await rm(resolve(root, ".vitehub/types/connections.d.ts"), { force: true })
+  }
+  return {
+    name: "@vite-hub/connections/types-cleanup",
+    enforce: "pre",
+    config: config => prepareTypes({ projectRoot: resolve(config.root || process.cwd()) }),
+    configResolved: config => prepareTypes({ projectRoot: config.root }),
   }
 }
