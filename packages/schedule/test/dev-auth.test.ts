@@ -138,7 +138,12 @@ describe("Schedule private dev authority", () => {
     finally {
       await new Promise<void>((resolve, reject) => httpServer.close(error => error ? reject(error) : resolve()))
       if (serverId) await vi.waitFor(async () => { expect(await readViteHubDevToken(devContext.rootDir, { namespace: scheduleDevTokenNamespace, serverId })).toBeUndefined() })
-      if (secondServerId) expect(await readViteHubDevToken(viteRoot, { namespace: scheduleDevTokenNamespace, serverId: secondServerId })).toBeTruthy()
+      if (secondServerId) {
+        expect(await readViteHubDevToken(viteRoot, { namespace: scheduleDevTokenNamespace, serverId: secondServerId })).toBeTruthy()
+        expect(await runScheduleCli(["get", "digest", "--url", second.url, "--json"], {
+          cwd: viteRoot, rootDir: viteRoot, env: {}, stdout: { write: () => true }, stderr: { write: () => true },
+        })).toBe(0)
+      }
       await new Promise<void>((resolve, reject) => second.httpServer.close(error => error ? reject(error) : resolve()))
       if (secondServerId) await vi.waitFor(async () => { expect(await readViteHubDevToken(viteRoot, { namespace: scheduleDevTokenNamespace, serverId: secondServerId })).toBeUndefined() })
       await removeViteHubDevToken(viteRoot, { namespace: scheduleDevTokenNamespace, serverId: stale.serverId })
