@@ -23,6 +23,11 @@ export interface BabysitterOptions {
    * `"direct"` merges a ready PR into its default branch before any model pass.
    */
   merge: BabysitterMerge;
+  /**
+   * Check names whose pending run means a review is in progress, such as a review bot's check.
+   * A parked PR keeps waiting while one runs. Defaults to none.
+   */
+  reviewChecks: string[];
   /** @deprecated Use `merge: "auto"`. */
   autoMerge: boolean;
 }
@@ -84,6 +89,7 @@ export const babysitter: BabysitterAgent = defineAgent({
     driver: "codex" as BuiltInAgentDriverName,
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The default widens to the documented merge union.
     merge: false as BabysitterMerge,
+    reviewChecks: [] as string[],
     autoMerge: false,
   },
   configure: ({ filter, driver, merge, autoMerge }) => {

@@ -64,8 +64,7 @@ export function snapshotCheckEvidence(snapshot: Snapshot): GitHubCheckEvidence {
   const head = snapshot.pr?.head?.sha ?? "";
   const checkRuns = Object.values(snapshot.checks).flatMap((check) => {
     if (check.deleted || check.head_sha !== head || !hasRuntimeType(check.id, "number") || !hasRuntimeType(check.name, "string")) return [];
-    const app: unknown = check.app;
-    return [{ id: check.id, head_sha: head, name: check.name, app: isRuntimeRecord(app) && hasRuntimeType(app.id, "number") ? { id: app.id } : null,
+    return [{ id: check.id, head_sha: head, name: check.name, app: hasRuntimeType(check.app?.id, "number") ? { id: check.app.id } : null,
       status: String(check.status ?? ""), conclusion: check.conclusion === undefined || check.conclusion === null ? null : String(check.conclusion) }];
   });
   const statuses = Object.values(snapshot.statuses).flatMap((status, index) => {

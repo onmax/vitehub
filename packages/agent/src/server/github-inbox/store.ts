@@ -328,7 +328,8 @@ export class PullRequestInbox {
       return false
     }
     const newHead = previous?.head?.sha !== pr.head?.sha
-    if (newHead || pr.state === 'closed') delete s.wait
+    // A wait on a pushed head survives that head's synchronize event.
+    if (newHead && pr.head?.sha !== s.wait?.headSha || pr.state === 'closed') delete s.wait
     s.pr = { ...previous, ...pr }
     if (newHead) {
       s.checks = Object.fromEntries(Object.entries(s.checks).filter(([, check]) => check.head_sha === pr.head?.sha))
@@ -572,10 +573,32 @@ export class PullRequestInbox {
       return true
     })
   }
-  async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> }): Promise<boolean> {
+  /**
+   * Finishes a claimed pass. A `wait` without `headSha` binds to the claimed head and requires
+   * unchanged evidence. A wait with `headSha`, such as the head of a repair push, keeps later events
+   * unhandled, so `waitsToEvaluate()` returns the PR and the host decides whether they need work.
+   */
+  async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> & { headSha?: string } }): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token) return false
+      const pinnedHead = result.wait?.headSha
+      if (result.wait && pinnedHead) {
+        if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
+        // The synchronize event for the pinned head may arrive before or after this finish.
+        if (s.status === 'terminal' || (s.pr?.head?.sha !== pinnedHead && s.pr?.head?.sha !== claim.snapshot.pr?.head?.sha)) {
+          s.lease = null; s.leaseUntil = 0
+          if (s.status !== 'terminal') { s.status = 'ready'; s.nextAt = 0 }
+          await this.put(tx, s)
+          return false
+        }
+        s.wait = parseWait({ ...result.wait, headSha: pinnedHead })
+        s.lease = null; s.leaseUntil = 0; s.lastResult = result.text
+        this.recordProgress(s, claim, result.progress)
+        s.status = 'waiting'; s.handled = Math.max(s.handled, claim.generation); s.reasons = s.generation > claim.generation ? s.reasons : []
+        s.revision = (s.revision ?? 0) + 1
+        await this.put(tx, s); return true
+      }
       if (result.wait) {
         if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
         if (s.status === 'terminal' || !s.pr?.head?.sha || s.pr.head.sha !== claim.snapshot.pr?.head?.sha
@@ -589,19 +612,7 @@ export class PullRequestInbox {
         s.revision = (s.revision ?? 0) + 1
       }
       const head = s.pr?.head?.sha
-      const progress = result.progress
-      if (progress?.kind === 'verified') requireEvidence(progress.evidence)
-      const previous = s.progressBudget?.head === head ? s.progressBudget : undefined
-      const limit = previous?.limit ?? this.budgets.noProgress
-      if (progress && head && head === claim.snapshot.pr?.head?.sha && limit !== undefined) {
-        const creditedEvidence = previous?.creditedEvidence ?? []
-        const verified = progress.kind === 'verified' && !creditedEvidence.includes(progress.evidence)
-        const count = verified ? 0 : (previous?.count ?? 0) + 1
-        s.progressBudget = { head, limit, count, exhausted: count >= limit,
-          evidence: verified ? progress.evidence : previous?.evidence,
-          creditedEvidence: verified ? [...creditedEvidence, progress.evidence] : creditedEvidence,
-          resetReason: previous?.resetReason }
-      }
+      this.recordProgress(s, claim, result.progress)
       s.lease = null; s.leaseUntil = 0; s.lastResult = result.text
       if (s.status === 'terminal' || result.terminal && s.generation === claim.generation) { s.status = 'terminal'; s.handled = s.generation }
       else if (s.generation !== claim.generation) { s.status = 'ready'; s.handled = Math.max(s.handled, claim.generation); s.nextAt = 0 }
@@ -616,6 +627,40 @@ export class PullRequestInbox {
         s.status = 'waiting'; s.nextAt = 0; s.reasons = ['no-progress-budget-exhausted']
       }
       await this.put(tx, s); return true
+    })
+  }
+  private recordProgress(s: Snapshot, claim: Claim, progress: ProgressOutcome | undefined): void {
+    const head = s.pr?.head?.sha
+    if (progress?.kind === 'verified') requireEvidence(progress.evidence)
+    const previous = s.progressBudget?.head === head ? s.progressBudget : undefined
+    const limit = previous?.limit ?? this.budgets.noProgress
+    if (progress && head && head === claim.snapshot.pr?.head?.sha && limit !== undefined) {
+      const creditedEvidence = previous?.creditedEvidence ?? []
+      const verified = progress.kind === 'verified' && !creditedEvidence.includes(progress.evidence)
+      const count = verified ? 0 : (previous?.count ?? 0) + 1
+      s.progressBudget = { head, limit, count, exhausted: count >= limit,
+        evidence: verified ? progress.evidence : previous?.evidence,
+        creditedEvidence: verified ? [...creditedEvidence, progress.evidence] : creditedEvidence,
+        resetReason: previous?.resetReason }
+    }
+  }
+  /** Waiting PRs that received events since the host last evaluated their wait. */
+  async waitsToEvaluate(): Promise<Snapshot[]> {
+    if (!this.repositories.length) return []
+    const repositories = this.repositoryFilter()
+    const rows = await this.read(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql}
+      AND waiting=1 AND status<>'terminal' AND lease IS NULL AND generation>handled ORDER BY dirty_at, number`, [this.scope, ...repositories.args])
+    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value))))
+  }
+  /** Records that the host evaluated a wait's new events and the wait still holds. */
+  async acknowledgeWait(observed: Snapshot): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, observed.repository, observed.number)
+      if (!s?.wait || s.lease || s.status === 'terminal' || s.generation !== observed.generation
+        || (s.revision ?? 0) !== (observed.revision ?? 0)) return false
+      s.handled = s.generation; s.reasons = []
+      await this.put(tx, s)
+      return true
     })
   }
   /** Re-evaluate structured evidence outside an Agent invocation before calling this method. */
