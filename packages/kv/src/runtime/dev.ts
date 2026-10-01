@@ -136,6 +136,15 @@ function readPositiveInteger(body: object, name: string): number | undefined {
   return value
 }
 
+function readTTL(body: object): number | undefined {
+  const value: unknown = Reflect.get(body, "ttl")
+  if (value === undefined) return
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new KVDevRequestError("ttl must be a positive number.", 400)
+  }
+  return value
+}
+
 async function readBody(request: Request): Promise<KVDevRequestBody> {
   const body: unknown = await request.json().catch(() => undefined)
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new KVDevRequestError("The KV Dev request body is invalid.", 400)
@@ -147,12 +156,15 @@ async function readBody(request: Request): Promise<KVDevRequestBody> {
   const limit = readPositiveInteger(body, "limit")
   const prefix = readString(body, "prefix")
   const store = readString(body, "store")
-  const ttl = readPositiveInteger(body, "ttl")
+  const ttl = readTTL(body)
   if (cursor) parsed.cursor = cursor
   if (key !== undefined) parsed.key = key
   if (limit !== undefined) parsed.limit = limit
   if (prefix !== undefined) parsed.prefix = prefix
-  if (store) parsed.store = store
+  if (store !== undefined) {
+    if (!store.trim()) throw new KVDevRequestError("store must be a nonempty name.", 400)
+    parsed.store = store
+  }
   if (ttl !== undefined) parsed.ttl = ttl
   if (Reflect.has(body, "value")) parsed.value = Reflect.get(body, "value")
   return parsed
@@ -217,7 +229,8 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
       const key = requireKey(body)
       if (body.value === undefined) throw new KVDevRequestError("The set operation requires a value.", 400)
       const existed = unwrap(await selected.storage.has(key))
-      unwrap(await selected.storage.set(key, body.value, body.ttl ? { ttl: body.ttl } : undefined))
+      const ttl = body.ttl === undefined ? undefined : selected.driver === "cloudflare-kv-binding" ? Math.max(60, Math.ceil(body.ttl)) : body.ttl
+      unwrap(await selected.storage.set(key, body.value, ttl === undefined ? undefined : { ttl }))
       const notice = body.ttl ? ttlNotice(selected.driver, body.ttl) : undefined
       const result: KVDevSetResult = {
         created: !existed,

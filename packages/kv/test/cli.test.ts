@@ -47,6 +47,22 @@ function sentBody(fetch: ReturnType<typeof devServer>): unknown {
   return JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))
 }
 
+describe("KV review regressions", () => {
+  it("emits JSON for discovery failures", async () => {
+    const output = context()
+    await expect(runKVCli(["list", "--json"], output.context, { fetch: vi.fn(async () => { throw new Error("offline") }) })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message")
+    expect(output.stderr.output()).toBe("")
+  })
+
+  it("forwards fractional TTL seconds", async () => {
+    const output = context()
+    const fetch = devServer({ created: true, key: "a", store: "default", ttl: 1.5, type: "string" })
+    await expect(runKVCli(["set", "a", "x", "--ttl", "1.5"], output.context, { fetch })).resolves.toBe(0)
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({ ttl: 1.5 })
+  })
+})
+
 describe("vitehub kv", () => {
   it("lists keys as lines and as JSON", async () => {
     const result = { cursor: "next", keys: ["users:1", "users:2"], limit: 2, prefix: "users:", store: "default", stores: ["default", "cache"] }
@@ -199,11 +215,12 @@ describe("vitehub kv", () => {
       [["set", "a"], "Missing value."],
       [["set", "a", "b", "c"], "Unexpected argument: c."],
       [["set", "a", "{", "--json-value"], "The value is not valid JSON"],
-      [["set", "a", "b", "--ttl", "0"], "--ttl must be a positive integer."],
+      [["set", "a", "b", "--ttl", "0"], "--ttl must be a positive number."],
       [["list", "--limit", "5000"], "--limit must be at most 1000."],
       [["list", "--ttl", "5"], "Unknown option: --ttl."],
       [["get", "a", "--prefix", "x"], "Unknown option: --prefix."],
       [["list", "--store"], "--store needs a value."],
+      [["del", "a", "--store="], "--store needs a nonempty name."],
     ]
     for (const [args, message] of cases) {
       const invalid = context()

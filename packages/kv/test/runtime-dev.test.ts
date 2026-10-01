@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises"
 
 import { afterAll, describe, expect, it, vi } from "vitest"
 
+import { kv } from "../src/index.ts"
 import { kvDevHeader, kvDevHeaderValue } from "../src/dev.ts"
 import { handleKVDevRequest, listKVDevStores } from "../src/runtime/dev.ts"
 
@@ -88,6 +89,25 @@ describe("KV dev runtime handler", () => {
     expect((await run({ key: "settings", operation: "del" })).body).toEqual({ deleted: false, key: "settings", store: "default" })
     expect((await run({ key: "settings", operation: "get" })).body).toEqual({ found: false, key: "settings", store: "default" })
     expect((await run({ key: "settings", operation: "has" })).body).toEqual({ exists: false, key: "settings", store: "default" })
+  })
+
+  it("accepts fractional TTLs and rejects empty stores without mutating default storage", async () => {
+    expect((await run({ key: "fractional", operation: "set", ttl: 1.5, value: "x" })).status).toBe(200)
+    expect((await run({ key: "empty-store", operation: "set", store: "", value: "x" })).status).toBe(400)
+    expect((await run({ key: "empty-store", operation: "has" })).body).toMatchObject({ exists: false })
+  })
+
+  it("clamps Cloudflare TTL before calling storage", async () => {
+    const set = vi.spyOn(kv, "set").mockResolvedValue([null, undefined])
+    try {
+      const response = await handleKVDevRequest(devRequest({ key: "clamped", operation: "set", ttl: 1.5, value: "x" }), [{ driver: "cloudflare-kv-binding", name: "default" }])
+      expect(response.status).toBe(200)
+      expect(set).toHaveBeenCalledWith("clamped", "x", { ttl: 60 })
+      expect(await response.json()).toMatchObject({ ttl: 1.5, notice: expect.stringContaining("60 seconds") })
+    }
+    finally {
+      set.mockRestore()
+    }
   })
 
   it("keeps named stores apart", async () => {

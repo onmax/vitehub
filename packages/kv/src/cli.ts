@@ -134,6 +134,12 @@ function parsePositiveInteger(name: string, value: string | undefined): number {
   return number
 }
 
+function parseTTL(value: string): number {
+  const ttl = Number(value)
+  if (!value || !Number.isFinite(ttl) || ttl <= 0) throw kvErrorDiagnostics.KV_R0019({ message: "--ttl must be a positive number." })
+  return ttl
+}
+
 function readOptionValue(args: readonly string[], index: number, name: string): { consumed: number, value: string } | undefined {
   const arg = args[index]!
   if (arg === `--${name}`) {
@@ -172,6 +178,7 @@ function parseArgs(command: KVCommand, args: readonly string[], env: NodeJS.Proc
     }
     const store = readOptionValue(args, index, "store")
     if (store) {
+      if (!store.value.trim()) throw kvErrorDiagnostics.KV_R0019({ message: "--store needs a nonempty name." })
       parsed.store = store.value
       index += store.consumed
       continue
@@ -181,7 +188,8 @@ function parseArgs(command: KVCommand, args: readonly string[], env: NodeJS.Proc
       if (!command.options.includes(option)) continue
       const read = readOptionValue(args, index, option)
       if (!read) continue
-      if (option === "limit" || option === "ttl") parsed[option] = parsePositiveInteger(option, read.value)
+      if (option === "ttl") parsed.ttl = parseTTL(read.value)
+      else if (option === "limit") parsed.limit = parsePositiveInteger(option, read.value)
       else parsed[option] = read.value
       index += read.consumed
       matched = true
@@ -318,14 +326,16 @@ async function runKVCommand(command: KVCommand, args: string[], context: KVCliCo
     return 0
   }
   const fetchImpl = options.fetch ?? globalThis.fetch
+  let discoveryError = ""
   const server = await discoverViteHubDevServer<KVDevDiscovery>({
     endpoint: kvDevEndpoint,
     fetch: fetchImpl,
     rootDir: context.rootDir,
     serverUrl: parsed.url,
-    stderr: context.stderr,
+    stderr: parsed.json ? { write: (chunk) => { discoveryError += chunk; return true } } : context.stderr,
   })
   if (!server) {
+    if (parsed.json) return writeFailure(parsed, context, { message: `${discoveryError.trim()} ${kvDevServerHint}` })
     context.stderr.write(`${kvDevServerHint}\n`)
     return 1
   }
