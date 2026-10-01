@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { defineCapability } from "../capability-runtime.ts"
 import { ViteHubError } from "@vite-hub/runtime"
 
@@ -184,6 +185,10 @@ async function resolveScope(
   return stableKeyPart(id)
 }
 
+function hasInspectionMethods(limiter: RateLimitCapabilityLimiter): limiter is RateLimiter {
+  return v.is(v.object({ peek: v.function(), reset: v.function() }), limiter)
+}
+
 async function resolveLimiter(
   limiter: RateLimitLimiter,
   context: AgentCapabilityRuntimeContext,
@@ -192,7 +197,7 @@ async function resolveLimiter(
   if (!resolved || typeof resolved.consume !== "function") {
     throw agentDiagnostics.AGENT_R0162({ message: "[vitehub] rateLimit({ limiter }) must be a RateLimiter." })
   }
-  if (typeof resolved.peek === "function" && typeof resolved.reset === "function") return resolved
+  if (hasInspectionMethods(resolved)) return resolved
   return {
     capabilities: resolved.capabilities,
     consume: resolved.consume.bind(resolved),
