@@ -120,6 +120,7 @@ function valueType(value: unknown): string {
 
 function ttlNotice(driver: KVDriver, ttl: number): string | undefined {
   if (driver === "fs-lite") return "The fs-lite driver ignores TTL. The value does not expire."
+  if (driver === "upstash" && Math.ceil(ttl) !== ttl) return `Upstash rounds the TTL up to ${Math.ceil(ttl)} seconds.`
   if (driver === "cloudflare-kv-binding") {
     const effectiveTTL = Math.max(60, Math.ceil(ttl))
     if (ttl < 60) return "Cloudflare KV raises a TTL below 60 seconds to 60 seconds."
@@ -202,7 +203,7 @@ function encodeBase64(bytes: Uint8Array): string {
 function inspectValue(value: unknown, seen = new WeakSet<object>()): unknown {
   if (v.is(v.bigint(), value)) return value.toString()
   if (v.is(v.union([v.null(), v.string(), v.boolean(), v.pipe(v.number(), v.finite())]), value) && !Object.is(value, -0)) return value
-  if (!v.is(v.record(v.string(), v.unknown()), value) || seen.has(value)) {
+  if (!v.is(v.custom<object>(value => value !== null && Object(value) === value), value) || seen.has(value)) {
     throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
   }
   seen.add(value)
@@ -217,13 +218,13 @@ function inspectValue(value: unknown, seen = new WeakSet<object>()): unknown {
       if (dataKeys.length !== value.length || dataKeys.some(key => !v.is(v.string(), key) || String(Number(key)) !== key || !Number.isInteger(Number(key)) || Number(key) < 0 || Number(key) >= value.length)) {
         throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
       }
-      return Array.from(value, (entry: unknown) => inspectValue(entry, seen))
+      return Array.from({ length: value.length }, (_, index) => inspectValue(Object.getOwnPropertyDescriptor(value, String(index))?.value, seen))
     }
     const prototype: unknown = Object.getPrototypeOf(value)
     if (prototype !== Object.prototype && prototype !== null || Object.getOwnPropertySymbols(value).length) {
       throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
     }
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, inspectValue(entry, seen)]))
+    return Object.fromEntries(dataKeys.map(key => [key, inspectValue(Object.getOwnPropertyDescriptor(value, key)?.value, seen)]))
   }
   finally { seen.delete(value) }
 }
@@ -264,7 +265,7 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
       const key = requireKey(body)
       if (body.value === undefined) throw new KVDevRequestError("The set operation requires a value.", 400)
       const existed = unwrap(await selected.storage.has(key))
-      const ttl = body.ttl === undefined ? undefined : selected.driver === "cloudflare-kv-binding" ? Math.max(60, Math.ceil(body.ttl)) : body.ttl
+      const ttl = body.ttl === undefined ? undefined : selected.driver === "cloudflare-kv-binding" ? Math.max(60, Math.ceil(body.ttl)) : selected.driver === "upstash" ? Math.ceil(body.ttl) : body.ttl
       unwrap(await selected.storage.set(key, body.value, ttl === undefined ? undefined : { ttl }))
       const notice = body.ttl ? ttlNotice(selected.driver, body.ttl) : undefined
       const result: KVDevSetResult = {
