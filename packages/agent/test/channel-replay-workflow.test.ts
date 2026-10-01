@@ -20,8 +20,6 @@ it("reserves concurrent Workflow replays before activity and hands the journal t
   const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
   const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
   let entered = 0
-  let release!: () => void
-  const ready = new Promise<void>((resolve) => { release = resolve })
   const update = vi.fn()
   const channel = defineChannel("mailbox", {
     activity: { update },
@@ -33,8 +31,7 @@ it("reserves concurrent Workflow replays before activity and hands the journal t
       received: defineChannelTrigger({
         input: v.object({ id: v.string() }),
         invoke: async () => {
-          if (++entered === 2) release()
-          await ready
+          entered++
           return { input: { prompt: "hello" }, run: { runId: "trigger-run", channelId: "mailbox", activity: { target: { message: "m1" } } } }
         },
       }),
@@ -60,6 +57,7 @@ it("reserves concurrent Workflow replays before activity and hands the journal t
   const agent = defineAgent({ channels: { mailbox: channel }, driver: { run: () => "unused" }, invocations, name: "replay-workflow", runtime: workflow("replay-workflow") })
   const results = await Promise.all([replayChannel(agent, "mailbox", { runtime }), replayChannel(agent, "mailbox", { runtime })])
   expect(update.mock.calls.filter(([context]) => context.activity.status === "queued")).toHaveLength(1)
+  expect(entered).toBe(1)
   expect(providerRun).toHaveBeenCalledTimes(1)
   expect(results.reduce((sum, result) => sum + result.processed, 0)).toBe(1)
   expect(results.reduce((sum, result) => sum + result.skipped, 0)).toBe(1)

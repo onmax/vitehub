@@ -2,8 +2,8 @@ import { createRuntimeContext } from "@vite-hub/runtime"
 
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { agentErrorMessage } from "./agent-error.ts"
-import { isResolvedAgentTriggerHandledInvocation, resolveAgentTriggerInvocation, runAgent } from "./index.ts"
-import { AgentInvocationClaimConflict, exclusiveAgentInvocation, pendingAgentInvocationAnnotation } from "./invocations.ts"
+import { isResolvedAgentTriggerHandledInvocation, resolveAgentTriggerInvocation, reserveAgentChannelItem, runAgent } from "./index.ts"
+import { AgentInvocationClaimConflict, exclusiveAgentInvocation, inheritedAgentInvocationClaim, type AgentInvocationJournal, pendingAgentInvocationAnnotation } from "./invocations.ts"
 import { channelMessageRunId } from "./internal/channel-run-id.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { agentToolJsonSchema } from "./tool-schema.ts"
@@ -168,17 +168,22 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
   }
   // A forced run needs a new ID because the stable one already has an Invocation.
   const id = run.force ? `${stableId}:${crypto.randomUUID()}` : stableId
+  let reservation: AgentInvocationJournal<TRuntimeConfig> | undefined
   try {
     const itemRuntime = { ...run.runtime, ...(!run.force && run.invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), run: { ...run.runtime.run, runId: id } }
+    if (!run.force && run.invocations) reservation = await reserveAgentChannelItem(run.agent, itemRuntime)
     const invocation = await resolveAgentTriggerInvocation(run.agent, itemRuntime, run.triggerId, item)
-    if (isResolvedAgentTriggerHandledInvocation(invocation)) return { id, key, reason: "handled", status: "skipped" }
-    const output = await runAgent(run.agent, { ...itemRuntime, run: { ...itemRuntime.run, ...invocation.run, runId: id } }, {
+    if (isResolvedAgentTriggerHandledInvocation(invocation)) { await reservation?.finish("completed"); return { id, key, reason: "handled", status: "skipped" } }
+    const token = await reservation?.handoffClaim()
+    if (reservation && !token) throw new Error("Could not transfer the Invocation execution claim.")
+    const output = await runAgent(run.agent, { ...itemRuntime, ...(token ? { [inheritedAgentInvocationClaim]: token } : {}), run: { ...itemRuntime.run, ...invocation.run, runId: id } }, {
       ...invocation.input,
       ...(run.dryRun ? { dryRun: true } : {}),
     })
     return { id, key, status: isWorkflowRun(output) ? "started" : "completed" }
   }
   catch (error) {
+    await reservation?.releaseClaim()
     if (error instanceof AgentInvocationClaimConflict) return { id, key, reason: "existing", status: "skipped" }
     return { error: agentErrorMessage(error), id, key, status: "failed" }
   }

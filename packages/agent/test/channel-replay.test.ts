@@ -103,15 +103,12 @@ describe("replayChannel()", () => {
   it("atomically excludes a webhook dispatch racing history replay", async () => {
     const invocations = memoryInvocations()
     let entered = 0
-    let release!: () => void
-    const gate = new Promise<void>(resolve => { release = resolve })
     const channel = defineChannel("mailbox", {
       history: { collection: defineCollection(async () => [emails[0]!], { cursor: email => email.id, cursorSchema: v.string() }), key: email => email.id },
       triggers: { received: defineChannelTrigger({
         input: v.object({ folder: v.string(), id: v.string(), subject: v.string() }),
         invoke: async () => {
-          if (++entered === 2) release()
-          await gate
+          entered++
           return { input: { prompt: "hello" } }
         },
       }) },
@@ -124,6 +121,7 @@ describe("replayChannel()", () => {
       replayChannel(agent, "mailbox", { runtime }),
       dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" }),
     ])
+    expect(entered).toBe(1)
     expect(run).toHaveBeenCalledOnce()
     expect(finish).toHaveBeenCalledOnce()
     expect(results.reduce((sum, result) => sum + result.processed, 0)).toBe(1)
@@ -161,6 +159,40 @@ describe("replayChannel()", () => {
       expect(label).toHaveBeenCalledOnce()
       expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).skipped).toBe(1)
     } finally { release(); await initial; vi.useRealTimers() }
+  })
+
+  it("claims before an asynchronous trigger write and retries failed trigger preparation", async () => {
+    const invocations = memoryInvocations()
+    let entered!: () => void
+    let release!: () => void
+    const running = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let fail = true
+    const invoke = vi.fn(async () => {
+      entered()
+      await gate
+      if (fail) throw new Error("Trigger preparation failed")
+      return { input: { prompt: "hello" } }
+    })
+    const channel = defineChannel("mailbox", {
+      history: { collection: defineCollection(async () => [emails[0]!], { cursor: email => email.id, cursorSchema: v.string() }), key: email => email.id },
+      triggers: { received: defineChannelTrigger({ input: v.object({ folder: v.string(), id: v.string(), subject: v.string() }), invoke }) },
+    })
+    const run = vi.fn(() => "done")
+    const agent = defineAgent({ channels: { mailbox: channel }, driver: { run }, invocations, runtime: false })
+    const first = replayChannel(agent, "mailbox", { limit: 1 })
+    try {
+      await Promise.race([running, first])
+      expect((await replayChannel(agent, "mailbox", { limit: 1 })).skipped).toBe(1)
+      expect(invoke).toHaveBeenCalledOnce()
+      release()
+      expect((await first).failed).toBe(1)
+      expect(run).not.toHaveBeenCalled()
+      fail = false
+      expect((await replayChannel(agent, "mailbox", { limit: 1 })).processed).toBe(1)
+      expect(invoke).toHaveBeenCalledTimes(2)
+      expect(run).toHaveBeenCalledOnce()
+    } finally { release(); await first }
   })
 
   it("replays existing items again with force", async () => {
