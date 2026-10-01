@@ -300,7 +300,7 @@ export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { st
         finally {
           for (const [name, callback, disposer] of installed) {
             if (typeof disposer === "function") disposer()
-            else host.hooks.removeHook?.(name, callback)
+            else host.hooks.removeHook(name, callback)
           }
           onClose?.()
         }
