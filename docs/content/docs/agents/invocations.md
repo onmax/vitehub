@@ -174,6 +174,8 @@ the stable codes and redaction rules.
 
 Every invocation also has an in-memory metadata trace through `runtime.trace` and `runtime.traceLog`. The default log is process-local and is not persisted across a Workflow boundary.
 
+Finish events set `event.invocation.cancelled` to `true` when output consumption is cancelled. Finish effects can use this field to distinguish cancellation from normal completion.
+
 Capability setup callbacks (`configure`, `prepare`, `bind`, `input`, `resolve`, `output`) and `close` emit one `agent.capability.<phase>` event when the callback settles. These events measure the callback itself with a monotonic clock, excluding before/after hooks and trace persistence. Read `agent.capability.id`, `agent.capability.phase`, `agent.capability.outcome`, and `agent.capability.durationMs` to distinguish slow integration setup from model execution. Outcomes are `success`, `error`, or `cancelled`; cancellation means the callback failed while the effective invocation input's abort signal was set.
 
 Timing events carry the available invocation, run, and trace identifiers. They contain no callback arguments, results, configuration, or thrown error messages, and follow the normal trace and journal retention policy. A missing event means timing is unavailable, not zero. Emission does not await arbitrary trace sinks: pending or rejected persistence cannot change callback results or prevent cleanup. The host still owns its trace sink's flushing and retention policy.
@@ -280,7 +282,7 @@ hooks: {
 }
 ```
 
-The journal records pending, running, completed, failed, and cancelled states plus bounded invocation metadata and trace observations. Failed records retain bounded `cause` and `AggregateError.errors` trees, common status and code fields, and public ViteHub error details. Use `invocations.list()` for cursor-based summaries, `invocations.get(id)` for a stored record ID, and `invocations.getByRunId(runId, agentName?)` when starting from the source run ID. Always pass the Agent Definition name for a named Definition; the name is part of its durable invocation identity. Journal failures never change the Agent Invocation result.
+The journal records pending, running, completed, failed, and cancelled states plus bounded invocation metadata and trace observations. Failed records retain bounded `cause` and `AggregateError.errors` trees, common status and code fields, and public ViteHub error details. Use `invocations.list()` for cursor-based summaries, `invocations.get(id)` for a stored record ID, and `invocations.getByRunId(runId, agentName?)` when starting from the source run ID. Always pass the Agent Definition name for a named Definition; the name is part of its durable invocation identity. When the Console is enabled, a discovered Definition without `name` records its discovered name, such as `labeller` for `server/agents/labeller.ts`, also when server code calls `runAgent()` directly. If the same unnamed Definition is discovered under multiple names, direct calls remain unscoped because the Definition cannot identify the imported alias. Host calls still record their selected Agent name. Journal failures never change the Agent Invocation result.
 
 Use `triggeredBy` to filter persisted summaries by the person label recorded in `annotations.triggeredBy`. It matches the trimmed label exactly and composes with Agent, Capability, status, and text filters:
 

@@ -777,7 +777,7 @@ describe("framework package contract", () => {
       if (!Array.isArray(handlers) || !Array.isArray(publicAssets)) {
         throw new TypeError("Expected the distributed Console Nitro configuration.");
       }
-      expect(handlers).toHaveLength(8);
+      expect(handlers).toHaveLength(9);
       expect(handlers.map((registration) => Reflect.get(Object(registration), "route"))).toEqual([
         "/api/_vitehub/console/status",
         "/api/_vitehub/console/usage",
@@ -787,6 +787,7 @@ describe("framework package contract", () => {
         "/_vitehub/rpc/**",
         "/_vitehub/env/manage",
         "/_vitehub/channels/replay",
+        "/_vitehub/schedules/run",
       ]);
       for (const registration of handlers) {
         const handler = Reflect.get(Object(registration), "handler");

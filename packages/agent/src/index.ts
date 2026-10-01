@@ -1,7 +1,10 @@
+import { readWorkflowJournalName } from "./internal/workflow-journal-name.ts"
 import type { AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
 export type { AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
 import { invocationUsageWithAuxiliaryCalls } from "./internal/auxiliary-usage.ts"
 import { agentLayerMetadata, createConfiguredAgentDefinition, rememberAgentLayerOptions, resolveAgentLayerOptions } from "./agent-layers.ts"
+import { readDiscoveredAgentName } from "./internal/discovered-agent-name.ts"
+import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { asUnknownBoundary, hasRuntimeType, isCallableMember, isRuntimeObject, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { Diagnostic } from "nostics"
 import agentRegistry from "#vitehub/agent/registry"
@@ -757,6 +760,8 @@ type AgentDefinitionWithBaseResolve<
   [colocatedAgentSkillsSymbol]?: ColocatedAgentSkills
 }
 interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
+  agentIdentity?: AgentRuntimeContext["agentIdentity"]
+  journalAgentName?: string
   capabilities?: Record<string, boolean>
   input?: AgentRunInput<CALL_OPTIONS>
   parsedInputData?: boolean
@@ -829,6 +834,11 @@ type CheckedInvocationTools<TTools> = {
 const agentWorkflowHandles = new WeakMap<object, Map<string, WorkflowHandle<AgentWorkflowInvocationPayload, unknown>>>()
 const agentWorkflowNames = new Set<string>()
 const agentIdentityOwner = Symbol("vitehub.agentIdentityOwner")
+
+// Name journal records like the Console lists them: explicit name, host identity, then discovered file name.
+function agentInvocationName(agent: { name?: string }, context: Pick<AgentRuntimeContext, "agentIdentity">): string | undefined {
+  return agent.name || context.agentIdentity?.name || readWorkflowJournalName(context, agent) || readDiscoveredAgentName(agent)
+}
 
 interface DefaultAgentWorkflowRuntimeBinding extends AgentWorkflowRuntimeBinding {
   discoveryDefault: true
@@ -1062,7 +1072,7 @@ async function runAgentAsWorkflow<
       const journal = await bindAgentInvocations(agent.invocations, {
         ...context,
         run: { ...context.run, runId },
-      }, { agentName: agent.name || context.agentIdentity?.name, terminalTakeover: true })
+      }, { agentName: agentInvocationName(agent, context), terminalTakeover: true })
       await journal?.finish(status, error)
     }
     catch (journalError) {
@@ -1152,9 +1162,11 @@ async function runAgentAsWorkflow<
     : context.run
   // SAFETY: withParsedAgentMessageMeta preserves this invocation's call-options type.
   const parsedMessageMeta = parsedAgentMessageMetaState(agent, parsedInput as AgentRunInput<CALL_OPTIONS>, context.run)
+  const invocationName = agentInvocationName(agent, context)
   const payload: AgentWorkflowInvocationPayload<CALL_OPTIONS> = {
     ...(parsedInputData ? { parsedInputData: true } : {}),
     ...(context.agentIdentity ? { agentIdentity: context.agentIdentity } : {}),
+    ...(invocationName ? { journalAgentName: invocationName } : {}),
     ...(Object.keys(workflowCapabilities).length ? { capabilities: workflowCapabilities } : {}),
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     input: cloneWorkflowJsonValue(workflowInput) as AgentRunInput<CALL_OPTIONS>,
@@ -1215,7 +1227,7 @@ async function runAgentAsWorkflow<
       )
       await workflowRuntimeState.runWithWorkflowRuntimeEvent(workflowEvent, () => deferAgentWorkflowRecovery(recoveryHandle, {
         invocationRecovery: {
-          ...(agent.name || context.agentIdentity?.name ? { agentName: agent.name || context.agentIdentity?.name } : {}),
+          ...(agentInvocationName(agent, context) ? { agentName: agentInvocationName(agent, context) } : {}),
           runId,
           sourceRunId,
           workflowName,
@@ -1235,7 +1247,7 @@ async function runAgentAsWorkflow<
   if (exclusive) {
     const dispatchJournal = hasAgentDefinition(agent)
       ? await bindAgentInvocations(agent.invocations, context, {
-          agentName: agent.name || context.agentIdentity?.name,
+          agentName: agentInvocationName(agent, context),
           requireNew: true,
         })
       : undefined
@@ -1267,7 +1279,7 @@ async function runAgentAsWorkflow<
         const invocationJournal = await bindAgentInvocations(agent.invocations, {
           ...context,
           run: { ...context.run, runId: failedRunId },
-        }, { agentName: agent.name || context.agentIdentity?.name, deferClaim: ambiguous, terminalTakeover: true })
+        }, { agentName: agentInvocationName(agent, context), deferClaim: ambiguous, terminalTakeover: true })
         if (!ambiguous) await invocationJournal?.finish("failed", error)
       }
     }
@@ -1299,7 +1311,7 @@ async function runAgentAsWorkflow<
     invocationJournal = await bindAgentInvocations(agent.invocations, {
       ...context,
       run: { ...context.run, runId: options.fresh && !durableChannelDelivery ? run.id : context.run?.runId ?? run.id },
-    }, { agentName: agent.name || context.agentIdentity?.name, deferClaim: true, terminalTakeover: true })
+    }, { agentName: agentInvocationName(agent, context), deferClaim: true, terminalTakeover: true })
     if (snapshot?.status === "cancelled" || snapshot?.status === "completed" || snapshot?.status === "failed") {
       await invocationJournal?.finish(snapshot.status, snapshot.error)
     }
@@ -3106,6 +3118,7 @@ export function agentWithColocatedInstructions<Agent>(agent: Agent, instructions
   Object.setPrototypeOf(definition as object, Object.getPrototypeOf(agent as object))
   // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
   Object.defineProperties(definition as object, decorations)
+  Object.defineProperty(definition, agentDefinitionSourceSymbol, { configurable: true, value: agent })
   return definition
 }
 
@@ -6173,6 +6186,7 @@ async function finishAgentInvocation<
         input: context.input,
         invoker: context.invoker,
         invocation: {
+          ...(outcomeCancelled ? { cancelled: true } : {}),
           durationMs,
           ...(resultKind !== undefined ? { resultKind } : {}),
           ...(context.run ? { run: context.run } : {}),
@@ -7722,7 +7736,7 @@ async function executeAgentInvocation<
           ? { run: { ...context.run, runId: (context as AgentRuntimeContext & { [agentInvocationRunId]: string })[agentInvocationRunId] } }
           : {}),
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      }, { agentName: (definition as AgentDefinition).name || context.agentIdentity?.name, requireNew: exclusive })
+      }, { agentName: agentInvocationName(definition as AgentDefinition, context), requireNew: exclusive })
       : undefined
     if (exclusive && invocationJournal?.claimStatus !== "owned") {
       if (invocationJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
