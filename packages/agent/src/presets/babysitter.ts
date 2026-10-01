@@ -154,6 +154,9 @@ export const babysitter: BabysitterAgent = defineAgent({
     if (driver !== "codex" && driver !== "claude-code") {
       throw new TypeError('[vitehub] Babysitter driver must be "codex" or "claude-code".');
     }
+    if (noFindingsReviews.some((prefix) => prefix.length === 0)) {
+      throw new TypeError("[vitehub] Babysitter noFindingsReviews cannot contain an empty prefix.");
+    }
     // Validate merge settings when the Agent is defined, not on the first PR.
     resolveBabysitterMerge(merge, autoMerge);
     const definition = defineAgent({
