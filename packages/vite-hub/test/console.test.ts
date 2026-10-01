@@ -46,7 +46,7 @@ import { encodeAgentRouteParam } from "../src/console/runtime/console-route.ts"
 import { installConsoleAgentDefinitions, installConsoleAgents } from "../src/console/runtime/server/agents.ts"
 import { createConsoleFixtureInvocations, createConsoleInvocations, getConsoleInvocationsDatabase, installConsoleFixtureInvocations, installConsoleInvocations, resolveConsoleDatabaseOptions } from "../src/console/runtime/server/invocations.ts"
 import { console as consoleRuntime } from "../src/console/server.ts"
-import invocationHandler from "../src/console/runtime/server/invocation.get.ts"
+import invocationHandler, { getConsoleInvocationDetail } from "../src/console/runtime/server/invocation.get.ts"
 import invocationCapabilitiesHandler from "../src/console/runtime/server/invocation-capabilities.get.ts"
 import invocationsHandler from "../src/console/runtime/server/invocations.get.ts"
 import consolePageHandler from "../src/console/runtime/server/page.get.ts"
@@ -2047,8 +2047,12 @@ describe("Agent invocation console", () => {
   it.each(["support", ".", "team/support"])("starts an enabled Agent invocation for %j", async (name) => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-invoke-agent-"))
     try {
+      let receivedPrompt: unknown
       const definition = defineAgent({
-        driver: { run: () => "done" },
+        driver: { run: (context) => {
+          receivedPrompt = context.input.prompt
+          return "done"
+        } },
         invoker: {
           profiles: [{ id: "support", kind: "person", label: "Support agent" }],
         },
@@ -2082,6 +2086,7 @@ describe("Agent invocation console", () => {
           status: "completed",
         })
       })
+      expect(receivedPrompt).toBe(" Test this Agent ")
     }
     finally {
       await rm(root, { force: true, recursive: true })
@@ -2117,6 +2122,187 @@ describe("Agent invocation console", () => {
     }
   })
 
+  it("disables legacy reruns and deletion for a custom store without delete", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-custom-actions-"))
+    const { delete: _delete, ...store } = createMemoryAgentInvocationStore()
+    const invocations = defineAgentInvocations({ store })
+    const record = fixtureDocument("legacy-session").invocations[0]!
+    await store.create({ ...record, observations: [{
+      attributes: { "input.prompt": "Original prompt", "agent.invoker.id": "support" },
+      name: "agent.invocation.start",
+      sequence: 1,
+      timestamp: record.createdAt,
+      type: "run",
+    }] })
+    const definition = defineAgent({ driver: { run: () => "done" }, invocations, name: "support" })
+    const event = (body?: unknown): ConsoleRequestEvent => {
+      const method = body === undefined ? "GET" : "POST"
+      const url = "http://localhost/api/_vitehub/console/invocations/legacy-session"
+      return {
+        headers: new Headers({ host: "localhost" }),
+        method,
+        node: { req: { method, socket: { remoteAddress: "127.0.0.1" }, url } },
+        req: { ...(body === undefined ? {} : { json: async () => body }), method, url },
+      }
+    }
+    try {
+      installConsoleAgentDefinitions([
+        { definition: { default: definition }, fallbackName: "help" },
+      ], { invoke: true, projectRoot: root })
+      await expect(invocationHandler(event())).resolves.toMatchObject({ invocation: { actions: {
+        delete: { available: false, reason: "store-delete-unavailable" },
+        rerun: { available: false, reason: "replay-metadata-unavailable" },
+      } } })
+      await expect(invocationHandler(event({ action: "delete" }))).rejects.toMatchObject({
+        statusCode: 409,
+        statusMessage: "This invocation store does not support deletion.",
+      })
+      await expect(invocations.get("legacy-session")).resolves.toBeDefined()
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it("reruns and deletes journaled invocations only with Console invoke access", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-invocation-actions-"))
+    let release: (value: string) => void = () => {}
+    let blocked = false
+    let blockedDriverStarted = false
+    const prompts: (string | undefined)[] = []
+    const definition = defineAgent({
+      driver: { run: ({ prompt }) => { prompts.push(prompt); return blocked ? new Promise<string>(resolve => { release = resolve; blockedDriverStarted = true }) : "done" } },
+      invoker: { profiles: [{ id: "support", kind: "person", label: "Support agent" }], resolve: () => ({ id: "resolved-support", kind: "person" }) },
+      name: "support",
+    })
+    const start = (prompt: string, invokerProfileId: string | null = "support") => agentInvocationsHandler({
+      context: { params: { agent: "support" } },
+      method: "POST",
+      req: {
+        json: async () => ({ ...invokerProfileId ? { invokerProfileId } : {}, prompt }),
+        method: "POST",
+        url: "http://localhost/api/_vitehub/console/agents/support/invocations",
+      },
+    })
+    const detailEvent = (id: string, body?: unknown): ConsoleRequestEvent => {
+      const method = body === undefined ? "GET" : "POST"
+      const url = `http://localhost/api/_vitehub/console/invocations/${id}`
+      return {
+        headers: new Headers({ host: "localhost" }),
+        method,
+        node: { req: { method, socket: { remoteAddress: "127.0.0.1" }, url } },
+        req: { ...(body === undefined ? {} : { json: async () => body }), method, url },
+      }
+    }
+    const install = (invoke: boolean) => installConsoleAgentDefinitions([
+      { definition: { default: definition }, fallbackName: "help" },
+    ], { invoke, projectRoot: root })
+    try {
+      install(true)
+      const completed = await start("  Summarize the release notes.\n")
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(completed.id)).resolves.toMatchObject({ status: "completed" })
+      })
+      await expect(invocationHandler(detailEvent(completed.id))).resolves.toMatchObject({
+        invocation: {
+          actions: {
+            delete: { available: true },
+            rerun: { available: true, invokerProfileId: "support", prompt: "  Summarize the release notes.\n" },
+          },
+        },
+      })
+
+      const originalDetail = await getConsoleInvocationDetail(detailEvent(completed.id))
+      const rerun = originalDetail.invocation.actions?.rerun
+      expect(rerun?.available).toBe(true)
+      if (!rerun?.available) throw new Error("Expected replayable prompt")
+      const replayed = await start(rerun.prompt, rerun.invokerProfileId)
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(replayed.id)).resolves.toMatchObject({ status: "completed" })
+      })
+      const replayedDetail = await getConsoleInvocationDetail(detailEvent(replayed.id))
+      expect(replayedDetail.invocation.actions?.rerun).toEqual(rerun)
+
+      for (const profiles of [[], [{ id: "renamed-support", kind: "person" as const }]]) {
+        const reconfigured = defineAgent({
+          driver: { run: () => "done" },
+          invoker: { profiles },
+          name: "support",
+        })
+        installConsoleAgentDefinitions([
+          { definition: { default: reconfigured }, fallbackName: "help" },
+        ], { invoke: true, projectRoot: root })
+        await expect(invocationHandler(detailEvent(completed.id))).resolves.toMatchObject({
+          invocation: {
+            actions: {
+              delete: { available: true },
+              rerun: { available: false, reason: "invoker-profile-unavailable" },
+            },
+          },
+        })
+      }
+      install(true)
+
+      const withoutProfile = await start("Use the default invoker.", null)
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(withoutProfile.id)).resolves.toMatchObject({ status: "completed" })
+      })
+      const defaultDetail = await getConsoleInvocationDetail(detailEvent(withoutProfile.id))
+      expect(defaultDetail.invocation.actions?.rerun).toEqual({ available: false, reason: "input-has-invoker" })
+
+      const whitespacePrompt = "  def run():\n    return 1\n  "
+      const whitespace = await start(whitespacePrompt)
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(whitespace.id)).resolves.toMatchObject({ status: "completed" })
+      })
+      const whitespaceDetail = await getConsoleInvocationDetail(detailEvent(whitespace.id))
+      const replayInput = whitespaceDetail.invocation.actions?.rerun
+      expect(replayInput).toEqual({ available: true, invokerProfileId: "support", prompt: whitespacePrompt })
+      if (!replayInput?.available) throw new Error("Expected a replayable whitespace prompt.")
+      const whitespaceReplay = await start(replayInput.prompt, replayInput.invokerProfileId)
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(whitespaceReplay.id)).resolves.toMatchObject({ status: "completed" })
+      })
+      expect(prompts.slice(-2)).toEqual([whitespacePrompt, whitespacePrompt])
+
+      blocked = true
+      const running = await start("Keep running.")
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "running" })
+      })
+      await expect(invocationHandler(detailEvent(running.id))).resolves.toMatchObject({
+        invocation: { actions: { delete: { available: false }, rerun: { available: false, reason: "invocation-not-terminal" } } },
+      })
+      await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 409 })
+      await vi.waitFor(() => { expect(blockedDriverStarted).toBe(true) })
+      release("done")
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "completed" })
+      })
+
+      await expect(invocationHandler(detailEvent(running.id))).resolves.toMatchObject({
+        invocation: { actions: { rerun: { available: true, prompt: "Keep running." } } },
+      })
+
+      await expect(invocationHandler(detailEvent(completed.id, { action: "cancel" }))).rejects.toMatchObject({ statusCode: 400 })
+      await expect(invocationHandler(detailEvent("missing", { action: "delete" }))).rejects.toMatchObject({ statusCode: 404 })
+
+      install(false)
+      const inspected = await getConsoleInvocationDetail(detailEvent(completed.id))
+      expect(inspected.invocation).not.toHaveProperty("actions")
+      await expect(invocationHandler(detailEvent(completed.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 403 })
+
+      install(true)
+      await expect(invocationHandler(detailEvent(completed.id, { action: "delete" }))).resolves.toEqual({ id: completed.id, outcome: "deleted" })
+      await expect(invocationHandler(detailEvent(completed.id))).rejects.toMatchObject({ statusCode: 404 })
+      await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "completed" })
+    }
+    finally {
+      release("done")
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
   it("rejects disabled Agents, unknown profiles, and unsupported fields", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-invoke-validation-"))
     const definition = defineAgent({
@@ -2142,6 +2328,8 @@ describe("Agent invocation console", () => {
       installConsoleAgentDefinitions([
         { definition: { default: definition }, fallbackName: "help" },
       ], { invoke: true, projectRoot: root })
+      await expect(agentInvocationsHandler(request({ prompt: " \n " })))
+        .rejects.toMatchObject({ statusCode: 400, statusMessage: "Agent invocation requires a prompt." })
       await expect(agentInvocationsHandler(request({ invokerProfileId: "unknown", prompt: "hello" })))
         .rejects.toMatchObject({ statusCode: 400, statusMessage: "Unknown Agent invocation profile." })
       await expect(agentInvocationsHandler(request({ extra: true, prompt: "hello" })))
@@ -2519,7 +2707,7 @@ describe("Agent invocation console", () => {
     const detailURL = "http://localhost/api/_vitehub/console/invocations/inv-delta"
     requestEvent.node!.req!.url = detailURL
     requestEvent.req!.url = detailURL
-    const initial = await invocationHandler(requestEvent)
+    const initial = await getConsoleInvocationDetail(requestEvent)
     await store.update("inv-delta", {
       observation: {
         name: "agent.invocation.running",
@@ -2533,7 +2721,7 @@ describe("Agent invocation console", () => {
     requestEvent.node!.req!.url = url
     requestEvent.req!.url = url
 
-    await expect(invocationHandler(requestEvent)).resolves.toMatchObject({
+    await expect(getConsoleInvocationDetail(requestEvent)).resolves.toMatchObject({
       appendObservations: true,
       invocation: { id: "inv-delta" },
       observations: [{ sequence: 3 }],
@@ -2548,7 +2736,7 @@ describe("Agent invocation console", () => {
       },
       timestamp: "2026-08-23T12:00:04.000Z",
     })
-    const replaced = await invocationHandler(requestEvent)
+    const replaced = await getConsoleInvocationDetail(requestEvent)
     expect(replaced.appendObservations).toBeUndefined()
     expect(replaced.observations.map(observation => observation.sequence)).toEqual([0, 1, 2, 3])
 
@@ -2559,7 +2747,7 @@ describe("Agent invocation console", () => {
     const truncatedURL = `${detailURL}?observationCount=4&observationCursor=${encodeURIComponent(replaced.observationCursor)}`
     requestEvent.node!.req!.url = truncatedURL
     requestEvent.req!.url = truncatedURL
-    await expect(invocationHandler(requestEvent)).resolves.not.toHaveProperty("appendObservations")
+    await expect(getConsoleInvocationDetail(requestEvent)).resolves.not.toHaveProperty("appendObservations")
   })
 
   it("bounds each console response to the requested page size", async () => {

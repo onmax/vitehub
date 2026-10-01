@@ -70,11 +70,13 @@ import {
 } from "./channels.ts"
 import { registerMessageChannelDeferredReplyTrace, setChatFinalReplyText, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
 import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, createAgentInvocationContextStore } from "./invocation-context.ts"
+import { agentInvocationCallerAbortSignal, copyAgentInvocationCallerAbortSignal, markAgentInvocationCallerAbortSignal } from "./internal/invocation-input.ts"
 import { bindAgentRunEvents, type AgentRunEventPublisher } from "./run-events.ts"
 import { bindAgentInvocations, type AgentInvocationJournal } from "./invocations.ts"
 import { isAttachmentPart, materializeMessageAttachmentData, type AgentMessagePhase, type Message } from "./messages.ts"
 import {
   createFallbackAgentInvoker,
+  hasUnreplayableAgentInputContext,
   hasResolvedAgentInvokerInput,
   normalizeAgentInvokerOptions,
   portableResolvedAgentInvokerInput,
@@ -249,7 +251,7 @@ import type {
 import type { WorkflowHandle } from "@vite-hub/workflow"
 import type { OpenTelemetryLogRecordView, OpenTelemetrySpanView, TraceActivityContext, TraceEventLogEntry } from "@vite-hub/runtime"
 
-export { agentInvocationId } from "./invocations.ts"
+export { agentInvocationId, agentInvocationRerunInput } from "./invocations.ts"
 
 export type {
   AgentInvocationAnnotationValue,
@@ -261,6 +263,8 @@ export type {
   AgentInvocationPruneResult,
   AgentInvocationRecord,
   AgentInvocationRecordStatus,
+  AgentInvocationRerunInput,
+  AgentInvocationRerunUnavailableReason,
   AgentInvocationRetentionOptions,
   AgentInvocationSummary,
   AgentInvocations,
@@ -764,6 +768,7 @@ interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
   journalAgentName?: string
   capabilities?: Record<string, boolean>
   input?: AgentRunInput<CALL_OPTIONS>
+  callerAbortSignal?: boolean
   parsedInputData?: boolean
   invocationRecovery?: {
     agentName?: string
@@ -1170,6 +1175,7 @@ async function runAgentAsWorkflow<
     ...(Object.keys(workflowCapabilities).length ? { capabilities: workflowCapabilities } : {}),
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     input: cloneWorkflowJsonValue(workflowInput) as AgentRunInput<CALL_OPTIONS>,
+    callerAbortSignal: agentInvocationCallerAbortSignal(input),
     // Headers and bodies may contain webhook credentials and remain process-local by design.
     ...(context.request ? { requestUrl: context.request.url } : {}),
     ...(parsedMessageMeta !== undefined ? { parsedMessageMeta } : {}),
@@ -4174,9 +4180,10 @@ async function parseAgentInputData<TInput extends AgentRunInput<unknown>>(
 ): Promise<TInput> {
   const schema = definition?.[baseAgentData]
   if (!schema) return input
-  return { ...input, data: await parseStandardSchema(schema, input.data, "Agent input data") }
+  return copyAgentInvocationCallerAbortSignal(input, { ...input, data: await parseStandardSchema(schema, input.data, "Agent input data") })
 }
 
+// Controller cancellation is internal unless the caller supplied its own signal.
 async function createAgentInvocationContext<
   TRuntimeConfig extends AgentRuntimeConfig,
   CALL_OPTIONS,
@@ -4189,11 +4196,21 @@ async function createAgentInvocationContext<
   invocationTools?: AgentToolSet,
 ): Promise<AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS>> {
   const startedAt = Date.now()
+  const replayHasContext = hasUnreplayableAgentInputContext(input.context)
+  const replayCallerAbortSignal = agentInvocationCallerAbortSignal(input)
+  // Preparation can replace or mutate input. Replay must retain the caller's input metadata.
+  const replayInput = {
+    ...input,
+    ...(replayCallerAbortSignal === false ? { abortSignal: undefined } : {}),
+    ...(input.context ? { context: { ...input.context } } : {}),
+    ...(input.messages ? { messages: [...input.messages] } : {}),
+    ...(Array.isArray(input.prompt) ? { prompt: [...input.prompt] } : {}),
+  }
   const inputDataParsed = consumeParsedAgentWorkflowInput(input, definition)
   const resolvedContext = createResolvedRuntimeContext(context)
   const invocationContext = createAgentInvocationContextStore(input.context)
   await parseAgentMessageMeta(definition, invocationContext, context.run)
-  input = { ...input, context: { ...input.context, ...invocationContext.toJSON() } }
+  input = copyAgentInvocationCallerAbortSignal(input, { ...input, context: { ...input.context, ...invocationContext.toJSON() } })
   const telemetryInvocationId = createTraceId()
   let telemetryScheduler: AgentTelemetryScheduler | undefined
   const telemetryChanged = (entry: TraceEventLogEntry) => telemetryScheduler?.changed(entry)
@@ -4728,7 +4745,8 @@ async function createAgentInvocationContext<
     invocationContext.set("agent.finishHook", Boolean(invocation.finishHook), { overwrite: true })
     capabilityPreparationPending = false
     await invocationContext.get(agentInvocationConfigurationUpdatedContextKey)?.()
-    await traceAgentInvocationStart(toTraceContext(invocation))
+    await traceAgentInvocationStart(toTraceContext(invocation), replayInput, replayHasContext,
+      capabilities.input.abortSignal !== input.abortSignal ? true : replayCallerAbortSignal)
     try {
       await applyChannelDeliveryEffectIntents(invocation, invocation.deliveryEffectIntents)
     }
@@ -7943,21 +7961,25 @@ function createInlineAgentInvocationController<
   return startLiveAgentInvocation<TOutput | Response, CALL_OPTIONS>({
     parentAbortSignal: input.abortSignal,
     sendInput: (id, nextInput, options) => sendAgentInvocationInput(id, nextInput, options),
-    start: ({ abortSignal, id, onFinish }) => executeAgentInvocation(agent, {
-      ...withAgentInvocationResponseOwner(context, id),
-      run: { ...context.run, runId: runId || id },
-    }, { ...input, abortSignal }, {
-      kind: "run",
-      onFinish(outcome) {
-        onFinish(outcome.status === "cancelled"
-          ? { status: "cancelled" }
-          : outcome.status === "success"
-          // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-            ? { ...(outcome.result !== undefined ? { output: outcome.result as TOutput | Response } : {}), status: "completed" }
-            : { error: outcome.error, status: "failed" })
-      },
-      renderOutput: true,
-    }),
+    start: ({ abortSignal, id, onFinish }) => {
+      const invocationInput = { ...input, abortSignal }
+      markAgentInvocationCallerAbortSignal(invocationInput, agentInvocationCallerAbortSignal(input))
+      return executeAgentInvocation(agent, {
+        ...withAgentInvocationResponseOwner(context, id),
+        run: { ...context.run, runId: runId || id },
+      }, invocationInput, {
+        kind: "run",
+        onFinish(outcome) {
+          onFinish(outcome.status === "cancelled"
+            ? { status: "cancelled" }
+            : outcome.status === "success"
+            // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
+              ? { ...(outcome.result !== undefined ? { output: outcome.result as TOutput | Response } : {}), status: "completed" }
+              : { error: outcome.error, status: "failed" })
+        },
+        renderOutput: true,
+      })
+    },
     support: id => agentInvocationInputSupport(id),
   })
 }
@@ -8177,7 +8199,7 @@ async function runAgentWithContext<
     const turn = schedule.input && hasRuntimeType(schedule.input, "object") && (schedule.input as { kind?: unknown }).kind === "agent-turn"
       ? parseScheduledAgentTurnInput(schedule.input)
       : undefined
-    const forwardedInput = { ...input }
+    const forwardedInput = copyAgentInvocationCallerAbortSignal(input, { ...input })
     if (turn) {
       delete forwardedInput.message
       delete forwardedInput.messages
@@ -8194,7 +8216,7 @@ async function runAgentWithContext<
       run: { ...context.run, ...turn?.delivery, runId },
       waitUntil: context.waitUntil ?? schedule.waitUntil ?? (() => {}),
     }
-    input = {
+    input = copyAgentInvocationCallerAbortSignal(input, {
       ...forwardedInput,
       context: {
         ...input.context,
@@ -8209,7 +8231,7 @@ async function runAgentWithContext<
         },
       },
       ...(turn ? { prompt: turn.prompt } : {}),
-    }
+    })
   }
   const invocationContext = withAgentIdentityOwner(agent, context)
   const binding = resolveAgentWorkflowRuntimeBinding(agent)

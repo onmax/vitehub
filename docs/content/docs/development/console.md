@@ -370,6 +370,17 @@ const body = {
 
 History must contain valid ViteHub Messages with `user` or `assistant` roles and unique IDs. Parts must be `text`, `file`, `image`, or `audio`. The Console preserves message metadata and appends the new prompt as a user Message. It rejects malformed Messages, `system` or `tool` roles, and other parts before starting the Agent. This includes tool calls, tool results, and approval parts nested in user or assistant Messages. Omit `messages` for a prompt-only invocation. Each request creates a new invocation; history does not resume a previous runtime session.
 
+### Rerun and delete sessions
+
+Rerun is available after the session completes, fails, or is cancelled.
+
+When `invoke` is enabled for an Agent, its session header shows two actions:
+
+- **Rerun** starts a new invocation with the recorded prompt and the same Invoker Profile. The action is available only when the journal kept the complete prompt. It is unavailable if the recorded Invoker Profile is no longer configured, for sessions that started with prior `messages` or attachments, for metadata-only journals, and for prompts that the journal truncated. Records without the current replay metadata and sessions with a direct invoker or actor identity are also unavailable. The tooltip gives the reason.
+- **Delete** removes a completed, failed, or cancelled session and its usage record after you confirm. It uses the same journal operation as `vitehub agent invocations delete`. Pending and running sessions cannot be deleted. Custom journals without `store.delete` show a disabled action with an explanation.
+
+The `vitehub:console:invocation` RPC operation returns these actions as `invocation.actions`. With `method: 'POST'` and the body `{ action: 'delete' }`, it deletes the record. It returns `403` when Console invocation is disabled for the Agent and `409` when the record is not terminal or the store does not support deletion. When invocation is disabled, the Console stays read-only and does not show the actions.
+
 
 Nuxt does not need an SEO module for the `X-Robots-Tag` default. If the app already uses `@nuxtjs/robots` or `@nuxtjs/seo`, add route metadata so its robots and sitemap modules also know that Console pages are not indexable:
 

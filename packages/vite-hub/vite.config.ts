@@ -149,6 +149,10 @@ export default defineConfig({
         to: "dist/console/runtime/components",
       },
       {
+        from: "src/console/runtime/components/console-session-actions.vue",
+        to: "dist/console/runtime/components",
+      },
+      {
         from: "src/console/runtime/components/console-session-inspector.vue",
         to: "dist/console/runtime/components",
       },
@@ -235,6 +239,7 @@ export default defineConfig({
       ...distributionEntries,
       "src/console/runtime/console-route.ts",
       "src/console/runtime/client/invocation.ts",
+      "src/console/runtime/client/invocation-deletion.ts",
       "src/console/runtime/client/request.ts",
       "src/console/runtime/client/env-management.ts",
       "src/console/runtime/client/env-status.ts",
@@ -270,6 +275,7 @@ export default defineConfig({
         delete exports["./console/runtime/console-route"];
         delete exports["./console/runtime/client/sections"];
         delete exports["./console/runtime/client/invocation"];
+        delete exports["./console/runtime/client/invocation-deletion"];
         delete exports["./console/runtime/client/request"];
         delete exports["./console/runtime/client/env-management"];
         delete exports["./console/runtime/client/env-status"];

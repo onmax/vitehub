@@ -50,8 +50,8 @@ describe("Console invocation history", () => {
     await vi.waitFor(() => expect(fixture.run).toHaveBeenCalledOnce())
     const input = fixture.run.mock.calls[0]![0].input
     expect(input).toMatchObject({
-      messages: [...messages, expect.objectContaining({ role: "user", parts: [expect.objectContaining({ type: "text", text: "And if that is blank?" })] })],
-      prompt: "And if that is blank?",
+      messages: [...messages, expect.objectContaining({ role: "user", parts: [expect.objectContaining({ type: "text", text: " And if that is blank? " })] })],
+      prompt: " And if that is blank? ",
     })
     expect(new Set(input.messages?.map(message => message.id)).size).toBe(3)
     await vi.waitFor(async () => {

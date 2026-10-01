@@ -1,3 +1,4 @@
+import { copyAgentInvocationCallerAbortSignal } from "./internal/invocation-input.ts"
 import { supportsSkillPersistence } from "./internal/skill-persistence.ts"
 import { markCapabilityInspection } from "./internal/capability-inspection.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
@@ -449,13 +450,13 @@ function getRunMessages(input: AgentRunInput): Message[] {
 function normalizeRunInput(input: AgentRunInput): AgentRunInput {
   if (input.messages || Array.isArray(input.prompt) || input.message === undefined) return input
   const { message: _message, ...next } = input
-  return { ...next, messages: getRunMessages(input) }
+  return copyAgentInvocationCallerAbortSignal(input, { ...next, messages: getRunMessages(input) })
 }
 
 function withMessages(input: AgentRunInput, messages: Message[]): AgentRunInput {
-  if (input.messages) return { ...input, messages }
-  if (Array.isArray(input.prompt)) return { ...input, prompt: messages }
-  return { ...input, messages }
+  if (input.messages) return copyAgentInvocationCallerAbortSignal(input, { ...input, messages })
+  if (Array.isArray(input.prompt)) return copyAgentInvocationCallerAbortSignal(input, { ...input, prompt: messages })
+  return copyAgentInvocationCallerAbortSignal(input, { ...input, messages })
 }
 
 async function callHooks<
