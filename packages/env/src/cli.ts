@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url"
 import { viteHubEnvServerModulePath } from "@vite-hub/internal/build/vite"
 import { withViteStageServer } from "@vite-hub/internal/vite-stage"
 
+import type { ViteStageServerConfig } from "@vite-hub/internal/vite-stage"
 import type { ViteHubCliContext, ViteHubCliContributor } from "@vite-hub/internal/cli"
 import type { ServerEnvInspection, ServerEnvInspectionEntry } from "./types.ts"
 import { envErrorDiagnostics } from "./error-diagnostics.ts"
@@ -87,7 +88,7 @@ async function inspectStage(input: EnvCliInspectInput, resolveProjectRoot: (vite
   const hasNuxtConfig = ["js", "mjs", "cjs", "ts", "mts", "cts"].some(extension => existsSync(join(projectRoot, `nuxt.config.${extension}`)))
   const stageVite = {
     loadEnv: vite.loadEnv,
-    async createServer(config: Parameters<typeof vite.createServer>[0] & { mode: string }) {
+    async createServer(config: ViteStageServerConfig) {
       if (!hasNuxtConfig) return await vite.createServer(config)
       const require = createRequire(join(projectRoot, "package.json"))
       // SAFETY: nuxt/kit owns loadNuxt. Resolve the application-installed version.
