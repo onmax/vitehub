@@ -780,6 +780,18 @@ add a policy, such as a required approval check; return `true` or a reason. Any
 other result runs a normal repair pass. `autoMerge: true` is a deprecated alias
 for `merge: "auto"`.
 
+After a repair push, the pass may continue for 3 minutes, then ends. The PR
+waits on the pushed head. Later events on a waiting PR start a pass only when
+they need one: new human or bot feedback, a new failing check, a merge conflict,
+or an unresolved review thread. Pending checks, the pushed head's synchronize
+event, and repeated results for failures the pass already saw keep it waiting.
+With `merge: "direct"`, passing required checks also wake it, so the host can
+merge. `reviewChecks` lists check names, such as a review bot's check, that keep
+a PR waiting while they run. A PR that ends three passes on one head without a
+push waits for new evidence. A stacked PR whose parent merged into the default
+branch is retargeted to the default branch. A provider rate limit is retried
+three times; after that, the host admits no PR work for an hour.
+
 Colocated `instructions.md` fills the preset's instruction slot without adding
 headings. Explicit `driver.instructions` replaces that slot. Use
 `{ mode: "replace", value: "..." }` to replace the complete instruction document.

@@ -23,6 +23,11 @@ export interface BabysitterOptions {
    * `"direct"` merges a ready PR into its default branch before any model pass.
    */
   merge: BabysitterMerge;
+  /**
+   * Check names whose pending run means a review is in progress, such as a review bot's check.
+   * A parked PR keeps waiting while one runs. Defaults to none.
+   */
+  reviewChecks: string[];
   /** @deprecated Use `merge: "auto"`. */
   autoMerge: boolean;
 }
@@ -65,16 +70,15 @@ export const babysitterPassResultSchema = {
 };
 
 /** A repair workflow. Connections, provider settings and host resources stay in the application. */
-export type BabysitterAgent = ConfiguredAgentDefinition<
-  BabysitterOptions,
-  AgentDefinition<
-    AgentRuntimeConfig,
-    unknown,
-    AgentInvokerProfile,
-    AgentInvocationContextValues,
-    BabysitterPassResult
-  >
->;
+type BabysitterDefinition = AgentDefinition<
+  AgentRuntimeConfig,
+  unknown,
+  AgentInvokerProfile,
+  AgentInvocationContextValues,
+  BabysitterPassResult
+> & { reviewChecks: string[] };
+
+export type BabysitterAgent = ConfiguredAgentDefinition<BabysitterOptions, BabysitterDefinition>;
 
 export const babysitter: BabysitterAgent = defineAgent({
   options: {
@@ -84,15 +88,16 @@ export const babysitter: BabysitterAgent = defineAgent({
     driver: "codex" as BuiltInAgentDriverName,
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The default widens to the documented merge union.
     merge: false as BabysitterMerge,
+    reviewChecks: [] as string[],
     autoMerge: false,
   },
-  configure: ({ filter, driver, merge, autoMerge }) => {
+  configure: ({ filter, driver, merge, reviewChecks, autoMerge }) => {
     if (driver !== "codex" && driver !== "claude-code") {
       throw new TypeError('[vitehub] Babysitter driver must be "codex" or "claude-code".');
     }
     // Validate merge settings when the Agent is defined, not on the first PR.
     resolveBabysitterMerge(merge, autoMerge);
-    return defineAgent({
+    const definition = defineAgent({
       description: "Repair selected pull requests and wait for their checks and reviews.",
       channels: { github: { pullRequest: { filter } } },
       driver: {
@@ -104,5 +109,9 @@ export const babysitter: BabysitterAgent = defineAgent({
         output: { schema: babysitterPassResultSchema },
       },
     });
+    // Keep preset-only policy on the configured definition so runtime hosts
+    // can read it alongside the other Babysitter options.
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- Object.assign preserves the configured AgentDefinition and adds the preset-owned reviewChecks policy.
+    return Object.assign(definition, { reviewChecks }) as BabysitterDefinition;
   },
 });

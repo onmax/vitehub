@@ -28,7 +28,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { merge?: unknown; driver?: string; mergeableState?: string } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -49,7 +49,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     user: { login: "developer" },
     labels: [{ name: "repair" }],
     head: { sha: head, ref: "fix", repo: { full_name: "acme/app" } },
-    base: { sha: "c".repeat(40), ref: "main", repo: { full_name: "acme/app", default_branch: "main" } },
+    base: { sha: "c".repeat(40), ref: preset.base ?? "main", repo: { full_name: "acme/app", default_branch: "main", owner: { login: "acme" } } },
     html_url: "https://github.com/acme/app/pull/12",
     mergeable_state: preset.mergeableState ?? "clean",
   });
@@ -115,7 +115,10 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
         ]),
         stderr: "",
       };
+    if (text.includes("-X PATCH")) return { stdout: JSON.stringify(pr()), stderr: "" };
     const path = args.find((arg) => arg.startsWith("repos/")) ?? "";
+    if (path.includes("pulls?state=all&head="))
+      return { stdout: (preset.parents ?? []).map((value) => JSON.stringify(value)).join("\n"), stderr: "" };
     const data =
       path.includes("pulls?state") || path === "repos/acme/app/pulls/12"
         ? [pr()]
@@ -200,6 +203,8 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     concurrency: 1,
     activityAuthors: ["vitehub-agent"],
     error: errors,
+    ...(preset.postPushGraceMs === undefined ? {} : { postPushGraceMs: preset.postPushGraceMs }),
+    ...(preset.providerRetryDelayMs === undefined ? {} : { providerRetryDelayMs: preset.providerRetryDelayMs }),
   });
   const passes: Array<{ tools: string[]; prompt: string; session: string; instructions: string }> = [];
   let operation: "pushRepair" | "requestAutoMerge" | "updatePullRequest" | undefined;
@@ -340,6 +345,127 @@ describe("Babysitter preset runtime", () => {
     // @ts-expect-error -- only provider Drivers can repair a checkout.
     expect(() => defineAgent({ extends: babysitter, options: { driver: "model" } })).toThrow(/driver must be/);
     expect(() => defineAgent({ extends: babysitter, options: { merge: { strategy: "direct", method: "fast-forward" as "squash" } } })).toThrow(/merge.method/);
+  });
+
+  it("retargets a stacked PR to the default branch after its parent merged there", async () => {
+    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { sha: "c".repeat(40), ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
+    const f = await fixture(false, false, { base: "feat/parent", parents });
+    try {
+      await f.reconcile();
+      const patch = f.command.mock.calls.find(([args]) => args.includes("PATCH"));
+      expect(patch?.[0]).toEqual(expect.arrayContaining(["repos/acme/app/pulls/12", "base=main"]));
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("keeps a stacked PR on its base while the parent is unmerged or landed elsewhere", async () => {
+    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { sha: "c".repeat(40), ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "feat/grandparent" } }];
+    const f = await fixture(false, false, { base: "feat/parent", parents });
+    try {
+      await f.reconcile();
+      expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(false);
+      expect(createProviderRuntime).toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("wakes a pushed head for a new failing check, not for its pending checks", async () => {
+    const f = await fixture();
+    f.choose("pushRepair");
+    try {
+      await f.reconcile();
+      f.choose(undefined);
+      const head = f.pr().head.sha;
+      const check = (id: number, status: string, conclusion: string | null) => f.runtime.inbox.ingest(`check-${id}-${status}`, "check_run", {
+        repository: { full_name: "acme/app" }, action: status === "completed" ? "completed" : "created",
+        check_run: { id, name: "test", head_sha: head, status, conclusion, app: { id: 1 }, pull_requests: [{ number: 12 }] },
+      });
+      await f.runtime.inbox.ingest("head-pushed", "pull_request", { repository: { full_name: "acme/app" }, action: "synchronize", pull_request: f.pr() });
+      await check(2, "in_progress", null);
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      await check(2, "completed", "failure");
+      await f.reconcile();
+      expect(f.passes).toHaveLength(2);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("ends a pass that keeps running after its repair push and parks on the pushed head", async () => {
+    const f = await fixture(false, false, { postPushGraceMs: 10 });
+    f.choose("pushRepair");
+    const implementation = createProviderRuntime.getMockImplementation()!;
+    createProviderRuntime.mockImplementation(async (...args: unknown[]) => {
+      const runtime = await implementation(...args);
+      const sendTurn = runtime.sendTurn;
+      // After pushing, the worker keeps watching checks instead of returning.
+      return { ...runtime, sendTurn: async (input: unknown) => { await sendTurn(input); return await new Promise(() => {}); } };
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledOnce();
+      const state = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(state.status).toBe("waiting");
+      expect(state.wait?.headSha).toBe("b".repeat(40));
+      expect(state.lease).toBeNull();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("retries a provider rate limit, then blocks admission", async () => {
+    const f = await fixture(false, false, { providerRetryDelayMs: 1 });
+    createProviderRuntime.mockImplementation(async () => { throw new Error("429 Too Many Requests") });
+    try {
+      await f.reconcile().catch(() => {});
+      expect(createProviderRuntime).toHaveBeenCalledTimes(4);
+      expect(await f.runtime.inbox.metaNumber("provider-quota-blocked-until")).toBeGreaterThan(Date.now());
+      await f.runtime.inbox.ingest("new-feedback", "issue_comment", { repository: { full_name: "acme/app" }, action: "created",
+        issue: { number: 12, pull_request: {} }, comment: { id: 9, body: "Please fix", user: { login: "human", type: "User" } } });
+      createProviderRuntime.mockClear();
+      await f.reconcile().catch(() => {});
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("does not retry a provider failure after updating GitHub metadata", async () => {
+    const f = await fixture(false, false, { providerRetryDelayMs: 1 });
+    f.choose("updatePullRequest", { title: "Repaired title" });
+    const implementation = createProviderRuntime.getMockImplementation()!;
+    createProviderRuntime.mockImplementation(async (...args) => {
+      const runtime = await implementation(...args);
+      return { ...runtime, events: {
+        async *[Symbol.asyncIterator]() {
+          for await (const event of runtime.events) {
+            yield event;
+            throw new Error("429 Too Many Requests");
+          }
+        },
+      } };
+    });
+    try {
+      await f.reconcile().catch(() => {});
+      expect(f.passes).toHaveLength(1);
+      expect(f.command.mock.calls.filter(([args]) => args.includes("PATCH"))).toHaveLength(1);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("resets the exhausted Babysitter budget only for new repair evidence", async () => {
+    const f = await fixture();
+    const feedback = (id: number) => f.runtime.inbox.ingest(`budget-feedback-${id}`, "issue_comment", {
+      repository: { full_name: "acme/app" }, action: "created", issue: { number: 12, pull_request: {} },
+      comment: { id, body: `Repair finding ${id}`, user: { login: "reviewer" } },
+    });
+    try {
+      await f.reconcile();
+      for (const id of [1, 2]) { await feedback(id); await f.reconcile(); }
+      expect((await f.runtime.inbox.get("acme/app", 12))?.progressBudget?.exhausted).toBe(true);
+      await f.runtime.inbox.ingest("budget-pending", "status", {
+        repository: { full_name: "acme/app" }, sha: f.pr().head.sha, context: "test", state: "pending",
+      });
+      await f.reconcile();
+      expect(f.passes).toHaveLength(3);
+      await feedback(3);
+      await f.reconcile();
+      expect(f.passes).toHaveLength(4);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.progressBudget?.count).toBe(1);
+    } finally { await f.runtime.inbox.close(); }
   });
 
   it("never merges into a base other than the default branch", () => {
@@ -515,12 +641,14 @@ describe("Babysitter preset runtime", () => {
     expect(state.status).toBe("waiting");
     expect(state.handled).toBe(state.generation);
     expect(state.attempts).toBe(0);
+    expect(state.wait?.headSha).toBe("b".repeat(40));
+    // The synchronize event for the repair's own push keeps the wait.
     await f.runtime.inbox.ingest("head-pushed", "pull_request", {
       repository: { full_name: "acme/app" },
       action: "synchronize",
       pull_request: f.pr(),
     });
-    expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("ready");
+    expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
   });
 
   it("retries checkout failure when no repair was pushed", async () => {
@@ -562,20 +690,25 @@ describe("Babysitter preset runtime", () => {
     expect(f.passes).toHaveLength(1);
     expect(f.command).toHaveBeenCalledTimes(requests);
     f.choose(undefined);
+    // The repair's own push and its pending checks do not start another pass.
     await f.runtime.inbox.ingest("head-pushed", "pull_request", {
       repository: { full_name: "acme/app" },
       action: "synchronize",
       pull_request: f.pr(),
     });
+    await f.runtime.inbox.ingest("check-pending", "check_run", {
+      repository: { full_name: "acme/app" }, action: "created",
+      check_run: { id: 2, name: "test", head_sha: f.pr().head.sha, status: "in_progress", conclusion: null, app: { id: 1 }, pull_requests: [{ number: 12 }] },
+    });
     await f.reconcile();
-    expect(f.passes).toHaveLength(2);
+    expect(f.passes).toHaveLength(1);
     await f.runtime.inbox.ingest("new-feedback", "pull_request_review", {
       repository: { full_name: "acme/app" }, action: "submitted", pull_request: f.pr(),
       review: { id: 42, body: "Check this follow-up", user: { login: "another-bot[bot]", type: "Bot" }, state: "COMMENTED", commit_id: f.pr().head.sha },
     });
     await f.reconcile();
-    expect(f.passes).toHaveLength(3);
-    expect(new Set(f.passes.map(pass => pass.session)).size).toBe(3);
+    expect(f.passes).toHaveLength(2);
+    expect(new Set(f.passes.map(pass => pass.session)).size).toBe(2);
     expect(f.runtime.workload()).toEqual({ running: 0 });
     await f.runtime.inbox.close();
   });

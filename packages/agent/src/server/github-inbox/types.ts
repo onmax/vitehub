@@ -9,7 +9,8 @@ const timestampFields = {
 }
 const reference = v.object({
   sha: v.optional(v.string()), ref: v.optional(v.string()),
-  repo: v.nullish(v.object({ full_name: v.string() })),
+  // Keep owner and default_branch: stack and merge decisions read them.
+  repo: v.nullish(v.looseObject({ full_name: v.string(), default_branch: v.optional(v.string()), owner: v.nullish(v.looseObject({ login: v.optional(v.string()) })) })),
 })
 const pullRequestSchema = v.looseObject({
   number: v.pipe(v.number(), v.integer(), v.minValue(1)),
@@ -30,7 +31,7 @@ interface GitHubTimestamps {
   updated_at?: string | null; updatedAt?: string | null; created_at?: string | null; createdAt?: string | null
   submitted_at?: string | null; submittedAt?: string | null; completed_at?: string | null; started_at?: string | null
 }
-interface GitHubRef { sha?: string; ref?: string; repo?: { full_name: string } | null }
+interface GitHubRef { sha?: string; ref?: string; repo?: { [key: string]: unknown; full_name: string; default_branch?: string; owner?: { [key: string]: unknown; login?: string } | null } | null }
 export interface GitHubPullRequestRecord extends GitHubTimestamps {
   [key: string]: unknown
   number: number; user?: GitHubActor | null; author?: GitHubActor | null
