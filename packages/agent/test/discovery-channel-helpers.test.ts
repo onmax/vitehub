@@ -861,6 +861,26 @@ it("keeps catch shadowing local to its block", async () => {
   expect((await discover(source))?.workspace).toBe("review")
 })
 
+it.each([
+  "using github = foreign",
+  "await using github = foreign",
+  "using other = foreign, github = foreign",
+  "await using other = foreign, github = foreign",
+])("rejects resource bindings that shadow imported Channel helpers: %s", async declaration => {
+  const source = `${imports} import { defineCapability } from "vite-hub/agent"; const foreign = Object.assign(() => ({ capabilities: [defineCapability({ id: "files", workspace: true })] }), { [Symbol.dispose]() {} }); export default defineAgent({ options: {}, configure: async () => { ${declaration}; return defineAgent({ channels: { custom: github({ pullRequest: false }) } }) } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
+it.each(["using", "await using"])("keeps %s shadowing local to its block", async keyword => {
+  const source = `${imports} { ${keyword} github = foreign; } export default defineAgent({ channels: { custom: github({ pullRequest: true }) } })`
+  expect((await discover(source))?.workspace).toBe("review")
+})
+
+it("preserves a trusted helper alias named using", async () => {
+  const source = `${imports} const using = github; export default defineAgent({ channels: { custom: using({ pullRequest: true }) } })`
+  expect((await discover(source))?.workspace).toBe("review")
+})
+
 it("rejects a reassigned relative Channel export", async () => {
   const source = 'import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal } })'
   const files = { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export let portal = github({ pullRequest: false }); portal = github({ pullRequest: true })' }

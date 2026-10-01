@@ -238,6 +238,12 @@ function isWorkspaceAgentDefinition(source: string, file: string): boolean {
 
 function inspectAgentModule(source: string, file: string, modules: Set<string>) {
   const { tokens, lineBreaks } = tokenizeAgentSource(source)
+  function declarationKeyword(index: number): boolean {
+    if (["const", "let", "var"].includes(tokens[index])) return true
+    // `using` is contextual; calls and properties with this name are not declarations.
+    return tokens[index] === "using" && !lineBreaks.has(index + 1)
+      && isIdentifier(tokens[index + 1] ?? "") && ["=", ":", "of"].includes(tokens[index + 2])
+  }
   function startsStatement(index: number): boolean {
     if (!lineBreaks.has(index) || !(isIdentifier(tokens[index]) || /^["'0-9]/.test(tokens[index] ?? ""))) return false
     if (["in", "instanceof", "as", "satisfies"].includes(tokens[index])) return false
@@ -352,7 +358,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           if (isIdentifier(token) && !["from", "as", "type"].includes(token) && tokens[j + 1] !== "as") imported.add(token)
         }
       }
-      if (["const", "let", "var"].includes(tokens[i])) {
+      if (declarationKeyword(i)) {
         // Record every declarator, such as `a` and `b` in `const a = x, b = y`.
         for (const [name, initializer] of declarators(i)) {
           declarations.set(name, initializer)
@@ -438,7 +444,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   const declaratorInitializers = new Map<number, number>()
   const declarationTypeTokens = new Set<number>()
   for (let keyword = 0; keyword < tokens.length; keyword++) {
-    if (!["const", "let", "var"].includes(tokens[keyword])) continue
+    if (!declarationKeyword(keyword)) continue
     for (const [, initializer, binding] of declarators(keyword)) {
       declaratorInitializers.set(binding, initializer)
       for (let index = binding + 1; index < initializer; index++) declarationTypeTokens.add(index)
@@ -708,12 +714,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   const destructuredImportedHelpers = new Map<number, Map<string, number>>()
   const variableDeclarations = new Map<number, number>()
   for (let i = 0; i < tokens.length; i++) {
-    if (!["const", "let", "var"].includes(tokens[i])) continue
+    if (!declarationKeyword(i)) continue
     variableDeclarations.set(i, i)
     const scope = tokenScopes[i]
     for (let cursor = i + 1; cursor < tokens.length; cursor++) {
       if (tokenScopes[cursor] !== scope) continue
-      if ([";", "const", "let", "var", "export", "return", "in", "of", "}", ")"].includes(tokens[cursor])) break
+      if (declarationKeyword(cursor) || [";", "export", "return", "in", "of", "}", ")"].includes(tokens[cursor])) break
       if (tokens[cursor] === "," && (["[", "{"].includes(tokens[cursor + 1])
         || (isIdentifier(tokens[cursor + 1] ?? "") && ["=", ":", "!"].includes(tokens[cursor + 2])))) {
         variableDeclarations.set(cursor, i)
@@ -992,10 +998,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         continue
       }
       let declaration = index - 2
-      while (declaration >= 0 && !["const", "let", "var", "for"].includes(tokens[declaration]!)) declaration--
+      while (declaration >= 0 && !declarationKeyword(declaration) && tokens[declaration] !== "for") declaration--
       // A predeclared `for...of` target is assigned on every iteration. Its
       // initialiser cannot safely be used for Channel ownership inference.
-      if (!["const", "let", "var"].includes(tokens[declaration]!)) continue
+      if (!declarationKeyword(declaration)) continue
       const loopDeclaration = tokens[declaration - 1] === "(" && (tokens[declaration - 2] === "for"
         || (tokens[declaration - 2] === "await" && tokens[declaration - 3] === "for"))
       if (!loopDeclaration) mutatedBindings.add(alias)
@@ -1017,7 +1023,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // no literal property to inspect. Invalidate local RHS references so a
   // later mutation through that property cannot use a stale initializer.
   for (let index = 0; index + 4 < tokens.length; index++) {
-    if (declarationTypeTokens.has(index) || ["const", "let", "var"].includes(tokens[index]!)) continue
+    if (declarationTypeTokens.has(index) || declarationKeyword(index)) continue
     if (!isIdentifier(tokens[index]) && ![")", "]", "}"].includes(tokens[index]!)) continue
     if (![".", "["].includes(tokens[index + 1]!)) continue
     let assignment = memberCallEnd(index)
@@ -1280,7 +1286,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       const token = tokens[i]
       if (expressionDepth === 0) {
         if (i > index && conditionalDepth === 0 && startsStatement(i)) break
-        if ([";", ",", ":", "export", "const", "let", "var", ")", "}", "]"].includes(token) && conditionalDepth === 0) break
+        if ((declarationKeyword(i) || [";", ",", ":", "export", ")", "}", "]"].includes(token)) && conditionalDepth === 0) break
         if (token === "?" && tokens[i + 1] !== "." && tokens[i + 1] !== "?" && tokens[i - 1] !== "?") {
           if (conditionalDepth === 0) consequent = i + 1
           conditionalDepth++
@@ -2039,8 +2045,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
 
-  // Returns [name, initializer, binding] tuples for a `const`, `let`, or
-  // `var` declaration. Declarators without an initializer are skipped.
+  // Returns [name, initializer, binding] tuples for variable and resource
+  // declarations. Declarators without an initializer are skipped.
   function declarators(keyword: number): [string, number, number][] {
     const result: [string, number, number][] = []
     let name = keyword + 1
@@ -2054,7 +2060,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
       if (depth === 0) {
         if (token === ";" || (k > keyword + 1 && (startsStatement(k)
-          || (lineBreaks.has(k) && ["const", "let", "var", "export", "import", "function", "class"].includes(token))))) break
+          || (lineBreaks.has(k) && (declarationKeyword(k) || ["export", "import", "function", "class"].includes(token)))))) break
         if (token === "=" && initializer === undefined && tokens[k + 1] !== ">") {
           initializer = k + 1
           if (isIdentifier(tokens[name] ?? "")) result.push([tokens[name]!, initializer, name])
@@ -2317,7 +2323,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           returnGroup = { depth: Number.POSITIVE_INFINITY }
         }
         // Declarations also end a preceding semicolon-free return statement.
-        else if (callbackDepth === returnExpressionDepth && [";", "const", "let", "var"].includes(token)) returnExpression = false
+        else if (callbackDepth === returnExpressionDepth && (token === ";" || declarationKeyword(i))) returnExpression = false
         if (["{", "(", "["].includes(token)) callbackDepth++
         else if (["}", ")", "]"].includes(token)) callbackDepth--
         if (callbackDepth < returnExpressionDepth) returnExpression = false
