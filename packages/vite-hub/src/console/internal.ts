@@ -1,8 +1,9 @@
-import type { ServerEnvDescription } from "@vite-hub/env"
+import type { ServerEnvDescription, ServerEnvInspection } from "@vite-hub/env"
 import type { AgentInvocations } from "@vite-hub/agent"
 import type { BlobStorage } from "@vite-hub/blob"
 import type { RuntimeDatabaseEntry } from "@vite-hub/database/drizzle"
 import type { KVStorage } from "@vite-hub/kv"
+import type { ScheduleDefinitionRegistry } from "@vite-hub/schedule"
 import type { ConsoleDefinitionCatalog } from "./runtime/definitions.ts"
 import type { ConsoleSectionId } from "./runtime/sections.ts"
 
@@ -30,12 +31,14 @@ export const consoleKVRootKey: unique symbol = Symbol.for("vitehub.console.kv.ro
 export const consoleEnvKey: unique symbol = Symbol.for("vitehub.console.env")
 export const consoleEnvRegistryKey: unique symbol = Symbol.for("vitehub.console.env.registry")
 export const consoleEnvRootKey: unique symbol = Symbol.for("vitehub.console.env.root")
+export const consoleSchedulesKey: unique symbol = Symbol.for("vitehub.console.schedules")
+export const consoleSchedulesRegistryKey: unique symbol = Symbol.for("vitehub.console.schedules.registry")
+export const consoleSchedulesRootKey: unique symbol = Symbol.for("vitehub.console.schedules.root")
 export const consoleConnectionsKey: unique symbol = Symbol.for("vitehub.console.connections")
 export const consoleConnectionsRegistryKey: unique symbol = Symbol.for("vitehub.console.connections.registry")
 export const consoleConnectionsRootKey: unique symbol = Symbol.for("vitehub.console.connections.root")
 export const consoleInvocationsRootIdentityRegistryKey: unique symbol = Symbol.for("vitehub.console.invocations.root-identities")
 export const consoleInvocationsRevisionRegistryKey: unique symbol = Symbol.for("vitehub.console.invocations.revisions")
-export const consoleProjectRootKey: typeof consoleInvocationsRootKey = consoleInvocationsRootKey
 export const consoleSectionsKey: unique symbol = Symbol.for("vitehub.console.sections")
 export const consoleAuthKey: unique symbol = Symbol.for("vitehub.console.auth")
 export const consoleProjectNameKey: unique symbol = Symbol.for("vitehub.console.project-name")
@@ -93,6 +96,12 @@ type ConsoleKVByRoot = {
 type ConsoleEnvByRoot = {
   get(key: string): ConsoleEnvInspection | undefined
   set(key: string, value: ConsoleEnvInspection): unknown
+  readonly size: number
+}
+
+type ConsoleSchedulesByRoot = {
+  get(key: string): ScheduleDefinitionRegistry | undefined
+  set(key: string, value: ScheduleDefinitionRegistry): unknown
   readonly size: number
 }
 
@@ -163,7 +172,9 @@ export type ConsoleInvocationScope = {
   [consoleConnectionsKey]?: ConsoleConnectionsInspection
   [consoleConnectionsRegistryKey]?: ConsoleConnectionsByRoot
   [consoleConnectionsRootKey]?: string
-  [consoleProjectRootKey]?: string
+  [consoleSchedulesKey]?: ScheduleDefinitionRegistry
+  [consoleSchedulesRegistryKey]?: ConsoleSchedulesByRoot
+  [consoleSchedulesRootKey]?: string
   [consoleInvocationsRootIdentityRegistryKey]?: ConsoleInvocationIdentitiesByRoot
   [consoleSectionsKey]?: readonly ConsoleSectionId[]
   [consoleAuthKey]?: ConsoleAuthMode | false
@@ -687,14 +698,6 @@ export function resolveConsoleProjectName(scope: ConsoleInvocationScope = defaul
   if (root) return registered?.get(root)?.projectName ?? scope[consoleProjectNameKey]
   if (registered && registered.size > 1) return scope[consoleProjectNameKey]
   return registered?.values().next().value?.projectName ?? scope[consoleProjectNameKey]
-}
-
-export function resolveConsoleProjectRoot(scope: ConsoleInvocationScope = defaultConsoleInvocationScope()): string | undefined {
-  return scope[consoleInvocationsRootKey]
-}
-
-export function resolveConsoleInvocationsRoot(scope: ConsoleInvocationScope = defaultConsoleInvocationScope()): string | undefined {
-  return scope[consoleInvocationsRootKey]
 }
 
 export function resolveConsoleInvocationsIdentity(scope: ConsoleInvocationScope = defaultConsoleInvocationScope()): string | undefined {
