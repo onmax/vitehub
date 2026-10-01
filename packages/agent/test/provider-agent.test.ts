@@ -4672,7 +4672,7 @@ cli_auth_credentials_store = "keyring"
     const calls = createProviderRuntime.mock.calls.length
     // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
     await expect(createProviderAgentAdapter({ cwd: missing, provider: "codex" }).generate(context("thread-provider-cwd-missing") as never))
-      .rejects.toMatchObject({ code: "AGENT_R0939" })
+      .rejects.toMatchObject({ code: "AGENT_R0938" })
     expect(createProviderRuntime.mock.calls.length).toBe(calls)
     await expect(access(missing)).rejects.toMatchObject({ code: "ENOENT" })
   })

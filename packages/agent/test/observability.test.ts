@@ -20,6 +20,28 @@ function setup(overrides: Partial<AgentEvlogExporter> = {}, options = {}) {
 }
 afterEach(async () => { await Promise.allSettled(instances.splice(0).map(item => item.flush())); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
+it.each(["production", undefined])("adds resolved default identity to all telemetry with NODE_ENV %s", async (nodeEnv) => {
+  vi.stubEnv("NODE_ENV", nodeEnv)
+  try {
+    const { telemetry, exporter } = setup({}, { service: undefined, environment: undefined })
+    const identity = { service: "vitehub-agent", environment: nodeEnv || "development" }
+    telemetry.event("default.event")
+    await telemetry.capture("default.capture", {})
+    telemetry.exception(new Error("default failure"))
+    const agent = defineAgent({ driver: { run: () => "answer" }, capabilities: [telemetry.capability] })
+    await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil }, { prompt: "hello" })
+    await Promise.allSettled(background.splice(0))
+    await telemetry.flush()
+    expect(exporter.capture).toHaveBeenCalledWith("default.event", expect.objectContaining(identity), expect.anything())
+    expect(exporter.capture).toHaveBeenCalledWith("default.capture", expect.objectContaining(identity), expect.anything())
+    expect(exporter.capture).toHaveBeenCalledWith("$ai_trace", expect.objectContaining({ ...identity, status: "completed" }), expect.anything())
+    expect(exporter.exception).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining(identity), expect.anything())
+  }
+  finally {
+    vi.unstubAllEnvs()
+  }
+})
+
 it("keeps concurrent invocation identity and terminal events separate", async () => {
   const { telemetry, exporter } = setup()
   const agent = defineAgent({ driver: { run: () => "answer" }, capabilities: [telemetry.capability] })
@@ -166,7 +188,7 @@ it.each([
   vi.stubGlobal("__VITEHUB_APP_BASE_URL__", "/inspect/")
   const { telemetry, exporter } = setup()
   const hooks = new Map<string, Function>()
-  telemetry.plugin({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
+  telemetry.plugin({ hooks: { hook(name, callback) { hooks.set(name, callback) }, removeHook() {} } })
   const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
   const agent = defineAgent({ name, invocations, driver: { run: () => "answer" }, capabilities: [telemetry.capability] })
   await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil, agentIdentity: { name: `discovered-${name}` }, run: { runId: "links" } }, { prompt: "hello" })
@@ -205,7 +227,7 @@ it.each(["failures", "all", false] as const)("preserves application logs with HT
 it.each(["minimal", "standard", "full"] as const)("logs HTTP 4xx failures with request metadata at %s level", async (level) => {
   const { telemetry, exporter } = setup({}, { level, logs: false })
   const hooks = new Map<string, Function>()
-  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
+  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) }, removeHook() {} } })
   const req = Object.assign(new Request("https://example.test/missing?token=secret"), { context: { requestId: "req-1" } })
   hooks.get("error")!(Object.assign(new Error("Not found"), { statusCode: 404 }), { event: { req } })
   await telemetry.flush()
@@ -216,7 +238,7 @@ it.each(["minimal", "standard", "full"] as const)("logs HTTP 4xx failures with r
 it("keeps non-request 4xx failures as exceptions", async () => {
   const { telemetry, exporter } = setup()
   const hooks = new Map<string, Function>()
-  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
+  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) }, removeHook() {} } })
   hooks.get("error")!(Object.assign(new Error("Upstream rejected background task"), { statusCode: 403 }), {})
   await telemetry.flush()
   expect(exporter.exception).toHaveBeenCalledTimes(1)
@@ -226,7 +248,7 @@ it("keeps non-request 4xx failures as exceptions", async () => {
 it.each([500, 503])( "keeps HTTP %s failures as exceptions", async (statusCode) => {
   const { telemetry, exporter } = setup()
   const hooks = new Map<string, Function>()
-  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
+  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) }, removeHook() {} } })
   const req = Object.assign(new Request("https://example.test/fail"), { context: { requestId: "req-5xx" } })
   hooks.get("error")!(Object.assign(new Error("Server error"), { statusCode }), { event: { req } })
   await telemetry.flush()
@@ -236,7 +258,7 @@ it.each([500, 503])( "keeps HTTP %s failures as exceptions", async (statusCode) 
 it.each(["statusCode", "status"])("keeps errors with a throwing %s getter on the exception path", async (property) => {
   const { telemetry, exporter } = setup()
   const hooks = new Map<string, Function>()
-  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
+  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) }, removeHook() {} } })
   const error = Object.defineProperty(new Error("Unknown failure"), property, {
     get() { throw new Error("Cannot inspect status") },
   })
@@ -245,4 +267,134 @@ it.each(["statusCode", "status"])("keeps errors with a throwing %s getter on the
   await telemetry.flush()
   expect(exporter.exception).toHaveBeenCalledTimes(1)
   expect(exporter.capture).not.toHaveBeenCalled()
+})
+
+it("installs one host instance for useObservability() and every Agent", async () => {
+  const { useObservability } = await import("../src/observability.ts")
+  const { installObservability } = await import("../src/observability/host.ts")
+  const { createMemoryAgentInvocationStore, defineAgentInvocations } = await import("../src/server.ts")
+  expect(() => useObservability()).toThrow("Observability is not configured")
+  const exporter = { capture: vi.fn(async () => {}), exception: vi.fn(async () => {}), logs: vi.fn(async () => {}), flush: vi.fn(async () => {}) }
+  const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+  const plugin = installObservability({ service: "host", exporter, papercuts: { invocations: () => invocations } })
+  const closeHooks: Function[] = []
+  plugin({ hooks: { hook(name, callback) { if (name === "close") closeHooks.push(callback) }, removeHook() {} } })
+  const observability = useObservability()
+  expect(observability.status()).toMatchObject({ configured: true, papercuts: { running: true, pending: 0, delivered: 0, failed: 0 } })
+
+  // The Agent declares no Capabilities; the host instance still receives its terminal event.
+  const agent = defineAgent({ driver: { run: () => "answer" } })
+  await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil, agentIdentity: { name: "bot" }, run: { runId: "host" } }, { prompt: "hello" })
+  await Promise.allSettled(background.splice(0))
+  expect(exporter.capture).toHaveBeenCalledWith("$ai_trace", expect.objectContaining({ agent_name: "bot", service: "host", status: "completed" }), expect.anything())
+
+  for (const close of closeHooks) await close()
+  expect(observability.status().closed).toBe(true)
+  expect(() => useObservability()).toThrow("Observability is not configured")
+})
+
+it("clears host Observability when exporter shutdown flush rejects", async () => {
+  const { installObservability } = await import("../src/observability/host.ts")
+  const { useObservability } = await import("../src/observability.ts")
+  const closeHooks: Array<() => Promise<void>> = []
+  const host = (close: Array<() => Promise<void>>) => ({
+    hooks: {
+      hook(...registration: [name: "close", callback: () => Promise<void>] | [name: "request" | "evlog:drain" | "error", callback: unknown]) {
+        if (registration[0] === "close") close.push(registration[1])
+      },
+      removeHook() {},
+    },
+  })
+  installObservability({ service: "failed-host", exporter: { capture: async () => {}, exception: async () => {}, logs: async () => {}, flush: async () => { throw new Error("flush failed") } } })(host(closeHooks))
+  await expect((async () => { for (const close of closeHooks) await close() })()).rejects.toThrow("flush failed")
+  expect(() => useObservability()).toThrow("Observability is not configured")
+  const replacementClose: Array<() => Promise<void>> = []
+  installObservability({ service: "replacement" })(host(replacementClose))
+  for (const close of replacementClose) await close()
+})
+
+it("rolls back host Observability when host attachment fails", async () => {
+  const { installObservability } = await import("../src/observability/host.ts")
+  const { useObservability } = await import("../src/observability.ts")
+  const plugin = installObservability({ service: "failed-attachment" })
+  expect(() => plugin({ hooks: { hook() { throw new Error("hook failed") }, removeHook() {} } })).toThrow("hook failed")
+  expect(() => useObservability()).toThrow("Observability is not configured")
+
+  const closeHooks: Array<() => Promise<void>> = []
+  installObservability({ service: "retry" })({
+    hooks: {
+      hook(name, callback) { if (name === "close") closeHooks.push(callback as () => Promise<void>) },
+      removeHook() {},
+    },
+  })
+  for (const close of closeHooks) await close()
+})
+
+it("cleans up telemetry when a later host attachment hook fails", async () => {
+  const { installObservability } = await import("../src/observability/host.ts")
+  const { useObservability } = await import("../src/observability.ts")
+  const flush = vi.fn(async () => {})
+  const plugin = installObservability({ service: "partial-attachment", exporter: { capture: async () => {}, exception: async () => {}, logs: async () => {}, flush } })
+  const removed: string[] = []
+  expect(() => plugin({ hooks: {
+    hook(name) { if (name === "close") throw new Error("close hook failed") },
+    removeHook(name) { removed.push(name) },
+  } })).toThrow("close hook failed")
+  await new Promise(resolve => setTimeout(resolve, 10))
+  expect(flush).toHaveBeenCalledOnce()
+  expect(removed).toEqual(["request", "evlog:drain", "error"])
+  expect(() => useObservability()).toThrow("Observability is not configured")
+})
+
+it("uses hook disposers when a host exposes removeHook", async () => {
+  const { installObservability } = await import("../src/observability/host.ts")
+  const { useObservability } = await import("../src/observability.ts")
+  const flush = vi.fn(async () => {})
+  const disposers: Array<() => void> = []
+  const plugin = installObservability({ service: "disposer-attachment", exporter: { capture: async () => {}, exception: async () => {}, logs: async () => {}, flush } })
+  expect(() => plugin({ hooks: {
+    hook(name) {
+      if (name === "close") throw new Error("close hook failed")
+      const dispose = vi.fn()
+      disposers.push(dispose)
+      return dispose
+    },
+    removeHook() {},
+  } })).toThrow("close hook failed")
+  await new Promise(resolve => setTimeout(resolve, 10))
+  expect(flush).toHaveBeenCalledOnce()
+  expect(disposers).toHaveLength(3)
+  for (const dispose of disposers) expect(dispose).toHaveBeenCalledOnce()
+  expect(() => useObservability()).toThrow("Observability is not configured")
+})
+
+it("preserves host ownership and replaces injected Capabilities after shutdown", async () => {
+  const { useObservability } = await import("../src/observability.ts")
+  const { installObservability } = await import("../src/observability/host.ts")
+  const firstClose: Function[] = []
+  const secondClose: Function[] = []
+  const first = installObservability({ service: "first", exporter: { capture: vi.fn(async () => {}), exception: vi.fn(async () => {}), logs: vi.fn(async () => {}), flush: vi.fn(async () => {}) } })
+  first({ hooks: { hook(name, callback) { if (name === "close") firstClose.push(callback) }, removeHook() {} } })
+  const firstInstance = useObservability()
+  let firstClosed = false
+  try {
+    expect(() => installObservability({ service: "second" })).toThrow("Close its host")
+    expect(useObservability()).toBe(firstInstance)
+    expect(() => defineAgent({ capabilities: [{ id: "observability" }], driver: { run: () => "answer" } })).toThrow()
+    expect(() => defineAgent({ capabilities: [{ id: "custom", capabilities: [{ id: "observability" }] }], driver: { run: () => "answer" } })).toThrow()
+    const agent = defineAgent({ driver: { run: () => "answer" } })
+    for (const close of firstClose) await close()
+    firstClosed = true
+    const capture = vi.fn(async () => {})
+    const second = installObservability({ service: "second", exporter: { capture, exception: vi.fn(async () => {}), logs: vi.fn(async () => {}), flush: vi.fn(async () => {}) } })
+    second({ hooks: { hook(name, callback) { if (name === "close") secondClose.push(callback) }, removeHook() {} } })
+    await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil, agentIdentity: { name: "bot" }, run: { runId: "replacement" } }, { prompt: "hello" })
+    await Promise.allSettled(background.splice(0))
+    expect(capture).toHaveBeenCalledWith("$ai_trace", expect.objectContaining({ service: "second", status: "completed" }), expect.anything())
+  }
+  finally {
+    if (!firstClosed) for (const close of firstClose) await close()
+    for (const close of secondClose) await close()
+  }
+  expect(() => useObservability()).toThrow("Observability is not configured")
 })
