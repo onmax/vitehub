@@ -218,10 +218,10 @@ function mergeNitroScheduleConfig(value: unknown, options: { crons: string[], mo
  * Adds the development-only Nitro handler that runs `vitehub schedule` operations in the Nitro runtime.
  * Build output never contains this handler.
  */
-async function addNitroScheduleDevHandler(value: unknown, root: string, importBase?: string): Promise<NitroConfig> {
-  const handler = resolve(root, generatedNitroDevHandler)
+async function addNitroScheduleDevHandler(value: unknown, roots: ReturnType<typeof resolveSchedulePluginRoots>, importBase?: string): Promise<NitroConfig> {
+  const handler = resolve(roots.projectRoot, generatedNitroDevHandler)
   await mkdir(dirname(handler), { recursive: true })
-  const contents = renderViteHubNitroDevHandler({ context: { rootDir: root }, export: "handleScheduleDevRequest", module: `${importBase ?? schedulePackageName}/runtime/dev` })
+  const contents = renderViteHubNitroDevHandler({ context: { rootDir: roots.viteRoot }, export: "handleScheduleDevRequest", module: `${importBase ?? schedulePackageName}/runtime/dev` })
   if (!existsSync(handler) || await readFile(handler, "utf8") !== contents) await writeFile(handler, contents, "utf8")
   const kit = createNitroServerKit(cloneNitroConfig(value))
   kit.addHandler({ handler, route: scheduleDevRuntimeRoute })
@@ -618,7 +618,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
         serverDirs,
       })
       if (env.command === "serve") {
-        Reflect.set(config, "nitro", await addNitroScheduleDevHandler(nitro ?? currentNitro, roots.projectRoot, internalOptions.importBase))
+        Reflect.set(config, "nitro", await addNitroScheduleDevHandler(nitro ?? currentNitro, roots, internalOptions.importBase))
         return
       }
       if (!nitro) return null
@@ -626,7 +626,6 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
     },
     async configureServer(server) {
       closeDevEndpoint = await registerScheduleDevEndpoint(server, {
-        rootDir: projectRoot,
         nitroBaseURL: () => {
           // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
           const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL

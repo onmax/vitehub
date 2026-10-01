@@ -14,8 +14,6 @@ export type ScheduleDevServer = ViteHubNitroDevServer & {
 }
 
 export interface ScheduleDevEndpointOptions {
-  /** Project root when it differs from the Vite root. */
-  rootDir?: string
   /** Nitro `baseURL`. Nitro routes use this prefix. */
   nitroBaseURL?: () => string | undefined
 }
@@ -28,7 +26,7 @@ export interface ScheduleDevEndpointOptions {
  * Nitro environment get `501` with a clear message. The returned cleanup also supports middleware-mode servers.
  */
 export async function registerScheduleDevEndpoint(server: ScheduleDevServer, options: ScheduleDevEndpointOptions = {}): Promise<() => Promise<void>> {
-  const rootDir = options.rootDir ?? server.config.root
+  const rootDir = server.config.root
   const { serverId, token } = await createViteHubDevToken(rootDir, scheduleDevTokenNamespace)
   const close = () => removeViteHubDevToken(rootDir, { namespace: scheduleDevTokenNamespace, serverId })
   server.httpServer?.once("close", () => { void close().catch(() => {}) })
