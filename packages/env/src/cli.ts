@@ -87,6 +87,7 @@ function isInspection(value: unknown): value is ServerEnvInspection {
 }
 
 async function inspectStage(input: EnvCliInspectInput, resolveProjectRoot: (viteRoot: string) => string): Promise<ServerEnvInspection> {
+  const explicitEnv = { ...input.env }
   const vite = await import("vite")
   const projectRoot = resolveProjectRoot(input.rootDir)
   const hasNuxtConfig = ["js", "mjs", "cjs", "ts", "mts", "cts"].some(extension => existsSync(join(projectRoot, `nuxt.config.${extension}`)))
@@ -99,7 +100,6 @@ async function inspectStage(input: EnvCliInspectInput, resolveProjectRoot: (vite
       const kit = await import(pathToFileURL(require.resolve("nuxt/kit")).href) as {
         loadNuxt: (options: { cwd: string, dev: true, envName: string, overrides: { devtools: { enabled: false }, vite: { mode: string }, vitehubCliDiscovery: true }, ready: true }) => Promise<{ close: () => Promise<void>, options: { vite?: import("vite").InlineConfig } }>
       }
-      const explicitEnv = { ...input.env }
       Object.assign(process.env, vite.loadEnv(input.stage, projectRoot, ""))
       for (const [key, value] of Object.entries(explicitEnv)) if (value !== undefined) process.env[key] = value
       const nuxt = await kit.loadNuxt({ cwd: projectRoot, dev: true, envName: input.stage, overrides: { devtools: { enabled: false }, vite: { mode: input.stage }, vitehubCliDiscovery: true }, ready: true })
@@ -118,10 +118,15 @@ async function inspectStage(input: EnvCliInspectInput, resolveProjectRoot: (vite
       }
     },
   }
-  return await withViteStageServer(stageVite, input, async (server) => {
+  return await withViteStageServer(stageVite, { ...input, env: explicitEnv }, async (server) => {
     // The Env plugin writes this module while the stage server resolves its config.
     // Nuxt reloads its stage-specific declarations before this server resolves config.
-    const modulePath = viteHubEnvServerModulePath(server.config.root)
+    const selectedPlugin = server.config.plugins.find(plugin => plugin.name === "@vite-hub/env/vite")
+    const selectedAPI = v.safeParse(v.object({ resolveProjectRoot: v.function() }), selectedPlugin?.api)
+    if (!selectedAPI.success) throw envErrorDiagnostics.ENV_R0024({ message: "[vitehub] The selected stage does not configure the Env plugin." })
+    const selectedRoot: unknown = selectedAPI.output.resolveProjectRoot(server.config.root)
+    if (!v.is(v.string(), selectedRoot)) throw envErrorDiagnostics.ENV_R0024({ message: "[vitehub] The selected Env plugin returned an invalid project root." })
+    const modulePath = viteHubEnvServerModulePath(selectedRoot)
     const generated = await server.ssrLoadModule(pathToFileURL(modulePath).href)
     const inspect: unknown = generated.inspectServerEnv
     if (!v.is(v.function(), inspect)) throw envErrorDiagnostics.ENV_R0024({ message: `[vitehub] The generated Server Env module does not export inspectServerEnv(): ${modulePath}` })
