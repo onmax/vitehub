@@ -1504,7 +1504,7 @@ function conversationAnswers(activities: readonly InvocationActivity[]) {
   const lastUser = orderedActivities.findLastIndex(activity => activity.kind === "message" && activity.role === "user");
   const lastAssistant = orderedActivities.findLastIndex((activity, index) => index > lastUser
     && activity.kind === "message" && activity.role === "assistant" && activity.attributes["message.phase"] !== "commentary");
-  const tail = firstUser >= 0 ? orderedActivities.slice(firstUser + 1) : [];
+  const tail = orderedActivities.slice(firstUser + 1);
   const finalBody = lastAssistant >= 0 ? orderedActivities[lastAssistant]!.body?.trim() : undefined;
   const answers = new Set(uniqueDeliveredAnswers(tail, new Set(finalBody ? [finalBody] : [])));
   return { orderedActivities, firstUser, lastAssistant, tail, answers };
@@ -1539,11 +1539,11 @@ function renderInvocationActivities(
   messageRendering: MessageRendering,
 ) {
   const { orderedActivities, firstUser, lastAssistant, tail, answers } = conversationAnswers(activities);
-  if (firstUser < 0) return renderActivitySequence(orderedActivities, invocation, expanded, toggleExpanded, inspect, messageRendering);
+  if (firstUser < 0 && !orderedActivities.some(isDeliveredAnswer)) return renderActivitySequence(orderedActivities, invocation, expanded, toggleExpanded, inspect, messageRendering);
 
-  const history = orderedActivities.slice(0, firstUser).filter(isVisibleMessage);
-  const workBeforePrompt = orderedActivities.slice(0, firstUser).filter(activity => activity.kind !== "message");
-  const prompt = orderedActivities[firstUser]!;
+  const history = orderedActivities.slice(0, Math.max(firstUser, 0)).filter(isVisibleMessage);
+  const workBeforePrompt = orderedActivities.slice(0, Math.max(firstUser, 0)).filter(activity => activity.kind !== "message");
+  const prompt = orderedActivities[firstUser];
   const hasLaterCommentary = lastAssistant >= 0 && orderedActivities.slice(lastAssistant + 1).some(activity =>
     activity.kind === "message" && activity.role === "assistant" && activity.attributes["message.phase"] === "commentary");
   if (hasLaterCommentary) {
@@ -1555,7 +1555,7 @@ function renderInvocationActivities(
       answers.has(activity) ? [deliveryAnswer(activity)] : activity.kind === "delivery" ? [] : [activity]);
     return [
       renderPreviousMessages(history, invocation, expanded, toggleExpanded, inspect, messageRendering),
-      renderInvocationActivity(prompt, expanded, toggleExpanded, inspect, messageRendering),
+      prompt ? renderInvocationActivity(prompt, expanded, toggleExpanded, inspect, messageRendering) : null,
       renderWorkSummary(work, invocation, expanded, workOpen, setWorkOpen, toggleExpanded, inspect, messageRendering),
       ...beforeAnswer.filter(activity => answers.has(activity))
         .map(activity => renderInvocationActivity(deliveryAnswer(activity), expanded, toggleExpanded, inspect, messageRendering)),
@@ -1566,7 +1566,7 @@ function renderInvocationActivities(
 
   return [
     renderPreviousMessages(history, invocation, expanded, toggleExpanded, inspect, messageRendering),
-    renderInvocationActivity(prompt, expanded, toggleExpanded, inspect, messageRendering),
+    prompt ? renderInvocationActivity(prompt, expanded, toggleExpanded, inspect, messageRendering) : null,
     renderWorkSummary(work, invocation, expanded, workOpen, setWorkOpen, toggleExpanded, inspect, messageRendering),
     ...[...[...answers].map(deliveryAnswer), ...(lastAssistant >= 0 ? [orderedActivities[lastAssistant]!] : [])]
       .sort((left, right) => left.sequence - right.sequence)

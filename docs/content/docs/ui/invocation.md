@@ -8,7 +8,7 @@ icon: i-ph-activity-light
 
 `AgentInvocation` turns append-only observations into a conversation. Each message shows its role: the prompt shows its known author, other user messages show `You`, and replies show `Assistant`. User prompts align to the end. Commands, reasoning, tool activity, and file changes collapse into one work group and expand in place.
 
-A completed `reply` or `update` delivery with captured content is the answer the user saw, so it appears as an assistant message after the work group. The delivery row stays in the work group without a second copy of the text. When the delivered text equals the final assistant message, only the message appears. Status updates and failed deliveries keep their text in the work group.
+A completed `reply` or `update` delivery with captured content is the answer the user saw, so it appears as an assistant message after the work group. This also applies when the invocation has no visible user prompt. The delivery row stays in the work group without a second copy of the text. When the delivered text equals the final assistant message, only the message appears. Status updates and failed deliveries keep their text in the work group.
 
 ::component-preview{name="InvocationExample" flush}
 ::

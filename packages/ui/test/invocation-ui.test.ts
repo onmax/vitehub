@@ -651,11 +651,10 @@ describe("Agent Invocation UI", () => {
       updatedAt: timestamp,
     } satisfies AgentInvocationView;
     const wrapper = mount(AgentInvocation, { props: { invocation } });
-    const delivery = wrapper.get('[data-kind="delivery"]');
+    const answer = wrapper.get('.vh-invocation-message[data-role="assistant"]');
 
-    expect(delivery.find("summary").exists()).toBe(true);
-    expect(delivery.get(".vh-invocation-delivery__body").text()).toBe("Bounded reply.");
-    expect(delivery.text()).toContain("Some activity details were omitted.");
+    expect(answer.get(".vh-invocation-message__body").text()).toBe("Bounded reply.");
+    expect(answer.text()).toContain("Some activity details were omitted.");
   });
 
   it("preserves Markdown-significant whitespace in captured delivery bodies", () => {
@@ -677,9 +676,9 @@ describe("Agent Invocation UI", () => {
       traceId: "trace",
       updatedAt: timestamp,
     } satisfies AgentInvocationView;
-    const delivery = mount(AgentInvocation, { props: { invocation } }).get('[data-kind="delivery"]');
+    const wrapper = mount(AgentInvocation, { props: { invocation }, global: { stubs: { AgentMarkdown: true } } });
 
-    expect(delivery.get(".vh-invocation-delivery__body .vh-invocation-event__markdown").element.textContent)
+    expect(wrapper.getComponent({ name: "AgentMarkdown" }).props("value"))
       .toBe("    delivered as code\n");
   });
 
@@ -975,6 +974,40 @@ describe("Agent Invocation UI", () => {
       .toEqual(finalResponse === "Finished." ? ["Done.", "Done.", "Finished."] : ["Done.", "Done."]);
     const inspector = mount(AgentInvocationInspector, { props: { invocation } });
     expect(inspector.get(".vh-invocation-inspector__metrics").text()).toContain(`Messages${visibleMessageCount}`);
+  });
+
+  it.each(["reply", "update"].flatMap(kind =>
+    [undefined, "Done.", "Finished."].flatMap(finalResponse =>
+      (finalResponse ? [false, true] : [false]).map(hasFollowup => ({ kind, finalResponse, hasFollowup })))),
+  )("renders a promptless $kind answer with final response $finalResponse and followup $hasFollowup", async ({ kind, finalResponse, hasFollowup }) => {
+    const timestamp = "2026-08-22T00:00:00.000Z";
+    const invocation = {
+      id: "promptless-answer",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      status: "completed" as const,
+      traceId: "trace",
+      observations: [
+        { attributes: { "channel.effect.kind": kind, "channel.effect.content": "Done." }, name: "agent.channel.delivery", sequence: 1, timestamp, type: "run" as const },
+        ...(finalResponse ? [{ attributes: { "message.content": finalResponse, "message.role": "assistant" }, name: "agent.message", sequence: 2, timestamp, type: "lifecycle" as const }] : []),
+        ...(hasFollowup ? [{ attributes: { "message.content": "Followup.", "message.role": "assistant", "message.phase": "commentary" }, name: "agent.message", sequence: 3, timestamp, type: "lifecycle" as const }] : []),
+      ],
+    } satisfies AgentInvocationView;
+
+    const wrapper = mount(AgentInvocation, { props: { invocation } });
+    const expectedAnswers = ["Done.", ...(finalResponse === "Finished." ? [finalResponse] : []), ...(hasFollowup ? ["Followup."] : [])];
+    expect(wrapper.findAll('.vh-invocation-message[data-role="assistant"]').map(message => message.get(".vh-invocation-message__body").text()))
+      .toEqual(expectedAnswers);
+    expect(wrapper.get(".vh-invocation-work__details").attributes("open")).toBeUndefined();
+    expect(wrapper.find('[data-kind="delivery"]').exists()).toBe(false);
+    const work = wrapper.get(".vh-invocation-work__details");
+    if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
+    work.element.open = true;
+    await work.trigger("toggle");
+    const receipt = wrapper.get('.vh-invocation-work__activities [data-kind="delivery"]');
+    expect(receipt.find(".vh-invocation-delivery__body").exists()).toBe(false);
+    const inspector = mount(AgentInvocationInspector, { props: { invocation } });
+    expect(inspector.get(".vh-invocation-inspector__metrics").text()).toContain(`Messages${expectedAnswers.length}`);
   });
 
   it("keeps active work visible and collapses it when the run completes", async () => {
