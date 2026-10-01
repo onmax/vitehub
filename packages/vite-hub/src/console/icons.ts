@@ -94,6 +94,7 @@ export const consoleIcons: readonly string[] = [
   "ph:folder-light",
   "ph:funnel-light",
   "ph:git-branch-light",
+  "ph:heartbeat-light",
   "ph:info-light",
   "ph:key-light",
   "ph:layout-light",
