@@ -45,6 +45,18 @@ const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
 })
 
 describe("agentInvocationRerunInput", () => {
+  it.each(["invoker.profileId", "invokerProfileId", "invoker.profile", "invokerProfile"])("replays the supported %s profile selector", async (key) => {
+    for (const value of ["reviewer", { id: "reviewer" }]) {
+      const record = await journaled({ context: { [key]: value }, prompt: "Hi" })
+      expect(agentInvocationRerunInput(record)).toEqual({ available: true, invokerProfileId: "reviewer", prompt: "Hi" })
+    }
+  })
+
+  it("does not discard extra fields supplied with a profile selector", async () => {
+    const record = await journaled({ context: { invokerProfile: { id: "reviewer", trustedScope: "customer-a" } }, prompt: "Hi" })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-context" })
+  })
+
   it("rejects replay that drops trusted input context", async () => {
     const record = await journaled({ context: { trustedScope: "customer-a" }, prompt: "Hi" })
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-context" })

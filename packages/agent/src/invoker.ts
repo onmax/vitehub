@@ -51,6 +51,17 @@ function profileIdFromSelector(value: unknown): string | undefined {
   if (isRecord(value)) return stringValue(value.id)
 }
 
+/** Context that a prompt/profile rerun cannot reconstruct without changing authority. */
+export function hasUnreplayableAgentInputContext(inputContext: unknown): boolean {
+  const context = contextRecord(inputContext)
+  return Reflect.ownKeys(context).some((key) => {
+    if (!profileSelectorKeys.some(selector => selector === key)) return true
+    const value = context[key]
+    if (hasRuntimeType(value, "string")) return !profileIdFromSelector(value)
+    return !isRecord(value) || Reflect.ownKeys(value).some(key => key !== "id") || !profileIdFromSelector(value)
+  })
+}
+
 function normalizeAgentEmail(value: unknown): AgentInvoker["email"] {
   const address = stringValue(isRecord(value) ? value.address : value)?.toLowerCase()
   if (!address || !/^[^@\s]+@[^@\s]+$/.test(address)) return
