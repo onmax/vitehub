@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest"
 
 import { oauth2 } from "../src/providers/oauth2.ts"
-import { expectCode, mockFetch, tokenSet } from "./helpers.ts"
+import { createConnectionsRuntime } from "../src/runtime/core.ts"
+import { createDatabase, expectCode, mockFetch, testKey, tokenSet } from "./helpers.ts"
 
 import type { OAuth2ProviderOptions } from "../src/providers/oauth2.ts"
 
@@ -24,6 +25,23 @@ describe("oauth2", () => {
     expect(oauth2(options()).id).toBe("oauth2")
   })
 
+  it.each(["not-a-url", "/authorize", "http://[::1", "ftp://auth.example/authorize", "javascript:alert(1)", "http://auth.example/authorize"])("rejects invalid authorization endpoint %s before resolving credentials", (authorizationUrl) => {
+    const client = vi.fn(() => ({ clientId: "client" }))
+    expect(() => oauth2(options({ authorizationUrl, client }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: "provider.authorizationUrl" } }))
+    expect(client).not.toHaveBeenCalled()
+  })
+
+  it("rejects a malformed authorization URL before creating a connect ticket", async () => {
+    const database = vi.fn(() => createDatabase())
+    const runtime = createConnectionsRuntime({
+      database,
+      encryptionKey: () => testKey(),
+      registry: { api: async () => ({ default: { provider: oauth2(options({ authorizationUrl: "not-a-url" })) } }) },
+    })
+    await expect(runtime.start("api", { actor: { kind: "user", id: "admin" }, origin: "http://localhost:5173" })).rejects.toMatchObject({ code: "CONNECTIONS_INVALID", details: { path: "provider.authorizationUrl" } })
+    expect(database).not.toHaveBeenCalled()
+  })
+
   it("rejects credential endpoints over non-loopback HTTP", () => {
     expect(() => oauth2(options({ tokenUrl: "http://auth.example/token" }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: "provider.tokenUrl" } }))
     expect(() => oauth2(options({ revokeUrl: "http://auth.example/revoke" }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: "provider.revokeUrl" } }))
@@ -42,9 +60,13 @@ describe("oauth2", () => {
     expect(client).not.toHaveBeenCalled()
   })
 
-  it.each(["http://localhost:8976", "http://127.0.0.1:8976", "http://[::1]:8976", "https://auth.example"])("accepts credential endpoints at %s", async (origin) => {
+  it.each(["http://localhost:8976", "http://127.0.0.1:8976", "http://[::1]:8976", "https://auth.example"])("accepts OAuth endpoints at %s", async (origin) => {
     const upstream = mockFetch(() => Response.json({ access_token: "new", token_type: "Bearer" }))
-    const provider = oauth2(options({ tokenUrl: `${origin}/token`, revokeUrl: `${origin}/revoke` }))
+    const provider = oauth2(options({ authorizationUrl: `${origin}/authorize`, tokenUrl: `${origin}/token`, revokeUrl: `${origin}/revoke` }))
+    const authorization = new URL(await provider.authorizationUrl({ codeChallenge: "challenge", redirectUri: "http://localhost/callback", state: "state" }, { fetch: upstream.fetch }))
+    expect(authorization.origin).toBe(origin)
+    expect(authorization.pathname).toBe("/authorize")
+    expect(authorization.searchParams.get("state")).toBe("state")
     await provider.exchange({ code: "code", codeVerifier: "verifier", redirectUri: "http://localhost/callback" }, { fetch: upstream.fetch })
     await provider.revoke!(tokenSet(), { fetch: upstream.fetch })
     expect(upstream.calls.map(call => call.url)).toEqual([`${origin}/token`, `${origin}/revoke`])
