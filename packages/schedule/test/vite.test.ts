@@ -50,6 +50,8 @@ async function resolvePluginConfig(plugin: ReturnType<typeof hubSchedule>, root:
 describe("Vite schedule integration", () => {
   it("keeps public URL defines and output roots separate when a plugin is reused across builds", async () => {
     const plugin = hubSchedule()
+    const prepareScheduleRuntime = vi.fn(async () => undefined)
+    const workflowPlugin = { name: "workflow", vitehub: { workflow: { prepareScheduleRuntime } } }
     const projects = []
     const buildStart = plugin.buildStart
     if (typeof buildStart !== "function") throw new TypeError("Expected buildStart hook")
@@ -60,7 +62,7 @@ describe("Vite schedule integration", () => {
           root,
           command: "build",
           build: { outDir: "dist/client" },
-          plugins: [],
+          plugins: [workflowPlugin],
           resolve: { alias: [] },
           define: {
             __VITEHUB_PUBLIC_URL__: JSON.stringify({ url: `https://${name}.example` }),
@@ -95,7 +97,8 @@ describe("Vite schedule integration", () => {
           ),
         ),
       )
-      for (const { root, name } of projects) {
+      for (const { root, name, context } of projects) {
+        expect(prepareScheduleRuntime).toHaveBeenCalledWith(expect.any(String), context.environment.config)
         const artifact = await readFile(
           join(createDefaultCloudflareOutputRoot(root), "index.js"),
           "utf8",

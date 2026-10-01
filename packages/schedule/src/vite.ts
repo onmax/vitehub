@@ -100,7 +100,7 @@ type NitroConfig = Record<string, unknown> & {
 interface WorkflowVitePlugin extends Plugin {
   vitehub?: {
     workflow?: {
-      prepareScheduleRuntime?: (artifactDir?: string) => Promise<ScheduleWorkflowRuntime | undefined>
+      prepareScheduleRuntime?: (artifactDir?: string, config?: ResolvedConfig) => Promise<ScheduleWorkflowRuntime | undefined>
     }
   }
 }
@@ -670,9 +670,11 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
       const bundleDefines = resolveViteHubBundleDefines(config)
       let artifactDir: string | undefined
       try {
+        // SAFETY: The framework adds optional forwarded server directories to the active Vite configuration.
+        const buildServerDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
         const discovered = discoverScheduleDefinitions({
           rootDir: roots.viteRoot,
-          serverDirs: (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? (this?.environment ? undefined : serverDirs),
+          serverDirs: buildServerDirs ?? (this?.environment ? undefined : serverDirs),
           serverRootDir: rootDir,
         })
         const emitStandaloneProviderOutput = (options.runtime === undefined || options.providerOutput === "standalone") && shouldEmitStandaloneProviderOutput(discovered, options)
@@ -684,7 +686,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
           ?.vitehub?.workflow?.prepareScheduleRuntime
         artifactDir = resolve(rootDir, ".vitehub/schedule-generations", randomUUID())
         const contributionArtifactDir = artifactDir
-        const workflow = await prepareWorkflow?.(resolve(contributionArtifactDir, "workflow"))
+        const workflow = await prepareWorkflow?.(resolve(contributionArtifactDir, "workflow"), config)
         const contributedAliases = await collectViteHubProviderImportAliases((config.plugins ?? []) as Array<Plugin & ViteHubProviderImportContributor>)
         const aliases = {
           ...resolveStringAliases(config),

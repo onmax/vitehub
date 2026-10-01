@@ -678,6 +678,7 @@ function deploymentPlugins(
           mainFields: serverResolve.mainFields,
           preserveSymlinks: serverResolve.preserveSymlinks,
         }
+        // SAFETY: Nitro extends resolved Vite configuration with optional host settings, which cloneRecord validates.
         const nitroConfig = cloneRecord((config as { nitro?: unknown }).nitro)
         for (const module of Array.isArray(nitroConfig.modules) ? nitroConfig.modules : []) {
           const buildConfigRef = resolvedBuildConfigs.get(module)

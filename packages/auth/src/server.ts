@@ -6,7 +6,7 @@ import { normalizeAuthBasePath } from "./shared.ts"
 import { throwAuthenticationProviderError } from "./errors.ts"
 import { getAuthenticationSession } from "./session.ts"
 
-import type { AccessAuthorizeOption } from "@vite-hub/runtime"
+import type { AccessAuthorizeOption, PublicUrlConfig } from "@vite-hub/runtime"
 import type {
   AuthAccessAuthorize,
   AuthAccessConfiguration,
@@ -25,6 +25,8 @@ import type {
 } from "./types.ts"
 import { authErrorDiagnostics } from "./error-diagnostics.ts"
 
+declare const __VITEHUB_PUBLIC_URL__: PublicUrlConfig | undefined
+
 type AuthRuntimeEnvResolver = (event?: unknown) => Record<string, unknown>
 
 function hasRuntimeOptions(options: AuthRuntimeOptions | undefined): boolean {
@@ -34,6 +36,12 @@ function hasRuntimeOptions(options: AuthRuntimeOptions | undefined): boolean {
 function hasRequestRuntimeOptions(definition: AuthDefinition): boolean {
   if (typeof definition.options === "function") return true
   return typeof definition.options.runtime === "function"
+}
+
+function hasConfiguredPublicUrl(): boolean {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The build injects this value only when `vitehub({ publicUrl })` is set.
+  return typeof __VITEHUB_PUBLIC_URL__ !== "undefined"
+    && Boolean(__VITEHUB_PUBLIC_URL__?.url || Object.keys(__VITEHUB_PUBLIC_URL__?.agents ?? {}).length)
 }
 
 let authRuntimeEnvResolver: AuthRuntimeEnvResolver | undefined
@@ -325,7 +333,7 @@ export function getAuthForRequest(
   event?: unknown,
 ): ViteHubAuth {
   const definition = resolveDefaultDefinition()
-  if (!hasRequestRuntimeOptions(definition) && !hasRuntimeOptions(runtimeOptions)) {
+  if (!hasRequestRuntimeOptions(definition) && !hasRuntimeOptions(runtimeOptions) && !hasConfiguredPublicUrl()) {
     return getAuthForDefinition(definition)
   }
   return createAuthenticationProvider(resolveBetterAuthOptionsForRequest(definition, request, runtimeOptions, event))
