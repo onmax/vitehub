@@ -48,6 +48,20 @@ function sentBody(fetch: ReturnType<typeof devServer>): unknown {
 }
 
 describe("KV review regressions", () => {
+  it.each([
+    ["set", "a", "b", "--ttl", "0", "--json"],
+    ["set", "a", "@/missing-kv-input-file", "--json"],
+    ["list", "--cursor=", "--json"],
+    ["list", "--cursor", "", "--json"],
+  ])("returns JSON for validation and file failures: %j", async (...args) => {
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runKVCli(args, output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toEqual({ error: { message: expect.any(String) } })
+    expect(output.stderr.output()).toBe("")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it("reports invalid binary payloads without throwing", async () => {
     const output = context()
     await expect(runKVCli(["get", "key", "--json"], output.context, { fetch: devServer({ encoding: "base64", found: true, key: "key", store: "default", value: "invalid!" }) })).resolves.toBe(1)
