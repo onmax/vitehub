@@ -31,6 +31,8 @@ export type UIMessageLike = {
 export interface AgentChatMessageTriggerInput {
   abortSignal?: AbortSignal
   context?: AgentRunInput["context"]
+  /** Original inbound message, captured by generated routes before input mapping. */
+  currentMessage?: AgentChatMessageHookArgs
   invoker?: AgentInvoker
   invokerProfileId?: string
   meta?: Record<string, unknown>
@@ -408,7 +410,7 @@ function selectChatHistory(messages: UIMessageLike[], triggerHistory: AgentChatT
   return selectRecentChatHistory(sessionMessages, triggerHistory).slice(-limit)
 }
 
-function chatMessageHookArgs(message: UIMessageLike | undefined): AgentChatMessageHookArgs {
+export function chatMessageHookArgs(message: UIMessageLike | undefined): AgentChatMessageHookArgs {
   const metadata = metadataRecord(message)
   return {
     ...(message?.id !== undefined ? { id: message.id } : {}),
@@ -461,7 +463,7 @@ export function createChatMessageTriggerInput<TRuntimeConfig extends AgentRuntim
   const invoker = resolveChatTriggerInvoker(triggerInput)
   if (!triggerInput?.invoker) markDerivedChatTriggerInvoker(invoker)
   return {
-    currentMessage: chatMessageHookArgs(messages.at(-1)),
+    currentMessage: triggerInput?.currentMessage ?? chatMessageHookArgs(messages.at(-1)),
     hookArgs,
     input: {
       abortSignal: triggerInput?.abortSignal,

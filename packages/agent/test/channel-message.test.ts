@@ -156,6 +156,57 @@ describe("Channel message handle", () => {
     expect(history).toEqual([["old-message"]])
   })
 
+  it.each([false, true])("preserves the inbound message when mapInput rewrites Driver messages (error: %s)", async fail => {
+    const seen: unknown[] = []
+    const history: unknown[] = []
+    const label = vi.fn()
+    const agent = defineAgent({
+      channels: {
+        portal: webChat({
+          route: {
+            mapInput: ({ input }) => {
+              input.messages.push({ id: "mapped-message", role: "user", parts: [{ type: "text", text: "mapped" }] })
+              return { messages: input.messages.slice(-1) }
+            },
+          },
+          message: {
+            data: v.object({ id: v.string(), text: v.string(), metadata: v.object({ category: v.string() }) }),
+            methods: { label: (context, value: string) => label(context.message.id, value) },
+          },
+        }),
+      },
+      driver: { run: ({ input }) => {
+        history.push(input.messages?.map(message => ({ id: message.id, text: message.text })))
+        if (fail) throw new Error("driver failed")
+        return "ok"
+      } },
+      hooks: {
+        async "agent:finish"(event) {
+          seen.push(event.message?.data)
+          await event.message?.label("finished")
+        },
+        async "agent:error"(event) {
+          seen.push(event.message?.data)
+          await event.message?.label("failed")
+        },
+      },
+    })
+    // SAFETY: The generated route accepts this host-independent Agent through its internal host boundary.
+    const handler = createChannelChatRouteHandler(agent as never)
+    const response = await handler(new Request("https://example.com/api/_vitehub/agents/support/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        messages: [{ id: "current-message", role: "user", parts: [{ type: "text", text: "current" }], metadata: { category: "support" } }],
+      }),
+    }), { agentName: "support" })
+    const responseText = await response.text()
+    expect(response.status, responseText).toBe(fail ? 500 : 200)
+    expect(seen).toEqual([{ id: "current-message", text: "current", metadata: { category: "support" } }])
+    expect(label).toHaveBeenCalledWith("current-message", fail ? "failed" : "finished")
+    expect(history).toEqual([[{ id: "mapped-message", text: "mapped" }]])
+  })
+
   it.each([false, true])("retains custom message methods on a Telegram helper with dryRun=%s", async dryRun => {
     const label = vi.fn((id: string, value: string) => `${id}:${value}`)
     const subject = vi.fn((id: string) => `subject:${id}`)
