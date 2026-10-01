@@ -1063,15 +1063,21 @@ async function applyCapabilityWorkspaceContributions<
     capabilities?(): Promise<{ conditionalWrites: boolean }>
     fs: ReadonlyWorkspaceFacade<Name>["fs"] & {
       writeFile(path: string, content: string | Uint8Array, options?: { ifDigest?: string | null, mediaType?: string, metadata?: Record<string, unknown> }): Promise<string>
-      rm(path: string, options?: { force?: boolean, recursive?: boolean }): Promise<void>
+      rm(path: string, options?: { force?: boolean, recursive?: boolean, ifDigest?: string | null }): Promise<void>
     }
   }
   const retirementPaths = context.workspaceRetirementPaths || []
-  if (context.persistWorkspaceContributions && (persistencePaths.length || retirementPaths.length) && await supportsSkillPersistence(retainedWorkspace)) {
-    await Promise.all(persistencePaths.map(({ path }) => sourceResolution.workspace.fs.materializeSources?.({ path })))
+  const conditionalWorkspacePersistence = context.persistWorkspaceContributions
+    && (persistencePaths.length || retirementPaths.length)
+    && await supportsSkillPersistence(retainedWorkspace)
+  const canRetireWorkspaceContributions = context.persistWorkspaceContributions
+    && retirementPaths.length > 0
+    && typeof retainedWorkspace.fs.rm === "function"
+  if (conditionalWorkspacePersistence || canRetireWorkspaceContributions) {
+    if (conditionalWorkspacePersistence) await Promise.all(persistencePaths.map(({ path }) => sourceResolution.workspace.fs.materializeSources?.({ path })))
     const pending: Array<{ capabilityId: string, path: string, ifDigest: string | null }> = []
     const desired = new Map<string, { content: string | Uint8Array, digest: string }>()
-    for (const item of persistencePaths) {
+    for (const item of conditionalWorkspacePersistence ? persistencePaths : []) {
       if (!await sourceResolution.workspace.fs.exists(item.path)) continue
       const content = await sourceResolution.workspace.fs.readFile(item.path, { encoding: "binary" })
       const digest = await capabilityContributionDigest(content)
@@ -1134,7 +1140,7 @@ async function applyCapabilityWorkspaceContributions<
       const current = await retainedWorkspace.fs.readFile(path, { encoding: "binary" })
       if (await capabilityContributionDigest(current) !== metadata.digest) continue
       try {
-        await retainedWorkspace.rm(path, { force: true, ifDigest: stat.digest })
+        await retainedWorkspace.fs.rm(path, { force: true, ...(conditionalWorkspacePersistence ? { ifDigest: stat.digest } : {}) })
       }
       catch (error) {
         // A concurrent edit or invocation won the conditional removal.
