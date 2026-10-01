@@ -1479,8 +1479,8 @@ function invocationPromptMetadata(invocation: AgentInvocationView, activities: r
 const answerDeliveryKinds = new Set(["reply", "update"]);
 
 function deliveryContent(activity: InvocationActivity): string | undefined {
-  const content = stringAttribute(activity.attributes, "channel.effect.content");
-  return content?.trim() ? content : undefined;
+  const content = activity.attributes["channel.effect.content"];
+  return hasRuntimeType(content, "string") && content.trim() ? content : undefined;
 }
 
 // A delivered reply is the answer the user saw, so show it as an assistant message.
