@@ -174,7 +174,7 @@ safe for public responses. Use the `ViteHubError` public contract at that bounda
 
 | Import                   | Provides                                                                                             |
 | ------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `@vite-hub/runtime`      | Context, capability, policy, approval, trace, lease, diagnostic, error, and execution-authority APIs |
+| `@vite-hub/runtime`      | Context, capability, policy, approval, trace, lease, diagnostic, error, execution-authority, and public URL APIs |
 | `@vite-hub/runtime/node` | Node process observations, reconciliation, and graceful-drain lifecycle primitives                  |
 
 Do not import from `src`, `dist`, or ViteHub's `_internal` paths.

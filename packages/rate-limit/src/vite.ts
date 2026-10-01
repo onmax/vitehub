@@ -6,12 +6,13 @@ import {
   contributeCloudflareProviderOutput,
   contributeProviderDeploymentOutput,
   contributeProviderRuntime,
+  createDefaultCloudflareOutputRoot,
   createProviderDeploymentOutputGenerationState,
   finalizeProviderDeploymentOutputs,
   shouldSkipViteProviderBuild,
   useProviderOutputCatalog,
 } from "@vite-hub/internal/build/deployment-output"
-import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
@@ -35,7 +36,7 @@ const packageName = "@vite-hub/rate-limit"
 const pluginName = "@vite-hub/rate-limit/vite"
 const generatedNitroPlugin = ".vitehub/nitro/rate-limit/plugin.ts"
 const generatedRuntimeModule = ".vitehub/rate-limit/cloudflare-runtime.mjs"
-const mergeNoExternal = createNoExternalMerger(packageName)
+const noExternalAddition = createNoExternalAddition(packageName)
 
 interface InternalRateLimitModuleOptions extends RateLimitModuleOptions {
   importBase?: string
@@ -151,18 +152,29 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
   return {
     name: pluginName,
     vitehub: {
-      inspect: () => ({
-        definitions: [{
-          kind: "rate-limit",
-          label: "Rate Limits",
-          list: () => inspectRateLimitDefinitions({ projectRoot: inspectionRoot(), rootDir: inspectionRoot(), scanDirs: rateLimit.scanDirs }),
-        }],
-        providerOutput: [{
+      inspect: () => {
+        const rootDir = resolved?.root ?? inspectionRoot()
+        const providerOutput = [{
           description: "Rate Limit manifest with provider and capabilities",
           owner: "rate-limit",
-          path: resolve(resolved?.root ?? inspectionRoot(), ".vitehub/rate-limit/manifest.json"),
-        }],
-      }),
+          path: resolve(rootDir, ".vitehub/rate-limit/manifest.json"),
+        }]
+        if (provider === "cloudflare" && !cloudflareOwnedByNitro && declarations.length > 0 && resolveRateLimitNamespace(rateLimit.namespace)) {
+          providerOutput.push({
+            description: "Generated Cloudflare Rate Limit worker config",
+            owner: "rate-limit",
+            path: resolve(createDefaultCloudflareOutputRoot(rootDir), "wrangler.json"),
+          })
+        }
+        return {
+          definitions: [{
+            kind: "rate-limit",
+            label: "Rate Limits",
+            list: () => inspectRateLimitDefinitions({ projectRoot: inspectionRoot(), rootDir: inspectionRoot(), scanDirs: rateLimit.scanDirs }),
+          }],
+          providerOutput,
+        }
+      },
     },
     config(config, env) {
       rateLimit = config.rateLimit ?? rateLimit
@@ -211,7 +223,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
     },
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) return
-      return { resolve: { noExternal: mergeNoExternal(config.resolve?.noExternal) } }
+      return { resolve: { noExternal: noExternalAddition(config.resolve?.noExternal) } }
     },
     async handleHotUpdate(context) {
       if (!/\.(?:c|m)?[jt]sx?$/i.test(context.file)) return

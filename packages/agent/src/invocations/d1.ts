@@ -4,7 +4,7 @@ import { searchableAgentInvocationText } from "./search.ts"
 import { filteredObservationRecord } from "./observation-projection.ts"
 import { sqlTrimWhitespace } from "./sql-whitespace.ts"
 
-import type { AgentInvocationRecord, AgentInvocationStore, AgentInvocationStoreCreateInput, AgentInvocationSummary } from "../invocations.ts"
+import type { AgentInvocationRecord, AgentInvocationRetentionOptions, AgentInvocationStore, AgentInvocationStoreCreateInput, AgentInvocationSummary } from "../invocations.ts"
 
 /** The D1 operations used by the journal. A Cloudflare D1Database satisfies this contract. */
 export interface AgentInvocationD1Database {
@@ -24,13 +24,15 @@ export interface AgentInvocationD1Result<T> {
   meta: { changes: number }
 }
 
-export interface D1AgentInvocationStoreOptions {
+export interface D1AgentInvocationStoreOptions extends AgentInvocationRetentionOptions {
   /** Resolved once per operation. Return the binding for the current request. */
   database: AgentInvocationD1Database | (() => AgentInvocationD1Database | Promise<AgentInvocationD1Database>)
   /** Maximum age of terminal records. Defaults to 30 days; false disables this limit. */
   maxAgeMs?: false | number
   /** Maximum count of terminal records. Defaults to 10,000; false disables this limit. */
   maxRecords?: false | number
+  /** Create the table and indexes on first use of each binding in an isolate. Defaults to true. Set false when your own migrations apply `d1AgentInvocationSchema()`. */
+  migrate?: boolean
   tablePrefix?: string
 }
 
@@ -50,7 +52,7 @@ function tableName(prefix = "vitehub_agent_") {
   return table
 }
 
-/** Apply these statements through your D1 migration tool before using the store. */
+/** Idempotent statements that create the journal table. The store applies them on first use unless `migrate` is false. */
 export function d1AgentInvocationSchema(options: Pick<D1AgentInvocationStoreOptions, "tablePrefix"> = {}): readonly string[] {
   const table = tableName(options.tablePrefix)
   return [
@@ -76,7 +78,7 @@ export function d1AgentInvocationSchema(options: Pick<D1AgentInvocationStoreOpti
 
 function retention(value: false | number | undefined, fallback: number, maximum = Number.MAX_SAFE_INTEGER) {
   if (value === false) return false
-  const result = value ?? fallback
+  const result = value === undefined ? fallback : value
   if (!Number.isSafeInteger(result) || result < 1 || result > maximum) {
     throw agentDiagnostics.AGENT_R0911({ message: "[vitehub] D1 Agent Invocation retention limits must be positive safe integers or false." })
   }
@@ -96,7 +98,7 @@ interface RecordRow {
 
 function record(row: RecordRow): AgentInvocationRecord {
   // doctor-disable-next-line typescript/boundaries/no-unvalidated-deserialization -- The migrated table stores this adapter's serialized AgentInvocationStoreCreateInput, not caller-supplied JSON.
-  // SAFETY: The adapter reads its own JSON records from its explicitly migrated table.
+  // SAFETY: The adapter reads its own JSON records from its migrated table.
   const stored = JSON.parse(row.record) as AgentInvocationStoreCreateInput
   return { ...stored, cursor: String(row.sequence) }
 }
@@ -137,27 +139,45 @@ function fitRecord(input: AgentInvocationStoreCreateInput, append = false) {
   return { stored, values }
 }
 
-/** D1 journal with atomic batches and optimistic updates across Worker isolates. Does not create or migrate tables. */
+/** D1 journal with atomic batches and optimistic updates across Worker isolates. Creates its table on first use unless `migrate` is false. */
 export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOptions): AgentInvocationStore {
   const table = tableName(options.tablePrefix)
+  const schema = d1AgentInvocationSchema(options)
   const maxAgeMs = retention(options.maxAgeMs, 30 * 24 * 60 * 60 * 1000, 8_640_000_000_000_000)
   const maxRecords = retention(options.maxRecords, 10_000)
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The public option accepts a D1 binding or a request-scoped factory; callability selects the factory member.
-  const database = async () => typeof options.database === "function" ? await options.database() : options.database
-  const prune = (db: AgentInvocationD1Database) => {
+  // Workers cannot share pending I/O between requests, so keep only completed bindings.
+  const migrated = new WeakSet<AgentInvocationD1Database>()
+  const database = async () => {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The public option accepts a D1 binding or a request-scoped factory; callability selects the factory member.
+    const db = typeof options.database === "function" ? await options.database() : options.database
+    if (options.migrate !== false && !migrated.has(db)) {
+      await db.batch(schema.map(statement => db.prepare(statement)))
+      migrated.add(db)
+    }
+    return db
+  }
+  const pruneSelection = (updatedBefore?: string) => {
     const filters: string[] = []
     const values: (string | number)[] = []
-    if (maxAgeMs !== false) {
+    if (updatedBefore !== undefined) {
       filters.push("updated_at < ?")
-      values.push(new Date(Date.now() - maxAgeMs).toISOString())
+      values.push(updatedBefore)
     }
-    if (maxRecords !== false) {
-      filters.push(`sequence NOT IN (SELECT sequence FROM ${table} WHERE status IN (${terminal}) ORDER BY sequence DESC LIMIT ?)`)
-      values.push(maxRecords)
+    else {
+      if (maxAgeMs !== false) {
+        filters.push("updated_at < ?")
+        values.push(new Date(Date.now() - maxAgeMs).toISOString())
+      }
+      if (maxRecords !== false) {
+        filters.push(`sequence NOT IN (SELECT sequence FROM ${table} WHERE status IN (${terminal}) ORDER BY sequence DESC LIMIT ?)`)
+        values.push(maxRecords)
+      }
     }
-    return filters.length
-      ? [db.prepare(`DELETE FROM ${table} WHERE status IN (${terminal}) AND (${filters.join(" OR ")})`).bind(...values)]
-      : []
+    return filters.length ? { values, where: `status IN (${terminal}) AND (${filters.join(" OR ")})` } : undefined
+  }
+  const prune = (db: AgentInvocationD1Database) => {
+    const selection = pruneSelection()
+    return selection ? [db.prepare(`DELETE FROM ${table} WHERE ${selection.where}`).bind(...selection.values)] : []
   }
   return {
     async create(input) {
@@ -173,6 +193,25 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
       const row = results.at(-1)?.results[0]
       if (!row) throw agentDiagnostics.AGENT_R0915({ message: `[vitehub] D1 Agent Invocation ${JSON.stringify(input.id)} was removed by retention.` })
       return { created: results[before.length]!.meta.changes > 0, record: record(row) }
+    },
+    async delete(id) {
+      const db = await database()
+      const results = await db.batch<{ id: string }>([
+        db.prepare(`DELETE FROM ${table} WHERE id = ? AND status IN (${terminal})`).bind(id),
+        db.prepare(`SELECT id FROM ${table} WHERE id = ?`).bind(id),
+      ])
+      if (results[0]!.meta.changes > 0) return "deleted"
+      return results[1]!.results.length ? "not-terminal" : "not-found"
+    },
+    async prune(pruneOptions) {
+      const dryRun = pruneOptions.dryRun === true
+      const selection = pruneSelection(pruneOptions.updatedBefore)
+      if (!selection) return { dryRun, ids: [] }
+      const db = await database()
+      const result = await db.prepare(dryRun
+        ? `SELECT id FROM ${table} WHERE ${selection.where} ORDER BY sequence`
+        : `DELETE FROM ${table} WHERE ${selection.where} RETURNING id`).bind(...selection.values).all<{ id: string }>()
+      return { dryRun, ids: result.results.map(row => row.id) }
     },
     async get(id, options) {
       const db = await database()

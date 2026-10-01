@@ -36,6 +36,8 @@ another reader to resolve a new revision. No registration or global type map is 
 
 `file()` follows a symbolic link only when its resolved target stays inside the Source root. `glob()` is also confined to the Source root. It does not follow symbolic links by default, and it checks each file path again before it reads content or metadata. Set `followSymlinks: true` to follow links when their resolved targets stay inside the Source root. This option controls file selection. It does not isolate the process from concurrent file system changes.
 
+File paths are relative to the Source root. Absolute paths, Windows drive paths such as `C:notes.md`, parent traversal, and null bytes are rejected on every host.
+
 Use `defineSource()` for custom loaders:
 
 ```ts
@@ -187,8 +189,16 @@ export const useArticles = () => useCollection("articles", {
 ViteHub discovers modules in `server/collections` and generates the collection
 registry and GET handler. The module must export a Collection with the same name
 as its filename, so `articles.ts` exports `articles` and maps to `/api/articles`.
-Everything in that directory is a public read model; keep private definitions
-elsewhere and do not repeat the route under `server/api`. Restart Nuxt after
+A Collection is a public read model unless it sets `authorize`. `authorize: true`
+requires a signed-in `@vite-hub/auth` session, and a callback receives
+`{ request, session, user }` and returns `true`, `false` for `403`, or a
+`Response`. The route checks access before it parses the query. Without a session
+it returns `401`, and `useCollection()` sets `error` to a `CollectionAccessError`
+with that `status`. Generated routes pass Auth's `authorizeRequest` when the host
+enables Auth with a discovered Auth Definition (`hubSource({ auth: true })`
+alongside `hubAuth()` outside `vite-hub`); otherwise a
+Collection with `authorize` fails closed. Do not repeat the route under
+`server/api`. Restart Nuxt after
 adding, removing, or renaming a Collection module so Nitro rebuilds its handler
 manifest.
 Callers do not repeat URL strings or generic imports. `filter` is validated by

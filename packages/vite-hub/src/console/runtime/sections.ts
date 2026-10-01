@@ -1,5 +1,5 @@
 /** Sections that the Console UI in `vite-hub` renders with its own components. Owner packages contribute the others. */
-export const consoleBuiltinSectionIds = ["env", "agents", "usage", "blob", "database", "databases", "kv"] as const
+export const consoleBuiltinSectionIds = ["env", "agents", "usage", "blob", "databases", "kv"] as const
 
 export type ConsoleBuiltinSectionId = (typeof consoleBuiltinSectionIds)[number]
 
@@ -34,14 +34,8 @@ export const consoleSectionDetails: Readonly<Record<ConsoleBuiltinSectionId, Con
     label: "Blob",
     routeName: "vitehub-console-blob",
   },
-  database: {
-    description: "Inspect database tables, rows, columns, and relationships.",
-    icon: "i-ph-database-light",
-    label: "Database",
-    routeName: "vitehub-console-database",
-  },
   databases: {
-    description: "Inspect discovered Database Definitions and static schema metadata.",
+    description: "Inspect Database schemas, relationships, and live table rows.",
     icon: "i-lucide-database",
     label: "Databases",
     routeName: "vitehub-console-databases",
