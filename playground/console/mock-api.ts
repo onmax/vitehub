@@ -337,11 +337,11 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
         input = await body(request)
       }
       catch {
-        json(response, { error: "Invalid invocation action" }, 400)
+        json(response, { error: "Malformed invocation action." }, 400)
         return true
       }
       if (!(input instanceof Object) || Array.isArray(input) || Object.keys(input).length !== 1 || Reflect.get(input, "action") !== "delete") {
-        json(response, { error: "Invalid invocation action" }, 400)
+        json(response, { error: "Unsupported invocation action." }, 400)
         return true
       }
       const outcome = await invocations.delete(id)
