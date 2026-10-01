@@ -4617,7 +4617,14 @@ cli_auth_credentials_store = "keyring"
     expect(session.close).toHaveBeenCalledOnce()
   })
 
-  it("skips provider workspace diffs when auto-commit is disabled", async () => {
+  it.each([
+    { commit: false, name: "docs" },
+    {
+      name: "docs",
+      plugins: [{ id: "notes", rules: { "notes/**": { commit: true } } }],
+      rules: { "notes/**": { commit: false } },
+    },
+  ])("skips provider workspace diffs when auto-commit is disabled: %j", async (workspaceDefinition) => {
     const threadId = "thread-workspace-no-auto-commit"
     runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
     const session = {
@@ -4633,7 +4640,7 @@ cli_auth_credentials_store = "keyring"
     await createProviderAgentAdapter({ provider: "codex" }).generate(context(threadId, {
       workspace,
       workspaceAutoCommit: false,
-      workspaceDefinition: { commit: false, name: "docs" },
+      workspaceDefinition,
       workspaceMode: "write",
     }) as never)
 
