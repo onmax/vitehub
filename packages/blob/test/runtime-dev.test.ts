@@ -4,6 +4,7 @@ import { join } from "node:path"
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { blob } from "../src/index.ts"
 import { blobDevFileHeader, blobDevHeader, blobDevHeaderValue, blobDevMaximumUploadBytes } from "../src/dev.ts"
 import { handleBlobDevRequest, listBlobDevStores } from "../src/runtime/dev.ts"
 import { setBlobRuntimeConfig, setBlobRuntimeStorage } from "../src/runtime/state.ts"
@@ -50,6 +51,19 @@ async function run(body: unknown): Promise<{ body: Record<string, unknown>, stat
 const binary = Uint8Array.from([0, 255, 1, 128, 10, 13, 0xef, 0xbb, 0xbf, 0xc3, 0x28])
 
 describe("Blob dev runtime handler", () => {
+  it("deletes even when metadata temporarily reports a missing blob", async () => {
+    await run({ operation: "put", pathname: "recent.txt", data: Buffer.from("recent").toString("base64") })
+    const missing = await blob.head("absent.txt")
+    const head = vi.spyOn(blob, "head").mockResolvedValue(missing)
+    const del = vi.spyOn(blob, "del")
+    try {
+      expect(await run({ operation: "del", pathname: "recent.txt" })).toMatchObject({ status: 200, body: { deleted: false } })
+      expect(del).toHaveBeenCalledWith("recent.txt")
+    }
+    finally { head.mockRestore(); del.mockRestore() }
+    expect((await blob.head("recent.txt"))[0]?.code).toBe("BLOB_NOT_FOUND")
+  })
+
   it.each(["", "   "])("rejects store %j without changing the default store", async (store) => {
     await run({ data: Buffer.from("original").toString("base64"), operation: "put", pathname: "original.txt" })
     expect((await run({ operation: "del", pathname: "original.txt", store })).status).toBe(400)

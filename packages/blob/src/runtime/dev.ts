@@ -269,7 +269,7 @@ async function runOperation(body: BlobDevRequestBody, stores: readonly BlobDevSt
     case "del": {
       const pathname = requirePathname(body)
       const existed = await headOrUndefined(selected.storage, pathname)
-      if (existed) unwrap(await selected.storage.del(pathname))
+      unwrap(await selected.storage.del(pathname))
       const result: BlobDevDeleteResult = { deleted: Boolean(existed), pathname, store: selected.name }
       return json(result)
     }
