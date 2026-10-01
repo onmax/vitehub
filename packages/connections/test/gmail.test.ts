@@ -103,8 +103,8 @@ describe("gmail", () => {
 
   it("serializes repeated query values through the runtime", async () => {
     const upstream = mockFetch(() => Response.json({ messages: [] }))
-    const { name, runtime, store } = setupRuntime({ definition: { provider: { ...fakeProvider().provider, origins: ["https://*.googleapis.com"] } }, fetch: upstream.fetch, name: "gmail" })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
+    const { name, runtime, store } = setupRuntime({ definition: { provider: { ...fakeProvider({ scopes: ["https://www.googleapis.com/auth/gmail.readonly"] }).provider, origins: ["https://*.googleapis.com"] } }, fetch: upstream.fetch, name: "gmail" })
+    await store.write({ name, provider: "fake", tokens: tokenSet({ scopes: ["https://www.googleapis.com/auth/gmail.readonly"] }) })
 
     await runtime.call(name, gmailOperations.messagesList, { labelIds: ["INBOX", "UNREAD"], maxResults: 5 }, { actor: { id: "server", kind: "service" } })
     expect(upstream.calls[0]!.url).toBe(`${api}/messages?labelIds=INBOX&labelIds=UNREAD&maxResults=5`)

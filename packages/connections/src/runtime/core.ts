@@ -202,7 +202,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       ...(value.description ? { description: value.description } : {}),
     }
     if (!grant) return { ...base, scopes: value.provider.scopes, status: "disconnected" }
-    const current = grant.keyMatches && grant.provider === value.provider.id
+    const scopesMatch = value.provider.scopes.every(scope => grant.scopes.includes(scope))
+    const current = grant.keyMatches && grant.provider === value.provider.id && scopesMatch
     return {
       ...base,
       connectedAt: grant.connectedAt,
@@ -215,7 +216,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         ? { lastError: "CONNECTIONS_KEY_MISMATCH" }
         : grant.provider !== value.provider.id
           ? { lastError: "CONNECTIONS_PROVIDER_CHANGED" }
-          : grant.lastError ? { lastError: grant.lastError } : {}),
+          : !scopesMatch
+            ? { lastError: "CONNECTIONS_SCOPES_CHANGED" }
+            : grant.lastError ? { lastError: grant.lastError } : {}),
     }
   }
 
@@ -267,8 +270,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     }
   }
 
-  async function send(name: string, value: ConnectionDefinition, url: URL, init: RequestInit, event: unknown, actor: ConnectionActor): Promise<Response> {
+  async function send(name: string, value: ConnectionDefinition, url: URL, init: RequestInit, event: unknown, actor: ConnectionActor, scopes?: readonly string[]): Promise<Response> {
     const authorize = (token: ConnectionTokenSet) => {
+      if (scopes?.length && !scopes.some(scope => token.scopes.includes(scope))) throw connectionError("needs_reconnect", { connection: name })
       const headers = new Headers(init.headers)
       headers.set("authorization", `${token.tokenType.toLowerCase() === "bearer" ? "Bearer" : token.tokenType} ${token.accessToken}`)
       return fetcher(url, { ...init, headers })
@@ -325,12 +329,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     init: RequestInit,
     options: ConnectionCallOptions,
     read: (response: Response) => Promise<TResult>,
+    scopes?: readonly string[],
   ): Promise<TResult> {
     const started = Date.now()
     const audit = options.audit === "all" || base.effect === "write"
     let status: number | undefined
     try {
-      const response = await send(name, value, url, init, options.event, options.actor)
+      const response = await send(name, value, url, init, options.event, options.actor, scopes)
       status = response.status
       const result = await read(response)
       if (audit || !response.ok) {
@@ -357,6 +362,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         await recordQuietly({ ...base, outcome: "skipped" }, callOptions.event)
         return { operation: operation.id, skipped: "dry-run" }
       }
+      if (operation.scopes?.length) {
+        const grant = await store(callOptions.event).grant(name)
+        if (grant && !operation.scopes.some(scope => grant.scopes.includes(scope))) {
+          await recordQuietly({ ...base, error: "CONNECTIONS_NEEDS_RECONNECT", outcome: "failed" }, callOptions.event)
+          throw connectionError("needs_reconnect", { connection: name, operation: operation.id })
+        }
+      }
       const headers = new Headers(request.headers)
       headers.set("accept", "application/json")
       let body: string | undefined
@@ -379,7 +391,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         }
         // SAFETY: Without a parse function, the Operation declaration states the provider response shape.
         return operation.parse ? operation.parse(parsed) : parsed as never
-      })
+      }, operation.scopes)
     },
     async decide(name, actor, operation) {
       return decideConnectionAccess((await definition(name)).access, actor, operation)

@@ -115,7 +115,7 @@ describe("Connections management route", () => {
 
   it("lets non-admins read but not change Connections", async () => {
     const { handler, store } = setup(viewer)
-    await store.write({ name: "gmail", provider: "example", tokens: tokenSet() })
+    await store.write({ name: "gmail", provider: "example", tokens: tokenSet({ scopes: ["openid", "email", "test.read"] }) })
 
     const list = await handler(manage({ action: "list" }))
     expect(list.status).toBe(200)

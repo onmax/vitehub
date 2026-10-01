@@ -1,6 +1,6 @@
 # @vite-hub/connections
 
-`@vite-hub/connections` connects one provider account to an application with OAuth 2 and lets server code and Agents call that provider. Each call checks access rules, refreshes the access token when necessary, and records activity without request or response bodies.
+`@vite-hub/connections` connects one provider account to an application with OAuth 2 and lets server code and Agents call that provider. Each call checks access rules, refreshes the access token when necessary, and records activity without request or response bodies. An Operation with `scopes` requires at least one listed OAuth scope in the connected grant. Missing scopes raise `CONNECTIONS_NEEDS_RECONNECT` before API dispatch, including after token refresh. Inspection reports `needs-reconnect` when the grant lacks a configured provider scope.
 
 Most ViteHub applications should install the `vite-hub` framework distribution and use `vitehub({ connections: true, database: true })` with the `vite-hub/connections` imports. Install this owner package directly when you are building a library, a custom framework integration, or another focused composition.
 

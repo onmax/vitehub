@@ -109,6 +109,7 @@ export interface ConnectionOperation<TInput = unknown, TOutput = unknown, TEffec
   effect: TEffect
   id: string
   request: (input: TInput) => ConnectionRequest
+  /** Alternative OAuth scopes. The grant must contain at least one when this list is nonempty. */
   scopes?: readonly string[]
   /** Maps the parsed JSON body to the output. */
   parse?: (body: unknown) => TOutput
