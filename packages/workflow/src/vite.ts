@@ -54,6 +54,13 @@ interface AgentWorkflowRegistryPlugin extends Plugin {
 
 const noExternalAddition = createNoExternalAddition(workflowPackageName)
 
+interface ScheduledWorkflowBuildConfig {
+  config: ResolvedConfig
+  providerOutput: ProviderOutputCatalog | undefined
+  workflow: WorkflowModuleOptions | undefined
+  serverDirs: string[] | undefined
+}
+
 interface InternalWorkflowModuleOptions {
   agentImportBase?: string
   hosting?: string
@@ -83,10 +90,12 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     : options
   let workflow = defaultWorkflow
   const scheduleBuildConfigs = new WeakMap<ResolvedConfig, {
+    config: ResolvedConfig
     providerOutput: ProviderOutputCatalog | undefined
     workflow: WorkflowModuleOptions | undefined
     serverDirs: string[] | undefined
   }>()
+  const scheduledBuildConfigsByRoot = new Map<string, ScheduledWorkflowBuildConfig[]>()
   const buildConfigs = new WeakMap<object, {
     config: ResolvedConfig
     providerOutput: ProviderOutputCatalog | undefined
@@ -104,6 +113,16 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     const viteHubNitroContext = config && Reflect.get(config, VITEHUB_NITRO_CONFIG_CONTEXT) === true
     const ownerEnvironment = config?.environments?.nitro ? "nitro" : "ssr"
     return Boolean(environmentName && environmentName !== ownerEnvironment && viteHubNitroContext)
+  }
+
+  function scheduledBuildConfig(config: ResolvedConfig): ScheduledWorkflowBuildConfig | undefined {
+    const direct = scheduleBuildConfigs.get(config)
+    if (direct) return direct
+    const candidates = scheduledBuildConfigsByRoot.get(config.root) ?? []
+    if (candidates.length === 1) return candidates[0]
+    const publicDefine = JSON.stringify({ publicUrl: config.define?.__VITEHUB_PUBLIC_URL__, base: config.define?.__VITEHUB_APP_BASE_URL__ })
+    return candidates.find(candidate => candidate.config.build.outDir === config.build.outDir
+      && JSON.stringify({ publicUrl: candidate.config.define?.__VITEHUB_PUBLIC_URL__, base: candidate.config.define?.__VITEHUB_APP_BASE_URL__ }) === publicDefine)
   }
 
   function providerRuntimeImportAliases(provider: "cloudflare" | "vercel", generation?: ProviderDeploymentOutputGeneration, catalog = providerOutput): Record<string, string> {
@@ -201,7 +220,11 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       const buildConfig = config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[], __vitehubWorkflowServerDirs?: string[] }
       const buildServerDirs = buildConfig[VITEHUB_SERVER_DIRS] ?? buildConfig.__vitehubWorkflowServerDirs
       serverDirs = buildServerDirs
-      scheduleBuildConfigs.set(config, { providerOutput, workflow, serverDirs: buildServerDirs })
+      const scheduled = { config, providerOutput, workflow, serverDirs: buildServerDirs }
+      scheduleBuildConfigs.set(config, scheduled)
+      const configs = scheduledBuildConfigsByRoot.get(config.root) ?? []
+      configs.push(scheduled)
+      scheduledBuildConfigsByRoot.set(config.root, configs)
     },
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) {
@@ -240,7 +263,8 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       if (environmentConfig) {
         // SAFETY: This private fallback field is copied from the plugin's config hook by Vite.
         const config = environmentConfig as typeof environmentConfig & { [VITEHUB_SERVER_DIRS]?: string[], __vitehubWorkflowServerDirs?: string[] }
-        const scheduled = scheduleBuildConfigs.get(config) ?? {
+        const scheduled = scheduledBuildConfig(config) ?? {
+          config,
           providerOutput: useProviderOutputCatalog(config),
           serverDirs: config[VITEHUB_SERVER_DIRS] ?? config.__vitehubWorkflowServerDirs,
           workflow: config.workflow ?? defaultWorkflow,

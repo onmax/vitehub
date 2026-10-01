@@ -1735,6 +1735,7 @@ async function writeAgentRuntimeRegistry(
       ...options,
       channelHandlers: false,
       workspaceRegistry: false,
+      resetPublicUrlAgentNames: false,
     })
     await writeFile(definitionCatalogPath, [...catalog.imports, "", ...catalog.setup, "", "export { agents }", ""].join("\n"), "utf8")
     entries.push(`[${JSON.stringify(definition.name)}]: async () => (await import(${JSON.stringify(moduleImportSpecifier(registryPath, definitionCatalogPath))})).agents[${JSON.stringify(definition.name)}]`)
@@ -1786,6 +1787,7 @@ async function generateAgentDeploymentCatalog(
     workspaceImportBase: string
     workspaceRuntimeImport?: string
     workspaceRegistry?: false
+    resetPublicUrlAgentNames?: boolean
   },
 ): Promise<GeneratedAgentDeploymentCatalog> {
   const channelHandlers = options.channelHandlers !== false
@@ -1878,7 +1880,7 @@ async function generateAgentDeploymentCatalog(
           ]
         : []),
       `const agents${typescript ? ": Record<string, AgentInput>" : ""} = {${agentEntries ? `\n  ${agentEntries}\n` : ""}}`,
-      "resetPublicUrlAgentNames()",
+      ...(options.resetPublicUrlAgentNames === false ? [] : ["resetPublicUrlAgentNames()"]),
       ...definitions.map(definition => `markDiscoveredAgentName(agents[${JSON.stringify(definition.name)}], ${JSON.stringify(definition.name)})`),
       ...registeredAgentWorkspaceEntries,
       `const agentIdentities${typescript ? ": Record<string, AgentHostIdentity>" : ""} = {${agentIdentityEntries ? `\n  ${agentIdentityEntries}\n` : ""}}`,
@@ -2728,6 +2730,15 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
   let installsCloudflareState = false
   let providerOutput: ProviderOutputCatalog | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
+  const buildConfigs = new WeakMap<object, {
+    agent: AgentModuleOptions | false | undefined
+    config: ResolvedConfig
+    providerOutput: ProviderOutputCatalog | undefined
+    serverDirs: string[] | undefined
+  }>()
+  const fallbackEnvironment = {}
+  const buildEnvironment = (context: { environment?: object } | undefined): object =>
+    context?.environment ?? context ?? fallbackEnvironment
   let resolved: ResolvedConfig | undefined
   let closeDiscoveryWatcher: (() => Promise<void>) | undefined
   let serverDirs: string[] | undefined
@@ -3204,6 +3215,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       )
       standaloneRuntimeCapabilities = await writeStandaloneAgentRuntimeCapabilities(config, runtimeCapabilities)
       await writeGeneratedAgentOutputs(config)
+      buildConfigs.set(config, { agent, config, providerOutput, serverDirs })
       if (agent === false || !discoverAgentEvalFiles([config.root, ...(serverDirs ?? [])]).length) {
         await removeAgentEvaliteConfig(config.root, generatedRoot)
         return
@@ -3226,22 +3238,33 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       }
     },
     buildStart() {
-      providerOutputGenerations.capture(this, providerOutput)
+      const context = buildEnvironment(this)
+      const environmentConfig = this?.environment?.config
+      if (environmentConfig) {
+        const scheduled = buildConfigs.get(environmentConfig)
+        buildConfigs.set(context, scheduled ?? { agent, config: environmentConfig, providerOutput, serverDirs })
+      } else if (resolved) {
+        buildConfigs.set(context, { agent, config: resolved, providerOutput, serverDirs })
+      }
+      providerOutputGenerations.capture(this, buildConfigs.get(context)?.providerOutput ?? providerOutput)
     },
     async buildEnd(error) {
+      const build = buildConfigs.get(buildEnvironment(this))
       if (error) {
-        await providerOutputGenerations.reset(this, providerOutput, error)
+        await providerOutputGenerations.reset(this, build?.providerOutput ?? providerOutput, error)
         return
       }
-      if (!resolved || resolved.command !== "build") return
-      const config = resolved
+      const config = build?.config ?? resolved
+      const buildAgent = build?.agent ?? agent
+      const buildServerDirs = build?.serverDirs ?? serverDirs
+      if (!config || config.command !== "build") return
       let artifactDir: string | undefined
       try {
-        const normalized = normalizeAgentOptions(agent)
+        const normalized = normalizeAgentOptions(buildAgent)
         const definitions = normalized && isNetlifyHosting(config)
         ? [
             ...discoverAgentDefinitions({ mode: "vite-suffix", rootDir: config.root }),
-            ...discoverAgentDefinitions({ mode: "server-agents", scanDirs: serverDirs ?? [join(config.root, "server")] }),
+            ...discoverAgentDefinitions({ mode: "server-agents", scanDirs: buildServerDirs ?? [join(config.root, "server")] }),
           ]
           : []
         const hostedDefinitions = definitions.filter(definition => definition.source === "server-agents" || definition.source === "server-agent" || definition.source === "server-agent-workspace")
@@ -3249,7 +3272,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           ? resolve(config.root, ".vitehub/agent-generations", randomUUID())
           : undefined
         const contributionArtifactDir = artifactDir
-        const providerImportAliases = getProviderImportAliases(agent, frameworkOptions) ?? {}
+        const providerImportAliases = getProviderImportAliases(buildAgent, frameworkOptions) ?? {}
         const definitionSources = await Promise.all(definitions.map(async (definition) => {
           const instructionDependencies = new Set<string>()
           const instructions = await readColocatedAgentInstructions(definition.handler, { dependencies: instructionDependencies })
@@ -3286,8 +3309,8 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         if (retainedSources && normalized) {
           const retainedGeneratedRoot = join(retainedSources.resolve(config.root), ".vitehub")
           await writeAgentRuntimeRegistry(retainedGeneratedRoot, retainedDefinitions, {
-            agentImportBase: getAgentImportBase(agent, frameworkOptions),
-            workspaceImportBase: getWorkspaceImportBase(agent, frameworkOptions),
+            agentImportBase: getAgentImportBase(buildAgent, frameworkOptions),
+            workspaceImportBase: getWorkspaceImportBase(buildAgent, frameworkOptions),
           })
         }
         const retainedProviderImportAliases = {
@@ -3297,7 +3320,8 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
             ? join(retainedSources.resolve(config.root), ".vitehub", generatedAgentRegistry)
             : join(resolveViteHubGeneratedRoot(config), generatedAgentRegistry) } : {}),
         }
-        contributeProviderDeploymentOutput(providerOutput, {
+        const buildProviderOutput = build?.providerOutput ?? providerOutput
+        contributeProviderDeploymentOutput(buildProviderOutput, {
           discard: contributionArtifactDir ? async () => await removeProviderOutputArtifactDir(contributionArtifactDir) : undefined,
           owner: "agent",
           rootDir: config.root,
@@ -3305,17 +3329,17 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           if (normalized && normalized.runtime === "deno") return
           if (normalized && hostedDefinitions.length && isNetlifyHosting(config)) {
             await writeNetlifyAgentProviderOutput(config, normalized, {
-              agentImportBase: getAgentImportBase(agent, frameworkOptions),
+              agentImportBase: getAgentImportBase(buildAgent, frameworkOptions),
               libsqlState: resolveLibsqlAgentState(normalized, config),
               providerImportAliases: retainedProviderImportAliases,
               runtimeCapabilities: standaloneRuntimeCapabilities,
               schedule: hasScheduleVitePlugin(config),
-              scheduleRuntimeImport: getScheduleRuntimeImport(agent, frameworkOptions),
+              scheduleRuntimeImport: getScheduleRuntimeImport(buildAgent, frameworkOptions),
               sourceRootDir: retainedSources?.resolve(config.root),
-              workflowImportBase: getWorkflowImportBase(agent, frameworkOptions),
-              workspaceDependencyRuntimeImports: getWorkspaceDependencyRuntimeImports(agent, frameworkOptions),
-              workspaceImportBase: getWorkspaceImportBase(agent, frameworkOptions),
-            }, serverDirs, write, retainedDefinitions.filter(definition => definition.source === "server-agents" || definition.source === "server-agent" || definition.source === "server-agent-workspace"), contributionArtifactDir ? resolve(contributionArtifactDir, "sources") : undefined)
+              workflowImportBase: getWorkflowImportBase(buildAgent, frameworkOptions),
+              workspaceDependencyRuntimeImports: getWorkspaceDependencyRuntimeImports(buildAgent, frameworkOptions),
+              workspaceImportBase: getWorkspaceImportBase(buildAgent, frameworkOptions),
+            }, buildServerDirs, write, retainedDefinitions.filter(definition => definition.source === "server-agents" || definition.source === "server-agent" || definition.source === "server-agent-workspace"), contributionArtifactDir ? resolve(contributionArtifactDir, "sources") : undefined)
           }
           else if (isNetlifyHosting(config)) {
             await cleanupNetlifyAgentProviderOutput(config, write)
@@ -3335,7 +3359,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       }
       catch (error) {
         if (artifactDir) await removeProviderOutputArtifactDir(artifactDir)
-        await providerOutputGenerations.reset(this, providerOutput, error)
+        await providerOutputGenerations.reset(this, build?.providerOutput ?? providerOutput, error)
         throw error
       }
     },

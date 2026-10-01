@@ -30,7 +30,7 @@ This registers ViteHub's build integration. Your application still needs a serve
 
 On a Node host with persistent storage, set `dataDir` once. Enabled Agent State, Console, KV, Blob, and Workspace integrations derive local paths from it. For example, `vitehub({ preset: "node", dataDir: "/var/lib/app", agent: true, kv: true, blob: true, workspace: true })` uses that directory without per-store environment variables. Relative paths resolve from the configuration process's working directory. The host must mount persistent storage there; `dataDir` does not create a volume. Other presets require their own storage providers.
 
-Set `publicUrl` to the public origin of the deployed application, for example `vitehub({ preset: "node", publicUrl: "https://agents.example.com" })`. Console invocation links, GitHub activity links, telemetry session links, and the default Auth base URL use it. A function receives each discovered Agent name. It applies to builds; `vite dev` uses the request origin.
+Set `publicUrl` to the public origin of the deployed application, for example `vitehub({ preset: "node", publicUrl: "https://agents.example.com" })`. Console invocation links, GitHub activity links, telemetry session links, and the default Auth base URL use it. A function receives each discovered Agent name. It applies to builds. In `vite dev`, request-bound Console and Auth flows use the request origin; GitHub activity and telemetry links remain unset unless `publicUrl` or a Channel override is configured.
 
 Explicit store paths, remote URLs, and disabled services remain authoritative. Set `console.databaseUrl` to preserve an existing journal location; `VITEHUB_CONSOLE_DATABASE_URL` remains a runtime override. Changing paths does not migrate existing data.
 
