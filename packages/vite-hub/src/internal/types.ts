@@ -1,5 +1,5 @@
 import { mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises"
-import { dirname, join, relative, resolve } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 
 import {
   resolveViteHubProjectRoot,
@@ -100,7 +100,7 @@ async function writeViteHubTypes(options: ViteHubTypesOptions): Promise<void> {
     const generatedDirectory = resolve(root, ".vitehub")
     return (await collectGeneratedTypeFiles(generatedDirectory)).map(file => relative(directory, join(generatedDirectory, file)).replaceAll("\\", "/"))
   }))).flat())].sort()
-  const references = files.map(file => `/// <reference path="./${file}" />`).join("\n")
+  const references = files.map(file => `/// <reference path="${isAbsolute(file) ? file : `./${file}`}" />`).join("\n")
   await writeFileIfChanged(
     resolve(options.projectRoot, viteHubTypesEntry),
     `${references}${references ? "\n\n" : ""}export {}\n`,
