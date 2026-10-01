@@ -43,6 +43,16 @@ describe("discoverConnectionDefinitions", () => {
 })
 
 describe("hubConnections", () => {
+  it("prepares discovered Connection declarations without a Vite build", async () => {
+    const root = await createTempProject();
+    const definition = await writeConnection(root, "custom-server/connections/google.ts");
+    const plugin = hubConnections();
+    await plugin.api.prepareTypes({ projectRoot: root, serverDirs: [join(root, "custom-server")] });
+    const declarations = await readFile(join(root, ".vitehub/types/connections.d.ts"), "utf8");
+    expect(declarations).toContain(`"google": typeof import(${JSON.stringify(definition)})`);
+    expect(plugin.api.getDefinitions()).toEqual([{ handler: definition, name: "google", source: "server-connections" }]);
+  });
+
   it("writes the registry and mounts the management API in development", async () => {
     const root = await createTempProject()
     const definition = await writeConnection(root, "server/connections/google.ts")

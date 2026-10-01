@@ -33,6 +33,7 @@ export interface ConnectionsVitePluginOptions {
 export type ConnectionsModuleOptions = Pick<ConnectionsVitePluginOptions, "management" | "projectRoot">
 
 export interface ConnectionsVitePluginAPI {
+  prepareTypes: (options: { projectRoot: string, serverDirs?: string[] }) => Promise<void>
   getDefinitions: () => DiscoveredConnectionDefinition[]
   refresh: () => DiscoveredConnectionDefinition[]
 }
@@ -103,6 +104,12 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
     name: CONNECTIONS_VITE_PLUGIN_NAME,
     enforce: "pre",
     api: {
+      async prepareTypes(input) {
+        projectRoot = resolveViteHubProjectRoot(input.projectRoot, { projectRoot: options.projectRoot })
+        serverDirs = input.serverDirs
+        definitions = discoverConnectionDefinitions({ rootDir: projectRoot, serverDirs })
+        await refreshGeneratedFiles()
+      },
       getDefinitions: () => definitions,
       refresh,
     },
