@@ -244,11 +244,15 @@ export { agentInvocationId } from "./invocations.ts"
 
 export type {
   AgentInvocationAnnotationValue,
+  AgentInvocationDeleteOutcome,
   AgentInvocationListOptions,
   AgentInvocationListResult,
   AgentInvocationObservationOptions,
+  AgentInvocationPruneOptions,
+  AgentInvocationPruneResult,
   AgentInvocationRecord,
   AgentInvocationRecordStatus,
+  AgentInvocationRetentionOptions,
   AgentInvocationSummary,
   AgentInvocations,
   AgentInvocationStore,
@@ -455,12 +459,9 @@ export type {
   AgentRunMetadata,
   AgentRunResult,
   AgentRuntime,
-  AgentBoxContext,
+  AgentBoxDefinition,
   AgentGitHub,
   AgentGitHubAccess,
-  AgentBoxDefinitions,
-  AgentBoxInput,
-  AgentBoxValue,
   AgentRuntimeBinding,
   AgentRuntimeConfig,
   AgentRuntimeContext,
@@ -816,30 +817,11 @@ function withAgentIdentityOwner<TRuntimeConfig extends AgentRuntimeConfig>(
   agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
   context: AgentRuntimeContext<TRuntimeConfig>,
 ): AgentRuntimeContext<TRuntimeConfig> {
-  context = withAgentBox(agent, context)
+  if (agent.github && !context.githubIdentity) context = { ...context, githubIdentity: agent.github }
   // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
   if (!context.agentIdentity || (context as AgentRuntimeContext & { [agentIdentityOwner]?: object })[agentIdentityOwner]) return context
   // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
   return { ...context, [agentIdentityOwner]: agent as object } as AgentRuntimeContext<TRuntimeConfig>
-}
-
-function withAgentBox<TRuntimeConfig extends AgentRuntimeConfig>(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
-  context: AgentRuntimeContext<TRuntimeConfig>,
-): AgentRuntimeContext<TRuntimeConfig> {
-  if (agent.github && !context.githubIdentity) context = { ...context, githubIdentity: agent.github }
-  if (context.box) return context
-  const input = agent.box
-  const configured = hasRuntimeType(input, "function") ? input() : input
-  if (!configured) return context
-  const box = Object.freeze({
-    ...configured,
-    definitions: configured,
-    get(name: string): unknown {
-      return configured[name]
-    },
-  })
-  return { ...context, box }
 }
 
 function hasAgentDefinition(value: unknown): value is AgentDefinition {
@@ -1797,6 +1779,34 @@ function agentRequiresWritableWorkspace(options: {
     .some(channel => capabilitiesRequireWritableWorkspace(channel.capabilities))
 }
 
+/** Check Agent Box combinations that cannot run the provider inside the Box. */
+function validateAgentBox(
+  box: unknown,
+  driver: { readonly credentialProfile?: unknown, readonly credentials?: unknown, readonly kind: string, readonly launch?: unknown },
+  options: { hasWorkspace: boolean },
+) {
+  if (!hasRuntimeType(box, "object") || box === null || !("runtime" in box) || box.runtime === undefined) {
+    throw agentDiagnostics.AGENT_R0954({ message: "[vitehub] defineAgent({ box }) requires a Box definition with a runtime." })
+  }
+  if (driver.kind !== "provider") {
+    throw agentDiagnostics.AGENT_R0955({ message: "[vitehub] defineAgent({ box }) requires a built-in provider Driver such as { kind: \"codex\" } or { kind: \"claude-code\" }." })
+  }
+  if (driver.launch !== undefined) {
+    throw agentDiagnostics.AGENT_R0956({ message: "[vitehub] defineAgent({ box }) cannot be combined with driver.launch. The Box starts the provider." })
+  }
+  if (driver.credentials !== undefined || driver.credentialProfile !== undefined) {
+    throw agentDiagnostics.AGENT_R0957({ message: "[vitehub] defineAgent({ box }) cannot be combined with driver.credentials or driver.credentialProfile. Write provider credentials with box.home.files or box.env." })
+  }
+  if (options.hasWorkspace) {
+    throw agentDiagnostics.AGENT_R0958({ message: "[vitehub] defineAgent({ box }) cannot be combined with an Agent Workspace. Use box.checkout or box.cwd for the provider working tree." })
+  }
+  const navigator: unknown = Reflect.get(globalThis, "navigator")
+  const userAgent = isRuntimeObject(navigator) ? Reflect.get(navigator, "userAgent") : undefined
+  if (Reflect.get(globalThis, "Deno") !== undefined || userAgent === "Cloudflare-Workers") {
+    throw agentDiagnostics.AGENT_R0959({ message: "[vitehub] defineAgent({ box }) requires a Node.js host. Workers and Deno hosts cannot start provider Drivers." })
+  }
+}
+
 function defineBaseAgent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
@@ -1831,9 +1841,10 @@ function defineBaseAgent<
     driverKind: driver.kind,
     hasWorkspace: false,
   })
+  // Capabilities and Channels that contribute a Workspace reach this point through createWorkspaceAgentDefinition.
+  if (box !== undefined) validateAgentBox(box, driver, { hasWorkspace: Boolean(workspace) })
   let providerAdapter: Promise<AgentAdapter<CALL_OPTIONS>> | undefined
   const resolveBaseAgent: BaseAgentResolver<TRuntimeConfig, CALL_OPTIONS> = async (context) => {
-    context = withAgentBox(definition, context)
     const resolvedAdapter = driver.kind === "model"
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
       ? (await import("./ai-sdk.ts")).createAiSdkAdapter({
@@ -1843,6 +1854,7 @@ function defineBaseAgent<
         } as never) as AgentAdapter<CALL_OPTIONS>
       : driver.kind === "provider"
           ? await (providerAdapter ??= import("#vitehub/agent/provider-agent").then(module => module.createProviderAgentAdapter<CALL_OPTIONS, TRuntimeConfig>({
+            box,
             credentialProfile: driver.credentialProfile,
             credentials: driver.credentials,
             env: driver.env,
@@ -1900,6 +1912,7 @@ function defineBaseAgent<
     async status(context, statusOptions) {
       const checkedAt = new Date().toISOString()
       if (driver.kind !== "provider") return { agent: name ?? "agent", checkedAt, stale: false, readiness: "unsupported" }
+      if (box) return { agent: name ?? "agent", checkedAt, stale: false, readiness: "unsupported", reason: "Provider inspection inside an Agent Box is not supported." }
       const { inspectAgentProvider } = await import("#vitehub/agent/provider-agent")
       return inspectAgentProvider(driver, {
         ...createAgentCallbackContext(withAgentIdentityOwner(definition, context)),
@@ -1911,7 +1924,6 @@ function defineBaseAgent<
     },
     async resolve(context) {
       context = withAgentIdentityOwner(definition, context)
-      context = withAgentBox(definition, context)
       const adapterInstance = await resolveBaseAgent(context)
       const resolvedContext = createResolvedRuntimeContext(context)
       const resolvedTools = driver.kind === "model" && normalizedCapabilities.length && !workspace

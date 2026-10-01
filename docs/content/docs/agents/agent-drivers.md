@@ -148,7 +148,25 @@ Threads resume with the provider's opaque cursor. ViteHub normalizes assistant t
 | `output` | Optional structured Agent output contract. |
 | `capacity` | Optional process-local static or adaptive concurrency and queue limits. |
 
-Provider Drivers do not accept Agent Boxes, model-specific Provider Tool contributions, Cloudflare Agents, or Deno. Provider Workspaces are also unsupported on Windows. These boundaries fail explicitly. Workspace-scoped Skills and ordinary Capability tools are supported.
+Provider Drivers do not accept model-specific Provider Tool contributions, Cloudflare Agents, or Deno. Provider Workspaces are also unsupported on Windows. These boundaries fail explicitly. Workspace-scoped Skills and ordinary Capability tools are supported.
+
+## Run a provider Driver in a Box
+
+Set `box` on the Agent Definition to start the provider inside a [Box](/docs/agents/boxes). The Box supplies the working tree, private Home, environment, and boot checks for each invocation:
+
+```ts [server/agents/review/agent.ts]
+import { defineAgent } from 'vite-hub/agent'
+
+export default defineAgent({
+  box: {
+    runtime: 'trusted-host',
+    requires: ['git'],
+  },
+  driver: { kind: 'codex', permissions: 'allow-all' },
+})
+```
+
+The provider runtime stays in the ViteHub process. Only the provider command runs in the Box. ViteHub adds the provider command to the Box requirements and writes the Driver instructions and Skills to the Box Home. `driver.env` values reach the provider in the Box. With `box`, the Driver rejects `launch`, `credentials`, and `credentialProfile`, and the Agent rejects `workspace`. Put provider credentials in the Box instead. A Box session lasts one invocation, so the provider does not resume a thread from an earlier invocation.
 
 ### Cloudflare Workers
 

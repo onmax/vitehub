@@ -235,6 +235,16 @@ Names match exactly, and matching observations keep their journal order. Other r
 
 The SQLite adapter keeps at most 10,000 terminal records from the last 30 days by default. Pending and running invocations remain available until they reach a terminal state. Set `maxAgeMs` or `maxRecords` to `false` to disable that limit. Retention runs after successful creates and terminal transitions, so a journal without either event may retain an expired record.
 
+Delete or prune terminal records on demand:
+
+```ts
+await invocations.delete(invocationId) // 'deleted' | 'not-found' | 'not-terminal'
+await invocations.prune({ olderThanMs: 7 * 24 * 60 * 60 * 1000, dryRun: true })
+await invocations.prune() // applies the store's maxAgeMs and maxRecords now
+```
+
+`delete(id)` keeps a pending or running record and returns `'not-terminal'`. `prune()` deletes completed, failed, and cancelled records last updated before `olderThanMs`. The age must be a non-negative safe integer that produces a cutoff within JavaScript's Date range. Invalid ages fail with `AGENT_R0929`. Without `olderThanMs`, it applies the store's configured retention. Both return the affected IDs, and `dryRun: true` lists them without deleting. The SQLite and D1 adapters and the memory store implement both operations. A custom store must implement `store.delete()` and `store.prune()` to support them. Deletion removes the journal record and its claim. Artifacts that a Capability wrote to Blob storage are not keyed by the journal record, so the application owns their retention.
+
 Use `configuration: 'content'` to retain resolved instructions and tool descriptions/schemas independently of other trace content. The default is `configuration: 'metadata'`. Console journals enable configuration retention for inspection; existing records cannot recover contracts that were not saved. Recorded configuration still uses the journal's observation limits and marks truncated values.
 
 Invocation journals are metadata-only by default. Set `content: 'content'` only when the application must persist prompts, messages, reasoning, tool inputs and outputs, and result text. That opt-in stores sensitive model content in the configured durable store; apply the same access controls, retention policy, and encryption requirements as the source data.
@@ -319,6 +329,16 @@ vitehub agent invocations tail INVOCATION_ID
 ```
 
 The CLI defaults to `http://localhost:5173/api/invocations`. Use `--url` or `VITEHUB_AGENT_INVOCATIONS_URL` for another local endpoint, and `--json` for automation-safe output.
+
+Delete and prune open a SQLite or libSQL journal directly:
+
+```sh
+vitehub agent invocations delete INVOCATION_ID
+vitehub agent invocations prune --older-than 30d --dry-run --json
+vitehub agent invocations prune --database file:./.data/invocations.db --older-than 12h
+```
+
+Without `--database` or `VITEHUB_AGENT_INVOCATIONS_DATABASE_URL`, both commands use the Console journal: `VITEHUB_CONSOLE_DATABASE_URL`, or `.vitehub/data/console.sqlite` in the project root. Set `VITEHUB_AGENT_INVOCATIONS_DATABASE_AUTH_TOKEN` for an authenticated libSQL endpoint. Durations accept `ms`, `s`, `m`, `h`, `d`, and `w`. `--older-than` defaults to `30d`. Use `--table-prefix` when the store sets `tablePrefix`. The commands refuse a missing database file and never print URL credentials or tokens. For D1, call `invocations.prune()` from a Worker instead.
 
 Configured journals also retain failures and cancellation during Workflow preparation, before provider dispatch. Fresh manual starts get distinct invocation IDs. Durable Channel deliveries keep their delivery run ID across preparation attempts.
 

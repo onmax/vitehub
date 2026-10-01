@@ -11,7 +11,7 @@ import { once } from "node:events"
 import { chmod, cp, mkdir, mkdtemp, lstat, readFile, readlink, readdir, rename, rm, rmdir, symlink, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import { hostname, tmpdir } from "node:os"
-import { basename, delimiter, dirname, extname, join, relative, resolve } from "node:path"
+import { basename, delimiter, dirname, extname, join, posix, relative, resolve } from "node:path"
 
 import { formatRuntimeDiagnosticError, getViteHubErrorShape, normalizeExecutionAuthority, resolveRuntimeValue, ViteHubError } from "@vite-hub/runtime"
 import { resolveWorkspaceAutoCommit } from "@vite-hub/workspace"
@@ -64,6 +64,7 @@ import type {
   AgentProviderLaunchResolver,
   AgentProviderPermissions,
   AgentRuntimeConfig,
+  AgentRunCallbackContext,
   CodexReasoningEffort,
   CodexReasoningSummary,
   AgentToolDefinition,
@@ -80,6 +81,9 @@ import type {
   WorkspaceSessionOptions,
 } from "@vite-hub/workspace"
 import { agentProviderCleanupTask } from "./internal/provider-cleanup-task.ts"
+import { boxSharesHostNetwork, openProviderBox, providerBoxEnvironment, startProviderBoxRelay } from "./internal/provider-box.ts"
+import type { ProviderBoxRelay, ProviderBoxSession } from "./internal/provider-box.ts"
+import type { BoxDefinition } from "@vite-hub/box"
 import { redactCredentialText } from "./internal/credential-redaction.ts"
 import { createWorkspaceSetupObservers } from "./internal/workspace-observability.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
@@ -88,6 +92,8 @@ export interface ProviderAgentAdapterOptions<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   _CALL_OPTIONS = unknown,
 > {
+  /** Run the provider inside this Box. Each invocation opens a new Box session. */
+  box?: BoxDefinition<AgentRunCallbackContext<TRuntimeConfig, _CALL_OPTIONS>>
   credentialProfile?: string
   credentials?: AgentProviderCredentialResolver<TRuntimeConfig>
   /** Provider process environment. Every resolved value is treated as a credential in persisted diagnostics. */
@@ -1093,8 +1099,8 @@ async function prepareCodexCredentialHome<
   return prepareCodexCredentials(options, { ...providerMetadataContext(context), abortSignal: context.input.abortSignal, purpose: "invocation" }, isAuxiliaryAgentAdapterContext(context))
 }
 
-async function prepareCodexCredentials<TRuntimeConfig extends AgentRuntimeConfig>(
-  options: ProviderAgentAdapterOptions<TRuntimeConfig>,
+async function prepareCodexCredentials<TRuntimeConfig extends AgentRuntimeConfig, CALL_OPTIONS = unknown>(
+  options: ProviderAgentAdapterOptions<TRuntimeConfig, CALL_OPTIONS>,
   context: AgentProviderCredentialContext<TRuntimeConfig>,
   auxiliary = false,
 ): Promise<CodexCredentialHome | undefined> {
@@ -2362,6 +2368,49 @@ function isTerminalEvent(event: ProviderRuntimeEvent, turnId: TurnId): boolean {
   return event.turnId === turnId && (event.type === "turn.completed" || event.type === "turn.aborted")
 }
 
+function addProviderBoxSkill(files: Record<string, string | Uint8Array>, path: string, content: string | Uint8Array) {
+  const skillRoot = providerSkillRoots.find(root => path.startsWith(`${root}/`))
+  const skillPath = skillRoot ? path.slice(skillRoot.length + 1) : undefined
+  if (!skillPath) throw agentDiagnostics.AGENT_R0712({ message: "[vitehub] Colocated Skill path must stay inside a provider skill root." })
+  // Every provider reads a different Home skill root.
+  for (const root of providerSkillRoots) files[`${root}/${skillPath}`] ??= content
+}
+
+function assertProviderBoxInvocation<CALL_OPTIONS, TRuntimeConfig extends AgentRuntimeConfig>(
+  box: BoxDefinition<AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS>>,
+  context: AgentAdapterRunContext<CALL_OPTIONS, TRuntimeConfig>,
+  managedBrowser: boolean,
+) {
+  if (process.platform === "win32") {
+    throw agentDiagnostics.AGENT_R0963({ message: "[vitehub] defineAgent({ box }) is not supported on Windows because the provider Box relay requires a POSIX Node host." })
+  }
+  if (managedBrowser) {
+    throw agentDiagnostics.AGENT_R0960({ message: "[vitehub] Managed browser() cannot be used with defineAgent({ box }) because the browser runs outside the Box. Install the browser in the Box and use browser({ runtime: \"external\" })." })
+  }
+  if (Object.keys(context.tools || {}).length && !boxSharesHostNetwork(box.runtime)) {
+    throw agentDiagnostics.AGENT_R0961({ message: "[vitehub] Capability tools with defineAgent({ box }) require a Box runtime that shares the ViteHub network, such as trusted-host or crabbox with network: \"direct\"." })
+  }
+  if (currentInputAttachments(context.messages, context.runtime.run?.messageId).length) {
+    throw agentDiagnostics.AGENT_R0962({ message: "[vitehub] Image attachments are not supported with defineAgent({ box }) because the provider cannot read host attachment files." })
+  }
+}
+
+/** Claude receives host attachment directories. Keep only directories that map into the Box. */
+function claudeBoxArgs(args: readonly string[], mapPath: (value: string) => string | undefined): string[] {
+  const selected: string[] = []
+  for (let index = 0; index < args.length; index++) {
+    const value = args[index]!
+    if (value === "--add-dir" && index + 1 < args.length) {
+      const directory = args[index + 1]!
+      index++
+      if (mapPath(directory) !== undefined) selected.push(value, directory)
+      continue
+    }
+    selected.push(value)
+  }
+  return selected
+}
+
 async function* runProvider<
   CALL_OPTIONS,
   TRuntimeConfig extends AgentRuntimeConfig,
@@ -2404,7 +2453,8 @@ async function* runProvider<
   // SAFETY: The provider runtime accepts the transport thread ID or a generated non-empty UUID.
   const threadId = (transportSessionId || crypto.randomUUID()) as ThreadId
   const auxiliary = isAuxiliaryAgentAdapterContext(context)
-  const preservesProviderSession = !auxiliary && (options.provider !== "codex"
+  // A Box session lasts one invocation, so provider sessions cannot resume in the next one.
+  const preservesProviderSession = !auxiliary && !options.box && (options.provider !== "codex"
     || options.credentials === undefined
     || Boolean(options.credentialProfile?.trim()))
   const releaseSessionLock = sessionKey && !auxiliary
@@ -2416,7 +2466,7 @@ async function* runProvider<
     effectiveSignal?.throwIfAborted()
     const providerRoot = await mkdtemp(join(tmpdir(), "vitehub-provider-"))
     try {
-      launchRoot = options.launch === undefined ? undefined : await mkdtemp(join(tmpdir(), "vitehub-provider-launch-"))
+      launchRoot = options.launch === undefined && !options.box ? undefined : await mkdtemp(join(tmpdir(), "vitehub-provider-launch-"))
     }
     catch (error) {
       await removeProviderRoot(providerRoot).catch(() => undefined)
@@ -2433,6 +2483,10 @@ async function* runProvider<
   let onProviderExit: AgentProviderLaunchCommand["onExit"]
   let runtime: ProviderRuntime | undefined
   let providerLaunchDiagnosticPath: string | undefined
+  let providerBox: ProviderBoxSession | undefined
+  let providerBoxRelay: ProviderBoxRelay | undefined
+  const providerBoxHomeFiles: Record<string, string | Uint8Array> = {}
+  let claudeBoxPromptFile: string | undefined
   let providerLaunchSecretEnvironmentKeys: readonly string[] = []
   let providerRuntimeEnvironment: NodeJS.ProcessEnv | undefined
   let sessionStore: PartitionedProviderSessionStore | undefined
@@ -2468,12 +2522,23 @@ async function* runProvider<
     releaseDeferredRuntimeStopped = resolve
   })
   let rootCleanup: Promise<void> | undefined
-  const cleanupRoot = () => rootCleanup ??= launchRoot
+  const closeProviderBox = async () => {
+    // Closing a Box can synchronize an authoritative cwd back, so a close failure fails the invocation.
+    await Promise.all([
+      providerBoxRelay?.close().catch(() => undefined),
+      providerBox?.session.close(),
+    ])
+  }
+  const removeRoots = () => launchRoot
     ? Promise.all([
         removeProviderRoot(root),
         rm(launchRoot, { force: true, recursive: true }),
       ]).then(() => undefined)
     : removeProviderRoot(root)
+  const cleanupRoot = () => rootCleanup ??= closeProviderBox().then(removeRoots, async (error: unknown) => {
+    await removeRoots().catch(() => undefined)
+    throw error
+  })
   let workspaceCleanupDeferred = false
   let deferredWorkspaceCleanup: Promise<void> | undefined
   const activeWorkspaceCommands = new Set<Promise<unknown>>()
@@ -2598,7 +2663,15 @@ async function* runProvider<
         ...(inspectedTools ? { tools: inspectedTools } : {}),
       })
     }
-    if (instructions && materializeInstructions) {
+    if (instructions && materializeInstructions && options.box) {
+      // The provider reads these from Box Home, so the checked-out tree stays unchanged.
+      if (options.provider === "claude-code") {
+        claudeBoxPromptFile = ".claude/vitehub-system-prompt.md"
+        providerBoxHomeFiles[claudeBoxPromptFile] = instructions
+      }
+      else providerBoxHomeFiles[".codex/AGENTS.md"] = instructions
+    }
+    else if (instructions && materializeInstructions) {
       const promptFileInstructions = options.provider === "claude-code" && preserveNativeInstructions && provenanceInstructions
         ? provenanceInstructions
         : instructions
@@ -2628,6 +2701,10 @@ async function* runProvider<
         || !hasRuntimeType(source.workspacePath, "string")) continue
       const target = resolve(root, source.workspacePath)
       if (target !== root && !target.startsWith(`${root}/`)) throw agentDiagnostics.AGENT_R0712({ message: "[vitehub] Colocated Skill path must stay inside the provider Workspace." })
+      if (options.box) {
+        addProviderBoxSkill(providerBoxHomeFiles, relative(root, target), source.content)
+        continue
+      }
       // Preserve resolved Workspace Sources only after validating the complete path.
       const { entry } = await inspectGeneratedProviderFilePath(root, target)
       if (entry?.isFile()) continue
@@ -2719,6 +2796,7 @@ async function* runProvider<
       ? (options.provider === "codex" ? "codex" : "claude")
       : providerExecutable
     const capabilityEnvironment = auxiliary ? undefined : browserRuntimeEnvironment(context.context)
+    if (options.box) assertProviderBoxInvocation(options.box, context, Boolean(capabilityEnvironment?.PATH))
     if (options.launch !== undefined && capabilityEnvironment?.PATH) {
       throw new Error("[vitehub] Managed browser() cannot be used with driver.launch because the launcher may run on another filesystem. Use browser({ runtime: \"external\" }) with a browser runtime prepared by the launcher.")
     }
@@ -2764,6 +2842,41 @@ async function* runProvider<
       )
       providerLauncher = materializedLauncher.path
       providerLaunchDiagnosticPath = materializedLauncher.diagnosticPath
+    }
+    if (options.box) {
+      if (!launchRoot) throw agentDiagnostics.AGENT_R0717({ message: "[vitehub] Provider launcher root was not prepared." })
+      const configuredCommand = options.providerSettings?.binaryPath
+      if (configuredCommand !== undefined && !hasRuntimeType(configuredCommand, "string")) {
+        throw agentDiagnostics.AGENT_R0716({ message: "[vitehub] driver.providerSettings.binaryPath must be a string." })
+      }
+      // In a Box, binaryPath names the provider command inside the Box.
+      const boxCommand = configuredCommand?.trim() || (options.provider === "codex" ? "codex" : "claude")
+      const boxContext: AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS> = {
+        ...providerMetadataContext(context),
+        input: context.input,
+        run: context.runtime.run,
+      }
+      providerBox = await waitForProviderOperation(
+        openProviderBox({ command: boxCommand, context: boxContext, definition: options.box, files: providerBoxHomeFiles, signal: effectiveSignal }),
+        effectiveSignal,
+        lateBox => lateBox.session.close(),
+        observeLateCleanup,
+      )
+      if (claudeBoxPromptFile) claudePromptFile = posix.join(providerBox.home, claudeBoxPromptFile)
+      const explicitEnvironment = Object.keys(providerEnvironmentOverrides || {})
+      const preparedEnvironment = { ...providerRuntimeEnvironment }
+      providerLaunchSecretEnvironmentKeys = providerSecretEnvironmentKeys(providerEnvironmentOverrides, Object.keys(context.tools || {}).length ? ["T3_MCP_BEARER_TOKEN"] : [])
+      providerLaunchDiagnosticPath = join(launchRoot, "box-diagnostic.json")
+      providerBoxRelay = await startProviderBoxRelay({
+        box: providerBox,
+        command: boxCommand,
+        diagnosticPath: providerLaunchDiagnosticPath,
+        environment: received => providerBoxEnvironment({ explicit: explicitEnvironment, host: process.env, prepared: preparedEnvironment, received }),
+        filterArgs: options.provider === "claude-code" ? claudeBoxArgs : undefined,
+        launchRoot,
+        localRoot: root,
+      })
+      providerLauncher = providerBoxRelay.launcher
     }
     const auxiliaryEnvironmentLaunchArgs = options.provider === "codex" && isAuxiliaryAgentAdapterContext(context)
       ? providerRuntimeEnvironment.T3CODE_CODEX_LAUNCH_ARGS
