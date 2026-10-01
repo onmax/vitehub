@@ -60,6 +60,7 @@ function parseSnapshot(value: unknown): Snapshot {
     ('mergeIntent' in input && (input.mergeIntent === null || Object.prototype.toString.call(input.mergeIntent) !== '[object Object]'
       // SAFETY: the preceding tag check establishes a non-null record.
       || Object.prototype.toString.call((input.mergeIntent as Record<string, unknown>).head) !== '[object String]'
+      // SAFETY: the preceding tag check establishes a non-null record.
       || Object.prototype.toString.call((input.mergeIntent as Record<string, unknown>).text) !== '[object String]'))) {
     throw new TypeError('Invalid inbox snapshot')
   }
