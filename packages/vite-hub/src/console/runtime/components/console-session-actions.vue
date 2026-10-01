@@ -26,6 +26,8 @@ const error = ref<string>();
 const confirmOpen = ref(false);
 
 const rerunUnavailable: Record<string, string> = {
+  "input-has-data": "Rerun is unavailable: this session received structured input",
+  "input-redacted": "Rerun is unavailable: the recorded prompt was redacted",
   "input-has-messages": "Rerun is unavailable: this session received messages or attachments",
   "input-not-captured": "Rerun is unavailable: the prompt was not recorded",
   "input-truncated": "Rerun is unavailable: the recorded prompt is incomplete",

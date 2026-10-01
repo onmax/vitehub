@@ -254,13 +254,15 @@ export async function resolveAgentInvoker<
 ): Promise<AgentInvoker> {
   const normalizedOptions = normalizeAgentInvokerOptions(options)
   const profiles = normalizedOptions?.profiles || []
-  const selectedProfile = selectAgentInvokerProfile(profiles, input.context)
-  if (selectedProfile) invocationContext.set(agentInvokerProfileContextKey, selectedProfile.id, { overwrite: true })
   const requestedInvoker = resolveInputAgentInvoker(input.context)
   if (requestedInvoker && hasResolvedAgentInvokerInput(input)) {
+    const profileId = selectedProfileId(input.context)
+    if (profileId) invocationContext.set(agentInvokerProfileContextKey, profileId, { overwrite: true })
     ensureAgentInvokerContext(invocationContext, requestedInvoker)
     return requestedInvoker
   }
+  const selectedProfile = selectAgentInvokerProfile(profiles, input.context)
+  if (selectedProfile) invocationContext.set(agentInvokerProfileContextKey, selectedProfile.id, { overwrite: true })
   const defaultInvoker = requestedInvoker || createFallbackAgentInvoker(run)
   const selectedEmail = selectedProfile?.email || defaultInvoker.email
   let selectedInvoker: AgentInvoker | undefined
