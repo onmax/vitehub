@@ -52,6 +52,8 @@ export interface ConnectionCallOptions {
 
 export interface ConnectionLifecycleOptions {
   actor: ConnectionActor
+  /** Opaque browser binding for interactive OAuth starts. */
+  browserToken?: string
   event?: unknown
 }
 
@@ -72,7 +74,7 @@ export interface ConnectionsRuntime {
   list: (event?: unknown) => Promise<ConnectionSummary[]>
   names: () => string[]
   /** Opens a connect ticket. Returns the provider URL and the state for the cookie. */
-  open: (input: { event?: unknown, name: string, ticket: string }) => Promise<{ authorizationUrl: string, state: string }>
+  open: (input: { browserToken?: string, event?: unknown, name: string, ticket: string }) => Promise<{ authorizationUrl: string, state: string }>
   record: (activity: Omit<ConnectionActivity, "id" | "timestamp">, event?: unknown) => Promise<void>
   refresh: (name: string, options: ConnectionLifecycleOptions) => Promise<ConnectionSummary>
   /** Creates a single-use connect ticket. `origin` is the public origin of the app. `basePath` overrides the mounted route path. */
@@ -419,10 +421,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return Promise.all(names().map(name => inspect(name, event)))
     },
     names,
-    async open({ event, name, ticket }) {
+    async open({ browserToken, event, name, ticket }) {
       const value = await definition(name)
-      const pending = await store(event).openPending(ticket, Date.now())
-      if (!pending || pending.name !== name) throw connectionError("invalid", { connection: name })
+      const pending = await store(event).openPending(ticket, Date.now(), browserToken)
+      if (!pending || pending.name !== name || (pending.browserToken !== undefined && pending.browserToken !== browserToken)) throw connectionError("invalid", { connection: name })
       const authorizationUrl = await value.provider.authorizationUrl({
         codeChallenge: await codeChallenge(pending.verifier),
         redirectUri: pending.redirectUri,
@@ -466,6 +468,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const expiresAt = Date.now() + pendingTtlMs
       await store(lifecycle.event).createPending({
         actor: lifecycle.actor,
+        ...(lifecycle.browserToken ? { browserToken: lifecycle.browserToken } : {}),
         expiresAt,
         name,
         redirectUri: `${origin}${connectBasePath}/${encodeURIComponent(name)}/callback`,

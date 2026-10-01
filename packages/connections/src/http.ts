@@ -42,6 +42,11 @@ function json(value: unknown, status = 200): Response {
   return Response.json(value, { headers: securityHeaders, status })
 }
 
+function appendCookie(response: Response, value: string): Response {
+  response.headers.append("set-cookie", value)
+  return response
+}
+
 function redirect(location: string, cookie?: string): Response {
   const headers = new Headers({ ...securityHeaders, location, "referrer-policy": "no-referrer" })
   if (cookie) headers.append("set-cookie", cookie)
@@ -138,7 +143,12 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions): (r
       case "list": return json({ admin: access.admin, connections: await runtime.list(event) })
       case "inspect": return json({ admin: access.admin, connection: await runtime.inspect(input.name, event) })
       case "activity": return json({ events: await runtime.activity({ before: input.before, connection: input.name, event, limit: input.limit }) })
-      case "start": return json(await runtime.start(input.name, { actor: access.actor, basePath: options.basePath, event, origin: new URL(request.url).origin }))
+      case "start": {
+        const browserToken = crypto.randomUUID()
+        const result = await runtime.start(input.name, { actor: access.actor, basePath: options.basePath, browserToken, event, origin: new URL(request.url).origin })
+        const response = json(result)
+        return appendCookie(response, cookie(`${basePath}/${encodeURIComponent(input.name)}`, browserToken, new URL(request.url).protocol === "https:", 600))
+      }
       case "refresh": return json({ connection: await runtime.refresh(input.name, { actor: access.actor, event }) })
       case "disconnect": return json({ connection: await runtime.disconnect(input.name, { actor: access.actor, event }) })
     }
@@ -165,7 +175,7 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions): (r
       if (path[1] === "connect") {
         const ticket = url.searchParams.get("ticket")
         if (!ticket || ticket.length > 128) throw connectionError("invalid")
-        const opened = await options.runtime.open({ event, name: connection, ticket })
+        const opened = await options.runtime.open({ browserToken: readCookie(request, stateCookie), event, name: connection, ticket })
         return redirect(opened.authorizationUrl, cookie(cookiePath, opened.state, secure, 600))
       }
       const clear = cookie(cookiePath, "", secure, 0)

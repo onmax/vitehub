@@ -318,7 +318,7 @@ describe("Connections runtime refresh", () => {
       return Response.json({ id: "1", ok: true })
     })
     const definition: ConnectionDefinition = {
-      provider: oauth2({ authorizationUrl: "https://auth.example/authorize", client: () => ({ clientId: "client" }), origins: ["https://api.example"], scopes: ["test.read"], tokenUrl: "https://auth.example/token" }),
+      provider: oauth2({ authorizationUrl: "https://auth.example/authorize", client: () => ({ clientId: "client" }), origins: ["https://api.example", "https://auth.example"], scopes: ["test.read"], tokenUrl: "https://auth.example/token" }),
     }
     const { name, runtime, store } = setupRuntime({ definition, fetch: provider.fetch })
     await store.write({ name, provider: "oauth2", tokens: tokenSet({ expiresAt: Date.now() - 1 }) })

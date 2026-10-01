@@ -133,8 +133,15 @@ describe("oauth2", () => {
   })
 
   it("rejects a user info URL outside the provider origins", () => {
-    expect(() => oauth2(options({ origins: ["https://api.example"], userInfoUrl: "https://auth.example/userinfo" })))
+    expect(() => oauth2(options({ origins: ["https://api.example"], tokenUrl: "https://api.example/token", userInfoUrl: "https://auth.example/userinfo" })))
       .toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: "provider.userInfoUrl" } }))
+  })
+
+  it("rejects credential endpoints outside the provider origins", () => {
+    expect(() => oauth2(options({ origins: ["https://api.example"], tokenUrl: "https://auth.example/token" })))
+      .toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: "provider.tokenUrl" } }))
+    expect(() => oauth2(options({ origins: ["https://api.example"], revokeUrl: "https://auth.example/revoke", tokenUrl: "https://api.example/token" })))
+      .toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: "provider.revokeUrl" } }))
   })
 
   it("accepts a 400 invalid_token revocation but fails other 400 errors", async () => {

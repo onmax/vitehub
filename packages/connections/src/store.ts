@@ -30,6 +30,8 @@ export interface StoredGrant {
 export interface PendingConnection {
   /** Actor that started the connect. The callback records activity for this actor. */
   actor: ConnectionActor
+  /** Browser binding set by the HTTP handler for interactive connects. */
+  browserToken?: string
   name: string
   redirectUri: string
   state: string
@@ -46,7 +48,7 @@ export interface ConnectionsStore {
   grant: (name: string) => Promise<StoredGrant | undefined>
   /** Takes the refresh lease when the revision is current and no lease is active. */
   lease: (name: string, revision: string, now: number, until: number) => Promise<boolean>
-  openPending: (ticket: string, now: number) => Promise<PendingConnection | undefined>
+  openPending: (ticket: string, now: number, browserToken?: string) => Promise<PendingConnection | undefined>
   /** Clears the lease and sets a status without a new token. Only changes the grant at `revision`. */
   release: (name: string, revision: string, status: ConnectionStatus, lastError?: string) => Promise<void>
   /** One read of the grant, with its tokens when the key matches. Disconnect uses it as a consistent snapshot. */
@@ -82,7 +84,7 @@ const tokenSet = v.object({
 })
 const pendingRow = v.object({ expires_at: v.number(), name: identifier, payload: v.pipe(v.string(), v.regex(sealedPayloadPattern)), state: identifier })
 const actor = v.object({ id: identifier, kind: v.picklist(["agent", "route", "schedule", "service", "user"]) })
-const pendingPayload = v.object({ actor, redirectUri: v.string(), verifier: v.string() })
+const pendingPayload = v.object({ actor, browserToken: v.optional(v.string()), redirectUri: v.string(), verifier: v.string() })
 const activityPayload = v.object({
   action: v.picklist(["call", "connect", "disconnect", "refresh"]),
   actor,
@@ -157,7 +159,7 @@ export function createConnectionsStore(options: { db: ConnectionsDatabase, encry
     const parsed = v.parse(pendingRow, row)
     return key.then(sealKey => unseal(sealKey, pendingAad(aadState), parsed.payload)).then((payload) => {
       const value = v.parse(pendingPayload, parseJson(payload))
-      return { actor: value.actor, name: parsed.name, redirectUri: value.redirectUri, state: parsed.state, verifier: value.verifier }
+      return { actor: value.actor, name: parsed.name, redirectUri: value.redirectUri, state: parsed.state, verifier: value.verifier, ...(value.browserToken ? { browserToken: value.browserToken } : {}) }
     })
   }
 
@@ -193,7 +195,7 @@ export function createConnectionsStore(options: { db: ConnectionsDatabase, encry
       await initialize()
       await db.run(sql`DELETE FROM vitehub_connection_pending WHERE expires_at < ${Date.now()}`)
       // Parse with the read schema, so `openPending()` can always read the row back.
-      const value = v.parse(pendingPayload, { actor: { ...pending.actor, id: pending.actor.id.slice(0, 512) }, redirectUri: pending.redirectUri, verifier: pending.verifier })
+      const value = v.parse(pendingPayload, { actor: { ...pending.actor, id: pending.actor.id.slice(0, 512) }, ...(pending.browserToken ? { browserToken: pending.browserToken } : {}), redirectUri: pending.redirectUri, verifier: pending.verifier })
       const payload = await seal(await key, pendingAad(pending.state), JSON.stringify(value))
       await db.run(sql`INSERT INTO vitehub_connection_pending (state, ticket, name, payload, expires_at) VALUES (${pending.state}, ${pending.ticket}, ${pending.name}, ${payload}, ${pending.expiresAt})`)
     },
@@ -210,11 +212,15 @@ export function createConnectionsStore(options: { db: ConnectionsDatabase, encry
       const rows = await db.all(sql`UPDATE vitehub_connection_grants SET lease_until = ${until} WHERE name = ${name} AND revision = ${revision} AND (lease_until IS NULL OR lease_until < ${now}) RETURNING name`)
       return rows.length === 1
     },
-    async openPending(ticket, now) {
+    async openPending(ticket, now, browserToken) {
       await initialize()
-      const row = (await db.all(sql`UPDATE vitehub_connection_pending SET opened = 1 WHERE ticket = ${ticket} AND opened = 0 AND expires_at >= ${now} RETURNING state, name, payload, expires_at`))[0]
+      const candidate = (await db.all(sql`SELECT state, name, payload, expires_at FROM vitehub_connection_pending WHERE ticket = ${ticket} AND opened = 0 AND expires_at >= ${now}`))[0]
+      if (candidate === undefined) return
+      const pending = await readPending(candidate, v.parse(pendingRow, candidate).state)
+      if (pending.browserToken !== undefined && pending.browserToken !== browserToken) return
+      const row = (await db.all(sql`UPDATE vitehub_connection_pending SET opened = 1 WHERE state = ${pending.state} AND opened = 0 RETURNING state, name, payload, expires_at`))[0]
       if (row === undefined) return
-      return readPending(row, v.parse(pendingRow, row).state)
+      return pending
     },
     async release(name, revision, nextStatus, lastError) {
       await initialize()

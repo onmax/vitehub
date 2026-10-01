@@ -24,8 +24,9 @@ export interface OAuth2ProviderOptions {
   /** Provider identifier shown in the Console. Default: `"oauth2"`. */
   id?: string
   /**
-   * API origins that may receive the access token, for example `["https://api.example.com"]`.
-   * `https://*.example.com` matches subdomains. Calls to other origins fail.
+   * Origins that may receive tokens or OAuth client credentials, for example `["https://api.example.com"]`.
+   * Include the token, revoke, user info, and API origins. `https://*.example.com` matches subdomains.
+   * Calls to other origins fail.
    */
   origins: readonly string[]
   revokeUrl?: string
@@ -76,6 +77,13 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionProvider {
     throw connectionError("invalid", { path: "provider" })
   }
   const origins = assertConnectionOrigins(options.origins)
+  // Credential-bearing endpoints must be one of the configured API origins.
+  if (!matchesConnectionOrigin(origins, new URL(options.tokenUrl))) {
+    throw connectionError("invalid", { path: "provider.tokenUrl" })
+  }
+  if (options.revokeUrl && !matchesConnectionOrigin(origins, new URL(options.revokeUrl))) {
+    throw connectionError("invalid", { path: "provider.revokeUrl" })
+  }
   // User info receives the access token, so it must be one of the API origins.
   if (options.userInfoUrl && !matchesConnectionOrigin(origins, new URL(options.userInfoUrl))) {
     throw connectionError("invalid", { path: "provider.userInfoUrl" })

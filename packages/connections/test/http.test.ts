@@ -62,7 +62,7 @@ async function startConnect(handler: ReturnType<typeof setup>["handler"]): Promi
   const started = await handler(manage({ action: "start", name: "gmail" }))
   expect(started.status).toBe(200)
   const { url: ticketUrl } = await started.json() as { url: string }
-  const response = await handler(new Request(ticketUrl))
+  const response = await handler(new Request(ticketUrl, { headers: { cookie: started.headers.get("set-cookie")! } }))
   expect(response.status).toBe(302)
   return { authorizationUrl: new URL(response.headers.get("location")!), response, state: stateCookie(response), ticketUrl }
 }
@@ -252,6 +252,14 @@ describe("Connections connect routes", () => {
     expect((await handler(new Request(`${base}/gmail/connect?ticket=unknown`))).status).toBe(400)
     expect((await handler(new Request(`${base}/gmail/connect`))).status).toBe(400)
     expect((await handler(new Request(`${base}/gmail/connect?ticket=${"x".repeat(129)}`))).status).toBe(400)
+  })
+
+  it("binds a transferred connect URL to the browser that started it", async () => {
+    const { handler } = setup()
+    const started = await handler(manage({ action: "start", name: "gmail" }))
+    const { url } = await started.json() as { url: string }
+    expect((await handler(new Request(url))).status).toBe(400)
+    expect((await handler(new Request(url, { headers: { cookie: started.headers.get("set-cookie")! } }))).status).toBe(302)
   })
 
   it("rejects a ticket for another Connection", async () => {

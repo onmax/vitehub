@@ -20,8 +20,8 @@ export function google(options: GoogleProviderOptions): ConnectionProvider {
     authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     client: options.client,
     id: "google",
-    // Google APIs, including Gmail, are served from googleapis.com subdomains.
-    origins: ["https://*.googleapis.com"],
+    // Google APIs and OAuth endpoints receive tokens or client credentials.
+    origins: ["https://*.googleapis.com", "https://openidconnect.googleapis.com"],
     revokeUrl: "https://oauth2.googleapis.com/revoke",
     scopes: [...new Set(["openid", "email", ...options.scopes])],
     tokenUrl: "https://oauth2.googleapis.com/token",
