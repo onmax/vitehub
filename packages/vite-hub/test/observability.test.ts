@@ -46,7 +46,7 @@ describe("vitehub({ observability })", () => {
       const source = await readFile(generated, "utf8")
       expect(source).toContain(`import { installObservability } from "@vite-hub/agent/observability/host"`)
       expect(source).toContain(`import { posthog } from "@vite-hub/agent/observability/posthog"`)
-      expect(source).toContain("useServerEnv().observability?.posthog?.apiKey")
+      expect(source).toContain("loadServerEnv()")
       expect(source).toContain(`papercuts: { ...{"eventPrefix":"acme.papercut"}, invocations: getConsoleInvocations }`)
     }
     finally {

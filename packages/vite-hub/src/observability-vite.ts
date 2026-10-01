@@ -78,15 +78,16 @@ function renderObservabilityNitroPlugin(options: ObservabilityOptions): string {
     ...(posthog
       ? [
           `import { posthog } from "@vite-hub/agent/observability/posthog"`,
-          `import { useServerEnv } from "#vitehub/env/server"`,
+          `import { loadServerEnv } from "#vitehub/env/server"`,
         ]
       : []),
     ...(papercuts ? [`import { getConsoleInvocations } from "vite-hub/console/server"`] : []),
     "",
-    "export default function viteHubObservabilityPlugin(nitroApp) {",
+    "export default async function viteHubObservabilityPlugin(nitroApp) {",
     ...(posthog
       ? [
-          "  const apiKey = useServerEnv().observability?.posthog?.apiKey",
+          "  const serverEnv = await loadServerEnv()",
+          "  const apiKey = serverEnv.observability?.posthog?.apiKey",
           "  const key = typeof apiKey?.unseal === \"function\" ? apiKey.unseal() : apiKey",
         ]
       : []),
