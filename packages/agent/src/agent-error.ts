@@ -186,7 +186,7 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
   const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month]
   // Date.parse normalizes overflow days, so validate the provider's calendar date first.
   if (daysInMonth === undefined || day < 1 || day > daysInMonth) return
-  const namedTime = namedDate && resetText.match(/\s(\d{1,2}):(\d{2})\s+[ap]\.?m/i)
+  const namedTime = namedDate && resetText.match(/\s(\d{1,2}):(\d{2})\s+([ap])\.?m\.?(?:\s+(.+))?$/i)
   // Date.parse can normalize invalid clock fields in named dates too.
   if (namedTime && (Number(namedTime[1]) < 1 || Number(namedTime[1]) > 12 || Number(namedTime[2]) > 59)) return
   const isoTime = isoDate && resetText.match(/T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?/i)
@@ -198,6 +198,18 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
     .replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, "$1")
     .replace(/\b([ap])\.m\.?/gi, "$1m"))
   if (!Number.isFinite(time)) return
+  // Date.parse normalizes nonexistent local wall times during DST transitions.
+  // Do not publish a reset instant that differs from the provider's unzoned clock.
+  if (namedTime && !namedTime[4]) {
+    const parsed = new Date(time)
+    const hour = Number(namedTime[1]) % 12 + (namedTime[3]?.toLowerCase() === "p" ? 12 : 0)
+    const minute = Number(namedTime[2])
+    if (parsed.getFullYear() !== year
+      || parsed.getMonth() !== month
+      || parsed.getDate() !== day
+      || parsed.getHours() !== hour
+      || parsed.getMinutes() !== minute) return
+  }
   return { resetText, resetAt: new Date(time).toISOString() }
 }
 

@@ -108,6 +108,36 @@ describe("chat error fallback", () => {
   })
 
   it.each([
+    ["Mar 8, 2026 2:30 AM", undefined],
+    ["Mar. 8th, 2026 2:30 a.m", undefined],
+    ["Mar 8, 2026 1:30 AM", "2026-03-08T09:30:00.000Z"],
+    ["Mar 8, 2026 3:30 AM", "2026-03-08T10:30:00.000Z"],
+    ["Mar 8, 2026 2:30 AM UTC", "2026-03-08T02:30:00.000Z"],
+    ["Mar 8, 2026 2:30 AM -0800", "2026-03-08T10:30:00.000Z"],
+  ])("validates local reset times across DST transitions: %s", async (resetText, resetAt) => {
+    vi.stubEnv("TZ", "America/Los_Angeles")
+    try {
+      const message = `Quota exhausted. Try again at ${resetText}.`
+      for (const error of [
+        agentDiagnostics.AGENT_R0726({ message }),
+        { data: { error: { code: "insufficient_quota", message } }, name: "AI_APICallError", statusCode: 429 },
+      ]) {
+        for (const context of ["http", "invocation", "serialization"] as const) {
+          const publicError = toAgentPublicError(error, context)
+          expect(publicError.details).toEqual(resetAt ? { resetText, resetAt } : undefined)
+          expect(await resolveChatErrorFallbackText(undefined, { error, publicError } as never))
+            .toBe(resetAt
+              ? `The AI provider usage limit has been reached. Usage should reset ${resetText}.`
+              : "The AI provider usage limit has been reached. Usage will reset when the provider quota renews.")
+        }
+      }
+    }
+    finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it.each([
     "token sk-live-secret",
     "the next billing cycle",
     "2026-99-15T01:23:00Z",
