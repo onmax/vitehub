@@ -92,6 +92,7 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionProvider {
   if (!options.authorizationUrl || !options.tokenUrl || !options.scopes.length) {
     throw connectionError("invalid", { path: "provider" })
   }
+  assertCredentialUrl(options.authorizationUrl, "provider.authorizationUrl")
   assertCredentialUrl(options.tokenUrl, "provider.tokenUrl")
   if (options.revokeUrl) assertCredentialUrl(options.revokeUrl, "provider.revokeUrl")
   const origins = assertConnectionOrigins(options.origins)

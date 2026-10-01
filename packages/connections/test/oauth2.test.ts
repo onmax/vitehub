@@ -30,6 +30,12 @@ describe("oauth2", () => {
     expect(() => oauth2(options({ tokenUrl: "http://localhost:8787/token", revokeUrl: "http://127.0.0.1/revoke" }))).not.toThrow()
   })
 
+  it("validates the authorization endpoint before issuing tickets", () => {
+    expect(() => oauth2(options({ authorizationUrl: "not a URL" }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: "provider.authorizationUrl" } }))
+    expect(() => oauth2(options({ authorizationUrl: "http://auth.example/authorize" }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: "provider.authorizationUrl" } }))
+    expect(() => oauth2(options({ authorizationUrl: "http://localhost:8787/authorize" }))).not.toThrow()
+  })
+
   it.each(["tokenUrl", "revokeUrl"] as const)("rejects plaintext non-loopback %s before resolving credentials", (endpoint) => {
     const client = vi.fn(() => ({ clientId: "client", clientSecret: "private" }))
     expect(() => oauth2(options({ client, [endpoint]: "http://auth.example/credential" }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: `provider.${endpoint}` } }))
