@@ -283,6 +283,63 @@ describe("Agent Box environment", () => {
 })
 
 describe("Agent Box relay", () => {
+  it("stops pulling Box output while the runtime consumer is paused", async () => {
+    const root = await temporaryRoot()
+    const totalChunks = 256
+    let pulled = 0
+    let output: ReadableStreamDefaultController<Uint8Array> | undefined
+    let finish: ((exit: { code: number }) => void) | undefined
+    const exited = new Promise<{ code: number }>(resolve => finish = resolve)
+    const child = {
+      kill: async () => {
+        if (pulled < totalChunks) output?.close()
+        finish?.({ code: 0 })
+      },
+      stderr: new ReadableStream<Uint8Array>({ start: controller => controller.close() }),
+      stdin: new WritableStream<Uint8Array>(),
+      stdout: new ReadableStream<Uint8Array>({
+        start: controller => output = controller,
+        pull: (controller) => {
+          controller.enqueue(new Uint8Array(64 * 1024))
+          pulled++
+          if (pulled === totalChunks) {
+            controller.close()
+            finish?.({ code: 0 })
+          }
+        },
+      }),
+      wait: () => exited,
+    }
+    const relay = await startProviderBoxRelay({
+      // SAFETY: The fixture supplies the Box cwd and process streams used by the relay.
+      box: { session: { cwd: "/box/work" }, spawn: async () => child } as unknown as ProviderBoxSession,
+      command: "provider",
+      diagnosticPath: join(root, "diagnostic.json"),
+      environment: () => ({}),
+      launchRoot: root,
+      localRoot: join(root, "local"),
+    })
+    const launcher = spawn(relay.launcher, [], { stdio: ["pipe", "pipe", "ignore"] })
+    const closed = new Promise<number | null>(resolve => launcher.once("close", resolve))
+    try {
+      launcher.stdin.end()
+      await vi.waitFor(() => expect(pulled).toBeGreaterThan(1))
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const pausedCount = pulled
+      await new Promise(resolve => setTimeout(resolve, 100))
+      expect(pulled).toBe(pausedCount)
+      expect(pulled).toBeLessThan(totalChunks)
+      launcher.stdout.resume()
+      expect(await closed).toBe(0)
+      expect(pulled).toBe(totalChunks)
+    }
+    finally {
+      launcher.kill("SIGKILL")
+      await relay.close()
+      await closed
+    }
+  })
+
   it("stops a Box process that starts after its relay connection closed", async () => {
     const root = await temporaryRoot()
     let started: (() => void) | undefined

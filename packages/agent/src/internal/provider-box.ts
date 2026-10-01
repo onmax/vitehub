@@ -213,12 +213,24 @@ async function handleRelayConnection(
   void forwardInput.catch(() => undefined)
   let stderrBytes = 0
   let stderrTail = Buffer.alloc(0)
-  const forward = (stream: ReadableStream<Uint8Array>, type: number) => forwardStream(stream, (chunk) => {
+  const forward = (stream: ReadableStream<Uint8Array>, type: number) => forwardStream(stream, async (chunk) => {
     if (type === frameStderr) {
       stderrBytes += chunk.byteLength
       stderrTail = Buffer.concat([stderrTail, chunk]).subarray(-stderrTailBytes)
     }
-    if (!socket.destroyed) socket.write(frame(type, chunk))
+    if (socket.destroyed || socket.write(frame(type, chunk))) return
+    const draining = new AbortController()
+    const onClose = () => draining.abort()
+    socket.once("close", onClose)
+    try {
+      await once(socket, "drain", { signal: draining.signal })
+    }
+    catch (error) {
+      if (!socket.destroyed) throw error
+    }
+    finally {
+      socket.off("close", onClose)
+    }
   })
   // The provider can exit while the provider runtime keeps its input open.
   // Input forwarding stops at exit, so the relay does not wait for input that the provider no longer reads.
@@ -371,13 +383,13 @@ async function pipeRelayInput(
   }
 }
 
-async function forwardStream(stream: ReadableStream<Uint8Array>, write: (chunk: Uint8Array) => void) {
+async function forwardStream(stream: ReadableStream<Uint8Array>, write: (chunk: Uint8Array) => void | Promise<void>) {
   const reader = stream.getReader()
   try {
     while (true) {
       const { done, value } = await reader.read()
       if (done) return
-      write(value)
+      await write(value)
     }
   }
   finally {
@@ -434,18 +446,25 @@ socket.on("connect", () => {
   process.stdin.pipe(socket)
 })
 socket.on("data", (chunk) => {
+  socket.pause()
   buffered = Buffer.concat([buffered, chunk])
+  void consumeFrames().then(() => socket.resume(), () => socket.destroy())
+})
+async function consumeFrames() {
   while (buffered.length >= 5) {
     const length = buffered.readUInt32BE(1)
     if (buffered.length < 5 + length) break
     const type = buffered[0]
     const payload = buffered.subarray(5, 5 + length)
     buffered = buffered.subarray(5 + length)
-    if (type === ${frameStdout}) process.stdout.write(payload)
-    else if (type === ${frameStderr}) process.stderr.write(payload)
+    if (type === ${frameStdout}) await writeOutput(process.stdout, payload)
+    else if (type === ${frameStderr}) await writeOutput(process.stderr, payload)
     else if (type === ${frameExit}) exitCode = payload.readInt32BE(0)
   }
-})
+}
+function writeOutput(stream, payload) {
+  return new Promise((resolve, reject) => stream.write(payload, (error) => error ? reject(error) : resolve()))
+}
 socket.on("error", (error) => {
   process.stderr.write("[vitehub] Agent Box relay failed: " + error.message + "\\n")
 })
