@@ -14,6 +14,7 @@ import type {
   AgentInvocationSummary,
   AgentInvocationStore,
   AgentInvocationStoreCreateInput,
+  AgentInvocationStoreUpdateInput,
 } from "../invocations.ts"
 import type { Client } from "@libsql/client"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
@@ -165,6 +166,12 @@ async function retrySqliteBusy<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
+interface PendingUpdate {
+  input: AgentInvocationStoreUpdateInput
+  reject: (error: unknown) => void
+  resolve: (record: AgentInvocationRecord | undefined) => void
+}
+
 export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationStoreOptions = {}): AgentInvocationStore {
   if (!options.client && !options.url) {
     throw agentDiagnostics.AGENT_R0633({ message: "[vitehub] SQLite Agent Invocations require url or client." })
@@ -184,6 +191,66 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     const result = writes.then(operation, operation)
     writes = result.then(() => undefined, () => undefined)
     return result
+  }
+  // Keep invocation and claim identifiers separate. Concatenating them with a
+  // delimiter allows distinct pairs to collide when either identifier contains
+  // that delimiter.
+  const pendingUpdates = new Map<string, Map<string | undefined, PendingUpdate[]>>()
+  /** Applies queued updates to one record in one transaction. A failed update does not stop later ones. */
+  const applyUpdateBatch = async (id: string, claimId: string | undefined, inputs: AgentInvocationStoreUpdateInput[]): Promise<Array<AgentInvocationRecord | Error | undefined>> => {
+    await initialize()
+    return await retrySqliteBusy(async () => {
+      const transaction = await client.transaction("write")
+      try {
+        const result = await transaction.execute({
+          args: claimId === undefined ? [id] : [id, id, claimId],
+          sql: `SELECT sequence, record FROM ${table} WHERE id = ?${claimId === undefined
+            ? ""
+            : ` AND EXISTS (SELECT 1 FROM ${table}_claims WHERE id = ? AND claim_id = ?)`} LIMIT 1`,
+        })
+        const row = result.rows[0]
+        const record = row ? deserialize(row.record, row.sequence) : undefined
+        if (!record) {
+          await transaction.commit()
+          return inputs.map(() => undefined)
+        }
+        let updated = record
+        const results = inputs.map((input) => {
+          try {
+            updated = applyAgentInvocationStoreUpdate(updated, input)
+            return updated
+          }
+          catch (error) {
+            return error instanceof Error ? error : new Error(String(error))
+          }
+        })
+        if (updated === record) {
+          await transaction.commit()
+          return results
+        }
+        const stored = storedRecord(updated)
+        await transaction.execute({
+          args: [id],
+          sql: `UPDATE ${table} SET search_version = -1, summary = NULL WHERE id = ?`,
+        })
+        await transaction.execute({
+          args: [updated.status, agentNameRecord(stored), searchableAgentInvocationText(stored), searchVersion, serializedSummary(stored), updated.updatedAt, serialize(stored), id],
+          sql: `UPDATE ${table} SET status = ?, agent_name = ?, search = ?, search_version = ?, summary = ?, updated_at = ?, record = ? WHERE id = ?`,
+        })
+        if (updated.status === "completed" || updated.status === "failed" || updated.status === "cancelled") {
+          await prune(transaction)
+        }
+        await transaction.commit()
+        return results
+      }
+      catch (error) {
+        await transaction.rollback().catch(() => undefined)
+        throw error
+      }
+      finally {
+        await transaction.close()
+      }
+    })
   }
   const backfillSearch = async () => {
     let backfillSequence = 0
@@ -735,47 +802,37 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
       })
     },
     async update(id, input, claimId) {
-      return write(async () => {
-        await initialize()
-        return await retrySqliteBusy(async () => {
-          const transaction = await client.transaction("write")
+      // Updates for one invocation that wait behind another write share one
+      // read, serialization, and commit. Each update still applies in order.
+      let updatesByClaim = pendingUpdates.get(id)
+      if (!updatesByClaim) {
+        updatesByClaim = new Map()
+        pendingUpdates.set(id, updatesByClaim)
+      }
+      let batch = updatesByClaim.get(claimId)
+      if (!batch) {
+        const items: PendingUpdate[] = []
+        batch = items
+        updatesByClaim.set(claimId, items)
+        void write(async () => {
+          if (updatesByClaim?.get(claimId) === items) updatesByClaim.delete(claimId)
+          if (updatesByClaim?.size === 0 && pendingUpdates.get(id) === updatesByClaim) pendingUpdates.delete(id)
           try {
-            const result = await transaction.execute({
-              args: claimId ? [id, id, claimId] : [id],
-              sql: `SELECT sequence, record FROM ${table} WHERE id = ?${claimId
-                ? ` AND EXISTS (SELECT 1 FROM ${table}_claims WHERE id = ? AND claim_id = ?)`
-                : ""} LIMIT 1`,
+            const results = await applyUpdateBatch(id, claimId, items.map(item => item.input))
+            items.forEach((item, index) => {
+              const result = results[index]
+              if (result instanceof Error) item.reject(result)
+              else item.resolve(result)
             })
-            const row = result.rows[0]
-            const record = row ? deserialize(row.record, row.sequence) : undefined
-            if (!record) {
-              await transaction.commit()
-              return
-            }
-            const updated = applyAgentInvocationStoreUpdate(record, input)
-            const stored = storedRecord(updated)
-            await transaction.execute({
-              args: [id],
-              sql: `UPDATE ${table} SET search_version = -1, summary = NULL WHERE id = ?`,
-            })
-            await transaction.execute({
-              args: [updated.status, agentNameRecord(stored), searchableAgentInvocationText(stored), searchVersion, serializedSummary(stored), updated.updatedAt, serialize(stored), id],
-              sql: `UPDATE ${table} SET status = ?, agent_name = ?, search = ?, search_version = ?, summary = ?, updated_at = ?, record = ? WHERE id = ?`,
-            })
-            if (updated.status === "completed" || updated.status === "failed" || updated.status === "cancelled") {
-              await prune(transaction)
-            }
-            await transaction.commit()
-            return updated
           }
           catch (error) {
-            await transaction.rollback().catch(() => undefined)
-            throw error
-          }
-          finally {
-            await transaction.close()
+            for (const item of items) item.reject(error)
           }
         })
+      }
+      const items = batch
+      return await new Promise<AgentInvocationRecord | undefined>((resolve, reject) => {
+        items.push({ input, reject, resolve })
       })
     },
   }
