@@ -89,6 +89,7 @@ const approvalRow = v.object({
   decided_at: v.nullable(v.string()),
   decided_by: v.nullable(v.string()),
   error: v.nullable(v.string()),
+  grant_revision: v.nullable(v.string()),
   id: identifier,
   input: v.string(),
   invocation_id: v.nullable(v.string()),
@@ -127,6 +128,7 @@ function toApproval(row: unknown): ConnectionApproval {
   if (stored.decided_at) approval.decidedAt = stored.decided_at
   if (stored.decided_by) approval.decidedBy = stored.decided_by
   if (stored.error) approval.error = stored.error
+  if (stored.grant_revision) approval.grantRevision = stored.grant_revision
   if (stored.invocation_id) approval.invocationId = stored.invocation_id
   if (stored.trace_id) approval.traceId = stored.trace_id
   return approval
@@ -155,6 +157,9 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
       await db.run(
         sql`CREATE TABLE IF NOT EXISTS vitehub_connection_approvals (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, input TEXT NOT NULL, status TEXT NOT NULL, trace_id TEXT, invocation_id TEXT, created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT, error TEXT, execution_expires_at TEXT)`,
       )
+      const approvalColumns = await db.all(sql`PRAGMA table_info(vitehub_connection_approvals)`)
+      if (!approvalColumns.some(column => v.parse(v.object({ name: v.string() }), column).name === "grant_revision"))
+        await db.run(sql`ALTER TABLE vitehub_connection_approvals ADD COLUMN grant_revision TEXT`)
       await db.run(sql`CREATE TABLE IF NOT EXISTS vitehub_connection_refresh_leases (name TEXT PRIMARY KEY, owner TEXT NOT NULL, revision TEXT NOT NULL, expires_at INTEGER NOT NULL)`)
       const columns = await db.all(sql`PRAGMA table_info(vitehub_connection_approvals)`)
       if (
@@ -185,7 +190,7 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
       ready = undefined
       throw error
     }))
-  const approvalColumns = sql`id, name, actor, action, input, status, trace_id, invocation_id, created_at, decided_at, decided_by, error`
+  const approvalColumns = sql`id, name, actor, action, input, status, trace_id, invocation_id, created_at, decided_at, decided_by, error, grant_revision`
 
   return {
     ...envStore,
@@ -263,7 +268,7 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
       },
       async create(approval) {
         await initialize()
-        await db.run(sql`INSERT INTO vitehub_connection_approvals (id, name, actor, action, input, status, trace_id, invocation_id, created_at) VALUES (${approval.id}, ${approval.name}, ${approval.actor}, ${approval.action}, ${JSON.stringify(approval.input ?? null)}, ${approval.status}, ${approval.traceId ?? null}, ${approval.invocationId ?? null}, ${approval.createdAt})`)
+        await db.run(sql`INSERT INTO vitehub_connection_approvals (id, name, actor, action, input, status, trace_id, invocation_id, created_at, grant_revision) VALUES (${approval.id}, ${approval.name}, ${approval.actor}, ${approval.action}, ${JSON.stringify(approval.input ?? null)}, ${approval.status}, ${approval.traceId ?? null}, ${approval.invocationId ?? null}, ${approval.createdAt}, ${approval.grantRevision ?? null})`)
       },
       async get(id) {
         await initialize()

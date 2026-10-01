@@ -543,12 +543,14 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return undefined
     }
     if (decision === "approve") {
+      const grant = await (await getStore()).secrets.read(tokenKey(context.name))
       const approval: ConnectionApproval = {
         action: providerRequest.action,
         actor: context.actor,
         createdAt: new Date(now()).toISOString(),
         id: `approval_${randomToken().slice(0, 20)}`,
         input: approvalInput,
+        grantRevision: grant?.revision,
         name: context.name,
         status: "pending",
         traceId: context.options.traceId,
@@ -739,7 +741,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
           token = parseToken(secret.unseal(), input.name)
         }
         catch {}
-        if (token) await revokeProviderToken(loaded, token.refreshToken ?? token.accessToken)
+        if (token && (await connections.secrets.read(key))?.revision === metadata.revision)
+          await revokeProviderToken(loaded, token.refreshToken ?? token.accessToken)
         // Fence the marker with the revision of the token sent to the provider.
         const replacement = await connections.bridge.replace(envContext(actor), { expectedRevision: metadata.revision, key, value: JSON.stringify({ revoked: true }) })
         return replacement.revision
@@ -775,6 +778,11 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       executionExpiresAt,
     })
     if (!approval) throw new ConnectionError("invalid", `Approval "${input.id}" is not pending.`)
+    const currentGrant = await connections.secrets.read(tokenKey(approval.name))
+    if (!approval.grantRevision || currentGrant?.revision !== approval.grantRevision) {
+      await connections.approvals.transition(input.id, "approved", "failed", { error: "CONNECTION_REAUTH_REQUIRED" })
+      throw new ConnectionError("reauth_required", `Approval "${input.id}" belongs to an earlier Connection grant.`)
+    }
     const leaseAbort = new AbortController()
     const signal = AbortSignal.any([
       AbortSignal.timeout(APPROVAL_EXECUTION_TTL_MS),

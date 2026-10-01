@@ -214,6 +214,7 @@ export interface ConnectionApproval {
   decidedAt?: string
   decidedBy?: string
   error?: string
+  grantRevision?: string
   id: string
   input: unknown
   invocationId?: string

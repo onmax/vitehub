@@ -33,6 +33,7 @@
   },
   "exports": {
     ".": "./dist/index.js",
+    "./agent": "./dist/agent.js",
     "./google": "./dist/google.js",
     "./server": "./dist/server.js",
     "./vite": "./dist/vite.js",
