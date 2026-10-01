@@ -222,3 +222,39 @@ it.each(["different", "unidentified"] as const)("quarantines a rotated provider 
   await expect(connect({ ...test, runtime })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
   expect(test.provider.calls).toHaveLength(before)
 })
+
+
+it.each(["marker audit", "state write", "marker write"] as const)("recovers Connection metadata after confirmed revocation and %s failure", async stage => {
+  const test = createTestRuntime()
+  await connect(test)
+  const original = await test.store.secrets.read("connection/mail")
+  const runtime = createConnectionsRuntime({ definitions: { mail: mailConnection() }, store: test.store, now: () => test.now.value, fetch: async (input, init) => {
+    const response = await test.provider.fetch(input, init)
+    if (String(input) === "https://auth.example.com/revoke") test.provider.valid.clear()
+    return response
+  } })
+  if (stage === "marker audit") {
+    const append = test.store.access.append
+    test.store.access.append = async event => {
+      if (event.action === "replace" && event.outcome === "succeeded") throw new Error("Revoke audit unavailable")
+      await append(event)
+    }
+  }
+  if (stage === "state write") {
+    const put = test.store.state.putForToken
+    test.store.state.putForToken = async () => {
+      test.store.state.putForToken = put
+      throw new Error("Revoke state unavailable")
+    }
+  }
+  if (stage === "marker write") test.store.bridge.replace = async () => { throw new Error("Revoke marker unavailable") }
+  await expect(runtime.revoke({ name: "mail" })).rejects.toBeDefined()
+  expect(test.provider.valid.has(ACCESS_TOKEN)).toBe(false)
+  expect(await runtime.inspect("mail")).toMatchObject({ status: stage === "marker write" ? "reauth_required" : "revoked" })
+  const current = await test.store.secrets.read("connection/mail")
+  if (stage === "marker write") expect(current).toEqual(original)
+  else expect(JSON.parse(current!.value)).toEqual({ revoked: true })
+  const count = test.provider.calls.length
+  await expect(runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+  expect(test.provider.calls).toHaveLength(count)
+})

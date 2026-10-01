@@ -54,6 +54,7 @@ function errorResponse(error: unknown): Response {
     const status = {
       approval_required: 409,
       denied: 403,
+      execution_unknown: 409,
       invalid: 400,
       provider: 502,
       reauth_required: 409,

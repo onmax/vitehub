@@ -49,6 +49,7 @@ interface CallContext {
   definition: ConnectionDefinition
   name: string
   options: UseConnectionOptions
+  providerExecution?: { dispatched: boolean, rejected: boolean }
 }
 
 interface ProviderRequest {
@@ -511,12 +512,21 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
               authorization: `${current.tokenType === "bearer" ? "Bearer" : current.tokenType} ${current.accessToken}`,
             }
             if (providerRequest.json && providerRequest.body !== undefined && !Object.keys(headers).some(key => key.toLowerCase() === "content-type")) headers["content-type"] = "application/json"
+            if (providerRequest.write && context.providerExecution) {
+              context.providerExecution.dispatched = true
+              context.providerExecution.rejected = false
+            }
             return request(providerRequest.url, {
               body: providerRequest.body,
               headers,
               method: providerRequest.method,
               redirect: init.redirect,
               signal: init.signal,
+            }).then(response => {
+              if (providerRequest.write && context.providerExecution) {
+                context.providerExecution.rejected = response.status >= 400 && response.status < 500 && response.status !== 408
+              }
+              return response
             })
           }
           let response = await call(token)
@@ -824,6 +834,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const owner = await claimMutationLease(input.name)
     let releaseLease = true
     let providerFailure: ConnectionError | undefined
+    let providerRevoked = false
+    let leasedRevision: string | undefined
     try {
       const stored = await connections.secrets.inspect(key)
       let revision: string | null = null
@@ -835,6 +847,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         }
         revision = await connections.bridge.use(envContext(actor), key, "revoke", async (secret, metadata) => {
           if (!metadata?.revision) throw new ConnectionError("invalid", "Connection revocation requires the Env Bridge to provide the leased token revision.")
+          leasedRevision = metadata.revision
           let token: StoredToken | undefined
           try {
             token = parseToken(secret.unseal(), input.name)
@@ -856,6 +869,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
               })
               throw providerFailure
             }
+            providerRevoked = true
             releaseLease = true
           }
           // Keep the mutation lease until the revoked marker and metadata are durable.
@@ -869,6 +883,17 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return await inspect(input.name)
     }
     catch (error) {
+      if (providerRevoked) {
+        await (async () => {
+          const current = await connections.secrets.read(key)
+          if (!current) return
+          const value: unknown = JSON.parse(current.value)
+          const revoked = v.is(v.object({ revoked: v.literal(true) }), value)
+          if (!revoked && current.revision !== leasedRevision) return
+          const persisted = await setStatus(input.name, { status: revoked ? "revoked" : "reauth_required" }, current.revision)
+          if (revoked && persisted) releaseLease = true
+        })().catch(() => undefined)
+      }
       throw providerFailure ?? error
     }
     finally {
@@ -914,6 +939,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         .then(active => { if (!active) leaseAbort.abort(new ConnectionError("invalid", "Approval execution lease was lost.")) })
         .catch((error: unknown) => leaseAbort.abort(error))
     }, APPROVAL_EXECUTION_TTL_MS / 3)
+    const providerExecution = { dispatched: false, rejected: false }
     try {
       const stored = v.parse(approvalInputSchema, approval.input)
       const loaded = await definition(approval.name)
@@ -921,6 +947,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         actor: approval.actor,
         approved: true,
         approvedGrantId: stored.grantId,
+        providerExecution,
         definition: loaded,
         name: approval.name,
         options: {
@@ -951,13 +978,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return output
     }
     catch (error) {
-      const code = signal.aborted
-        ? "CONNECTION_EXECUTION_UNKNOWN"
-        : isConnectionError(error)
-          ? error.code
-          : "CONNECTION_FAILED"
-      await connections.approvals.transition(input.id, "approved", "failed", { error: code })
-      throw error
+      const uncertain = signal.aborted || (providerExecution.dispatched && !providerExecution.rejected)
+      const failure = uncertain
+        ? new ConnectionError("execution_unknown", "The provider may have completed this write. Check the provider before requesting another approval.", { details: { action: approval.action, connection: approval.name }, requestId: input.id })
+        : error
+      const code = isConnectionError(failure) ? failure.code : "CONNECTION_FAILED"
+      await connections.approvals.transition(input.id, "approved", "failed", { error: code }).catch(() => undefined)
+      throw failure
     }
     finally {
       clearInterval(heartbeat)
