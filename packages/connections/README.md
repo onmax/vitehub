@@ -50,7 +50,7 @@ const labels = await gmail(connection).labels.list();
 const response = await connection.fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile");
 ```
 
-`call()` runs a typed Operation with an `id` and an `effect`. `fetch()` treats `GET` and `HEAD` as reads and other methods as writes. With `dryRun: true`, write calls return without calling the provider. A call signal cancels token refresh, refresh-lease waits, and the API request. Custom providers receive `context.signal`; `context.fetch` uses that signal.
+`call()` runs a typed Operation with an `id` and an `effect`. `fetch()` treats `GET` and `HEAD` as reads and other methods as writes. With `dryRun: true`, write calls return without calling the provider. A call signal cancels token refresh, refresh-lease waits, and the API request. A token-store write already in progress may commit after cancellation. The cancelled call rejects and records a failed refresh instead of using those tokens. Custom providers receive `context.signal`; `context.fetch` uses that signal.
 
 ## Register the Vite integration
 

@@ -104,4 +104,36 @@ describe("Connection Operation cancellation", () => {
     expect((await store.tokens(name))?.tokens).toEqual(original)
   })
 
+  it("does not report a refresh successful when cancellation wins during the store write", async () => {
+    const controller = new AbortController()
+    let started: (() => void) | undefined
+    let finish: (() => void) | undefined
+    const writing = new Promise<void>(resolve => started = resolve)
+    const finished = new Promise<void>(resolve => finish = resolve)
+    const fetch = vi.fn(async () => new Response(null, { status: 200 }))
+    const { db, name, runtime, store } = setupRuntime({ fetch })
+    const original = tokenSet({ expiresAt: Date.now() - 1 })
+    await store.write({ name, provider: "fake", tokens: original })
+    const all = db.all.bind(db)
+    let runs = 0
+    vi.spyOn(db, "all").mockImplementation(async query => {
+      runs += 1
+      // The token read and lease acquisition precede the token write.
+      if (runs === 3) {
+        started?.()
+        await finished
+      }
+      return all(query)
+    })
+
+    const pending = runtime.call(name, readOperation, { id: "42" }, { actor: { id: "server", kind: "service" }, signal: controller.signal })
+    await writing
+    controller.abort(new Error("refresh cancelled during write"))
+    finish?.()
+    await expect(pending).rejects.toBe(controller.signal.reason)
+    expect((await store.tokens(name))?.tokens.accessToken).toBe("refreshed-access-1")
+    expect(fetch).not.toHaveBeenCalled()
+    expect((await store.activity({ connection: name })).filter(event => event.action === "refresh")).toMatchObject([{ outcome: "failed" }])
+  })
+
 })

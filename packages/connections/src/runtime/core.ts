@@ -278,7 +278,11 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
           signal?.throwIfAborted()
           const refreshed = await cancellable(value.provider.refresh(stored.tokens, providerContext(event, signal)), signal)
           signal?.throwIfAborted()
+          // Once the store write starts it cannot be rolled back through the store
+          // contract. The refresh may commit, but cancellation must still prevent
+          // this invocation from reporting a successful acquisition.
           await db.write({ expectedRevision: stored.grant.revision, name, provider: value.provider.id, tokens: { ...refreshed, account: refreshed.account ?? stored.tokens.account } })
+          signal?.throwIfAborted()
           await recordQuietly({ action: "refresh", actor, connection: name, durationMs: Date.now() - started, outcome: "succeeded" }, event)
           return refreshed
         }
