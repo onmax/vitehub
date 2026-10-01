@@ -162,7 +162,7 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions = {}
         }
         case "approve": {
           const result = await connections.approve({ actor, id: input.id })
-          return json({ ...result, approval: approvalSummary(result.approval) })
+          return json({ approval: approvalSummary(result.approval) })
         }
         case "deny": return json({ approval: approvalSummary(await connections.deny({ actor, id: input.id })) })
       }

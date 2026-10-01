@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest"
 
 import { createConnectionsHandler } from "../src/http.ts"
-import { ACCESS_TOKEN, createTestRuntime, REFRESH_TOKEN } from "./helpers.ts"
+import { createConnectionsRuntime } from "../src/runtime.ts"
+import { ACCESS_TOKEN, connect, createTestRuntime, mailConnection, REFRESH_TOKEN } from "./helpers.ts"
 
 const origin = "http://localhost:5173"
 
@@ -57,6 +58,34 @@ describe("createConnectionsHandler", () => {
       expect(text).toContain("private-approval")
     }
     expect(await test.store.approvals.get("private-approval")).toMatchObject({ input: { body: "private-message-content" } })
+  })
+
+  it("returns only the approval summary after a successful provider write", async () => {
+    const test = createTestRuntime()
+    const privateRecord = { id: "private-message-id", body: "private-provider-message", recipient: "private-recipient@example.com" }
+    test.runtime = createConnectionsRuntime({
+      definitions: { mail: mailConnection() },
+      fetch: async (input, init) => {
+        const response = await test.provider.fetch(input, init)
+        return String(input).endsWith("/modify") ? Response.json(privateRecord) : response
+      },
+      now: () => test.now.value,
+      store: test.store,
+    })
+    await connect(test)
+    await expect(test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.messages.modify", {
+      id: "m1", requestBody: { addLabelIds: ["private-input-label"] }, userId: "me",
+    })).rejects.toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
+    const pending = (await test.runtime.approvals({ status: "pending" })).approvals[0]!
+    const approve = vi.spyOn(test.runtime, "approve")
+    const handler = createConnectionsHandler({ actor: () => "user:owner", runtime: () => test.runtime })
+    const response = await handler(post({ action: "approve", id: pending.id }))
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(JSON.parse(text)).toEqual({ approval: expect.objectContaining({ id: pending.id, status: "executed", decidedBy: "user:owner" }) })
+    for (const privateValue of [...Object.values(privateRecord), "private-input-label", '"result"', '"input"']) expect(text).not.toContain(privateValue)
+    expect(await approve.mock.results[0]!.value).toMatchObject({ result: privateRecord })
+    expect(await test.store.approvals.get(pending.id)).toMatchObject({ status: "executed", input: { input: { requestBody: { addLabelIds: ["private-input-label"] } } } })
   })
 
   it("pages every pending approval without unbounded reads or decision gaps", async () => {
