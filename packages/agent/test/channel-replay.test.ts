@@ -137,7 +137,7 @@ describe("replayChannel()", () => {
 
   it("reports inline objects with workflow-shaped fields as completed", async () => {
     const { channel } = mailbox()
-    const agent = defineAgent({ channels: { mailbox: channel }, invocations: memoryInvocations(), run: () => ({ id: "item", provider: "custom", status: "success" }), runtime: false })
+    const agent = defineAgent({ channels: { mailbox: channel }, invocations: memoryInvocations(), driver: { run: () => ({ id: "item", provider: "custom", status: "success" }) }, runtime: false })
     const result = await replayChannel(agent, "mailbox", { limit: 1 })
     expect(result.items[0]).toMatchObject({ status: "completed" })
   })
