@@ -4,7 +4,7 @@ import attributes from "@comark/vue/plugins/attributes";
 import components from "@comark/vue/plugins/components";
 import frontmatter from "@comark/vue/plugins/frontmatter";
 import taskList from "@comark/vue/plugins/task-list";
-import { defineComponent, h, shallowRef, type PropType } from "vue";
+import { defineComponent, getCurrentInstance, h, shallowRef, Suspense, type PropType } from "vue";
 import { markdownMath } from "../internal/markdown-math.ts";
 import { useViteHubUI } from "../config.ts";
 import { ImagePreview } from "../internal/image-preview.ts";
@@ -59,6 +59,7 @@ export const AgentMarkdown = defineComponent({
     value: { default: "", type: String },
   },
   setup(props, { attrs }) {
+    const hasParentSuspense = Boolean(getCurrentInstance()?.suspense);
     const defaults = useViteHubUI();
     return () => {
       const parserOptions = { ...props.options };
@@ -78,7 +79,7 @@ export const AgentMarkdown = defineComponent({
         else plugins.push(plugin);
       }
       const safePlugins = plugins.filter(plugin => plugin.name !== "html");
-      return h(Markdown, {
+      const markdown = () => h(Markdown, {
         ...attrs,
         class: [defaults.markdown.class, attrs.class],
         components: { img: ImagePreview, math: AgentMath, ...props.components },
@@ -86,6 +87,11 @@ export const AgentMarkdown = defineComponent({
         options: { ...parserOptions, registerDefaultPlugins: false },
         streaming: props.streaming,
         value: props.value,
+      });
+      if (hasParentSuspense) return markdown();
+      return h(Suspense, null, {
+        default: markdown,
+        fallback: () => h("div", { ...attrs, class: [defaults.markdown.class, attrs.class] }, props.value),
       });
     };
   },
