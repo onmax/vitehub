@@ -184,13 +184,12 @@ Use a read-only Workspace filesystem unless the caller must write. Set `maxOutpu
 
 Agents use Shell through the [`workspaceShell()` Capability](/docs/capabilities/workspace-shell). It exposes shell-shaped Workspace inspection and optional structured Workspace mutation tools through Workspace Scope, Workspace rules, and Shell policy.
 
-The global Agent `bash` tool is separate from the Shell Runtime. Capabilities register executables, and ViteHub sends each structured call through an executable Workspace Session. Read the [Bash concept](/docs/concepts/bash) for the Agent contract.
+To let an Agent run commands, use the same Capability. `workspaceShell({ mode: 'write', commands: ['pnpm'] })` gives Provider Drivers allowlisted command tools that run in the active Workspace Session. `commands` requires `mode: 'write'` and works only with Provider Drivers. For model-backed Agents, use the [`sandbox()` Capability](/docs/capabilities/sandbox).
 
 Do not expose a raw Shell Runtime to a model. Use [Official capabilities](/docs/capabilities/official-capabilities) so policy, metadata, Driver support, and tools stay attached to the Agent Definition.
 
 ## Next steps
 
-- Understand the model-facing [Bash](/docs/concepts/bash) tool.
 - Use [Workspace](/docs/server-primitives/workspace) for file-tree state.
 - Use [Sandbox](/docs/server-primitives/sandbox) for provider-managed isolation.
 - Expose Workspace commands to Agents with [Workspace shell](/docs/capabilities/workspace-shell).
