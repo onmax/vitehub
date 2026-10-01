@@ -350,4 +350,15 @@ describe("defineChannel({ history })", () => {
     expect(() => defineChannel("x", { history: { collection, key: () => "", trigger: "c" }, triggers })).toThrow(/must name one of the Channel triggers: a, b/)
     expect(defineChannel("x", { history: { collection, key: () => "", trigger: "b" }, triggers }).history?.trigger).toBe("b")
   })
+
+  it("rejects raw Channel histories with multiple triggers and no explicit trigger", async () => {
+    const { channel } = mailbox()
+    const rawChannel = {
+      ...channel,
+      history: { ...channel.history, trigger: undefined },
+      triggers: { ...channel.triggers, other: channel.triggers.received },
+    }
+    const agent = defineAgent({ channels: { mailbox: rawChannel } as never, driver: { run: () => "ok" }, runtime: false })
+    await expect(replayChannel(agent, "mailbox", { force: true })).rejects.toMatchObject({ code: "AGENT_R0933" })
+  })
 })
