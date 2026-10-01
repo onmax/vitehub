@@ -95,7 +95,8 @@ export async function withConnectionsTypesLock<T>(directory: string, action: () 
           if (hasCode(cause, "ENOENT")) return undefined;
           throw cause;
         });
-        if (!existing?.isDirectory()) throw error;
+        if (!existing) continue;
+        if (!existing.isDirectory()) throw error;
         if (await recoverAbandonedDirectory(directory)) continue;
         await new Promise<void>(resolve => setTimeout(resolve, Math.min(20, deadline - Date.now())));
       }
