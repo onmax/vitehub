@@ -7892,7 +7892,8 @@ async function executeAgentInvocation<
       )
     }
     if (preparedInvocation?.handledResponse || preparedInvocation?.intercepted) {
-      await invocationJournal?.running()
+      const running = await invocationJournal?.running()
+      if ((exclusive || inheritedClaim) && running === false) throw new Error("Could not persist the Invocation running state before execution.")
       await activity?.update("running")
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
     }
@@ -7911,7 +7912,8 @@ async function executeAgentInvocation<
     throw error
   }
   if (!release) {
-    await invocationJournal?.running()
+    const running = await invocationJournal?.running()
+    if ((exclusive || inheritedClaim) && running === false) throw new Error("Could not persist the Invocation running state before execution.")
     await activity?.update("running")
     try {
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
@@ -7930,7 +7932,8 @@ async function executeAgentInvocation<
     release()
   }
   try {
-    await invocationJournal?.running()
+    const running = await invocationJournal?.running()
+    if ((exclusive || inheritedClaim) && running === false) throw new Error("Could not persist the Invocation running state before execution.")
     await activity?.update("running")
     return await executeAgentInvocationWithCapacityLease(agent, context, input, {
       ...options,

@@ -319,7 +319,8 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   prepareWorkflowDispatch(binding: AgentInvocationWorkflowBinding): Promise<boolean>
   confirmWorkflowDispatch(binding?: AgentInvocationWorkflowBinding): Promise<boolean>
   releaseClaim(): Promise<void>
-  running(): Promise<void>
+  /** Persist the execution-start marker; false means execution must not begin. */
+  running(): Promise<boolean>
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
   /** Persist resolved run metadata while this journal owns the execution claim. */
   setRunMetadata(run: AgentRunMetadata): Promise<boolean>
@@ -2403,13 +2404,14 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           registerAgentInvocationRecovery(context, retry)
         },
         async running() {
-          if (finished) return
+          if (finished) return false
           runningRequested = true
           const markRunning = async () => {
             runningPersisted = await update({ status: "running", timestamp: new Date().toISOString() })
             return runningPersisted
           }
-          if (await markRunning() || runningRetry) return
+          if (await markRunning()) return true
+          if (runningRetry) return false
           runningRetry = (async () => {
             const deadline = Date.now() + TERMINAL_RETRY_TIMEOUT_MS
             while (!finished && Date.now() < deadline) {
@@ -2422,6 +2424,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             }
           })()
           registerAgentInvocationRecovery(context, runningRetry)
+          return false
         },
         async setAnnotations(annotations) {
           if (finished || finishing) return
