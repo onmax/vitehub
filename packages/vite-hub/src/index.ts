@@ -1,4 +1,4 @@
-import { consoleDatabaseUrl, withDataDir } from "./storage-config.ts"
+import { consoleD1Binding, consoleDatabaseUrl, withDataDir } from "./storage-config.ts"
 import { existsSync, readFileSync } from "node:fs"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -462,6 +462,7 @@ function deploymentPlugins(
   }
   let providerOutput: ReturnType<typeof useProviderOutputCatalog> | undefined
   let deploymentRoot: string | undefined
+  let deploymentOutputDir: string | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   const deploymentEnvPlugin = { current: envPlugin }
   const subscribedEnvPlugins = new WeakSet<EnvVitePlugin>()
@@ -627,7 +628,7 @@ function deploymentPlugins(
           },
         },
         inspect: () => ({
-          providerOutput: describeDeploymentPlanOutput(plan, deploymentRoot ?? process.cwd()),
+          providerOutput: describeDeploymentPlanOutput(plan, deploymentRoot ?? process.cwd(), deploymentOutputDir),
         }),
       },
       config(config) {
@@ -641,6 +642,8 @@ function deploymentPlugins(
       },
       configResolved(config) {
         deploymentRoot = config.root
+        // SAFETY: Vite preserves the user-defined Nitro field on the resolved config, while ResolvedConfig omits framework extensions from its type.
+        deploymentOutputDir = (config as ResolvedConfig & { nitro?: { output?: { dir?: string } } }).nitro?.output?.dir
         const serverResolve = resolveServerOptions(config)
         resolvedBuildConfig = {
           alias: (serverResolve.alias ?? []).map(alias => ({
@@ -774,6 +777,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     plugins.push(consoleVitePlugin({
       blobStores: consoleBlobStores,
       console: options.console === true ? true : options.console,
+      resolveD1Binding: (root, serverDirs) => consoleD1Binding(plan.preset, options.database, { root, serverDirs }),
       databaseUrl: consoleDatabaseUrl(options),
       databaseDiscoveryRoot: options.database && options.database !== true ? options.database.projectRoot : undefined,
       kvStores: presetKV ? Object.keys(presetKV.stores || { default: presetKV.store }) : [],

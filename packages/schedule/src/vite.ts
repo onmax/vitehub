@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto"
 import { mkdir, rm, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, normalize } from "node:path"
 
-import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { contributeProviderDeploymentOutput, createDefaultCloudflareOutputRoot, createDefaultNetlifyOutputRoot, createDefaultVercelOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { encodeProviderOutputAliases } from "@vite-hub/internal/build/esbuild"
 import { removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
 import { getViteMode } from "@vite-hub/internal/build/mode"
@@ -462,6 +462,7 @@ function shouldInstallNitroSchedulePlugin(definitions: DiscoveredScheduleDefinit
 }
 
 function shouldEmitStandaloneProviderOutput(definitions: DiscoveredScheduleDefinition[], options: ScheduleVitePluginOptions): boolean {
+  if (options.runtime !== undefined && options.providerOutput !== "standalone") return false
   if (options.providerOutput === false || options.providerOutput === "nitro") return false
   if (options.providerOutput === "standalone") return definitions.some(definition => definition.runtimeOnly !== true)
   if (hasServerScheduleDefinitions(definitions)) return hasViteSuffixScheduleDefinitions(definitions)
@@ -757,6 +758,21 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
           return inspectScheduleDefinitions({ projectRoot: roots.projectRoot, rootDir: roots.viteRoot, serverDirs, serverRootDir: roots.projectRoot })
         },
       }],
+      providerOutput: shouldEmitStandaloneProviderOutput(
+        discoverScheduleDefinitions({
+          rootDir: viteRoot ?? process.cwd(),
+          serverDirs,
+          serverRootDir: projectRoot ?? resolveViteHubProjectRoot(viteRoot ?? process.cwd(), options),
+        }),
+        options,
+      )
+        ? [
+            { description: "Generated Cloudflare Schedule worker and config", owner: "schedule", path: resolve(createDefaultCloudflareOutputRoot(viteRoot ?? process.cwd()), "wrangler.json") },
+            { description: "Generated Vercel Schedule functions", owner: "schedule", path: resolve(createDefaultVercelOutputRoot(viteRoot ?? process.cwd()), "functions/api/vitehub/schedules/vercel") },
+            { description: "Generated Netlify Schedule functions", owner: "schedule", path: resolve(createDefaultNetlifyOutputRoot(viteRoot ?? process.cwd()), "functions") },
+            { description: "Generated Deno Schedule cron entry", owner: "schedule", path: resolve(viteRoot ?? process.cwd(), ".vitehub/schedule/deno-cron.mjs") },
+          ]
+        : [],
     }),
   } satisfies ViteHubInspectionPluginMetadata
   return inspectable

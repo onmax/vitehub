@@ -26,6 +26,7 @@ can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
 The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
+The CLI owns the `inspect` namespace. Plugin command contributions with that name are ignored.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
@@ -57,6 +58,7 @@ Available namespaces:
 | `vitehub inspect definitions` | Available | ViteHub CLI plus package inspection contributors | List the Definitions that each active package discovered. |
 | `vitehub inspect provider-output` | Available | ViteHub CLI plus package inspection contributors | List generated Provider Output files with secrets redacted. |
 | `vitehub provision run` | Available | ViteHub CLI plus package Provision Steps | Create missing provider resources idempotently. |
+| `vitehub provision status` | Available | ViteHub CLI plus package Provision Steps | Show recorded provider ids and pending plan actions without applying them. |
 
 ## Inspect Definitions and Provider Output
 
@@ -313,6 +315,12 @@ CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm vitehub provision run --
 VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider vercel --dry-run
 ```
 
+Use `provision status` to compare the ids recorded in `.vitehub/provision.json` with the current plan. Add `--json` to `provision run` or `provision status` for one JSON document on stdout. Read [Provisioning](/docs/development/provisioning#json-output) for the fields.
+
+```bash [Terminal]
+CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm vitehub provision status --provider cloudflare --json
+```
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -322,6 +330,7 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 | `Provision requires --provider cloudflare\|vercel` | The provider flag is missing or misspelled. | Pass a supported provider explicitly. |
 | Provision fails before applying actions | Required provider credentials are missing. | Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`, or set `VERCEL_TOKEN`. |
 | Provision dry-run reports no actions | A package plan skipped provider lookup because its read credentials are missing. | Supply the provider credentials to inspect existing resources; `--dry-run` still prevents `apply()`. |
+| Provision status reports `plan: not checked` | Provider credentials are missing, so the plan phase did not run. | Set the provider credentials. Recorded ids are shown without them. |
 | Vercel Provision reports no resources for Blob | `VERCEL_PROJECT_ID` is missing, or the active Blob store is not `vercel-blob`. | Set the project id and select the Vercel Blob driver before rerunning the plan. |
 | Agent eval CLI is disabled | `agent.eval` or `agent.cli` disables the Agent Eval Runner. | Re-enable the Agent integration option for local development. |
 | Agent eval times out | The eval case, model call, or provider run exceeds `agent.eval.testTimeout`. | Increase `agent.eval.testTimeout` in `vite.config.ts` or narrow the eval case. |

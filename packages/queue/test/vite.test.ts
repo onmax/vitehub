@@ -7,6 +7,7 @@ import { promisify } from "node:util"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+import { collectViteHubDefinitionInspectors, collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
 import { createDefaultCloudflareOutputRoot } from "@vite-hub/internal/build/deployment-output"
 import { VITEHUB_NITRO_CONFIG_CONTEXT } from "@vite-hub/internal/build/vite"
 
@@ -28,6 +29,37 @@ async function runProviderOutputHooks(plugin: ReturnType<typeof hubQueue>) {
 }
 
 describe("hubQueue", () => {
+  it.each(["cloudflare", "vercel"] as const)("ignores a Nitro output override for standalone %s inspection", async (provider) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-queue-inspection-output-"))
+    roots.push(root)
+    const plugin = hubQueue({ provider })
+    await (plugin.configResolved as (config: unknown) => Promise<void>)({
+      root, command: "build", nitro: { output: { dir: "custom-output" } },
+    })
+    const entries = await collectViteHubProviderOutputEntries([plugin])
+    expect(entries).toMatchObject([{
+      path: provider === "cloudflare"
+        ? resolve(createDefaultCloudflareOutputRoot(root), "wrangler.json")
+        : resolve(root, ".vercel/output/config.json"),
+    }])
+  })
+
+  it.each([
+    { options: false as const, nitro: {} },
+    { options: { provider: "cloudflare" as const }, nitro: { preset: "vercel" } },
+  ])("omits disabled Queue Definitions and provider output for $options", async ({ options, nitro }) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-queue-disabled-inspection-"))
+    roots.push(root)
+    await writeFile(join(root, "welcome.queue.ts"), "export default { handler: async () => undefined }\n")
+    const plugin = hubQueue(options)
+    const configResolved = plugin.configResolved as (config: unknown) => Promise<void>
+    await configResolved({ root, nitro, command: "build" })
+
+    const inspectors = await collectViteHubDefinitionInspectors([plugin])
+    expect(inspectors).toEqual([])
+    expect(await collectViteHubProviderOutputEntries([plugin])).toEqual([])
+  })
+
   it("serializes shared Provider Output finalization", () => {
     expect(hubQueue().closeBundle).toMatchObject({ order: "post", sequential: true })
   })

@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { encodeProviderOutputAliases } from "@vite-hub/internal/build/esbuild"
-import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, getProviderRuntimeModule, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { contributeProviderDeploymentOutput, createDefaultCloudflareOutputRoot, createDefaultVercelOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, getProviderRuntimeModule, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
 import { collectViteHubProviderImportAliases, createNoExternalMerger, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { normalizeHosting } from "@vite-hub/internal/hosting"
@@ -190,16 +190,26 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       }
     },
     vitehub: {
-      inspect: () => ({
-        definitions: [{
+      inspect: () => {
+        const normalized = normalizeWorkflowOptions(workflow, { hosting: internalOptions?.hosting ?? "vercel" })
+        if (!normalized) return
+        const rootDir = resolveViteHubProjectRoot(resolved?.root ?? process.cwd())
+        return {
+          definitions: [{
           kind: "workflow",
           label: "Workflows",
           list: () => {
             const rootDir = resolved?.root ?? process.cwd()
             return inspectWorkflowDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
           },
-        }],
-      }),
+          }],
+          providerOutput: normalized.provider === "cloudflare"
+            ? [{ description: "Generated Cloudflare Workflow worker", owner: "workflow", path: resolve(createDefaultCloudflareOutputRoot(rootDir), "worker.mjs") }]
+            : normalized.provider === "vercel"
+              ? [{ description: "Generated Vercel Workflow function", owner: "workflow", path: resolve(createDefaultVercelOutputRoot(rootDir), "functions", resolveNitroVercelFunctionName(resolved ?? {}, "workflow") ?? "__server.func", "index.mjs") }]
+              : [],
+        }
+      },
       workflow: {
         async createNitroConfig({ nitro, projectRoot, serverDirs: nitroServerDirs, transformRegistry }: WorkflowNitroConfigOptions) {
           return await createCloudflareWorkflowNitroConfig({
