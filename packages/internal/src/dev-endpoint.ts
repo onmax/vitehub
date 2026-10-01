@@ -57,6 +57,9 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
 
 function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boolean {
   const trimmed = host.trim().toLowerCase()
+  // Vite accepts these protocol-like Host values before parsing a hostname.
+  // Keep the endpoint guard aligned so browser and extension clients are not blocked.
+  if (/^(?:file|.+-extension):/i.test(trimmed)) return true
   if (trimmed.startsWith("[")) {
     const end = trimmed.indexOf("]")
     return end > 0 && isIP(trimmed.slice(1, end)) === 6
