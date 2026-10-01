@@ -250,6 +250,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       }
       if (await db.lease(name, stored.grant.revision, now, now + leaseMs)) {
         const started = Date.now()
+        const renew = () => {
+          void db.renew(name, stored.grant.revision, Date.now(), Date.now() + leaseMs).catch(() => undefined)
+        }
+        const renewal = setInterval(renew, Math.floor(leaseMs / 2))
         try {
           const refreshed = await value.provider.refresh(stored.tokens, providerContext(event))
           await db.write({ expectedRevision: stored.grant.revision, name, provider: value.provider.id, tokens: { ...refreshed, account: refreshed.account ?? stored.tokens.account } })
@@ -262,6 +266,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
           await db.release(name, stored.grant.revision, reconnect ? "needs-reconnect" : "error", errorCode(error)).catch(() => undefined)
           await recordQuietly({ action: "refresh", actor, connection: name, durationMs: Date.now() - started, error: errorCode(error), outcome: "failed", ...(errorStatus(error) ? { status: errorStatus(error) } : {}) }, event)
           throw reconnect ? connectionError("needs_reconnect", { connection: name }, error) : error
+        }
+        finally {
+          clearInterval(renewal)
         }
       }
       if (Date.now() + delay > deadline) throw connectionError("unavailable", { connection: name })

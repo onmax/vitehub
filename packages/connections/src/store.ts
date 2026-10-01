@@ -46,6 +46,8 @@ export interface ConnectionsStore {
   grant: (name: string) => Promise<StoredGrant | undefined>
   /** Takes the refresh lease when the revision is current and no lease is active. */
   lease: (name: string, revision: string, now: number, until: number) => Promise<boolean>
+  /** Extends an active refresh lease for the current revision. */
+  renew: (name: string, revision: string, now: number, until: number) => Promise<boolean>
   openPending: (ticket: string, now: number) => Promise<PendingConnection | undefined>
   /** Clears the lease and sets a status without a new token. Only changes the grant at `revision`. */
   release: (name: string, revision: string, status: ConnectionStatus, lastError?: string) => Promise<void>
@@ -208,6 +210,11 @@ export function createConnectionsStore(options: { db: ConnectionsDatabase, encry
     async lease(name, revision, now, until) {
       await initialize()
       const rows = await db.all(sql`UPDATE vitehub_connection_grants SET lease_until = ${until} WHERE name = ${name} AND revision = ${revision} AND (lease_until IS NULL OR lease_until < ${now}) RETURNING name`)
+      return rows.length === 1
+    },
+    async renew(name, revision, now, until) {
+      await initialize()
+      const rows = await db.all(sql`UPDATE vitehub_connection_grants SET lease_until = ${until} WHERE name = ${name} AND revision = ${revision} AND lease_until >= ${now} RETURNING name`)
       return rows.length === 1
     },
     async openPending(ticket, now) {

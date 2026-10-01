@@ -94,6 +94,15 @@ describe("createConnectionsStore", () => {
     expect(await store.lease("missing", grant.revision, now, now + 1)).toBe(false)
   })
 
+  it("renews an active refresh lease without reviving an expired one", async () => {
+    const { store } = setup()
+    const grant = await store.write({ name: "gmail", provider: "google", tokens: tokenSet() })
+    expect(await store.lease("gmail", grant.revision, 1_000, 31_000)).toBe(true)
+    expect(await store.renew("gmail", grant.revision, 2_000, 32_000)).toBe(true)
+    expect((await store.grant("gmail"))?.leaseUntil).toBe(32_000)
+    expect(await store.renew("gmail", grant.revision, 32_001, 62_000)).toBe(false)
+  })
+
   it("replaces only the expected revision and clears the lease", async () => {
     const { store } = setup()
     const grant = await store.write({ name: "gmail", provider: "google", tokens: tokenSet() })
