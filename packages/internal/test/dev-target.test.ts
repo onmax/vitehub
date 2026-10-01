@@ -114,6 +114,14 @@ describe("dev server discovery", () => {
     }
   })
 
+  it("validates the discovery object and accepts an owner parser", async () => {
+    const output = captureStderr()
+    const options = { endpoint, rootDir: "/app", serverUrl: "http://localhost:5173", stderr: output.stderr }
+    expect((await discoverViteHubDevServer({ ...options, fetch: async () => Response.json(null) }))?.discovery).toEqual({})
+    const target = await discoverViteHubDevServer({ ...options, fetch: async () => Response.json({ id: 7 }), parseDiscovery: () => ({ root: "/app", id: 7 }) })
+    expect(target?.discovery.id).toBe(7)
+  })
+
   it("uses the owner root check", async () => {
     const output = captureStderr()
     const target = await discoverViteHubDevServer({
@@ -251,12 +259,19 @@ describe("guarded dev endpoint", () => {
       isViteHubDevHostAllowed({ config: { server } }, { headers: host === undefined ? {} : { host } } as unknown as IncomingMessage)
     expect(allowed(undefined)).toBe(true)
     expect(allowed("localhost")).toBe(true)
+    expect(allowed("LOCALHOST:5173")).toBe(true)
+    expect(allowed("App.Localhost:5173")).toBe(true)
+    expect(allowed("APP.TEST:5173", { allowedHosts: ["app.test"] })).toBe(true)
+    expect(allowed("app.test:5173", { allowedHosts: ["APP.TEST"] })).toBe(true)
+
     expect(allowed("app.localhost:5173")).toBe(true)
     expect(allowed("127.0.0.1:5173")).toBe(true)
     expect(allowed("192.168.1.20:5173")).toBe(true)
     expect(allowed("[::1]:5173")).toBe(true)
     expect(allowed("[not-ip]:5173")).toBe(false)
     expect(allowed("attacker.example:5173")).toBe(false)
+    expect(allowed("attacker-extension:5173")).toBe(false)
+    expect(allowed("file:5173")).toBe(false)
     expect(allowed("localhost.attacker.example")).toBe(false)
     expect(allowed("tunnel.test", { allowedHosts: [".tunnel.test"] })).toBe(true)
     expect(allowed("eviltunnel.test", { allowedHosts: [".tunnel.test"] })).toBe(false)

@@ -160,6 +160,8 @@ Omitting `timeZone` during an update preserves the stored zone. Set it to `UTC` 
 
 Memory stores are the default for direct calls. They are process-local and lose Runtime Schedules and Schedule Run history on restart. Use `createKVRuntimeScheduleStore({ kvStore })` and `createKVScheduleRunStore({ kvStore })` when those records must survive a restart. Both factories require an explicit `ScheduleKVStorage`. Static schedules, memory stores, and custom storage do not require `@vite-hub/kv`.
 
+Schedule Run stores accept `listRuns({ scheduleId, runtimeOnly, limit })`. Inspection requests use these options to read only the latest run or the ten runs shown in the Console. The KV store selects run keys through a persisted metadata index before fetching records and limits concurrent reads to 16. Custom stores should apply the filters and limit in their storage query. Opaque run IDs remain supported. Records without index entries use batches of at most 16 reads. Failed index writes preserve the run record and use this fallback query path.
+
 To use ViteHub KV, install `@vite-hub/kv` and import the adapter explicitly:
 
 ```ts

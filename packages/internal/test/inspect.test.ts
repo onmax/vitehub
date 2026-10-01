@@ -47,6 +47,15 @@ describe("inspection contributors", () => {
 })
 
 describe("redactInspectionValue", () => {
+  it("bounds and serializes structured-clone values", () => {
+    const cyclic: Record<string, unknown> = { count: 1n, token: "secret" }
+    cyclic.self = cyclic
+    const result = redactInspectionValue(cyclic)
+    expect(result).toEqual({ count: "1", token: "[redacted]", self: "[circular]" })
+    expect(() => JSON.stringify(result)).not.toThrow()
+    expect(redactInspectionValue(Array.from({ length: 1000 }, () => "value"))).toHaveLength(100)
+  })
+
   it("redacts secret-like keys, Worker vars, and credential URLs", () => {
     expect(redactInspectionValue({
       d1_databases: [{ binding: "DB", database_id: "db-id" }],
@@ -71,9 +80,18 @@ describe("redactInspectionValue", () => {
 })
 
 describe("redactInspectionText", () => {
+  it.each([
+    ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: [redacted]'],
+    ['Authorization: Bearer abc rejected', 'Authorization: [redacted] rejected'],
+    ['password="hunter 2" failed', 'password=[redacted] failed'],
+    ["token='secret with spaces'; retry", 'token=[redacted]; retry'],
+  ])("redacts the complete credential in %s", (input, expected) => {
+    expect(redactInspectionText(input)).toBe(expected)
+  })
+
   it("redacts credentials inside free text", () => {
     expect(redactInspectionText("GET https://user:hunter2@example.test/db failed, Authorization: Bearer abc.def; api_key=sk_live token: t1 done"))
-      .toBe("GET https://[redacted]@example.test/db failed, Authorization: [redacted] [redacted]; api_key=[redacted] token: [redacted] done")
+      .toBe("GET https://[redacted]@example.test/db failed, Authorization: [redacted]; api_key=[redacted] token: [redacted] done")
     expect(redactInspectionText("Target report failed after 3 attempts.")).toBe("Target report failed after 3 attempts.")
   })
 })

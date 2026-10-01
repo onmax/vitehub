@@ -20,7 +20,6 @@ import { enrichAgentUsageCost, modelsDevPricing, type AgentUsagePricing } from "
 import { resolveAgentEvalOptions, writeAgentEvaliteConfig, type ResolvedAgentEvalOptions } from "./internal/evalite-config.ts"
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute, readAgentInvocationStream } from "./invocation-stream.ts"
 
-import type { AgentDevLoopDiscoveryResponse } from "./invocation-stream.ts"
 import type { AgentEvalOptions, AgentUsageRecord } from "./types.ts"
 import type { UIMessageLike } from "./chat-message-input.ts"
 import type { WorkspaceDevTokenOptions } from "@vite-hub/workspace/server"
@@ -760,9 +759,17 @@ async function readDiscovery(
   context: AgentCliContext,
   fetchImpl: typeof fetch,
 ): Promise<AgentDevTarget | undefined> {
-  const server = await discoverViteHubDevServer<Partial<AgentDevLoopDiscoveryResponse>>({
+  const server = await discoverViteHubDevServer({
     endpoint: agentDevEndpoint,
     fetch: fetchImpl,
+    parseDiscovery(value: unknown) {
+      const response = isRecord(value) ? value : {}
+      return {
+        root: response.root,
+        workspaceDevTokenServerId: response.workspaceDevTokenServerId,
+        agents: Array.isArray(response.agents) ? response.agents.filter(isRecord) : [],
+      }
+    },
     isCompatibleRoot: isCompatibleAgentDevServerRoot,
     rootDir: context.rootDir,
     serverUrl: parsed.url,

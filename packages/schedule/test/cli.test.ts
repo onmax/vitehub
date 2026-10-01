@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import { EventEmitter } from "node:events"
 import { Readable } from "node:stream"
 
@@ -51,6 +55,62 @@ function devServer(result: unknown, init: { discovery?: Record<string, unknown>,
 }
 
 describe("vitehub schedule", () => {
+  it.each([false, true])("rejects malformed operation results with json %s", async (json) => {
+    const output = context()
+    expect(await runScheduleCli(["list", ...(json ? ["--json"] : [])], output.context, { fetch: devServer({ automaticRuns: false, schedules: "invalid" }) })).toBe(1)
+    if (json) expect(JSON.parse(output.stdout.output())).toEqual({ error: { message: "The Schedule Dev response has an invalid result shape." } })
+    else expect(output.stderr.output()).toContain("invalid result shape")
+  })
+
+  it("returns parseable JSON errors through the executable entrypoint", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "vitehub-schedule-cli-proof-"))
+    const cli = resolve(import.meta.dirname, "../../cli/src/index.ts")
+    try {
+      await mkdir(join(directory, "node_modules/@vite-hub"), { recursive: true })
+      await symlink(resolve(import.meta.dirname, ".."), join(directory, "node_modules/@vite-hub/schedule"), "dir")
+      await writeFile(join(directory, "vite.config.mjs"), 'import { hubSchedule } from "@vite-hub/schedule/vite"; export default { plugins: [hubSchedule()] };')
+      const help = spawnSync(process.execPath, [cli, "schedule", "get", "--help"], { cwd: directory, encoding: "utf8", timeout: 30_000 })
+      expect(help.status, help.stderr).toBe(0)
+      expect(help.stdout).toContain("vitehub schedule get")
+      const failure = spawnSync(process.execPath, [cli, "schedule", "get", "--json"], { cwd: directory, encoding: "utf8", timeout: 30_000 })
+      expect(failure.status).toBe(1)
+      expect(JSON.parse(failure.stdout)).toMatchObject({ error: { message: expect.any(String) } })
+      expect(failure.stderr).toBe("")
+    }
+    finally {
+      await rm(directory, { force: true, recursive: true })
+    }
+  }, 60_000)
+
+  it.each([["get", "--json"], ["runs", "digest", "--json", "--limit", "0"]])("returns argument failures as JSON for %j", async (...args) => {
+    const result = context()
+    expect(await runScheduleCli(args, result.context)).toBe(1)
+    expect(JSON.parse(result.stdout.output())).toMatchObject({ error: { message: expect.any(String) } })
+    expect(result.stderr.output()).toBe("")
+  })
+
+  it("returns discovery failures as JSON without human diagnostics", async () => {
+    const result = context()
+    expect(await runScheduleCli(["list", "--json"], result.context, {
+      fetch: async () => { throw new Error("unreachable") },
+    })).toBe(1)
+    expect(JSON.parse(result.stdout.output())).toMatchObject({ error: { message: expect.stringContaining("No Compatible") } })
+    expect(result.stderr.output()).toBe("")
+  })
+
+  it("times out during discovery using the command signal", async () => {
+    const result = context()
+    let signal: AbortSignal | null | undefined
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      signal = init?.signal
+      await new Promise((_resolve, reject) => signal?.addEventListener("abort", () => reject(signal?.reason), { once: true }))
+      return Response.json({})
+    }
+    expect(await runScheduleCli(["list", "--json", "--timeout", "10"], result.context, { fetch })).toBe(1)
+    expect(signal?.aborted).toBe(true)
+    expect(JSON.parse(result.stdout.output())).toHaveProperty("error")
+  })
+
   it("lists Runtime Schedules as a table and as JSON", async () => {
     const result = { automaticRuns: false, schedules: [digest] }
     const human = context()

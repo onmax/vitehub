@@ -20,7 +20,7 @@ import { createScheduleTargetsContents, SCHEDULE_TARGETS_ID } from "./targets-mo
 import { scheduleDevRuntimeRoute } from "./dev.ts"
 import { registerScheduleDevEndpoint } from "./vite-dev.ts"
 
-import type { Plugin, ResolvedConfig, UserConfig } from "vite"
+import type { Plugin, ResolvedConfig } from "vite"
 import type { ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import type { ScheduleWorkflowRuntime } from "./internal/provider-output.ts"
 import type { ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
@@ -109,10 +109,6 @@ interface WorkflowVitePlugin extends Plugin {
       prepareScheduleRuntime?: (artifactDir?: string) => Promise<ScheduleWorkflowRuntime | undefined>
     }
   }
-}
-
-type ViteConfigWithNitro = UserConfig & {
-  nitro?: NitroConfig
 }
 
 function resolveSchedulePluginRoots(root: string, options: Pick<ScheduleVitePluginOptions, "projectRoot"> = {}) {
@@ -608,7 +604,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
       })
       emitStandaloneProviderOutput = (options.runtime === undefined || options.providerOutput === "standalone") && shouldEmitStandaloneProviderOutput(definitions, options)
       standaloneProviderSource = selectStandaloneProviderSource(definitions, options)
-      const currentNitro = (config as { nitro?: unknown }).nitro
+      const currentNitro = Reflect.get(config, "nitro")
       const nitro = await createScheduleNitroConfig({
         ...options,
         command: env.command,
@@ -618,17 +614,18 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
         serverDirs,
       })
       if (env.command === "serve") {
-        ;(config as ViteConfigWithNitro).nitro = await addNitroScheduleDevHandler(nitro ?? currentNitro, roots.projectRoot, internalOptions.importBase)
+        Reflect.set(config, "nitro", await addNitroScheduleDevHandler(nitro ?? currentNitro, roots.projectRoot, internalOptions.importBase))
         return
       }
       if (!nitro) return null
-      ;(config as ViteConfigWithNitro).nitro = nitro
+      Reflect.set(config, "nitro", nitro)
     },
     configureServer(server) {
       registerScheduleDevEndpoint(server, {
         nitroBaseURL: () => {
           // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
           const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
+          // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate the unknown Nitro dev URL from the resolved Vite config extension.
           return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
         },
       })

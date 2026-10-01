@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { deserializeResponse, serializeResponse, ViteHubError } from "@vite-hub/runtime"
 import { defineScheduleTarget, schedules, type ScheduleKVStorage } from "../src/index.ts"
@@ -838,6 +838,78 @@ describe("Schedule Run bookkeeping", () => {
 })
 
 describe("KV Schedule Run Store", () => {
+  it("limits provider reads to the newest matching indexed run keys", async () => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    for (let index = 0; index < 100; index++) {
+      const scheduledAt = new Date(Date.UTC(2026, 0, 1, 0, index))
+      for (const scheduleId of ["digest_with_underscore", "other"]) {
+        await store.createRun({
+          id: `srun_runtime_${encodeURIComponent(scheduleId)}_${scheduledAt.toISOString()}`,
+          scheduleId, target: "report", scheduledAt, createdAt: scheduledAt, updatedAt: scheduledAt,
+          status: "pending", attemptCount: 0,
+        })
+      }
+    }
+    const get = vi.spyOn(kvStore, "get")
+    const runs = await store.listRuns({ scheduleId: "digest_with_underscore", runtimeOnly: true, limit: 10 })
+    expect(runs).toHaveLength(10)
+    expect(get).toHaveBeenCalledTimes(10)
+    expect(runs[0]?.scheduledAt.toISOString()).toBe("2026-01-01T01:39:00.000Z")
+    expect(runs.every(run => run.scheduleId === "digest_with_underscore")).toBe(true)
+  })
+
+  it.each(["memory", "kv"])("preserves opaque generated-shaped IDs in the %s store", async (kind) => {
+    const kvStore = createTestKVStore()
+    const store = kind === "memory" ? createMemoryScheduleRunStore() : createKVScheduleRunStore({ kvStore })
+    const scheduledAt = new Date("2026-05-23T09:00:00.000Z")
+    const ids = ["srun_runtime_%_2026-05-23T09:00:00.000Z", "srun_runtime_other_2026-05-23T09:00:00.000Z"]
+    for (const id of ids) {
+      await store.createRun({ id, scheduleId: "actual", target: "report", scheduledAt, createdAt: scheduledAt,
+        updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+    }
+    expect((await store.listRuns({ scheduleId: "actual", runtimeOnly: true, limit: 10 })).map(run => run.id)).toEqual(ids)
+    if (kind === "kv") {
+      // Existing records remain readable when they predate the index.
+      for (const key of await kvStore.keys("vitehub:schedule/schedule-run-index")) await kvStore.del(key)
+      expect((await store.listRuns({ scheduleId: "actual", limit: 10 })).map(run => run.id).sort()).toEqual(ids.toSorted())
+    }
+  })
+
+  it.each([false, true])("keeps history authoritative when index publication fails after writing %s", async (published) => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    const scheduledAt = new Date("2026-05-23T09:00:00.000Z")
+    const run = { id: "older", scheduleId: "actual", target: "report", scheduledAt,
+      createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending" as const, attemptCount: 0 }
+    await store.createRun(run)
+    const originalSet = kvStore.set.bind(kvStore)
+    const set = vi.spyOn(kvStore, "set")
+    set.mockImplementation(async (key, value) => {
+      if (key.includes("/schedule-run-index/")) {
+        if (published) await originalSet(key, value)
+        throw new Error("index unavailable")
+      }
+      await originalSet(key, value)
+    })
+    const newer = { ...run, id: "index-failure", scheduledAt: new Date("2026-05-24T09:00:00.000Z") }
+    await expect(store.createRun(newer)).resolves.toEqual(newer)
+    expect(await store.getRun(newer.id)).toEqual(newer)
+    expect(await store.listRuns({ scheduleId: "actual", limit: 1 })).toEqual([newer])
+    set.mockImplementation(async (key, value) => {
+      if (key.includes("/schedule-runs/")) throw new Error("record unavailable")
+      await originalSet(key, value)
+    })
+    await expect(store.createRun({ ...run, id: "record-failure", scheduledAt: new Date("2026-05-25T09:00:00.000Z") })).rejects.toThrow("record unavailable")
+    expect(await store.getRun("record-failure")).toBeUndefined()
+    expect(await kvStore.keys("vitehub:schedule/schedule-run-index/record-failure/")).toEqual([])
+    set.mockRestore()
+    const retried = { ...run, id: "record-failure", scheduleId: "other", scheduledAt: new Date("2026-05-26T09:00:00.000Z") }
+    await store.createRun(retried)
+    expect(await store.listRuns({ scheduleId: "actual", limit: 1 })).toEqual([newer])
+    expect(await store.listRuns({ scheduleId: "other", limit: 1 })).toEqual([retried])
+  })
+
   it("matches the ScheduleRunStore run and attempt contract and round-trips dates and errors", async () => {
     const store = createKVScheduleRunStore({ kvStore: createTestKVStore(), prefix: "tests/runs" })
     const createdAt = new Date("2026-05-23T09:00:00.000Z")

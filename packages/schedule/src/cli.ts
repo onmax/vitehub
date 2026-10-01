@@ -39,16 +39,6 @@ interface ParsedScheduleArgs {
   url: string
 }
 
-interface ScheduleDevDiscovery {
-  message?: unknown
-  root?: unknown
-  runtime?: unknown
-}
-
-interface ScheduleDevFailure {
-  error?: { code?: unknown, message?: unknown }
-}
-
 const scheduleDevEndpoint = {
   header: scheduleDevHeader,
   headerValue: scheduleDevHeaderValue,
@@ -218,25 +208,77 @@ function formatRun(run: ScheduleRunSummary): string {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function formatResult(operation: ScheduleDevOperation, result: Record<string, unknown>): string {
-  // SAFETY: the Schedule dev handler of the same package version writes these shapes.
+function stringFields(value: Record<string, unknown>, fields: string[]): boolean {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+  return fields.every(field => typeof value[field] === "string")
+}
+
+function optionalStrings(value: Record<string, unknown>, fields: string[]): boolean {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+  return fields.every(field => value[field] === undefined || typeof value[field] === "string")
+}
+
+function isRunError(value: unknown): boolean {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+  return value === undefined || (isRecord(value) && typeof value.message === "string" && optionalStrings(value, ["name"]))
+}
+
+function isRunSummary(value: unknown): value is ScheduleRunSummary {
+  return isRecord(value) && stringFields(value, ["id", "scheduleId", "scheduledAt", "target"])
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+    && typeof value.attemptCount === "number" && Number.isInteger(value.attemptCount) && value.attemptCount >= 0
+    && (value.status === "pending" || value.status === "running" || value.status === "succeeded" || value.status === "failed")
+    && optionalStrings(value, ["completedAt", "startedAt"]) && isRunError(value.error)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+    && (value.response === undefined || (isRecord(value.response) && typeof value.response.status === "number"
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+      && Number.isInteger(value.response.status) && typeof value.response.statusText === "string"))
+}
+
+function isScheduleSummary(value: unknown): value is RuntimeScheduleSummary {
+  return isRecord(value) && stringFields(value, ["id", "target", "cron", "timeZone", "createdAt", "updatedAt"])
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+    && typeof value.enabled === "boolean" && isRecord(value.console)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+    && typeof value.console.visible === "boolean" && typeof value.console.dispatch === "boolean"
+    && optionalStrings(value, ["nextRunAt"]) && (value.lastRun === undefined || isRunSummary(value.lastRun))
+}
+
+function isAttemptSummary(value: unknown): value is ScheduleRunAttemptSummary {
+  return isRecord(value) && stringFields(value, ["id", "runId", "startedAt"])
+    && (value.status === "running" || value.status === "succeeded" || value.status === "failed")
+    && optionalStrings(value, ["completedAt"]) && isRunError(value.error)
+}
+
+function formatResult(operation: ScheduleDevOperation, result: Record<string, unknown>): string | undefined {
   switch (operation) {
     case "list":
-      return formatScheduleList(result as unknown as RuntimeScheduleInspection)
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+      if (typeof result.automaticRuns === "boolean" && Array.isArray(result.schedules) && result.schedules.every(isScheduleSummary)) {
+        return formatScheduleList({ automaticRuns: result.automaticRuns, schedules: result.schedules })
+      }
+      break
     case "get":
-      return formatSchedule(result.schedule as RuntimeScheduleSummary, result.automaticRuns === true)
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+      if (isScheduleSummary(result.schedule) && typeof result.automaticRuns === "boolean") return formatSchedule(result.schedule, result.automaticRuns)
+      break
     case "runs":
-      return formatRuns(result.runs as ScheduleRunSummary[])
+      if (Array.isArray(result.runs) && result.runs.every(isRunSummary)) return formatRuns(result.runs)
+      break
     case "attempts":
-      return formatAttempts(result.run as ScheduleRunSummary, result.attempts as ScheduleRunAttemptSummary[])
+      if (isRunSummary(result.run) && Array.isArray(result.attempts) && result.attempts.every(isAttemptSummary)) return formatAttempts(result.run, result.attempts)
+      break
     case "run":
-      return formatRun(result.run as ScheduleRunSummary)
+      if (isRunSummary(result.run)) return formatRun(result.run)
+      break
     case "enable":
     case "disable": {
-      const schedule = result.schedule as RuntimeScheduleSummary
+      if (!isScheduleSummary(result.schedule)) break
+      const schedule = result.schedule
       return `${operation === "enable" ? "Enabled" : "Disabled"} Schedule ${schedule.id}.${schedule.nextRunAt ? ` Next run: ${schedule.nextRunAt}.` : ""}\n`
     }
   }
@@ -245,8 +287,10 @@ function formatResult(operation: ScheduleDevOperation, result: Record<string, un
 async function readFailure(response: Response): Promise<{ code?: string, message: string }> {
   const text = await response.text()
   try {
-    const body: ScheduleDevFailure = JSON.parse(text)
-    if (typeof body.error?.message === "string") {
+    const body: unknown = JSON.parse(text)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+    if (isRecord(body) && isRecord(body.error) && typeof body.error.message === "string") {
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
       return { ...(typeof body.error.code === "string" ? { code: body.error.code } : {}), message: body.error.message }
     }
   }
@@ -256,13 +300,13 @@ async function readFailure(response: Response): Promise<{ code?: string, message
   return { message: text || `Schedule Dev request failed with HTTP ${response.status}.` }
 }
 
-function writeFailure(parsed: ParsedScheduleArgs, context: ScheduleCliContext, failure: { code?: string, message: string }): number {
+function writeFailure(parsed: Pick<ParsedScheduleArgs, "json">, context: ScheduleCliContext, failure: { code?: string, message: string }): number {
   if (parsed.json) context.stdout.write(`${JSON.stringify({ error: failure }, null, 2)}\n`)
   else context.stderr.write(`${failure.message}\n`)
   return 1
 }
 
-function withTimeout(timeout: number | undefined): Pick<RequestInit, "signal"> {
+function withTimeout(timeout: number | undefined): { signal?: AbortSignal } {
   return timeout ? { signal: AbortSignal.timeout(timeout) } : {}
 }
 
@@ -277,6 +321,7 @@ async function runScheduleCommand(
     parsed = parseArgs(command, args, context.env)
   }
   catch (error) {
+    if (args.includes("--json")) return writeFailure({ json: true }, context, { message: error instanceof Error ? error.message : String(error) })
     context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     writeUsage(command, context.stderr)
     return 1
@@ -286,20 +331,21 @@ async function runScheduleCommand(
     return 0
   }
   const fetchImpl = options.fetch ?? globalThis.fetch
-  const server = await discoverViteHubDevServer<ScheduleDevDiscovery>({
+  const timeout = withTimeout(parsed.timeout)
+  let discoveryFailure = ""
+  const server = await discoverViteHubDevServer({
     endpoint: scheduleDevEndpoint,
     fetch: fetchImpl,
     rootDir: context.rootDir,
     serverUrl: parsed.url,
-    stderr: context.stderr,
+    stderr: { write: chunk => { discoveryFailure += String(chunk) } },
+    ...timeout,
   })
-  if (!server) {
-    context.stderr.write(`${scheduleDevServerHint}\n`)
-    return 1
-  }
+  if (!server) return writeFailure(parsed, context, { message: `${discoveryFailure.trim()}\n${scheduleDevServerHint}` })
   if (server.discovery.runtime !== "nitro") {
     return writeFailure(parsed, context, {
       code: "SCHEDULE_DEV_RUNTIME_UNAVAILABLE",
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
       message: typeof server.discovery.message === "string"
         ? server.discovery.message
         : "This Vite Development Server cannot reach the Schedule runtime.",
@@ -316,7 +362,7 @@ async function runScheduleCommand(
       body: JSON.stringify(body),
       headers: { accept: "application/json", "content-type": "application/json" },
       method: "POST",
-      ...withTimeout(parsed.timeout),
+      ...timeout,
     })
   }
   catch (error) {
@@ -325,7 +371,9 @@ async function runScheduleCommand(
   if (!response.ok) return writeFailure(parsed, context, await readFailure(response))
   const result: unknown = await response.json().catch(() => undefined)
   if (!isRecord(result)) return writeFailure(parsed, context, { message: "The Schedule Dev response is not valid JSON." })
-  context.stdout.write(parsed.json ? `${JSON.stringify(result, null, 2)}\n` : formatResult(command.name, result))
+  const formatted = formatResult(command.name, result)
+  if (formatted === undefined) return writeFailure(parsed, context, { message: "The Schedule Dev response has an invalid result shape." })
+  context.stdout.write(parsed.json ? `${JSON.stringify(result, null, 2)}\n` : formatted)
   // A failed manual run is a command failure, so scripts can check the exit code.
   return command.name === "run" && isRecord(result.run) && result.run.status === "failed" ? 1 : 0
 }

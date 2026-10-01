@@ -91,8 +91,10 @@ function isoDate(value: Date | string | undefined): string | undefined {
 /** Redacts secret-named keys, then credentials inside each remaining string. */
 function redactInput(value: unknown): unknown {
   const redacted = redactInspectionValue(value)
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque inspection values or request JSON fields at the dev endpoint boundary.
   if (typeof redacted === "string") return redactInspectionText(redacted)
   if (Array.isArray(redacted)) return redacted.map(redactInput)
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque inspection values or request JSON fields at the dev endpoint boundary.
   if (!redacted || typeof redacted !== "object") return redacted
   return Object.fromEntries(Object.entries(redacted).map(([key, entry]) => [key, redactInput(entry)]))
 }
@@ -182,25 +184,26 @@ export function summarizeRuntimeSchedule(
 }
 
 interface RuntimeScheduleState {
-  runs: ScheduleRunRecord[]
+  runs: Map<string, ScheduleRunRecord[]>
   schedules: RuntimeScheduleRecord[]
 }
 
-async function readRuntimeScheduleState(): Promise<RuntimeScheduleState> {
-  const [records, runs] = await Promise.all([
-    getRuntimeScheduleStore().list(),
-    getScheduleRunStore().listRuns(),
-  ])
+async function readRuntimeScheduleState(limit: number, visibleOnly = false): Promise<RuntimeScheduleState> {
+  const records = (await getRuntimeScheduleStore().list()).filter(schedule => !visibleOnly || schedule.console?.enabled !== false)
+  const runs = new Map<string, ScheduleRunRecord[]>()
+  for (const schedule of records) {
+    runs.set(schedule.id, await getScheduleRunStore().listRuns({ scheduleId: schedule.id, runtimeOnly: true, limit }))
+  }
   return { runs, schedules: [...records].sort((left, right) => left.id.localeCompare(right.id)) }
 }
 
 /** Lists Runtime Schedules of this runtime with their next due time and last run. */
 export async function inspectRuntimeSchedules(options: RuntimeScheduleInspectionOptions = {}): Promise<RuntimeScheduleInspection> {
   const now = options.now ?? new Date()
-  const state = await readRuntimeScheduleState()
+  const state = await readRuntimeScheduleState(1)
   return {
     automaticRuns: isScheduleWakeDriverActive(),
-    schedules: state.schedules.map(schedule => summarizeRuntimeSchedule(schedule, state.runs, now)),
+    schedules: state.schedules.map(schedule => summarizeRuntimeSchedule(schedule, state.runs.get(schedule.id) ?? [], now)),
   }
 }
 
@@ -208,7 +211,7 @@ export async function inspectRuntimeSchedules(options: RuntimeScheduleInspection
 export async function inspectRuntimeSchedule(id: string, options: RuntimeScheduleInspectionOptions = {}): Promise<RuntimeScheduleSummary | undefined> {
   const schedule = await getRuntimeScheduleStore().get(id)
   if (!schedule) return
-  return summarizeRuntimeSchedule(schedule, await getScheduleRunStore().listRuns(), options.now)
+  return summarizeRuntimeSchedule(schedule, await getScheduleRunStore().listRuns({ scheduleId: id, runtimeOnly: true, limit: 1 }), options.now)
 }
 
 /**
@@ -216,7 +219,7 @@ export async function inspectRuntimeSchedule(id: string, options: RuntimeSchedul
  * Schedule Definition with the same name.
  */
 export async function listRuntimeScheduleRuns(scheduleId: string, options: { limit?: number } = {}): Promise<ScheduleRunSummary[]> {
-  const runs = (await getScheduleRunStore().listRuns())
+  const runs = (await getScheduleRunStore().listRuns({ scheduleId, limit: options.limit }))
     .filter(run => run.scheduleId === scheduleId)
     .sort(newestFirst)
   return (options.limit === undefined ? runs : runs.slice(0, options.limit)).map(summarizeScheduleRun)
@@ -274,8 +277,8 @@ function consoleRecord(summary: RuntimeScheduleSummary, runs: readonly ScheduleR
   runs.slice(0, consoleRunHistoryLimit).forEach((run, index) => {
     fields.push({ label: `Run ${index + 1}`, value: formatRun(run) })
   })
-  if (runs.length > consoleRunHistoryLimit) {
-    fields.push({ label: "Older runs", value: `${runs.length - consoleRunHistoryLimit} more. Use \`vitehub schedule runs ${summary.id}\`.` })
+  if (runs.length >= consoleRunHistoryLimit) {
+    fields.push({ label: "Older runs", value: `Use \`vitehub schedule runs ${summary.id}\`.` })
   }
   return {
     cells: {
@@ -288,7 +291,7 @@ function consoleRecord(summary: RuntimeScheduleSummary, runs: readonly ScheduleR
       timing: summary.timeZone === "UTC" ? summary.cron : `${summary.cron} (${summary.timeZone})`,
     },
     fields,
-    id: summary.id,
+    id: `runtime:${summary.id}`,
   }
 }
 
@@ -298,14 +301,14 @@ function consoleRecord(summary: RuntimeScheduleSummary, runs: readonly ScheduleR
  */
 export async function readScheduleConsoleRecords(): Promise<ViteHubConsoleRecord[]> {
   const now = new Date()
-  const state = await readRuntimeScheduleState()
+  const state = await readRuntimeScheduleState(consoleRunHistoryLimit, true)
   const automaticRuns = isScheduleWakeDriverActive()
   return state.schedules
-    .map(schedule => summarizeRuntimeSchedule(schedule, state.runs, now))
+    .map(schedule => summarizeRuntimeSchedule(schedule, state.runs.get(schedule.id) ?? [], now))
     .filter(summary => summary.console.visible)
     .map(summary => consoleRecord(
       summary,
-      state.runs.filter(run => isRuntimeScheduleRun(run, summary.id)).sort(newestFirst).map(summarizeScheduleRun),
+      (state.runs.get(summary.id) ?? []).filter(run => isRuntimeScheduleRun(run, summary.id)).sort(newestFirst).map(summarizeScheduleRun),
       automaticRuns,
     ))
 }
@@ -342,12 +345,15 @@ function scheduleFailure(error: unknown): Response {
 
 async function readBody(request: Request): Promise<ScheduleDevRequestBody | undefined> {
   const body: unknown = await request.json().catch(() => undefined)
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque inspection values or request JSON fields at the dev endpoint boundary.
   if (!body || typeof body !== "object" || Array.isArray(body)) return
   const operation: unknown = Reflect.get(body, "operation")
   const id: unknown = Reflect.get(body, "id")
   const limit: unknown = Reflect.get(body, "limit")
   if (!isScheduleDevOperation(operation)) return
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque inspection values or request JSON fields at the dev endpoint boundary.
   if (id !== undefined && (typeof id !== "string" || !id)) return
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque inspection values or request JSON fields at the dev endpoint boundary.
   if (limit !== undefined && (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1)) return
   return {
     ...(id !== undefined ? { id } : {}),
@@ -384,14 +390,14 @@ async function runOperation(body: ScheduleDevRequestBody): Promise<Response> {
       catch (error) {
         // The handler failed after the run started. Return the stored failed run.
         const run = await getScheduleRunStore().getRun(toRunId("runtime", id, scheduledAt))
-        return run ? json({ run: summarizeScheduleRun(run) }) : scheduleFailure(error)
+        return run?.status === "failed" ? json({ run: summarizeScheduleRun(run) }) : scheduleFailure(error)
       }
     }
     case "enable":
     case "disable":
       try {
         const updated = body.operation === "enable" ? await schedules.enable(id) : await schedules.disable(id)
-        const runs = await getScheduleRunStore().listRuns()
+        const runs = await getScheduleRunStore().listRuns({ scheduleId: id, runtimeOnly: true, limit: 1 })
         return json({ schedule: summarizeRuntimeSchedule(updated, runs) })
       }
       catch (error) {

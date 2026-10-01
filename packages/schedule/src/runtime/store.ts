@@ -1,6 +1,6 @@
 import { assertRuntimeScheduleId, createScheduleError } from "../errors.ts"
 
-import type { RuntimeScheduleRecord, RuntimeScheduleStore, RuntimeScheduleUpdateInput, ScheduleRunAttemptRecord, ScheduleRunRecord, ScheduleRunStore } from "../types.ts"
+import type { RuntimeScheduleRecord, RuntimeScheduleStore, RuntimeScheduleUpdateInput, ScheduleRunAttemptRecord, ScheduleRunRecord, ScheduleRunListOptions, ScheduleRunStore } from "../types.ts"
 import type { ScheduleKVStorage } from "./kv-storage.ts"
 import { scheduleErrorDiagnostics } from "../error-diagnostics.ts"
 
@@ -326,8 +326,8 @@ export function createMemoryScheduleRunStore(): ScheduleRunStore {
         .filter(attempt => attempt.runId === runId)
         .map(cloneScheduleRunAttempt)
     },
-    listRuns() {
-      return [...runs.values()].map(cloneScheduleRun)
+    listRuns(options) {
+      return selectRuns([...runs.values()], options).map(cloneScheduleRun)
     },
     updateAttempt(id, patch) {
       const existing = attempts.get(id)
@@ -358,6 +358,26 @@ export function createMemoryScheduleRunStore(): ScheduleRunStore {
   }
 }
 
+function selectRuns(runs: ScheduleRunRecord[], options: ScheduleRunListOptions = {}): ScheduleRunRecord[] {
+  const selected = runs.filter(run => (options.scheduleId === undefined || run.scheduleId === options.scheduleId)
+    && (!options.runtimeOnly || run.id.startsWith("srun_runtime_")))
+  if (options.limit === undefined) return selected
+  return selected.sort((left, right) => right.scheduledAt.getTime() - left.scheduledAt.getTime()).slice(0, options.limit)
+}
+
+/** Index keys carry metadata from the stored record, independent of caller-selected run IDs. */
+function runIndexMetadata(key: string): { id: string, scheduleId: string, scheduledAt: number } | undefined {
+  try {
+    const parts = key.split("/").slice(-3).map(decodeURIComponent)
+    const scheduledAt = Date.parse(parts[2]!)
+    if (!Number.isFinite(scheduledAt)) return
+    return { id: parts[0]!, scheduleId: parts[1]!, scheduledAt }
+  }
+  catch {
+    return undefined
+  }
+}
+
 export function createKVScheduleRunStore(options: KVScheduleStoreOptions): ScheduleRunStore {
   const prefix = options.prefix ?? "vitehub:schedule"
 
@@ -381,6 +401,12 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
           throw scheduleErrorDiagnostics.SCHEDULE_R0033({ message: `Schedule Run already exists: ${run.id}` })
         }
         await store.set(key, serializeScheduleRun(run))
+        try {
+          await store.set(joinKey(prefix, "schedule-run-index", run.id, run.scheduleId, run.scheduledAt.toISOString()), true)
+        }
+        catch {
+          // The run is authoritative. An unavailable index leaves it on the legacy read path.
+        }
         return cloneScheduleRun(run)
       })
     },
@@ -397,10 +423,42 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
       const attempts = await Promise.all(keys.map(key => store.get<StoredScheduleRunAttemptRecord>(key)))
       return attempts.flatMap(attempt => attempt && attempt.runId === runId ? [deserializeScheduleRunAttempt(attempt)] : [])
     },
-    async listRuns() {
+    async listRuns(options = {}) {
       const keys = await store.keys(scheduleRunBase(prefix))
-      const runs = await Promise.all(keys.map(key => store.get<StoredScheduleRunRecord>(key)))
-      return runs.flatMap(run => run ? [deserializeScheduleRun(run)] : [])
+      const indexKeys = await store.keys(joinKey(prefix, "schedule-run-index"))
+      const metadataById = new Map(indexKeys.flatMap(key => {
+        const metadata = runIndexMetadata(key)
+        return metadata ? [[metadata.id, metadata] as const] : []
+      }))
+      const known: { key: string, scheduledAt: number }[] = []
+      const unknown: string[] = []
+      for (const key of keys) {
+        let id: string
+        try {
+          id = decodeURIComponent(key.slice(key.lastIndexOf("/") + 1))
+        }
+        catch {
+          unknown.push(key)
+          continue
+        }
+        const metadata = metadataById.get(id)
+        if (!metadata) unknown.push(key)
+        else if ((options.scheduleId === undefined || metadata.scheduleId === options.scheduleId)
+          && (!options.runtimeOnly || metadata.id.startsWith("srun_runtime_"))) {
+          known.push({ key, scheduledAt: metadata.scheduledAt })
+        }
+      }
+      known.sort((left, right) => right.scheduledAt - left.scheduledAt)
+      // Read legacy records without an index with bounded concurrency, preserving their history.
+      const records: ScheduleRunRecord[] = []
+      const selectedKeys = options.scheduleId === undefined && options.limit === undefined && !options.runtimeOnly
+        ? keys
+        : [...unknown, ...known.slice(0, options.limit).map(entry => entry.key)]
+      for (let index = 0; index < selectedKeys.length; index += 16) {
+        const batch = await Promise.all(selectedKeys.slice(index, index + 16).map(key => store.get<StoredScheduleRunRecord>(key)))
+        records.push(...batch.flatMap(run => run ? [deserializeScheduleRun(run)] : []))
+      }
+      return selectRuns(records, options)
     },
     async updateAttempt(id, patch) {
       const key = scheduleRunAttemptKey(prefix, id)

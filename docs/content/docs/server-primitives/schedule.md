@@ -293,6 +293,8 @@ Static provider output remains build-time configuration; selecting the Process R
 | KV Schedule Run Store | `createKVScheduleRunStore({ kvStore, prefix? })` | Persists Schedule Runs and attempts through KV-compatible storage. |
 | Custom Store | `setRuntimeScheduleStore(store)`, `setScheduleRunStore(store)` | Implement `RuntimeScheduleStore` or `ScheduleRunStore` directly. |
 
+Implement `ScheduleRunStore.listRuns({ scheduleId, runtimeOnly, limit })` with a filtered storage query. The Console requests ten runs per Runtime Schedule. CLI list and get request the latest run, and `runs --limit` passes its limit to the store. Built-in KV storage selects run keys through a persisted metadata index before fetching records; records without index entries use batches of at most 16 reads. Index publication is optional; a failed index write preserves the run and uses the same fallback query path.
+
 Both KV factories require an explicit `ScheduleKVStorage`. To use ViteHub KV, pass `scheduleKVStorage` from `vite-hub/schedule/runtime/kv` (or `@vite-hub/schedule/runtime/kv` for standalone consumers). Standalone consumers must install `@vite-hub/kv` when using that adapter. Static schedules, memory stores, and custom storage do not need the package.
 
 ```ts

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { scheduleDevHeader, scheduleDevHeaderValue } from "../src/dev.ts"
 import { defineScheduleTarget, schedules } from "../src/index.ts"
@@ -10,8 +10,9 @@ import {
 } from "../src/runtime/console.ts"
 import type { RuntimeScheduleSummary, ScheduleRunAttemptSummary, ScheduleRunSummary } from "../src/runtime/console.ts"
 import type { RuntimeScheduleRecord } from "../src/types.ts"
+import { createMemoryScheduleRunStore } from "../src/runtime/store.ts"
 import { nextRuntimeScheduleRunAt } from "../src/runtime/due.ts"
-import { resetScheduleRuntime, setScheduleRuntimeRegistry, setScheduleWakeDriverActive } from "../src/runtime/state.ts"
+import { resetScheduleRuntime, setScheduleRunStore, setScheduleRuntimeRegistry, setScheduleWakeDriverActive } from "../src/runtime/state.ts"
 
 const now = new Date("2026-05-23T08:15:00.000Z")
 
@@ -58,6 +59,43 @@ describe("Runtime Schedule inspection", () => {
     expect(nextRuntimeScheduleRunAt(scheduleRecord("0 0 30 2 *"), now)).toBeUndefined()
   })
 
+  it("finds the first occurrence through the Chatham DST fallback", () => {
+    expect(nextRuntimeScheduleRunAt(scheduleRecord("45 2 * * *", "Pacific/Chatham"), new Date("2026-04-04T13:45:00.000Z"))?.toISOString())
+      .toBe("2026-04-04T14:00:00.000Z")
+  })
+
+  it("caches sparse next occurrences between inspection requests", () => {
+    const format = vi.spyOn(Intl.DateTimeFormat.prototype, "formatToParts")
+    const schedule = scheduleRecord("0 0 29 2 *", "Pacific/Chatham")
+    const after = new Date("2026-07-01T00:00:00.000Z")
+    const first = nextRuntimeScheduleRunAt(schedule, after)
+    const reads = format.mock.calls.length
+    expect(first).toBeDefined()
+    expect(nextRuntimeScheduleRunAt(schedule, new Date(after.getTime() + 60_000))).toEqual(first)
+    expect(format).toHaveBeenCalledTimes(reads)
+    format.mockRestore()
+  })
+
+  it("inspects opaque input and separates Runtime and Definition IDs", async () => {
+    installTargets()
+    const input: Record<string, unknown> = { count: 1n }
+    input.self = input
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "definition:daily", target: "report", input })
+    const inspection = await inspectRuntimeSchedules({ now })
+    expect(inspection.schedules[0]?.input).toEqual({ count: "1", self: "[circular]" })
+    expect(() => JSON.stringify(inspection)).not.toThrow()
+    expect((await readScheduleConsoleRecords())[0]?.id).toBe("runtime:definition:daily")
+  })
+
+  it("reports persistence failures after the run record was created", async () => {
+    installTargets()
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
+    setScheduleRunStore({ ...createMemoryScheduleRunStore(), createAttempt: () => { throw new Error("attempt storage failed") } })
+    const response = await handleScheduleDevRequest(devRequest({ operation: "run", id: "digest" }))
+    expect(response.status).toBe(500)
+    expect(await readBody(response)).toHaveProperty("error")
+  })
+
   it("lists Runtime Schedules with next run, last run, and redacted input", async () => {
     installTargets()
     await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", input: { prompt: "Read https://bot:pw-secret@example.test/feed", token: "sk-live-secret" }, target: "report" })
@@ -97,6 +135,17 @@ describe("Runtime Schedule inspection", () => {
     expect(runs[0]?.error?.message).not.toContain("hunter2")
   })
 
+  it("queries only visible Console records with the history limit", async () => {
+    installTargets()
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "visible", target: "report" })
+    await schedules.dynamic.create({ console: { enabled: false }, cron: "0 9 * * *", id: "hidden", target: "report" })
+    const store = createMemoryScheduleRunStore()
+    const listRuns = vi.fn(store.listRuns)
+    setScheduleRunStore({ ...store, listRuns })
+    await readScheduleConsoleRecords()
+    expect(listRuns.mock.calls).toEqual([[{ scheduleId: "visible", runtimeOnly: true, limit: 10 }]])
+  })
+
   it("reads Console records with run history and hides records that opt out", async () => {
     installTargets()
     setScheduleWakeDriverActive(true)
@@ -106,7 +155,7 @@ describe("Runtime Schedule inspection", () => {
 
     const records = await readScheduleConsoleRecords()
 
-    expect(records.map(record => record.id)).toEqual(["digest"])
+    expect(records.map(record => record.id)).toEqual(["runtime:digest"])
     expect(records[0]?.cells).toMatchObject({
       enabled: "Enabled",
       kind: "Runtime",

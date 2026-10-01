@@ -53,8 +53,6 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
 }
 
-const fileOrExtensionProtocol = /^(?:file|.+-extension):/i
-
 const ipv4Octet = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)"
 const ipv4Literal = new RegExp(`^${ipv4Octet}(?:\\.${ipv4Octet}){3}$`)
 
@@ -78,8 +76,7 @@ function isIPv6Literal(value: string): boolean {
 }
 
 function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boolean {
-  if (fileOrExtensionProtocol.test(host)) return true
-  const trimmed = host.trim()
+  const trimmed = host.trim().toLowerCase()
   if (trimmed.startsWith("[")) {
     const end = trimmed.indexOf("]")
     return end > 0 && isIPv6Literal(trimmed.slice(1, end))
@@ -88,8 +85,11 @@ function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boole
   const hostname = colon === -1 ? trimmed : trimmed.slice(0, colon)
   if (isIPv4Literal(hostname)) return true
   if (hostname === "localhost" || hostname.endsWith(".localhost")) return true
-  return allowedHosts.some(allowed => allowed === hostname
-    || (allowed.startsWith(".") && (allowed.slice(1) === hostname || hostname.endsWith(allowed))))
+  return allowedHosts.some(value => {
+    const allowed = value.toLowerCase()
+    return allowed === hostname
+      || (allowed.startsWith(".") && (allowed.slice(1) === hostname || hostname.endsWith(allowed)))
+  })
 }
 
 /**
@@ -232,6 +232,7 @@ export function viteHubNitroDevUnavailableMessage(label: string): string {
 }
 
 function isNitroDevEnvironment(value: unknown): value is ViteHubNitroDevEnvironment {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Nitro exposes opaque Vite environments; a callable dispatchFetch is its dev dispatch contract.
   return typeof value === "object" && value !== null && typeof Reflect.get(value, "dispatchFetch") === "function"
 }
 
