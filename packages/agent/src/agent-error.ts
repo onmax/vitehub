@@ -189,8 +189,11 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
   const namedTime = namedDate && resetText.match(/\s(\d{1,2}):(\d{2})\s+[ap]\.?m/i)
   // Date.parse can normalize invalid clock fields in named dates too.
   if (namedTime && (Number(namedTime[1]) < 1 || Number(namedTime[1]) > 12 || Number(namedTime[2]) > 59)) return
+  const isoTime = isoDate && resetText.match(/T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?/i)
+  // Date.parse can normalize invalid ISO clock fields too.
+  if (isoTime && (Number(isoTime[1]) > 23 || Number(isoTime[2]) > 59 || Number(isoTime[3] ?? 0) > 59)) return
   const offset = resetText.match(/[+-](\d{2}):?(\d{2})$/)
-  if (offset && (Number(offset[1]) > 23 || Number(offset[2]) > 59)) return
+  if (offset && (Number(offset[1]) > 14 || Number(offset[2]) > 59 || Number(offset[1]) === 14 && Number(offset[2]) !== 0)) return
   const time = Date.parse(resetText
     .replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, "$1")
     .replace(/\b([ap])\.m\.?/gi, "$1m"))
