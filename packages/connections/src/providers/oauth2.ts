@@ -100,8 +100,8 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionProvider {
       "accept": "application/json",
       "content-type": "application/x-www-form-urlencoded",
     }
-    if (clientAuth === "basic" && secret) {
-      headers.authorization = basicCredentials(id, secret)
+    if (clientAuth === "basic") {
+      headers.authorization = basicCredentials(id, secret ?? "")
     }
     else {
       body.set("client_id", id)

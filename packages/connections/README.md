@@ -35,6 +35,8 @@ export default defineConnection({
 
 Access rules check `deny`, then `approve`, then `allow`. When no pattern matches, reads are allowed and writes are denied. `approve` makes the call fail with `CONNECTIONS_APPROVAL_REQUIRED`.
 
+The low-level server runtime accepts `actor` and `approved` from trusted integration code. It does not authenticate callers or collect approvals. Set `approved` only after approval for the exact call and Operation, and never copy it from HTTP requests or Agent tool input. Agent Capabilities are trusted server code; their tool input is untrusted.
+
 Use `oauth2()` from `@vite-hub/connections` for other OAuth 2 providers. Its required `origins` option lists the API origins that may receive the token, for example `["https://api.example.com"]`. Calls to other origins fail with `CONNECTIONS_ORIGIN_NOT_ALLOWED`.
 
 ## Call the provider
@@ -48,7 +50,7 @@ const labels = await gmail(connection).labels.list();
 const response = await connection.fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile");
 ```
 
-`call()` runs a typed Operation with an `id` and an `effect`. `fetch()` treats `GET` and `HEAD` as reads and other methods as writes. With `dryRun: true`, write calls return without calling the provider.
+`call()` runs a typed Operation with an `id` and an `effect`. `fetch()` treats `GET` and `HEAD` as reads and other methods as writes. With `dryRun: true`, write calls return without calling the provider. A call signal cancels token refresh, refresh-lease waits, and the API request. Custom providers receive `context.signal`; `context.fetch` uses that signal.
 
 ## Register the Vite integration
 
@@ -79,7 +81,7 @@ setConnectionsRuntime(createConnectionsRuntime({
 
 ## Connect an account
 
-`createConnectionsHandler()` from `@vite-hub/connections/http` handles the management route and the OAuth connect and callback routes. It does not add authentication. The ViteHub Console mounts it under `/_vitehub/connections` behind Console Auth. Mount it only behind your own admin guard.
+`createConnectionsHandler()` from `@vite-hub/connections/http` handles the management route and the OAuth connect and callback routes. It does not add authentication. The ViteHub Console mounts it under `/_vitehub/connections` behind Console Auth. Mount it only behind your own admin guard. Set `basePath` when mounting the handler at a different path. The handler uses that path for connect URLs, callback URLs, and the state cookie. Direct `runtime.start()` calls can also set `basePath` for the connect flow.
 
 ## Understand storage and security limits
 

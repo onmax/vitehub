@@ -2039,6 +2039,47 @@ describe("Agent Invocation UI", () => {
     expect(invocationActivities(invocation).map(activity => activity.body)).toEqual(["Final answer."]);
   });
 
+  it("uses declared tool labels and icons from the configuration catalog", () => {
+    const timestamp = "2026-08-22T00:00:00.000Z";
+    const invocation = {
+      configuration: {
+        driver: { kind: "model" },
+        runtime: { name: "node" },
+        tools: [
+          { icon: "i-lucide-utensils", label: "Searched meals", name: "search_meals" },
+          { name: "db_schema" },
+        ],
+      },
+      createdAt: timestamp,
+      id: "invocation",
+      observations: [
+        { attributes: { "tool.id": "meal", "tool.name": "search_meals" }, name: "agent.tool.finish", sequence: 1, timestamp, type: "run" as const },
+        { attributes: { "tool.id": "provider", "tool.name": "search_meals", "tool.title": "Provider title" }, name: "agent.tool.finish", sequence: 2, timestamp, type: "run" as const },
+        { attributes: { "tool.id": "schema", "tool.name": "db_schema" }, name: "agent.tool.finish", sequence: 3, timestamp, type: "run" as const },
+      ],
+      status: "completed" as const,
+      traceId: "trace",
+      updatedAt: timestamp,
+    } satisfies AgentInvocationView;
+
+    expect(invocationActivities(invocation).map(activity => [invocationActivityTitle(activity), activity.toolDisplay?.icon])).toEqual([
+      ["Searched meals", "i-lucide-utensils"],
+      ["Provider title", "i-lucide-utensils"],
+      ["Db_schema", undefined],
+    ]);
+
+    const UIcon = defineComponent({ props: { name: { required: true, type: String } }, setup: props => () => h("svg", { "data-name": props.name }) });
+    const withIcons = mount(AgentInvocation, { global: { components: { UIcon } }, props: { invocation } });
+    expect(withIcons.findAll('.vh-invocation-event__icon[data-icon="i-lucide-utensils"] svg[data-name="i-lucide-utensils"]')).toHaveLength(2);
+    const withoutIcons = mount(AgentInvocation, { props: { invocation } });
+    expect(withoutIcons.find('.vh-invocation-event__icon[data-icon="i-lucide-utensils"]').exists()).toBe(false);
+
+    const inspector = mount(AgentInvocationInspector, { global: { components: { UIcon } }, props: { invocation } });
+    const row = inspector.get('.vh-agent-tool-list [data-used="true"]');
+    expect(row.get("small").text()).toBe("Searched meals");
+    expect(row.get('.vh-agent-tool-list__icon svg').attributes("data-name")).toBe("i-lucide-utensils");
+  });
+
   it("renders canonical tool, error, and approval decision details", () => {
     const timestamp = "2026-08-22T00:00:00.000Z";
     const invocation = {

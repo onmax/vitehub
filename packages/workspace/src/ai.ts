@@ -639,7 +639,8 @@ export function createWorkspaceTools<Operations extends WorkspaceToolOperations 
   }
 
   if (resolved.materialize) {
-    result.materialize_sources = tool({
+    // Display metadata for Agent traces and the Console; the model does not receive it.
+    result.materialize_sources = Object.assign(tool({
       description: [
         "Materialize complete workspace source snapshots as an explicit tool step before shell inspection.",
         "This prepares whole sources, not individual files or partial limits.",
@@ -660,7 +661,7 @@ export function createWorkspaceTools<Operations extends WorkspaceToolOperations 
         type: "object",
       }),
       execute: async ({ path, sources }) => await materializeWorkspaceSourcesTool(input, { path, sources }),
-    })
+    }), { icon: "i-lucide-folder-sync", title: "Materialized Workspace sources" })
   }
 
   if (writeEnabled) Object.assign(result, createWriteTools(input as Workspace, resolved.write))

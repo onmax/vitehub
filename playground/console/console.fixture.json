@@ -528,7 +528,21 @@
         "runtime": { "name": "node" },
         "tools": [
           { "name": "exec_command" },
-          { "name": "browser" }
+          { "name": "browser" },
+          {
+            "capabilityId": "db",
+            "name": "db_query",
+            "label": "Queried database",
+            "icon": "i-lucide-database",
+            "description": "Run one read-only SQL query against the configured ViteHub database."
+          },
+          {
+            "capabilityId": "db",
+            "name": "db_schema",
+            "label": "Read database schema",
+            "icon": "i-lucide-table-properties",
+            "description": "Describe the configured ViteHub database schema."
+          }
         ],
         "workspace": {
           "mode": "read",
@@ -583,9 +597,22 @@
           }
         },
         {
-          "name": "agent.message.recorded",
+          "name": "agent.tool.finish",
           "type": "run",
           "sequence": 4,
+          "timestamp": "2026-08-30T14:08:05.000Z",
+          "trace": { "id": "trace_console_hierarchy" },
+          "attributes": {
+            "tool.id": "count-sections",
+            "tool.name": "db_query",
+            "tool.input": { "statement": "SELECT section, count(*) AS screens FROM console_screens GROUP BY section" },
+            "tool.output": { "rows": [{ "section": "agents", "screens": 5 }, { "section": "storage", "screens": 3 }] }
+          }
+        },
+        {
+          "name": "agent.message.recorded",
+          "type": "run",
+          "sequence": 5,
           "timestamp": "2026-08-30T14:10:58.000Z",
           "trace": { "id": "trace_console_hierarchy" },
           "attributes": {
@@ -597,7 +624,7 @@
         {
           "name": "agent.invocation.finish",
           "type": "lifecycle",
-          "sequence": 5,
+          "sequence": 6,
           "timestamp": "2026-08-30T14:11:24.000Z",
           "trace": { "id": "trace_console_hierarchy" },
           "attributes": {
