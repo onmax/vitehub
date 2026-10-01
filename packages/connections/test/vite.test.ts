@@ -412,6 +412,22 @@ describe("hubConnections", () => {
     await expect(readFile(join(root, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
   });
 
+  it("preserves shared output when recovery cannot prove every owner", async () => {
+    const firstRoot = await createTempProject();
+    const secondRoot = await createTempProject();
+    const sharedTarget = await createTempProject();
+    const options = { projectRoot: sharedTarget };
+
+    await hubConnections(options).api.prepareTypes({ projectRoot: firstRoot });
+    await hubConnections(options).api.prepareTypes({ projectRoot: secondRoot });
+    await writeFile(join(sharedTarget, ".vitehub/connections-types-owners.json"), "{");
+
+    await hubConnections(options).api.prepareTypes({ projectRoot: firstRoot });
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: firstRoot });
+
+    await expect(readFile(join(sharedTarget, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+  });
+
   it("retires the default declaration when moving to a custom root", async () => {
     const root = await createTempProject();
     await hubConnections().api.prepareTypes({ projectRoot: root });

@@ -308,7 +308,10 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
       await withOwnersLock(projectRoot, async () => {
         let owners = await readOwners(projectRoot);
         const hadTypes = await readOptionalFile(resolve(projectRoot, generatedTypesPath)) !== undefined;
-        if (owners === undefined && hadTypes) {
+        if ((!owners || owners.length === 0) && hadTypes) {
+          // A missing or malformed owner manifest may contain owners from other
+          // app roots. Preserve the declaration and leave ownership unknown so
+          // cleanup cannot remove output that another app still uses.
           const types = renderRegistryTypes(definitions);
           await Promise.all([
             writeFileIfChanged(resolve(projectRoot, generatedTypesPath), types),
