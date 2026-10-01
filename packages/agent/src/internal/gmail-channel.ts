@@ -391,7 +391,7 @@ function headerMap(parts: GmailApiPart[]): Record<string, string> {
   for (const { name, value } of parts[0]?.headers || []) {
     const key = name.toLowerCase()
     if (omittedHeaders.has(key) || Object.hasOwn(headers, key)) continue
-    headers[key] = value.slice(0, 1_000)
+    headers[key] = value
   }
   return headers
 }
@@ -455,13 +455,14 @@ async function toGmailMessage(client: GmailClient, message: v.InferOutput<typeof
     const attachment = await gmailRequest(client, v.object({ data: v.string() }), { method: "GET", path: `messages/${encodeURIComponent(message.id)}/attachments/${encodeURIComponent(part.body.attachmentId)}` })
     part.body.data = attachment.data
   }
-  const headers = headerMap(parts)
+  const rawHeaders = headerMap(parts)
+  const headers = Object.fromEntries(Object.entries(rawHeaders).map(([name, value]) => [name, value.slice(0, 1_000)]))
   return {
     attachments: parts.flatMap(part => part.filename
       ? [{ attachmentId: part.body?.attachmentId, filename: part.filename, mimeType: part.mimeType || "application/octet-stream", size: part.body?.size ?? 0 }]
       : []),
     body: bodyText(bodyParts, bodyLimit),
-    cc: splitAddresses(headers.cc),
+    cc: splitAddresses(rawHeaders.cc),
     date: messageDate(message.internalDate, headers.date),
     from: headers.from ?? "",
     headers,
@@ -470,7 +471,7 @@ async function toGmailMessage(client: GmailClient, message: v.InferOutput<typeof
     snippet: message.snippet ?? "",
     subject: headers.subject ?? "",
     threadId: message.threadId,
-    to: splitAddresses(headers.to),
+    to: splitAddresses(rawHeaders.to),
   }
 }
 

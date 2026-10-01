@@ -1542,6 +1542,40 @@ describe("gmail() Channel", () => {
     expect(gmailMessagePrompt(message!)).toContain(`Cc: ${header}`)
   })
 
+  it("keeps complete folded recipient lists while bounding display headers", async () => {
+    const to = Array.from({ length: 40 }, (_, index) => `"Recipient, ${index}" <recipient${index}@example.com>`)
+    const cc = Array.from({ length: 40 }, (_, index) => `Copy (Team, ${index}) <copy${index}@example.com>`)
+    const toHeader = to.join(",\r\n ")
+    const ccHeader = cc.join(",\r\n\t")
+    expect(toHeader.length).toBeGreaterThan(1_000)
+    expect(ccHeader.length).toBeGreaterThan(1_000)
+    const client: GmailClient = async () => ({ id: "m1", threadId: "thread-1", payload: { headers: [
+      { name: "To", value: toHeader }, { name: "Cc", value: ccHeader },
+      { name: "to", value: "ignored-duplicate@example.com" },
+      { name: "cc", value: "ignored-copy@example.com" },
+      { name: "Subject", value: "s".repeat(1_100) }, { name: "Received", value: "omitted transport" },
+    ] } })
+    const message = await getGmailMessage(client, "m1", 100)
+    expect(message?.to).toEqual(to)
+    expect(message?.cc).toEqual(cc)
+    expect(message?.headers.to).toBe(toHeader.slice(0, 1_000))
+    expect(message?.headers.cc).toBe(ccHeader.slice(0, 1_000))
+    expect(message?.subject).toHaveLength(1_000)
+    expect(message?.headers).not.toHaveProperty("received")
+    const seen: unknown[] = []
+    const agent = defineAgent({
+      channels: { gmail: gmail({ client }) },
+      driver: { run: ({ input }) => String(input.prompt) },
+      hooks: { "agent:finish": event => {
+        if (event.message?.channel === "gmail") seen.push(event.message.data.to, event.message.data.cc)
+      } },
+    })
+    const prompt = await runAgentTrigger(agent, runtimeContext(), "gmail.received", message)
+    expect(prompt).toContain(`To: ${to.join(", ")}`)
+    expect(prompt).toContain(`Cc: ${cc.join(", ")}`)
+    expect(seen).toEqual([to, cc])
+  })
+
   it("splits address headers outside quotes and angle brackets", () => {
     expect(splitAddresses("\"Doe, John\" <john@example.com>, <a,b@example.com>, max@example.com")).toEqual([
       "\"Doe, John\" <john@example.com>",
