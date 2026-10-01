@@ -1,3 +1,9 @@
+/** Development Server route for manual Static Schedule runs. */
+export const scheduleDevRunRoute = "/__vitehub/schedule/run"
+export const scheduleDevRunHeader = "x-vitehub-schedule-run"
+/** Console route for manual Static Schedule runs on a deployment. */
+export const scheduleConsoleRunRoute = "_vitehub/schedules/run"
+
 /** Vite Development Server route that `vitehub schedule` commands call. */
 export const scheduleDevRoute = "/__vitehub/schedule/dev"
 /** Nitro route that the dev endpoint forwards Schedule operations to. The route exists only in `vite dev`. */

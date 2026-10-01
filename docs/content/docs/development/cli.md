@@ -33,7 +33,7 @@ Available namespaces:
   agent       Agent development workflows.
   channels    External Channel registration workflows.
   db          Database development workflows.
-  schedule    Inspect and control Runtime Schedules in a running Vite + Nitro Development Server.
+  schedule    Run Static Schedule Definitions and inspect or control Runtime Schedules.
   workspace   Workspace development workflows.
   types       Generate ViteHub TypeScript declarations.
   inspect     Inspect discovered Definitions and generated Provider Output.
@@ -57,7 +57,8 @@ Available namespaces:
 | `vitehub schedule get` | Available | Schedule Package | Show one Runtime Schedule. |
 | `vitehub schedule runs` | Available | Schedule Package | List the recorded runs of one Schedule, newest first. |
 | `vitehub schedule attempts` | Available | Schedule Package | List the attempts of one Schedule Run. |
-| `vitehub schedule run` | Available | Schedule Package | Run one Runtime Schedule now in the development runtime. |
+| `vitehub schedule run` | Available | Schedule Package | Run a manual Static Schedule Definition locally or through the deployed Console. |
+| `vitehub schedule run-runtime` | Available | Schedule Package | Run one Runtime Schedule now in the development runtime. |
 | `vitehub schedule enable` | Available | Schedule Package | Enable one Runtime Schedule. |
 | `vitehub schedule disable` | Available | Schedule Package | Disable one Runtime Schedule. |
 | `vitehub workspace dev` | Available | Workspace Package | Run commands through a Workspace Session exposed by a Compatible Vite Development Server. |
@@ -173,6 +174,33 @@ pnpm vitehub db migrate
 
 `db generate` forwards Drizzle Kit arguments, supports `--name <name>` for a migration name, and uses `--custom` to create an empty custom migration. `db migrate` accepts forwarded Drizzle Kit migration arguments.
 
+## Run a Schedule on demand
+
+`schedule run` starts a Static Schedule Definition that sets `manual: true`. It prints the run status, duration, and run id, and exits with `1` when the run fails. Add `--json` to print the run record.
+
+```bash [Terminal]
+pnpm vitehub schedule run sync
+```
+
+Without `--url`, the command posts to the running Vite Development Server at `VITEHUB_DEV_SERVER_URL` or `http://localhost:5173`. Use `--server <url>` to select another local server.
+
+With `--url`, the command posts to `/_vitehub/schedules/run` on the deployment. That route runs only when the deployment enables the [Console](/docs/development/console#run-schedules-on-demand) with `invoke: true`, and the Console access policy protects it like every other `/_vitehub/**` route. Set the credentials for that policy in the environment:
+
+| Variable                        | Value                                                                                                                                           |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITEHUB_CONSOLE_AUTHORIZATION` | An `Authorization` header value that the Console access policy accepts, for example the Basic or Bearer credential that host middleware checks. |
+| `VITEHUB_CONSOLE_COOKIE`        | A `Cookie` header value from a signed-in Console session.                                                                                       |
+| `CF_ACCESS_CLIENT_ID`           | Cloudflare Access service-token client ID. Forwarded as `CF-Access-Client-Id`.                                                                 |
+| `CF_ACCESS_CLIENT_SECRET`       | Cloudflare Access service-token client secret. Forwarded as `CF-Access-Client-Secret`.                                                         |
+
+```bash [Terminal]
+VITEHUB_CONSOLE_AUTHORIZATION="Basic $(printf 'admin:%s' "$ADMIN_TOKEN" | base64)" \
+  pnpm vitehub schedule run sync --url https://app.example.com
+```
+
+The command requires HTTPS for remote URLs and does not follow redirects. A `401`, `403`, or redirect response reports a Console authentication failure. The command never sends the credential to the local Development Server.
+
+
 ## Inspect and control Runtime Schedules
 
 Start the app's Vite Development Server, then run `vitehub schedule` from another terminal. The commands read the Schedule stores of that server runtime, so they show Runtime Schedules and runs that the running app created.
@@ -183,7 +211,7 @@ pnpm vitehub schedule list --json
 pnpm vitehub schedule get digest
 pnpm vitehub schedule runs digest --limit 5
 pnpm vitehub schedule attempts srun_runtime_digest_2026-05-22T07:00:00.000Z
-pnpm vitehub schedule run digest
+pnpm vitehub schedule run-runtime digest
 pnpm vitehub schedule disable digest
 pnpm vitehub schedule enable digest
 ```
@@ -194,7 +222,7 @@ digest  report  0 9 * * * (Europe/Copenhagen)  yes      2026-05-23T07:00:00.000Z
 Automatic runs: off. No wake driver is installed, so due times do not start runs in this runtime.
 ```
 
-Every command accepts `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>` (whole milliseconds from 1 to 2147483647). `runs` accepts `--limit <n>`. A failed run makes `schedule run` exit with status 1 and prints the stored run. Errors go to stderr, or into the JSON body with `--json`.
+Every command accepts `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>` (whole milliseconds from 1 to 2147483647). `runs` accepts `--limit <n>`. A failed run makes `schedule run-runtime` exit with status 1 and prints the stored run. Errors go to stderr, or into the JSON body with `--json`.
 
 Schedule operations require a private token scoped to the local project and server instance. The dev server stores it with user-only permissions outside the served project tree, and the CLI reads it locally. Discovery exposes only the server ID. Vite and Nitro both reject operations without the token, including requests to a server exposed with `--host`. Shutdown removes the credential.
 
@@ -365,7 +393,7 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 | Vite config fails while loading a ViteHub plugin import | A fresh npm project is loading `vite.config.ts` as CommonJS, but ViteHub packages are ESM-only. | Set `"type": "module"` in `package.json` or rename the config to `vite.config.mts`. |
 | `No Compatible Vite Development Server found` | The app dev server is not running or `--url` points at the wrong port. | Start Vite separately, then pass the dev server URL. |
 | `vitehub schedule` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
-| `vitehub schedule run` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
+| `vitehub schedule run-runtime` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
 | `Unknown Workspace Dev target` | The named Workspace is not discovered by the running Vite dev server. | Check the Workspace Definition name and make sure `hubWorkspace()` is active. |
 | `Agent Dev Loop command requires workspace.mode: "write"` | A `!` command targeted an Agent without writable Workspace access. | Configure the selected Agent with `workspace: { mode: 'write' }`, or send a normal Agent message instead. |
 | Agent Dev Loop request times out | A streamed invocation emitted no events before the inactivity timeout, or a Capability CLI/Workspace command exceeded its wall-clock deadline. | Pass `--timeout <ms>` for the dev-loop operation or inspect the stalled work. |

@@ -280,7 +280,7 @@ One-time delayed execution is not part of the first-version Scheduling vocabular
 ```bash [Terminal]
 pnpm vitehub schedule list
 pnpm vitehub schedule runs weekday-report --limit 5 --json
-pnpm vitehub schedule run weekday-report
+pnpm vitehub schedule run-runtime weekday-report
 ```
 
 Use `pnpm vitehub schedule get --json -- -daily` for an ID that starts with a hyphen. All options must precede `--`.

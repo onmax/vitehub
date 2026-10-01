@@ -180,7 +180,7 @@ describe("vitehub schedule", () => {
 
   it("runs, enables, and disables a Schedule", async () => {
     const run = context()
-    await expect(runScheduleCli(["run", "digest"], run.context, {
+    await expect(runScheduleCli(["run-runtime", "digest"], run.context, {
       fetch: devServer({ run: { ...digest.lastRun, response: { status: 204, statusText: "No Content" } } }),
     })).resolves.toBe(0)
     expect(run.stdout.output()).toBe(`Run ${digest.lastRun.id}: succeeded (HTTP 204 No Content)\n`)
@@ -199,11 +199,11 @@ describe("vitehub schedule", () => {
   it("exits with 1 when a manual run fails", async () => {
     const failed = { ...digest.lastRun, error: { message: "Target failed", name: "Error" }, status: "failed" }
     const human = context()
-    await expect(runScheduleCli(["run", "digest"], human.context, { fetch: devServer({ run: failed }) })).resolves.toBe(1)
+    await expect(runScheduleCli(["run-runtime", "digest"], human.context, { fetch: devServer({ run: failed }) })).resolves.toBe(1)
     expect(human.stdout.output()).toContain("Error: Error: Target failed\n")
 
     const json = context()
-    await expect(runScheduleCli(["run", "digest", "--json"], json.context, { fetch: devServer({ run: failed }) })).resolves.toBe(1)
+    await expect(runScheduleCli(["run-runtime", "digest", "--json"], json.context, { fetch: devServer({ run: failed }) })).resolves.toBe(1)
     expect(JSON.parse(json.stdout.output())).toEqual({ run: failed })
   })
 
@@ -212,7 +212,7 @@ describe("vitehub schedule", () => {
     const run = summarizeScheduleRun({ ...digest.lastRun, scheduledAt, createdAt: scheduledAt, updatedAt: scheduledAt,
       error: { message: "Target failed", name: "Authorization: Bearer error-name-secret" }, status: "failed" })
     const output = context()
-    expect(await runScheduleCli(["run", "digest", ...(json ? ["--json"] : [])], output.context, { fetch: devServer({ run }) })).toBe(1)
+    expect(await runScheduleCli(["run-runtime", "digest", ...(json ? ["--json"] : [])], output.context, { fetch: devServer({ run }) })).toBe(1)
     expect(output.stdout.output()).not.toContain("error-name-secret")
     if (json) expect(JSON.parse(output.stdout.output()).run.error.name).toBe("Authorization: [redacted]")
     else expect(output.stdout.output()).toContain("Error: Authorization: [redacted]: Target failed")
@@ -223,7 +223,7 @@ describe("vitehub schedule", () => {
     const run = summarizeScheduleRun({ ...digest.lastRun, scheduledAt, createdAt: scheduledAt, updatedAt: scheduledAt,
       response: { body: { data: "", encoding: "base64", mediaType: "text/plain" }, headers: [], status: 200, statusText: "Authorization: Bearer status-secret" }, status: "succeeded" })
     const output = context()
-    expect(await runScheduleCli(["run", "digest", ...(json ? ["--json"] : [])], output.context, { fetch: devServer({ run }) })).toBe(0)
+    expect(await runScheduleCli(["run-runtime", "digest", ...(json ? ["--json"] : [])], output.context, { fetch: devServer({ run }) })).toBe(0)
     expect(output.stdout.output()).not.toContain("status-secret")
     if (json) expect(JSON.parse(output.stdout.output()).run.response.statusText).toBe("Authorization: [redacted]")
     else expect(output.stdout.output()).toContain("HTTP 200 Authorization: [redacted]")
@@ -369,7 +369,7 @@ describe("vitehub schedule", () => {
   it("contributes one feature per command", () => {
     const [namespace] = createScheduleCliContributor().namespaces
     expect(namespace?.name).toBe("schedule")
-    expect(namespace?.features.map(feature => feature.name)).toEqual(["list", "get", "runs", "attempts", "run", "enable", "disable"])
+    expect(namespace?.features.map(feature => feature.name)).toEqual(["run", "list", "get", "runs", "attempts", "run-runtime", "enable", "disable"])
   })
 })
 

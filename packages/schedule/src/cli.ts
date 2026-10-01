@@ -1,3 +1,7 @@
+import { runScheduleRunCli } from "./cli-static.ts"
+export { parseScheduleRunArgs, runScheduleRunCli } from "./cli-static.ts"
+export { scheduleDevRunHeader, scheduleDevRunRoute, scheduleConsoleRunRoute } from "./dev.ts"
+
 import {
   discoverViteHubDevServer,
   fetchViteHubDevEndpoint,
@@ -20,11 +24,6 @@ import type {
   ScheduleRunSummary,
 } from "./runtime/console.ts"
 
-/** Legacy development route retained for the standalone Static Schedule runner. */
-export const scheduleDevRunRoute = "/__vitehub/schedule/run"
-/** Legacy request marker retained for the standalone Static Schedule runner. */
-export const scheduleDevRunHeader = "x-vitehub-schedule-run"
-
 export type ScheduleCliContext = Pick<ViteHubCliContext, "cwd" | "env" | "rootDir"> & ViteHubCliStreams
 
 export interface ScheduleCliOptions {
@@ -33,6 +32,7 @@ export interface ScheduleCliOptions {
 
 interface ScheduleCommand {
   description: string
+  cliName?: string
   id?: "schedule" | "run"
   limit?: boolean
   name: ScheduleDevOperation
@@ -67,14 +67,14 @@ const scheduleCommands: readonly ScheduleCommand[] = [
   { description: "Show one Runtime Schedule.", id: "schedule", name: "get" },
   { description: "List the runs of one Runtime Schedule, newest first.", id: "schedule", limit: true, name: "runs" },
   { description: "List the attempts of one Schedule Run.", id: "run", name: "attempts" },
-  { description: "Run one Runtime Schedule now.", id: "schedule", name: "run" },
+  { description: "Run one Runtime Schedule now.", id: "schedule", name: "run", cliName: "run-runtime" },
   { description: "Enable one Runtime Schedule.", id: "schedule", name: "enable" },
   { description: "Disable one Runtime Schedule.", id: "schedule", name: "disable" },
 ]
 
 function commandUsage(command: ScheduleCommand): string {
   const id = command.id === "run" ? " <runId>" : command.id ? " <id>" : ""
-  return `vitehub schedule ${command.name}${id}${command.limit ? " [--limit <n>]" : ""} [--json] [--url <url>]`
+  return `vitehub schedule ${command.cliName ?? command.name}${id}${command.limit ? " [--limit <n>]" : ""} [--json] [--url <url>]`
 }
 
 function writeUsage(command: ScheduleCommand, stream: ViteHubCliStreams["stdout"]): void {
@@ -418,9 +418,10 @@ async function runScheduleCommand(
  */
 export async function runScheduleCli(args: string[], context: ScheduleCliContext, options: ScheduleCliOptions = {}): Promise<number> {
   const [name, ...rest] = args
-  const command = scheduleCommands.find(entry => entry.name === name)
+  if (name === "run") return await runScheduleRunCli(rest, context, options)
+  const command = scheduleCommands.find(entry => (entry.cliName ?? entry.name) === name)
   if (!command) {
-    context.stderr.write(`${name ? `Unknown schedule command: ${name}\n` : ""}Commands: ${scheduleCommands.map(entry => entry.name).join(", ")}\n`)
+    context.stderr.write(`${name ? `Unknown schedule command: ${name}\n` : ""}Commands: ${["run", ...scheduleCommands.map(entry => entry.cliName ?? entry.name)].join(", ")}\n`)
     return 1
   }
   return await runScheduleCommand(command, rest, context, options)
@@ -429,13 +430,13 @@ export async function runScheduleCli(args: string[], context: ScheduleCliContext
 export function createScheduleCliContributor(options: ScheduleCliOptions = {}): ViteHubCliContributor {
   return {
     namespaces: [{
-      description: "Inspect and control Runtime Schedules in a running Vite + Nitro Development Server.",
-      features: scheduleCommands.map(command => ({
+      description: "Run Static Schedule Definitions and inspect or control Runtime Schedules.",
+      features: [{ name: "run", description: "Run a Static Schedule Definition that sets manual: true.", usage: "vitehub schedule run <name> [--url <console-url>] [--server <dev-server-url>] [--json]", run: async (args: string[], context: ViteHubCliContext) => await runScheduleRunCli(args, context, options) }, ...scheduleCommands.map(command => ({
         description: command.description,
-        name: command.name,
+        name: command.cliName ?? command.name,
         run: async (args: string[], context: ViteHubCliContext) => await runScheduleCommand(command, args, context, options),
         usage: commandUsage(command),
-      })),
+      }))],
       name: "schedule",
     }],
   }
