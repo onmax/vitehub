@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { dirname, isAbsolute, relative, resolve } from "node:path"
@@ -184,10 +185,11 @@ const generatedNitroDevHandler = ".vitehub/nitro/email/dev-handler.ts"
  * Adds the development-only Nitro handler that runs `vitehub email outbox` operations in the Nitro runtime.
  * Build output never contains this handler.
  */
-async function addNitroEmailDevHandler(value: unknown, root: string, importBase: string, outbox: boolean): Promise<Record<string, unknown>> {
+async function addNitroEmailDevHandler(value: unknown, root: string, importBase: string, outbox: boolean, runtimeId: string): Promise<Record<string, unknown>> {
   const handler = resolve(root, generatedNitroDevHandler)
   await mkdir(dirname(handler), { recursive: true })
   await writeFile(handler, renderViteHubNitroDevHandler({
+    ...(outbox ? { arguments: [runtimeId] } : {}),
     export: outbox ? "handleEmailDevRequest" : "handleDisabledEmailDevRequest",
     module: `${importBase}/runtime/console`,
   }), "utf8")
@@ -220,6 +222,7 @@ function renderEmailDefinitionModule(
 /** Development outbox that wraps the provider driver. Only `vite dev` passes it. */
 interface GeneratedEmailOutbox extends ResolvedEmailOutboxOptions {
   import: string
+  runtimeId: string
 }
 
 function renderConfiguredEmailDefinitionModule(
@@ -244,9 +247,10 @@ function renderConfiguredEmailDefinitionModule(
       ? `{ ...${renderResolvedOptions(definition.options, "options")}, binding: vitehubEmailEnv.EMAIL, EmailMessage }`
       : renderResolvedOptions(definition.options, "options")})`,
     "}",
+    `export const outboxRuntimeId = ${JSON.stringify(outbox?.runtimeId ?? "disabled")}`,
     "export const definition = {",
     outbox
-      ? `  driver: () => createEmailDevOutboxDriver({ deliver: ${outbox.deliver}, driver: createProviderDriver, limit: ${outbox.limit}, provider: ${JSON.stringify(definition.driver)} }),`
+      ? `  driver: () => createEmailDevOutboxDriver({ deliver: ${outbox.deliver}, driver: createProviderDriver, limit: ${outbox.limit}, provider: ${JSON.stringify(definition.driver)}, runtimeId: ${JSON.stringify(outbox.runtimeId)} }),`
       : "  driver: createProviderDriver,",
     "}",
     "export default definition",
@@ -374,6 +378,7 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
   const configured = configuredDefinition(options)
   const driverImport = resolveDriverImport(configured.driver)
   const outbox = resolveOutboxOptions(options.outbox)
+  const outboxRuntimeId = randomUUID()
   const importBase = internalOptions.importBase ?? "@vite-hub/email"
   let command: "build" | "serve" | undefined
   let resolvedConfig: ResolvedConfig | undefined
@@ -462,7 +467,7 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
       updateTemplateRoots(resolveViteHubProjectRoot(config.root ?? process.cwd()))
       if (cloudflare) configureNitroCloudflareWorkers(config as Record<string, unknown>, cloudflareEmail)
       if (command === "serve") {
-        configRecord.nitro = await addNitroEmailDevHandler(configRecord.nitro, projectRoot, importBase, outbox !== undefined)
+        configRecord.nitro = await addNitroEmailDevHandler(configRecord.nitro, projectRoot, importBase, outbox !== undefined, outboxRuntimeId)
       }
       const emailTemplatePaths = cloudflare || vercel
         ? await prepareTypes({ materialize: true, projectRoot, serverDirs })
@@ -490,7 +495,7 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
       }
       const entry = definition.handler.replace(/\.mjs$/, ".entry.mjs")
       // The outbox is added only for `vite dev`. A build never imports the outbox module.
-      const devOutbox = command === "serve" && outbox ? { ...outbox, import: resolveOutboxImport() } : undefined
+      const devOutbox = command === "serve" && outbox ? { ...outbox, import: resolveOutboxImport(), runtimeId: outboxRuntimeId } : undefined
       await writeFileIfChanged(entry, renderConfiguredEmailDefinitionModule(definition, driverImport, runtimeEnvImport, cloudflare, cloudflare && cloudflareEmail, devOutbox))
       try {
         await bundleEsmEntry(entry, definition.handler, {

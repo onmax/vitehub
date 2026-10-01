@@ -15,7 +15,7 @@ import { discoverEmailTemplates } from "./templates.ts"
 
 import type { ViteHubCliContext, ViteHubCliContributor, ViteHubCliStreams } from "@vite-hub/internal/cli"
 import type { EmailDevOperation, EmailDevRequestBody } from "./dev.ts"
-import type { EmailOutboxDelivery, EmailOutboxList, EmailOutboxMessage } from "./runtime/console.ts"
+import type { EmailOutboxAttachment, EmailOutboxDelivery, EmailOutboxList, EmailOutboxListItem, EmailOutboxMessage } from "./runtime/console.ts"
 
 export type EmailCliContext = Pick<ViteHubCliContext, "cwd" | "env" | "rootDir"> & ViteHubCliStreams
 
@@ -157,6 +157,8 @@ function table(rows: readonly (readonly string[])[]): string {
 
 function deliveryLabel(delivery: EmailOutboxDelivery): string {
   switch (delivery.status) {
+    case "pending":
+      return "Sending"
     case "captured":
       return "captured"
     case "sent":
@@ -216,6 +218,62 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+function isStrings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === "string")
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every(item => typeof item === "string")
+}
+
+function isDelivery(value: unknown): value is EmailOutboxDelivery {
+  if (!isRecord(value)) return false
+  if (value.status === "captured" || value.status === "pending") return true
+  if (value.status === "sent") return typeof value.id === "string"
+  return value.status === "failed" && isRecord(value.error) && typeof value.error.message === "string"
+    && (value.error.code === undefined || typeof value.error.code === "string")
+}
+
+function hasMessageFields(value: Record<string, unknown>): boolean {
+  return ["capturedAt", "from", "id", "provider", "subject"].every(key => typeof value[key] === "string")
+    && isStrings(value.to) && isDelivery(value.delivery)
+}
+
+function isListItem(value: unknown): value is EmailOutboxListItem {
+  return isRecord(value) && hasMessageFields(value) && typeof value.attachments === "number"
+    && Number.isSafeInteger(value.attachments) && value.attachments >= 0
+}
+
+function isAttachment(value: unknown): value is EmailOutboxAttachment {
+  return isRecord(value) && typeof value.filename === "string" && typeof value.size === "number" && Number.isFinite(value.size)
+    && (value.disposition === undefined || value.disposition === "inline" || value.disposition === "attachment")
+    && ["cid", "contentType"].every(key => value[key] === undefined || typeof value[key] === "string")
+}
+
+function isMessage(value: unknown): value is EmailOutboxMessage {
+  return isRecord(value) && hasMessageFields(value) && isStringRecord(value.headers)
+    && Array.isArray(value.attachments) && value.attachments.every(isAttachment)
+    && ["bcc", "cc", "replyTo"].every(key => value[key] === undefined || isStrings(value[key]))
+    && ["html", "preheader", "scheduledAt", "stream", "template", "text"].every(key => value[key] === undefined || typeof value[key] === "string")
+    && (value.metadata === undefined || isStringRecord(value.metadata))
+    && (value.tags === undefined || (Array.isArray(value.tags) && value.tags.every(tag => isRecord(tag) && typeof tag.name === "string" && typeof tag.value === "string")))
+}
+
+type OutboxResult =
+  | { operation: "list", value: EmailOutboxList }
+  | { operation: "get", value: { message: EmailOutboxMessage } }
+  | { operation: "clear", value: { cleared: number } }
+
+function parseOutboxResult(operation: EmailDevOperation, value: unknown): OutboxResult | undefined {
+  if (!isRecord(value)) return undefined
+  if (operation === "get") return isMessage(value.message) ? { operation, value: { message: value.message } } : undefined
+  if (operation === "clear") return typeof value.cleared === "number" && Number.isSafeInteger(value.cleared) && value.cleared >= 0
+    ? { operation, value: { cleared: value.cleared } } : undefined
+  if ((value.limit !== null && (typeof value.limit !== "number" || !Number.isFinite(value.limit)))
+    || !Array.isArray(value.messages) || !value.messages.every(isListItem)) return undefined
+  return { operation, value: { limit: value.limit, messages: value.messages } }
+}
+
 async function readFailure(response: Response): Promise<{ code?: string, message: string }> {
   const text = await response.text()
   try {
@@ -241,20 +299,19 @@ function withTimeout(timeout: number | undefined): Pick<RequestInit, "signal"> {
   return timeout ? { signal: AbortSignal.timeout(timeout) } : {}
 }
 
-function formatOutboxResult(command: OutboxCommand, parsed: ParsedOutboxArgs, result: Record<string, unknown>): string {
-  if (parsed.json) return `${JSON.stringify(command.operation === "get" ? result.message : result, null, 2)}\n`
-  // SAFETY: the Email dev handler of the same package version writes these shapes.
-  switch (command.operation) {
+function formatOutboxResult(parsed: ParsedOutboxArgs, result: OutboxResult): string {
+  if (parsed.json) return `${JSON.stringify(result.operation === "get" ? result.value.message : result.value, null, 2)}\n`
+  switch (result.operation) {
     case "list":
-      return formatOutboxList(result as unknown as EmailOutboxList)
+      return formatOutboxList(result.value)
     case "get": {
-      const message = result.message as EmailOutboxMessage
+      const message = result.value.message
       if (parsed.format === "html") return message.html === undefined ? "" : `${message.html}\n`
       if (parsed.format === "text") return message.text === undefined ? "" : `${message.text}\n`
       return formatMessage(message)
     }
     case "clear": {
-      const cleared = typeof result.cleared === "number" ? result.cleared : 0
+      const cleared = result.value.cleared
       return `Removed ${cleared} message${cleared === 1 ? "" : "s"} from the outbox.\n`
     }
   }
@@ -275,14 +332,17 @@ async function runOutboxCommand(command: OutboxCommand, args: string[], context:
     return 0
   }
   const fetchImpl = options.fetch ?? globalThis.fetch
+  let discoveryError = ""
   const server = await discoverViteHubDevServer<EmailDevDiscovery>({
     endpoint: emailDevEndpoint,
     fetch: fetchImpl,
     rootDir: context.rootDir,
     serverUrl: parsed.url,
-    stderr: context.stderr,
+    ...withTimeout(parsed.timeout),
+    stderr: parsed.json ? { write: (chunk) => { discoveryError += chunk; return true } } : context.stderr,
   })
   if (!server) {
+    if (parsed.json) return writeFailure(true, context, { message: `${discoveryError.trim()} ${emailDevServerHint}` })
     context.stderr.write(`${emailDevServerHint}\n`)
     return 1
   }
@@ -308,9 +368,9 @@ async function runOutboxCommand(command: OutboxCommand, args: string[], context:
     return writeFailure(parsed.json, context, { message: `Email Dev request failed: ${error instanceof Error ? error.message : String(error)}` })
   }
   if (!response.ok) return writeFailure(parsed.json, context, await readFailure(response))
-  const result: unknown = await response.json().catch(() => undefined)
-  if (!isRecord(result)) return writeFailure(parsed.json, context, { message: "The Email Dev response is not valid JSON." })
-  context.stdout.write(formatOutboxResult(command, parsed, result))
+  const result = parseOutboxResult(command.operation, await response.json().catch(() => undefined))
+  if (!result) return writeFailure(parsed.json, context, { message: "The Email Dev response is invalid." })
+  context.stdout.write(formatOutboxResult(parsed, result))
   return 0
 }
 

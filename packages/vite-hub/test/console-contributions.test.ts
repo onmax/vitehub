@@ -4,9 +4,26 @@ import { join } from "node:path"
 
 import { describe, expect, it, vi } from "vitest"
 
+import { writeConsoleNitroPlugin } from "../src/console/plugin.ts"
 import { consoleContributedSections, consoleRuntimeReaderModule, describeConsoleContributedSections, describeConsoleRuntimeReaders, isConsoleContributedSectionId } from "../src/console/contributions.ts"
 import { parseConsoleContributedSection, parseConsoleSectionContent } from "../src/console/runtime/definitions.ts"
 import { consoleBuiltinSectionIds, consoleSectionRouteName, isConsoleBuiltinSectionId, isConsoleSectionId, resolveConsoleSectionIds } from "../src/console/runtime/sections.ts"
+
+describe("Email Console runtime ownership", () => {
+  it("passes the generated Email runtime identity to its reader", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-email-console-"))
+    try {
+      const plugin = join(root, "plugin.ts")
+      await writeConsoleNitroPlugin(plugin, root, ["email"], [], { agents: [], content: {} }, [], [])
+      const source = await readFile(plugin, "utf8")
+      expect(source).toContain('import { outboxRuntimeId as vitehubEmailOutboxRuntimeId } from "#vitehub/email/definition"')
+      expect(source).toContain('"email": () => vitehubConsoleRuntimeReader0(vitehubEmailOutboxRuntimeId)')
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+})
 
 describe("Console section contributions", () => {
   it("registers the owner sections with valid ids that do not replace built-in sections", () => {

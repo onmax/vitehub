@@ -271,6 +271,8 @@ The outbox records:
 - attachment names, content types, and sizes, but not attachment content
 - tags, metadata, the provider driver name, and the delivery result
 
+The outbox stores the effective recipients and subject of a single personalization. Messages appear as Sending while the provider is pending, in submission order.
+
 By default the outbox records the message and then sends it through the provider, because development sends are real deliveries. Set `deliver: false` to record messages without a provider request. In this mode `email.send()` returns an `outbox-<n>` id with `driver: 'outbox'`, and ViteHub does not resolve the provider options.
 
 ```ts [vite.config.ts]
@@ -294,7 +296,7 @@ export default defineConfig({
 | `outbox.deliver` | `boolean` | `true` | `true` sends each message through the provider after it records the message. `false` records messages only. |
 | `outbox.limit` | `number` | `50` | Number of messages to keep, from 1 to 1000. The outbox removes the oldest message first. |
 
-Set `outbox: false` to disable the outbox. A restart of the Development Server clears the outbox. The outbox redacts header and metadata values with secret names, and credentials in delivery errors. It keeps message bodies as the application rendered them.
+Set `outbox: false` to disable the outbox. Each Development Server has a separate outbox identity. A restart creates a fresh outbox. The outbox redacts header and metadata values with secret names, and credentials in delivery errors. It keeps message bodies as the application rendered them.
 
 Inspect the outbox with the [CLI](/docs/development/cli#inspect-the-email-development-outbox) or in the [Console](/docs/development/console) **Email** section:
 

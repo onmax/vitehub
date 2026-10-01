@@ -153,6 +153,7 @@ export interface ViteHubDevServerDiscoveryOptions {
   isCompatibleRoot?: (rootDir: string, serverRoot: string) => boolean
   rootDir: string
   serverUrl: string
+  signal?: AbortSignal | null
   stderr: ViteHubCliStreams["stderr"]
 }
 
@@ -256,6 +257,7 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   try {
     response = await fetchViteHubDevEndpoint(options.fetch, url, options.endpoint, {
       headers: { accept: "application/json" },
+      signal: options.signal,
     })
   }
   catch {

@@ -135,7 +135,7 @@ Captured messages are cloned before storage. `clear()` empties the mailbox and r
 
 In `vite dev`, `hubEmail()` wraps the provider driver with a development outbox. Each `email.send()` call records the headers, recipients, subject, text and HTML bodies, attachment metadata, provider name, and delivery result in the memory of the server runtime. Build output never contains the outbox.
 
-By default the outbox records each message and then delivers it through the provider. Configure it with `outbox`:
+By default the outbox records each message and then delivers it through the provider. Pending deliveries appear as Sending. Each development runtime has separate messages, limits, and outbox IDs. Configure it with `outbox`:
 
 ```ts
 hubEmail({
@@ -157,7 +157,7 @@ pnpm vitehub email outbox clear
 pnpm vitehub email preview welcome --data '{"user":{"name":"Maxi"}}'
 ```
 
-`emailConsoleSection` adds an **Email** section to the ViteHub Console. It reads the outbox with `readEmailOutboxConsoleRecords()` from `@vite-hub/email/runtime/console` on each request and shows the HTML body as escaped source text. It never renders captured HTML.
+`emailConsoleSection` adds an **Email** section to the ViteHub Console. It passes the generated definition's `outboxRuntimeId` to `readEmailOutboxConsoleRecords(runtimeId)` from `@vite-hub/email/runtime/console` on each request and shows the HTML body as escaped source text. It never renders captured HTML.
 
 ## Use another provider
 

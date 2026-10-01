@@ -46,24 +46,26 @@ function listItem(message: EmailOutboxMessage): EmailOutboxListItem {
 }
 
 /** Lists the messages of the development outbox, newest first. */
-export function listEmailOutbox(): EmailOutboxList {
-  const outbox = getEmailOutbox()
+export function listEmailOutbox(runtimeId?: string): EmailOutboxList {
+  const outbox = getEmailOutbox(runtimeId)
   return { limit: outbox?.limit ?? null, messages: (outbox?.list() ?? []).map(listItem) }
 }
 
 /** Returns one captured message, or `undefined` when the outbox has no message with this id. */
-export function getEmailOutboxMessage(id: string): EmailOutboxMessage | undefined {
-  return getEmailOutbox()?.get(id)
+export function getEmailOutboxMessage(id: string, runtimeId?: string): EmailOutboxMessage | undefined {
+  return getEmailOutbox(runtimeId)?.get(id)
 }
 
 /** Removes every captured message. Returns the number of removed messages. */
-export function clearEmailOutbox(): number {
-  return getEmailOutbox()?.clear() ?? 0
+export function clearEmailOutbox(runtimeId?: string): number {
+  return getEmailOutbox(runtimeId)?.clear() ?? 0
 }
 
 /** Short text for a delivery state. */
 export function formatEmailOutboxDelivery(delivery: EmailOutboxDelivery): string {
   switch (delivery.status) {
+    case "pending":
+      return "Sending"
     case "captured":
       return "Captured only"
     case "sent":
@@ -130,8 +132,8 @@ function consoleRecord(message: EmailOutboxMessage): ViteHubConsoleRecord {
  * Console runtime reader. Returns one record for each message in the development outbox, newest first. The Console
  * calls it on each request. Without an outbox, for example in build output, it returns no records.
  */
-export function readEmailOutboxConsoleRecords(): ViteHubConsoleRecord[] {
-  return (getEmailOutbox()?.list() ?? []).map(consoleRecord)
+export function readEmailOutboxConsoleRecords(runtimeId?: string): ViteHubConsoleRecord[] {
+  return (getEmailOutbox(runtimeId)?.list() ?? []).map(consoleRecord)
 }
 
 function json(value: unknown, status = 200): Response {
@@ -152,19 +154,19 @@ async function readBody(request: Request): Promise<EmailDevRequestBody | undefin
   return { ...(id !== undefined ? { id } : {}), operation }
 }
 
-function runOperation(body: EmailDevRequestBody): Response {
+function runOperation(body: EmailDevRequestBody, runtimeId?: string): Response {
   switch (body.operation) {
     case "list":
-      return json(listEmailOutbox())
+      return json(listEmailOutbox(runtimeId))
     case "get": {
       if (!body.id) return failure("The get operation requires an id.", 400)
-      const message = getEmailOutboxMessage(body.id)
+      const message = getEmailOutboxMessage(body.id, runtimeId)
       return message
         ? json({ message })
         : failure("Outbox message was not found. The outbox keeps only recent messages and a restart clears it.", 404, "EMAIL_OUTBOX_MESSAGE_NOT_FOUND")
     }
     case "clear":
-      return json({ cleared: clearEmailOutbox() })
+      return json({ cleared: clearEmailOutbox(runtimeId) })
   }
 }
 
@@ -176,12 +178,12 @@ const devHeaders = { header: emailDevHeader, headerValue: emailDevHeaderValue, l
  *
  * The request must carry the Email dev header, must not come from another origin, and must use JSON.
  */
-export async function handleEmailDevRequest(request: Request): Promise<Response> {
+export async function handleEmailDevRequest(request: Request, runtimeId?: string): Promise<Response> {
   const rejection = validateViteHubNitroDevRequest(request, devHeaders)
   if (rejection) return rejection
   const body = await readBody(request)
   if (!body) return failure("The Email Dev request body is invalid.", 400)
-  return runOperation(body)
+  return runOperation(body, runtimeId)
 }
 
 /**

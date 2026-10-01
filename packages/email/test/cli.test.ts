@@ -67,6 +67,31 @@ const listResult = {
   ],
 }
 
+describe("Email discovery failure output", () => {
+  it.each([[], ["--json"]])("reports malformed outbox rows with flags %j", async (flags) => {
+    const output = context()
+    await expect(runEmailOutboxCli(["list", ...flags], output.context, { fetch: devServer({ ...listResult, messages: [{}] }) })).resolves.toBe(1)
+    expect(output.stdout.output() + output.stderr.output()).toContain("response is invalid")
+  })
+
+  it("prints a JSON error without stderr diagnostics", async () => {
+    const output = context()
+    await expect(runEmailOutboxCli(["list", "--json"], output.context, { fetch: vi.fn(async () => { throw new Error("offline") }) })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message")
+    expect(output.stderr.output()).toBe("")
+  })
+
+  it("applies timeout to discovery", async () => {
+    const output = context()
+    const fetch = vi.fn((_url: string | URL | Request, request?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      request?.signal?.addEventListener("abort", () => reject(request.signal?.reason), { once: true })
+    }))
+    await expect(runEmailOutboxCli(["list", "--json", "--timeout", "10"], output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message")
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+})
+
 describe("vitehub email outbox", () => {
   it("lists captured messages as a table and as JSON", async () => {
     const human = context()

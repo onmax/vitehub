@@ -24,6 +24,8 @@ export interface EmailOutboxAttachment {
 export type EmailOutboxDelivery =
   /** Capture-only mode. No provider request was made. */
   | { status: "captured" }
+  /** The provider has not completed delivery yet. */
+  | { status: "pending" }
   /** The provider accepted the message. */
   | { id: string, status: "sent" }
   /** The provider rejected the message or the provider driver failed. The message is redacted. */
@@ -76,10 +78,10 @@ interface EmailOutboxState {
 // The generated Email definition and the Console reader are separate bundles in one runtime. They share this state.
 const outboxState = Symbol.for("vitehub.email.outbox")
 
-type OutboxGlobal = typeof globalThis & { [outboxState]?: EmailOutboxState }
+type OutboxGlobal = typeof globalThis & { [outboxState]?: Map<string, EmailOutboxState> }
 
-function state(): EmailOutboxState | undefined {
-  return (globalThis as OutboxGlobal)[outboxState]
+function state(runtimeId = "default"): EmailOutboxState | undefined {
+  return (globalThis as OutboxGlobal)[outboxState]?.get(runtimeId)
 }
 
 function normalizeLimit(value: number | undefined): number {
@@ -87,15 +89,17 @@ function normalizeLimit(value: number | undefined): number {
   return Math.min(Math.max(Math.trunc(value), 1), maximumEmailOutboxLimit)
 }
 
-function installState(limit: number): EmailOutboxState {
-  const current = state()
+function installState(limit: number, runtimeId: string): EmailOutboxState {
+  const current = state(runtimeId)
   if (current) {
     current.limit = limit
     current.messages.splice(limit)
     return current
   }
   const created: EmailOutboxState = { limit, messages: [], nextId: 1 }
-  ;(globalThis as OutboxGlobal)[outboxState] = created
+  const global = globalThis as OutboxGlobal
+  global[outboxState] ??= new Map()
+  global[outboxState].set(runtimeId, created)
   return created
 }
 
@@ -103,8 +107,8 @@ function installState(limit: number): EmailOutboxState {
  * Returns the development outbox of this runtime, or `undefined` when no outbox is installed. The outbox exists only
  * after the first send in `vite dev` with `outbox` enabled.
  */
-export function getEmailOutbox(): EmailOutboxStore | undefined {
-  const current = state()
+export function getEmailOutbox(runtimeId = "default"): EmailOutboxStore | undefined {
+  const current = state(runtimeId)
   if (!current) return
   return {
     clear() {
@@ -154,6 +158,10 @@ export function summarizeEmailOutboxMessage(
   message: EmailMessage,
   options: { capturedAt: Date, delivery: EmailOutboxDelivery, id: string, provider: string },
 ): EmailOutboxMessage {
+  if (message.personalizations?.length === 1) {
+    const personalization = message.personalizations[0]!
+    message = { ...message, bcc: personalization.bcc ?? message.bcc, cc: personalization.cc ?? message.cc, subject: personalization.subject ?? message.subject, to: personalization.to }
+  }
   const template = message.template?.id ?? message.template?.alias
   return {
     attachments: (message.attachments ?? []).map(attachment => ({
@@ -201,6 +209,8 @@ export interface EmailDevOutboxDriverOptions {
   limit?: number
   /** Stable provider driver name, for example `resend`. */
   provider: string
+  /** Identity generated for one development runtime. Separate identities never share messages or ids. */
+  runtimeId?: string
 }
 
 /**
@@ -211,18 +221,18 @@ export interface EmailDevOutboxDriverOptions {
  * created, so provider options are not resolved or checked.
  */
 export async function createEmailDevOutboxDriver(options: EmailDevOutboxDriverOptions): Promise<EmailDriver> {
-  const outbox = installState(normalizeLimit(options.limit))
+  const outbox = installState(normalizeLimit(options.limit), options.runtimeId ?? "default")
   const record = (message: EmailMessage, delivery: EmailOutboxDelivery, id = `outbox-${outbox.nextId++}`) => {
     outbox.messages.unshift(summarizeEmailOutboxMessage(message, { capturedAt: new Date(), delivery, id, provider: options.provider }))
     outbox.messages.splice(outbox.limit)
-    return id
+    return outbox.messages[0]!
   }
 
   if (!options.deliver) {
     return {
       name: "outbox",
       send(message, context) {
-        const id = record(message, { status: "captured" })
+        const { id } = record(message, { status: "captured" })
         return { data: { at: new Date(), driver: "outbox", id, stream: context.stream }, error: null }
       },
     }
@@ -245,16 +255,17 @@ export async function createEmailDevOutboxDriver(options: EmailDevOutboxDriverOp
   return {
     name: driver.name,
     async send(message, context): Promise<EmailDriverResult> {
+      const captured = record(message, { status: "pending" })
       let result: EmailDriverResult
       try {
         await driver.initialize?.()
         result = await driver.send(message, context)
       }
       catch (error) {
-        record(message, failedDelivery(error))
+        captured.delivery = failedDelivery(error)
         throw error
       }
-      record(message, result.error ? failedDelivery(result.error) : { id: result.data.id, status: "sent" })
+      captured.delivery = result.error ? failedDelivery(result.error) : { id: result.data.id, status: "sent" }
       return result
     },
   }

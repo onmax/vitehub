@@ -25,6 +25,44 @@ function providerDriver(send: EmailDriver["send"] = (_, context) => ({ data: { a
 }
 
 describe("Email development outbox", () => {
+  it("captures sends in submission order while provider delivery is pending", async () => {
+    const completions: Array<(result: Awaited<ReturnType<EmailDriver["send"]>>) => void> = []
+    const driver = providerDriver(() => new Promise(resolve => completions.push(resolve)))
+    const wrapped = await createEmailDevOutboxDriver({ deliver: true, driver, provider: "resend" })
+    const context = { attempt: 1, driver: "resend", meta: {} }
+    const first = wrapped.send({ ...message, subject: "first" }, context)
+    const second = wrapped.send({ ...message, subject: "second" }, context)
+    await vi.waitFor(() => expect(completions).toHaveLength(2))
+    expect(getEmailOutbox()?.list().map(entry => [entry.id, entry.subject, entry.delivery.status])).toEqual([
+      ["outbox-2", "second", "pending"], ["outbox-1", "first", "pending"],
+    ])
+    completions[1]!({ data: { at: new Date(), driver: "resend", id: "second" }, error: null })
+    await second
+    completions[0]!({ data: { at: new Date(), driver: "resend", id: "first" }, error: null })
+    await first
+    expect(getEmailOutbox()?.list().map(entry => [entry.id, entry.delivery.status])).toEqual([["outbox-2", "sent"], ["outbox-1", "sent"]])
+  })
+
+  it("captures effective personalized recipients and subject", async () => {
+    const email = createEmail({ driver: () => createEmailDevOutboxDriver({ deliver: false, driver: providerDriver(), provider: "resend" }) })
+    await email.send({ ...message, personalizations: [{ to: "personal@example.com", cc: "cc@example.com", bcc: "bcc@example.com", subject: "Personal" }] })
+    expect(getEmailOutbox()?.list()[0]).toMatchObject({ to: ["personal@example.com"], cc: ["cc@example.com"], bcc: ["bcc@example.com"], subject: "Personal" })
+  })
+
+  it("isolates messages, limits, clear, and ids between runtime identities", async () => {
+    const first = createEmail({ driver: () => createEmailDevOutboxDriver({ deliver: false, driver: providerDriver(), limit: 2, provider: "resend", runtimeId: "first-runtime" }) })
+    const second = createEmail({ driver: () => createEmailDevOutboxDriver({ deliver: false, driver: providerDriver(), limit: 5, provider: "resend", runtimeId: "second-runtime" }) })
+    await first.send({ ...message, subject: "first" })
+    await second.send({ ...message, subject: "second" })
+    expect(getEmailOutbox("first-runtime")?.list()).toMatchObject([{ id: "outbox-1", subject: "first" }])
+    expect(getEmailOutbox("second-runtime")?.list()).toMatchObject([{ id: "outbox-1", subject: "second" }])
+    expect(getEmailOutbox("first-runtime")?.limit).toBe(2)
+    expect(getEmailOutbox("second-runtime")?.limit).toBe(5)
+    expect(getEmailOutbox("restart-runtime")).toBeUndefined()
+    getEmailOutbox("second-runtime")?.clear()
+    expect(getEmailOutbox("first-runtime")?.list()).toHaveLength(1)
+  })
+
   it("does not exist before the first send", () => {
     expect(getEmailOutbox()).toBeUndefined()
   })

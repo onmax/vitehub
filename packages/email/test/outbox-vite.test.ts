@@ -7,6 +7,8 @@ import { build } from "esbuild"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { createEmail } from "../src/client.ts"
+import { emailDevHeader, emailDevHeaderValue } from "../src/dev.ts"
+import { handleEmailDevRequest, readEmailOutboxConsoleRecords } from "../src/runtime/console.ts"
 import { getEmailOutbox } from "../src/runtime/outbox.ts"
 import { hubEmail } from "../src/vite.ts"
 
@@ -71,13 +73,14 @@ describe("Email development outbox output", () => {
       .toContain("import { handleEmailDevRequest as handleViteHubDevRequest } from \"@vite-hub/email/runtime/console\"")
 
     // The generated definition is a separate bundle. It must write to the outbox that the Console reader reads.
-    const module: { definition: EmailDefinition } = await import(pathToFileURL(definition).href)
+    const module: { definition: EmailDefinition, outboxRuntimeId: string } = await import(pathToFileURL(definition).href)
+    expect(await readFile(devHandler(root), "utf8")).toContain(JSON.stringify(module.outboxRuntimeId))
     const email = createEmail(module.definition)
     for (const subject of ["One", "Two", "Three", "Four"]) {
       await expect(email.send({ from: "hello@example.com", html: "<p>Hi</p>", subject, to: "ada@example.com" }))
         .resolves.toMatchObject({ driver: "outbox" })
     }
-    const outbox = getEmailOutbox()
+    const outbox = getEmailOutbox(module.outboxRuntimeId)
     expect(outbox?.limit).toBe(3)
     expect(outbox?.list().map(message => [message.subject, message.provider, message.delivery.status])).toEqual([
       ["Four", "resend", "captured"],
@@ -86,16 +89,37 @@ describe("Email development outbox output", () => {
     ])
   })
 
+  it("gives separate applications and restarts fresh outbox identities", async () => {
+    const firstRoot = await createTempProject()
+    const secondRoot = await createTempProject()
+    const first = await configure(hubEmail({ driver: "resend", outbox: { deliver: false } }), firstRoot, "serve")
+    const firstModule: { definition: EmailDefinition, outboxRuntimeId: string } = await import(pathToFileURL(first.definition).href)
+    await createEmail(firstModule.definition).send({ from: "hello@example.com", subject: "First app", text: "Hi", to: "ada@example.com" })
+    const second = await configure(hubEmail({ driver: "resend", outbox: { deliver: false } }), secondRoot, "serve")
+    const secondModule: { definition: EmailDefinition, outboxRuntimeId: string } = await import(pathToFileURL(second.definition).href)
+    expect(secondModule.outboxRuntimeId).not.toBe(firstModule.outboxRuntimeId)
+    expect(getEmailOutbox(secondModule.outboxRuntimeId)).toBeUndefined()
+    await createEmail(secondModule.definition).send({ from: "hello@example.com", subject: "Second app", text: "Hi", to: "ada@example.com" })
+    const clear = await handleEmailDevRequest(new Request("http://localhost/_vitehub/email/dev", { body: JSON.stringify({ operation: "clear" }), headers: { "content-type": "application/json", [emailDevHeader]: emailDevHeaderValue }, method: "POST" }), secondModule.outboxRuntimeId)
+    expect(await clear.json()).toEqual({ cleared: 1 })
+    expect(readEmailOutboxConsoleRecords(firstModule.outboxRuntimeId)).toHaveLength(1)
+    expect(getEmailOutbox(firstModule.outboxRuntimeId)?.list()).toHaveLength(1)
+    const restarted = await configure(hubEmail({ driver: "resend", outbox: { deliver: false } }), firstRoot, "serve")
+    const restartedModule: { outboxRuntimeId: string } = await import(`${pathToFileURL(restarted.definition).href}?restart`)
+    expect(restartedModule.outboxRuntimeId).not.toBe(firstModule.outboxRuntimeId)
+    expect(getEmailOutbox(restartedModule.outboxRuntimeId)).toBeUndefined()
+  })
+
   it("delivers through the provider by default in vite dev", async () => {
     const root = await createTempProject()
     const { definition } = await configure(hubEmail({ driver: "resend" }), root, "serve")
 
     expect(await readFile(definition, "utf8")).toContain("vitehub.email.outbox")
-    const module: { definition: EmailDefinition } = await import(pathToFileURL(definition).href)
+    const module: { definition: EmailDefinition, outboxRuntimeId: string } = await import(pathToFileURL(definition).href)
     // No API key is configured, so the provider driver fails. The outbox keeps the message and the failure.
     await expect(createEmail(module.definition).send({ from: "hello@example.com", subject: "Hi", text: "Hi", to: "ada@example.com" }))
       .rejects.toThrow()
-    expect(getEmailOutbox()?.list()[0]).toMatchObject({ delivery: { status: "failed" }, provider: "resend", subject: "Hi" })
+    expect(getEmailOutbox(module.outboxRuntimeId)?.list()[0]).toMatchObject({ delivery: { status: "failed" }, provider: "resend", subject: "Hi" })
   })
 
   it("keeps the handler but reports a disabled outbox with outbox: false", async () => {
