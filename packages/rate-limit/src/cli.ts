@@ -190,7 +190,7 @@ async function readFailure(response: Response): Promise<{ code?: string, message
   return { message: text || `Rate Limit Dev request failed with HTTP ${response.status}.` }
 }
 
-function writeFailure(parsed: ParsedRateLimitArgs, context: RateLimitCliContext, failure: { code?: string, message: string }): number {
+function writeFailure(parsed: Pick<ParsedRateLimitArgs, "json">, context: RateLimitCliContext, failure: { code?: string, message: string }): number {
   if (parsed.json) context.stdout.write(`${JSON.stringify({ error: failure }, null, 2)}\n`)
   else context.stderr.write(`${failure.message}\n`)
   return 1
@@ -211,6 +211,8 @@ async function runRateLimitCommand(
     parsed = parseArgs(args, context.env)
   }
   catch (error) {
+    const terminator = args.indexOf("--")
+    if (args.slice(0, terminator < 0 ? args.length : terminator).includes("--json")) return writeFailure({ json: true }, context, { message: error instanceof Error ? error.message : String(error) })
     context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     writeUsage(command, context.stderr)
     return 1
