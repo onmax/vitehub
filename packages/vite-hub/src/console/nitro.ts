@@ -16,6 +16,11 @@ export function addConsoleRpcHandler(nitro: { handlers?: Array<{ handler: string
   const managementConflict = handlers.find(candidate => candidate.route === managementRoute && candidate.handler !== managementHandler)
   if (managementConflict) throw viteHubErrorDiagnostics.VITE_HUB_R0040({ message: `Cannot mount the ViteHub Env handler at "${managementRoute}" because that route is already registered.` })
   kit.addHandler({ handler: managementHandler, method: "post", route: managementRoute })
+  const replayRoute = "/_vitehub/channels/replay"
+  const replayHandler = join(consoleRuntimeRoot, "server/channel-replay.js")
+  const replayConflict = handlers.find(candidate => candidate.route === replayRoute && candidate.handler !== replayHandler)
+  if (replayConflict) throw viteHubErrorDiagnostics.VITE_HUB_R0040({ message: `Cannot mount the ViteHub Channel replay handler at "${replayRoute}" because that route is already registered.` })
+  kit.addHandler({ handler: replayHandler, method: "post", route: replayRoute })
   const scheduleRunRoute = "/_vitehub/schedules/run"
   const scheduleRunHandler = join(consoleRuntimeRoot, "server/schedule-run.js")
   const scheduleRunConflict = handlers.find(candidate => candidate.route === scheduleRunRoute && candidate.handler !== scheduleRunHandler)

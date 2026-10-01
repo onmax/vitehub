@@ -36,7 +36,6 @@ export const consoleSchedulesRegistryKey: unique symbol = Symbol.for("vitehub.co
 export const consoleSchedulesRootKey: unique symbol = Symbol.for("vitehub.console.schedules.root")
 export const consoleInvocationsRootIdentityRegistryKey: unique symbol = Symbol.for("vitehub.console.invocations.root-identities")
 export const consoleInvocationsRevisionRegistryKey: unique symbol = Symbol.for("vitehub.console.invocations.revisions")
-export const consoleProjectRootKey: typeof consoleInvocationsRootKey = consoleInvocationsRootKey
 export const consoleSectionsKey: unique symbol = Symbol.for("vitehub.console.sections")
 export const consoleAuthKey: unique symbol = Symbol.for("vitehub.console.auth")
 export const consoleProjectNameKey: unique symbol = Symbol.for("vitehub.console.project-name")
@@ -134,7 +133,6 @@ export type ConsoleInvocationScope = {
   [consoleSchedulesKey]?: ScheduleDefinitionRegistry
   [consoleSchedulesRegistryKey]?: ConsoleByRoot<ScheduleDefinitionRegistry>
   [consoleSchedulesRootKey]?: string
-  [consoleProjectRootKey]?: string
   [consoleInvocationsRootIdentityRegistryKey]?: ConsoleInvocationIdentitiesByRoot
   [consoleSectionsKey]?: readonly ConsoleSectionId[]
   [consoleAuthKey]?: ConsoleAuthMode | false
@@ -528,14 +526,6 @@ export function resolveConsoleProjectName(scope: ConsoleInvocationScope = defaul
   if (root) return registered?.get(root)?.projectName ?? scope[consoleProjectNameKey]
   if (registered && registered.size > 1) return scope[consoleProjectNameKey]
   return registered?.values().next().value?.projectName ?? scope[consoleProjectNameKey]
-}
-
-export function resolveConsoleProjectRoot(scope: ConsoleInvocationScope = defaultConsoleInvocationScope()): string | undefined {
-  return scope[consoleInvocationsRootKey]
-}
-
-export function resolveConsoleInvocationsRoot(scope: ConsoleInvocationScope = defaultConsoleInvocationScope()): string | undefined {
-  return scope[consoleInvocationsRootKey]
 }
 
 export function resolveConsoleInvocationsIdentity(scope: ConsoleInvocationScope = defaultConsoleInvocationScope()): string | undefined {

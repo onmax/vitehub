@@ -140,6 +140,26 @@ launch: ({ command, providerCommand }) => ({
 })
 ```
 
+### Run in an existing directory
+
+By default, each invocation receives a new temporary working directory. Set `cwd` when the provider must run in a directory that the application prepares, such as a disposable local checkout that is also the Workspace's local store root:
+
+```ts [server/agents/review/agent.ts]
+import { defineAgent } from 'vite-hub/agent'
+
+export default defineAgent({
+  driver: {
+    cwd: '/srv/review/checkout',
+    kind: 'codex',
+    permissions: 'allow-edits',
+  },
+})
+```
+
+`cwd` accepts an absolute or relative path, or an invocation-time resolver. Relative paths resolve from the process working directory. The resolved value must be an existing directory; otherwise the invocation fails with `AGENT_R0939` before the provider starts. A `launch` resolver receives this directory as `cwd`.
+
+The directory is the working copy. ViteHub still materializes Workspace Sources, but it does not start a Workspace session. It does not copy Workspace files into the directory, create a Git baseline, compute a diff, write changes back, or remove the directory. Generated instruction and Skill files are restored after the provider stops. When the directory is a Git repository root, Git ignores the generated files while the provider runs, so provider commits do not include them. Title and progress summary runs ignore `cwd` and use a temporary directory. The application owns the directory's contents, cleanup, and isolation between concurrent invocations. Agent inspection reports whether `cwd` is static or dynamic without resolving it.
+
 Threads resume with the provider's opaque cursor. ViteHub normalizes assistant text, reasoning, native and Capability tool activity, approvals, provider questions, usage, warnings, errors, and terminal state into Agent Invocation events.
 
 | Option | Purpose |
@@ -154,6 +174,7 @@ Threads resume with the provider's opaque cursor. ViteHub normalizes assistant t
 | `execution.attachments.maxBytes` | Optional positive per-invocation image attachment budget; defaults to 25 MiB. Inline and application-resolved lazy images share the budget. |
 | `instructions` | Invocation-scoped instructions composed with colocated instructions. |
 | `launch` | Provider command wrapper or invocation-time resolver. Receives the provider executable, working directory, selected environment, and abort signal. |
+| `cwd` | Optional existing directory or invocation-time resolver. The provider runs there without a Workspace session, write-back, or removal. See [Run in an existing directory](#run-in-an-existing-directory). |
 | `permissions` | `"ask"`, `"allow-edits"`, or `"allow-all"`; defaults to `"ask"`. Set `"allow-all"` explicitly to run provider actions without approval. |
 | `providerSettings` | Advanced settings passed to the embedded provider runtime. Explicit settings override the installed Codex executable fallback. |
 | `requirements` | Command names that `status()` checks where the Driver runs. Missing commands are reported in `missingCommands`. |
@@ -310,6 +331,6 @@ State, instructions, and criteria accept JSON values. Root numbers and booleans 
 
 ### Provider exit evidence
 
-A `launch` resolver can return `onExit({ cwd, abortSignal })` with its command. ViteHub calls this host callback once after the provider and Workspace commands stop, before it restores generated files or deletes the working directory. Auxiliary runs, such as title generation, do not call it. Use it to read the final checkout HEAD and persist evidence in host-owned state. The callback also runs after a failed or cancelled turn when shutdown completes. Cancellation can return before this deferred cleanup finishes. Its signal has a separate teardown deadline; stop all I/O when it aborts. Callback errors fail cleanup without preventing directory removal.
+A `launch` resolver can return `onExit({ cwd, abortSignal })` with its command. ViteHub calls this host callback once after the provider and Workspace commands stop, before it restores generated files or deletes the temporary working directory. Auxiliary runs, such as title generation, do not call it. Use it to read the final checkout HEAD and persist evidence in host-owned state. The callback also runs after a failed or cancelled turn when shutdown completes. Cancellation can return before this deferred cleanup finishes. Its signal has a separate teardown deadline; stop all I/O when it aborts. Callback errors fail cleanup without preventing directory removal.
 
 The callback is skipped when provider shutdown fails or exceeds the cleanup deadline, and during provider inspection. Missing evidence must remain unknown. This callback does not verify model claims, grant push authority, or make closure state durable across host crashes. Validate the checkout in host code and persist the result before returning when durability is required.

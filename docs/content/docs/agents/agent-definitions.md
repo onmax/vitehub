@@ -110,7 +110,7 @@ Each key is a Skill name, and each value is its `SKILL.md` content. The result k
 Export ordinary `defineAgent()` definitions from a preset package. Consumers import them and select a local name:
 
 ```ts
-import { defineAgent } from "@vite-hub/agent"
+import { defineAgent } from "vite-hub/agent"
 import { notetaker } from "@example/agents"
 
 export default defineAgent({

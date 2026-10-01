@@ -17,7 +17,8 @@ export async function protectGeneratedProviderGitFiles(root: string, paths: read
   const names = [...new Set(paths.map(path => relative(root, path).replaceAll("\\", "/")))]
   if (names.some(name => /[\r\n]/.test(name))) throw new Error("Generated provider Git paths must not contain line breaks.")
   const entries = (await git(["ls-files", "-v", "-z", "--", ...names])).split("\0").filter(Boolean)
-  const tracked = entries.filter(entry => entry[0]?.toUpperCase() !== "S").map(entry => entry.slice(2))
+  const trackedEntries = entries.filter(entry => entry[0]?.toUpperCase() !== "S")
+  const originalSkipWorktree = new Map(trackedEntries.map(entry => [entry.slice(2), entry[0] === "S"]))
   const excludePath = resolve(root, (await git(["rev-parse", "--git-path", "info/exclude"])).trim())
   const originalExclude = await readFile(excludePath, "utf8").catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined
@@ -29,14 +30,26 @@ export async function protectGeneratedProviderGitFiles(root: string, paths: read
   let excluded = false
   const restore = async () => {
     try {
-      if (tracked.length) await git(["update-index", "--no-skip-worktree", "--", ...tracked])
+      for (const [name, skipWorktree] of originalSkipWorktree) {
+        await git(["update-index", skipWorktree ? "--skip-worktree" : "--no-skip-worktree", "--", name])
+      }
     }
     finally {
       if (excluded) {
-        const current = await readFile(excludePath, "utf8")
-        const remaining = current.replace(block, "")
-        if (originalExclude === undefined && !remaining) await rm(excludePath)
-        else await writeFile(excludePath, remaining)
+        const currentExclude = await readFile(excludePath, "utf8").catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return undefined
+          throw error
+        })
+        if (currentExclude === undefined) {
+          if (originalExclude !== undefined) await writeFile(excludePath, originalExclude)
+        }
+        else if (currentExclude.includes(block)) {
+          const withoutBlock = currentExclude.replace(block, "")
+          if (withoutBlock.length) await writeFile(excludePath, withoutBlock)
+          else await rm(excludePath, { force: true })
+        }
+        else if (originalExclude !== undefined) await writeFile(excludePath, originalExclude)
+        else await rm(excludePath, { force: true })
         excluded = false
       }
     }
@@ -45,7 +58,7 @@ export async function protectGeneratedProviderGitFiles(root: string, paths: read
     await mkdir(dirname(excludePath), { recursive: true })
     await writeFile(excludePath, `${originalExclude ?? ""}${block}`)
     excluded = true
-    if (tracked.length) await git(["update-index", "--skip-worktree", "--", ...tracked])
+    if (originalSkipWorktree.size) await git(["update-index", "--skip-worktree", "--", ...originalSkipWorktree.keys()])
     return restore
   }
   catch (error) {
