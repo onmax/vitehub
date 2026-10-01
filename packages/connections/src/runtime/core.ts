@@ -321,6 +321,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         try {
           signal?.throwIfAborted()
           const refreshed = await cancellable(oauth2Provider(name, value.provider).refresh(stored.tokens, providerContext(event, signal)), signal)
+          signal?.throwIfAborted()
           await db.write({ expectedRevision: stored.grant.revision, name, provider: grantProvider(value.provider), tokens: { ...refreshed, account: refreshed.account ?? stored.tokens.account } })
           signal?.throwIfAborted()
           await recordQuietly({ action: "refresh", actor, connection: name, durationMs: Date.now() - started, outcome: "succeeded" }, event)
