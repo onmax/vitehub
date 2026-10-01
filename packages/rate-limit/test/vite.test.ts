@@ -200,6 +200,27 @@ describe("hubRateLimit", () => {
     await expect(readFile(join(createDefaultCloudflareOutputRoot(root), "wrangler.json"), "utf8")).resolves.toContain(getCloudflareRateLimitBindingName("upload"))
   })
 
+  it("reports standalone Wrangler output through inspection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-rate-limit-inspection-"))
+    roots.push(root)
+    await writeCloudflareDeclaration(root)
+    const plugin = hubRateLimit({ namespace: "vite-test", provider: "cloudflare" })
+    const config = plugin.config as unknown as (config: Record<string, unknown>, env: { command: "build" }) => unknown
+    const configResolved = plugin.configResolved as (config: unknown) => Promise<void>
+    const userConfig = { root }
+
+    config(userConfig, { command: "build" })
+    await configResolved({ ...userConfig, build: { outDir: "dist" }, command: "build", plugins: [], resolve: { alias: [] } } as never)
+
+    const inspection = plugin.vitehub.inspect()
+    expect(inspection?.providerOutput).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        owner: "rate-limit",
+        path: join(createDefaultCloudflareOutputRoot(root), "wrangler.json"),
+      }),
+    ]))
+  })
+
   it("rejects Nitro Rate Limit declarations generated after config resolution", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-rate-limit-nitro-late-declaration-"))
     roots.push(root)
