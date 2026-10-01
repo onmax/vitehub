@@ -123,6 +123,25 @@ describe("docs build warning budget", () => {
     )).toThrow("unbudgeted warning");
   });
 
+  it("ignores the wrapped header for a known Rollup annotation source", () => {
+    const source = "node_modules/.cache/nuxt/.nuxt/dist/server/_nuxt/dist-Dg8NDwTS.js";
+    const output = [
+      `[warn] ${source} (2457:0): A comment`,
+      "\"/** known pure annotation */\"",
+      `in \"${source}\" contains an annotation that Rollup cannot interpret`,
+    ].join("\n");
+    expect(() => assertBuildWarningBudget(output)).not.toThrow();
+  });
+
+  it("does not ignore a wrapped annotation header from an unknown source", () => {
+    const output = [
+      "[warn] unknown-package.js (1:0): A comment",
+      "\"/** unknown annotation */\"",
+      'in "unknown-package.js" contains an annotation that Rollup cannot interpret',
+    ].join("\n");
+    expect(() => assertBuildWarningBudget(output)).toThrow("unbudgeted warning");
+  });
+
   it("rejects lowercase logger warnings and standard Node warnings", () => {
     const warnings = [
       "[warn] an unexpected docs build warning",

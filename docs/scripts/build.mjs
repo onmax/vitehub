@@ -91,8 +91,22 @@ export function assertBuildWarningBudget(output) {
   const unknownWarnings = [];
   const newMissingIcons = new Set();
 
-  for (const line of stripVTControlCharacters(output).split(/\r?\n/)) {
+  const lines = stripVTControlCharacters(output).split(/\r?\n/);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
     const normalizedLine = normalizeWarningText(line);
+    // Rollup prints a wrapped annotation warning as a header, quoted comment,
+    // and a later detail line. Count only the detail line, but only when the
+    // known source appears in that complete warning sequence.
+    const annotationSource = buildWarningBudget.find((entry) =>
+      entry.source && normalizedLine.includes(normalizeWarningText(entry.source))
+      && /:\s*a comment\s*$/i.test(normalizedLine),
+    )?.source;
+    if (annotationSource && lines.slice(lineIndex + 1, lineIndex + 8).some((nextLine) => {
+      const normalizedNextLine = normalizeWarningText(nextLine);
+      return normalizedNextLine.includes(normalizeWarningText(annotationSource))
+        && normalizedNextLine.includes("contains an annotation that rollup cannot interpret");
+    })) continue;
     const warningWithoutToken = buildWarningBudget.find(
       (entry) =>
         entry.warningTokenRequired === false &&
