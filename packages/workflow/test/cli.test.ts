@@ -1,6 +1,7 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -53,6 +54,21 @@ function devServer(respond: (body: Record<string, unknown>) => Response, discove
 describe("workflow CLI arguments", () => {
   const parse = (operation: WorkflowDevOperation, args: string[]) => parseWorkflowCliArgs(operation, args, {})
 
+  it("runs help and JSON argument errors through the executable entrypoint", async () => {
+    await mkdir(join(cwd, "node_modules/@vite-hub"), { recursive: true })
+    await symlink(resolve(import.meta.dirname, ".."), join(cwd, "node_modules/@vite-hub/workflow"), "dir")
+    await writeFile(join(cwd, "vite.config.mjs"), 'import { hubWorkflow } from "@vite-hub/workflow/vite"; export default { plugins: [hubWorkflow({ provider: "vercel" })] };')
+    const cli = resolve(import.meta.dirname, "../../cli/src/index.ts")
+    const help = spawnSync(process.execPath, [cli, "workflow", "get", "--help"], { cwd, encoding: "utf8", timeout: 30_000 })
+    expect(help.status).toBe(0)
+    expect(help.stdout).toContain("vitehub workflow get")
+    expect(help.stderr).toBe("")
+    const invalid = spawnSync(process.execPath, [cli, "workflow", "get", "--json"], { cwd, encoding: "utf8", timeout: 30_000 })
+    expect(invalid.status).toBe(1)
+    expect(JSON.parse(invalid.stdout).error.message).toContain("run")
+    expect(invalid.stderr).toBe("")
+  })
+
   it("parses each command", () => {
     expect(parse("start", ["welcome", "--input", "{\"a\":1}", "--json"])).toEqual({
       help: false,
@@ -102,6 +118,13 @@ describe("workflow CLI arguments", () => {
 })
 
 describe("workflow CLI commands", () => {
+  it.each([{ run: { id: "bad" } }, { signal: { id: 42, provider: "vercel" } }])("rejects malformed operation views %j", async (body) => {
+    const output = createContext()
+    const server = devServer(() => Response.json(body))
+    expect(await runWorkflowCli("get", ["run-1", "--json"], output.context, { fetch: server.fetch })).toBe(1)
+    expect(JSON.parse(output.stdout()).error.code).toBe("WORKFLOW_DEV_FAILED")
+  })
+
   it("starts a run and prints concise output with the runtime note", async () => {
     const note = "Runs the Workflow inline in the Nitro dev runtime, as the app does in development."
     const server = devServer(() => Response.json({ note, run: { id: "run-1", provider: "vercel", status: "queued", workflow: "welcome" } }))

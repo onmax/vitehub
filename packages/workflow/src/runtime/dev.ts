@@ -27,6 +27,7 @@ const maxRequestBytes = 1024 * 1024
 const maxRememberedRuns = 1024
 
 function isRecord(value: unknown): value is Record<string, unknown> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque request or provider values at the Workflow dev endpoint boundary.
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
 
@@ -42,21 +43,27 @@ function parseRequest(body: unknown): WorkflowDevRequest | undefined {
   if (!isRecord(body)) return
   const operation = body.operation
   if (operation === "start") {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque request or provider values at the Workflow dev endpoint boundary.
     if (typeof body.workflow !== "string" || !body.workflow) return
     return { operation, workflow: body.workflow, ...("input" in body ? { input: body.input } : {}) }
   }
   if (operation === "get" || operation === "cancel") {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque request or provider values at the Workflow dev endpoint boundary.
     if (typeof body.runId !== "string" || !body.runId) return
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque request or provider values at the Workflow dev endpoint boundary.
     if (body.workflow !== undefined && (typeof body.workflow !== "string" || !body.workflow)) return
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque request or provider values at the Workflow dev endpoint boundary.
     return { operation, runId: body.runId, ...(typeof body.workflow === "string" ? { workflow: body.workflow } : {}) }
   }
   if (operation === "resume") {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque request or provider values at the Workflow dev endpoint boundary.
     if (typeof body.token !== "string" || !body.token) return
     return { operation, token: body.token, ...("payload" in body ? { payload: body.payload } : {}) }
   }
 }
 
 function jsonReplacer(_key: string, value: unknown): unknown {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque request or provider values at the Workflow dev endpoint boundary.
   if (typeof value === "bigint") return value.toString()
   if (value instanceof Error) return serializeError(value)
   if (value instanceof Response) return { response: { status: value.status, statusText: value.statusText } }
@@ -75,8 +82,10 @@ function toJsonValue(value: unknown): unknown {
 }
 
 function errorCode(error: unknown): string | undefined {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque request or provider values at the Workflow dev endpoint boundary.
   if (!error || typeof error !== "object") return
   const code = Reflect.get(error, "code")
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque request or provider values at the Workflow dev endpoint boundary.
   return typeof code === "string" ? code : undefined
 }
 
@@ -91,10 +100,12 @@ function serializeError(error: Error): { code?: string, message: string, name?: 
 
 function toIsoDate(value: unknown): string | undefined {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value.toISOString()
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque request or provider values at the Workflow dev endpoint boundary.
   return typeof value === "string" ? value : undefined
 }
 
 function isErrorLike(value: unknown): value is Error {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque request or provider values at the Workflow dev endpoint boundary.
   return value instanceof Error || (isRecord(value) && typeof value.message === "string")
 }
 

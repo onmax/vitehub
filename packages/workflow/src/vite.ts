@@ -207,10 +207,12 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       order: "pre",
       async handler(config, env) {
         workflow = config.workflow ?? workflow
+        // SAFETY: Vite config permits the shared server-directory symbol added by ViteHub discovery.
         serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
         if (env.command !== "serve") return
         const rootDir = resolve(config.root || process.cwd())
         const state = devGeneratedState()
+        // SAFETY: Nitro extends Vite config with an opaque nitro value that the server kit validates.
         const kit = createNitroServerKit((config as { nitro?: unknown }).nitro)
         // The build reports configuration errors. Development keeps the app running without a registry.
         if (state.configuredProvider) {
@@ -219,6 +221,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         }
         const { handler } = await writeWorkflowDevFiles({ ...state, importBase: internalOptions.importBase, projectRoot: resolveViteHubProjectRoot(rootDir) })
         kit.addHandler({ handler, route: workflowDevRuntimeRoute })
+        // SAFETY: Nitro reads this extension in its later config hook; the server kit owns its value.
         ;(config as { nitro?: unknown }).nitro = kit.config
       },
     },
@@ -228,6 +231,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
           nitroBaseURL: () => {
             // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
             const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
+            // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate the unknown Nitro dev URL from resolved Vite config.
             return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
           },
         })

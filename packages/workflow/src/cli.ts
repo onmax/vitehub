@@ -13,7 +13,7 @@ import { workflowDevHeader, workflowDevHeaderValue, workflowDevOperations, workf
 import { workflowErrorDiagnostics } from "./error-diagnostics.ts"
 
 import type { ViteHubCliCommandNamespace, ViteHubCliContext, ViteHubCliContributor, ViteHubCliStreams } from "@vite-hub/internal/cli"
-import type { WorkflowDevDiscovery, WorkflowDevErrorBody, WorkflowDevOperation, WorkflowDevRequest, WorkflowDevRunView, WorkflowDevSignalView } from "./dev-support.ts"
+import type { WorkflowDevOperation, WorkflowDevRequest, WorkflowDevRunView, WorkflowDevSignalView } from "./dev-support.ts"
 
 export type WorkflowCliContext = Pick<ViteHubCliContext, "cwd" | "env" | "rootDir"> & ViteHubCliStreams
 
@@ -205,11 +205,40 @@ export async function resolveWorkflowCliJsonValues(parsed: ParsedWorkflowCliArgs
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
 
-function isErrorBody(value: unknown): value is WorkflowDevErrorBody {
+function isErrorBody(value: unknown): value is { error: { code?: unknown, message: string } } {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
   return isRecord(value) && isRecord(value.error) && typeof value.error.message === "string"
+}
+
+function isProvider(value: unknown): value is WorkflowDevRunView["provider"] {
+  return value === "cloudflare" || value === "openworkflow" || value === "vercel"
+}
+
+function isRunView(value: unknown): value is WorkflowDevRunView {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.workflow !== "string" || !isProvider(value.provider)) return false
+  if (value.status !== "queued" && value.status !== "running" && value.status !== "completed"
+    && value.status !== "failed" && value.status !== "cancelled" && value.status !== "unknown") return false
+  for (const field of ["createdAt", "startedAt", "completedAt"]) {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
+    if (value[field] !== undefined && typeof value[field] !== "string") return false
+  }
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
+  if (value.error !== undefined && (!isRecord(value.error) || typeof value.error.message !== "string"
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
+    || (value.error.code !== undefined && typeof value.error.code !== "string")
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
+    || (value.error.name !== undefined && typeof value.error.name !== "string"))) return false
+  return true
+}
+
+function isSignalView(value: unknown): value is WorkflowDevSignalView {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
+  return isRecord(value) && typeof value.id === "string" && isProvider(value.provider)
 }
 
 class WorkflowCliFailure {
@@ -227,6 +256,7 @@ function writeFailure(parsed: Pick<ParsedWorkflowCliArgs, "json">, context: Work
 }
 
 function formatValue(value: unknown): string {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
   return typeof value === "string" ? value : JSON.stringify(value, null, 2)
 }
 
@@ -260,7 +290,7 @@ function writeSignal(context: WorkflowCliContext, signal: WorkflowDevSignalView)
 
 async function discoverWorkflowDevServer(parsed: ParsedWorkflowCliArgs, context: WorkflowCliContext, fetchImpl: typeof fetch) {
   const messages: string[] = []
-  const server = await discoverViteHubDevServer<Partial<WorkflowDevDiscovery>>({
+  const server = await discoverViteHubDevServer({
     endpoint: workflowDevEndpoint,
     fetch: fetchImpl,
     rootDir: context.rootDir,
@@ -276,10 +306,11 @@ async function discoverWorkflowDevServer(parsed: ParsedWorkflowCliArgs, context:
   return server
 }
 
-function checkNitroRuntime(discovery: Partial<WorkflowDevDiscovery>): void {
+function checkNitroRuntime(discovery: { root?: unknown, runtime?: unknown, message?: unknown }): void {
   if (discovery.runtime === "nitro") return
   throw new WorkflowCliFailure(
     workflowDevRuntimeUnavailableCode,
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
     typeof discovery.message === "string" ? discovery.message : "This Vite Development Server cannot reach the Workflow runtime.",
   )
 }
@@ -310,6 +341,7 @@ async function sendWorkflowDevRequest(url: string, request: WorkflowDevRequest, 
     body = undefined
   }
   if (isErrorBody(body)) {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
     throw new WorkflowCliFailure(typeof body.error.code === "string" ? body.error.code : "WORKFLOW_DEV_FAILED", body.error.message)
   }
   if (!response.ok || body === undefined) {
@@ -332,6 +364,10 @@ export async function runWorkflowCli(
     parsed = await resolveWorkflowCliJsonValues(parseWorkflowCliArgs(operation, args, context.env), context.cwd)
   }
   catch (error) {
+    if (args.includes("--json")) return writeFailure({ json: true }, context, {
+      code: "WORKFLOW_INVALID_ARGUMENT",
+      message: error instanceof Error ? error.message : String(error),
+    })
     context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     writeWorkflowCliUsage(operation, context.stderr)
     return 1
@@ -346,8 +382,8 @@ export async function runWorkflowCli(
     const { discovery, url } = await discoverWorkflowDevServer(parsed, context, fetchImpl)
     checkNitroRuntime(discovery)
     const body = await sendWorkflowDevRequest(url, parsed.request, parsed, fetchImpl)
-    const run = isRecord(body) && isRecord(body.run) ? body.run as unknown as WorkflowDevRunView : undefined
-    const signal = isRecord(body) && isRecord(body.signal) ? body.signal as unknown as WorkflowDevSignalView : undefined
+    const run = isRecord(body) && isRunView(body.run) ? body.run : undefined
+    const signal = isRecord(body) && isSignalView(body.signal) ? body.signal : undefined
     if (!run && !signal) throw new WorkflowCliFailure("WORKFLOW_DEV_FAILED", "Workflow Dev response has no run or signal.")
     if (parsed.json) {
       context.stdout.write(`${JSON.stringify(body, null, 2)}\n`)
@@ -355,6 +391,7 @@ export async function runWorkflowCli(
     }
     if (run) writeRun(context, operation, run)
     if (signal) writeSignal(context, signal)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate fields from an untrusted CLI network response or format an opaque JSON value.
     const note = isRecord(body) && typeof body.note === "string" ? body.note : undefined
     if (note) context.stderr.write(`[workflow] ${note}\n`)
     return 0
