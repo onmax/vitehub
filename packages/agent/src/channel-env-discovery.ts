@@ -222,13 +222,13 @@ function channelFactoryReference(
   let next = index + 1
   let member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
   if (tokens[member] === "." && tokens[member + 1] === "[") member++
+  const memberName = tokens[member] === "[" && tokens[member + 2] === "]" ? stringTokenValue(tokens[member + 1] ?? "") : undefined
   if (!kind && namespaces.has(tokens[index]!)) {
     if (tokens[member] === "." && known.has(tokens[member + 1]!)) {
       kind = tokens[member + 1]!
       next = member + 2
-    } else if (tokens[member] === "[" && isStringToken(tokens[member + 1]) && tokens[member + 2] === "]"
-      && known.has(tokens[member + 1]!.slice(1, -1))) {
-      kind = tokens[member + 1]!.slice(1, -1)
+    } else if (memberName !== undefined && known.has(memberName)) {
+      kind = memberName
       next = member + 3
     }
   }
@@ -740,13 +740,13 @@ function factoryCall(
   let next = index + 1
   let member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
   if (tokens[member] === "." && tokens[member + 1] === "[") member++
+  const memberName = tokens[member] === "[" && tokens[member + 2] === "]" ? stringTokenValue(tokens[member + 1] ?? "") : undefined
   if (!name && namespaces.has(tokens[index]!)) {
     if (tokens[member] === "." && names.has(tokens[member + 1]!)) {
       name = tokens[member + 1]!
       next = member + 2
-    } else if (tokens[member] === "[" && isStringToken(tokens[member + 1]) && tokens[member + 2] === "]"
-      && names.has(tokens[member + 1]!.slice(1, -1))) {
-      name = tokens[member + 1]!.slice(1, -1)
+    } else if (memberName !== undefined && names.has(memberName)) {
+      name = memberName
       next = member + 3
     }
   }

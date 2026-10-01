@@ -60,6 +60,16 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: [] }])
   })
 
+  it.each(["tele\\u0067ram", "tele\\x67ram", "tele\\u{67}ram"])("decodes escaped namespace factory members: %s", (member) => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import * as channels from "vite-hub/agent/channels"
+      defineAgent({ channels: { support: channels["${member}"]() } })
+      defineAgent({ channels: { support: channels["${member}"] } })
+      defineAgent({ channels: { support: channels?.["${member}"]<Runtime>() } })
+    `)).toEqual(Array.from({ length: 3 }, () => ({ kind: "telegram", keys: [] })))
+  })
+
   it("recognizes only single parenthesized bare factory references", () => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
