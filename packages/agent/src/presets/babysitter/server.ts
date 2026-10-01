@@ -240,6 +240,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: current.reason });
         return false;
       }
+      if (!(await pullRequestInbox.isCurrentClaim(claim))) {
+        schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "inbox claim changed" });
+        return false;
+      }
       // GitHub rejects the merge when the head no longer matches sha.
       const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000, signal });
       const response: unknown = JSON.parse(result.stdout);
