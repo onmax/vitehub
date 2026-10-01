@@ -280,7 +280,7 @@ function requestUrl(request: GmailRequest): string {
  * It runs on Node.js, Cloudflare Workers, and Vercel.
  */
 export function createGmailOAuthClient(credentials: GmailOAuthCredentials, fetchImpl: typeof fetch = globalThis.fetch): GmailClient {
-  const cacheKey = `${credentials.clientId}\n${credentials.refreshToken}`
+  const cacheKey = JSON.stringify([credentials.clientId, credentials.clientSecret, credentials.refreshToken])
   const reuse = fetchImpl === globalThis.fetch ? oauthClients.get(cacheKey) : undefined
   if (reuse) return reuse
   const client: GmailClient = async (request) => {

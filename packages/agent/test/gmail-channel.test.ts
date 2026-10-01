@@ -570,6 +570,32 @@ describe("gmail() Channel", () => {
     } finally { release(); await delivery; await Promise.all(tasks); errors.mockRestore() }
   })
 
+  it.each(["default", "injected"] as const)("refreshes OAuth credentials after client secret rotation with %s fetch", async transport => {
+    const secrets: string[] = []
+    const authorizations: Array<string | null> = []
+    const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
+      if (String(input) === "https://oauth2.googleapis.com/token") {
+        const secret = new URLSearchParams(String(init?.body)).get("client_secret") || ""
+        secrets.push(secret)
+        return Response.json({ access_token: `token-${secret}`, expires_in: 3599 })
+      }
+      authorizations.push(new Headers(init?.headers).get("authorization"))
+      return Response.json({ emailAddress: "max@example.com", historyId: "100" })
+    })
+    if (transport === "default") vi.stubGlobal("fetch", fetch)
+    const credentials = { clientId: `secret-rotation-${transport}`, clientSecret: "before", refreshToken: `secret-rotation-${transport}` }
+    try {
+      const first = gmailClientFromSettings(credentials, transport === "injected" ? fetch : undefined)
+      await first({ method: "GET", path: "profile" })
+      const second = gmailClientFromSettings({ ...credentials, clientSecret: "after" }, transport === "injected" ? fetch : undefined)
+      await second({ method: "GET", path: "profile" })
+      expect(second).not.toBe(first)
+      expect(secrets).toEqual(["before", "after"])
+      expect(authorizations).toEqual(["Bearer token-before", "Bearer token-after"])
+    }
+    finally { if (transport === "default") vi.unstubAllGlobals() }
+  })
+
   it("invalidates the verified mailbox when OAuth credentials change", async () => {
     stubGmailEnv()
     const first = await createGoogle()
