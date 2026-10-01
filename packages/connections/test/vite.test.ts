@@ -143,6 +143,58 @@ describe("hubConnections", () => {
     expect(plugin.api.getDefinitions().map((definition) => definition.name)).toEqual(["slack"]);
   });
 
+  it("cleans persisted custom-root declarations after a fresh module load", async () => {
+    const root = await createTempProject();
+    const customRoot = join(root, "packages/api");
+    await hubConnections({ projectRoot: "packages/api" }).api.prepareTypes({ projectRoot: root });
+    vi.resetModules();
+    const fresh = await import("../src/vite.ts");
+    await fresh.hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+    await expect(readFile(join(customRoot, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves another project's generated declarations and edited custom declarations", async () => {
+    const root = await createTempProject();
+    const other = await createTempProject();
+    const customRoot = join(root, "packages/api");
+    await hubConnections({ projectRoot: "packages/api" }).api.prepareTypes({ projectRoot: root });
+    await hubConnections().api.prepareTypes({ projectRoot: other });
+    const file = join(customRoot, ".vitehub/types/connections.d.ts");
+    await writeFile(file, "// user declaration\nexport {}\n");
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+    await expect(readFile(file, "utf8")).resolves.toContain("user declaration");
+    await expect(readFile(join(other, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+    await expect(readFile(join(root, ".vitehub/connections-types.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves user declarations at the default root across repeated cleanup hooks", async () => {
+    const root = await createTempProject();
+    await hubConnections().api.prepareTypes({ projectRoot: root });
+    const file = join(root, ".vitehub/types/connections.d.ts");
+    await writeFile(file, "// user declaration\nexport {}\n");
+    const cleanup = hubConnectionsTypesCleanup();
+    await cleanup.api!.prepareTypes({ projectRoot: root });
+    await cleanup.api!.prepareTypes({ projectRoot: root });
+    await expect(readFile(file, "utf8")).resolves.toContain("user declaration");
+  });
+
+  it.each(["relative", "absolute"])("cleans %s custom output through the Vite config hook", async (form) => {
+    const root = await createTempProject();
+    const custom = join(root, "api");
+    const plugin = hubConnections({ projectRoot: form === "absolute" ? custom : "api" });
+    await (plugin.configResolved as (config: { root: string }) => Promise<void>)({ root });
+    await (hubConnectionsTypesCleanup().config as (config: { root: string }) => Promise<void>)({ root });
+    await expect(readFile(join(custom, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("retires a previous custom output when changing the configured root", async () => {
+    const root = await createTempProject();
+    await hubConnections({ projectRoot: "packages/old" }).api.prepareTypes({ projectRoot: root });
+    await hubConnections({ projectRoot: "packages/new" }).api.prepareTypes({ projectRoot: root });
+    await expect(readFile(join(root, "packages/old/.vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(root, "packages/new/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+  });
+
   it("removes declarations from a previously configured custom root when disabled", async () => {
     const root = await createTempProject();
     const projectRoot = join(root, "packages/api");
