@@ -2407,7 +2407,14 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           if (finished) return false
           runningRequested = true
           const markRunning = async () => {
-            runningPersisted = await update({ status: "running", timestamp: new Date().toISOString() })
+            // Clear the replay reservation before any Driver work starts. If a
+            // later terminal update is lost, the pending record still carries
+            // proof that execution began and cannot be retried as preparation.
+            runningPersisted = await update({
+              status: "running",
+              annotations: { ...normalizeAnnotations(context.run?.annotations), [pendingAgentInvocationAnnotation]: false },
+              timestamp: new Date().toISOString(),
+            })
             return runningPersisted
           }
           if (await markRunning()) return true
