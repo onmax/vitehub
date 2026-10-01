@@ -56,7 +56,8 @@ export function getMcpWarnings(input: { context?: unknown } | undefined): McpAva
   return Array.isArray(warnings)
     ? warnings.filter((warning): warning is McpAvailabilityWarning => isRecord(warning)
         && typeof warning.server === "string"
-        && (warning.phase === "resolve" || warning.phase === "discovery"))
+        && (warning.phase === "resolve" || warning.phase === "discovery")
+        && (warning.statusCode === undefined || (typeof warning.statusCode === "number" && Number.isFinite(warning.statusCode))))
     : []
 }
 

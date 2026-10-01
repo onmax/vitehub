@@ -539,6 +539,16 @@ describe("mcp capability", () => {
     expect(healthy.close).toHaveBeenCalledTimes(1)
   })
 
+  it("validates optional status codes in caller-provided MCP warnings", async () => {
+    const { getMcpWarnings } = await import("../src/capabilities.ts")
+    const warnings = [
+      { server: "healthy", phase: "resolve", statusCode: 503 },
+      { server: "absent", phase: "discovery" },
+      ...["503", null, {}, NaN, Infinity].map(statusCode => ({ server: "invalid", phase: "resolve", statusCode })),
+    ]
+    expect(getMcpWarnings({ context: { "vitehub.mcp.warnings": warnings } })).toEqual(warnings.slice(0, 2))
+  })
+
   it("adds an opt-in unavailable notice for the final chat reply", async () => {
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
     const { getMcpWarnings, mcp } = await import("../src/capabilities.ts")
