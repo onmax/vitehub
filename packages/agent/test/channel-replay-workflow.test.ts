@@ -90,6 +90,36 @@ it("does not pass replay IDs to native Vercel Workflows", async () => {
   await expect(invocations.getByRunId(channelReplayRunId("mailbox", "m1"), "vercel-replay")).resolves.toMatchObject({ status: "pending" })
 })
 
+it("does not redispatch an unconfirmed native Vercel replay after its lease expires", async () => {
+  const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+  const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+  const channel = defineChannel("mailbox", {
+    history: { collection: defineCollection(async () => [{ id: "m1" }], { cursor: item => item.id, cursorSchema: v.string() }), key: item => item.id },
+    triggers: { received: defineChannelTrigger({ input: v.object({ id: v.string() }), invoke: () => ({ input: { prompt: "hello" } }) }) },
+  })
+  const providerRun = vi.fn(async (_payload: unknown) => ({ id: "vercel-assigned", provider: "vercel", status: "queued" }))
+  const getRun = vi.fn(async (id: string) => ({ id, provider: "vercel", status: "unknown" }))
+  setAgentWorkflowRuntimeLoaders({
+    state: async () => ({ ...await import("@vite-hub/workflow/runtime/state"), getWorkflowRuntimeConfig: () => ({ provider: "vercel" as const }) }),
+    workflow: async () => ({ ...await import("@vite-hub/workflow"),
+      // SAFETY: The fixture only uses Workflow dispatch and lookup.
+      createWorkflow: () => ({ getRun, run: providerRun }) as never,
+    }),
+  })
+  const agent = defineAgent({ channels: { mailbox: channel }, driver: { run: () => "unused" }, invocations, name: "vercel-recovery", runtime: workflow("vercel-recovery") })
+  vi.useFakeTimers()
+  try {
+    const reservation = await bindAgentInvocations(invocations, { ...runtime, run: { runId: channelReplayRunId("mailbox", "m1"), annotations: { [pendingAgentInvocationAnnotation]: true } } }, { agentName: "vercel-recovery", recoverPending: true })
+    const invocationClaimToken = await reservation?.handoffClaim()
+    // The provider accepted the run, but the caller exited before confirming dispatch.
+    await providerRun({ invocationClaimToken })
+    await vi.advanceTimersByTimeAsync(30_001)
+    await expect(replayChannel(agent, "mailbox", { runtime })).resolves.toMatchObject({ processed: 0, skipped: 1, failed: 0 })
+    expect(providerRun).toHaveBeenCalledOnce()
+    expect(getRun).not.toHaveBeenCalled()
+  } finally { vi.useRealTimers() }
+})
+
 it("recovers an undispatched Workflow reservation after process loss and keeps confirmed dispatch skipped", async () => {
   const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
   const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }

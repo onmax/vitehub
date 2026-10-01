@@ -1069,6 +1069,11 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
       const workflowName = resolveAgentWorkflowName(agent, binding, context)
       const handle = await getAgentWorkflowHandle<TRuntimeConfig, unknown, unknown>(agent, workflowName, Boolean(context.agentIdentity))
       const recoveryConfig = (await loadAgentWorkflowRuntimeStateModule()).getWorkflowRuntimeConfig()
+      const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
+      // Native Vercel Workflows assign their own run IDs. A pending replay
+      // reservation therefore cannot be matched to a provider run after the
+      // caller exits, so retrying it could dispatch a duplicate Workflow.
+      if (exclusive && recoveryConfig && recoveryConfig.provider === "vercel") throw new AgentInvocationClaimConflict()
       const stableId = context.run?.runId || ""
       const providerId = recoveryConfig && recoveryConfig.provider === "cloudflare" ? await portableAgentWorkflowRunId(stableId) : stableId
       const accepted = await handle.getRun(providerId)
@@ -1272,7 +1277,7 @@ async function runAgentAsWorkflow<
     ? `${context.run.runId}:${channelDeliveryBinding.steer.claimId}${options.fresh ? `:${crypto.randomUUID()}` : ""}`
     : context.run?.runId
   const workflowRunId = context.run?.runId && (!options.fresh || durableChannelDelivery)
-    ? exclusive && workflowConfig?.provider === "vercel"
+    ? exclusive && workflowConfig && workflowConfig.provider === "vercel"
       ? undefined
       : workflowConfig && workflowConfig.provider === "cloudflare"
       ? await portableAgentWorkflowRunId(workflowProviderRunId ?? context.run.runId)
