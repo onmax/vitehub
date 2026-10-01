@@ -88,3 +88,16 @@ it("keeps batches for invocation and claim pairs distinct", async () => {
     expect((await store.get("a\0b"))?.status).toBe("failed")
   })
 })
+
+it("keeps omitted and empty claim IDs distinct", async () => {
+  await withStore(async (store) => {
+    await store.create({ id: "run", observations: [], status: "running", createdAt: timestamp, updatedAt: timestamp, traceId: "trace" })
+    const results = await Promise.all([
+      store.update("run", { status: "completed", timestamp }),
+      store.update("run", { status: "failed", timestamp }, ""),
+    ])
+    expect(results[0]?.status).toBe("completed")
+    expect(results[1]).toBeUndefined()
+    expect((await store.get("run"))?.status).toBe("completed")
+  })
+})

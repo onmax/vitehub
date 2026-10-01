@@ -195,7 +195,7 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
   // Keep invocation and claim identifiers separate. Concatenating them with a
   // delimiter allows distinct pairs to collide when either identifier contains
   // that delimiter.
-  const pendingUpdates = new Map<string, Map<string, PendingUpdate[]>>()
+  const pendingUpdates = new Map<string, Map<string | undefined, PendingUpdate[]>>()
   /** Applies queued updates to one record in one transaction. A failed update does not stop later ones. */
   const applyUpdateBatch = async (id: string, claimId: string | undefined, inputs: AgentInvocationStoreUpdateInput[]): Promise<Array<AgentInvocationRecord | Error | undefined>> => {
     await initialize()
@@ -203,10 +203,10 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
       const transaction = await client.transaction("write")
       try {
         const result = await transaction.execute({
-          args: claimId ? [id, id, claimId] : [id],
-          sql: `SELECT sequence, record FROM ${table} WHERE id = ?${claimId
-            ? ` AND EXISTS (SELECT 1 FROM ${table}_claims WHERE id = ? AND claim_id = ?)`
-            : ""} LIMIT 1`,
+          args: claimId === undefined ? [id] : [id, id, claimId],
+          sql: `SELECT sequence, record FROM ${table} WHERE id = ?${claimId === undefined
+            ? ""
+            : ` AND EXISTS (SELECT 1 FROM ${table}_claims WHERE id = ? AND claim_id = ?)`} LIMIT 1`,
         })
         const row = result.rows[0]
         const record = row ? deserialize(row.record, row.sequence) : undefined
@@ -804,19 +804,18 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     async update(id, input, claimId) {
       // Updates for one invocation that wait behind another write share one
       // read, serialization, and commit. Each update still applies in order.
-      const claimKey = claimId ?? ""
       let updatesByClaim = pendingUpdates.get(id)
       if (!updatesByClaim) {
         updatesByClaim = new Map()
         pendingUpdates.set(id, updatesByClaim)
       }
-      let batch = updatesByClaim.get(claimKey)
+      let batch = updatesByClaim.get(claimId)
       if (!batch) {
         const items: PendingUpdate[] = []
         batch = items
-        updatesByClaim.set(claimKey, items)
+        updatesByClaim.set(claimId, items)
         void write(async () => {
-          if (updatesByClaim?.get(claimKey) === items) updatesByClaim.delete(claimKey)
+          if (updatesByClaim?.get(claimId) === items) updatesByClaim.delete(claimId)
           if (updatesByClaim?.size === 0 && pendingUpdates.get(id) === updatesByClaim) pendingUpdates.delete(id)
           try {
             const results = await applyUpdateBatch(id, claimId, items.map(item => item.input))
