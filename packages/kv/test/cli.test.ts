@@ -89,6 +89,31 @@ describe("KV review regressions", () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it.each(["9007199254740993", '{"nested":[-9007199254740993]}'])("rejects unsafe JSON integers before discovery: %s", async value => {
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runKVCli(["set", "a", value, "--json-value", "--json"], output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output()).error.message).toContain("safe integer range")
+    expect(output.stderr.output()).toBe("")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each(["9007199254740991", "1.5"])("preserves safe JSON numbers: %s", async value => {
+    const output = context()
+    const fetch = devServer({ created: true, key: "a", store: "default", type: "number" })
+    await expect(runKVCli(["set", "a", value, "--json-value", "--json"], output.context, { fetch })).resolves.toBe(0)
+    expect(sentBody(fetch)).toMatchObject({ value: Number(value) })
+    expect(output.stderr.output()).toBe("")
+  })
+
+  it("keeps an empty continued list page off stdout", async () => {
+    const output = context()
+    const fetch = devServer({ cursor: "next", keys: [], limit: 2, prefix: "users:", store: "default", stores: ["default"] })
+    await expect(runKVCli(["list", "--prefix", "users:"], output.context, { fetch })).resolves.toBe(0)
+    expect(output.stdout.output()).toBe("")
+    expect(output.stderr.output()).toBe("No keys on this page.\nMore keys exist. Next page: --cursor next\n")
+  })
+
   it("reports invalid binary payloads without throwing", async () => {
     const output = context()
     await expect(runKVCli(["get", "key", "--json"], output.context, { fetch: devServer({ encoding: "base64", found: true, key: "key", store: "default", value: "invalid!" }) })).resolves.toBe(1)
@@ -143,7 +168,8 @@ describe("vitehub kv", () => {
 
     const empty = context()
     await expect(runKVCli(["list"], empty.context, { fetch: devServer({ keys: [], limit: 100, prefix: "", store: "default", stores: ["default"] }) })).resolves.toBe(0)
-    expect(empty.stdout.output()).toBe("No keys in store default.\n")
+    expect(empty.stdout.output()).toBe("")
+    expect(empty.stderr.output()).toBe("No keys in store default.\n")
   })
 
   it("prints values and reports missing keys with exit code 1", async () => {

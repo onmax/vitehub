@@ -211,7 +211,10 @@ function parseArgs(command: KVCommand, args: readonly string[], env: NodeJS.Proc
 }
 
 function validateJSONNumbers(value: unknown): void {
-  if (v.is(v.number(), value) && (!Number.isFinite(value) || Object.is(value, -0))) throw kvErrorDiagnostics.KV_R0019({ message: "JSON numbers must be finite and cannot be negative zero." })
+  if (v.is(v.number(), value)) {
+    if (!Number.isFinite(value) || Object.is(value, -0)) throw kvErrorDiagnostics.KV_R0019({ message: "JSON numbers must be finite and cannot be negative zero." })
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) throw kvErrorDiagnostics.KV_R0019({ message: "JSON integers must be within the safe integer range. Use a string for larger integers." })
+  }
   if (Array.isArray(value)) value.forEach(validateJSONNumbers)
   else if (v.is(v.record(v.string(), v.unknown()), value)) Object.values(value).forEach(validateJSONNumbers)
 }
@@ -272,8 +275,8 @@ function writeResult(result: KVCommandResult, context: KVCliContext): number {
     case "list": {
       const page = result.value
       // Some drivers scan a fixed number of entries per page, so a page can be empty while more keys exist.
-      if (page.keys.length === 0 && page.cursor) context.stdout.write("No keys on this page.\n")
-      else if (page.keys.length === 0) context.stdout.write(`No keys${page.prefix ? ` with prefix ${page.prefix}` : ""} in store ${page.store}.\n`)
+      if (page.keys.length === 0 && page.cursor) context.stderr.write("No keys on this page.\n")
+      else if (page.keys.length === 0) context.stderr.write(`No keys${page.prefix ? ` with prefix ${page.prefix}` : ""} in store ${page.store}.\n`)
       else context.stdout.write(`${page.keys.join("\n")}\n`)
       // The cursor hint goes to stderr, so stdout stays a plain key list for scripts.
       if (page.cursor) context.stderr.write(`More keys exist. Next page: --cursor ${page.cursor}\n`)
