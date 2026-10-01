@@ -1,3 +1,4 @@
+import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { inheritAgentLayerOptions } from "./agent-layers.ts"
 import { registeredWorkspaceAgentNames } from "./internal/workspace-agent-registration.ts"
 import { agentInstructionSources, resolveAgentInstructions } from "./agent-instructions.ts"
@@ -36,7 +37,7 @@ import { inheritAgentCapacity, inspectAgentCapacity } from "./internal/agent-cap
 import { normalizeAgentDriver } from "./internal/agent-driver.ts"
 import { gatewayModelDescriptor } from "./internal/agent-model.ts"
 import { consumesMessageChannelInstructions, inspectMessageChannelInstructions } from "./internal/channels.ts"
-import { colocatedAgentSkillsSymbol, type ColocatedAgentSkills } from "./internal/colocated-agent-skills.ts"
+import { colocatedAgentSkillsSymbol, discoveredSkillsSetter, type ColocatedAgentSkills } from "./internal/colocated-agent-skills.ts"
 
 import type {
   AgentAdapterInstructions,
@@ -303,6 +304,11 @@ export function workspaceAgentWithSourceRoot<Agent>(agent: Agent, sourceRootDir:
     ...workspaceDefinitionFromOptions(workspaceOptions as never),
     __vitehubWorkspaceAgentOptions: workspaceOptions,
   }
+  Object.defineProperty(decoratedAgent, agentDefinitionSourceSymbol, { configurable: true, value: workspaceAgent })
+  for (const key of [colocatedAgentSkillsSymbol, discoveredSkillsSetter]) {
+    const descriptor = Object.getOwnPropertyDescriptor(workspaceAgent, key)
+    if (descriptor) Object.defineProperty(decoratedAgent, key, descriptor)
+  }
   inheritAgentCapacity(workspaceAgent, decoratedAgent)
   inheritAgentLayerOptions(workspaceAgent, decoratedAgent, {
     workspace: decoratedWorkspace,
@@ -555,6 +561,18 @@ function capabilityMetadataTool(capability: NormalizedCapability, options: { dri
       status: "available",
     }
   }
+  if (capability.id.startsWith("channel-delivery.")) {
+    const tool = capability.metadata?.tool
+    const name = hasRuntimeType(tool, "string") ? tool : undefined
+    if (!name) return undefined
+    return {
+      category: "capability",
+      description: "Deliver a message through the configured Channel.",
+      icon: "i-lucide-send",
+      name,
+      status: "available",
+    }
+  }
   return capability.tools
     ? {
         category: "capability",
@@ -777,6 +795,7 @@ function providerMetadata(driver: {
   permissions: AgentInspectionProviderMetadata["permissions"]
   provider: string
   providerSettings?: Record<string, unknown>
+  requirements?: readonly string[]
   reasoningEffort?: AgentInspectionProviderMetadata["reasoningEffort"]
   reasoningSummary?: AgentInspectionProviderMetadata["reasoningSummary"]
   sessionStorePath?: string
@@ -794,6 +813,7 @@ function providerMetadata(driver: {
     permissions: driver.permissions,
     provider: driver.provider,
     ...(providerSettings.length ? { providerSettings } : {}),
+    ...(driver.requirements?.length ? { requirements: [...driver.requirements] } : {}),
     ...(driver.reasoningEffort ? { reasoningEffort: driver.reasoningEffort } : {}),
     ...(driver.reasoningSummary ? { reasoningSummary: driver.reasoningSummary } : {}),
     ...(driver.sessionStorePath ? { sessionStore: "sqlite" as const } : {}),

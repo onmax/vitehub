@@ -57,6 +57,8 @@ export interface RunViteHubCliOptions {
   args?: string[]
   cwd?: string
   env?: NodeJS.ProcessEnv
+  /** Namespaces that run without loading the project config, for example inside a deployed container. */
+  runtimeNamespaces?: ViteHubCliCommandNamespace[]
   loadConfig?: (rootDir: string) => Promise<ViteHubCliLoadedConfig>
   loadNuxtViteConfig?: (rootDir: string) => Promise<{ plugins: readonly unknown[], root?: string } | undefined>
   spawn?: ViteHubCliSpawn
@@ -99,7 +101,7 @@ async function loadNuxtViteConfig(rootDir: string): Promise<{ plugins: readonly 
         : nuxt.options.rootDir || rootDir,
       vitehubCliDiscovery: true,
     }
-    const config = await resolveConfig(inlineConfig, "serve", "development")
+    const config = await resolveConfig(inlineConfig, "build", "production")
     return {
       plugins: config.plugins,
       root: config.root,
@@ -133,7 +135,7 @@ async function loadViteConfig(rootDir: string): Promise<ViteHubCliLoadedConfig> 
     root: rootDir,
     vitehubCliDiscovery: true,
   }
-  return await resolveConfig(inlineConfig, "serve", "development")
+  return await resolveConfig(inlineConfig, "build", "production")
 }
 
 // Built-in namespace that orchestrates package-contributed Provision Steps.
@@ -212,6 +214,10 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
   const cwd = options.cwd || process.cwd()
   const env = options.env || process.env
   const stderr = options.stderr || process.stderr
+  const spawn = options.spawn || defaultSpawn
+  const runtimeNamespace = options.runtimeNamespaces?.find(namespace => namespace.name === args[0])
+  if (runtimeNamespace) return await runNamespace(runtimeNamespace, args, { cwd, env, rootDir: cwd, spawn, stderr, stdout })
+
   const config = await (options.loadConfig || loadViteConfig)(cwd)
   const nuxtConfig = config.vitehubConfigResolved
     ? undefined
@@ -222,16 +228,10 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
     ...(await collectViteHubCliNamespaces(plugins)).filter(namespace => namespace.name !== "inspect"),
     createInspectNamespace(plugins),
     createProvisionNamespace(plugins),
+    ...options.runtimeNamespaces ?? [],
   ]
 
-  const context: ViteHubCliContext = {
-    cwd,
-    env,
-    rootDir,
-    spawn: options.spawn || defaultSpawn,
-    stderr,
-    stdout,
-  }
+  const context: ViteHubCliContext = { cwd, env, rootDir, spawn, stderr, stdout }
 
   if (!args.length || isRootHelp(args)) {
     writeRootHelp(namespaces, stdout)
@@ -245,7 +245,11 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
     writeRootHelp(namespaces, stderr)
     return 1
   }
+  return await runNamespace(namespace, args, context)
+}
 
+async function runNamespace(namespace: ViteHubCliCommandNamespace, args: string[], context: ViteHubCliContext): Promise<number> {
+  const { stderr, stdout } = context
   const featureName = args[1]
   if (!featureName || args[1] === "-h" || args[1] === "--help") {
     writeNamespaceHelp(namespace, stdout)

@@ -56,6 +56,17 @@ describe("hubQueue", () => {
     }])
   })
 
+  it("keeps explicit Vercel output at .vercel when Nitro owns Cloudflare output", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-queue-vercel-nitro-output-"))
+    roots.push(root)
+    const plugin = hubQueue({ provider: "vercel" })
+    await (plugin.configResolved as (config: unknown) => Promise<void>)({
+      root, command: "build", nitro: { preset: "cloudflare_module", output: { dir: "custom-output" } },
+    })
+    const entries = await collectViteHubProviderOutputEntries([plugin])
+    expect(entries).toMatchObject([{ path: resolve(root, ".vercel/output/config.json") }])
+  })
+
   it.each([
     { provider: "cloudflare" as const, preset: "vercel" },
     { provider: "vercel" as const, preset: "cloudflare_module" },

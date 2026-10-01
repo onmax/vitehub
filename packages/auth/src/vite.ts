@@ -1,7 +1,7 @@
 import { resolve } from "node:path"
 import { Readable } from "node:stream"
 
-import { createNoExternalMerger, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, isServerEnvironment, generatedViteHubWatchIgnoredAddition, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { summarizeDefinitions } from "@vite-hub/internal/inspect"
@@ -33,7 +33,7 @@ const envServerModuleId = "#vitehub/env/server"
 const envVitePluginName = "@vite-hub/env/vite"
 const generatedAuthAccessMiddlewareHandler = ".vitehub/auth/access-middleware.ts"
 const generatedAuthRouteHandler = ".vitehub/auth/route.ts"
-const mergeNoExternal = createNoExternalMerger(authPackageName)
+const mergeNoExternal = createNoExternalAddition(authPackageName)
 
 type NitroConfig = Record<string, unknown>
 type NitroHandler = { handler: string; method?: string; middleware?: boolean; route: string }
@@ -350,7 +350,7 @@ export function hubAuth(options?: AuthModuleOptions, internalOptions: InternalAu
           : {}),
         server: {
           watch: {
-            ignored: mergeGeneratedViteHubWatchIgnored(config.server?.watch?.ignored),
+            ignored: generatedViteHubWatchIgnoredAddition(config.server?.watch?.ignored),
           },
         },
       }
