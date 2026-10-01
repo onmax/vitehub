@@ -211,7 +211,7 @@ function parseArgs(command: KVCommand, args: readonly string[], env: NodeJS.Proc
 }
 
 function validateJSONNumbers(value: unknown): void {
-  if (v.is(v.number(), value) && !Number.isFinite(value)) throw kvErrorDiagnostics.KV_R0019({ message: "JSON numbers must be finite." })
+  if (v.is(v.number(), value) && (!Number.isFinite(value) || Object.is(value, -0))) throw kvErrorDiagnostics.KV_R0019({ message: "JSON numbers must be finite and cannot be negative zero." })
   if (Array.isArray(value)) value.forEach(validateJSONNumbers)
   else if (v.is(v.record(v.string(), v.unknown()), value)) Object.values(value).forEach(validateJSONNumbers)
 }
