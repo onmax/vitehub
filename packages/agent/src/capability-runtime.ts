@@ -1072,7 +1072,6 @@ async function applyCapabilityWorkspaceContributions<
     && await supportsSkillPersistence(retainedWorkspace)
   const canRetireWorkspaceContributions = context.persistWorkspaceContributions
     && retirementPaths.length > 0
-    && typeof retainedWorkspace.fs.rm === "function"
   if (conditionalWorkspacePersistence || canRetireWorkspaceContributions) {
     if (conditionalWorkspacePersistence) await Promise.all(persistencePaths.map(({ path }) => sourceResolution.workspace.fs.materializeSources?.({ path })))
     const pending: Array<{ capabilityId: string, path: string, ifDigest: string | null }> = []
@@ -1140,7 +1139,9 @@ async function applyCapabilityWorkspaceContributions<
       const current = await retainedWorkspace.fs.readFile(path, { encoding: "binary" })
       if (await capabilityContributionDigest(current) !== metadata.digest) continue
       try {
-        await retainedWorkspace.fs.rm(path, { force: true, ...(conditionalWorkspacePersistence ? { ifDigest: stat.digest } : {}) })
+        const removeOptions: { force: true, ifDigest?: string | null } = { force: true }
+        if (conditionalWorkspacePersistence) removeOptions.ifDigest = stat.digest
+        await retainedWorkspace.fs.rm(path, removeOptions)
       }
       catch (error) {
         // A concurrent edit or invocation won the conditional removal.
