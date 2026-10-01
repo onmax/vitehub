@@ -273,6 +273,7 @@ const agentTypeDiagnosticCodes = new Set([
   "AGENT_R0932",
   "AGENT_R0937",
   "AGENT_R0933",
+  "AGENT_R0939",
   "AGENT_R0501",
   "AGENT_R0508",
   "AGENT_R0509",
@@ -454,10 +455,12 @@ const agentTypeDiagnosticCodes = new Set([
   "AGENT_R0927",
   "AGENT_R0970",
   "AGENT_R0930",
+  "AGENT_R0936",
   "AGENT_R0935",
   "AGENT_R0924",
   "AGENT_R0925",
   "AGENT_R0929",
+  "AGENT_R0938",
 ])
 
 const dynamicError = {
@@ -1433,14 +1436,15 @@ export const agentDiagnostics = defineDiagnostics({
     AGENT_R0935: dynamicError,
     AGENT_R0936: dynamicError,
     AGENT_R0937: dynamicError,
-    AGENT_R0933: dynamicError,
     AGENT_R0970: dynamicError,
     AGENT_R0924: dynamicError,
     AGENT_R0925: dynamicError,
     AGENT_R0932: dynamicError,
+    AGENT_R0933: dynamicError,
     AGENT_R0929: dynamicError,
     AGENT_R0930: dynamicError,
     AGENT_R0931: dynamicError,
+    AGENT_R0938: dynamicError,
     AGENT_R0001: {
       why: ({ name, available }: { name: string, available: string[] }) => formatUnknownAgentMessage(name, available, { prefix: true }),
       fix: "Use a discovered Agent name. Check the Agent Definition and the ViteHub Agent plugin configuration.",
@@ -1492,6 +1496,10 @@ export const agentDiagnostics = defineDiagnostics({
     AGENT_B0019: {
       why: ({ files }: { files: string[] }) => `[vitehub] Provider Agent Drivers ("codex" and "claude-code") cannot run in a Cloudflare Worker. Used in ${files.join(", ")}.`,
       fix: "Use a { model } or { run } Driver in Worker builds, or deploy Agents that use provider Drivers to a Node.js host.",
+    },
+    AGENT_R0939: {
+      why: "[vitehub] Observability is not configured.",
+      fix: "Set vitehub({ observability: { service } }) in the Vite config.",
     },
     AGENT_R0928: {
       why: "[vitehub] Provider Agent Drivers are not included in Worker builds. They start local Codex or Claude Code processes, which require a Node.js host.",

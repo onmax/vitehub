@@ -37,7 +37,7 @@ import { bundleEsmEntry } from "@vite-hub/internal/build/esbuild"
 import { createImportPath, ensureGeneratedDir } from "@vite-hub/internal/build/paths"
 import { toSafeAppName } from "@vite-hub/internal/build/user-entry"
 import { createNodeFunctionConfig, createVercelConfigJson } from "@vite-hub/internal/build/vercel-config"
-import { createRuntimeRegistryContents } from "@vite-hub/internal/definition-discovery"
+import { createRuntimeRegistryContents } from "@vite-hub/internal/definition-catalog"
 import { readProvisionStateSync } from "@vite-hub/internal/provision-state"
 
 import type { ResolvedBlobModuleOptions } from "../../../packages/blob/src/types.ts"

@@ -56,7 +56,7 @@ export default defineWorkspace({
 | Source resolution, request, and preparation helpers from `@vite-hub/workspace/runtime` | Integrate resolved Workspace Sources and process-local readiness into runtime facades. |
 | `defineWorkspaceFileHandler`, `readWorkspaceFileResponse` from `@vite-hub/workspace/server` | Serve Workspace files from H3 routes. |
 | `hubWorkspace` from `@vite-hub/workspace/vite` | Register Workspace discovery, generated types, assets, and runtime wiring. |
-| `@vite-hub/workspace/loader`, `@vite-hub/workspace/publish`, `@vite-hub/workspace/test` | Add loaders and publishers, or create test Workspaces. |
+| `@vite-hub/workspace/loader`, `@vite-hub/workspace/publish`, `@vite-hub/workspace/test` | Add loaders and publishers, or register test Workspaces. |
 
 Workspace definition, Source Binding, rule, hook, store, sync, facade, and session types are exported from `@vite-hub/workspace`. Source resolution runtime types are exported from `@vite-hub/workspace/runtime`.
 
@@ -85,7 +85,7 @@ The Vite config key is `workspace`.
 
 | Store | Configure with | Nuance |
 | --- | --- | --- |
-| Local | `{ provider: 'local', root?: string }` | Filesystem-backed Workspace Store. Used by default in development and on hosts without a more specific match. |
+| Local | `{ provider: 'local', root?: string, locks?: 'filesystem' \| 'process' }` | Filesystem-backed Workspace Store. Used by default in development and on hosts without a more specific match. |
 | Memory | `{ provider: 'memory' }` | Test or ephemeral runtime storage. |
 | Cloudflare Artifacts | `{ provider: 'cloudflare-artifacts', binding?, namespace?, repo?, repoPrefix?, branch? }` | Opt-in, versioned Git storage. Defaults: binding `WORKSPACE_ARTIFACTS`, namespace `vitehub`, repo prefix `vitehub-workspace-`. |
 | Vercel Blob | `{ provider: 'vercel-blob', token?, prefix?, access? }` | Blob-backed storage. Defaults: prefix `.vitehub/workspaces`, access `private`; the token can come from `BLOB_READ_WRITE_TOKEN`. |
@@ -124,6 +124,14 @@ await recoverLocalWorkspaceLocks({
 The `offline: true` flag confirms exclusive offline access; it does not stop other processes. Restart the Workspace processes after recovery succeeds.
 
 Interrupted file removals require a separate retry. If reads report `Interrupted Workspace removal`, retry removal of the reported path with `force: true` and, for directories, `recursive: true` before restoring files. This prevents restored files from reusing deleted Source ownership.
+
+### Local path locks
+
+Local Stores lock each path before they read or write it. The default, `locks: 'filesystem'`, keeps lock markers under `.vitehub/locks` inside the root, so separate processes that share the root stay coordinated. Set `locks: 'process'` when one process owns the root, for example a disposable checkout that one worker uses. The Store then keeps the same per-path read and write locks in memory. It creates no lock directory, does not poll lock markers, and lists entries in parallel. A waiting writer runs before readers that arrive after it. Process locks do not protect the root from another process.
+
+### Git checkout roots
+
+Set `ignore: 'git'` when the Local Store root is a Git checkout. Listings, snapshots, and diffs then skip `.git` and every path that Git ignores, such as `node_modules` and build output. The Store asks Git for the ignored paths on each listing, so changes to `.gitignore` apply immediately. Git must be installed on the host.
 
 ### Cloudflare Artifacts
 

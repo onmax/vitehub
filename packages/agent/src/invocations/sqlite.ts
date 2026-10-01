@@ -14,6 +14,7 @@ import type {
   AgentInvocationSummary,
   AgentInvocationStore,
   AgentInvocationStoreCreateInput,
+  AgentInvocationStoreUpdateInput,
 } from "../invocations.ts"
 import type { Client } from "@libsql/client"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
@@ -104,6 +105,13 @@ function capabilityIdsProjection() {
   ))`
 }
 
+// The index on this expression must use the same SQL text as the queries that read it.
+function triggeredByProjection() {
+  const source = "CASE WHEN json_valid(summary) THEN summary ELSE record END"
+  return `CASE WHEN json_type(${source}, '$.annotations.triggeredBy') = 'text'
+    THEN json_extract(${source}, '$.annotations.triggeredBy') END`
+}
+
 function serializedSummary(record: Omit<AgentInvocationRecord, "cursor">): string {
   const { observations: _observations, ...summary } = record
   return JSON.stringify(summary, (_key, value) => typeof value === "bigint" ? String(value) : value)
@@ -165,6 +173,12 @@ async function retrySqliteBusy<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
+interface PendingUpdate {
+  input: AgentInvocationStoreUpdateInput
+  reject: (error: unknown) => void
+  resolve: (record: AgentInvocationRecord | undefined) => void
+}
+
 export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationStoreOptions = {}): AgentInvocationStore {
   if (!options.client && !options.url) {
     throw agentDiagnostics.AGENT_R0633({ message: "[vitehub] SQLite Agent Invocations require url or client." })
@@ -184,6 +198,66 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     const result = writes.then(operation, operation)
     writes = result.then(() => undefined, () => undefined)
     return result
+  }
+  // Keep invocation and claim identifiers separate. Concatenating them with a
+  // delimiter allows distinct pairs to collide when either identifier contains
+  // that delimiter.
+  const pendingUpdates = new Map<string, Map<string | undefined, PendingUpdate[]>>()
+  /** Applies queued updates to one record in one transaction. A failed update does not stop later ones. */
+  const applyUpdateBatch = async (id: string, claimId: string | undefined, inputs: AgentInvocationStoreUpdateInput[]): Promise<Array<AgentInvocationRecord | Error | undefined>> => {
+    await initialize()
+    return await retrySqliteBusy(async () => {
+      const transaction = await client.transaction("write")
+      try {
+        const result = await transaction.execute({
+          args: claimId === undefined ? [id] : [id, id, claimId],
+          sql: `SELECT sequence, record FROM ${table} WHERE id = ?${claimId === undefined
+            ? ""
+            : ` AND EXISTS (SELECT 1 FROM ${table}_claims WHERE id = ? AND claim_id = ?)`} LIMIT 1`,
+        })
+        const row = result.rows[0]
+        const record = row ? deserialize(row.record, row.sequence) : undefined
+        if (!record) {
+          await transaction.commit()
+          return inputs.map(() => undefined)
+        }
+        let updated = record
+        const results = inputs.map((input) => {
+          try {
+            updated = applyAgentInvocationStoreUpdate(updated, input)
+            return updated
+          }
+          catch (error) {
+            return error instanceof Error ? error : new Error(String(error))
+          }
+        })
+        if (updated === record) {
+          await transaction.commit()
+          return results
+        }
+        const stored = storedRecord(updated)
+        await transaction.execute({
+          args: [id],
+          sql: `UPDATE ${table} SET search_version = -1, summary = NULL WHERE id = ?`,
+        })
+        await transaction.execute({
+          args: [updated.status, agentNameRecord(stored), searchableAgentInvocationText(stored), searchVersion, serializedSummary(stored), updated.updatedAt, serialize(stored), id],
+          sql: `UPDATE ${table} SET status = ?, agent_name = ?, search = ?, search_version = ?, summary = ?, updated_at = ?, record = ? WHERE id = ?`,
+        })
+        if (updated.status === "completed" || updated.status === "failed" || updated.status === "cancelled") {
+          await prune(transaction)
+        }
+        await transaction.commit()
+        return results
+      }
+      catch (error) {
+        await transaction.rollback().catch(() => undefined)
+        throw error
+      }
+      finally {
+        await transaction.close()
+      }
+    })
   }
   const backfillSearch = async () => {
     let backfillSequence = 0
@@ -403,6 +477,13 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
       await client.execute(`CREATE INDEX IF NOT EXISTS ${table}_legacy_agent_name_sequence
         ON ${table} (json_extract(record, '$.agentName'), sequence DESC)
         WHERE agent_name IS NULL OR agent_name = ''`)
+      // Tables from older versions store summary and capability_ids after the large record column.
+      // Reading those values from the row walks every overflow page of record, so filter lists read them from these indexes.
+      // Invocation list queries cannot use either index: one is partial, and the other starts with the label.
+      await client.execute(`CREATE INDEX IF NOT EXISTS ${table}_agent_name_capability_ids
+        ON ${table} (agent_name, capability_ids) WHERE capability_ids IS NOT NULL`)
+      await client.execute(`CREATE INDEX IF NOT EXISTS ${table}_triggered_by_agent_name
+        ON ${table} (${triggeredByProjection()}, agent_name)`)
       await client.execute(`CREATE TABLE IF NOT EXISTS ${table}_claims (
         id TEXT PRIMARY KEY,
         claim_id TEXT NOT NULL,
@@ -660,13 +741,20 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
         sql: `UPDATE ${table} SET capability_ids = ${capabilityIdsProjection()}
           WHERE capability_ids IS NULL AND ${filter}`,
       })))
+      // A writer can invalidate the cache between these statements. Resolve those rows
+      // from their current record so an active Invocation never returns stale IDs.
+      // Cached IDs come from the covering index. Only legacy rows without agent_name read the row.
+      const rows = selectedAgent
+        ? `SELECT capability_ids AS ids FROM ${table} WHERE agent_name = ? AND capability_ids IS NOT NULL
+          UNION ALL SELECT ${capabilityIdsProjection()} FROM ${table} WHERE agent_name = ? AND capability_ids IS NULL
+          UNION ALL SELECT COALESCE(capability_ids, ${capabilityIdsProjection()}) FROM ${table}
+            WHERE (agent_name IS NULL OR agent_name = '') AND json_extract(record, '$.agentName') = ?`
+        : `SELECT capability_ids AS ids FROM ${table} WHERE capability_ids IS NOT NULL
+          UNION ALL SELECT ${capabilityIdsProjection()} FROM ${table} WHERE capability_ids IS NULL`
       const result = await client.execute({
-        args,
-        // A writer can invalidate the cache between these statements. Resolve those rows
-        // from their current record so an active Invocation never returns stale IDs.
+        args: selectedAgent ? [selectedAgent, selectedAgent, selectedAgent] : [],
         sql: `SELECT DISTINCT capability.value AS capability_id
-          FROM ${table}, json_each(COALESCE(capability_ids, ${capabilityIdsProjection()})) AS capability
-          WHERE ${filter} ORDER BY capability_id`,
+          FROM (${rows}) AS invocation, json_each(invocation.ids) AS capability ORDER BY capability_id`,
       })
       return result.rows.flatMap((row) => {
         return hasRuntimeType(row.capability_id, "string") ? [row.capability_id] : []
@@ -675,17 +763,19 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     async listTriggeredBy(agentName) {
       await initialize()
       const selectedAgent = agentName?.trim()
-      const args = selectedAgent ? [selectedAgent, selectedAgent] : []
-      const agentFilter = selectedAgent
-        ? " AND (agent_name = ? OR ((agent_name IS NULL OR agent_name = '') AND json_extract(record, '$.agentName') = ?))"
-        : ""
+      const triggeredBy = triggeredByProjection()
+      // The planner prefers agent_name_sequence for the Agent filter, which evaluates the label from every row.
+      // INDEXED BY reads the label from the expression index instead. Only legacy rows without agent_name read the row.
+      const labels = `SELECT ${triggeredBy} AS triggered_by FROM ${table} INDEXED BY ${table}_triggered_by_agent_name
+        WHERE ${triggeredBy} IS NOT NULL`
+      const rows = selectedAgent
+        ? `${labels} AND agent_name = ?
+          UNION ALL SELECT ${triggeredBy} FROM ${table}
+            WHERE (agent_name IS NULL OR agent_name = '') AND json_extract(record, '$.agentName') = ?`
+        : labels
       const result = await client.execute({
-        args,
-        sql: `SELECT DISTINCT json_extract(CASE WHEN json_valid(summary) THEN summary ELSE record END, '$.annotations.triggeredBy') AS triggered_by
-          FROM ${table}
-          WHERE json_type(CASE WHEN json_valid(summary) THEN summary ELSE record END, '$.annotations.triggeredBy') = 'text'
-            AND trim(json_extract(CASE WHEN json_valid(summary) THEN summary ELSE record END, '$.annotations.triggeredBy')) <> ''${agentFilter}
-          ORDER BY triggered_by`,
+        args: selectedAgent ? [selectedAgent, selectedAgent] : [],
+        sql: `SELECT DISTINCT triggered_by FROM (${rows}) WHERE trim(triggered_by) <> '' ORDER BY triggered_by`,
       })
       return result.rows.flatMap(row => hasRuntimeType(row.triggered_by, "string") ? [row.triggered_by] : [])
     },
@@ -735,47 +825,37 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
       })
     },
     async update(id, input, claimId) {
-      return write(async () => {
-        await initialize()
-        return await retrySqliteBusy(async () => {
-          const transaction = await client.transaction("write")
+      // Updates for one invocation that wait behind another write share one
+      // read, serialization, and commit. Each update still applies in order.
+      let updatesByClaim = pendingUpdates.get(id)
+      if (!updatesByClaim) {
+        updatesByClaim = new Map()
+        pendingUpdates.set(id, updatesByClaim)
+      }
+      let batch = updatesByClaim.get(claimId)
+      if (!batch) {
+        const items: PendingUpdate[] = []
+        batch = items
+        updatesByClaim.set(claimId, items)
+        void write(async () => {
+          if (updatesByClaim?.get(claimId) === items) updatesByClaim.delete(claimId)
+          if (updatesByClaim?.size === 0 && pendingUpdates.get(id) === updatesByClaim) pendingUpdates.delete(id)
           try {
-            const result = await transaction.execute({
-              args: claimId ? [id, id, claimId] : [id],
-              sql: `SELECT sequence, record FROM ${table} WHERE id = ?${claimId
-                ? ` AND EXISTS (SELECT 1 FROM ${table}_claims WHERE id = ? AND claim_id = ?)`
-                : ""} LIMIT 1`,
+            const results = await applyUpdateBatch(id, claimId, items.map(item => item.input))
+            items.forEach((item, index) => {
+              const result = results[index]
+              if (result instanceof Error) item.reject(result)
+              else item.resolve(result)
             })
-            const row = result.rows[0]
-            const record = row ? deserialize(row.record, row.sequence) : undefined
-            if (!record) {
-              await transaction.commit()
-              return
-            }
-            const updated = applyAgentInvocationStoreUpdate(record, input)
-            const stored = storedRecord(updated)
-            await transaction.execute({
-              args: [id],
-              sql: `UPDATE ${table} SET search_version = -1, summary = NULL WHERE id = ?`,
-            })
-            await transaction.execute({
-              args: [updated.status, agentNameRecord(stored), searchableAgentInvocationText(stored), searchVersion, serializedSummary(stored), updated.updatedAt, serialize(stored), id],
-              sql: `UPDATE ${table} SET status = ?, agent_name = ?, search = ?, search_version = ?, summary = ?, updated_at = ?, record = ? WHERE id = ?`,
-            })
-            if (updated.status === "completed" || updated.status === "failed" || updated.status === "cancelled") {
-              await prune(transaction)
-            }
-            await transaction.commit()
-            return updated
           }
           catch (error) {
-            await transaction.rollback().catch(() => undefined)
-            throw error
-          }
-          finally {
-            await transaction.close()
+            for (const item of items) item.reject(error)
           }
         })
+      }
+      const items = batch
+      return await new Promise<AgentInvocationRecord | undefined>((resolve, reject) => {
+        items.push({ input, reject, resolve })
       })
     },
   }
