@@ -8,7 +8,7 @@ import { basename, dirname, extname, join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { parseAst } from "vite"
 
-import { contributeProviderDeploymentOutput, createDefaultNetlifyOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, useProviderOutputCatalog, writeProviderDeploymentOutputs } from "@vite-hub/internal/build/deployment-output"
+import { contributeProviderDeploymentOutput, createDefaultNetlifyOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, getProviderOutputCatalog, useProviderOutputCatalog, writeProviderDeploymentOutputs } from "@vite-hub/internal/build/deployment-output"
 import { encodeProviderOutputAliases, resolveViteHubBundleDefines } from "@vite-hub/internal/build/esbuild"
 import { rebasePublishedProviderSourceLinks, removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources, rewriteRetainedProviderSourcePaths } from "@vite-hub/internal/build/provider-output-sources"
 import { copyNodeRuntimePackages, copyVercelFunctionRuntimePackages } from "@vite-hub/internal/build/vercel-runtime-packages"
@@ -3236,7 +3236,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       standaloneRuntimeCapabilities = await writeStandaloneAgentRuntimeCapabilities(config, runtimeCapabilities)
       build.runtimeCapabilities = standaloneRuntimeCapabilities
       await writeGeneratedAgentOutputs(config)
-      const configs = scheduledBuildConfigsByRoot.get(config.root) ?? []
+      const configs = (scheduledBuildConfigsByRoot.get(config.root) ?? []).filter(previous => previous !== config)
       configs.push(config)
       scheduledBuildConfigsByRoot.set(config.root, configs)
       if (agent === false || !discoverAgentEvalFiles([config.root, ...(serverDirs ?? [])]).length) {
@@ -3267,17 +3267,11 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       if (environmentConfig) {
         const candidates = scheduledBuildConfigsByRoot.get(environmentConfig.root) ?? []
         const direct = buildConfigs.get(environmentConfig)
-        const sharedBuilds = candidates.filter(candidate => candidate.build === environmentConfig.build)
-        let matches = candidates
-        if (sharedBuilds.length === 1) matches = sharedBuilds
-        else if (candidates.length > 1) {
-          matches = candidates.filter(candidate =>
-            candidate.build.outDir === environmentConfig.build.outDir
-            && candidate.define?.__VITEHUB_PUBLIC_URL__ === environmentConfig.define?.__VITEHUB_PUBLIC_URL__
-            && candidate.define?.__VITEHUB_APP_BASE_URL__ === environmentConfig.define?.__VITEHUB_APP_BASE_URL__,
-          )
-        }
-        if (!direct && candidates.length && matches.length !== 1) {
+        const catalog = getProviderOutputCatalog(environmentConfig)
+        const matches = catalog
+          ? candidates.filter(candidate => buildConfigs.get(candidate)?.providerOutput === catalog)
+          : candidates.filter(candidate => candidate.build === environmentConfig.build)
+        if (!direct && matches.length !== 1) {
           rejectedBuilds.add(context)
           throw agentDiagnostics.AGENT_B0020({ root: environmentConfig.root })
         }

@@ -29,6 +29,7 @@ vi.mock("@vite-hub/internal/build/deployment-output", () => ({
     reset: lifecycle.reset,
   }),
   finalizeProviderDeploymentOutputs: lifecycle.finalize,
+  getProviderOutputCatalog: () => undefined,
   getProviderRuntimeModule: () => undefined,
   shouldSkipViteProviderBuild: () => false,
   useProviderOutputCatalog: lifecycle.useCatalog,

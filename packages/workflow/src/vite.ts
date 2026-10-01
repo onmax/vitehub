@@ -5,7 +5,7 @@ import { resolve } from "node:path"
 
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { encodeProviderOutputAliases } from "@vite-hub/internal/build/esbuild"
-import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, getProviderRuntimeModule, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, getProviderOutputCatalog, getProviderRuntimeModule, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
 import { collectViteHubProviderImportAliases, createNoExternalAddition, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_PROJECT_ROOT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { normalizeHosting } from "@vite-hub/internal/hosting"
@@ -122,20 +122,13 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     const direct = scheduleBuildConfigs.get(config)
     if (direct) return direct
     const candidates = scheduledBuildConfigsByRoot.get(config.root) ?? []
-    // Vite's environment configs retain the resolved build options even when
-    // private fields are omitted. Prefer this association over equal URL values.
-    const sharedBuilds = config.build ? candidates.filter(candidate => candidate.config.build === config.build) : []
-    if (sharedBuilds.length === 1) {
-      scheduleBuildConfigs.set(config, sharedBuilds[0]!)
-      return sharedBuilds[0]
-    }
-    if (candidates.length === 1) return candidates[0]
-    const publicDefine = JSON.stringify({ publicUrl: config.define?.__VITEHUB_PUBLIC_URL__, base: config.define?.__VITEHUB_APP_BASE_URL__ })
-    const matches = candidates.filter(candidate => candidate.config.build.outDir === config.build.outDir
-      && JSON.stringify({ publicUrl: candidate.config.define?.__VITEHUB_PUBLIC_URL__, base: candidate.config.define?.__VITEHUB_APP_BASE_URL__ }) === publicDefine)
-    if (candidates.length && matches.length !== 1) throw workflowErrorDiagnostics.WORKFLOW_B0002({ root: config.root })
-    const match = matches[0]
-    if (match) scheduleBuildConfigs.set(config, match)
+    const catalog = getProviderOutputCatalog(config)
+    const matches = catalog
+      ? candidates.filter(candidate => candidate.providerOutput === catalog)
+      : config.build ? candidates.filter(candidate => candidate.config.build === config.build) : []
+    if (matches.length !== 1) throw workflowErrorDiagnostics.WORKFLOW_B0002({ root: config.root })
+    const match = matches[0]!
+    scheduleBuildConfigs.set(config, match)
     return match
   }
 
@@ -329,7 +322,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       serverDirs = buildServerDirs
       const scheduled = { config, providerOutput, workflow, serverDirs: buildServerDirs }
       scheduleBuildConfigs.set(config, scheduled)
-      const configs = scheduledBuildConfigsByRoot.get(config.root) ?? []
+      const configs = (scheduledBuildConfigsByRoot.get(config.root) ?? []).filter(previous => previous.config !== config)
       configs.push(scheduled)
       scheduledBuildConfigsByRoot.set(config.root, configs)
       if (devRootDir) {

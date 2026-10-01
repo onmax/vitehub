@@ -139,7 +139,7 @@ describe("Workflow preparation for Schedule", () => {
       await Promise.all(roots.map(root => rm(root, { recursive: true, force: true })))
     }
   })
-  it("rejects an ambiguous Workflow environment clone before contributing output", async () => {
+  it.each([true, false])("rejects an unassociated Workflow clone with shared URL %j before contributing output", async (sharedUrl) => {
     const plugin = hubWorkflow({ provider: "vercel" })
     const root = await mkdtemp(join(tmpdir(), "vitehub-workflow-ambiguous-build-"))
     try {
@@ -147,11 +147,11 @@ describe("Workflow preparation for Schedule", () => {
         root, command: "build", plugins: [], build: { outDir: "dist" },
         resolve: { alias: [{ find: "build-alias", replacement: join(root, name) }] },
         workflow: { provider: "vercel" },
-        define: { __VITEHUB_PUBLIC_URL__: JSON.stringify("https://shared.example.com") },
+        define: { __VITEHUB_PUBLIC_URL__: JSON.stringify(`https://${sharedUrl ? "shared" : name}.example.com`) },
       } as unknown as ResolvedConfig))
       for (const config of configs) await (plugin.configResolved as (config: ResolvedConfig) => Promise<void>)(config)
       for (const config of configs) useProviderOutputCatalog(config).replaceDeploymentContribution({ owner: "workflow", rootDir: root, write: async () => undefined })
-      const clone = { ...Object.fromEntries(Object.entries(configs[1]!)), build: { ...configs[1]!.build } }
+      const clone = { ...Object.fromEntries(Object.entries(configs[1]!)), build: { ...configs[1]!.build }, define: configs[0]!.define }
       const context = { environment: { config: clone } }
       expect(() => (plugin.buildStart as (this: typeof context) => void).call(context)).toThrow("Cannot identify the owning Workflow build")
       await (plugin.buildEnd as (this: typeof context, error?: Error) => Promise<void>).call(context, new Error("Ambiguous build"))

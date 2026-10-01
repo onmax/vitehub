@@ -27,10 +27,11 @@ afterEach(async () => {
 })
 
 it.each([
-  { retainMetadata: true, sameRoot: false },
-  { retainMetadata: false, sameRoot: false },
-  { retainMetadata: false, sameRoot: true },
-])("keeps Agent output in its owning catalog across environment clones %j", async ({ retainMetadata, sameRoot }) => {
+  { retainMetadata: true, sameRoot: false, cloneBuild: false },
+  { retainMetadata: true, sameRoot: true, cloneBuild: true },
+  { retainMetadata: false, sameRoot: false, cloneBuild: false },
+  { retainMetadata: false, sameRoot: true, cloneBuild: false },
+])("keeps Agent output in its owning catalog across environment clones %j", async ({ retainMetadata, sameRoot, cloneBuild }) => {
   vi.stubEnv("VITEHUB_HOSTING", "netlify")
   const plugin = hubAgent({ providers: { state: { provider: "memory" } } })
   const configs: ResolvedConfig[] = []
@@ -53,7 +54,7 @@ it.each([
   }
   for (const config of configs) await (plugin.configResolved as (config: ResolvedConfig) => Promise<void>)(config)
   for (const config of configs) {
-    const clone = { ...config }
+    const clone = { ...config, build: cloneBuild ? { ...config.build } : config.build }
     if (!retainMetadata) {
       for (const key of Object.getOwnPropertySymbols(clone)) Reflect.deleteProperty(clone, key)
     }
@@ -82,18 +83,18 @@ it.each([
 })
 
 
-it("rejects an ambiguous Agent environment clone before contributing output", async () => {
+it.each([true, false])("rejects an unassociated Agent clone with shared URL %j before contributing output", async (sharedUrl) => {
   const plugin = hubAgent()
   const root = await mkdtemp(join(tmpdir(), "vitehub-agent-ambiguous-build-"))
   roots.push(root)
   const configs = ["first", "second"].map(name => ({
     root, command: "build", plugins: [], build: { outDir: "dist" },
     resolve: { alias: [{ find: "build-alias", replacement: join(root, name) }] },
-    define: { __VITEHUB_PUBLIC_URL__: JSON.stringify("https://shared.example.com") },
+    define: { __VITEHUB_PUBLIC_URL__: JSON.stringify(`https://${sharedUrl ? "shared" : name}.example.com`) },
   } as unknown as ResolvedConfig))
   for (const config of configs) await (plugin.configResolved as (config: ResolvedConfig) => Promise<void>)(config)
   for (const config of configs) useProviderOutputCatalog(config).replaceDeploymentContribution({ owner: "agent", rootDir: root, write: async () => undefined })
-  const clone = { ...Object.fromEntries(Object.entries(configs[1]!)), build: { ...configs[1]!.build } }
+  const clone = { ...Object.fromEntries(Object.entries(configs[1]!)), build: { ...configs[1]!.build }, define: configs[0]!.define }
   const context = { environment: { config: clone } }
   expect(() => (plugin.buildStart as (this: typeof context) => void).call(context)).toThrow("Cannot identify the owning Agent build")
   await (plugin.buildEnd as (this: typeof context, error?: Error) => Promise<void>).call(context, new Error("Ambiguous build"))
