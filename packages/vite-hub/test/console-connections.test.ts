@@ -76,7 +76,7 @@ describe("Connections management client", () => {
     expect(second.pending).toEqual([{ ...base, id: "old-pending" }])
     expect(second.nextCursor).toBeUndefined()
     expect(fetch).toHaveBeenCalledWith("/_vitehub/connections", expect.objectContaining({
-      body: JSON.stringify({ name: "gmail", status: "pending", before: "pending-99", action: "approvals" }),
+      body: JSON.stringify({ name: "gmail", status: "pending", before: "pending-99", action: "approval-summaries" }),
     }))
   })
 

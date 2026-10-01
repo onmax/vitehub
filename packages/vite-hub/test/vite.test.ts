@@ -50,6 +50,14 @@ const integrationMocks = vi.hoisted(() => ({
   resolveAuthViteConfig: vi.fn(),
   hubQueue: vi.fn(() => ({ name: "@vite-hub/queue/vite" })),
   hubRateLimit: vi.fn(() => ({ name: "@vite-hub/rate-limit/vite" })),
+  rateLimitConsoleSection: {
+    description: "Inspect discovered Rate Limit policies and their source locations.",
+    icon: "i-lucide-gauge",
+    id: "rate-limits",
+    label: "Rate Limits",
+    read: vi.fn(),
+    view: { kind: "definition-catalog", notice: "" },
+  },
   hubSandbox: vi.fn(() => ({ name: "@vite-hub/sandbox/vite" })),
   hubSchedule: vi.fn(() => ({ name: "@vite-hub/schedule/vite" })),
   hubWorkflow: vi.fn(() => ({ name: "@vite-hub/workflow/vite" })),
@@ -91,15 +99,19 @@ vi.mock("@vite-hub/kv/vite", () => ({
   hubKvOptionalPeerResolver: integrationMocks.hubKvOptionalPeerResolver,
   resolveKVViteConfig: integrationMocks.resolveKVViteConfig,
 }))
-vi.mock("@vite-hub/queue/vite", () => ({ hubQueue: integrationMocks.hubQueue }))
-vi.mock("@vite-hub/rate-limit/vite", () => ({ hubRateLimit: integrationMocks.hubRateLimit }))
-vi.mock("@vite-hub/sandbox/vite", () => ({ hubSandbox: integrationMocks.hubSandbox }))
-vi.mock("@vite-hub/schedule/vite", () => ({ hubSchedule: integrationMocks.hubSchedule }))
-vi.mock("@vite-hub/workflow/vite", () => ({
+vi.mock("@vite-hub/queue/vite", async importOriginal => ({ ...await importOriginal<typeof import("@vite-hub/queue/vite")>(), hubQueue: integrationMocks.hubQueue }))
+vi.mock("@vite-hub/rate-limit/vite", () => ({
+  hubRateLimit: integrationMocks.hubRateLimit,
+  rateLimitConsoleSection: integrationMocks.rateLimitConsoleSection,
+}))
+vi.mock("@vite-hub/sandbox/vite", async importOriginal => ({ ...await importOriginal<typeof import("@vite-hub/sandbox/vite")>(), hubSandbox: integrationMocks.hubSandbox }))
+vi.mock("@vite-hub/schedule/vite", async importOriginal => ({ ...await importOriginal<typeof import("@vite-hub/schedule/vite")>(), hubSchedule: integrationMocks.hubSchedule }))
+vi.mock("@vite-hub/workflow/vite", async importOriginal => ({
+  ...await importOriginal<typeof import("@vite-hub/workflow/vite")>(),
   discoverWorkflowDefinitions: integrationMocks.discoverWorkflowDefinitions,
   hubWorkflow: integrationMocks.hubWorkflow,
 }))
-vi.mock("@vite-hub/workspace/vite", () => ({ hubWorkspace: integrationMocks.hubWorkspace }))
+vi.mock("@vite-hub/workspace/vite", async importOriginal => ({ ...await importOriginal<typeof import("@vite-hub/workspace/vite")>(), hubWorkspace: integrationMocks.hubWorkspace }))
 
 import type { KVModuleOptions } from "@vite-hub/kv"
 import { resolveConfig, type Plugin, type PluginOption } from "vite"
