@@ -13,6 +13,13 @@ const strictCapabilities = {
 } satisfies RateLimitDriverCapabilities
 
 describe("Rate Limit core", () => {
+  it.each([[], [undefined, { used: 1 }], [null, { used: 1 }, "extra"], [new Error("offline"), { used: 1 }]].map(outcome => ({ outcome })))("rejects malformed custom peek outcomes: %j", async ({ outcome }) => {
+    const driver = memoryRateLimitDriver()
+    Object.assign(driver, { peek: () => outcome })
+    const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })
+    await expect(limiter.peek({ key: "user" })).rejects.toThrow("must return [null, value] or [Error, undefined]")
+  })
+
   it.each([[], [undefined], [null, "extra"], ["error"]].map(outcome => ({ outcome })))("rejects malformed custom reset outcomes: %j", async ({ outcome }) => {
     const driver = memoryRateLimitDriver()
     Object.assign(driver, { reset: () => outcome })
