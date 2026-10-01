@@ -91,7 +91,7 @@ describe("vitehub kv against a Vite + Nitro Development Server", () => {
       expect(await discovery.json()).toMatchObject({ runtime: "nitro" })
 
       expect(await run(["set", "greeting", "hello"])).toEqual({ code: 0, stderr: "", stdout: "Created key greeting in store default (string).\n" })
-      expect(await run(["get", "greeting"])).toEqual({ code: 0, stderr: "", stdout: "hello\n" })
+      expect(await run(["get", "greeting"])).toEqual({ code: 0, stderr: "", stdout: "hello" })
       expect(await run(["list", "--json"])).toMatchObject({ code: 0, stdout: expect.stringContaining("\"greeting\"") })
       expect(await run(["del", "greeting"])).toEqual({ code: 0, stderr: "", stdout: "Deleted key greeting from store default.\n" })
       expect((await run(["has", "greeting"])).code).toBe(1)
