@@ -34,6 +34,7 @@ const generatedViteHubFilesPattern = "**/.vitehub/**"
 const projectRootDirectoryMarkers = [
   ["server", "agents"],
   ["server", "channels"],
+  ["server", "connections"],
   ["server", "browsers"],
   ["server", "emails"],
   ["server", "schedules"],
