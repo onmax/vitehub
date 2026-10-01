@@ -1,4 +1,4 @@
-export const consoleSectionIds = ["env", "connections", "agents", "usage", "blob", "database", "databases", "kv", "rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"] as const
+export const consoleSectionIds = ["env", "connections", "agents", "usage", "blob", "databases", "kv", "rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"] as const
 
 export type ConsoleSectionId = (typeof consoleSectionIds)[number]
 
@@ -32,12 +32,6 @@ export const consoleSectionDetails: Readonly<Record<ConsoleSectionId, {
     icon: "i-lucide-file-box",
     label: "Blob",
     routeName: "vitehub-console-blob",
-  },
-  database: {
-    description: "Inspect database tables, rows, columns, and relationships.",
-    icon: "i-ph-database-light",
-    label: "Database",
-    routeName: "vitehub-console-database",
   },
   databases: {
     description: "Inspect discovered Database Definitions and static schema metadata.",
@@ -100,7 +94,7 @@ export function isConsoleSectionId(value: unknown): value is ConsoleSectionId {
   return consoleSectionIds.some((section) => section === value)
 }
 
-export function resolveConsoleSectionIds(options: { env?: unknown; connections?: unknown; agent?: unknown; blob?: unknown; database?: unknown; kv?: unknown; preset?: unknown; queue?: unknown; rateLimit?: unknown; sandbox?: unknown; schedule?: unknown; workflow?: unknown; workspace?: unknown }): ConsoleSectionId[] {
+export function resolveConsoleSectionIds(options: { env?: unknown; connections?: unknown; agent?: unknown; blob?: unknown; kv?: unknown; preset?: unknown; queue?: unknown; rateLimit?: unknown; sandbox?: unknown; schedule?: unknown; workflow?: unknown; workspace?: unknown }): ConsoleSectionId[] {
   const workflowEnabled = options.workflow !== false
     && Boolean(options.workflow || (options.agent && options.preset !== "netlify"))
   return [

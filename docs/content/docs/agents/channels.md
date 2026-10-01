@@ -31,6 +31,83 @@ Built-in helpers include `discord()`, `github()`, `http()`, `slack()`, `teams()`
 
 `webChat()` enables a generated AI SDK chat route by default. `http()` is a generic HTTP Channel and keeps its route disabled unless you pass `http({ route: true })`.
 
+## Act on the Channel message in hooks
+
+The Channel defines the connector. The Agent reacts in its hooks. `agent:finish` and `agent:error` hooks receive `event.message`, a handle for the Channel message that started the Invocation.
+
+Declare the handle's methods with `defineChannel(kind, { message })`. The Trigger returns JSON `message` data that identifies the provider message. Each method receives the Channel context first. `context.message` is the Trigger's data, validated by the `message.data` Standard Schema when you set one.
+
+```ts [server/agents/labeller.ts]
+import { defineAgent } from 'vite-hub/agent'
+import { defineChannel, defineChannelTrigger } from 'vite-hub/agent/channels'
+import * as v from 'valibot'
+import { applyLabels, readEmail } from '../lib/mailbox'
+
+const mailbox = defineChannel('mailbox', {
+  message: {
+    data: v.object({ id: v.string() }),
+    methods: {
+      label: (context, labels: string[]) => applyLabels(context.message.id, labels),
+      subject: {
+        read: true,
+        handler: async context => (await readEmail(context.message.id)).subject,
+      },
+    },
+  },
+  messages: false,
+  triggers: {
+    received: defineChannelTrigger({
+      input: v.object({ id: v.string(), subject: v.string() }),
+      invoke(context, email) {
+        return {
+          input: { prompt: `Choose one label for: ${email.subject}` },
+          message: { id: email.id },
+          run: { channelId: context.trigger.channelId, origin: 'mailbox', runId: `mailbox:${email.id}` },
+        }
+      },
+    }),
+  },
+})
+
+export default defineAgent({
+  channels: { mailbox },
+  driver: { model: 'openai/gpt-5.1-mini' },
+  hooks: {
+    async 'agent:finish'(event) {
+      if (event.message?.channel !== 'mailbox' || !event.text) return
+      await event.message.label([event.text.trim()])
+    },
+  },
+})
+```
+
+`event.message` has these properties:
+
+| Property | Value |
+| --- | --- |
+| `channel` | The Channel name in the Agent's `channels` map. |
+| `kind` | The Channel Kind, such as `'mailbox'` or `'telegram'`. |
+| `data` | The Trigger's `message` data, typed by `message.data`. |
+| Methods | One async function per method, without the context argument. |
+
+TypeScript infers the handle from the Agent's `channels`. With several Channels, `event.message` is a union that `event.message.channel` narrows. Invocations without a triggering Channel message have `event.message` set to `undefined`, including direct runs that use a Channel only for output delivery. The names `channel`, `data`, `kind`, and `then` are reserved.
+
+Built-in Channels add the methods that their provider adapter supports. `discord()`, `slack()`, `teams()`, and `telegram()` provide `reply()` when an adapter is configured and messages are enabled. Built-in methods are optional in the handle type, so check availability or use `await event.message?.reply?.(text)`. `github()` provides `reply()`, `reaction()`, and `status()` when it has a GitHub App. `event.reply()` still returns a reply that ViteHub delivers after the hook. For a custom Channel, a `reply` method handles it.
+
+The built-in helpers also accept `message: { data, methods }`. Use this option on `discord()`, `github()`, `http()`, `slack()`, `teams()`, `telegram()`, or `webChat()` to add typed methods while keeping the provider configuration. A declared method replaces a built-in method with the same name.
+
+The generated `webChat()` route supplies the current inbound message as `{ id?, text, metadata? }`. This data comes from the request before `route.mapInput` changes the Driver messages or session selection filters the history. Use a `message.data` schema that accepts this shape.
+
+The built-in GitHub `webhook` and `dev` Triggers supply the pull request context as message data: `{ repository, pullRequest, run, trigger }`. The `trigger.comment` field identifies the triggering comment; lifecycle events can use a synthetic comment ID. Use a schema that accepts this context. Application-owned Triggers supply their own `message` data.
+
+### Dry run
+
+Set `dryRun: true` in the Invocation input to run an Agent against real messages without changing them. A Trigger can set it in its returned `input`; a direct caller passes it to `runAgent()`.
+
+A method declared as a function is a write. In a dry run, ViteHub does not call write methods or built-in delivery, including the automatic reply. It records each call as a skipped delivery in the Invocation trace, and the call returns `undefined`. Write method result types include `undefined`; check the result before using it. Methods declared as `{ read: true, handler }` still run and keep their exact result types.
+
+The Console shows the recorded call, such as `label(["Receipts"])`. The call text is Invocation content. A stored Invocation keeps it only with `content: 'content'` or when `metadataContent` lists `channel.effect.content`. The Console store lists it.
+
 ## Publish Agent activity without opening a chat
 
 Enable `activity` when an invocation should project its lifecycle into a Channel without treating that Channel as the Agent's conversation transport. With GitHub App webhooks enabled, ViteHub creates the authenticated app-owned comment on `pull_request.opened` unless `pullRequest.reconcile.events` explicitly excludes `opened`; later invocations reuse it. If that event is excluded, the first later invocation creates the comment. The comment claims work with a “Starting” row. One table lists the current and recent sessions, newest first, with links, status, GitHub relative start times, and completed durations. Normalized harness task checkboxes and the latest iteration result appear below it. Previous results stay under a collapsed section. The full transcript stays in the linked session when one is configured.
@@ -46,7 +123,7 @@ import { github } from 'vite-hub/agent/channels'
 export const agent = defineAgent({
   channels: {
     github: github({
-      activity: { publicUrl: 'https://agent.example.com' },
+      activity: true,
       app: true,
     }),
   },
@@ -54,7 +131,7 @@ export const agent = defineAgent({
 })
 ```
 
-Set `activity.publicUrl` to the public origin of the Agent's ViteHub Console. GitHub pull request webhook runs then receive a link to their own invocation as soon as they start. Use `activity: true` when the application supplies activity links itself.
+When `vitehub({ publicUrl })` is set, GitHub pull request webhook runs receive a link to their own Console invocation as soon as they start. Set `activity.publicUrl` to override the origin for this Channel. Without either, the run has no default link and the application can supply its own.
 
 Select the Channel and its destination when the application starts the invocation. Links are application-owned; use them for the current session, memory, or another inspection surface.
 
@@ -112,6 +189,8 @@ export default defineAgent({
 Reconciled deliveries use `pullRequest.reconcile.concurrencyLimit` concurrent invocation slots per repository and pull request. The default is `1`. Set a positive integer such as `4` to allow up to four deliveries for the same pull request to run together. Other pull requests have separate limits. ViteHub ignores bot-authored `synchronize` events to prevent a bot push from immediately triggering itself. Existing slash commands still work when reconciliation is enabled. Reconciliation starts work; merge policy and any required human consent remain application-owned instructions or Capabilities.
 
 Set `pullRequest.workspace.mount` to the repository path inside the Workspace. Omitting `workspace` mounts at `portal`. Both `workspace: true` and `workspace: {}` mount at the Workspace root. Set `workspace: false` to disable the pull request Workspace contribution.
+
+Folder Agent discovery reads these options to decide if the Agent owns a Workspace. `github({ pullRequest: false })` and `github({ pullRequest: { workspace: false } })` keep the Agent stateless, also when the Channel is exported from a relative module. Discovery rejects a `pullRequest` value that it cannot read, such as `options.pullRequest`. See [Agent Definitions](/docs/agents/agent-definitions) for the complete discovery rules.
 
 When a declared GitHub Source uses the same repository, root, include, and ignore at the same non-root mount, the pull request checkout replaces it for that Invocation. Reads use the pull request head SHA; the declared Source remains unchanged for other Invocations. A different repository or scope at the same mount fails the Invocation with an error that names the Source. Overlapping parent or child mounts and Sources contributed by other Capabilities also produce a conflict.
 
@@ -244,10 +323,7 @@ import { discord } from 'vite-hub/agent/channels'
 export default defineAgent({
   channels: {
     discord: discord({
-      adapter: {
-        botToken: process.env.DISCORD_BOT_TOKEN,
-        publicKey: process.env.DISCORD_PUBLIC_KEY,
-      },
+      adapter: true,
       messages: { lockScope: 'thread' },
     }),
   },
@@ -255,7 +331,45 @@ export default defineAgent({
 })
 ```
 
-Install the matching `@chat-adapter/*` package when a built-in Channel uses provider adapter options. Keep provider credentials in Server Env.
+Install the matching `@chat-adapter/*` package when a built-in Channel uses provider adapter options. With `adapter: true`, the Discord adapter reads its credentials from the Channel Env below.
+
+### Channel Env
+
+Built-in Channels read their credentials from Server Env. When `vitehub({ agent })` finds a built-in Channel factory in an Agent file, it declares these values under `env.server.<channel>`. You do not need an Env block for the default names. The values appear in `#vitehub/env/server` types, `describeServerEnv()`, and the Console Env page.
+
+| Channel | Server Env path | Host variable | Required |
+| --- | --- | --- | --- |
+| `telegram()` | `telegram.botToken` | `TELEGRAM_BOT_TOKEN` | Yes, unless the Channel sets `botToken` or `adapter` |
+| `telegram()` | `telegram.webhookSecret` | `TELEGRAM_WEBHOOK_SECRET_TOKEN` | No |
+| `telegram()` | `telegram.apiBaseUrl` | `TELEGRAM_API_BASE_URL` | No |
+| `discord()` | `discord.botToken`, `discord.publicKey`, `discord.applicationId` | `DISCORD_BOT_TOKEN`, `DISCORD_PUBLIC_KEY`, `DISCORD_APPLICATION_ID` | No |
+| `github()` | `github.token` | `VITEHUB_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` | No |
+| `github()` | `github.webhookSecret`, `github.appId`, `github.appInstallationId`, `github.appPrivateKey`, `github.appPrivateKeyPath` | `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_PRIVATE_KEY_PATH` | No |
+
+Tokens, keys, and webhook secrets are Secret Env. On Cloudflare, a required secret is added to `wrangler.secrets.required`. A required value makes `useServerEnv()` fail when it is missing, so supply `TELEGRAM_BOT_TOKEN` in every environment that runs an Agent with `telegram()`.
+
+An explicit Channel option always wins over Env. To use another host variable, declare the field yourself. Your declaration replaces the default for that field only:
+
+```ts [vite.config.ts]
+import { defineConfig } from 'vite'
+import { vitehub } from 'vite-hub'
+import { env } from 'vite-hub/env'
+
+export default defineConfig({
+  plugins: [vitehub({ agent: true })],
+  env: {
+    server: {
+      telegram: {
+        botToken: env({ secret: true, source: env.source('TELEGRAM_TOKEN') }),
+      },
+    },
+  },
+})
+```
+
+Discovery reads the Agent definition files. It finds factory calls imported from `vite-hub/agent/channels` or `@vite-hub/agent/channels`, such as `telegram()` or `channels.telegram()`, and shorthands in the `channels` option of `defineAgent()`, such as `channels: { telegram: { ... } }`. The option and each Channel value can be an object literal or a module-level `const` object. A bare factory such as `channels: { support: telegram }` counts as that factory without options. Discovery does not follow a Channel created in another module. In that case, declare the fields yourself. When the Channel options are not an object literal, the fields are declared as optional.
+
+When Server Env declares a field, the Channel reads only Server Env, including provider-backed values. A missing required value fails with `ENV_REQUIRED_MISSING` instead of using the default host variable. A Channel reads the host variable names directly only for a field that Server Env does not declare, for example without `vitehub()`. GitHub follows the same rules.
 
 For Telegram, ViteHub can own the verified webhook route and synchronize it after deployment:
 

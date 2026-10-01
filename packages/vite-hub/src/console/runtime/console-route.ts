@@ -1,7 +1,5 @@
 import { viteHubErrorDiagnostics } from "../../error-diagnostics.ts"
 import { decodeRouteSegment, encodeRouteSegment } from "@vite-hub/runtime"
-export const consoleDatabaseSchemaPath = "/database/schema/diagram"
-export const consoleDatabaseTablePath = "/database/:table?"
 export const consoleDatabasesSchemaPath = "/databases/:database/schema/diagram"
 export const consoleDatabasesTablePath = "/databases/:database?/:table?"
 
@@ -28,7 +26,6 @@ export function resolveConsoleRouteName(currentRouteName: string | symbol | null
 
   const consoleRouteName = [
     "vitehub-console-databases-schema",
-    "vitehub-console-database-schema",
     "vitehub-console-invocation",
     "vitehub-console-rate-limits",
     "vitehub-console-workspaces",
@@ -36,7 +33,6 @@ export function resolveConsoleRouteName(currentRouteName: string | symbol | null
     "vitehub-console-sandboxes",
     "vitehub-console-schedules",
     "vitehub-console-databases",
-    "vitehub-console-database",
     "vitehub-console-queues",
     "vitehub-console-agents",
     "vitehub-console-agent",

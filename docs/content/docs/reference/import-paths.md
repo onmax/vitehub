@@ -38,13 +38,12 @@ composition and explicit feature subpaths for application APIs.
 | `vite-hub/agent/invocations/sqlite` | LibSQL-compatible durable Agent Invocation Journal. |
 | `vite-hub/agent/mcp` | MCP Server configuration helpers. |
 | `vite-hub/agent/runtime/process` | Adaptive process-local Agent capacity for self-hosted Node applications. |
-| `vite-hub/console` | Route metadata for the local read-only invocation console. |
+| `vite-hub/console` | Console route metadata and the `ConsoleAgentInvocationInput` type. |
 | `vite-hub/console/auth` | Define a Console-owned Auth Definition and its access policy. |
 | `vite-hub/console/auth/client` | Configure Console Auth client plugins and setup. |
 | `vite-hub/console/auth/cloudflare-access` | Verify Cloudflare Access tokens for the Console guard. |
 | `vite-hub/console/auth/inline` | Build the Node-only inline GitHub Console Auth Definition. |
 | `vite-hub/console/blob` | Read-only Blob inspection registration for framework server integrations. |
-| `vite-hub/console/connections` | Connections management, connect, and callback route registration for framework server integrations. |
 | `vite-hub/console/database` | Read-only Database inspection registration for framework server integrations. |
 | `vite-hub/console/definitions` | Read-only Definition inspection registration for framework server integrations. |
 | `vite-hub/console/env` | Server Env declaration inventory registration for framework server integrations. |
@@ -142,8 +141,8 @@ for libraries, focused integrations, and advanced composition.
 | `@vite-hub/box/ssh` | Box Package | `sshLaunch` and `serveSsh` for a trusted SSH command transport. |
 | `@vite-hub/channels` | Channels Package | Outbound Channel Definitions with `defineOutboundChannel()`, explicit clients, portable types, and normalized delivery results. |
 | `@vite-hub/channels/server` | Channels Runtime | Server-only discovered named delivery. |
-| `@vite-hub/connections` and `@vite-hub/connections/google` | Connections Package | Connection Definitions, `oauth2()`, `useConnection()`, the Google preset, and typed Gmail Operations. |
-| `@vite-hub/connections/server`, `@vite-hub/connections/http`, and `@vite-hub/connections/agent` | Connections Runtime | Runtime access, management and OAuth routes, and the Agent primitive handle. |
+| `@vite-hub/connections` and `@vite-hub/connections/google` | Connections Package | Connection Definitions, the Google preset, and typed Gmail Operations. |
+| `@vite-hub/connections/server`, `@vite-hub/connections/http`, and `@vite-hub/connections/agent` | Connections Runtime | Server runtime access, management and OAuth routes, and the Agent primitive handle. |
 | `@vite-hub/content` and `@vite-hub/content/client` | Content Package | Comark Content runtime definition, ViteHub Source adaptation, server handler, and typed client. |
 | `@vite-hub/email` | Email Package | Explicit clients, portable types, and normalized errors. |
 | `@vite-hub/email/server` | Email Runtime | Server-only configured `email` Runtime Helper. |

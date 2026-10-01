@@ -37,11 +37,29 @@ const MAX_OBSERVATION_VALUE_ITEMS = 256
 const MAX_AGENT_CONFIGURATION_ITEMS = 32 * 1024
 const MAX_AGENT_CONFIGURATION_COLLECTION_ITEMS = 8 * 1024
 export const AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE = "vitehub.observation.truncated"
+const AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE = "vitehub.input.redacted"
 const AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE = "vitehub.observation.id"
+const PROMPT_TRUNCATED_ATTRIBUTE = "input.prompt.truncated"
+const INVOKER_PROFILE_TRUNCATED_ATTRIBUTE = "agent.invoker.profile.id.truncated"
 const APPENDED_OBSERVATION_ATTRIBUTE = "vitehub.observation.appended"
 const CANONICAL_TRACE_ATTRIBUTE_KEYS = new Set([
+  "input.replay.version",
+  "input.promptChanged",
+  "input.hasInvoker",
+  "input.hasResolvedInvoker",
+  "input.hasContext",
+  "input.hasRunMetadata",
+  "input.hasTimeout",
+  "input.hasAbortSignal",
+  "input.hasDryRun",
+  "input.hasData",
+  "input.hasOptions",
+  "input.hasMessages",
+  AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE,
   AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE,
   APPENDED_OBSERVATION_ATTRIBUTE,
+  PROMPT_TRUNCATED_ATTRIBUTE,
+  INVOKER_PROFILE_TRUNCATED_ATTRIBUTE,
   "vitehub.activity.owner",
   "vitehub.activity.phase",
   "vitehub.payload.summary",
@@ -140,8 +158,44 @@ export interface AgentInvocationStore {
   listCapabilityIds?(agentName?: string): MaybePromise<readonly string[]>
   listTriggeredBy?(agentName?: string): MaybePromise<readonly string[]>
   release(id: string, claimId: string): MaybePromise<void>
+  /** Deletes one terminal record and the claim the store keeps for it. Pending and running records remain. */
+  delete?(id: string): MaybePromise<AgentInvocationDeleteOutcome>
+  /** Deletes terminal records selected by `updatedBefore`, or by the store's configured retention when it is omitted. */
+  prune?(options: AgentInvocationStorePruneOptions): MaybePromise<AgentInvocationPruneResult>
   /** Updates are idempotent for observations carrying the ViteHub observation identity attribute. */
   update(id: string, input: AgentInvocationStoreUpdateInput, claimId?: string): MaybePromise<AgentInvocationRecord | undefined>
+}
+
+/** Retention limits for terminal records. Pending and running records are never removed by retention. */
+export interface AgentInvocationRetentionOptions {
+  /** Maximum age of terminal records, measured from their last update. Set to false to disable age-based retention. */
+  maxAgeMs?: false | number
+  /** Maximum number of terminal records. Set to false to disable count-based retention. */
+  maxRecords?: false | number
+}
+
+/** `not-terminal` means the record is pending or running and was kept. */
+export type AgentInvocationDeleteOutcome = "deleted" | "not-found" | "not-terminal"
+
+export interface AgentInvocationStorePruneOptions {
+  /** Report the selected record IDs without deleting them. */
+  dryRun?: boolean
+  /** ISO timestamp. Selects terminal records last updated before this time. */
+  updatedBefore?: string
+}
+
+export interface AgentInvocationPruneOptions {
+  /** Report the selected record IDs without deleting them. */
+  dryRun?: boolean
+  /** Selects terminal records last updated more than this many milliseconds ago. Omit it to apply the store's configured retention. */
+  olderThanMs?: number
+}
+
+export interface AgentInvocationPruneResult {
+  /** True when the store reported the selection without deleting it. */
+  dryRun: boolean
+  /** Deleted record IDs, or the IDs a dry run selected. */
+  ids: readonly string[]
 }
 
 export interface AgentInvocationObservationOptions {
@@ -194,6 +248,10 @@ export interface AgentInvocations {
   /** Durably append evidence to a live or terminal invocation. Repeated IDs return the existing observation. */
   appendObservation(id: string, event: TraceEvent, options: { id: string }): Promise<AgentInvocationRecord | undefined>
   readonly [agentInvocationsBrand]: true
+  /** Whether the configured store implements deletion. */
+  readonly supportsDelete: boolean
+  /** Deletes one terminal record. Rejects when the store does not implement deletion. */
+  delete(id: string): Promise<AgentInvocationDeleteOutcome>
   get(id: string, options?: { observationNames?: readonly string[] }): Promise<AgentInvocationRecord | undefined>
   getByRunId(runId: string, agentName?: string): Promise<AgentInvocationRecord | undefined>
   /** Reads invocation metadata without observation payloads. */
@@ -202,6 +260,8 @@ export interface AgentInvocations {
   listAgentNames(): Promise<readonly string[]>
   listCapabilityIds(agentName?: string): Promise<readonly string[]>
   listTriggeredBy(agentName?: string): Promise<readonly string[]>
+  /** Deletes terminal records. Rejects when the store does not implement pruning. */
+  prune(options?: AgentInvocationPruneOptions): Promise<AgentInvocationPruneResult>
 }
 
 interface BoundAgentInvocations extends AgentInvocations {
@@ -792,6 +852,20 @@ function boundedObservation(
   }
   const payload = boundedObservationPayload(observation.payload, payloadBudget, builtIns)
   const canonicalAttributes: Record<string, unknown> = {}
+  if (observation.name === "agent.invocation.start") {
+    if (observation.attributes?.["input.replay.version"] === 5) canonicalAttributes["input.replay.version"] = 5
+    for (const key of ["input.promptChanged", "input.hasInvoker", "input.hasResolvedInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"]) {
+      const value = observation.attributes?.[key]
+      if (hasRuntimeType(value, "boolean")) canonicalAttributes[key] = value
+    }
+  }
+  if (observation.attributes?.[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] === true) canonicalAttributes[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] = true
+  if (observation.name === "agent.invocation.start" && observation.attributes?.["input.prompt"] !== undefined) {
+    canonicalAttributes[PROMPT_TRUNCATED_ATTRIBUTE] = observation.attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
+  }
+  if (observation.name === "agent.invocation.start" && observation.attributes?.["agent.invoker.profile.id"] !== undefined) {
+    canonicalAttributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] = observation.attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] === true
+  }
   if (identity !== undefined) canonicalAttributes[AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE] = identity
   if (observation.attributes?.[APPENDED_OBSERVATION_ATTRIBUTE] === true) canonicalAttributes[APPENDED_OBSERVATION_ATTRIBUTE] = true
   if (observation.activity) {
@@ -842,6 +916,14 @@ function boundedObservation(
       attributes[AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE] = true
     }
   }
+  if (observation.name === "agent.invocation.start" && observation.attributes?.["input.prompt"] !== undefined && attributes) {
+    attributes[PROMPT_TRUNCATED_ATTRIBUTE] = attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
+      || attributes["input.prompt"] !== observation.attributes["input.prompt"]
+  }
+  if (observation.name === "agent.invocation.start" && observation.attributes?.["agent.invoker.profile.id"] !== undefined && attributes) {
+    attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] = attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] === true
+      || attributes["agent.invoker.profile.id"] !== observation.attributes["agent.invoker.profile.id"]
+  }
   return {
     ...observation,
     name: boundedString(observation.name)!,
@@ -883,6 +965,81 @@ function assertInvocationId(id: string): void {
 export async function agentInvocationId(runId: string, agentName?: string): Promise<string> {
   assertInvocationId(runId)
   return await boundedIdentity(invocationIdentity(runId, agentName))
+}
+
+/** Why a journaled Invocation cannot be started again with the same input. */
+export type AgentInvocationRerunUnavailableReason =
+  /** The Invocation has not reached a terminal state. */
+  | "invocation-not-terminal"
+  /** The journal has no start observation with a text prompt. */
+  | "input-not-captured"
+  /** The record predates the replay schema or lacks its required metadata. */
+  | "replay-metadata-unavailable"
+  /** The Invocation supplied an invoker identity, which the journal does not replay. */
+  | "input-has-invoker"
+  /** The Invocation received structured input, which the journal does not replay. */
+  | "input-has-data"
+  /** The Invocation received call options, which the journal does not replay. */
+  | "input-has-options"
+  /** The journal redactor changed the captured input or replay metadata. */
+  | "input-redacted"
+  /** The journal bounded the captured prompt or selected Invoker Profile. */
+  | "input-truncated"
+  /** The Invocation received messages or attachments, which the journal does not keep for replay. */
+  | "input-has-messages"
+  /** Trusted input context cannot be reconstructed from the captured prompt and profile. */
+  | "input-has-context"
+  /** Semantic run metadata is not retained by the rerun input. */
+  | "input-has-run-metadata"
+  /** The original Invocation set a timeout. */
+  | "input-has-timeout"
+  /** The caller supplied cancellation or a deadline through a direct abort signal. */
+  | "input-has-abort-signal"
+  /** The original Invocation suppressed writes through dry-run mode. */
+  | "input-has-dry-run"
+  /** Input preparation changed the prompt before execution. */
+  | "input-prompt-changed"
+
+export type AgentInvocationRerunInput =
+  | {
+    available: true
+    /** Invoker Profile selected at start, independent of the resolved invoker identity. */
+    invokerProfileId?: string
+    prompt: string
+  }
+  | { available: false, reason: AgentInvocationRerunUnavailableReason }
+
+/**
+ * Reads the complete prompt and invoker that the journal captured when the Invocation started.
+ * A caller can start a new Invocation with this input. The original record does not change.
+ */
+export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "observations"> & Partial<Pick<AgentInvocationRecord, "status">>): AgentInvocationRerunInput {
+  if (record.status !== undefined && !terminalStatus(record.status)) {
+    return { available: false, reason: "invocation-not-terminal" }
+  }
+  const start = record.observations.find(observation => observation.name === "agent.invocation.start")
+  const attributes = start?.attributes
+  if (!attributes) return { available: false, reason: "input-not-captured" }
+  if (attributes[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] === true) return { available: false, reason: "input-redacted" }
+  if (attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] === true || attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
+    || (attributes[PROMPT_TRUNCATED_ATTRIBUTE] === undefined && attributes[AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE] === true)) return { available: false, reason: "input-truncated" }
+  if (attributes["input.hasData"] === true) return { available: false, reason: "input-has-data" }
+  if (attributes["input.hasOptions"] === true) return { available: false, reason: "input-has-options" }
+  if (attributes["input.hasMessages"] === true || attributes["input.messages"] !== undefined) return { available: false, reason: "input-has-messages" }
+  const prompt = attributes["input.prompt"]
+  if (!hasRuntimeType(prompt, "string") || !prompt.trim()) return { available: false, reason: "input-not-captured" }
+  if (attributes["input.replay.version"] !== 5 || ["input.promptChanged", "input.hasInvoker", "input.hasResolvedInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"]
+    .some(key => !hasRuntimeType(attributes[key], "boolean"))) return { available: false, reason: "replay-metadata-unavailable" }
+  if (attributes["input.promptChanged"] === true) return { available: false, reason: "input-prompt-changed" }
+  if (attributes["input.hasInvoker"] === true) return { available: false, reason: "input-has-invoker" }
+  if (attributes["input.hasResolvedInvoker"] === true) return { available: false, reason: "input-has-invoker" }
+  if (attributes["input.hasContext"] === true) return { available: false, reason: "input-has-context" }
+  if (attributes["input.hasAbortSignal"] === true) return { available: false, reason: "input-has-abort-signal" }
+  if (attributes["input.hasRunMetadata"] === true) return { available: false, reason: "input-has-run-metadata" }
+  if (attributes["input.hasTimeout"] === true) return { available: false, reason: "input-has-timeout" }
+  if (attributes["input.hasDryRun"] === true) return { available: false, reason: "input-has-dry-run" }
+  const invokerProfileId = attributes["agent.invoker.profile.id"]
+  return { available: true, ...hasRuntimeType(invokerProfileId, "string") && invokerProfileId ? { invokerProfileId } : {}, prompt }
 }
 
 function assertStore(store: AgentInvocationStore | undefined): asserts store is AgentInvocationStore {
@@ -1301,6 +1458,29 @@ export function createMemoryAgentInvocationStore(): AgentInvocationStore {
     release(id, claimId) {
       if (claims.get(id)?.claimId === claimId) claims.delete(id)
     },
+    delete(id) {
+      const record = records.get(id)
+      if (!record) return "not-found"
+      if (!terminalStatus(record.status)) return "not-terminal"
+      records.delete(id)
+      claims.delete(id)
+      return "deleted"
+    },
+    prune(options) {
+      // The memory store has no configured retention, so only an explicit cutoff selects records.
+      const ids = options.updatedBefore === undefined
+        ? []
+        : [...records.values()]
+            .filter(record => terminalStatus(record.status) && record.updatedAt < options.updatedBefore!)
+            .map(record => record.id)
+      if (!options.dryRun) {
+        for (const id of ids) {
+          records.delete(id)
+          claims.delete(id)
+        }
+      }
+      return { dryRun: options.dryRun === true, ids }
+    },
     update(id, input, claimId) {
       const record = records.get(id)
       if (!record || (claimId && claims.get(id)?.claimId !== claimId)) return
@@ -1675,12 +1855,16 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
     try {
       const redacted = options.redact(cloneObservation(observation))
       const identity = observationIdentity(observation)
-      if (!redacted || identity === undefined) return redacted
+      if (!redacted) return
+      const inputRedacted = observation.name === "agent.invocation.start"
+        && ["input.prompt", "input.replay.version", "input.promptChanged", "input.hasInvoker", "input.hasResolvedInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"]
+          .some(key => observation.attributes?.[key] !== redacted.attributes?.[key])
       return {
         ...redacted,
         attributes: {
           ...redacted.attributes,
-          [AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE]: identity,
+          ...(identity !== undefined ? { [AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE]: identity } : {}),
+          ...(inputRedacted || observation.attributes?.[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] === true ? { [AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE]: true } : {}),
         },
       }
     }
@@ -1699,6 +1883,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
   const store = options.store
   const invocations: BoundAgentInvocations = {
     [agentInvocationsBrand]: true,
+    get supportsDelete() { return hasRuntimeType(store.delete, "function") },
     async [recoverInterruptedAgentInvocationsSymbol](recoveryOptions) {
       return await failInterruptedAgentInvocations(store, recoveryOptions)
     },
@@ -2165,6 +2350,30 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         throw agentDiagnostics.AGENT_R0902({ message: "[vitehub] Invocation store did not persist appended observation." })
       }
       return persisted
+    },
+    async delete(id) {
+      assertInvocationId(id)
+      if (!store.delete) {
+        throw agentDiagnostics.AGENT_R0932({ message: "[vitehub] This Agent Invocation store does not support deletion. Implement store.delete() or use a ViteHub store." })
+      }
+      return await store.delete(id)
+    },
+    async prune(pruneOptions = {}) {
+      if (!store.prune) {
+        throw agentDiagnostics.AGENT_R0932({ message: "[vitehub] This Agent Invocation store does not support pruning. Implement store.prune() or use a ViteHub store." })
+      }
+      const { dryRun, olderThanMs } = pruneOptions
+      if (olderThanMs !== undefined && (!Number.isSafeInteger(olderThanMs) || olderThanMs < 0)) {
+        throw agentDiagnostics.AGENT_R0929({ message: "[vitehub] Agent Invocation prune olderThanMs must be a non-negative safe integer." })
+      }
+      const cutoff = olderThanMs === undefined ? undefined : new Date(Date.now() - olderThanMs)
+      if (cutoff && Number.isNaN(cutoff.getTime())) {
+        throw agentDiagnostics.AGENT_R0929({ message: "[vitehub] Agent Invocation prune olderThanMs must produce a cutoff within JavaScript's Date range." })
+      }
+      return await store.prune({
+        ...(dryRun ? { dryRun: true } : {}),
+        ...(cutoff === undefined ? {} : { updatedBefore: cutoff.toISOString() }),
+      })
     },
     async get(id, options) {
       assertInvocationId(id)

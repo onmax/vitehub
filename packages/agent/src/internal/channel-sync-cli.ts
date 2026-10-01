@@ -1,6 +1,7 @@
 import { join } from "node:path"
 
 import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { withViteStageServer } from "@vite-hub/internal/vite-stage"
 
 import { discoverAgentDefinitions } from "../discovery.ts"
 import { getAgentChannelHistoryDefinition } from "./channel-history.ts"
@@ -302,36 +303,12 @@ function uniqueAgentDefinitions(
   return [...unique.values()]
 }
 
-async function loadChannelTargetsExclusive(
+async function loadQueuedChannelTargets(
   input: ChannelSyncLoadInput,
   syncOnly: boolean,
 ): Promise<Array<LoadedChannelTarget & { sync?: AgentChannelSyncProvider }>> {
-  const { createServer, loadEnv } = await import("vite")
-  let server: Awaited<ReturnType<typeof createServer>> | undefined
-  const previousEnvironment = new Map(
-    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
-  )
-  const selectedEnvironment = new Map(
-    Object.entries(input.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
-  )
-  try {
-    for (const key of Object.keys(process.env)) delete process.env[key]
-    for (const [key, value] of selectedEnvironment) process.env[key] = value
-    server = await createServer({
-      appType: "custom",
-      logLevel: "silent",
-      mode: input.stage,
-      root: input.rootDir,
-      server: { hmr: false, middlewareMode: true },
-    })
-    const environment = {
-      ...loadEnv(input.stage, server.config.envDir, ""),
-      ...Object.fromEntries(selectedEnvironment),
-    }
-    for (const [key, value] of Object.entries(environment)) {
-      if (value === undefined) continue
-      process.env[key] = value
-    }
+  const vite = await import("vite")
+  return await withViteStageServer(vite, input, async (server) => {
     const targets: Array<LoadedChannelTarget & { sync?: AgentChannelSyncProvider }> = []
     const stageRoot = server.config.root
     const stageServerDirs = (server.config as typeof server.config & {
@@ -366,38 +343,7 @@ async function loadChannelTargetsExclusive(
       }
     }
     return targets
-  }
-  finally {
-    try {
-      await server?.close()
-    }
-    finally {
-      for (const key of Object.keys(process.env)) delete process.env[key]
-      for (const [key, value] of previousEnvironment) {
-        process.env[key] = value
-      }
-    }
-  }
-}
-
-let channelSyncTargetLoadQueue: Promise<void> = Promise.resolve()
-
-async function loadQueuedChannelTargets(
-  input: ChannelSyncLoadInput,
-  syncOnly: boolean,
-): Promise<Array<LoadedChannelTarget & { sync?: AgentChannelSyncProvider }>> {
-  const previous = channelSyncTargetLoadQueue
-  let release!: () => void
-  channelSyncTargetLoadQueue = new Promise<void>((resolve) => {
-    release = resolve
   })
-  await previous
-  try {
-    return await loadChannelTargetsExclusive(input, syncOnly)
-  }
-  finally {
-    release()
-  }
 }
 
 async function loadChannelSyncTargets(

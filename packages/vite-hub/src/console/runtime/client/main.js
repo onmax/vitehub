@@ -10,14 +10,11 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import ConsoleApp from "../components/console-app.vue";
 import ConsoleBlob from "../components/console-blob.vue";
-import ConsoleDatabase from "../components/console-database.vue";
 import ConsoleDefinitions from "../components/console-definitions.vue";
 import ConsoleHome from "../components/console-home.vue";
 import ConsoleKv from "../components/console-kv.vue";
 import {
   consoleMountBase,
-  consoleDatabaseSchemaPath,
-  consoleDatabaseTablePath,
   consoleDatabasesSchemaPath,
   consoleDatabasesTablePath,
 } from "../console-route";
@@ -110,66 +107,6 @@ const router = createRouter({
         kvBase: `${hostBase}/api/_vitehub/console/kv`,
         searchBase: `${hostBase}/api/_vitehub/console/search`,
         sectionsBase,
-      },
-    },
-    {
-      component: ConsoleDatabase,
-      name: "vitehub-console-database-schema",
-      path: consoleDatabaseSchemaPath,
-      meta: { consoleSection: "database", title: "Schema · ViteHub Console" },
-      props: {
-        agentsBase: `${hostBase}/api/_vitehub/console/agents`,
-        databaseBase: `${hostBase}/api/_vitehub/console/database`,
-        definitionsBase: `${hostBase}/api/_vitehub/console/definitions`,
-        kvBase: `${hostBase}/api/_vitehub/console/kv`,
-        searchBase: `${hostBase}/api/_vitehub/console/search`,
-        sectionsBase,
-        view: "schema",
-      },
-    },
-    {
-      component: ConsoleDatabase,
-      name: "vitehub-console-database",
-      path: consoleDatabaseTablePath,
-      meta: { consoleSection: "database", title: "Database · ViteHub Console" },
-      props: {
-        agentsBase: `${hostBase}/api/_vitehub/console/agents`,
-        databaseBase: `${hostBase}/api/_vitehub/console/database`,
-        definitionsBase: `${hostBase}/api/_vitehub/console/definitions`,
-        kvBase: `${hostBase}/api/_vitehub/console/kv`,
-        searchBase: `${hostBase}/api/_vitehub/console/search`,
-        sectionsBase,
-        view: "data",
-      },
-    },
-    {
-      component: ConsoleKv,
-      name: "vitehub-console-kv",
-      path: "/kv",
-      meta: { consoleSection: "kv", title: "KV · ViteHub Console" },
-      props: {
-        agentsBase: `${hostBase}/api/_vitehub/console/agents`,
-        definitionsBase: `${hostBase}/api/_vitehub/console/definitions`,
-        kvBase: `${hostBase}/api/_vitehub/console/kv`,
-        searchBase: `${hostBase}/api/_vitehub/console/search`,
-        sectionsBase,
-      },
-    },
-    {
-      component: ConsoleApp,
-      name: "vitehub-console-usage",
-      path: "/usage",
-      meta: { consoleSection: "usage", title: "Usage · ViteHub Console" },
-      props: {
-        agentsBase: `${hostBase}/api/_vitehub/console/agents`,
-        apiBase: `${hostBase}/api/_vitehub/console/invocations`,
-        capabilitiesBase,
-        definitionsBase: `${hostBase}/api/_vitehub/console/definitions`,
-        kvBase: `${hostBase}/api/_vitehub/console/kv`,
-        hostBase,
-        searchBase: `${hostBase}/api/_vitehub/console/search`,
-        sectionsBase,
-        usageBase: `${hostBase}/api/_vitehub/console/usage`,
       },
     },
     {

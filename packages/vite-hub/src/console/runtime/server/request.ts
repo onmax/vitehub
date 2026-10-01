@@ -4,6 +4,7 @@ interface ConsoleHeaders {
 }
 
 export interface ConsoleRequestEvent {
+  env?: Record<string, unknown>
   context?: {
     clientAddress?: string
     params?: Record<string, string | undefined>

@@ -20,6 +20,7 @@ import { toAgentPublicError } from "../agent-error.ts"
 import { getAccessCapabilityOptions } from "../capabilities/access-metadata.ts"
 import { assertChatDeliveryOptions, CHAT_FINISH_EXTENSION_CONTEXT_KEY, getChatCapabilityOptions, resolveChatErrorFallbackText } from "../chat-trigger.ts"
 import {
+  chatMessageHookArgs,
   chatTriggerHistoryLimit,
   createChatMessageTriggerInput,
   derivedChatTriggerInvoker,
@@ -7074,6 +7075,7 @@ export function createChannelChatRouteHandler(
       )
       const trustedInput = mergeAgentChannelChatRouteInput(baseInput, trustInput ? trustAgentChannelChatRouteInput(body, routeOptions.input) : undefined)
       const resumableMessageId = trustedInput.run?.messageId
+      const currentMessage = structuredClone(chatMessageHookArgs(baseInput.messages.at(-1)))
       const inputContext = {
         agentName,
         // SAFETY: The route normalized this value for an internal boundary whose generic signature cannot express the narrowed variant.
@@ -7093,6 +7095,7 @@ export function createChannelChatRouteHandler(
         : undefined
       const admittedInput = mergeAgentChannelChatRouteInput(trustedInput, await routeOptions.admission?.context?.(inputContext))
       let triggerInput = mergeAgentChannelChatRouteInput(admittedInput, await routeOptions.mapInput?.({ ...inputContext, input: admittedInput }))
+      triggerInput = { ...triggerInput, currentMessage }
       if (resumableSession) {
         const claim = resumableSession.claim(resumableMessageId || "default")
         if (claim.kind === "existing") return await claim.response

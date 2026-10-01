@@ -8,11 +8,11 @@ icon: i-lucide-monitor-dot
 
 The ViteHub Console inspects the primitives enabled in the same ViteHub configuration. It is off by default. Enable it, start the app, then open `/_vitehub` to choose a section.
 
-ViteHub renders the Console UI and serves its static assets. Console RPC calls use stateless JSON `POST` requests, so the same interface works in development and on hosts that route consecutive requests to different instances, such as Cloudflare Workers. Connections also registers management and OAuth routes. Its OAuth flow uses browser redirects and stored state, as described below.
+ViteHub renders the Console UI and serves its static assets. Each Console operation is one stateless JSON `POST` request, so the same interface works in development and on hosts that route consecutive requests to different instances, such as Cloudflare Workers. The Console does not expose separate resource routes.
 
-The Console currently exposes Env, Connections, Agents, Blob, Database, KV, Rate Limit, Sandbox, Workspace, Workflow, Queue, and Schedule. The home shows only configured primitives in a grid and places the last opened primitive first, with that preference stored in the browser. Opening a section replaces the sidebar items with that section's navigation, and **All sections** returns to the Console home. **Search console** opens a command palette with the active primitive pages plus Agents and retained sessions when Agents is enabled. Blob lists configured stores and bounded pages of object metadata without downloading contents or exposing provider URLs. Database lists discovered Definitions, their source metadata, definition mode, and statically discovered table names without connecting to a database. KV lists configured stores and keys, then fetches a value only after the key is selected. Rate Limit lists statically discovered policies and source locations without reading live counters. Sandbox lists discovered Definitions without starting runtime resources. Workspace lists discovered Definitions and source roots without initializing workspace stores, Sources, files, or processes. Workflow, Queue, and Schedule list discovered Definitions and their source metadata without loading the Definition modules. Static Schedule Definitions also show their cron expression and UTC time zone; runtime targets show whether runtime Schedules are allowed.
+The Console currently exposes Env, Agents, Blob, Database, KV, Rate Limit, Sandbox, Workspace, Workflow, Queue, and Schedule. The home shows only configured primitives in a grid and places the last opened primitive first, with that preference stored in the browser. Opening a section replaces the sidebar items with that section's navigation, and **All sections** returns to the Console home. **Search console** opens a command palette with the active primitive pages plus Agents and retained sessions when Agents is enabled. Blob lists configured stores and bounded pages of object metadata without downloading contents or exposing provider URLs. Databases connects to each configured Database and reads live data. It shows the tables, columns, and relationships from the Drizzle schema, and pages of rows with search and sort. It runs only `SELECT` and `COUNT` queries. KV lists configured stores and keys, then fetches a value only after the key is selected. Rate Limit lists statically discovered policies and source locations without reading live counters. Sandbox lists discovered Definitions without starting runtime resources. Workspace lists discovered Definitions and source roots without initializing workspace stores, Sources, files, or processes. Workflow, Queue, and Schedule list discovered Definitions and their source metadata without loading the Definition modules. Static Schedule Definitions also show their cron expression and UTC time zone; runtime targets show whether runtime Schedules are allowed.
 
-Console data can contain user prompts, model output, tool activity, Blob metadata, provider metadata, and stored KV values. Protect the Console before making it reachable on a production URL.
+Console data can contain user prompts, model output, tool activity, Blob metadata, provider metadata, stored KV values, and Database rows. Protect the Console before making it reachable on a production URL.
 
 ## Enable the Console
 
@@ -84,19 +84,11 @@ If `console` is omitted or set to `false`, ViteHub does not register a Console p
 
 Open Env to search declared Server Env variables and filter by source. Select a variable to inspect its provider, secret flag, requirement, and whether a default is configured. Host environment includes process environment variables and host runtime bindings.
 
-This view does not read secret values, call external providers, or check credential validity. It does not enumerate undeclared host variables. Values and defaults remain hidden. Update host values through the deployment configuration and provider values in their connected store. Set `env: false` in ViteHub options to disable Env and its Console section.
+Select **Check status** to add a Status column from `inspectServerEnv()`. It shows whether each value is available, defaulted, missing, invalid, or failed in its provider. Red badges mark values that make `loadServerEnv()` fail. The check reads the Console server's environment and calls configured providers, so it runs only when you select it. It never returns values. Use `vitehub env check` for the same check in CI.
 
-## Manage Connections
+The declaration list does not read secret values or check credential validity. It does not enumerate undeclared host variables. Values and defaults remain hidden. Update host values through the deployment configuration and provider values in their connected store. Set `env: false` in ViteHub options to disable Env and its Console section.
 
-Open Connections to see each [Connection](/docs/server-primitives/connections) from `server/connections/`, with its provider, account, status, and token expiry. Select a Connection to open its details:
-
-- **Connection** shows the account, scopes, and last error. **Connect** or **Reconnect** starts the provider consent flow and returns to the Console. **Refresh token** refreshes the access token. **Disconnect** deletes the grant. It also revokes the grant at the provider when the provider supports revocation.
-- **Access** shows the rules from the Connection Definition for server code, routes, and Agents.
-- **Activity** lists Agent calls, writes, denials, failures, and account changes, newest first. Agent calls link to their Invocation. Activity has no request or response bodies or headers.
-
-The Console registers `POST /_vitehub/connections/manage`, `GET /_vitehub/connections/:name/connect`, and `GET /_vitehub/connections/:name/callback` only when Connections is enabled. Console Auth protects these routes in production. The Console records its actions with the actor `console`. The Connections section is not available in Nuxt apps.
-
-Starting Connect creates a single-use OAuth ticket in the Connections store. The browser opens the GET connect route with that ticket, receives a state cookie, and follows a redirect to the provider. The provider redirects back to the GET callback route, which validates the stored OAuth state and browser cookie before saving the grant and returning to the Console. Proxies must forward both GET routes, their query strings, and cookies, as well as the management POST route. When Vite `base` is set, these routes use that mount prefix.
+For a provider variable, select **Manage credential** to open the provider's management view. The Console sends these requests to `POST /_vitehub/env/manage`. If the provider supports management, as an [Env Bridge](/docs/server-primitives/env-bridge) store does, the view shows only the operations that your grants allow: credential metadata, a masked preview, conditional replacement, and, for administrators, activity and access grants. Other providers are read-only in the Console, so manage their values in the connected store.
 
 ## Develop against a fixture
 
@@ -149,7 +141,7 @@ The Console registers its page, assets, and RPC endpoint under `/_vitehub/**`. T
 
 ViteHub sends `X-Robots-Tag: noindex, nofollow` on the Console route and includes the equivalent robots meta tag in the standalone Console page. These directives keep the Console out of search engines that honor them. They do not restrict access, so keep the production access policy below.
 
-Console Auth can use its own Better Auth session. It does not require the application's Primary Auth Definition. For a Node host, the inline GitHub setup accepts only verified email addresses in `allowedEmails`:
+Console Auth can use its own Better Auth session. It does not require the application's Primary Auth Definition. For a Node host, the inline GitHub setup accepts verified email addresses in `allowedEmails`, active members of a GitHub organization in `org`, or both:
 
 If you previously protected the Console through Primary Auth, remove its `/_vitehub/**` and `/api/_vitehub/console/**` access routes when you switch to `console.auth`. Keep `auth: true` if application routes still use Primary Auth. Otherwise, both auth guards apply and maintainers must sign in twice.
 
@@ -173,9 +165,24 @@ export default defineConfig({
 })
 ```
 
-Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `BETTER_AUTH_SECRET` in the server environment. `baseURL` is the public origin used for OAuth redirects; set it when a proxy terminates TLS. The GitHub callback URL is `https://agent.example.com/api/_vitehub/console/auth/callback/github`. For Nuxt apps mounted below `/`, ViteHub includes `app.baseURL` in the callback and redirects. Put `databasePath` on persistent storage. Console Auth creates or updates its Better Auth tables before the first protected request. It refuses a missing database or secret. Application requests and channel requests keep their own authentication.
+To admit an organization instead of listing emails, set `org` to one GitHub organization login or a list. Sign-in then requests the `read:org` and `user:email` scopes. It requires an active membership (`GET /user/memberships/orgs/<org>`) in one of the organizations and a verified email. A primary verified email is preferred. When you set both `org` and `allowedEmails`, a user must pass both checks. Sign-in selects an allowlisted verified email, preferring the primary when it is allowlisted. Adding or changing the organization gate invalidates existing session cookies and requires a new sign-in. Any OAuth sign-in already in progress when the gate changes must also be restarted. Organization case, order, and duplicate entries do not change the gate. Membership is checked at sign-in, so a removed member keeps access until the session expires. Set `session.expiresIn` in seconds to shorten sessions. When `dataDir` is set, `databasePath` defaults to `<dataDir>/console-auth.sqlite`:
 
-For a custom provider, GitHub organization check, or Better Auth server plugins, commit `vitehub/console/auth/server.ts` and use `console: { access: 'auth', auth: {} }`. The file can import `defineAuth` and export a Console definition:
+```ts [vite.config.ts]
+export default defineConfig({
+  plugins: [vitehub({
+    preset: 'node',
+    dataDir: '/var/lib/app',
+    console: {
+      access: 'auth',
+      auth: { provider: 'github', org: 'acme', session: { expiresIn: 12 * 60 * 60 } },
+    },
+  })],
+})
+```
+
+Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `BETTER_AUTH_SECRET` in the server environment. `baseURL` is the public origin used for OAuth redirects. It defaults to `vitehub({ publicUrl })`, then the request origin; set one of them when a proxy terminates TLS. The GitHub callback URL is `https://agent.example.com/api/_vitehub/console/auth/callback/github`. For Nuxt apps mounted below `/`, ViteHub includes `app.baseURL` in the callback and redirects. Put `databasePath` on persistent storage. ViteHub creates its parent directory and makes the file readable only by its owner. Console Auth creates or updates its Better Auth tables before the first protected request. It refuses a missing database or secret. Application requests and channel requests keep their own authentication.
+
+For a custom provider or Better Auth server plugins, commit `vitehub/console/auth/server.ts` and use `console: { access: 'auth', auth: {} }`. The file can import `defineAuth` and export a Console definition:
 
 ```ts [vitehub/console/auth/server.ts]
 import { DatabaseSync } from 'node:sqlite'
@@ -273,6 +280,8 @@ curl https://agent.example.com/api/_vitehub/console/status \
   -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET"
 ```
 
+`vitehub schedule run --url` forwards these headers when `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` are set in its environment. See [Run a Schedule on demand](/docs/development/cli#run-a-schedule-on-demand).
+
 A tool that can send only an `Authorization` header can use the same service token when the Access application reads service tokens from that header (`read_service_tokens_from_header: "Authorization"`). Send `Authorization: {"cf-access-client-id":"<id>","cf-access-client-secret":"<secret>"}`. A user token from `cloudflared access token -app=https://agent.example.com` also works as the `CF_Authorization` cookie.
 
 ### Reuse Primary Auth
@@ -336,23 +345,15 @@ console: { exposure: 'host-managed', invoke: true }
 console: { access: 'auth', invoke: true }
 ```
 
-For `host-managed`, your middleware must authenticate and authorize all `/_vitehub/**` and `/api/_vitehub/console/**` routes, including the RPC transport, before it allows a request through. The build cannot verify this policy. Setting `invoke: false` keeps inspection available and disables Agent Invocation creation. The development shorthand `console: true` enables invocation; fixture mode always disables it.
-
-### Manage Connections
-
-Explicit `access` and `exposure` configurations also keep [Connections](/docs/server-primitives/connections) read-only. Console users can list Connections, access rules, and activity. Set `manageConnections: true` to let them connect, refresh, and disconnect:
-
-```ts
-console: { access: 'auth', manageConnections: true }
-```
-
-Every user that passes the Console access policy can then manage every Connection. Restrict the policy to the people who own the provider accounts. The development shorthand `console: true` enables management; fixture mode always disables it.
+For `host-managed`, your middleware must authenticate and authorize all `/_vitehub/**` and `/api/_vitehub/console/**` routes, including the RPC transport, before it allows a request through. The build cannot verify this policy. Setting `invoke: false` keeps inspection available and disables Agent Invocation creation and manual Schedule runs. The development shorthand `console: true` enables invocation; fixture mode always disables it.
 
 Console RPC requests must come from the same origin. The transport rejects opaque origins and browser requests marked `same-site` or `cross-site`. Browser Fetch Metadata permits same-origin requests through reverse proxies. When that metadata is absent, the transport compares the `Origin` header with the request URL. Hosts must reconstruct the public request origin for older browsers that send `Origin` without Fetch Metadata.
 
 Browsers can omit both headers on HTTP origins. Requests with neither same-origin Fetch Metadata nor an `Origin` header must send `x-vitehub-console: 1`. A foreign browser page cannot add this header without a CORS preflight, which the transport rejects. The built-in Console client adds it to every RPC call automatically. Server clients must add it when they send RPC calls without origin headers. The marker is not a credential. All requests still require the configured authentication and authorization.
 
-The `vitehub:console:agent-invocations` RPC operation accepts an Agent name, `method: 'POST'`, and a body typed as `ConsoleAgentInvocationInput` from `vite-hub/console`. The body requires a non-empty `prompt` and can include a configured `invokerProfileId` and prior `messages`.
+Reverse proxies must not add the marker to incoming requests or permit CORS preflights from foreign origins. Otherwise, foreign pages could bypass the transport's origin checks.
+
+The `vitehub:console:agent-invocations` RPC operation accepts an Agent name, `method: 'POST'`, and a body typed as `ConsoleAgentInvocationInput` from `vite-hub/console`. The body requires a non-empty `prompt` unless it includes an image attachment. It can include a configured `invokerProfileId` and prior `messages`.
 
 ```ts
 import { createMessage } from 'vite-hub/agent'
@@ -369,6 +370,17 @@ const body = {
 
 History must contain valid ViteHub Messages with `user` or `assistant` roles and unique IDs. Parts must be `text`, `file`, `image`, or `audio`. The Console preserves message metadata and appends the new prompt as a user Message. It rejects malformed Messages, `system` or `tool` roles, and other parts before starting the Agent. This includes tool calls, tool results, and approval parts nested in user or assistant Messages. Omit `messages` for a prompt-only invocation. Each request creates a new invocation; history does not resume a previous runtime session.
 
+### Rerun and delete sessions
+
+Rerun is available after the session completes, fails, or is cancelled.
+
+When `invoke` is enabled for an Agent, its session header shows two actions:
+
+- **Rerun** starts a new invocation with the recorded prompt and the same Invoker Profile. The action is available only when the journal kept the complete prompt. It is unavailable if the recorded Invoker Profile is no longer configured, for sessions that started with prior `messages` or attachments, for metadata-only journals, and for prompts that the journal truncated. Records without the current replay metadata and sessions with a direct invoker or actor identity are also unavailable. The tooltip gives the reason.
+- **Delete** removes a completed, failed, or cancelled session and its usage record after you confirm. It uses the same journal operation as `vitehub agent invocations delete`. Pending and running sessions cannot be deleted. Custom journals without `store.delete` show a disabled action with an explanation.
+
+The `vitehub:console:invocation` RPC operation returns these actions as `invocation.actions`. With `method: 'POST'` and the body `{ action: 'delete' }`, it deletes the record. It returns `403` when Console invocation is disabled for the Agent and `409` when the record is not terminal or the store does not support deletion. When invocation is disabled, the Console stays read-only and does not show the actions.
+
 
 Nuxt does not need an SEO module for the `X-Robots-Tag` default. If the app already uses `@nuxtjs/robots` or `@nuxtjs/seo`, add route metadata so its robots and sitemap modules also know that Console pages are not indexable:
 
@@ -384,6 +396,12 @@ export default defineNuxtConfig({
 Do not use `robots.txt` as access control. A crawler can ignore it, and a disallowed URL may still be listed without its contents.
 
 Read [Auth](/docs/server-primitives/auth#authorize-access-routes) for sign-in redirects and the complete callback contract.
+
+### Run Schedules on demand
+
+The same `invoke` setting enables manual Schedule runs. The Schedules page shows a **Run now** button next to the **Read-only** badge for each Static Schedule Definition that sets `manual: true`. The run status, duration, run id, and error replace the page notice after the run finishes. The Console omits the error stack.
+
+[`vitehub schedule run --url`](/docs/development/cli#run-a-schedule-on-demand) uses `POST /_vitehub/schedules/run` with a JSON body `{ "name": "sync" }`. The route is under `/_vitehub/**`, so the Console access policy protects it. It accepts only `application/json` requests and rejects a cross-origin `Origin` header. With `invoke: false`, or for a definition without `manual: true`, the route returns `404`. The Console UI uses the `vitehub:console:schedule-run` RPC operation with the same rules.
 
 ## Know what the Console stores
 
@@ -409,6 +427,20 @@ console: {
 
 These limits apply only to the Console fallback journal. If discovered Agent Definitions configure a shared journal, set its limits in `defineAgentInvocations()` instead. See [Agent Invocations](/docs/agents/invocations) for defaults and supported bounds. Larger limits increase record storage and memory use.
 
+The SQLite and libSQL fallback journal keeps every completed, failed, and cancelled record by default. The D1 fallback uses the Agent store defaults of 30 days and 10,000 terminal records. Set `retention` to change these limits:
+
+```ts
+console: {
+  exposure: 'host-managed',
+  retention: {
+    maxAgeMs: 14 * 24 * 60 * 60 * 1000,
+    maxRecords: 5000,
+  },
+}
+```
+
+Both limits are optional. The journal applies them after it creates a record and after a record reaches a terminal state. Pending and running records are always kept. Like `observations`, `retention` applies only to the Console fallback journal.
+
 Set `VITEHUB_CONSOLE_DATABASE_URL` when the journal belongs on another volume or libSQL endpoint. Relative `file:` paths resolve from the ViteHub project root:
 
 ```dotenv [.env]
@@ -422,7 +454,15 @@ VITEHUB_CONSOLE_DATABASE_URL=libsql://my-database.turso.io
 VITEHUB_CONSOLE_DATABASE_AUTH_TOKEN=secret-token
 ```
 
-The journal has no automatic TTL or deletion. In production, the operator must define how long to retain the file and how to remove records that may contain sensitive data. Workflow, Queue, and Schedule Definition inspection do not use the journal. Workflow and Queue do not expose run or message history because ViteHub does not yet have provider-independent contracts for listing that operational data. The Schedule page is a build-time Definition catalog; it does not include runtime-created Schedule records or their run store yet.
+The SQLite and libSQL journal has no automatic TTL unless you set `retention`. In production, the operator must define how long to retain records that may contain sensitive data. Delete one terminal record or prune old ones from the CLI:
+
+```sh
+vitehub agent invocations delete INVOCATION_ID
+vitehub agent invocations prune --older-than 14d --dry-run
+vitehub agent invocations prune --older-than 14d
+```
+
+These commands open `.vitehub/data/console.sqlite`, or `VITEHUB_CONSOLE_DATABASE_URL` when it is set. Pass `--database` when `dataDir` or `databaseUrl` moves the journal. Deleting a record also removes its row in the Console usage index. It does not delete Blob attachments, because Console uploads are not keyed by invocation and a later conversation can reference the same image. Workflow, Queue, and Schedule Definition inspection do not use the journal. Workflow and Queue do not expose run or message history because ViteHub does not yet have provider-independent contracts for listing that operational data. The Schedule page is a build-time Definition catalog; it does not include runtime-created Schedule records or their run store yet.
 
 The fallback applies only when an Agent Definition does not configure `invocations`. An explicit `defineAgent({ invocations })` store remains authoritative, and its sessions are not copied into `console.sqlite` or read by the built-in Console.
 
@@ -453,11 +493,15 @@ Use `db.batch()` for atomic D1 writes. If any statement fails, D1 rolls back the
 
 `vite dev` keeps the local SQLite journal. `console.databaseUrl` at build time, or `VITEHUB_CONSOLE_DATABASE_URL` at runtime, selects libSQL instead. An Agent Definition with its own `invocations` still wins. If the binding is missing from the Worker env, journal reads and writes fail with a diagnostic. Agent results do not change.
 
-The Console sends every operation as one `POST /_vitehub/rpc/__call` request with the JSON body `{ method, input }`. The server keeps no session between calls, so any instance can answer any call. The endpoint accepts calls only from the Console origin, as [Start Agent invocations](#start-agent-invocations) describes. Its internal request contract uses `GET` semantics for bounded listings and metadata, and JSON-body `POST` semantics to read a selected KV value without putting an opaque key in the request URL. The KV operation remains read-only. Each operation keeps its own body limit: 64 KiB for most operations, and the image attachment limit for Agent invocations. A successful call returns `200`, or `202` when it starts an Agent invocation. Failed calls use the operation status, such as `400`, `403`, `404`, `405`, or `413`. Responses set `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.
+The Console sends every operation as one `POST /_vitehub/rpc/__call` request with the JSON body `{ method, input }`. The server keeps no session between calls, so any instance can answer any call. The endpoint accepts calls only from the Console origin, as [Start Agent invocations](#start-agent-invocations) describes. Its internal request contract uses `GET` semantics for bounded listings and metadata, and JSON-body `POST` semantics to read a selected KV value without putting an opaque key in the request URL. The KV operation remains read-only. Each operation keeps its own body limit: 64 KiB for most operations, and the image attachment limit for Agent invocations. Invocation envelopes that exceed 64 KiB must put `method` first, within the first 64 KiB, so the server can select the larger limit before it reads the remaining body. The built-in Console client sends this order. Oversized bodies are cancelled before parsing, and duplicate invocation methods are rejected. A successful call returns `200`, or `202` when it starts an Agent invocation. Failed calls use the operation status, such as `400`, `403`, `404`, `405`, or `413`. Responses set `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.
 
 KV inspection calls the configured store's paginated `list`, `get`, and `has` operations. It never calls `set`, `del`, or `clear`. Each key page returns at most 200 entries, and the Console passes the provider's opaque cursor when you load more. Selected values are rendered as text or formatted JSON and truncated at 256 KiB in the response. Listing and reading can still count as provider operations even though they do not change data.
 
 Blob inspection calls only the configured store's `list` operation. It returns at most 100 objects initially and 250 per request, follows provider cursors only when you choose **Load more**, and supports a pathname prefix. It does not call `get`, `head`, `serve`, `sign`, `put`, or `del`. Object contents and provider URLs never enter the Console response. Listing can still incur provider requests and cost.
+
+## Read a session
+
+Open an Agent Invocation to read it as a conversation. Each message shows its role, and tool work collapses into one group. A reply that a Channel delivered appears as the assistant's answer after that group, also when the run recorded no assistant message. Select the link button in the session header to copy the session URL. The **Invocation** tab counts messages, steps, and tool calls, and shows the total time. [Invocation UI](/docs/ui/invocation) describes the same view for application pages.
 
 ## Inspect the Agent context
 
@@ -485,7 +529,7 @@ The Console does not calculate missing provider data. Token counts, model metada
 | A KV key page stops at 200 entries | Load the next page or enter a key prefix to narrow the list. The Console does not fetch values until selection. |
 | Blob is absent from the Console home | Configure `blob` with a preset that supports Blob or an explicit Blob store. |
 | Blob inspection returns a provider error | Check that the deployed Console runtime has permission and credentials to list the configured store. |
-| Databases is absent from the Console home | Configure `database`. The Console catalogs Database Definitions only when the integration is enabled. |
+| Databases is absent from the Console home | Configure `database`. The Console inspects Databases only when the integration is enabled. |
 | Rate Limits is absent from the Console home | Configure `rateLimit` and use statically declared `requireRateLimit()` policies. |
 | Workspaces is absent from the Console home | Configure `workspace` and add a discovered Workspace Definition. |
 | Sandboxes is absent from the Console home | Configure `sandbox: true` with a deployment preset that supports Sandbox. |
@@ -506,6 +550,6 @@ Images must be PNG, JPEG, WebP, or GIF, with at most ten images and 10 MiB combi
 
 ## Inspect capabilities
 
-Open the right panel's tab chooser and select **Capabilities**. Select a Capability to inspect its recorded data and tools. Tool rows and calls use each tool's declared label and icon. MCP groups tools by server and preserves original tool names and schemas. Title shows its generation settings, progress, and result. Other Capabilities have a default tools and configuration view.
+Open the right panel's tab chooser and select **Capabilities**. Select a Capability to inspect its recorded data and tools. Select a tool's call count to jump to its first call in the session. Tool rows and calls use each tool's declared label and icon. MCP groups tools by server and preserves original tool names and schemas. Title shows its generation settings, progress, and result. Other Capabilities have a default tools and configuration view.
 
 The panel reads the selected Invocation's snapshots. It does not run MCP discovery or title generation. Missing or truncated capture is marked. Developers can [contribute a read-only view](/docs/capabilities/custom-capabilities#contribute-an-inspection-view) with the shared JSON Render component catalog.
