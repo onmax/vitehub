@@ -57,6 +57,7 @@ Package-contributed namespaces appear only when their package is enabled. For ex
 | `vitehub agent invocations` | Available      | Agent Package                                     | List, inspect, or follow records in the application's Agent Invocation journal. Delete or prune terminal records.           |
 | `vitehub channels history`  | Available      | Agent Package                                     | Download one deployed conversation and its attachments.                                   |
 | `vitehub channels sync`     | Available      | Agent Package                                     | Inspect or apply provider-owned webhook registrations for a deployed stage.               |
+| `vitehub connections`       | Available      | Connections Package                               | Connect OAuth accounts, list Connections, read activity, and approve or deny writes.      |
 | `vitehub console dev`       | Available      | Console integration                               | Start the app's development command with deterministic Console fixture data.              |
 | `vitehub db generate`       | Available      | Database Package                                  | Refresh generated Database artifacts and generate Drizzle migrations.                     |
 | `vitehub db migrate`        | Available      | Database Package                                  | Refresh generated Database artifacts and apply Drizzle migrations.                        |
@@ -224,6 +225,22 @@ pnpm vitehub channels history \
 A Telegram direct-message Channel infers its thread when the adapter allows exactly one user. Pass `--thread <provider-thread-id>` for group conversations and adapters where one Channel serves multiple conversations, issues, or tickets. When a Channel declares multiple webhook registrations, select the deployed route and its authentication with `--webhook <id>`.
 
 The export can only contain history available through the Chat SDK adapter or its configured State Adapter. Telegram's Bot API cannot backfill arbitrary old messages, so its durable fallback uses the configured `threadHistory` window, which defaults to 100 messages retained for seven days. Export before that window expires when the archive is intended for recovery.
+
+## Manage Connections
+
+`vitehub connections` calls the Connections management API of a running app. It uses `http://localhost:5173` unless you pass `--url` or set `VITEHUB_CONNECTIONS_URL`.
+
+```sh
+pnpm vitehub connections connect google --port 8976
+pnpm vitehub connections list
+pnpm vitehub connections inspect google --json
+pnpm vitehub connections activity google
+pnpm vitehub connections approvals
+pnpm vitehub connections approvals approve <id>
+pnpm vitehub connections revoke google --confirm google
+```
+
+`connect` starts a loopback callback on `127.0.0.1` and prints the provider URL. The OAuth client must allow `http://127.0.0.1:<port>/callback`. With an HTTPS `--url`, `connect` prints the Console connect URL instead. See [Connections](/docs/server-primitives/connections).
 
 ## Manage Database migrations
 

@@ -1,69 +1,120 @@
 import { describe, expectTypeOf, it } from "vitest"
 
-import { gmail } from "../src/google.ts"
-import { defineConnection, oauth2, useConnection } from "../src/index.ts"
+import { defineConnection } from "../src/definition.ts"
+import { google } from "../src/google.ts"
+import { useConnection } from "../src/runtime/state.ts"
 
-import type { GmailLabel, GmailProfile } from "../src/google.ts"
-import type { ConnectionCallResult, ConnectionClient, ConnectionName, ConnectionOperation, ConnectionSkipped } from "../src/index.ts"
+import type { GmailClassificationLabelFieldValue, GmailClassificationLabelValue, GmailLabel } from "../src/google.ts"
+import type { ConnectionClient, ConnectionDefinition, ConnectionFetchInit, ConnectionMethod } from "../src/types.ts"
 
-interface Output { id: string }
+const connection = defineConnection({
+  access: {
+    "agent:labeller": { read: true, write: "approve" },
+    "schedule:gmail": { read: true, write: ["gmail.users.messages.modify"] },
+  },
+  api: { gmail: ["users.labels.*", "users.messages.get", "users.messages.list", "users.messages.modify"] },
+  provider: google({ clientId: "id", clientSecret: () => "secret" }),
+  scopes: ["https://www.googleapis.com/auth/gmail.modify"],
+})
 
-declare const readOperation: ConnectionOperation<{ id: string }, Output, "read">
-declare const writeOperation: ConnectionOperation<{ name: string }, Output, "write">
+type Client = typeof connection extends ConnectionDefinition<infer TApis, infer TSelection> ? ConnectionClient<TApis, TSelection> : never
+declare const client: Client
 
-describe("types", () => {
-  it("types dry-run call results", () => {
-    expectTypeOf<ConnectionCallResult<Output, "write", true>>().toEqualTypeOf<ConnectionSkipped>()
-    expectTypeOf<ConnectionCallResult<Output, "write", false>>().toEqualTypeOf<Output>()
-    expectTypeOf<ConnectionCallResult<Output, "write", undefined>>().toEqualTypeOf<Output>()
-    expectTypeOf<ConnectionCallResult<Output, "write", boolean>>().toEqualTypeOf<Output | ConnectionSkipped>()
-    expectTypeOf<ConnectionCallResult<Output, "write", boolean | undefined>>().toEqualTypeOf<Output | ConnectionSkipped>()
-    expectTypeOf<ConnectionCallResult<Output, "read", true>>().toEqualTypeOf<Output>()
-    expectTypeOf<ConnectionCallResult<Output, "read", boolean>>().toEqualTypeOf<Output>()
-    expectTypeOf<ConnectionSkipped["skipped"]>().toEqualTypeOf<"dry-run">()
+declare global {
+  interface ViteHubConnectionDefinitionModules {
+    typeTest: { default: typeof connection }
+  }
+}
+
+describe("Connection types", () => {
+  it("declares only serializable fetch bodies", () => {
+    expectTypeOf<Parameters<Client["fetch"]>[1]>().toEqualTypeOf<ConnectionFetchInit | undefined>()
+    const text: ConnectionFetchInit = { body: "label=INBOX", method: "POST" }
+    expectTypeOf(text.body).toEqualTypeOf<string | undefined>()
+    // @ts-expect-error Integrity is not dispatched or replayed by Connections.
+    const integrity: ConnectionFetchInit = { integrity: "sha256-example" }
+    // @ts-expect-error Cache policy is not part of the Connection fetch contract.
+    const cache: ConnectionFetchInit = { cache: "no-store" }
+    // @ts-expect-error Referrer policy is not part of the Connection fetch contract.
+    const referrer: ConnectionFetchInit = { referrerPolicy: "no-referrer" }
+    expectTypeOf(integrity).toEqualTypeOf<ConnectionFetchInit>()
+    expectTypeOf(cache).toEqualTypeOf<ConnectionFetchInit>()
+    expectTypeOf(referrer).toEqualTypeOf<ConnectionFetchInit>()
+    // @ts-expect-error Encode form parameters to a string before dispatch.
+    const form: ConnectionFetchInit = { body: new URLSearchParams() }
+    // @ts-expect-error Multipart bodies cannot be persisted for approval replay.
+    const multipart: ConnectionFetchInit = { body: new FormData() }
+    expectTypeOf(form).toEqualTypeOf<ConnectionFetchInit>()
+    expectTypeOf(multipart).toEqualTypeOf<ConnectionFetchInit>()
   })
 
-  it("infers dry run from useConnection options", () => {
-    const live = useConnection("gmail")
-    const dry = useConnection("gmail", { dryRun: true })
-    const explicitLive = useConnection("gmail", { dryRun: false })
-
-    expectTypeOf(live).toEqualTypeOf<ConnectionClient<undefined>>()
-    expectTypeOf(dry).toEqualTypeOf<ConnectionClient<true>>()
-    expectTypeOf(live.call(writeOperation, { name: "x" })).resolves.toEqualTypeOf<Output>()
-    expectTypeOf(explicitLive.call(writeOperation, { name: "x" })).resolves.toEqualTypeOf<Output>()
-    expectTypeOf(dry.call(writeOperation, { name: "x" })).resolves.toEqualTypeOf<ConnectionSkipped>()
-    expectTypeOf(dry.call(readOperation, { id: "1" })).resolves.toEqualTypeOf<Output>()
-
-    // @ts-expect-error Operation input is checked.
-    live.call(readOperation, { name: "x" })
+  it("requires Gmail classification label identifiers in request bodies", () => {
+    expectTypeOf<GmailClassificationLabelFieldValue>().toEqualTypeOf<{ fieldId: string, selection?: string }>()
+    expectTypeOf<GmailClassificationLabelValue>().toEqualTypeOf<{ fields?: GmailClassificationLabelFieldValue[], labelId: string }>()
+  })
+  it("exposes only selected methods", () => {
+    expectTypeOf(client.gmail.users.labels.list).toBeFunction()
+    expectTypeOf(client.gmail.users.messages.modify).toBeFunction()
+    // @ts-expect-error users.messages.send is not selected.
+    expectTypeOf(client.gmail.users.messages.send).toBeFunction()
   })
 
-  it("keeps dry-run typing through the Gmail client", () => {
-    const dry = gmail(useConnection("gmail", { dryRun: true }))
-    const live = gmail(useConnection("gmail"))
-
-    expectTypeOf(dry.labels.create({ name: "Receipts" })).resolves.toEqualTypeOf<ConnectionSkipped>()
-    expectTypeOf(live.labels.create({ name: "Receipts" })).resolves.toEqualTypeOf<GmailLabel>()
-    expectTypeOf(dry.profile.get()).resolves.toEqualTypeOf<GmailProfile>()
-    expectTypeOf(live.labels.list).parameters.toEqualTypeOf<[]>()
-
-    // @ts-expect-error Gmail inputs are typed.
-    live.messages.get({ messageId: "1" })
+  it("types method input and response", async () => {
+    const labels = await client.gmail.users.labels.list({ userId: "me" })
+    expectTypeOf(labels.labels).toEqualTypeOf<GmailLabel[] | undefined>()
+    await client.gmail.users.messages.modify({ id: "m1", requestBody: { addLabelIds: ["L1"] }, userId: "me" })
+    // @ts-expect-error userId is required.
+    await client.gmail.users.messages.modify({ id: "m1" })
   })
 
-  it("accepts any Connection name before discovery generates types", () => {
-    expectTypeOf<ConnectionName>().toEqualTypeOf<string>()
-    const runtimeName: string = "runtime-connection"
-    useConnection(runtimeName)
+  it("includes skipped writes when dry run may be enabled", async () => {
+    const normal = useConnection("typeTest")
+    const dryRun = useConnection("typeTest", { dryRun: true })
+    const conditional = useConnection("typeTest", { dryRun: true as boolean })
+    type NormalResult = Awaited<ReturnType<typeof normal.gmail.users.messages.modify>>
+    expectTypeOf<Awaited<ReturnType<typeof dryRun.gmail.users.messages.modify>>>().toEqualTypeOf<NormalResult | undefined>()
+    expectTypeOf<Awaited<ReturnType<typeof conditional.gmail.users.messages.modify>>>().toEqualTypeOf<NormalResult | undefined>()
+    expectTypeOf<Awaited<ReturnType<typeof normal.gmail.users.labels.list>>>().toEqualTypeOf<Awaited<ReturnType<typeof client.gmail.users.labels.list>>>()
+    type NormalRead = Awaited<ReturnType<typeof normal.gmail.users.labels.list>>
+    expectTypeOf<Awaited<ReturnType<typeof dryRun.gmail.users.labels.list>>>().toEqualTypeOf<NormalRead>()
+    expectTypeOf<Awaited<ReturnType<typeof conditional.gmail.users.labels.list>>>().toEqualTypeOf<NormalRead>()
+    const result = await dryRun.gmail.users.messages.modify({ id: "m1", userId: "me" })
+    // @ts-expect-error A skipped write has no provider response.
+    expectTypeOf(result.id).toBeString()
   })
 
-  it("keeps the provider type of a definition", () => {
-    const provider = oauth2({ authorizationUrl: "https://a.example", client: () => ({ clientId: "id" }), origins: ["https://api.a.example"], scopes: ["s"], tokenUrl: "https://a.example/token" })
-    const definition = defineConnection({ access: { server: { allow: ["*"] } }, provider })
-    expectTypeOf(definition.provider).toEqualTypeOf(provider)
+  it("matches catalog method effects for dry-run reads and bodyless writes", () => {
+    type Signature = { body: never, params: object, response: { id: string } }
+    type Read = ConnectionMethod<Signature & { method: "GET" }, true>
+    type Head = ConnectionMethod<Signature & { method: "HEAD" }, true>
+    type Options = ConnectionMethod<Signature & { method: "OPTIONS" }, true>
+    expectTypeOf<Awaited<ReturnType<Read>>>().toEqualTypeOf<{ id: string }>()
+    expectTypeOf<Awaited<ReturnType<Head>>>().toEqualTypeOf<{ id: string }>()
+    expectTypeOf<Awaited<ReturnType<Options>>>().toEqualTypeOf<{ id: string }>()
+  })
 
-    // @ts-expect-error Access patterns are string lists.
-    defineConnection({ access: { server: { allow: "*" } }, provider })
+  it("checks access patterns", () => {
+    defineConnection({
+      access: {
+        // @ts-expect-error unknown method.
+        server: { write: ["gmail.users.messages.explode"] },
+      },
+      provider: google({ clientId: "id", clientSecret: "secret" }),
+      scopes: [],
+    })
+    defineConnection({
+      access: { server: { write: ["gmail.users.messages.*", "fetch"] } },
+      provider: google({ clientId: "id", clientSecret: "secret" }),
+      scopes: [],
+    })
+  })
+
+  it("rejects unknown API selections", () => {
+    defineConnection({
+      // @ts-expect-error unknown method.
+      api: { gmail: ["users.nothing"] },
+      provider: google({ clientId: "id", clientSecret: "secret" }),
+      scopes: [],
+    })
   })
 })

@@ -949,8 +949,8 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
   if (options.connections) {
     plugins.push(hubConnections({
       ...(options.connections === true ? {} : options.connections),
-      databaseImport: "vite-hub/database/drizzle",
-      runtimeEnvImport: "vite-hub/env/server",
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
     }))
   }
   if (options.database) plugins.push(hubDb(options.database === true ? undefined : options.database))

@@ -8,8 +8,8 @@
     ],
     "baseUrl": "../..",
     "paths": {
-      "#vitehub/connections/runtime": [
-        "packages/connections/src/runtime/empty-runtime.ts"
+      "#vitehub/connections/registry": [
+        "packages/connections/src/runtime/empty-registry.ts"
       ],
       "@vite-hub/internal/*": [
         "packages/internal/src/*.ts"
@@ -25,6 +25,7 @@
     "test/**/*.test-d.ts"
   ],
   "exclude": [
-    "dist"
+    "dist",
+    "scripts"
   ]
 }
