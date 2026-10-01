@@ -564,10 +564,12 @@
           "attributes": {
             "input.hasMessages": false,
             "input.hasPrompt": true,
-            "input.replay.version": 2,
+            "input.replay.version": 3,
+            "input.hasTransformedPrompt": false,
             "input.hasContext": false,
             "input.hasRunMetadata": false,
             "input.hasTimeout": false,
+            "input.hasAbortSignal": false,
             "input.hasInvoker": false,
             "input.hasData": false,
             "input.hasOptions": false,

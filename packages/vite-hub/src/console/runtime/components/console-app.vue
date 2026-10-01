@@ -451,13 +451,14 @@ async function selectStartedInvocation(invocation: { agent: string; id: string }
 }
 
 async function removeDeletedInvocation(id: string): Promise<void> {
+  list.invocations.value = list.invocations.value.filter(invocation => invocation.id !== id);
   const agentName = selectedAgentName.value;
   const selected = selectedInvocationId.value === id;
   if (selected) {
     selectedInvocationId.value = undefined;
     closeDetails();
   }
-  // Refresh first: the Agent route selects the first listed session.
+  // Keep the confirmed deletion local if the post-delete refresh fails.
   await list.refresh();
   if (selected && agentName) {
     await router.push({

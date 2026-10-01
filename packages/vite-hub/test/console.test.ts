@@ -2094,8 +2094,10 @@ describe("Agent invocation console", () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-invocation-actions-"))
     let release: (value: string) => void = () => {}
     let blocked = false
+    let blockedDriverStarted = false
+    const prompts: (string | undefined)[] = []
     const definition = defineAgent({
-      driver: { run: () => blocked ? new Promise<string>(resolve => { release = resolve }) : "done" },
+      driver: { run: ({ prompt }) => { prompts.push(prompt); return blocked ? new Promise<string>(resolve => { release = resolve; blockedDriverStarted = true }) : "done" } },
       invoker: { profiles: [{ id: "support", kind: "person", label: "Support agent" }], resolve: () => ({ id: "resolved-support", kind: "person" }) },
       name: "support",
     })
@@ -2163,6 +2165,21 @@ describe("Agent invocation console", () => {
       const defaultDetail = await getConsoleInvocationDetail(detailEvent(withoutProfile.id))
       expect(defaultDetail.invocation.actions?.rerun).toEqual({ available: true, prompt: "Use the default invoker." })
 
+      const whitespacePrompt = "  def run():\n    return 1\n  "
+      const whitespace = await start(whitespacePrompt, null)
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(whitespace.id)).resolves.toMatchObject({ status: "completed" })
+      })
+      const whitespaceDetail = await getConsoleInvocationDetail(detailEvent(whitespace.id))
+      const replayInput = whitespaceDetail.invocation.actions?.rerun
+      expect(replayInput).toEqual({ available: true, prompt: whitespacePrompt })
+      if (!replayInput?.available) throw new Error("Expected a replayable whitespace prompt.")
+      const replayed = await start(replayInput.prompt, null)
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(replayed.id)).resolves.toMatchObject({ status: "completed" })
+      })
+      expect(prompts.slice(-2)).toEqual([whitespacePrompt, whitespacePrompt])
+
       blocked = true
       const running = await start("Keep running.")
       await vi.waitFor(async () => {
@@ -2172,6 +2189,7 @@ describe("Agent invocation console", () => {
         invocation: { actions: { delete: { available: false }, rerun: { available: false, reason: "invocation-not-terminal" } } },
       })
       await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 409 })
+      await vi.waitFor(() => { expect(blockedDriverStarted).toBe(true) })
       release("done")
       await vi.waitFor(async () => {
         await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "completed" })
@@ -2225,6 +2243,8 @@ describe("Agent invocation console", () => {
       installConsoleAgentDefinitions([
         { definition: { default: definition }, fallbackName: "help" },
       ], { invoke: true, projectRoot: root })
+      await expect(agentInvocationsHandler(request({ prompt: " \n " })))
+        .rejects.toMatchObject({ statusCode: 400, statusMessage: "Agent invocation requires a prompt." })
       await expect(agentInvocationsHandler(request({ invokerProfileId: "unknown", prompt: "hello" })))
         .rejects.toMatchObject({ statusCode: 400, statusMessage: "Unknown Agent invocation profile." })
       await expect(agentInvocationsHandler(request({ extra: true, prompt: "hello" })))

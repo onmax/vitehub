@@ -71,6 +71,7 @@ import { bindAgentInvocations, type AgentInvocationJournal } from "./invocations
 import { isAttachmentPart, materializeMessageAttachmentData, type AgentMessagePhase, type Message } from "./messages.ts"
 import {
   createFallbackAgentInvoker,
+  hasUnreplayableAgentInputContext,
   hasResolvedAgentInvokerInput,
   normalizeAgentInvokerOptions,
   portableResolvedAgentInvokerInput,
@@ -3920,6 +3921,9 @@ async function parseAgentInputData<TInput extends AgentRunInput<unknown>>(
   return { ...input, data: await parseStandardSchema(schema, input.data, "Agent input data") }
 }
 
+// Controller cancellation is internal unless the caller supplied its own signal.
+const agentInvocationCallerAbortSignals = new WeakMap<object, boolean>()
+
 async function createAgentInvocationContext<
   TRuntimeConfig extends AgentRuntimeConfig,
   CALL_OPTIONS,
@@ -3932,6 +3936,15 @@ async function createAgentInvocationContext<
   invocationTools?: AgentToolSet,
 ): Promise<AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS>> {
   const startedAt = Date.now()
+  const replayHasContext = hasUnreplayableAgentInputContext(input.context)
+  // Preparation can replace or mutate input. Replay must retain the caller's input metadata.
+  const replayInput = {
+    ...input,
+    ...(agentInvocationCallerAbortSignals.get(input) === false ? { abortSignal: undefined } : {}),
+    ...(input.context ? { context: { ...input.context } } : {}),
+    ...(input.messages ? { messages: [...input.messages] } : {}),
+    ...(Array.isArray(input.prompt) ? { prompt: [...input.prompt] } : {}),
+  }
   const inputDataParsed = consumeParsedAgentWorkflowInput(input, definition)
   const resolvedContext = createResolvedRuntimeContext(context)
   const invocationContext = createAgentInvocationContextStore(input.context)
@@ -4471,7 +4484,7 @@ async function createAgentInvocationContext<
     invocationContext.set("agent.finishHook", Boolean(invocation.finishHook), { overwrite: true })
     capabilityPreparationPending = false
     await invocationContext.get(agentInvocationConfigurationUpdatedContextKey)?.()
-    await traceAgentInvocationStart(toTraceContext(invocation))
+    await traceAgentInvocationStart(toTraceContext(invocation), replayInput, replayHasContext)
     try {
       await applyChannelDeliveryEffectIntents(invocation, invocation.deliveryEffectIntents)
     }
@@ -7684,21 +7697,25 @@ function createInlineAgentInvocationController<
   return startLiveAgentInvocation<TOutput | Response, CALL_OPTIONS>({
     parentAbortSignal: input.abortSignal,
     sendInput: (id, nextInput, options) => sendAgentInvocationInput(id, nextInput, options),
-    start: ({ abortSignal, id, onFinish }) => executeAgentInvocation(agent, {
-      ...withAgentInvocationResponseOwner(context, id),
-      run: { ...context.run, runId: runId || id },
-    }, { ...input, abortSignal }, {
-      kind: "run",
-      onFinish(outcome) {
-        onFinish(outcome.status === "cancelled"
-          ? { status: "cancelled" }
-          : outcome.status === "success"
-          // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-            ? { ...(outcome.result !== undefined ? { output: outcome.result as TOutput | Response } : {}), status: "completed" }
-            : { error: outcome.error, status: "failed" })
-      },
-      renderOutput: true,
-    }),
+    start: ({ abortSignal, id, onFinish }) => {
+      const invocationInput = { ...input, abortSignal }
+      agentInvocationCallerAbortSignals.set(invocationInput, input.abortSignal !== undefined)
+      return executeAgentInvocation(agent, {
+        ...withAgentInvocationResponseOwner(context, id),
+        run: { ...context.run, runId: runId || id },
+      }, invocationInput, {
+        kind: "run",
+        onFinish(outcome) {
+          onFinish(outcome.status === "cancelled"
+            ? { status: "cancelled" }
+            : outcome.status === "success"
+            // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
+              ? { ...(outcome.result !== undefined ? { output: outcome.result as TOutput | Response } : {}), status: "completed" }
+              : { error: outcome.error, status: "failed" })
+        },
+        renderOutput: true,
+      })
+    },
     support: id => agentInvocationInputSupport(id),
   })
 }
