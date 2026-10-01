@@ -32,6 +32,8 @@ On a Node host with persistent storage, set `dataDir` once. Enabled Agent State,
 
 Set `publicUrl` to the public origin of the deployed application, for example `vitehub({ preset: "node", publicUrl: "https://agents.example.com" })`. Console invocation links, GitHub activity links, telemetry session links, and the default Auth base URL use it. A function receives each discovered Agent name. It applies to builds. In `vite dev`, request-bound Console and Auth flows use the request origin. GitHub activity and telemetry links have no request-origin fallback. Use the GitHub Channel `activity.publicUrl` override or the evlog `sessionUrl` callback to supply links in development.
 
+Set `observability: { service }` to export Agent telemetry, failed request logs, and papercut reports through evlog. ViteHub registers the evlog Nitro module, adds the telemetry Capability to every Agent, and reports exporter status in the Console. Read the instance with `useObservability()` from `vite-hub/agent/observability`. See [Observability](https://vitehub.dev/docs/agents/observability).
+
 Explicit store paths, remote URLs, and disabled services remain authoritative. Set `console.databaseUrl` to preserve an existing journal location; `VITEHUB_CONSOLE_DATABASE_URL` remains a runtime override. Changing paths does not migrate existing data.
 
 ## Run a complete first result

@@ -1491,6 +1491,10 @@ export const agentDiagnostics = defineDiagnostics({
       why: ({ files }: { files: string[] }) => `[vitehub] Provider Agent Drivers ("codex" and "claude-code") cannot run in a Cloudflare Worker. Used in ${files.join(", ")}.`,
       fix: "Use a { model } or { run } Driver in Worker builds, or deploy Agents that use provider Drivers to a Node.js host.",
     },
+    AGENT_R0933: {
+      why: "[vitehub] Observability is not configured.",
+      fix: "Set vitehub({ observability: { service } }) in the Vite config.",
+    },
     AGENT_R0928: {
       why: "[vitehub] Provider Agent Drivers are not included in Worker builds. They start local Codex or Claude Code processes, which require a Node.js host.",
       fix: "Use a { model } or { run } Driver in Worker builds, or deploy Agents that use provider Drivers to a Node.js host.",

@@ -1,9 +1,9 @@
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
 import { sendBatchToPostHog } from "evlog/posthog"
 import { PostHog } from "posthog-node"
-import type { AgentEvlogExporter } from "../evlog.ts"
+import type { ObservabilityExporter } from "../observability.ts"
 
-export interface AgentPostHogOptions {
+export interface PostHogExporterOptions {
   apiKey: string
   host?: string
   /** Override PostHog's distinct ID. Defaults to the event service, agent name, or `vitehub`. */
@@ -11,7 +11,7 @@ export interface AgentPostHogOptions {
 }
 
 /** Node exporter for PostHog events, Error Tracking and evlog's official log drain. */
-export function posthogAgentExporter(options: AgentPostHogOptions): AgentEvlogExporter {
+export function posthog(options: PostHogExporterOptions): ObservabilityExporter {
   const host = options.host || "https://us.i.posthog.com"
   const endpoint = new URL("/batch/", host)
   if (!["https:", "http:"].includes(endpoint.protocol)) throw new TypeError("[vitehub] PostHog requires an HTTP(S) host.")

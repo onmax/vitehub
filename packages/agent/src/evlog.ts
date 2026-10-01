@@ -4,11 +4,11 @@ import { createLogger, type DrainContext, type WideEvent } from "evlog"
 import { createDrainPipeline } from "evlog/pipeline"
 import { withExportDeadline } from "./internal/export-deadline.ts"
 import { defineCapability, eagerFinishExtensionSymbol } from "./capability-runtime.ts"
-import { createPapercutReporter, type PapercutReporterOptions } from "./papercut-reporter.ts"
+import { createPapercutReporter, type PapercutReporterOptions, type PapercutReporterStatus } from "./papercut-reporter.ts"
 import { papercuts } from "./capabilities/papercuts.ts"
 import { diagnostics } from "./capabilities/diagnostics.ts"
-import { agentInvocationId } from "./invocations.ts"
 import { sanitizeAgentLog } from "./evlog/privacy.ts"
+import { agentInvocationId } from "./invocations.ts"
 import { consoleInvocationUrl, resolvePublicUrl } from "@vite-hub/runtime"
 import type { AgentCapabilityDefinition, AgentFinishEvent, ResolvedAgentRuntimeContext } from "./types.ts"
 import type { RuntimeDiagnosticReporter } from "@vite-hub/runtime"
@@ -43,20 +43,27 @@ export interface AgentEvlogOptions {
   papercuts?: Omit<PapercutReporterOptions, "send" | "sessionUrl">
 }
 
-export type AgentObservabilityOptions = AgentEvlogOptions & {
-  preset?: "evlog"
-  level?: "minimal" | "standard" | "full"
+export interface AgentEvlogStatus {
+  /** An exporter is configured. Without one, events reach only local evlog output. */
+  configured: boolean
+  accepted: number
+  failed: number
+  dropped: number
+  pending: number
+  closed: boolean
+  /** Papercut delivery, when enabled. */
+  papercuts?: PapercutReporterStatus
 }
 
 export interface AgentEvlog {
   capability: AgentCapabilityDefinition
-  plugin: (host: AgentEvlogHost) => void
+  plugin: (host: AgentEvlogHost, onClose?: () => void) => void
   capture(event: string, properties: Record<string, unknown>, delivery?: { uuid?: string, timestamp?: Date }): Promise<void>
   diagnostics: RuntimeDiagnosticReporter
   event(name: string, properties?: Record<string, unknown>): void
   exception(error: unknown, properties?: Record<string, unknown>): void
   drain(context: DrainContext): void
-  status(): { configured: boolean, accepted: number, failed: number, dropped: number, pending: number, closed: boolean }
+  status(): AgentEvlogStatus
   flush(): Promise<void>
 }
 
@@ -64,7 +71,7 @@ const minimalKeys = /^(?:agent_name|environment|service|run_id|invocation_id|thr
 const contentKeys = /(?:prompt|message|input|output|instruction|tool|argument|result|body|context|header|cookie|token|secret|credential)/i
 
 /** Apply the configured observability level before exporter delivery. */
-export function filterAgentObservability(level: NonNullable<AgentObservabilityOptions["level"]>, properties: Record<string, unknown>): Record<string, unknown> {
+export function filterAgentObservability(level: NonNullable<AgentEvlogOptions["level"]>, properties: Record<string, unknown>): Record<string, unknown> {
   if (level !== "minimal") return properties
   const filtered: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(properties)) {
@@ -72,11 +79,6 @@ export function filterAgentObservability(level: NonNullable<AgentObservabilityOp
     filtered[key] = value
   }
   return filtered
-}
-
-export function observability(options: AgentObservabilityOptions): AgentCapabilityDefinition {
-  if (options.preset !== "evlog") throw new TypeError("[vitehub] Unsupported observability preset.")
-  return createAgentEvlog(options).capability
 }
 
 /** One shared exporter per host. Capability invocations keep their metadata separate. */
@@ -98,7 +100,7 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
   const exporter = options.exporter
   const level = options.level ?? "standard"
   const exportedLogs = options.logs ?? "failures"
-  const metadata = { ...options.metadata, service: options.service, environment: options.environment }
+  const metadata = { ...options.metadata, service, environment }
   const pending = new Set<Promise<unknown>>()
   const counts = { accepted: 0, failed: 0, dropped: 0 }
   let closing = false
@@ -185,7 +187,7 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
 
   const summaries = new WeakMap<object, { usage: AgentFinishEvent["invocation"]["usage"], error?: unknown, cancelled: boolean, toolSteps: number }>()
   const capability: AgentCapabilityDefinition = defineCapability({
-    id: "evlog",
+    id: "observability",
     instructionCoverage: false,
     finish(result: AgentFinishEvent) {
       summaries.set(result.runtime, { usage: result.invocation.usage, error: result.error, cancelled: result.input.abortSignal?.aborted === true, toolSteps: result.toolResults.length })
@@ -233,7 +235,7 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
     ...options.papercuts,
     sessionUrl,
     send: delivery => capture("papercut_reported", delivery.properties, { timestamp: new Date(delivery.timestamp), uuid: delivery.uuid }),
-    onError: options.papercuts.onError ?? (() => event("papercut.replay.failed", { level: "error" })),
+    onError: options.papercuts.onError ?? (() => event("papercut.replay.failed", { level: "warn" })),
   }) : undefined
   capability.capabilities = [
     ...(options.resources ? [diagnostics({ resources: options.resources, reporter: reportDiagnostics })] : []),
@@ -241,7 +243,7 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
   ]
   const telemetry: AgentEvlog = {
     capability, capture, diagnostics: reportDiagnostics, event, exception,
-    plugin: host => agentEvlogPlugin(telemetry, reporter ? [reporter] : [])(host),
+    plugin: (host, onClose) => agentEvlogPlugin(telemetry, reporter ? [reporter] : [], onClose)(host),
     drain(context: DrainContext) {
       if (closing || !exporter) return
       const httpRequest = context.request !== undefined
@@ -254,7 +256,7 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
       if (safe.error) safe.error = { message: "Request failed; inspect the correlated exception." }
       logs({ ...safe, timestamp: context.event.timestamp, level: context.event.level, service, environment })
     },
-    status: () => ({ configured: Boolean(exporter), ...counts, pending: pending.size + logs.pending, closed: closing }),
+    status: () => ({ configured: Boolean(exporter), ...counts, pending: pending.size + logs.pending, closed: closing, papercuts: reporter?.status() }),
     flush() {
       if (!flush) {
         closing = true
@@ -278,7 +280,7 @@ export interface AgentEvlogHost {
   }
 }
 
-export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { start(): void; stop(): Promise<void> }[] = []): (host: AgentEvlogHost) => void {
+export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { start(): void; stop(): Promise<void> }[] = [], onClose?: () => void): (host: AgentEvlogHost) => void {
   const statusCodeOf = (error: unknown) => {
     const value = readAgentErrorProperty(error, "statusCode") ?? readAgentErrorProperty(error, "status")
     return hasRuntimeType(value, "number") && Number.isInteger(value) ? value : undefined
@@ -308,7 +310,10 @@ export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { st
     if (telemetry.status().configured) for (const reporter of reporters) reporter.start()
     host.hooks.hook("close", async () => {
       try { await Promise.all(reporters.map(reporter => reporter.stop())) }
-      finally { await telemetry.flush() }
+      finally {
+        try { await telemetry.flush() }
+        finally { onClose?.() }
+      }
     })
   }
 }
