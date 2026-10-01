@@ -1,3 +1,4 @@
+import { ViteHubError } from "@vite-hub/runtime"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { AgentToolSet } from "../src/types.ts"
@@ -478,6 +479,22 @@ describe("openapi capability", () => {
     await expect(tools.createOrder.policy({ name: "createOrder" })).resolves.toBe("deny")
     expect(connections.decide).toHaveBeenLastCalledWith("portal", { id: "agent", kind: "agent" }, { effect: "write", id: "openapi.createOrder" })
     expect(connections.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "openapi.createOrder", outcome: "denied" }), undefined)
+    await resolved.close()
+  })
+
+  it.each(["CONNECTIONS_DENIED", "CONNECTIONS_APPROVAL_REQUIRED"])("calls the Connection guard once for CLI policy rejection %s", async (code) => {
+    const failure = new ViteHubError(code, "Connection policy rejected")
+    const connection = {
+      fetch: vi.fn(async () => { throw failure }),
+      record: vi.fn(async () => {}),
+    }
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const { openapi } = await import("../src/capabilities.ts")
+    const resolved = await resolveAgentCapabilities({ capabilities: [openapi({
+      cli: { name: "portal" }, connection: "portal", operations: ["listCustomers"], spec: portalSpec(),
+    })] }, { ...runtime(), capabilities: { connections: { runtime: () => connection } } }, {})
+    await expect(resolved.tools?.portal?.execute?.({ argv: ["list-customers", "--json"] })).rejects.toBe(failure)
+    expect(connection.fetch).toHaveBeenCalledOnce()
     await resolved.close()
   })
 
