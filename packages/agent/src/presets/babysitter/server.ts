@@ -235,8 +235,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     if (pending) {
       try {
         const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", signal);
-        const state = live && typeof live === "object" ? (live as Record<string, unknown>).state : undefined;
-        if (typeof state === "string" && state.toLowerCase() !== "open") {
+        const state = isRuntimeRecord(live) && hasRuntimeType(live.state, "string") ? live.state : undefined;
+        const mergedAt = isRuntimeRecord(live) && hasRuntimeType(live.merged_at, "string") ? live.merged_at : undefined;
+        if (state?.toLowerCase() !== "open" && mergedAt) {
           await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
           await pullRequestInbox.finish(claim, { text: "Direct merge outcome reconciled: GitHub no longer reports the pull request as open.", terminal: true });
           return "merged";
