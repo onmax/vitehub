@@ -3153,9 +3153,9 @@ export function defineChannel<
   const TKind extends string,
   // No default: a default would replace the contextual type of method parameters.
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
-  THistoryItem,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
+  THistoryItem = unknown,
 >(
   kind: TKind,
   options: AgentChannelDefinitionOptions<TRuntimeConfig, TData, TMethods, THistoryItem> = {},
