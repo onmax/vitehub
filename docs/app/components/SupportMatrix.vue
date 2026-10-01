@@ -748,6 +748,9 @@ onBeforeUnmount(() => clearTimeout(proofRefreshTimer));
         <NuxtLink to="/docs/development/verification">Verification →</NuxtLink>
         <NuxtLink to="https://github.com/vite-hub/vitehub" external>GitHub →</NuxtLink>
       </nav>
+      <div class="mt-4 flex justify-center">
+        <DocsPageHeaderLinks />
+      </div>
     </header>
 
     <section class="support-matrix-main" aria-label="Runtime and host support matrix">

@@ -3,7 +3,7 @@ export const installOptions = {
     label: "Agent skill",
     value: "skill",
     icon: "i-lucide-bot",
-    command: "npx skills add https://vitehub.dev",
+    command: "npx skills add https://vitehub.dev --skill vitehub",
   },
   packages: [
     {
