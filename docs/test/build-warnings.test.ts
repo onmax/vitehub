@@ -11,7 +11,9 @@ describe("docs build warning budget", () => {
     const warnings = [
       ...buildWarningBudget.flatMap((entry) =>
         Array.from({ length: entry.maximum }, () =>
-          entry.warningTokenRequired === false ? entry.text : `[warn] ${entry.text}`,
+          entry.warningTokenRequired === false
+            ? `${entry.source ?? "known-source.js"} ${entry.text}`
+            : `[warn] ${entry.text}`,
         ),
       ),
       ...allowedMissingIcons.map((icon) => `WARN [Icon] failed to load icon ${icon}`),
@@ -113,6 +115,12 @@ describe("docs build warning budget", () => {
     ].join("\n");
 
     expect(() => assertBuildWarningBudget(output)).not.toThrow();
+  });
+
+  it("does not budget an annotation from an unknown dependency source", () => {
+    expect(() => assertBuildWarningBudget(
+      "[warn] unknown-package.js contains an annotation that Rollup cannot interpret",
+    )).toThrow("unbudgeted warning");
   });
 
   it("rejects lowercase logger warnings and standard Node warnings", () => {

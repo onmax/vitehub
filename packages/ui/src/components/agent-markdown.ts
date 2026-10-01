@@ -1,4 +1,9 @@
 import { Markdown, type MarkdownProps } from "@comark/vue";
+import alert from "@comark/vue/plugins/alert";
+import attributes from "@comark/vue/plugins/attributes";
+import components from "@comark/vue/plugins/components";
+import frontmatter from "@comark/vue/plugins/frontmatter";
+import taskList from "@comark/vue/plugins/task-list";
 import { defineComponent, h, type PropType } from "vue";
 import katex from "katex";
 import { markdownMath } from "../internal/markdown-math.ts";
@@ -34,12 +39,26 @@ export const AgentMarkdown = defineComponent({
   setup(props, { attrs }) {
     const defaults = useViteHubUI();
     return () => {
+      const parserOptions = { ...props.options };
+      const optionPlugins = parserOptions.plugins ?? [];
+      delete parserOptions.html;
+      delete parserOptions.plugins;
+      const plugins = [
+        frontmatter(),
+        alert(),
+        taskList(),
+        components(),
+        attributes(),
+        markdownMath,
+        ...optionPlugins,
+        ...(props.plugins ?? []),
+      ].filter(plugin => plugin.name !== "html");
       return h(Markdown, {
         ...attrs,
         class: [defaults.markdown.class, attrs.class],
         components: { img: ImagePreview, math: AgentMath, ...props.components },
-        plugins: [markdownMath, ...(props.plugins ?? [])],
-        options: { ...props.options, html: false },
+        plugins,
+        options: { ...parserOptions, registerDefaultPlugins: false },
         streaming: props.streaming,
         value: props.value,
       });

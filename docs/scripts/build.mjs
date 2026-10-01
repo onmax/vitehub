@@ -36,9 +36,24 @@ export const buildWarningBudget = Object.freeze([
   { name: "build plugin timings", maximum: 3, text: "[PLUGIN_TIMINGS]" },
   { name: "VueUse pure annotations", maximum: 2, text: "[INVALID_ANNOTATION]" },
   {
-    name: "Rollup pure annotations",
+    name: "Nuxt generated pure annotations",
     maximum: 2,
     text: "contains an annotation that Rollup cannot interpret",
+    source: "node_modules/.cache/nuxt/.nuxt/dist/server/_nuxt/dist-Dg8NDwTS.js",
+    warningTokenRequired: false,
+  },
+  {
+    name: "Zod util pure annotation",
+    maximum: 1,
+    text: "contains an annotation that Rollup cannot interpret",
+    source: "zod@4.5.4/node_modules/zod/v4/core/util.js",
+    warningTokenRequired: false,
+  },
+  {
+    name: "Zod regexes pure annotation",
+    maximum: 1,
+    text: "contains an annotation that Rollup cannot interpret",
+    source: "zod@4.5.4/node_modules/zod/v4/core/regexes.js",
     warningTokenRequired: false,
   },
   { name: "Nuxt UI button imports", maximum: 2, text: "[INEFFECTIVE_DYNAMIC_IMPORT]" },
@@ -81,6 +96,7 @@ export function assertBuildWarningBudget(output) {
     const warningWithoutToken = buildWarningBudget.find(
       (entry) =>
         entry.warningTokenRequired === false &&
+        (!entry.source || normalizedLine.includes(normalizeWarningText(entry.source))) &&
         normalizedLine.includes(normalizeWarningText(entry.text)),
     );
     if (warningWithoutToken) {
@@ -103,7 +119,8 @@ export function assertBuildWarningBudget(output) {
       continue;
     }
     const budget = buildWarningBudget.find((entry) =>
-      normalizedLine.includes(normalizeWarningText(entry.text)),
+      normalizedLine.includes(normalizeWarningText(entry.text))
+      && (!entry.source || normalizedLine.includes(normalizeWarningText(entry.source))),
     );
     if (!budget) unknownWarnings.push(line.trim());
     else counts.set(budget.name, (counts.get(budget.name) ?? 0) + 1);
