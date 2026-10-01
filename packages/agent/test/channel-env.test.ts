@@ -351,6 +351,53 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it.each([
+    "({} as TelegramChannelOptions)",
+    "({} satisfies TelegramChannelOptions)",
+    "(({} as Record<string, { value?: string }>))",
+    "(({}) satisfies TelegramChannelOptions)",
+  ])("preserves required Telegram Env for grouped asserted options: %s", async (options) => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram(${options})
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+    const root = await mkdtemp(join(tmpdir(), "vitehub-channel-env-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      await writeFile(join(root, "server", "agents", "support.ts"), `
+        import { defineAgent } from "vite-hub/agent"
+        import { telegram } from "vite-hub/agent/channels"
+        export default defineAgent({ channels: { telegram: telegram(${options}) } })
+      `)
+      expect(discoverAgentChannelEnv({ rootDir: root }).telegram?.botToken?.required).toBe(true)
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it("preserves explicit credentials in grouped asserted options", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram(({ botToken: token } as TelegramChannelOptions))
+      telegram((({ botToken: token }) satisfies TelegramChannelOptions))
+    `)).toEqual([
+      { kind: "telegram", keys: ["botToken"] },
+      { kind: "telegram", keys: ["botToken"] },
+    ])
+  })
+
+  it.each([
+    "({} as TelegramChannelOptions, options)",
+    "({} as TelegramChannelOptions || options)",
+    "({} satisfies TelegramChannelOptions && options)",
+  ])("keeps grouped asserted runtime expressions unknown: %s", (options) => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram(${options})
+    `)).toEqual([{ kind: "telegram", keys: undefined }])
+  })
+
   it("marks spread, computed, and variable options as unknown", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
@@ -828,6 +875,31 @@ describe("built-in Channel discovery", () => {
 })
 
 describe("Telegram adapter Env requirements", () => {
+  it.each([
+    ['async ["botToken"]() { return token }', false],
+    ['async *["botToken"]() { yield token }', false],
+    ['get ["botToken"]() { return undefined }', true],
+    ['async ["adapter"]() { return customAdapter }', false],
+    ['async *["adapter"]() { yield customAdapter }', false],
+    ['get ["adapter"]() { return undefined }', true],
+  ])("classifies computed option methods: %s", async (property, required) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-channel-env-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      for (const channel of [`telegram({ ${property} })`, `{ ${property} }`]) {
+        await writeFile(join(root, "server", "agents", "support.ts"), `
+          import { defineAgent } from "vite-hub/agent"
+          import { telegram } from "vite-hub/agent/channels"
+          export default defineAgent({ channels: { telegram: ${channel} } })
+        `)
+        expect(discoverAgentChannelEnv({ rootDir: root }).telegram?.botToken?.required).toBe(required)
+      }
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
   it.each([
     ["adapter() { return customAdapter }", false],
     ["adapter<T>() { return customAdapter }", false],

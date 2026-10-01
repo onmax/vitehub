@@ -85,11 +85,10 @@ function staticOptionKeys(tokens: string[], start: number, empty: string, typesc
   start = skipOptionAssertions(tokens, start, typescript)
   if (isUndefinedValue(tokens, start, new Set([",", ")", "}"]))) return new Set()
   while (tokens[start] === "(") {
-    const close = closingDelimiter(tokens, start)
     const value = skipOptionAssertions(tokens, start + 1, typescript)
     const valueEnd = ["{", "("].includes(tokens[value]!) ? closingDelimiter(tokens, value) : value
     // Only unwrap a single expression, not a comma expression or an operation on a literal.
-    if (valueEnd !== close - 1) return undefined
+    if (!isValueEnd(tokens, valueEnd + 1, new Set([")"]))) return undefined
     start = value
   }
   if (tokens[start] === empty) return new Set()
