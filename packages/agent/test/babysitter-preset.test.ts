@@ -16,6 +16,8 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({
 import { agentWithColocatedInstructions, defineAgent, getAgentFromRegistry } from "../src/index.ts";
 import { babysitter } from "../src/presets/babysitter.ts";
 import { createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
+import { getAgentLayerOptions } from "../src/agent-layers.ts";
+import { liveMergeReadiness } from "../src/presets/babysitter/merge.ts";
 import * as githubRuns from "../src/server/github-pull-requests.ts";
 import { agentInvocationId } from "../src/invocations.ts";
 import type { GitHubHost } from "../src/server/github.ts";
@@ -26,7 +28,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false) {
+async function fixture(autoMerge = false, discovered = false, preset: { merge?: unknown; driver?: string; mergeableState?: string } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -47,8 +49,9 @@ async function fixture(autoMerge = false, discovered = false) {
     user: { login: "developer" },
     labels: [{ name: "repair" }],
     head: { sha: head, ref: "fix", repo: { full_name: "acme/app" } },
-    base: { sha: "c".repeat(40), ref: "main", repo: { full_name: "acme/app" } },
+    base: { sha: "c".repeat(40), ref: "main", repo: { full_name: "acme/app", default_branch: "main" } },
     html_url: "https://github.com/acme/app/pull/12",
+    mergeable_state: preset.mergeableState ?? "clean",
   });
   const pageInfo = { hasNextPage: false, endCursor: null };
   const graphSnapshot = () => ({
@@ -99,6 +102,9 @@ async function fixture(autoMerge = false, discovered = false) {
       if (!text.includes("reviewThreads")) await onAdmission?.();
       return { stdout: JSON.stringify({ data }), stderr: "" };
     }
+    if (text.includes("-X PUT") && text.includes("/merge")) return { stdout: JSON.stringify({ merged: true }), stderr: "" };
+    if (text.includes("--slurp") && text.includes("/protection/required_status_checks"))
+      return { stdout: JSON.stringify([{ contexts: [], checks: [] }]), stderr: "" };
     if (text.includes("/rules/branches/"))
       return {
         stdout: JSON.stringify([
@@ -181,7 +187,8 @@ async function fixture(autoMerge = false, discovered = false) {
     ...(discovered ? {} : { name: "babysitter" }),
     preset: "babysitter",
     presets: { babysitter },
-    options: { filter: { labels: { allow: ["repair"] } }, autoMerge },
+    // SAFETY: tests pass invalid merge values on purpose to cover runtime validation.
+    options: { filter: { labels: { allow: ["repair"] } }, autoMerge, ...(preset.merge === undefined ? {} : { merge: preset.merge as false }), ...(preset.driver ? { driver: preset.driver as "codex" } : {}) },
     driver: { env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
   }), "Preserve the documented API contract.");
   const runtime = createBabysitterRuntime({
@@ -294,6 +301,61 @@ async function fixture(autoMerge = false, discovered = false) {
 }
 
 describe("Babysitter preset runtime", () => {
+  it("merges a ready PR directly before any model pass", async () => {
+    const f = await fixture(false, false, { merge: "direct" });
+    try {
+      await f.reconcile();
+      const merge = f.command.mock.calls.find(([args]) => args.join(" ").includes("-X PUT"));
+      expect(merge?.[0]).toEqual(expect.arrayContaining(["repos/acme/app/pulls/12/merge", "merge_method=squash", `sha=${"a".repeat(40)}`]));
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("terminal");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each([
+    ["GitHub reports the PR is not clean", { merge: "direct", mergeableState: "blocked" }],
+    ["merge.ready vetoes the merge", { merge: { strategy: "direct", ready: () => "needs a maintainer approval" } }],
+  ] as const)("runs a normal pass when %s", async (_case, preset) => {
+    const f = await fixture(false, false, preset);
+    try {
+      await f.reconcile();
+      expect(f.command.mock.calls.some(([args]) => args.join(" ").includes("-X PUT"))).toBe(false);
+      expect(createProviderRuntime).toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("uses the configured merge method", async () => {
+    const f = await fixture(false, false, { merge: { strategy: "direct", method: "rebase" } });
+    try {
+      await f.reconcile();
+      const merge = f.command.mock.calls.find(([args]) => args.join(" ").includes("-X PUT"));
+      expect(merge?.[0]).toContain("merge_method=rebase");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("validates driver and merge options when the Agent is defined", () => {
+    // @ts-expect-error -- an unknown merge mode is rejected at runtime too.
+    expect(() => defineAgent({ extends: babysitter, options: { merge: "yes" } })).toThrow(/merge must be/);
+    expect(() => defineAgent({ extends: babysitter, options: { merge: "direct", autoMerge: true } })).toThrow(/deprecated/);
+    // @ts-expect-error -- only provider Drivers can repair a checkout.
+    expect(() => defineAgent({ extends: babysitter, options: { driver: "model" } })).toThrow(/driver must be/);
+    expect(() => defineAgent({ extends: babysitter, options: { merge: { strategy: "direct", method: "fast-forward" as "squash" } } })).toThrow(/merge.method/);
+  });
+
+  it("never merges into a base other than the default branch", () => {
+    const head = "a".repeat(40);
+    const live = { state: "open", draft: false, mergeable_state: "clean", head: { sha: head }, base: { ref: "feat/parent", repo: { default_branch: "main" } } };
+    expect(liveMergeReadiness(live, head)).toEqual({ ready: false, reason: "base feat/parent is not the default branch" });
+    expect(liveMergeReadiness({ ...live, base: { ref: "main", repo: { default_branch: "main" } } }, head)).toEqual({ ready: true, head });
+    expect(liveMergeReadiness({ ...live, base: { ref: "main", repo: { default_branch: "main" } } }, "b".repeat(40))).toMatchObject({ ready: false, reason: "head changed" });
+  });
+
+  it("selects the Claude Code driver", () => {
+    const agent = defineAgent({ extends: babysitter, options: { driver: "claude-code" } });
+    expect(getAgentLayerOptions(agent)?.driver).toMatchObject({ kind: "claude-code", permissions: "allow-edits" });
+    expect(agent.options.driver).toBe("claude-code");
+  });
+
   it.each([
     { config: { url: "https://agents.example.test" }, discovered: false },
     { config: { agents: { babysitter: "https://agents.example.test" } }, discovered: false },

@@ -719,7 +719,8 @@ Without a template, extending instructions replaces the inherited document.
 Import `babysitter` from `@vite-hub/agent/presets/babysitter`, or
 `vite-hub/agent/presets/babysitter` in an application. It repairs selected pull
 requests, addresses human and bot review feedback, and parks while checks run.
-Its only workflow options are the GitHub Channel `filter` and `autoMerge`:
+Its workflow options are the GitHub Channel `filter`, the provider `driver`, and
+the `merge` policy:
 
 ```ts
 import { defineAgent } from "@vite-hub/agent"
@@ -730,11 +731,34 @@ export default defineAgent({
   presets: { babysitter },
   options: {
     filter: { labels: { allow: ["repair"], deny: ["do-not-touch"] } },
-    autoMerge: false,
+    driver: "codex",
+    merge: false,
   },
   driver: { model: "your-codex-model" },
 })
 ```
+
+`driver` selects the provider Driver that repairs each checkout: `"codex"` (the
+default) or `"claude-code"`. Set its model and other provider settings with the
+ordinary `driver` field. Model and custom run Drivers cannot repair a checkout.
+
+`merge` defaults to `false`:
+
+| Value | Behavior |
+| --- | --- |
+| `false` | The Babysitter never merges. |
+| `"auto"` | The worker may call `requestAutoMerge`, which requests GitHub native auto-merge. |
+| `"direct"` | Before a model pass, the host squash-merges a PR that is ready. |
+| `{ strategy: "direct", method, ready }` | Direct merge with `"squash"`, `"merge"`, or `"rebase"`, and an optional `ready` hook. |
+
+A direct merge needs passing required checks, completed and successful
+current-head checks and statuses, loaded and resolved review threads, a
+non-draft PR, and GitHub's live `mergeable_state: "clean"` on the default
+branch. The merge request pins the head SHA, so a concurrent push makes GitHub
+reject it. `ready({ repository, number, head, snapshot, requiredChecks })` can
+add a policy, such as a required approval check; return `true` or a reason. Any
+other result runs a normal repair pass. `autoMerge: true` is a deprecated alias
+for `merge: "auto"`.
 
 Colocated `instructions.md` fills the preset's instruction slot without adding
 headings. Explicit `driver.instructions` replaces that slot. Use
@@ -755,12 +779,12 @@ settings, host capacity, telemetry and deployment resources in the application.
 Configure the GitHub host identity with a login and email for repair commits.
 Only its author and committer identity fields pass to the worker; credentials do not.
 
-Each pass uses a disposable Codex workspace with edit permission. GitHub tokens
+Each pass uses a disposable provider workspace with edit permission. GitHub tokens
 stay on the host. Tools provide PR-bound log reads, repair pushes, comments,
-metadata updates and thread resolution. `autoMerge: false` omits the merge tool
-and the host rejects auto-merge operations. Enabling it requests GitHub native
-auto-merge subject to current PR admission and repository checks and reviews.
-There is no direct merge or branch-deletion fallback.
+metadata updates and thread resolution. Unless `merge` is `"auto"`, the worker
+has no merge tool and the host rejects auto-merge operations. With `"auto"`, it
+requests GitHub native auto-merge subject to current PR admission and repository
+checks and reviews. Workers never merge directly or delete branches.
 
 ### Bound repeated PR work
 
