@@ -56,8 +56,10 @@ describe("hubConnections", () => {
     const viteRoot = join(root, "app")
     const connectionRoot = join(viteRoot, "packages/api")
     const definition = await writeConnection(connectionRoot, "server/connections/google.ts")
+    await hubConnections().api.prepareTypes({ projectRoot: viteRoot })
     const plugin = hubConnections({ projectRoot: "packages/api" })
     await plugin.api.prepareTypes({ projectRoot: viteRoot })
+    await expect(readFile(join(root, ".vitehub/types/connections.d.ts"), "utf8")).rejects.toMatchObject({ code: "ENOENT" })
     expect(await readFile(join(connectionRoot, ".vitehub/types/connections.d.ts"), "utf8")).toContain(JSON.stringify(definition))
   })
 

@@ -2564,6 +2564,16 @@ describe("ViteHub Nuxt integration", () => {
     expect(steps).toEqual(["connections", "types"])
   })
 
+  it("includes default Connections declarations from a separate effective Vite root", async () => {
+    const { nuxt } = createNuxt()
+    Object.assign(nuxt.options.vite, { root: "frontend" })
+    await viteHubNuxtModule({ database: true, connections: true, preset: "node" }, nuxt)
+    // SAFETY: Module setup initializes both Nuxt TypeScript include lists before this assertion.
+    const appOptions = nuxt.options as typeof nuxt.options & { typescript: { tsConfig: { include: string[] } } }
+    expect(appOptions.typescript.tsConfig.include).toContain("../frontend/.vitehub/**/*.d.ts")
+    expect(nuxt.options.nitro).toMatchObject({ typescript: { tsConfig: { include: expect.arrayContaining(["../frontend/.vitehub/**/*.d.ts"]) } } })
+  })
+
   it("prepares Connection types with the effective relative Vite root", async () => {
     const prepareTypes = vi.fn(async () => {})
     mocks.vitehub.mockReturnValue([{ name: "@vite-hub/connections/vite", api: { prepareTypes } }])

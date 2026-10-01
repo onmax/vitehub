@@ -862,8 +862,10 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         },
       }
     : options
-  const secondaryProjectRoots = configuredProjectRoots(configuredOptions, rootDir, viteRoot)
-    .filter(root => root !== projectRoot)
+  const secondaryProjectRoots = [...new Set([
+    ...configuredProjectRoots(configuredOptions, rootDir, viteRoot),
+    ...(configuredOptions.connections ? [viteRoot] : []),
+  ])].filter(root => root !== projectRoot)
   const generatedTypes = [
     relative(nuxt.options.buildDir, join(projectRoot, ".vitehub/types.d.ts")),
     ...(effectiveQueue ? [relative(nuxt.options.buildDir, join(projectRoot, ".vitehub/queue.d.ts"))] : []),

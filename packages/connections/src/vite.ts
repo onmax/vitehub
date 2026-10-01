@@ -85,16 +85,19 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
   let resolved: ResolvedConfig | undefined
   let definitions: DiscoveredConnectionDefinition[] = []
   let serverDirs: string[] | undefined
+  let defaultProjectRoot = resolveViteHubProjectRoot(process.cwd())
   let projectRoot = process.cwd()
   let nitroRegistryFile: string | undefined
 
   function refresh(): DiscoveredConnectionDefinition[] {
+    defaultProjectRoot = resolveViteHubProjectRoot(resolve(resolved?.root ?? process.cwd()))
     projectRoot = resolveViteHubProjectRoot(resolve(resolved?.root ?? process.cwd()), { projectRoot: options.projectRoot })
     definitions = discoverConnectionDefinitions({ rootDir: projectRoot, serverDirs })
     return definitions
   }
 
   async function refreshGeneratedFiles(): Promise<void> {
+    if (projectRoot !== defaultProjectRoot) await rm(resolve(defaultProjectRoot, ".vitehub/types/connections.d.ts"), { force: true })
     await Promise.all([
       writeFileIfChanged(resolve(projectRoot, ".vitehub", "types", "connections.d.ts"), renderRegistryTypes(definitions)),
       ...(nitroRegistryFile ? [writeFileIfChanged(nitroRegistryFile, renderRegistry(definitions, database))] : []),
@@ -106,6 +109,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
     enforce: "pre",
     api: {
       async prepareTypes(input) {
+        defaultProjectRoot = resolveViteHubProjectRoot(input.projectRoot)
         projectRoot = resolveViteHubProjectRoot(input.projectRoot, { projectRoot: options.projectRoot })
         serverDirs = input.serverDirs
         definitions = discoverConnectionDefinitions({ rootDir: projectRoot, serverDirs })
