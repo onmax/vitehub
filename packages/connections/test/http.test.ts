@@ -58,16 +58,24 @@ function stateCookie(response: Response): string {
   return decodeURIComponent(match[1]!)
 }
 
+const browserCookies = new Map<string, string>()
+
 async function startConnect(handler: ReturnType<typeof setup>["handler"]): Promise<{ state: string, ticketUrl: string, authorizationUrl: URL, response: Response }> {
   const started = await handler(manage({ action: "start", name: "gmail" }))
   expect(started.status).toBe(200)
   const { url: ticketUrl } = await started.json() as { url: string }
   const response = await handler(new Request(ticketUrl, { headers: { cookie: started.headers.get("set-cookie")! } }))
   expect(response.status).toBe(302)
-  return { authorizationUrl: new URL(response.headers.get("location")!), response, state: stateCookie(response), ticketUrl }
+  const state = stateCookie(response)
+  const browser = /vitehub_connection_browser=([^;]+)/.exec(started.headers.get("set-cookie") ?? "")?.[1]
+  if (browser) browserCookies.set(state, decodeURIComponent(browser))
+  return { authorizationUrl: new URL(response.headers.get("location")!), response, state, ticketUrl }
 }
 
 function callback(query: Record<string, string>, cookie?: string): Request {
+  const state = query.state
+  const browser = state ? browserCookies.get(state) : undefined
+  if (browser && !cookie?.includes("vitehub_connection_browser=")) cookie = `${cookie ? `${cookie}; ` : ""}vitehub_connection_browser=${encodeURIComponent(browser)}`
   return new Request(`${base}/gmail/callback?${new URLSearchParams(query)}`, cookie ? { headers: { cookie } } : undefined)
 }
 
@@ -288,6 +296,19 @@ describe("Connections connect routes", () => {
     expect(ok.headers.get("location")).toBe("/settings?connection=gmail&outcome=connected")
     const replay = await handler(callback({ code: "auth-code", state }, `vitehub_connection_state=${encodeURIComponent(state)}`))
     expect(replay.status).toBe(400)
+  })
+
+  it("binds the OAuth callback to the browser that started it", async () => {
+    const { handler, runtime, upstream } = setup()
+    const { state } = await startConnect(handler)
+    const response = await handler(callback(
+      { code: "auth-code", state },
+      `vitehub_connection_state=${encodeURIComponent(state)}; vitehub_connection_browser=transferred`,
+    ))
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ code: "CONNECTIONS_INVALID" })
+    expect(upstream.calls).toEqual([])
+    expect((await runtime.inspect("gmail")).status).toBe("disconnected")
   })
 
   it("rejects a callback before the ticket was opened", async () => {

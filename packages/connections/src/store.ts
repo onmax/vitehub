@@ -41,7 +41,7 @@ export interface PendingConnection {
 export interface ConnectionsStore {
   activity: (options: { before?: string, connection?: string, limit?: number }) => Promise<ConnectionActivity[]>
   append: (activity: ConnectionActivity) => Promise<void>
-  consumePending: (state: string, now: number) => Promise<PendingConnection | undefined>
+  consumePending: (state: string, now: number, browserToken?: string) => Promise<PendingConnection | undefined>
   createPending: (pending: PendingConnection & { expiresAt: number, ticket: string }) => Promise<void>
   /** Deletes the grant only at `revision`, so a newer connect survives a slow disconnect. */
   deleteGrant: (name: string, revision: string) => Promise<void>
@@ -184,12 +184,15 @@ export function createConnectionsStore(options: { db: ConnectionsDatabase, encry
       const value = v.parse(activityPayload, { ...activity, actor: { ...activity.actor, id: activity.actor.id.slice(0, 512) } })
       await db.run(sql`INSERT INTO vitehub_connection_activity (name, id, payload) VALUES (${value.connection}, ${value.id}, ${JSON.stringify(value)})`)
     },
-    async consumePending(state, now) {
+    async consumePending(state, now, browserToken) {
       await initialize()
+      const candidate = (await db.all(sql`SELECT state, name, payload, expires_at FROM vitehub_connection_pending WHERE state = ${state} AND opened = 1`))[0]
+      if (candidate === undefined) return
+      const pending = await readPending(candidate, state)
+      if (pending.browserToken !== undefined && pending.browserToken !== browserToken) return
       const row = (await db.all(sql`DELETE FROM vitehub_connection_pending WHERE state = ${state} AND opened = 1 RETURNING state, name, payload, expires_at`))[0]
-      if (row === undefined) return
-      const pending = await readPending(row, state)
-      return v.parse(pendingRow, row).expires_at < now ? undefined : pending
+      if (row === undefined || v.parse(pendingRow, row).expires_at < now) return
+      return pending
     },
     async createPending(pending) {
       await initialize()

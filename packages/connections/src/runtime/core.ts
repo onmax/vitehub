@@ -60,7 +60,7 @@ export interface ConnectionLifecycleOptions {
 export interface ConnectionsRuntime {
   activity: (options: { before?: string, connection?: string, event?: unknown, limit?: number }) => Promise<ConnectionActivity[]>
   /** Completes the OAuth callback. `cookieState` must match the `state` query parameter. */
-  callback: (input: { code?: string, cookieState?: string, error?: string, event?: unknown, name: string, state?: string }) => Promise<ConnectionSummary>
+  callback: (input: { browserToken?: string, code?: string, cookieState?: string, error?: string, event?: unknown, name: string, state?: string }) => Promise<ConnectionSummary>
   call: <TInput, TOutput, TEffect extends ConnectionEffect>(
     name: string,
     operation: ConnectionOperation<TInput, TOutput, TEffect>,
@@ -439,7 +439,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       if (!input.state || !input.cookieState || input.state !== input.cookieState) {
         throw connectionError("invalid", { connection: input.name })
       }
-      const pending = await db.consumePending(input.state, Date.now())
+      const pending = await db.consumePending(input.state, Date.now(), input.browserToken)
       if (!pending || pending.name !== input.name) throw connectionError("invalid", { connection: input.name })
       const started = Date.now()
       try {

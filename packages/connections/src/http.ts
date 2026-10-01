@@ -31,6 +31,7 @@ const manageInput = v.variant("action", [
   v.object({ action: v.literal("disconnect"), name }),
 ])
 const stateCookie = "vitehub_connection_state"
+const browserCookie = "vitehub_connection_browser"
 
 const securityHeaders = {
   "cache-control": "no-store",
@@ -47,9 +48,9 @@ function appendCookie(response: Response, value: string): Response {
   return response
 }
 
-function redirect(location: string, cookie?: string): Response {
+function redirect(location: string, cookies?: string | readonly string[]): Response {
   const headers = new Headers({ ...securityHeaders, location, "referrer-policy": "no-referrer" })
-  if (cookie) headers.append("set-cookie", cookie)
+  for (const cookie of cookies ? (Array.isArray(cookies) ? cookies : [cookies]) : []) headers.append("set-cookie", cookie)
   return new Response(null, { headers, status: 302 })
 }
 
@@ -80,7 +81,7 @@ async function readBody(request: Request): Promise<unknown> {
   }
 }
 
-function errorResponse(error: unknown, cookie?: string): Response {
+function errorResponse(error: unknown, cookie?: string | readonly string[]): Response {
   if (!isConnectionError(error)) return json({ code: "CONNECTIONS_FAILED", message: "Connection request failed." }, 500)
   const status = error.code === "CONNECTIONS_NOT_FOUND"
     ? 404
@@ -92,7 +93,7 @@ function errorResponse(error: unknown, cookie?: string): Response {
           ? 503
           : 409
   const response = json({ code: error.code, message: error.message }, status)
-  if (cookie) response.headers.append("set-cookie", cookie)
+  for (const value of cookie ? (Array.isArray(cookie) ? cookie : [cookie]) : []) response.headers.append("set-cookie", value)
   return response
 }
 
@@ -103,8 +104,8 @@ function readCookie(request: Request, key: string): string | undefined {
   }
 }
 
-function cookie(path: string, value: string, secure: boolean, maxAge: number): string {
-  return `${stateCookie}=${encodeURIComponent(value)}; Path=${path}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`
+function cookie(name: string, path: string, value: string, secure: boolean, maxAge: number): string {
+  return `${name}=${encodeURIComponent(value)}; Path=${path}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`
 }
 
 function segment(value: string): string | undefined {
@@ -147,7 +148,7 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions): (r
         const browserToken = crypto.randomUUID()
         const result = await runtime.start(input.name, { actor: access.actor, basePath: options.basePath, browserToken, event, origin: new URL(request.url).origin })
         const response = json(result)
-        return appendCookie(response, cookie(`${basePath}/${encodeURIComponent(input.name)}`, browserToken, new URL(request.url).protocol === "https:", 600))
+        return appendCookie(response, cookie(browserCookie, `${basePath}/${encodeURIComponent(input.name)}`, browserToken, new URL(request.url).protocol === "https:", 600))
       }
       case "refresh": return json({ connection: await runtime.refresh(input.name, { actor: access.actor, event }) })
       case "disconnect": return json({ connection: await runtime.disconnect(input.name, { actor: access.actor, event }) })
@@ -175,13 +176,14 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions): (r
       if (path[1] === "connect") {
         const ticket = url.searchParams.get("ticket")
         if (!ticket || ticket.length > 128) throw connectionError("invalid")
-        const opened = await options.runtime.open({ browserToken: readCookie(request, stateCookie), event, name: connection, ticket })
-        return redirect(opened.authorizationUrl, cookie(cookiePath, opened.state, secure, 600))
+        const opened = await options.runtime.open({ browserToken: readCookie(request, browserCookie), event, name: connection, ticket })
+        return redirect(opened.authorizationUrl, cookie(stateCookie, cookiePath, opened.state, secure, 600))
       }
-      const clear = cookie(cookiePath, "", secure, 0)
+      const clear = [cookie(stateCookie, cookiePath, "", secure, 0), cookie(browserCookie, cookiePath, "", secure, 0)]
       try {
         await options.runtime.callback({
           code: url.searchParams.get("code") ?? undefined,
+          browserToken: readCookie(request, browserCookie),
           cookieState: readCookie(request, stateCookie),
           error: url.searchParams.get("error") ?? undefined,
           event,
