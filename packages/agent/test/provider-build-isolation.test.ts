@@ -8,6 +8,12 @@ import { hubAgent } from "../src/vite.ts"
 import type { ProviderDeploymentOutputWriter } from "@vite-hub/internal/build/deployment-output"
 import type { ResolvedConfig } from "vite"
 
+const finalized = vi.hoisted(() => vi.fn(async () => undefined))
+vi.mock("@vite-hub/internal/build/deployment-output", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@vite-hub/internal/build/deployment-output")>(),
+  finalizeProviderDeploymentOutputs: finalized,
+}))
+
 vi.mock("@vite-hub/internal/build/vercel-runtime-packages", () => ({
   copyNodeRuntimePackages: vi.fn(async () => undefined),
   copyVercelFunctionRuntimePackages: vi.fn(async () => undefined),
@@ -15,6 +21,7 @@ vi.mock("@vite-hub/internal/build/vercel-runtime-packages", () => ({
 
 const roots: string[] = []
 afterEach(async () => {
+  finalized.mockClear()
   vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map(root => rm(root, { force: true, recursive: true })))
 })
@@ -61,6 +68,8 @@ it.each([true, false])("keeps Agent output in its owning catalog across environm
         bundleOptions: expect.objectContaining({ define: config.define }),
       })] }),
     }))
+    await (plugin.closeBundle as { handler(this: typeof context): Promise<void> }).handler.call(context)
+    expect(finalized).toHaveBeenLastCalledWith(useProviderOutputCatalog(config))
     await contributions[0]?.discard?.()
   }
 })

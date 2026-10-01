@@ -42,7 +42,7 @@ describe("Workflow preparation for Schedule", () => {
           resolve: { alias: [{ find: "build-alias", replacement: join(root, "alias.ts") }] },
           [VITEHUB_SERVER_DIRS]: [server],
         }
-        await (plugin.config as (config: UserConfig) => void)(input)
+        await (plugin.config as { handler: (config: UserConfig, env: { command: string }) => Promise<void> }).handler(input, { command: "build" })
         // Model a host config clone that omits the framework's forwarded-directory field.
         const config = { ...input, command: "build" } as unknown as ResolvedConfig
         if (!retainForwardedDirs) Reflect.deleteProperty(config, VITEHUB_SERVER_DIRS)
@@ -67,7 +67,7 @@ describe("Workflow preparation for Schedule", () => {
     }
   })
 
-  it.each([true, false])("uses each environment config when a reused plugin starts builds with private metadata %j", async (retainMetadata) => {
+  it.each([true, false])("uses each environment config and owning catalog when the clone retains private metadata %j", async (retainPrivateMetadata) => {
     const plugin = hubWorkflow({ provider: "vercel" })
     const roots: string[] = []
     try {
@@ -85,7 +85,7 @@ describe("Workflow preparation for Schedule", () => {
           workflow: { provider: "vercel" },
           [VITEHUB_SERVER_DIRS]: [server],
         }
-        await (plugin.config as (config: UserConfig) => void)(input)
+        await (plugin.config as { handler: (config: UserConfig, env: { command: string }) => Promise<void> }).handler(input, { command: "build" })
         configs.push({
           ...input,
           build: { outDir: "dist" },
@@ -99,13 +99,24 @@ describe("Workflow preparation for Schedule", () => {
       }
       // Resolve both configs before either environment starts, as Vite's builder does.
       for (const config of configs) await (plugin.configResolved as (config: ResolvedConfig) => void)(config)
-      for (const config of configs) {
+      const contexts = configs.map(config => {
         // Vite creates an environment config from the resolved app config.
-        const clone = retainMetadata ? { ...config } : Object.fromEntries(Object.entries(config))
-        if (!retainMetadata) Reflect.deleteProperty(clone, "__vitehubWorkflowServerDirs")
-        const context = { environment: { config: clone } }
+        const clone = { ...config }
+        if (!retainPrivateMetadata) {
+          for (const key of Object.getOwnPropertySymbols(clone)) Reflect.deleteProperty(clone, key)
+          Reflect.deleteProperty(clone, VITEHUB_SERVER_DIRS)
+          Reflect.deleteProperty(clone, "__vitehubWorkflowServerDirs")
+        }
+        return { environment: { config: clone } }
+      })
+      // Start both environments before either completes its provider output.
+      for (const context of contexts) {
         ;(plugin.buildStart as (this: typeof context) => void).call(context)
+      }
+      for (const [index, context] of contexts.entries()) {
+        const config = configs[index]!
         await (plugin.buildEnd as (this: typeof context, error?: Error) => Promise<void>).call(context)
+        // The host plugins finalize this original config's catalog.
         const contributions = useProviderOutputCatalog(config).takeDeploymentContributions()
         expect(contributions).toHaveLength(1)
         await contributions[0]!.write({

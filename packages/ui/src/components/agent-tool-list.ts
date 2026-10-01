@@ -27,6 +27,10 @@ function schemaBlock(label: string, schema: AgentToolInspection["inputSchema"]) 
 
 export const AgentToolList = defineComponent({
   name: "AgentToolList",
+  emits: {
+    /** Emitted with a used tool's name when the viewer asks to see its calls. */
+    select: (name: string) => Boolean(name),
+  },
   props: {
     calls: {
       required: false,
@@ -39,8 +43,9 @@ export const AgentToolList = defineComponent({
       type: Array as PropType<readonly AgentToolInspection[]>,
     },
   },
-  setup(props) {
-    const Icon = getCurrentInstance()?.appContext.components.UIcon;
+  setup(props, { emit }) {
+    const instance = getCurrentInstance();
+    const Icon = instance?.appContext.components.UIcon;
     const toolIcon = (tool: AgentToolInspection) => Icon && tool.icon
       ? h("span", { "aria-hidden": "true", class: "vh-agent-tool-list__icon" }, [h(Icon, { name: tool.icon })])
       : null;
@@ -50,12 +55,23 @@ export const AgentToolList = defineComponent({
         { class: "vh-agent-tool-list" },
         props.tools.map((tool) => {
           const count = props.calls?.[tool.name];
-          const usage = props.calls
-            ? h("span", {
-                "aria-label": count ? `${count} call${count === 1 ? "" : "s"}` : "Not used",
-                class: "vh-agent-tool-list__count",
-              }, count || "—")
-            : null;
+          const calls = count ? `${count} call${count === 1 ? "" : "s"}` : undefined;
+          const usage = !props.calls
+            ? null
+            : calls && instance?.vnode.props?.onSelect
+              ? h("button", {
+                  "aria-label": `${calls}, show the first call`,
+                  class: "vh-agent-tool-list__count",
+                  onClick: (event: MouseEvent) => {
+                    // The button can sit in a disclosure summary; keep the disclosure state.
+                    event.preventDefault();
+                    event.stopPropagation();
+                    emit("select", tool.name);
+                  },
+                  title: "Show the first call",
+                  type: "button",
+                }, calls)
+              : h("span", { "aria-label": calls ?? "Not used", class: "vh-agent-tool-list__count" }, calls ?? "—");
           const attributes = {
             "data-used": props.calls ? (count ? "true" : "false") : undefined,
             key: tool.name,
