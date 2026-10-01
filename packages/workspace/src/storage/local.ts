@@ -296,7 +296,12 @@ async function withFilesystemWriterIntent<T>(lock: string, permissions: Pick<imp
       break
     }
     catch (error) {
-      if (Reflect.get(Object(error), "code") !== "ENOENT") throw error
+      if (Reflect.get(Object(error), "code") !== "ENOENT") {
+        // A failed setup can leave an empty parent that readers interpret as
+        // writer intent. Remove only an empty directory and retain the error.
+        await rmdir(intents).catch(() => {})
+        throw error
+      }
     }
   }
   try {

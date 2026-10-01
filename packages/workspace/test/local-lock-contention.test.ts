@@ -11,6 +11,8 @@ const pausedProbes = new Map<string, { entered: () => void, resume: Promise<void
 const pausedReads = new Map<string, { entered: () => void, resume: Promise<void> }>()
 const pausedGateRemovals = new Map<string, { entered: () => void, resume: Promise<void> }>()
 const failedHeartbeats = new Set<string>()
+const pausedStats = new Map<string, { entered: () => void, resume: Promise<void> }>()
+const failedStats = new Set<string>()
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>()
@@ -62,7 +64,17 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     }
     return file
   }
-  return { ...actual, default: { ...actual, mkdir, open, readFile, lstat, rm }, mkdir, open, readFile, lstat, rm }
+  const stat = async (...args: Parameters<typeof actual.stat>) => {
+    if (failedStats.delete(String(args[0]))) throw Object.assign(new Error("Writer intent permission setup failed"), { code: "EIO" })
+    const paused = pausedStats.get(String(args[0]))
+    if (paused) {
+      pausedStats.delete(String(args[0]))
+      paused.entered()
+      await paused.resume
+    }
+    return await actual.stat(...args)
+  }
+  return { ...actual, default: { ...actual, mkdir, open, readFile, lstat, rm, stat }, mkdir, open, readFile, lstat, rm, stat }
 })
 
 const roots: string[] = []
@@ -80,6 +92,42 @@ async function storeWithFiles(count: number) {
   const gate = (path: string) => join(root, ".vitehub/locks", `${createHash("sha256").update(path).digest("hex")}.gate`)
   return { gate, paths, root, store }
 }
+
+it.skipIf(process.platform === "win32")("retries writer intent when its parent disappears during permission setup", async () => {
+  const { gate, paths, store } = await storeWithFiles(1)
+  const intents = gate(paths[0]!).replace(/\.gate$/, ".writers")
+  let entered!: () => void, resume!: () => void
+  const reached = new Promise<void>((resolve) => { entered = resolve })
+  const resumed = new Promise<void>((resolve) => { resume = resolve })
+  pausedStats.set(intents, { entered, resume: resumed })
+  const writing = store.writeFile(paths[0]!, { path: paths[0]!, content: "updated" })
+  try {
+    await reached
+    await rm(intents, { recursive: true })
+    resume()
+    await writing
+    await expect(store.readFile(paths[0]!)).resolves.toMatchObject({ content: new TextEncoder().encode("updated") })
+  }
+  finally {
+    resume()
+    await Promise.allSettled([writing])
+    pausedStats.delete(intents)
+  }
+})
+
+it.skipIf(process.platform === "win32")("removes empty writer intent after permission setup fails", async () => {
+  const { gate, paths, store } = await storeWithFiles(1)
+  const intents = gate(paths[0]!).replace(/\.gate$/, ".writers")
+  failedStats.add(intents)
+  try {
+    await expect(store.writeFile(paths[0]!, { path: paths[0]!, content: "updated" })).rejects.toThrow("Writer intent permission setup failed")
+    await expect(readdir(intents)).rejects.toMatchObject({ code: "ENOENT" })
+    await expect(store.readFile(paths[0]!)).resolves.toMatchObject({ content: new TextEncoder().encode(paths[0]!) })
+  }
+  finally {
+    failedStats.delete(intents)
+  }
+})
 
 it.each(["probe", "gate release"])("rejects admission delayed past its deadline during %s", async (stage) => {
   const { gate, paths, root, store } = await storeWithFiles(1)
