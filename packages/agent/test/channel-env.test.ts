@@ -17,6 +17,22 @@ function uses(source: string) {
 }
 
 describe("built-in Channel discovery", () => {
+  it.each(["tele\\u0067ram", "tele\\u{67}ram"])("decodes escaped identifier Channel keys: %s", (key) => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      export default defineAgent({ channels: { ${key}: {} } })
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
+  it.each(["as AgentOptions && actual", "satisfies AgentOptions || actual", "as AgentOptions ?? actual"])("rejects runtime operations after unparenthesized settings assertions: %s", (expression) => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      const selected = { channels: { github: {} } }
+      const actual = { channels: { telegram: {} } }
+      export default defineAgent(selected ${expression})
+    `)).toEqual([])
+  })
+
   it("finds factory calls imported from the Channels module", () => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"

@@ -421,10 +421,7 @@ function localObject(tokens: string[], index: number, declarations: ReadonlyMap<
   }
   if (tokens[index] === "{") return index
   const declaration = declarations.get(tokens[index]!)
-  let after = index + 1
-  while (tokens[after] === "!" && tokens[after + 1] !== "=") after++
-  const end = tokens[after]
-  return declaration !== undefined && tokens[declaration] === "{" && [",", "}", ")", "as", "satisfies"].includes(end!) ? declaration : undefined
+  return declaration !== undefined && tokens[declaration] === "{" && isValueEnd(tokens, index + 1, new Set([",", "}", ")"])) ? declaration : undefined
 }
 
 function isShadowedAt(tokens: string[], index: number, name: string, bindings: ReadonlyMap<string, string>, lineBreaks: ReadonlySet<number>): boolean {

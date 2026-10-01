@@ -78,11 +78,14 @@ export function tokenizeAgentSource(source: string): { tokens: string[], lineBre
   const tokens: string[] = []
   const lineBreaks = new Set<number>()
   let previousEnd = 0
-  for (const match of source.matchAll(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|[A-Za-z_$][\w$]*|[^\s]/g)) {
+  for (const match of source.matchAll(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|(?:[A-Za-z_$]|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\}))(?:[\w$]|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\}))*|[^\s]/g)) {
     const token = match[0]
     if (token.startsWith("//") || token.startsWith("/*")) continue
     if (/[\r\n\u2028\u2029]/.test(source.slice(previousEnd, match.index))) lineBreaks.add(tokens.length)
-    tokens.push(token)
+    // Escaped identifier characters have the same binding and property names at runtime.
+    tokens.push(/^[A-Za-z_$\\]/.test(token)
+      ? token.replace(/\\u(?:([0-9a-fA-F]{4})|\{([0-9a-fA-F]+)\})/g, (_, code: string | undefined, point: string | undefined) => String.fromCodePoint(Number.parseInt(code ?? point!, 16)))
+      : token)
     previousEnd = match.index + token.length
   }
   return { tokens, lineBreaks }
