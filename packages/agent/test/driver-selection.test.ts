@@ -303,6 +303,16 @@ describe("built-in Agent Driver selection", () => {
     });
   });
 
+  it("keeps a provider working directory and reports only its form", () => {
+    const cwd = () => "/srv/checkout";
+    expect(normalizeAgentDriver({ driver: { cwd: "/srv/checkout", kind: "codex" } })).toMatchObject({ cwd: "/srv/checkout", kind: "provider" });
+    expect(normalizeAgentDriver({ driver: { cwd, kind: "claude-code" } })).toMatchObject({ cwd, kind: "provider" });
+    // SAFETY: This fixture deliberately gives a model Driver a provider-only option.
+    expect(() => normalizeAgentDriver({ driver: { cwd: "/srv/checkout", model: {} } } as never)).toThrow("does not support option: cwd");
+    expect(createAgentInspectionMetadata(defineAgent({ driver: { cwd, kind: "codex" } })).config?.driver.provider).toMatchObject({ cwd: "dynamic" });
+    expect(createAgentInspectionMetadata(defineAgent({ driver: { cwd: "/srv/checkout", kind: "codex" } })).config?.driver.provider).toMatchObject({ cwd: "static" });
+  });
+
   it("accepts sealed Codex credentials implemented by a class instance", () => {
     class SecretEnv {
       unseal() {
@@ -327,6 +337,9 @@ describe("built-in Agent Driver selection", () => {
     [{ kind: "codex", providerSettings: [] }, "driver.providerSettings }) must be an object"],
     [{ kind: "codex", sessionStorePath: "" }, "driver.sessionStorePath }) must be a non-empty string"],
     [{ kind: "claude-code", sessionStorePath: {} }, "driver.sessionStorePath }) must be a non-empty string"],
+    [{ kind: "codex", cwd: "" }, "driver.cwd }) must be a non-empty directory path or resolver"],
+    [{ kind: "claude-code", cwd: "  " }, "driver.cwd }) must be a non-empty directory path or resolver"],
+    [{ kind: "codex", cwd: 1 }, "driver.cwd }) must be a non-empty directory path or resolver"],
   ])("rejects invalid provider options %#", (driver, message) => {
     // SAFETY: These deliberately invalid fixtures exercise the runtime normalization boundary.
     expect(() => normalizeAgentDriver({ driver } as never)).toThrow(message);
