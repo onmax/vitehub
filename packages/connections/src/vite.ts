@@ -119,6 +119,26 @@ async function removeAbandonedManifestLock(lockPath: string): Promise<boolean> {
   }
   if (Date.now() - lockStat.mtimeMs <= staleManifestLockMs) return false;
 
+  // A delayed heartbeat can make a live lock look stale. Preserve locks whose
+  // recorded owner is still running; only ownerless or dead-process locks may
+  // be reclaimed.
+  const ownerContent = await readOptionalFile(resolve(lockPath, "owner.json"));
+  if (ownerContent !== undefined) {
+    try {
+      const owner = JSON.parse(ownerContent) as { pid?: unknown };
+      if (typeof owner.pid === "number" && Number.isInteger(owner.pid) && owner.pid > 0) {
+        try {
+          process.kill(owner.pid, 0);
+          return false;
+        } catch (error) {
+          if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) return false;
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+    }
+  }
+
   const abandonedPath = `${lockPath}.stale-${randomUUID()}`;
   try {
     await rename(lockPath, abandonedPath);
