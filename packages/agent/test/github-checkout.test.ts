@@ -219,7 +219,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
 
   // A restarted process adopts the checkout that the previous process left in the pool.
   const restarted = createGitHubHost(options)
-  await restarted.withPullRequestCheckout({ repository: 'base/repo', number: 2, headSha: twoSha, headRepository: 'base/repo', headRef: 'two' }, async ({ path }) => {
+  await restarted.withPullRequestCheckout({ repository: 'base/repo', number: 1, headSha: twoSha, headRepository: 'base/repo', headRef: 'two' }, async ({ path }) => {
     expect(path).toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(twoSha)
     expect(await git(path, 'branch', '--show-current')).toBe('two')
@@ -232,19 +232,22 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     await expect(git(path, 'config', 'core.fsmonitor')).rejects.toThrow()
     expect(await git(path, 'config', 'remote.origin.pushurl')).toBe('https://github.com/base/repo.git')
   })
-  await restarted.withPullRequestCheckout({ repository: 'base/repo', number: 3, headSha: oneSha }, async ({ path }) => {
-    expect(path).toBe(firstPath)
+  let secondPath = ''
+  await restarted.withPullRequestCheckout({ repository: 'base/repo', number: 2, headSha: oneSha }, async ({ path }) => {
+    secondPath = path
+    expect(path).not.toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(oneSha)
+    await expect(access(join(path, 'node_modules/marker'))).rejects.toThrow()
     expect(await git(path, 'config', 'remote.origin.pushurl')).toMatch(/^disabled:/)
     await expect(git(path, 'config', 'remote.origin.push')).rejects.toThrow()
   })
 
   // A checkout without a verified head leaves the pool.
-  await expect(restarted.withPullRequestCheckout({ repository: 'base/repo', number: 4, headSha: twoSha, headRepository: 'base/repo', headRef: 'one' }, async () => {
+  await expect(restarted.withPullRequestCheckout({ repository: 'base/repo', number: 2, headSha: twoSha, headRepository: 'base/repo', headRef: 'one' }, async () => {
     throw new Error('must not run')
   })).rejects.toThrow('head changed')
-  await expect(access(firstPath)).rejects.toThrow()
-  expect(await readdir(pool)).toEqual([])
+  await expect(access(secondPath)).rejects.toThrow()
+  expect(await readdir(pool)).toHaveLength(1)
 }, 30_000)
 
 it('rejects an empty checkout pool root', () => {

@@ -241,31 +241,34 @@ export function parseGraphQLRateLimit(value: unknown, checkedAt: number = Date.n
 
 /**
  * Reusable pull request checkouts under one root that one process owns. A checkout with a verified
- * head returns to its repository's idle list with its ignored files. A restarted process adopts
- * the directories that a previous process left under the root.
+ * head returns to its pull request's idle list with its ignored files. A restarted process adopts
+ * the directories that a previous process left under the root. Pull request identity is part of
+ * the pool key so ignored state cannot cross the trust boundary between pull requests.
  */
 function createCheckoutPool(root: string) {
   const idle = new Map<string, string[]>()
   let adopted: Promise<void> | undefined
-  const release = (repository: string, directory: string) => {
-    idle.set(repository, [...idle.get(repository) ?? [], directory])
+  const key = (repository: string, number: number) => `${repository}#${number}`
+  const release = (repository: string, number: number, directory: string) => {
+    const poolKey = key(repository, number)
+    idle.set(poolKey, [...idle.get(poolKey) ?? [], directory])
   }
   const adopt = () => adopted ??= (async () => {
     await mkdir(root, { recursive: true })
     for (const entry of await readdir(root, { withFileTypes: true })) {
-      const match = /^(.+?)--(.+?)-[A-Za-z0-9]{6}$/.exec(entry.name)
-      if (entry.isDirectory() && match) release(`${match[1]}/${match[2]}`, join(root, entry.name))
+      const match = /^(.+?)--(.+?)-pr-(\d+)-[A-Za-z0-9]{6}$/.exec(entry.name)
+      if (entry.isDirectory() && match) release(`${match[1]}/${match[2]}`, Number(match[3]), join(root, entry.name))
     }
   })().catch((error: unknown) => {
     adopted = undefined
     throw error
   })
   return {
-    async acquire(repository: string): Promise<{ directory: string, reused: boolean }> {
+    async acquire(repository: string, number: number): Promise<{ directory: string, reused: boolean }> {
       await adopt()
-      const directory = idle.get(repository)?.pop()
+      const directory = idle.get(key(repository, number))?.pop()
       if (directory) return { directory, reused: true }
-      return { directory: await mkdtemp(join(root, `${repository.replace("/", "--")}-`)), reused: false }
+      return { directory: await mkdtemp(join(root, `${repository.replace("/", "--")}-pr-${number}-`)), reused: false }
     },
     release,
   }
@@ -725,7 +728,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     if (pullRequest.headRepository && !pullRequest.headRef) {
       throw agentDiagnostics.AGENT_R0766({ message: "A pull request headRef is required when headRepository is supplied." })
     }
-    const pooled = checkoutPool ? await checkoutPool.acquire(pullRequest.repository) : undefined
+    const pooled = checkoutPool ? await checkoutPool.acquire(pullRequest.repository, pullRequest.number) : undefined
     const checkout = pooled?.directory ?? await mkdtemp(join(tmpdir(), `vitehub-${pullRequest.repository.replace("/", "-")}-pr-${pullRequest.number}-`))
     const operation = controlledOperation(options)
     let keepCheckout = false
@@ -821,7 +824,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     }
     finally {
       operation.close()
-      if (keepCheckout && checkoutPool) checkoutPool.release(pullRequest.repository, checkout)
+      if (keepCheckout && checkoutPool) checkoutPool.release(pullRequest.repository, pullRequest.number, checkout)
       else {
         await rm(checkout, { force: true, recursive: true })
         if (checkoutPool) await rm(`${checkout}.meta.json`, { force: true })
