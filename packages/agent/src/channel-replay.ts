@@ -190,7 +190,7 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
   const id = run.force ? `${stableId}:${crypto.randomUUID()}` : stableId
   let reservation: AgentInvocationJournal<TRuntimeConfig> | undefined
   try {
-    const itemRuntime = { ...run.runtime, ...(!run.force && run.invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), run: { ...run.runtime.run, runId: id } }
+    const itemRuntime = { ...run.runtime, ...(run.invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), run: { ...run.runtime.run, runId: id } }
     if (!run.force && run.invocations) reservation = await reserveAgentChannelItem(run.agent, itemRuntime)
     const invocation = await resolveAgentTriggerInvocation(run.agent, itemRuntime, run.triggerId, item)
     if (isResolvedAgentTriggerHandledInvocation(invocation)) { await reservation?.finish("completed"); return { id, key, reason: "handled", status: "skipped" } }

@@ -24,6 +24,7 @@ import type {
   AgentActivityTask,
   AgentActivityUpdate,
   AgentCallbackContext,
+  AgentGitHub,
   AgentCapabilityDefinition,
   AgentChatFinishExtension,
   AgentChatMessage,
@@ -91,8 +92,21 @@ import type { WorkspaceName } from "@vite-hub/workspace"
 
 export const messageChannelTitleSupportContextKey = "channel.delivery.supportsTitle"
 
-// Main runtime compatibility: older Channel definitions do not carry GitHub identity metadata.
-export function githubChannelIdentity(_channels: Readonly<Record<string, object>> | undefined): undefined { return undefined }
+const githubChannelIdentityKey = Symbol.for("vitehub.githubChannelIdentity")
+
+function isAgentGitHub(value: unknown): value is AgentGitHub {
+  return isRecord(value) && hasRuntimeType(value.access, "function")
+}
+
+/** Return the GitHub identity shared by the Agent's github() Channels, when there is exactly one. */
+export function githubChannelIdentity(channels: Readonly<Record<string, object>> | undefined): AgentGitHub | undefined {
+  const identities = new Set<AgentGitHub>()
+  for (const channel of Object.values(channels || {})) {
+    const identity = (channel as { [githubChannelIdentityKey]?: AgentGitHub })[githubChannelIdentityKey]
+    if (identity) identities.add(identity)
+  }
+  return identities.size === 1 ? [...identities][0] : undefined
+}
 const customTitleEffectChannels = new WeakSet<object>()
 
 export {
@@ -535,7 +549,7 @@ export interface GitHubChannelActivityOptions<TRuntimeConfig extends AgentRuntim
 export interface GitHubChannelOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
   extends AgentChannelOptions<TRuntimeConfig> {
   activity?: boolean | GitHubChannelActivityOptions<TRuntimeConfig>
-  app?: true | GitHubAppOptions<TRuntimeConfig>
+  app?: true | GitHubAppOptions<TRuntimeConfig> | AgentGitHub
   pullRequest?: boolean | GitHubPullRequestCommentEventOptions<TRuntimeConfig>
 }
 
@@ -3133,7 +3147,7 @@ function validateChannelMessageDefinition(kind: string, message: unknown): void 
     }
     if (hasRuntimeType(method, "function")) continue
     if (isRecord(method) && method.read === true && hasRuntimeType(method.handler, "function")) continue
-    throw agentDiagnostics.AGENT_R0928({ message: `[vitehub] Channel "${kind}" message method "${name}" must be a function or { read: true, handler }.` })
+    throw agentDiagnostics.AGENT_R0940({ message: `[vitehub] Channel "${kind}" message method "${name}" must be a function or { read: true, handler }.` })
   }
 }
 
@@ -3225,7 +3239,14 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
 export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>(
   options: GitHubChannelOptions<TRuntimeConfig> = {},
 ): AgentChannelDefinitionOf<TRuntimeConfig, "github"> {
-  const { activity, app: appOptions, pullRequest, ...channelOptions } = options
+  const { activity, app: appInput, pullRequest, ...channelOptions } = options
+  const identity = isAgentGitHub(appInput) ? appInput : undefined
+  const appOptions = isAgentGitHub(appInput)
+    ? {
+        token: async (_context: unknown, scope: { repository?: string }) => (await appInput.access(scope.repository ? { repository: scope.repository } : {})).token,
+        ...(appInput.identity?.() ? { identity: { login: appInput.identity()! } } : {}),
+      }
+    : appInput
   const activityDefinition = activity ? githubAgentActivity(appOptions) : undefined
   const openedActivityDefinition = activity ? githubAgentActivity(appOptions, "initialize") : undefined
   const app = githubAppOptions(appOptions)
@@ -3242,7 +3263,7 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
         userAgent: app?.userAgent,
       })
     : undefined
-  return defineChannel("github", {
+  const channel = defineChannel("github", {
     ...channelOptions,
     activity: activityDefinition,
     capabilities: [
@@ -3257,6 +3278,8 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
     },
     webhooks: githubWebhookDefaults(options.webhooks, appOptions),
   })
+  if (identity) Object.defineProperty(channel, githubChannelIdentityKey, { enumerable: true, value: identity })
+  return channel
 }
 
 export interface GmailChannelOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {

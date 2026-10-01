@@ -42,6 +42,7 @@ export type {
   AgentInvocationListOptions,
   AgentInvocationListResult,
   AgentInvocationObservationOptions,
+  AgentInvocationRetentionOptions,
   AgentInvocationRecord,
   AgentInvocationRecordStatus,
   AgentInvocationSummary,
