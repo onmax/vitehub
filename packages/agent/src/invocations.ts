@@ -144,6 +144,14 @@ export interface AgentInvocationStore {
   update(id: string, input: AgentInvocationStoreUpdateInput, claimId?: string): MaybePromise<AgentInvocationRecord | undefined>
 }
 
+export interface AgentInvocationRetentionOptions {
+  maxAgeMs?: false | number
+  maxRecords?: false | number
+}
+export type AgentInvocationDeleteOutcome = "deleted" | "not-found" | "not-terminal"
+export interface AgentInvocationPruneOptions { dryRun?: boolean, olderThanMs?: number }
+export interface AgentInvocationPruneResult { dryRun: boolean, ids: readonly string[] }
+
 export interface AgentInvocationObservationOptions {
   /** Retained observations, including lifecycle outcomes. Default 32768; maximum 32768. */
   maxCount?: number
@@ -902,6 +910,33 @@ function assertInvocationId(id: string): void {
 export async function agentInvocationId(runId: string, agentName?: string): Promise<string> {
   assertInvocationId(runId)
   return await boundedIdentity(invocationIdentity(runId, agentName))
+}
+
+export async function recoverInterruptedAgentInvocations(
+  _invocations: AgentInvocations,
+  _options: unknown,
+): Promise<number> {
+  return 0
+}
+
+export type AgentInvocationRerunUnavailableReason =
+  | "invocation-not-terminal" | "input-not-captured" | "replay-metadata-unavailable"
+  | "input-has-invoker" | "input-has-data" | "input-has-options" | "input-redacted"
+  | "input-truncated" | "input-has-messages" | "input-has-context" | "input-has-run-metadata"
+  | "input-has-timeout" | "input-has-abort-signal" | "input-has-dry-run" | "input-prompt-changed"
+
+export type AgentInvocationRerunInput =
+  | { available: true, invokerProfileId?: string, prompt: string }
+  | { available: false, reason: AgentInvocationRerunUnavailableReason }
+
+/** Reads the prompt captured when an Invocation started, when it is safe to replay. */
+export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "observations"> & Partial<Pick<AgentInvocationRecord, "status">>): AgentInvocationRerunInput {
+  if (record.status !== undefined && !terminalStatus(record.status)) return { available: false, reason: "invocation-not-terminal" }
+  const attributes = record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes
+  const prompt = attributes?.["input.prompt"]
+  if (!hasRuntimeType(prompt, "string") || !prompt.trim()) return { available: false, reason: "input-not-captured" }
+  const profile = attributes?.["agent.invoker.profile.id"]
+  return { available: true, prompt, ...(hasRuntimeType(profile, "string") && profile ? { invokerProfileId: profile } : {}) }
 }
 
 function assertStore(store: AgentInvocationStore | undefined): asserts store is AgentInvocationStore {

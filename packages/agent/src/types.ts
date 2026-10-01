@@ -1,4 +1,5 @@
 import type { AgentActivity, Message, StreamEvent } from "./messages.ts"
+import type { AskQuestion } from "./ask.ts"
 import type { AgentRunEventPublisher, AgentRunEvents } from "./run-events.ts"
 import type { AgentInvocationAnnotationValue, AgentInvocations } from "./invocations.ts"
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from "@standard-schema/spec"
@@ -88,6 +89,25 @@ export interface AgentBoxContext<TRuntimeConfig extends AgentRuntimeConfig = Age
 export interface AgentHostIdentity {
   readonly name: string
   readonly workspace?: WorkspaceName
+}
+
+export interface AgentGitHubAccess { env: Record<string, string>, token: string }
+export interface AgentGitHub {
+  access(input?: { repository?: string, signal?: AbortSignal }): Promise<AgentGitHubAccess>
+  identity?(): string | undefined
+}
+
+export type AgentAskQuestions<TOutput = Record<string, unknown>> = { readonly [K in keyof TOutput]: AskQuestion }
+export type AgentAskQuestionsResolver<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, CALL_OPTIONS = unknown, TContextValues extends object = AgentInvocationContextValues, TOutput = Record<string, unknown>> =
+  | AgentAskQuestions<TOutput>
+  | ((context: AgentRunContext<TRuntimeConfig, CALL_OPTIONS, WorkspaceName, TContextValues>) => MaybePromise<AgentAskQuestions<TOutput>>)
+export interface AgentAskDriver<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, CALL_OPTIONS = unknown, TContextValues extends object = AgentInvocationContextValues, TOutput = unknown> {
+  ask: AgentAskQuestionsResolver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>
+  capacity?: AgentDriverCapacityOptions
+  credentials?: never
+  execution?: never
+  kind?: never
+  model?: never
 }
 
 export interface AgentRuntimeContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
@@ -757,6 +777,23 @@ export interface AgentRunCallbackContext<
   invoker: AgentInvoker
   run?: AgentRunMetadata
 }
+
+export interface AgentInterceptContext<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+  TData = unknown,
+> extends AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues> {
+  data: TData
+}
+
+export type AgentInterceptHandler<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+  TData = unknown,
+  TIntercept = unknown,
+> = (context: AgentInterceptContext<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData>) => MaybePromise<TIntercept | undefined>
 
 export interface AgentRunResult {
   artifacts?: readonly PublishedAgentDeliveryArtifact[]
@@ -1675,6 +1712,20 @@ export type AgentSettings<
 }
 
 declare const agentOutputType: unique symbol
+declare const agentDataType: unique symbol
+declare const agentDataOutputType: unique symbol
+declare const agentInterceptOutputType: unique symbol
+
+export interface AgentDataCarrier<TDataInput = unknown> {
+  [agentDataType]?: TDataInput
+}
+
+export interface AgentDataOutputCarrier<TData = unknown> {
+  [agentDataOutputType]?: TData
+}
+export interface AgentInterceptOutputCarrier<TOutput = unknown> {
+  [agentInterceptOutputType]?: [TOutput]
+}
 
 export interface AgentDefinition<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
