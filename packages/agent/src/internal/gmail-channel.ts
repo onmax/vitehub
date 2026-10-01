@@ -619,7 +619,7 @@ export async function gmailLabelIds(client: GmailClient, names: readonly string[
     label ??= find(await listLabels(client, true))
     if (!label && Object.hasOwn(declared, name)) label = await createLabel(client, name, declared[name])
     if (!label) {
-      throw agentDiagnostics.AGENT_R0939({ message: `[vitehub] Gmail label "${name}" does not exist. Declare it in gmail({ labels }) or create it in Gmail.` })
+      throw agentDiagnostics.AGENT_R0940({ message: `[vitehub] Gmail label "${name}" does not exist. Declare it in gmail({ labels }) or create it in Gmail.` })
     }
     ids.push(label.id)
   }

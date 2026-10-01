@@ -452,4 +452,64 @@ describe("defineChannel({ history })", () => {
     expect(() => defineChannel("x", { history: { collection, key: () => "", trigger: "c" }, triggers })).toThrow(/must name one of the Channel triggers: a, b/)
     expect(defineChannel("x", { history: { collection, key: () => "", trigger: "b" }, triggers }).history?.trigger).toBe("b")
   })
+
+  it("rejects raw Channel histories with multiple triggers and no explicit trigger", async () => {
+    const { channel } = mailbox()
+    const rawChannel = {
+      ...channel,
+      history: { ...channel.history, trigger: undefined },
+      triggers: { ...channel.triggers, other: channel.triggers?.received },
+    }
+    const agent = defineAgent({ channels: { mailbox: rawChannel } as never, driver: { run: () => "ok" }, runtime: false })
+    await expect(replayChannel(agent, "mailbox", { force: true })).rejects.toMatchObject({ code: "AGENT_R0933" })
+  })
+
+  it("rejects ambiguous history on a raw AgentChannelDefinition", async () => {
+    const load = vi.fn(async () => [{ id: "m1" }])
+    const collection = defineCollection(load, {
+      cursor: (item: { id: string }) => item.id,
+      cursorSchema: v.string(),
+    })
+    const invoke = (name: string) => ({ input: { prompt: name } })
+    const agent = defineAgent({
+      channels: {
+        raw: {
+          kind: "raw",
+          history: { collection, key: (item: { id: string }) => item.id },
+          triggers: {
+            first: { invoke: () => invoke("first") },
+            second: { invoke: () => invoke("second") },
+          },
+        },
+      },
+      driver: { run: vi.fn() },
+      runtime: false,
+    })
+
+    await expect(replayChannel(agent, "raw", { dryRun: true })).rejects.toMatchObject({ code: "AGENT_R0933" })
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  it("rejects a history trigger that is absent from a raw definition", async () => {
+    const collection = defineCollection(async () => [], {
+      cursor: (item: { id: string }) => item.id,
+      cursorSchema: v.string(),
+    })
+    const agent = defineAgent({
+      channels: {
+        raw: {
+          kind: "raw",
+          history: { collection, key: (item: { id: string }) => item.id, trigger: "missing" },
+          triggers: { first: { invoke: () => ({ input: { prompt: "first" } }) } },
+        },
+      },
+      driver: { run: vi.fn() },
+      runtime: false,
+    })
+
+    await expect(replayChannel(agent, "raw", { dryRun: true })).rejects.toMatchObject({
+      code: "AGENT_R0930",
+      message: expect.stringContaining('Channel "raw" history trigger must name one of the Channel triggers: first.'),
+    })
+  })
 })

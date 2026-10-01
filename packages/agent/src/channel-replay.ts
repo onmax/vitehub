@@ -92,9 +92,14 @@ function resolveChannelHistory<TRuntimeConfig extends AgentRuntimeConfig>(
   if (!history) {
     throw agentDiagnostics.AGENT_R0931({ message: `[vitehub] Channel "${channel}" has no history. Add history to its defineChannel() options.` })
   }
-  const triggerName = history.trigger ?? Object.keys(definition.triggers || {})[0]
-  if (!triggerName) {
-    throw agentDiagnostics.AGENT_R0931({ message: `[vitehub] Channel "${channel}" history has no trigger.` })
+  const triggerNames = Object.keys(definition.triggers || {})
+  const triggerName = history.trigger
+  if (triggerName === undefined) {
+    if (triggerNames.length !== 1) throw agentDiagnostics.AGENT_R0930({ message: `[vitehub] Channel "${channel}" history requires an explicit trigger when the Channel has ${triggerNames.length} triggers.` })
+    return { history, triggerId: `${channel}.${triggerNames[0]}`, triggerName: triggerNames[0]! }
+  }
+  if (!hasRuntimeType(triggerName, "string") || !triggerNames.includes(triggerName)) {
+    throw agentDiagnostics.AGENT_R0930({ message: `[vitehub] Channel "${channel}" history trigger must name one of the Channel triggers: ${triggerNames.join(", ") || "none"}.` })
   }
   return { history, triggerId: `${channel}.${triggerName}`, triggerName }
 }

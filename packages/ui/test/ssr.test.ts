@@ -42,7 +42,7 @@ describe("UI server rendering", () => {
 
     const html = await renderToString(app);
     expect(customPluginRuns).toBe(1);
-    expect(html).toContain("katex");
+    expect(html).toContain("vh-math-fallback");
   });
 
   it.each(["task-list", "components", "attributes", "alert", "frontmatter"])("replaces the %s Markdown default with the caller's plugin", async (name) => {
@@ -62,7 +62,7 @@ describe("UI server rendering", () => {
     const output = await renderToString(app);
     expect(output).toContain("Overridden");
     expect(output).not.toContain("Original");
-    expect(output).toContain("katex");
+    expect(output).toContain("vh-math-fallback");
   });
 
   it("does not render raw HTML from Agent messages", async () => {
