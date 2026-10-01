@@ -1070,7 +1070,9 @@ async function applyCapabilityWorkspaceContributions<
   const conditionalWorkspacePersistence = context.persistWorkspaceContributions
     && (persistencePaths.length || retirementPaths.length)
     && await supportsSkillPersistence(retainedWorkspace)
-  const canRetireWorkspaceContributions = context.persistWorkspaceContributions
+  // Retirement must use the same conditional-write capability as persistence.
+  // A read-then-unconditional-delete fallback can remove a concurrent replacement.
+  const canRetireWorkspaceContributions = conditionalWorkspacePersistence
     && retirementPaths.length > 0
   if (conditionalWorkspacePersistence || canRetireWorkspaceContributions) {
     if (conditionalWorkspacePersistence) await Promise.all(persistencePaths.map(({ path }) => sourceResolution.workspace.fs.materializeSources?.({ path })))
