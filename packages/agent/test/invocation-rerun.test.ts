@@ -388,7 +388,7 @@ describe("agentInvocationRerunInput", () => {
     const record = await journaled(input)
     expect(record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes)
       .toMatchObject({ "agent.invoker.id": "resolved-user", "agent.invoker.profile.id": "removed-profile" })
-    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-invoker" })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-context" })
   })
 
   it("disables rerun when a redactor rewrites the captured prompt", async () => {

@@ -97,7 +97,8 @@ function invocationAttributes(
     "channel.delivery.provider": context.runtime.channelDelivery?.provider,
     "channel.delivery.source.id": context.runtime.channelDelivery?.sourceId,
     "input.replay.version": 5,
-    "input.hasInvoker": resolveInputAgentInvoker(context.input.context) !== undefined,
+    "input.hasInvoker": resolveInputAgentInvoker(context.input.context) !== undefined
+      && !(hasResolvedAgentInvokerInput(context.input) && context.context.get("agent.invoker.profile.id") !== undefined),
     // A resolver-derived invoker without a selected profile cannot be reconstructed by a rerun.
     "input.hasResolvedInvoker": (hasResolvedAgentInvokerInput(context.input) || hasResolverDerivedAgentInvoker(context.context))
       && context.context.get("agent.invoker.profile.id") === undefined,
