@@ -93,7 +93,7 @@ describe("Console Connections", () => {
     const { url } = v.parse(v.object({ url: v.string() }), await start.json())
     expect(url).toMatch(/^https:\/\/app\.test\/_vitehub\/connections\/example\/connect\?ticket=/)
 
-    const connect = await handleConsoleConnections(new Request(url))
+    const connect = await handleConsoleConnections(new Request(url, { headers: { cookie: start.headers.get("set-cookie") ?? "" } }))
     expect(connect.status).toBe(302)
     const state = new URL(connect.headers.get("location") ?? "").searchParams.get("state")
     const cookie = /vitehub_connection_state=([^;]*)/.exec(connect.headers.get("set-cookie") ?? "")?.[1]
@@ -128,7 +128,7 @@ describe("Console Connections", () => {
       const start = await dispatch(manage({ action: "start", name: "example" }, "/portal"))
       const { url } = v.parse(v.object({ url: v.string() }), await start.json())
       expect(url).toMatch(/^https:\/\/app\.test\/portal\/_vitehub\/connections\/example\/connect\?ticket=/)
-      const connect = await dispatch(new Request(url))
+      const connect = await dispatch(new Request(url, { headers: { cookie: start.headers.get("set-cookie") ?? "" } }))
       expect(connect.status).toBe(302)
       const redirectUri = `${origin}/portal/_vitehub/connections/example/callback`
       expect(authorization).toHaveBeenCalledWith(expect.objectContaining({ redirectUri }), expect.anything())
@@ -262,7 +262,7 @@ describe("Console Connections", () => {
         }
         const start = await dispatch(manage({ action: "start", name: "example" }, "/portal"))
         const { url } = await start.json() as { url: string }
-        const connect = await dispatch(new Request(url))
+        const connect = await dispatch(new Request(url, { headers: { cookie: start.headers.get("set-cookie") ?? "" } }))
         const state = new URL(connect.headers.get("location") ?? "").searchParams.get("state")
         const cookie = /vitehub_connection_state=([^;]*)/.exec(connect.headers.get("set-cookie") ?? "")?.[1]
         expect(connect.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections/example")
