@@ -21,7 +21,7 @@ export async function readGitHubAppEnvironment(context: Pick<AgentCallbackContex
   const env = await channelEnv("github", context as AgentCallbackContext);
   const appId = Number(envString(env.appId));
   const keyPath = envString(env.appPrivateKeyPath);
-  const privateKey = envString(env.appPrivateKey) ?? (keyPath ? (await readFile(keyPath, "utf8")).trim() : undefined);
+  const privateKey = (envString(env.appPrivateKey) ?? (keyPath ? (await readFile(keyPath, "utf8")).trim() : undefined))?.replace(/\\n/g, "\n");
   const installation = envString(env.appInstallationId);
   if (!Number.isSafeInteger(appId) || appId <= 0 || !privateKey) {
     throw new Error("[vitehub] The Babysitter needs a GitHub App: set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_APP_PRIVATE_KEY_PATH).");
@@ -44,6 +44,12 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   // SAFETY: the Babysitter preset attaches this contribution only to its own configured definitions.
   const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number } };
   const repositories = babysitterRepositories(agent.options.filter);
+  const filter = isRuntimeRecord(agent.options.filter) ? { ...agent.options.filter,
+    repository: isRuntimeRecord(agent.options.filter.repository) ? {
+      ...agent.options.filter.repository,
+      allow: repositories,
+    } : agent.options.filter.repository,
+  } : agent.options.filter;
   const app = await readGitHubAppEnvironment();
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();
@@ -59,6 +65,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   // Workers record invocations and provider sessions in this host's directory.
   const worker = defineAgent({
     extends: agent,
+    options: { ...agent.options, filter },
     invocations: host.invocations,
     driver: { capacity: host.capacity, sessionStorePath: host.providerSessionStorePath },
   });

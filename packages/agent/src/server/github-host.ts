@@ -190,7 +190,15 @@ export function createGitHubAppCredentials(app: GitHubAppEnvironment) {
   return {
     async credentials(context: GitHubHostCredentialContext): Promise<GitHubHostCredentials> {
       if (!context.repository) return { token: app.token }
-      const installationId = app.installationId ?? await installation(context.repository, context.signal)
+      let installationId = app.installationId
+      if (installationId === undefined) {
+        try {
+          installationId = await installation(context.repository, context.signal)
+        } catch (error) {
+          if (app.token) return { token: app.token }
+          throw error
+        }
+      }
       return { appId: app.appId, installationId, owner: owner(context.repository), privateKey: app.privateKey, token: app.token }
     },
     /** The App bot's login and noreply email, used as the commit author. */
