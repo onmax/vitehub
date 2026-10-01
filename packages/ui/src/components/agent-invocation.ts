@@ -1493,11 +1493,21 @@ function isDeliveredAnswer(activity: InvocationActivity): boolean {
     && deliveryContent(activity) !== undefined;
 }
 
-// Count delivered replies that no recorded assistant message already shows.
+// Use the same current-turn answer selection as the conversation renderer.
 function deliveredAnswerCount(activities: readonly InvocationActivity[]): number {
-  const assistantBodies = new Set(activities.flatMap(activity =>
-    activity.kind === "message" && activity.role === "assistant" && activity.body?.trim() ? [activity.body.trim()] : []));
-  return uniqueDeliveredAnswers(activities, assistantBodies).length;
+  return conversationAnswers(activities).answers.size;
+}
+
+function conversationAnswers(activities: readonly InvocationActivity[]) {
+  const orderedActivities = activities.filter(activity => activity.kind !== "message" || isVisibleMessage(activity));
+  const firstUser = promptActivityIndex(orderedActivities);
+  const lastUser = orderedActivities.findLastIndex(activity => activity.kind === "message" && activity.role === "user");
+  const lastAssistant = orderedActivities.findLastIndex((activity, index) => index > lastUser
+    && activity.kind === "message" && activity.role === "assistant" && activity.attributes["message.phase"] !== "commentary");
+  const tail = firstUser >= 0 ? orderedActivities.slice(firstUser + 1) : [];
+  const finalBody = lastAssistant >= 0 ? orderedActivities[lastAssistant]!.body?.trim() : undefined;
+  const answers = new Set(uniqueDeliveredAnswers(tail, new Set(finalBody ? [finalBody] : [])));
+  return { orderedActivities, firstUser, lastAssistant, tail, finalBody, answers };
 }
 
 function uniqueDeliveredAnswers(activities: readonly InvocationActivity[], bodies: Set<string>): InvocationActivity[] {
@@ -1528,24 +1538,12 @@ function renderInvocationActivities(
   inspect: InspectHandler,
   messageRendering: MessageRendering,
 ) {
-  const orderedActivities = activities.filter(activity => activity.kind !== "message" || isVisibleMessage(activity));
-  const firstUser = promptActivityIndex(orderedActivities);
-  const lastUser = orderedActivities.findLastIndex(activity => activity.kind === "message" && activity.role === "user");
-  let lastAssistant = -1;
-  for (let index = orderedActivities.length - 1; index >= 0; index -= 1) {
-    const activity = orderedActivities[index]!;
-    if (index > lastUser && activity.kind === "message" && activity.role === "assistant" && activity.attributes["message.phase"] !== "commentary") {
-      lastAssistant = index;
-      break;
-    }
-  }
+  const { orderedActivities, firstUser, lastAssistant, tail, finalBody, answers } = conversationAnswers(activities);
   if (firstUser < 0) return renderActivitySequence(orderedActivities, invocation, expanded, toggleExpanded, inspect, messageRendering);
 
   const history = orderedActivities.slice(0, firstUser).filter(isVisibleMessage);
   const workBeforePrompt = orderedActivities.slice(0, firstUser).filter(activity => activity.kind !== "message");
   const prompt = orderedActivities[firstUser]!;
-  const tail = orderedActivities.slice(firstUser + 1);
-  const finalBody = lastAssistant >= 0 ? orderedActivities[lastAssistant]!.body?.trim() : undefined;
   const finalDelivery = tail.findLast(activity => activity.kind === "delivery"
     && activity.status === "completed"
     && activity.attributes["channel.effect.supported"] !== false
@@ -1554,7 +1552,6 @@ function renderInvocationActivities(
     && finalBody !== undefined
     && deliveryContent(activity)?.trim() === finalBody);
   const finalDeliveryReceipt = finalDelivery ? deliveryReceipt(finalDelivery) : undefined;
-  const answers = new Set(uniqueDeliveredAnswers(tail, new Set(finalBody ? [finalBody] : [])));
   const hasLaterCommentary = lastAssistant >= 0 && orderedActivities.slice(lastAssistant + 1).some(activity =>
     activity.kind === "message" && activity.role === "assistant" && activity.attributes["message.phase"] === "commentary");
   if (hasLaterCommentary) {

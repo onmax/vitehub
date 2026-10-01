@@ -928,6 +928,37 @@ describe("Agent Invocation UI", () => {
     expect(inspector.get(".vh-invocation-inspector__metrics").text()).toContain(hasFollowup ? "Messages3" : "Messages2");
   });
 
+  it.each([undefined, "Finished.", "Done."])("counts a delivered answer matching history with final response %s", (finalResponse) => {
+    const timestamp = "2026-08-22T00:00:00.000Z";
+    const invocation = {
+      id: "repeated-answer-across-turns",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      status: "completed" as const,
+      traceId: "trace",
+      observations: [
+        {
+          attributes: { "input.messages": [
+            { id: "history-question", parts: [{ text: "Earlier question", type: "text" }], role: "user" },
+            { id: "history-answer", parts: [{ text: "Done.", type: "text" }], role: "assistant" },
+          ] },
+          name: "agent.invocation.started", sequence: 1, timestamp, type: "run" as const,
+        },
+        { attributes: { "message.content": "Run it again.", "message.role": "user" }, name: "agent.message", sequence: 2, timestamp, type: "lifecycle" as const },
+        { attributes: { "channel.effect.kind": "reply", "channel.effect.content": "Done." }, name: "agent.channel.delivery", sequence: 3, timestamp, type: "run" as const },
+        ...(finalResponse ? [{ attributes: { "message.content": finalResponse, "message.role": "assistant" }, name: "agent.message", sequence: 4, timestamp, type: "lifecycle" as const }] : []),
+      ],
+    } satisfies AgentInvocationView;
+
+    const wrapper = mount(AgentInvocation, { props: { invocation } });
+    const visibleMessageCount = finalResponse === "Finished." ? 5 : 4;
+    expect(wrapper.findAll(".vh-invocation-message")).toHaveLength(visibleMessageCount);
+    expect(wrapper.findAll('.vh-invocation-message[data-role="assistant"]').map(message => message.get(".vh-invocation-message__body").text()))
+      .toEqual(finalResponse === "Finished." ? ["Done.", "Done.", "Finished."] : ["Done.", "Done."]);
+    const inspector = mount(AgentInvocationInspector, { props: { invocation } });
+    expect(inspector.get(".vh-invocation-inspector__metrics").text()).toContain(`Messages${visibleMessageCount}`);
+  });
+
   it("keeps active work visible and collapses it when the run completes", async () => {
     const timestamp = "2026-08-22T00:00:00.000Z";
     const invocation = {
