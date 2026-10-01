@@ -109,6 +109,15 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: ["botToken"] }])
   })
 
+  it.each(["@memo()", "@cache.memo({ enabled: true })", "@memo", "@memo() @trace()"])("ignores decorated method declarations: %s", (decorator) => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      class Helper {
+        ${decorator} telegram() { telegram({ botToken: token }) }
+      }
+    `)).toEqual([{ kind: "telegram", keys: ["botToken"] }])
+  })
+
   it("ignores method declarations while keeping calls inside method bodies", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
@@ -635,6 +644,10 @@ describe("built-in Channel discovery", () => {
   })
 
   it.each([
+    "<AgentChannelInputs>channels",
+    "(<AgentChannelInputs>channels)",
+    "<AgentChannelInputs>{ telegram: {} }",
+    "(<AgentChannelInputs>{ telegram: {} })",
     "(channels as AgentChannelInputs)",
     "(channels satisfies AgentChannelInputs)",
     "((channels as Record<string, { botToken?: string }>))",
@@ -645,6 +658,14 @@ describe("built-in Channel discovery", () => {
       import { defineAgent } from "vite-hub/agent"
       const channels = { telegram: {} }
       export default defineAgent({ channels: ${expression} })
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
+  it.each(["<AgentChannelInputs>{ telegram: {} }", "(<AgentChannelInputs>{ telegram: {} })", "<Record<string, { botToken?: string }>>{ telegram: {} }"])("resolves angle-asserted module Channel maps: %s", (initializer) => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      const channels = ${initializer};
+      export default defineAgent({ channels })
     `)).toEqual([{ kind: "telegram", keys: [] }])
   })
 

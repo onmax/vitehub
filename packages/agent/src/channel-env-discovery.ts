@@ -124,7 +124,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
       else if (!channelModule && clause[b] === "defineAgent") agentFactories.add(local)
     }
   }
-  const declarations = moduleObjectDeclarations(tokens, lineBreaks)
+  const declarations = moduleObjectDeclarations(tokens, lineBreaks, typescript)
   const shadowBindings = new Map([...bindings, ...[...namespaces].map(name => [name, name] as const)])
   const agentBindings = new Map([...agentFactories].map(name => [name, "defineAgent"]))
   const agentShadowBindings = new Map([...agentBindings, ...[...agentNamespaces].map(name => [name, name] as const)])
@@ -138,7 +138,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
     const agent = !isShadowedAt(tokens, i, tokens[i]!, agentShadowBindings, lineBreaks) && factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames, lineBreaks, typescript)
     if (!agent || tokens[agent.open + 1] !== "{") continue
     visitObjectProperties(tokens, agent.open + 1, (option, channelsValue) => {
-      const channels = channelsValue === undefined ? undefined : localObject(tokens, channelsValue, declarations)
+      const channels = channelsValue === undefined ? undefined : localObject(tokens, channelsValue, declarations, typescript)
       if (option !== "channels" || channels === undefined) return
       visitObjectProperties(tokens, channels, (key, value) => {
         if (value === undefined) return
@@ -152,7 +152,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
           return
         }
         if (!known.has(key)) return
-        const options = localObject(tokens, value, declarations) ?? value
+        const options = localObject(tokens, value, declarations, typescript) ?? value
         const optionKeys = staticOptionKeys(tokens, options, "}", typescript)
         // An object with `kind` is a complete Channel definition, not built-in Channel options.
         let complete = false
@@ -362,11 +362,14 @@ function isValueEnd(tokens: string[], after: number, terminators: ReadonlySet<st
 }
 
 // Resolve an object literal, or a module-level `const name = { ... }` reference to one.
-function localObject(tokens: string[], index: number, declarations: ReadonlyMap<string, number>): number | undefined {
-  while (tokens[index] === "(") {
-    const valueEnd = ["{", "("].includes(tokens[index + 1]!) ? closingDelimiter(tokens, index + 1) : index + 1
+function localObject(tokens: string[], index: number, declarations: ReadonlyMap<string, number>, typescript: boolean): number | undefined {
+  for (;;) {
+    index = skipOptionAssertions(tokens, index, typescript)
+    if (tokens[index] !== "(") break
+    const value = skipOptionAssertions(tokens, index + 1, typescript)
+    const valueEnd = ["{", "("].includes(tokens[value]!) ? closingDelimiter(tokens, value) : value
     if (!isValueEnd(tokens, valueEnd + 1, new Set([")"]))) return undefined
-    index++
+    index = value
   }
   if (tokens[index] === "{") return index
   const declaration = declarations.get(tokens[index]!)
@@ -653,7 +656,7 @@ function bindingPatternHasName(tokens: string[], start: number, name: string, cl
 }
 
 // Map module-level const object initializers to the index of their opening brace.
-function moduleObjectDeclarations(tokens: string[], lineBreaks: ReadonlySet<number>): Map<string, number> {
+function moduleObjectDeclarations(tokens: string[], lineBreaks: ReadonlySet<number>, typescript: boolean): Map<string, number> {
   const declarations = new Map<string, number>()
   // A newline before an identifier ends the initializer unless it continues
   // an assertion or a binary expression. Operators can continue across lines.
@@ -666,8 +669,8 @@ function moduleObjectDeclarations(tokens: string[], lineBreaks: ReadonlySet<numb
       let equals = i + 2
       while (tokens[equals] && tokens[equals] !== "=" && tokens[equals] !== ";") equals++
       if (tokens[equals] === "=") {
-        const start = equals + 1
-        const object = localObject(tokens, start, declarations)
+        const start = skipOptionAssertions(tokens, equals + 1, typescript)
+        const object = localObject(tokens, start, declarations, typescript)
         const end = ["{", "("].includes(tokens[start]!) ? closingDelimiter(tokens, start) + 1 : start + 1
         if (object !== undefined && isValueEnd(tokens, end, new Set([",", ";"]), statementEnd)) declarations.set(tokens[i + 1]!, object)
       }
@@ -716,8 +719,24 @@ function factoryCall(
     && (!["await", "yield", "return", "throw", "new", "typeof", "void", "delete", "in", "instanceof"].includes(previous) || (previous === "void" && tokens[index - 2] === ":"))
   // Method keys are declarations. A call can precede a ternary colon, so also
   // require the key to follow a property boundary or a method modifier.
-  if (["{", ":"].includes(after!) && (afterType || ["{", "}", ",", ";", "async", "get", "set", "*", "static", "public", "private", "protected", "abstract", "declare", "override"].includes(previous)) && isMethodContainer(tokens, index)) return undefined
+  if (["{", ":"].includes(after!) && (afterType || followsDecorator(tokens, index) || ["{", "}", ",", ";", "async", "get", "set", "*", "static", "public", "private", "protected", "abstract", "declare", "override"].includes(previous)) && isMethodContainer(tokens, index)) return undefined
   return { name, open: next }
+}
+
+// Decorator calls can separate a method key from its property boundary.
+function followsDecorator(tokens: string[], index: number): boolean {
+  let previous = index - 1
+  if (tokens[previous] === ")") {
+    let depth = 1
+    while (previous > 0 && depth > 0) {
+      previous--
+      if (tokens[previous] === ")") depth++
+      else if (tokens[previous] === "(") depth--
+    }
+    previous--
+  }
+  while (previous >= 0 && (/^[A-Za-z_$][\w$]*$/.test(tokens[previous]!) || tokens[previous] === ".")) previous--
+  return tokens[previous] === "@"
 }
 
 // Angle-bracket assertions are TypeScript syntax, not JavaScript comparisons.
