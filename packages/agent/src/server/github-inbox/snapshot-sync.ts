@@ -1,7 +1,7 @@
 import * as v from 'valibot'
 import { parseEvidence, parsePullRequest, parseThread, type GitHubReviewThread, type GitHubEvidence, type GitHubDelivery, type GitHubPullRequestRecord } from './types.ts'
 import { createHash } from 'node:crypto'
-import { isFeedback, type Claim, type PullRequestInbox, type Snapshot } from './store.ts'
+import { type Claim, type PullRequestInbox, type Snapshot } from './store.ts'
 
 export type ReadGitHubSnapshot = (path: string, projection?: string) => Promise<unknown[]>
 export type ReadThreads = (repository: string, number: number) => Promise<GitHubReviewThread[]>
@@ -239,7 +239,7 @@ export async function detectChangedPullRequests(inbox: PullRequestInbox, graphql
     }
     // An inbox PR missing from the open list closed or merged.
     for (const item of tracked) if (item.repository === repository && item.status !== 'terminal' && !open.has(item.number)) await mark(item.number, 'closed')
-    } catch (error) {
+    } catch {
       // A repository failure must not prevent detection for later repositories.
       // The next interval retries this repository; partial pages are never marked.
       continue
