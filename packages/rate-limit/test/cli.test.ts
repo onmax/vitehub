@@ -77,14 +77,23 @@ describe("Rate Limit review regressions", () => {
     expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({ key })
   })
 
-  it.each(["http://user:secret@localhost:5173", "http://user:sec/ret@localhost", "http://user:sec@ret@host:invalid"])("redacts URL credentials in JSON discovery errors: %s", async url => {
+  it.each(["http://user:secret@localhost:5173", "http://user:sec/ret@localhost", "http://user:sec@ret@host:invalid", "http://user:sec ret@host:bad"])("redacts URL credentials in JSON discovery errors: %s", async url => {
     const output = context()
     await expect(runRateLimitCli(["peek", "login", "key", "--json", "--url", url], output.context, { fetch: vi.fn(async () => { throw new Error("offline") }) })).resolves.toBe(1)
     expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message")
     expect(output.stdout.output()).not.toContain("secret")
     expect(output.stdout.output()).not.toContain("sec/ret")
     expect(output.stdout.output()).not.toContain("ret@host")
+    expect(output.stdout.output()).not.toContain("sec ret")
     expect(output.stderr.output()).toBe("")
+  })
+
+  it.each([false, true])("redacts whitespace credentials from environment URL with JSON %s", async json => {
+    const output = context()
+    Object.assign(output.context.env, { VITEHUB_DEV_SERVER_URL: "http://user:sec ret@host:bad" })
+    await expect(runRateLimitCli(["peek", "login", "key", ...(json ? ["--json"] : [])], output.context, { fetch: vi.fn() })).resolves.toBe(1)
+    expect(output.stdout.output() + output.stderr.output()).not.toContain("sec ret")
+    expect(output.stdout.output() + output.stderr.output()).toContain("[redacted]")
   })
 
   it("applies timeout to discovery", async () => {

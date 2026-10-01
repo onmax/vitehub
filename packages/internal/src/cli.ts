@@ -246,7 +246,7 @@ function devServerDisplayUrl(value: string): string {
     return url.href
   }
   catch {
-    return value.replace(/\/\/[^\s]+@/g, "//[redacted]@")
+    return value.replace(/\/\/[\s\S]+@/g, "//[redacted]@")
   }
 }
 

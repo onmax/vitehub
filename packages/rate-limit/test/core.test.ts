@@ -36,6 +36,30 @@ describe("Rate Limit core", () => {
     await expect(limiter.reset({ key: "user" })).rejects.toThrow("must return [null] or [Error]")
   })
 
+  it("validates tagged and foreign Errors without native Error.isError", async () => {
+    const tagged = Object.assign(new Error("offline"), { [Symbol.toStringTag]: "ProviderError" })
+    const foreign: unknown = runInNewContext("new Error('cross-realm offline')")
+    const spoof = { name: "Error", message: "spoofed", [Symbol.toStringTag]: "Error" }
+    const descriptor = Object.getOwnPropertyDescriptor(Error, "isError")
+    Object.defineProperty(Error, "isError", { configurable: true, value: undefined })
+    try {
+      const driver = memoryRateLimitDriver()
+      const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })
+      for (const cause of [tagged, foreign]) {
+        Object.assign(driver, { peek: () => [cause, undefined], reset: () => [cause] })
+        await expect(limiter.peek({ key: "user" })).resolves.toMatchObject({ cause, status: "unavailable" })
+        await expect(limiter.reset({ key: "user" })).resolves.toEqual({ cause, status: "unavailable" })
+      }
+      Object.assign(driver, { peek: () => [spoof, undefined], reset: () => [spoof] })
+      await expect(limiter.peek({ key: "user" })).rejects.toThrow("must return [null, value] or [Error, undefined]")
+      await expect(limiter.reset({ key: "user" })).rejects.toThrow("must return [null] or [Error]")
+    }
+    finally {
+      if (descriptor) Object.defineProperty(Error, "isError", descriptor)
+      else Reflect.deleteProperty(Error, "isError")
+    }
+  })
+
   it("accepts genuine Errors with a custom display tag", async () => {
     const cause = Object.assign(new Error("offline"), { [Symbol.toStringTag]: "ProviderError" })
     const driver = memoryRateLimitDriver()
