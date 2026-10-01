@@ -329,27 +329,27 @@ async function loadWorkspaceAccessRuntime(): Promise<WorkspaceAccessRuntime> {
   }
 }
 
-interface AccessCapabilityMetadata<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
-  access: AccessCapabilityOptions<TRuntimeConfig>
+interface AccessCapabilityMetadata {
+  access: AccessCapabilityOptions
   chat: boolean
   kind: "access"
   workspace: boolean
 }
 
 function isAccessMetadata(value: unknown): value is AccessCapabilityMetadata {
-  return typeof value === "object"
-    && value !== null
-    && (value as { kind?: unknown }).kind === "access"
-    && typeof (value as { access?: unknown }).access === "object"
-    && (value as { access?: unknown }).access !== null
+  if (!isRecord(value) || value.kind !== "access" || !isRecord(value.access)) {
+    return false
+  }
+  // SAFETY: capability metadata is constructed by access() with this options shape.
+  return true
 }
 
-export function getAccessCapabilityOptions<TRuntimeConfig extends AgentRuntimeConfig>(
+export function getAccessCapabilityOptions(
   capabilities: AgentCapabilityDefinition[],
-): AccessCapabilityOptions<TRuntimeConfig>[] {
+): AccessCapabilityOptions[] {
   return capabilities
     .map(capability => capability.id === "access" && isAccessMetadata(capability.metadata) ? capability.metadata.access : undefined)
-    .filter((options): options is AccessCapabilityOptions<TRuntimeConfig> => !!options)
+    .filter((options): options is AccessCapabilityOptions => !!options)
 }
 
 export function access<
