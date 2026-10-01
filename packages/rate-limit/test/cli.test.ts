@@ -262,6 +262,17 @@ async function call(middleware: Middleware, init: { body?: string, headers?: Rec
 const guard = { [rateLimitDevHeader]: rateLimitDevHeaderValue }
 
 describe("Rate Limit dev endpoint", () => {
+  it.each(["allowedHosts", "https"])("rejects DNS-rebinding hosts even when Vite enables %s", async option => {
+    const dispatchFetch = vi.fn(async () => Response.json({}))
+    const { middlewares, server } = fakeServer({ nitro: { dispatchFetch } })
+    Object.assign(server.config.server, option === "allowedHosts" ? { allowedHosts: true } : { https: {} })
+    registerRateLimitDevEndpoint(server, { runtimeToken })
+    const response = await call(middlewares[0]!, { method: "POST", body: "{}", headers: { ...guard, "content-type": "application/json", host: "attacker.test:5173", origin: "http://attacker.test:5173" } })
+    expect(response.status).toBe(403)
+    expect(response.body).toContain("loopback host")
+    expect(dispatchFetch).not.toHaveBeenCalled()
+  })
+
   it("rejects a remote peer even with forged localhost headers", async () => {
     const { middlewares, server } = fakeServer()
     registerRateLimitDevEndpoint(server, { runtimeToken })
