@@ -1,6 +1,7 @@
 import * as v from "valibot"
 
 import { ConnectionError, isConnectionError, isEnvBridgeError } from "./errors.ts"
+import { isConnectionDefinition } from "./definition.ts"
 import { CONNECTION_NAME_MAX_LENGTH, isConnectionReadMethod } from "./types.ts"
 import { connectionActions, decide, envActor, providerApis } from "./policy.ts"
 
@@ -91,30 +92,6 @@ export interface ConnectionsRuntime {
   revoke: (input: { actor?: string, name: string }) => Promise<ConnectionInspection>
 }
 
-const connectionValue = v.union([v.string(), v.function()])
-const accessRuleSchema = v.object({
-  read: v.optional(v.boolean()),
-  write: v.optional(v.union([v.boolean(), v.literal("approve"), v.array(v.string())])),
-  approve: v.optional(v.boolean()),
-})
-const definitionSchema = v.looseObject({
-  provider: v.looseObject({
-    id: v.string(),
-    authorizationEndpoint: v.string(),
-    tokenEndpoint: v.string(),
-    clientId: connectionValue,
-    clientSecret: v.optional(connectionValue),
-    account: v.function(),
-    apis: v.record(v.string(), v.object({
-      rootUrl: v.string(),
-      methods: v.record(v.string(), v.tuple([v.string(), v.string(), v.boolean()])),
-      highRisk: v.optional(v.array(v.string())),
-    })),
-  }),
-  scopes: v.array(v.string()),
-  api: v.optional(v.record(v.string(), v.array(v.string()))),
-  access: v.optional(v.record(v.string(), accessRuleSchema)),
-})
 const storedTokenSchema = v.object({
   grantId: v.optional(v.string()),
   accountId: v.optional(v.string()),
@@ -136,10 +113,6 @@ const approvalInputSchema = v.variant("kind", [
   v.object({ grantId: v.optional(v.string()), input: v.unknown(), kind: v.literal("method") }),
   v.object({ grantId: v.optional(v.string()), body: v.optional(v.string()), headers: v.optional(v.record(v.string(), v.string())), kind: v.literal("fetch"), method: v.string(), redirect: v.optional(v.picklist(["error", "follow", "manual"])), url: v.string() }),
 ])
-
-function isDefinition(value: unknown): value is ConnectionDefinition {
-  return v.is(definitionSchema, value)
-}
 
 async function resolveValue(value: ConnectionValue | undefined): Promise<string | undefined> {
   return v.is(v.string(), value) || value === undefined ? value : await value()
@@ -256,14 +229,14 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   async function loadDefinition(name: string): Promise<ConnectionDefinition | undefined> {
     const entry = Object.hasOwn(options.definitions, name) ? options.definitions[name] : undefined
     if (!entry) return undefined
-    if (isDefinition(entry)) return entry
+    if (isConnectionDefinition(entry)) return entry
     if (!v.is(v.function(), entry)) return undefined
     let loaded = definitions.get(name)
     if (!loaded) {
       loaded = entry().then((module) => {
-        if (isDefinition(module)) return module
+        if (isConnectionDefinition(module)) return module
         const parsedModule = v.safeParse(v.object({ default: v.unknown() }), module)
-        return parsedModule.success && isDefinition(parsedModule.output.default) ? parsedModule.output.default : undefined
+        return parsedModule.success && isConnectionDefinition(parsedModule.output.default) ? parsedModule.output.default : undefined
       }).then((result) => {
         if (!result) definitions.delete(name)
         return result
