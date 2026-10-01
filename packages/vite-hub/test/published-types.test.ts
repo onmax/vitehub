@@ -67,8 +67,18 @@ it("keeps installed framework declarations independent of optional evlog", async
       await symlink(resolve(packageRoot, "node_modules", name), target, "dir")
     }
     await writeFile(resolve(consumerRoot, "consumer.ts"), `
-      import { vitehub } from "vite-hub"
+      import { vitehub, type ObservabilityEvlogOptions } from "vite-hub"
       vitehub({ preset: "cloudflare", observability: { service: "consumer", evlog: { pretty: true, sampling: { rates: { info: 25 } } } } })
+      const valid: ObservabilityEvlogOptions = { dev: { prettyError: { detail: "full" } }, redact: { builtins: ["email"], patterns: [/secret/], replacement: (matched: unknown, context: { path: string, key: string, groups?: Array<string | undefined> }) => context.path }, sampling: { keep: [{ status: 400 }] } }
+      void valid
+      // @ts-expect-error Unsupported terminal preset.
+      const invalidDev: ObservabilityEvlogOptions = { dev: "bogus" }
+      // @ts-expect-error Redaction accepts a Boolean or a configuration object.
+      const invalidRedact: ObservabilityEvlogOptions = { redact: 123 }
+      // @ts-expect-error Sampling rates must be numbers.
+      const invalidSampling: ObservabilityEvlogOptions = { sampling: { rates: { info: "all" } } }
+      void [invalidDev, invalidRedact, invalidSampling]
+
     `)
     await writeFile(resolve(consumerRoot, "package.json"), JSON.stringify({ private: true, type: "module" }))
     await writeFile(resolve(consumerRoot, "tsconfig.json"), JSON.stringify({

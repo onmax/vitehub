@@ -54,6 +54,21 @@ describe("vitehub({ observability })", () => {
     }
   })
 
+  it("uses normalized identity tags for request and Agent telemetry", async () => {
+    vi.stubEnv("NODE_ENV", "production")
+    const root = await mkdtemp(join(tmpdir(), "vitehub-observability-tags-"))
+    try {
+      const plugin = observabilityPlugin({ preset: "node", observability: { service: " support ", environment: "  " } })
+      const config: ObservabilityConfig = { root }
+      const hook = plugin.config as (config: ObservabilityConfig) => Promise<void>
+      await hook(config)
+      expect(evlog).toHaveBeenLastCalledWith(expect.objectContaining({ env: { service: "support", environment: "production" } }))
+      const source = await readFile(join(root, ".vitehub/nitro/observability/plugin.mjs"), "utf8")
+      expect(source).toContain('"service":"support","environment":"production"')
+    }
+    finally { vi.unstubAllEnvs(); await rm(root, { force: true, recursive: true }) }
+  })
+
   it.each([
     { preset: "netlify" as const, agent: true },
     { preset: "node" as const, agent: { runtime: "deno" as const } },

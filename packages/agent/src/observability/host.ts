@@ -30,8 +30,7 @@ export function installObservability(options: InstallObservabilityOptions): (hos
   }
   setHostObservability(observability)
   return (host) => {
-    telemetry.plugin(host)
-    host.hooks.hook("close", async () => {
+    telemetry.plugin(host, () => {
       if (hostObservability() === observability) setHostObservability(undefined)
     })
   }

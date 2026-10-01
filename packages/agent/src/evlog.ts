@@ -57,7 +57,7 @@ export interface AgentEvlogStatus {
 
 export interface AgentEvlog {
   capability: AgentCapabilityDefinition
-  plugin: (host: AgentEvlogHost) => void
+  plugin: (host: AgentEvlogHost, onClose?: () => void) => void
   capture(event: string, properties: Record<string, unknown>, delivery?: { uuid?: string, timestamp?: Date }): Promise<void>
   diagnostics: RuntimeDiagnosticReporter
   event(name: string, properties?: Record<string, unknown>): void
@@ -243,7 +243,7 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
   ]
   const telemetry: AgentEvlog = {
     capability, capture, diagnostics: reportDiagnostics, event, exception,
-    plugin: host => agentEvlogPlugin(telemetry, reporter ? [reporter] : [])(host),
+    plugin: (host, onClose) => agentEvlogPlugin(telemetry, reporter ? [reporter] : [], onClose)(host),
     drain(context: DrainContext) {
       if (closing || !exporter) return
       const httpRequest = context.request !== undefined
@@ -280,7 +280,7 @@ export interface AgentEvlogHost {
   }
 }
 
-export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { start(): void; stop(): Promise<void> }[] = []): (host: AgentEvlogHost) => void {
+export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { start(): void; stop(): Promise<void> }[] = [], onClose?: () => void): (host: AgentEvlogHost) => void {
   const statusCodeOf = (error: unknown) => {
     const value = readAgentErrorProperty(error, "statusCode") ?? readAgentErrorProperty(error, "status")
     return hasRuntimeType(value, "number") && Number.isInteger(value) ? value : undefined
@@ -310,7 +310,10 @@ export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { st
     if (telemetry.status().configured) for (const reporter of reporters) reporter.start()
     host.hooks.hook("close", async () => {
       try { await Promise.all(reporters.map(reporter => reporter.stop())) }
-      finally { await telemetry.flush() }
+      finally {
+        try { await telemetry.flush() }
+        finally { onClose?.() }
+      }
     })
   }
 }

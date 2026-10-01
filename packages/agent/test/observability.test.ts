@@ -289,6 +289,25 @@ it("installs one host instance for useObservability() and every Agent", async ()
   expect(() => useObservability()).toThrow("Observability is not configured")
 })
 
+it("clears host Observability when exporter shutdown flush rejects", async () => {
+  const { installObservability } = await import("../src/observability/host.ts")
+  const { useObservability } = await import("../src/observability.ts")
+  const closeHooks: Array<() => Promise<void>> = []
+  const host = (close: Array<() => Promise<void>>) => ({
+    hooks: {
+      hook(...registration: [name: "close", callback: () => Promise<void>] | [name: "request" | "evlog:drain" | "error", callback: unknown]) {
+        if (registration[0] === "close") close.push(registration[1])
+      },
+    },
+  })
+  installObservability({ service: "failed-host", exporter: { capture: async () => {}, exception: async () => {}, logs: async () => {}, flush: async () => { throw new Error("flush failed") } } })(host(closeHooks))
+  await expect((async () => { for (const close of closeHooks) await close() })()).rejects.toThrow("flush failed")
+  expect(() => useObservability()).toThrow("Observability is not configured")
+  const replacementClose: Array<() => Promise<void>> = []
+  installObservability({ service: "replacement" })(host(replacementClose))
+  for (const close of replacementClose) await close()
+})
+
 it("preserves host ownership and replaces injected Capabilities after shutdown", async () => {
   const { useObservability } = await import("../src/observability.ts")
   const { installObservability } = await import("../src/observability/host.ts")

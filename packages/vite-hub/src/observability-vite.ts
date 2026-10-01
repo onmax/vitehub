@@ -9,7 +9,7 @@ import type { Plugin } from "vite"
 
 import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
 
-/** Common evlog Nitro options. Other module options are forwarded unchanged. */
+/** Self-contained options for the evlog Nitro module. */
 export interface ObservabilityEvlogOptions {
   enabled?: boolean
   pretty?: boolean
@@ -19,7 +19,31 @@ export interface ObservabilityEvlogOptions {
   exclude?: string[]
   routes?: Record<string, { service: string }>
   minLevel?: "debug" | "info" | "warn" | "error"
-  [option: string]: unknown
+  dev?: "evlog" | "nitro" | "both" | {
+    frameworkOverlay?: boolean
+    prettyError?: { snippet?: boolean, stackDepth?: number, compact?: boolean, detail?: "full" | "guidance" }
+  }
+  sampling?: {
+    rates?: Partial<Record<"debug" | "info" | "warn" | "error", number>>
+    keep?: Array<{ status?: number, duration?: number, path?: string }>
+  }
+  redact?: boolean | {
+    paths?: string[]
+    patterns?: RegExp[]
+    builtins?: false | Array<"creditCard" | "email" | "ipv4" | "phone" | "jwt" | "bearer" | "iban">
+    replacement?: string | ((matched: unknown, context: { path: string, key: string, groups?: Array<string | undefined> }) => string)
+    transform?: (event: Record<string, unknown> & {
+      timestamp: string
+      level: "debug" | "info" | "warn" | "error"
+      service: string
+      environment: string
+      version?: string
+      commitHash?: string
+      region?: string
+      duration?: string
+      durationMs?: number
+    }) => void
+  }
 }
 
 export interface ObservabilityOptions {
@@ -90,6 +114,11 @@ export function observabilityVitePlugin(options: ObservabilityOptions, target: {
   if (!options.service?.trim()) {
     throw viteHubErrorDiagnostics.VITE_HUB_R0125({ message: "[vitehub] observability requires a non-empty service name." })
   }
+  const normalizedOptions = {
+    ...options,
+    service: options.service.trim(),
+    environment: options.environment?.trim() || options.evlog?.env?.environment?.trim() || process.env.NODE_ENV || "development",
+  }
   return {
     name: "vite-hub/observability",
     configResolved(config) {
@@ -124,13 +153,13 @@ export function observabilityVitePlugin(options: ObservabilityOptions, target: {
         server.observability = { posthog: { apiKey: options.posthog.apiKey } }
       }
       const plugin = resolve(config.root || process.cwd(), generatedObservabilityPlugin)
-      await writeIfChanged(plugin, renderObservabilityNitroPlugin(options))
+      await writeIfChanged(plugin, renderObservabilityNitroPlugin(normalizedOptions))
       const kit = createNitroServerKit(viteConfig.nitro)
       kit.addPlugin(plugin)
       const modules = Array.isArray(kit.config.modules) ? kit.config.modules : []
       const evlogOptions = options.evlog ?? {}
-      const env: NonNullable<ObservabilityEvlogOptions["env"]> = { ...evlogOptions.env, service: options.service }
-      if (options.environment) env.environment = options.environment
+      const env: NonNullable<ObservabilityEvlogOptions["env"]> = { ...evlogOptions.env, service: normalizedOptions.service }
+      env.environment = normalizedOptions.environment
       // One evlog module per Nitro app. Skip it when this hook already ran on the same config.
       if (!modules.some(module => module instanceof Object && "name" in module && module.name === "evlog")) {
         kit.config.modules = [...modules, evlog({ ...evlogOptions, env })]
