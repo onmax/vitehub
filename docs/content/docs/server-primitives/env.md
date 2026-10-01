@@ -440,6 +440,7 @@ export default defineConfig({
 ## Next steps
 
 - Replace credentials at runtime with [Env Bridge](/docs/server-primitives/env-bridge).
+- Learn the server primitive model in [Server primitives](/docs/server-primitives#how-a-primitive-works-in-your-app).
 - Use Env with [Auth](/docs/server-primitives/auth) when Auth runtime options need secrets.
 - Check a stage from the [CLI](/docs/development/cli#check-server-env).
 - Read the [Server Primitives overview](/docs/server-primitives).

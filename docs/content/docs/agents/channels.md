@@ -27,7 +27,7 @@ export default defineAgent({
 })
 ```
 
-Built-in helpers include `discord()`, `github()`, `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` from `vite-hub/agent/channels` for an application-owned Channel Kind. To send ordinary outbound messages without an Agent, use [`defineOutboundChannel()`](/docs/reference/channels) from `vite-hub/channels`.
+Built-in helpers include `discord()`, `github()`, `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` from `vite-hub/agent/channels` for an application-owned Channel Kind. To send ordinary outbound messages without an Agent, use [`defineOutboundChannel()`](/docs/server-primitives/channels) from `vite-hub/channels`.
 
 `webChat()` enables a generated AI SDK chat route by default. `http()` is a generic HTTP Channel and keeps its route disabled unless you pass `http({ route: true })`.
 
@@ -492,3 +492,17 @@ Provider-backed Drivers materialize inline data and application-owned `fetchData
 | User-authored command parsing | Input Commands Capability |
 | Prior conversational messages | Chat History and sessions |
 | Product event to Agent input | Trigger |
+
+## Channels and Invocations
+
+A Channel and an Agent Invocation are separate records. One Agent Definition can run behind several Channels because of this split.
+
+| | Channel | Agent Invocation |
+| --- | --- | --- |
+| Describes | Message origin and delivery | Actor, Capabilities, execution, and result |
+| Lifetime | Can contain many messages and Invocations | One request |
+| Can exist alone | Yes. A Channel can receive a message without starting an Agent. | Yes. A route or schedule can start an Invocation without a Channel. |
+
+Use verified Channel metadata to identify the Agent Actor, choose a Capability, or select a Workspace Scope. When a message reaches the wrong Agent, carries the wrong identity, or loses delivery data, inspect the Channel and the [Invocation](/docs/agents/invocations) together.
+
+To send an application message without an Agent, use the [Channels Server Primitive](/docs/server-primitives/channels).

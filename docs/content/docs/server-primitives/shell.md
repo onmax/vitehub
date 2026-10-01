@@ -190,6 +190,7 @@ Do not expose a raw Shell Runtime to a model. Use [Official capabilities](/docs/
 
 ## Next steps
 
+- Understand the model-facing [Workspace shell](/docs/capabilities/workspace-shell) tools.
 - Use [Workspace](/docs/server-primitives/workspace) for file-tree state.
 - Use [Sandbox](/docs/server-primitives/sandbox) for provider-managed isolation.
 - Expose Workspace commands to Agents with [Workspace shell](/docs/capabilities/workspace-shell).
