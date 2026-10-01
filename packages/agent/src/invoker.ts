@@ -12,6 +12,7 @@ import type {
   AgentRuntimeConfig,
 } from "./types.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
+import { copyAgentInvocationCallerAbortSignal } from "./internal/invocation-input.ts"
 
 export const agentInvokerContextKey = "invoker"
 const agentActorContextKey = "actor"
@@ -176,7 +177,7 @@ export function withResolvedAgentInvokerInput<CALL_OPTIONS>(
   input: AgentRunInput<CALL_OPTIONS>,
   invoker: AgentInvoker,
 ): AgentRunInput<CALL_OPTIONS> {
-  return {
+  const resolvedInput = {
     ...input,
     context: {
       ...input.context,
@@ -185,6 +186,8 @@ export function withResolvedAgentInvokerInput<CALL_OPTIONS>(
       [resolvedAgentInvokerInputKey]: true,
     },
   }
+  copyAgentInvocationCallerAbortSignal(input, resolvedInput)
+  return resolvedInput
 }
 
 export function hasResolvedAgentInvokerInput(input: AgentRunInput): boolean {
@@ -195,7 +198,9 @@ export function withoutResolvedAgentInvokerInput<CALL_OPTIONS>(input: AgentRunIn
   if (!hasResolvedAgentInvokerInput(input)) return input
   const context = { ...input.context }
   Reflect.deleteProperty(context, resolvedAgentInvokerInputKey)
-  return { ...input, context }
+  const unresolvedInput = { ...input, context }
+  copyAgentInvocationCallerAbortSignal(input, unresolvedInput)
+  return unresolvedInput
 }
 
 export function portableResolvedAgentInvokerInput<CALL_OPTIONS>(input: AgentRunInput<CALL_OPTIONS>): AgentRunInput<CALL_OPTIONS> {
@@ -210,7 +215,7 @@ export function portableResolvedAgentInvokerInput<CALL_OPTIONS>(input: AgentRunI
   const portableMeta = isRecord(serializedMeta) ? serializedMeta : undefined
   const portableInvoker: AgentInvoker = { ...invoker }
   if (portableMeta) portableInvoker.meta = portableMeta
-  return {
+  const portableInput = {
     ...input,
     context: {
       ...Object.fromEntries(Object.entries(context)),
@@ -218,10 +223,14 @@ export function portableResolvedAgentInvokerInput<CALL_OPTIONS>(input: AgentRunI
       [agentInvokerContextKey]: portableInvoker,
     },
   }
+  copyAgentInvocationCallerAbortSignal(input, portableInput)
+  return portableInput
 }
 
 export function restoreResolvedAgentInvokerInput<CALL_OPTIONS>(input: AgentRunInput<CALL_OPTIONS>): AgentRunInput<CALL_OPTIONS> {
-  return { ...input, context: { ...input.context, [resolvedAgentInvokerInputKey]: true } }
+  const restoredInput = { ...input, context: { ...input.context, [resolvedAgentInvokerInputKey]: true } }
+  copyAgentInvocationCallerAbortSignal(input, restoredInput)
+  return restoredInput
 }
 
 function selectedProfileId(inputContext: unknown): string | undefined {

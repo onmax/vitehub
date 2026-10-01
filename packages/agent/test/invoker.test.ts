@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import { agentInvokerLabel, normalizeAgentInvoker, portableResolvedAgentInvokerInput, withResolvedAgentInvokerInput } from "../src/invoker.ts"
+import { agentInvocationCallerAbortSignal, markAgentInvocationCallerAbortSignal } from "../src/internal/invocation-input.ts"
 import { sameInlineInvoker } from "../src/internal/inline-invoker.ts"
 
 describe("Agent Invoker", () => {
@@ -85,5 +86,13 @@ describe("Agent Invoker", () => {
       invoker: { id: "user-1", kind: "user", meta: { tenant: "acme" } },
     })
     expect(portable.context?.invoker?.meta?.loadTenant).toBeUndefined()
+  })
+
+  it("preserves caller abort provenance through resolved invoker input clones", () => {
+    const input = { prompt: "hello", abortSignal: new AbortController().signal }
+    markAgentInvocationCallerAbortSignal(input, false)
+    const resolved = withResolvedAgentInvokerInput(input, { id: "user-1", kind: "user" })
+    const portable = portableResolvedAgentInvokerInput(resolved)
+    expect(agentInvocationCallerAbortSignal(portable)).toBe(false)
   })
 })
