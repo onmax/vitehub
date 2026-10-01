@@ -417,9 +417,9 @@ function agentTraceActivity(event: TraceEvent): TraceActivityContext {
 
 export async function traceAgentInvocationStart<TRuntimeConfig extends AgentRuntimeConfig>(
   context: AgentTraceContext<TRuntimeConfig>,
-  replayInput: AgentRunInput = context.input,
-  replayHasContext = hasUnreplayableAgentInputContext(replayInput.context),
-  replayHasAbortSignal = replayInput.abortSignal !== undefined,
+  replayInput: AgentRunInput,
+  replayHasContext: boolean,
+  replayHasAbortSignal: boolean | undefined,
 ): Promise<void> {
   await traceAgentEvent(context, {
     attributes: invocationAttributes({ ...context, input: replayInput }, {

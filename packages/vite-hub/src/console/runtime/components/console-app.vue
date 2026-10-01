@@ -33,6 +33,7 @@ import ConsoleInvocationComposer from "./console-invocation-composer.vue";
 import ConsoleMark from "./console-mark.vue";
 import ConsoleSessionLoading from "./console-session-loading.vue";
 import ConsoleSessionNavbar from "./console-session-navbar.vue";
+import { createConsoleInvocationDeletion } from "../client/invocation-deletion";
 import ConsoleSessionActions from "./console-session-actions.vue";
 import type { ConsoleSessionRerun } from "./console-session-actions.vue";
 import ConsoleSessionInspector from "./console-session-inspector.vue";
@@ -450,23 +451,31 @@ async function selectStartedInvocation(invocation: { agent: string; id: string }
   scheduleInvocationListRefresh();
 }
 
+const deletedInvocations = createConsoleInvocationDeletion();
+
 async function removeDeletedInvocation(id: string): Promise<void> {
   const agentName = selectedAgentName.value;
-  const routeInvocationId = typeof route.params.invocation === "string" ? route.params.invocation : undefined;
-  const selected = selectedInvocationId.value === id || routeInvocationId === id;
-  if (selected) {
-    selectedInvocationId.value = undefined;
-    closeDetails();
-    if (agentName) {
-      await router.replace({
-        name: resolveConsoleRouteName(route.name, "vitehub-console-agent"),
-        params: { agent: encodeAgentRouteParam(agentName) },
-      });
-    }
-  }
-  list.invocations.value = list.invocations.value.filter(invocation => invocation.id !== id);
-  // Keep the confirmed deletion local if the post-delete refresh fails.
-  await list.refresh().catch(() => undefined);
+  const selected = selectedInvocationId.value === id || routeInvocation.value === id;
+  await deletedInvocations.remove(id, {
+    clearSelection() {
+      if (selected) {
+        selectedInvocationId.value = undefined;
+        closeDetails();
+      }
+    },
+    async navigate() {
+      if (selected && agentName) {
+        await router.replace({
+          name: resolveConsoleRouteName(route.name, "vitehub-console-agent"),
+          params: { agent: encodeAgentRouteParam(agentName) },
+        });
+      }
+    },
+    removeFromList() {
+      list.invocations.value = deletedInvocations.exclude(list.invocations.value);
+    },
+    refresh: () => list.refresh().catch(() => undefined),
+  });
 }
 
 async function startNewChat(): Promise<void> {
@@ -698,11 +707,15 @@ function updatePageVisibility(): void {
 }
 
 watch(
-  [routeInvocation, routeAgent, () => list.invocations.value[0], selectedAgentName, isUsageRoute],
+  [routeInvocation, routeAgent, () => list.invocations.value.find(invocation => !deletedInvocations.has(invocation.id)), selectedAgentName, isUsageRoute],
   async (
     [requestedInvocation, requestedAgent, firstInvocation, agentName, usageRoute],
     previous,
   ) => {
+    if (requestedInvocation && deletedInvocations.has(requestedInvocation)) {
+      selectedInvocationId.value = undefined;
+      return;
+    }
     if (usageRoute) {
       newChatAgentName.value = undefined;
       initialBootstrapPending.value = false;

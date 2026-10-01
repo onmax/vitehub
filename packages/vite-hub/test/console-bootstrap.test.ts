@@ -8,6 +8,7 @@ import {
   useConsoleSessionBootstrap,
 } from "../src/console/runtime/components/console-session-bootstrap";
 import { computed, effectScope, nextTick, ref, watch } from "vue";
+import { createConsoleInvocationDeletion } from "../src/console/runtime/client/invocation-deletion.ts";
 import { describe, expect, it, vi } from "vitest";
 
 const consolePage = readFileSync(
@@ -272,10 +273,17 @@ it.each([false, true])("clears a deleted route before list changes when refresh 
   const selectedInvocationId = ref<string | undefined>("deleted");
   const route = { name: "vitehub-console-invocation", params: { invocation: "deleted" as string | undefined } };
   const selectedAgentName = ref("agent");
+  const routeInvocation = computed(() => route.params.invocation);
+  const deletedInvocations = createConsoleInvocationDeletion();
   const list = {
     invocations: ref([{ id: "deleted" }, { id: "remaining" }]),
-    refresh: vi.fn(async () => { if (refreshFails) throw new Error("Refresh failed"); }),
+    refresh: vi.fn(async () => {}),
   };
+  list.refresh.mockImplementation(async () => {
+    // A stale response can still include the invocation after confirmed deletion.
+    list.invocations.value = [{ id: "deleted" }, { id: "remaining" }];
+    if (refreshFails) throw new Error("Refresh failed");
+  });
   const closeDetails = vi.fn();
   const router = { replace: vi.fn(async () => { route.params.invocation = undefined; }) };
   const stop = watch(list.invocations, () => {
@@ -286,8 +294,8 @@ it.each([false, true])("clears a deleted route before list changes when refresh 
   const source = consolePage.slice(consolePage.indexOf("async function removeDeletedInvocation("), consolePage.indexOf("async function startNewChat("))
     .replace("(id: string): Promise<void>", "(id)");
   // SAFETY: The function is read from the component and receives its declared dependencies.
-  const remove = new Function("list", "selectedAgentName", "route", "selectedInvocationId", "closeDetails", "router", "resolveConsoleRouteName", "encodeAgentRouteParam", `${source}; return removeDeletedInvocation;`)(
-    list, selectedAgentName, route, selectedInvocationId, closeDetails, router, (_name: unknown, target: string) => target, (name: string) => name,
+  const remove = new Function("list", "selectedAgentName", "route", "routeInvocation", "deletedInvocations", "selectedInvocationId", "closeDetails", "router", "resolveConsoleRouteName", "encodeAgentRouteParam", `${source}; return removeDeletedInvocation;`)(
+    list, selectedAgentName, route, routeInvocation, deletedInvocations, selectedInvocationId, closeDetails, router, (_name: unknown, target: string) => target, (name: string) => name,
   ) as (id: string) => Promise<void>;
   try {
     await expect(remove("deleted")).resolves.toBeUndefined();

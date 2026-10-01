@@ -1,6 +1,7 @@
 import { createMessage } from "../src/messages.ts"
 import { describe, expect, it, vi } from "vitest"
 import * as v from "valibot"
+import { markAgentInvocationCallerAbortSignal } from "../src/internal/invocation-input.ts"
 import { portableResolvedAgentInvokerInput, restoreResolvedAgentInvokerInput, withResolvedAgentInvokerInput } from "../src/invoker.ts"
 
 import { agentInvocationRerunInput, defineAgent, defineCapability, runAgent, startAgentInvocation } from "../src/index.ts"
@@ -179,6 +180,36 @@ describe("agentInvocationRerunInput", () => {
     }, { runId })
     await vi.waitFor(async () => { expect(await invocations.getByRunId(runId)).toMatchObject({ status: "completed" }) })
     expect(agentInvocationRerunInput((await invocations.getByRunId(runId))!)).toEqual(direct
+      ? { available: false, reason: "input-has-abort-signal" }
+      : { available: true, prompt: "Hi" })
+  })
+
+  it("blocks replay when preparation installs a different cancellation signal", async () => {
+    const invocations = defineAgentInvocations({ metadataContent: ["input.prompt"], store: createMemoryAgentInvocationStore() })
+    const abortSignal = new AbortController().signal
+    const agent = defineAgent({
+      capabilities: [defineCapability({
+        id: "replace-cancellation",
+        prepare(context) { context.input.set({ ...context.input.get(), abortSignal }) },
+      })],
+      driver: { run: ({ input }) => { expect(input.abortSignal).toBe(abortSignal); return "done" } },
+      invocations,
+      runtime: false,
+    })
+    await runAgent(agent, runtime("replacement-signal"), { prompt: "Hi" })
+    await vi.waitFor(async () => { expect(await invocations.getByRunId("replacement-signal")).toMatchObject({ status: "completed" }) })
+    expect(agentInvocationRerunInput((await invocations.getByRunId("replacement-signal"))!)).toEqual({ available: false, reason: "input-has-abort-signal" })
+  })
+
+  it.each([false, true])("inherits trusted caller-signal provenance in an inline controller: %s", async (supplied) => {
+    const invocations = defineAgentInvocations({ metadataContent: ["input.prompt"], store: createMemoryAgentInvocationStore() })
+    const agent = defineAgent({ driver: { run: () => "done" }, invocations, runtime: false })
+    const input = { ...(supplied ? {} : { abortSignal: new AbortController().signal }), prompt: "Hi" }
+    markAgentInvocationCallerAbortSignal(input, supplied)
+    const runId = `restored-controlled-signal-${supplied}`
+    await startAgentInvocation(agent, runtime(runId), input, { runId })
+    await vi.waitFor(async () => { expect(await invocations.getByRunId(runId)).toMatchObject({ status: "completed" }) })
+    expect(agentInvocationRerunInput((await invocations.getByRunId(runId))!)).toEqual(supplied
       ? { available: false, reason: "input-has-abort-signal" }
       : { available: true, prompt: "Hi" })
   })

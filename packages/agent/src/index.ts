@@ -1172,7 +1172,7 @@ async function runAgentAsWorkflow<
     ...(Object.keys(workflowCapabilities).length ? { capabilities: workflowCapabilities } : {}),
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     input: cloneWorkflowJsonValue(workflowInput) as AgentRunInput<CALL_OPTIONS>,
-    ...(input.abortSignal !== undefined ? { callerAbortSignal: true } : {}),
+    callerAbortSignal: agentInvocationCallerAbortSignal(input),
     // Headers and bodies may contain webhook credentials and remain process-local by design.
     ...(context.request ? { requestUrl: context.request.url } : {}),
     ...(parsedMessageMeta !== undefined ? { parsedMessageMeta } : {}),
@@ -4722,7 +4722,7 @@ async function createAgentInvocationContext<
     capabilityPreparationPending = false
     await invocationContext.get(agentInvocationConfigurationUpdatedContextKey)?.()
     await traceAgentInvocationStart(toTraceContext(invocation), replayInput, replayHasContext,
-      replayInput.abortSignal !== undefined || capabilities.input.abortSignal !== input.abortSignal || replayCallerAbortSignal === true)
+      capabilities.input.abortSignal !== input.abortSignal ? true : replayCallerAbortSignal)
     try {
       await applyChannelDeliveryEffectIntents(invocation, invocation.deliveryEffectIntents)
     }
@@ -7939,7 +7939,7 @@ function createInlineAgentInvocationController<
     sendInput: (id, nextInput, options) => sendAgentInvocationInput(id, nextInput, options),
     start: ({ abortSignal, id, onFinish }) => {
       const invocationInput = { ...input, abortSignal }
-      markAgentInvocationCallerAbortSignal(invocationInput, input.abortSignal !== undefined)
+      markAgentInvocationCallerAbortSignal(invocationInput, agentInvocationCallerAbortSignal(input))
       return executeAgentInvocation(agent, {
         ...withAgentInvocationResponseOwner(context, id),
         run: { ...context.run, runId: runId || id },

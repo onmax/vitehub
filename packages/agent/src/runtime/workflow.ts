@@ -402,7 +402,8 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
     if (payload.parsedInputData === true) {
       markParsedAgentWorkflowInput(restoredWorkflowInput, agent)
     }
-    if (payload.callerAbortSignal) markAgentInvocationCallerAbortSignal(restoredWorkflowInput, true)
+    markAgentInvocationCallerAbortSignal(restoredWorkflowInput,
+      isRuntimeBoolean(payload.callerAbortSignal) ? payload.callerAbortSignal : undefined)
     const inlineResult = await runAgentInline(
       agent,
       runtimeContext,
