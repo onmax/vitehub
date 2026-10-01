@@ -415,7 +415,11 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       }
       catch (error) {
         // Keep the lease if a rotated grant cannot be saved or quarantined durably.
-        if (dispatched && !rejected) releaseLease = await setStatus(name, { status: "reauth_required" }, stored.revision).catch(() => false)
+        if (dispatched && !rejected) {
+          releaseLease = await connections.secrets.inspect(key)
+            .then(current => setStatus(name, { status: "reauth_required" }, current?.revision ?? null))
+            .catch(() => false)
+        }
         throw error
       }
       finally {
@@ -573,14 +577,18 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return undefined
     }
     if (decision === "approve") {
+      await requireConnected(context.name)
       const current = await (await getStore()).secrets.read(tokenKey(context.name))
       const token = current ? parseToken(current.value, context.name) : undefined
+      if (!token?.grantId) {
+        throw new ConnectionError("reauth_required", `Connection "${context.name}" must be connected again before requesting approval.`, { details: { connection: context.name } })
+      }
       const approval: ConnectionApproval = {
         action: providerRequest.action,
         actor: context.actor,
         createdAt: new Date(now()).toISOString(),
         id: `approval_${randomToken().slice(0, 20)}`,
-        input: { ...approvalInput, grantId: token?.grantId },
+        input: { ...approvalInput, grantId: token.grantId },
         name: context.name,
         status: "pending",
         traceId: context.options.traceId,

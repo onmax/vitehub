@@ -447,6 +447,36 @@ describe("calls", () => {
     expect(test.provider.calls.at(-1)?.headers.get("authorization")).toBe("Bearer access-after-outage")
   })
 
+  it.each(["state", "audit"])("quarantines a committed refresh after its %s persistence fails", async (failure) => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    const original = await test.store.secrets.read("connection/mail")
+    test.provider.tokenResponses.push({ body: { access_token: "replacement-access", expires_in: 3600, refresh_token: "replacement-refresh" } })
+    test.provider.valid.add("replacement-access")
+    if (failure === "state") {
+      const put = test.store.state.putForToken
+      test.store.state.putForToken = async (state, revision) => {
+        if (state.refreshedAt && state.status === "connected") throw new Error("State persistence unavailable")
+        return await put(state, revision)
+      }
+    }
+    else {
+      const append = test.store.access.append
+      test.store.access.append = async (event) => {
+        if (event.action === "replace" && event.outcome === "succeeded") throw new Error("Audit persistence unavailable")
+        await append(event)
+      }
+    }
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toThrow()
+    const replacement = await test.store.secrets.read("connection/mail")
+    expect(replacement?.revision).not.toBe(original?.revision)
+    expect(JSON.parse(replacement!.value)).toMatchObject({ accessToken: "replacement-access", refreshToken: "replacement-refresh" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "reauth_required" })
+    const calls = test.provider.calls.length
+    expect(await rejection(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(test.provider.calls).toHaveLength(calls)
+  })
+
   it("requires reauthorization when a refresh response does not confirm a token", async () => {
     const test = createTestRuntime()
     await connect(test, { expires_in: 1 })
@@ -614,6 +644,33 @@ describe("dry run", () => {
 })
 
 describe("approvals", () => {
+  it.each(["disconnected", "grantless", "reauth_required", "revoked"])("requires a connected grant before approval creation (%s)", async (status) => {
+    const test = createTestRuntime(mailConnection({ "agent:labeller": { write: ["mail.messages.modify", "fetch"] } }))
+    if (status !== "disconnected") {
+      await connect(test)
+      if (status === "grantless") {
+        const current = await test.store.secrets.read("connection/mail")
+        const token = JSON.parse(current!.value)
+        delete token.grantId
+        await test.store.secrets.replace({ expectedRevision: current!.revision!, key: "connection/mail", value: JSON.stringify(token) })
+      }
+      else {
+        const state = await test.store.state.get("mail")
+        await test.store.state.put({ ...state!, status: status === "revoked" ? "revoked" : "reauth_required" })
+      }
+    }
+    const calls = test.provider.calls.length
+    const client = test.runtime.client("mail", { actor: "agent:labeller" })
+    expect(await rejection(client.call("mail.messages.modify", { id: "m1", userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(await rejection(client.fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { method: "POST" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(await test.runtime.approvals({ status: "pending" })).toEqual([])
+    expect(test.provider.calls).toHaveLength(calls)
+    await connect(test)
+    expect(await rejection(client.call("mail.messages.modify", { id: "m1", userId: "me" }))).toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
+    const [approval] = await test.runtime.approvals({ status: "pending" })
+    expect(await test.runtime.approve({ id: approval!.id })).toMatchObject({ approval: { status: "executed" } })
+  })
+
   it("preserves extension method casing in approval replay", async () => {
     const test = createTestRuntime(mailConnection({ "agent:labeller": { write: ["fetch"] } }))
     await connect(test)
