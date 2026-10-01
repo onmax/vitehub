@@ -21,6 +21,16 @@ export interface RateLimitDevEndpointOptions {
  * the Nitro dev environment, because the Nitro runtime owns the counters. Hosts without an in-process Nitro
  * environment get `501` with a clear message.
  */
+function isLoopbackHost(host: string | string[] | undefined): boolean {
+  if (host === undefined) return true
+  const value = Array.isArray(host) ? host[0] : host
+  try {
+    const hostname = new URL(`http://${value}`).hostname
+    return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
+  }
+  catch { return false }
+}
+
 export function registerRateLimitDevEndpoint(server: ViteHubNitroDevServer, options: RateLimitDevEndpointOptions): void {
   const host = server.config.server.host
   if (host === true || (host && !["localhost", "127.0.0.1", "::1", "[::1]"].includes(host))) {
@@ -32,6 +42,12 @@ export function registerRateLimitDevEndpoint(server: ViteHubNitroDevServer, opti
     get resolvedUrls() { return server.resolvedUrls },
     middlewares: {
       use: handler => server.middlewares.use((req, res, next) => {
+        if (isViteHubDevRoute(req, rateLimitDevRoute) && !isLoopbackHost(req.headers.host)) {
+          res.statusCode = 403
+          res.setHeader("cache-control", "no-store")
+          res.end("Rate Limit Dev requests require a loopback host.")
+          return
+        }
         const peer = req.socket?.remoteAddress
         const loopback = peer === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(peer ?? "") || /^::ffff:127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(peer ?? "")
         if (isViteHubDevRoute(req, rateLimitDevRoute) && !loopback) {
