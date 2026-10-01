@@ -75,6 +75,14 @@
       "types": "./dist/eve.d.ts",
       "import": "./dist/eve.js"
     },
+    "./evlog": {
+      "types": "./dist/evlog.d.ts",
+      "import": "./dist/evlog.js"
+    },
+    "./evlog/posthog": {
+      "types": "./dist/evlog/posthog.d.ts",
+      "import": "./dist/evlog/posthog.js"
+    },
     "./invocations/d1": {
       "types": "./dist/invocations/d1.d.ts",
       "import": "./dist/invocations/d1.js"
