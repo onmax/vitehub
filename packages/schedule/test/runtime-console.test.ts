@@ -225,6 +225,23 @@ describe("Runtime Schedule inspection", () => {
 })
 
 describe("Schedule dev request handler", () => {
+  it("rejects a credential from a superseded server instance", async () => {
+    const previous = credential
+    const replacement = await createViteHubDevToken(process.cwd(), scheduleDevTokenNamespace)
+    try {
+      const request = devRequest({ operation: "list" }, {
+        headers: {
+          [viteHubDevTokenHeader]: previous.token,
+          [scheduleDevTokenServerHeader]: previous.serverId,
+        },
+      })
+      expect((await handleScheduleDevRequest(request)).status).toBe(403)
+    }
+    finally {
+      await removeViteHubDevToken(process.cwd(), { namespace: scheduleDevTokenNamespace, serverId: replacement.serverId })
+    }
+  })
+
   it("rejects requests without the guard, from other origins, with other methods, or without JSON", async () => {
     const missingHeader = new Request("http://localhost/_vitehub/schedule/dev", {
       body: JSON.stringify({ operation: "list" }),
