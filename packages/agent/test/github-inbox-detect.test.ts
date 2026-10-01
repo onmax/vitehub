@@ -79,7 +79,7 @@ describe("GitHub inbox change detection", () => {
     const f = setup(() => [])
     await f.inbox.seed(repository, { number: 7, state: "open", user: { login: "dev" }, head: { sha: head, ref: "fix-7" }, base: { ref: "main" } })
     f.graphql.mockResolvedValueOnce({ errors: [{ message: "rate limited" }] } as never)
-    await expect(detectChangedPullRequests(f.inbox, () => f.graphql, [repository], f.clock() + 61_000)).rejects.toThrow("rate limited")
+    await detectChangedPullRequests(f.inbox, () => f.graphql, [repository], f.clock() + 61_000)
     expect(await f.inbox.metaEntries("snapshot-changed:")).toEqual([])
     await f.inbox.close()
   })

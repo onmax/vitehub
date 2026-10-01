@@ -198,11 +198,12 @@ const pendingChangeSchema = v.object({ fingerprint: v.string(), retryAt: v.numbe
  * Seeds new PRs and marks PRs whose fingerprint changed, or that closed, for a targeted REST probe.
  * This recovers lost webhook deliveries without probing unchanged PRs.
  */
-export async function detectChangedPullRequests(inbox: PullRequestInbox, graphql: (repository: string) => ReadGraphql, repositories: readonly string[], now: number = Date.now()): Promise<void> {
+export async function detectChangedPullRequests(inbox: PullRequestInbox, graphql: (repository: string) => ReadGraphql, repositories: readonly string[], now: number = Date.now(), allowSeed = true): Promise<void> {
   if (((await inbox.metaNumber('change-detect-next')) ?? 0) > now) return
   await inbox.setMeta('change-detect-next', now + 60_000)
   const tracked = await inbox.summary()
   for (const repository of repositories.map(r => r.toLowerCase())) {
+    try {
     const [owner, name] = repository.split('/')
     if (!owner || !name) continue
     const open = new Map<number, OpenPullRequest>()
@@ -228,6 +229,7 @@ export async function detectChangedPullRequests(inbox: PullRequestInbox, graphql
     for (const [number, pr] of open) {
       const fingerprint = openPullRequestFingerprint(pr)
       if (await inbox.get(repository, number)) { await mark(number, fingerprint); continue }
+      if (!allowSeed) continue
       // A PR that no delivery reported yet. Seeding applies the filter; the claim hydrates it over REST.
       await inbox.seed(repository, { number, title: pr.title, state: 'open', draft: pr.isDraft, user: pr.author ? { login: pr.author.login } : null,
         author_association: pr.authorAssociation, html_url: pr.url, updated_at: pr.updatedAt, labels: pr.labels.nodes.map(label => label.name),
@@ -237,6 +239,11 @@ export async function detectChangedPullRequests(inbox: PullRequestInbox, graphql
     }
     // An inbox PR missing from the open list closed or merged.
     for (const item of tracked) if (item.repository === repository && item.status !== 'terminal' && !open.has(item.number)) await mark(item.number, 'closed')
+    } catch (error) {
+      // A repository failure must not prevent detection for later repositories.
+      // The next interval retries this repository; partial pages are never marked.
+      continue
+    }
   }
 }
 
@@ -251,8 +258,6 @@ export async function probeChangedSnapshots(inbox: PullRequestInbox, read: ReadG
     if (pending.output.retryAt > now) continue
     const s = await inbox.get(repository, Number(number))
     if (!s) { await inbox.deleteMeta(key); continue }
-    // A leased PR is being worked on; its claim hydrates current state.
-    if (s.lease) continue
     // A failed probe retries later, not on every reconcile tick.
     await inbox.setMeta(key, { ...pending.output, retryAt: now + 2 * 60_000 } satisfies PendingChange)
     probed++

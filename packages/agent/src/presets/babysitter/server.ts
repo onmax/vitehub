@@ -378,7 +378,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     }
     try {
       // One open-PR query per repository and minute finds lost deliveries; only changed PRs are probed.
-      await detectChangedPullRequests(pullRequestInbox, repository => readGraphql(repository, 2), repositories);
+      await detectChangedPullRequests(pullRequestInbox, repository => readGraphql(repository, 4), repositories, Date.now(), !eventScopedBootstrap);
     } catch (error) {
       schedulerError("babysitter.snapshot.detect.failed", error);
     }
