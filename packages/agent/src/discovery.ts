@@ -1558,6 +1558,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   function resolveReference(index: number, seen = new Set<number>(), preserveCalls = false): number {
     while (tokens[index] === "(" || tokens[index] === "<") {
       if (tokens[index] === "<") { index = skipTypeArguments(index); continue }
+      if (preserveCalls) {
+        let depth = 1
+        let close = index + 1
+        for (; close < tokens.length && depth > 0; close++) {
+          if (tokens[close] === "(") depth++
+          else if (tokens[close] === ")") depth--
+        }
+        if (depth === 0 && hasChannelContinuation(close)) return index
+      }
       let last = index + 1
       let depth = 1
       for (let i = index + 1; i < tokens.length && depth > 0; i++) {

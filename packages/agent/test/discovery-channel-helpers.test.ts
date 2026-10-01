@@ -535,7 +535,7 @@ it("ignores a non-null assertion on an imported Channel", async () => {
   expect(definition?.workspace).toBe("review")
 })
 
-it.each(["portal!()", "portal!.property", "portal![key]", "portal!?.property"])("rejects a continued non-null assertion on an imported Channel: %s", async expression => {
+it.each(["portal!()", "portal!.property", "portal![key]", "portal!?.property", "(portal!)()", "(portal!).property", "(portal!)[key]", "(portal!)?.property"])("rejects a continued non-null assertion on an imported Channel: %s", async expression => {
   await expect(discover(
     `import portal from "../../portal.ts"; const key = "property"; export default defineAgent({ channels: { github: ${expression} } })`,
     { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export default github({ pullRequest: true })' },
