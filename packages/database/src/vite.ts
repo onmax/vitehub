@@ -153,7 +153,7 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
       inspect: () => {
         const config = resolvedOptions()
         if (config === false) return
-        const projectRoot = resolveViteHubProjectRoot(resolved?.root ?? process.cwd())
+        const outputRoot = resolved?.root ?? process.cwd()
         const provisionState = readProvisionStateSync(resolved?.root ?? process.cwd())
         return {
           definitions: [{
@@ -167,10 +167,10 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
           }],
           providerOutput: [
             ...(runtimeConfig && shouldCreateCloudflareOutput(runtimeConfig, provisionState)
-              ? [{ description: "Generated Cloudflare Database worker", owner: "database", path: resolve(createDefaultCloudflareOutputRoot(projectRoot), "index.js") }]
+              ? [{ description: "Generated Cloudflare Database worker", owner: "database", path: resolve(createDefaultCloudflareOutputRoot(outputRoot), "index.js") }]
               : []),
             ...(runtimeConfig && shouldCreateVercelOutput(runtimeConfig)
-              ? [{ description: "Generated Vercel Database function", owner: "database", path: resolve(createDefaultVercelOutputRoot(projectRoot), "functions", resolveNitroVercelFunctionName(resolved ?? {}, "database") ?? "__server.func", "index.mjs") }]
+              ? [{ description: "Generated Vercel Database function", owner: "database", path: resolve(createDefaultVercelOutputRoot(outputRoot), "functions", resolveNitroVercelFunctionName(resolved ?? {}, "database") ?? "__server.func", "index.mjs") }]
               : []),
           ],
         }

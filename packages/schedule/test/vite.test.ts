@@ -524,11 +524,13 @@ describe("Vite schedule integration", () => {
     expect(write).not.toHaveBeenCalled()
   })
 
-  it("preserves forwarded server directories in standalone Provider Output", async () => {
+  it("inspects forwarded standalone Provider Output under the configured project root", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-schedule-forwarded-standalone-output-"))
     const serverDir = join(root, "backend")
+    const viteRoot = join(root, "app")
+    await mkdir(viteRoot)
     await mkdir(join(serverDir, "schedules"), { recursive: true })
-    await mkdir(join(root, "dist", "client"), { recursive: true })
+    await mkdir(join(viteRoot, "dist", "client"), { recursive: true })
     await writeFile(join(serverDir, "schedules", "daily.ts"), [
       "import { defineSchedule } from '@vite-hub/schedule'",
       "export default defineSchedule({ cron: '0 2 * * *', handler: () => {} })",
@@ -537,17 +539,25 @@ describe("Vite schedule integration", () => {
 
     const plugin = hubSchedule({ projectRoot: root, providerOutput: "standalone" })
     await (plugin.config as (config: Record<PropertyKey, unknown>, env: { command: "build" | "serve", mode: string }) => unknown)(
-      { [VITEHUB_SERVER_DIRS]: [serverDir], root },
+      { [VITEHUB_SERVER_DIRS]: [serverDir], root: viteRoot },
       { command: "build", mode: "production" },
     )
     await (plugin.configResolved as (config: Record<string, unknown>) => Promise<void>)({
       build: { outDir: "dist/client" },
       command: "build",
       resolve: { alias: [] },
-      root,
+      root: viteRoot,
     })
     await runProviderOutputHooks(plugin)
 
+    const entries = await collectViteHubProviderOutputEntries([plugin])
+    expect(entries.map(entry => entry.path)).toEqual([
+      join(createDefaultCloudflareOutputRoot(root), "wrangler.json"),
+      join(createDefaultVercelOutputRoot(root), "functions/api/vitehub/schedules/vercel"),
+      join(createDefaultNetlifyOutputRoot(root), "functions"),
+      join(root, ".vitehub/schedule/deno-cron.mjs"),
+    ])
+    for (const entry of entries) expect(existsSync(entry.path)).toBe(true)
     const config = JSON.parse(await readFile(join(root, ".vercel", "output", "config.json"), "utf8"))
     expect(config.crons).toContainEqual({
       path: "/api/vitehub/schedules/vercel/daily",

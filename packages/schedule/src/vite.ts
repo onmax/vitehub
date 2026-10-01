@@ -767,10 +767,10 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
         options,
       )
         ? [
-            { description: "Generated Cloudflare Schedule worker and config", owner: "schedule", path: resolve(createDefaultCloudflareOutputRoot(viteRoot ?? process.cwd()), "wrangler.json") },
-            { description: "Generated Vercel Schedule functions", owner: "schedule", path: resolve(createDefaultVercelOutputRoot(viteRoot ?? process.cwd()), "functions/api/vitehub/schedules/vercel") },
-            { description: "Generated Netlify Schedule functions", owner: "schedule", path: resolve(createDefaultNetlifyOutputRoot(viteRoot ?? process.cwd()), "functions") },
-            { description: "Generated Deno Schedule cron entry", owner: "schedule", path: resolve(viteRoot ?? process.cwd(), ".vitehub/schedule/deno-cron.mjs") },
+            { description: "Generated Cloudflare Schedule worker and config", owner: "schedule", path: resolve(createDefaultCloudflareOutputRoot(projectRoot ?? resolveSchedulePluginRoots(viteRoot ?? process.cwd(), options).projectRoot), "wrangler.json") },
+            { description: "Generated Vercel Schedule functions", owner: "schedule", path: resolve(createDefaultVercelOutputRoot(projectRoot ?? resolveSchedulePluginRoots(viteRoot ?? process.cwd(), options).projectRoot), "functions/api/vitehub/schedules/vercel") },
+            { description: "Generated Netlify Schedule functions", owner: "schedule", path: resolve(createDefaultNetlifyOutputRoot(projectRoot ?? resolveSchedulePluginRoots(viteRoot ?? process.cwd(), options).projectRoot), "functions") },
+            { description: "Generated Deno Schedule cron entry", owner: "schedule", path: resolve(projectRoot ?? resolveSchedulePluginRoots(viteRoot ?? process.cwd(), options).projectRoot, ".vitehub/schedule/deno-cron.mjs") },
           ]
         : [],
     }),

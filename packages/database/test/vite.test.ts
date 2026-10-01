@@ -93,6 +93,25 @@ afterEach(async () => {
 })
 
 describe("hubDb", () => {
+  it("inspects Database provider artifacts under the writer's nested Vite root", async () => {
+    const root = await createTempProject()
+    const appRoot = join(root, "app")
+    await writeFile(join(root, "package.json"), '{"type":"module"}')
+    await writeDefinition(appRoot, "src/report.database.ts", "report", { connection: "url: 'libsql://database.example'," })
+    await symlink(join(import.meta.dirname, "../../../node_modules"), join(root, "node_modules"), "dir")
+    const plugin = hubDb()
+    await resolveConfigResolved(plugin)({ root: appRoot, command: "build", build: { outDir: "dist" }, resolve: { alias: [] }, plugins: [] })
+    for (const hook of [plugin.buildStart, plugin.buildEnd, plugin.closeBundle]) {
+      if (hook instanceof Function) await Reflect.apply(hook, {}, [])
+      else if (hook && hook.handler instanceof Function) await Reflect.apply(hook.handler, {}, [])
+    }
+    const entries = plugin.vitehub?.inspect?.()?.providerOutput ?? []
+    expect(entries.map(entry => entry.path)).toEqual([
+      join(appRoot, "dist/app/index.js"), join(appRoot, ".vercel/output/functions/__server.func/index.mjs"),
+    ])
+    for (const entry of entries) await expect(readFile(entry.path, "utf8")).resolves.toBeTruthy()
+  })
+
   it("does not inspect provider output without enabled Database Definitions", async () => {
     const rootDir = await createTempProject()
     const plugin = hubDb()

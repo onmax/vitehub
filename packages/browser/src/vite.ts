@@ -232,7 +232,7 @@ export function hubBrowser(options?: BrowserModuleOptions | false): BrowserViteP
           providerOutput: [{
             description: "Generated Cloudflare Browser worker",
             owner: "browser",
-            path: resolve(createDefaultCloudflareOutputRoot(resolveViteHubProjectRoot(resolved?.root ?? projectRoot)), "wrangler.json"),
+            path: resolve(createDefaultCloudflareOutputRoot(resolved?.root ?? projectRoot), "wrangler.json"),
           }],
         }
       },

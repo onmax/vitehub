@@ -184,20 +184,21 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   let validatesNitroDefinitions = false
   let serverDirs: string[] | undefined
-  const queueOutputRoot = () => {
-    const rootDir = resolved?.root ?? process.cwd()
+  const queueOutputRoot = (provider: QueueProvider) => {
+    const rootDir = nuxtProjectRoot ?? resolved?.root ?? process.cwd()
     // SAFETY: Nitro adds this optional output config to Vite's resolved config; its directory remains unknown until checked below.
     const outputDir = (resolved as (ResolvedConfig & { nitro?: { output?: { dir?: unknown } } }) | undefined)?.nitro?.output?.dir
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Nitro output.dir is an unknown config value at this integration boundary; only strings are valid paths.
     if ((nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker) && typeof outputDir === "string") return resolve(rootDir, outputDir)
-    return hosting === "cloudflare" ? createDefaultCloudflareOutputRoot(rootDir) : createDefaultVercelOutputRoot(rootDir)
+    return provider === "cloudflare" ? createDefaultCloudflareOutputRoot(rootDir) : createDefaultVercelOutputRoot(rootDir)
   }
 
   return {
     name: "@vite-hub/queue/vite",
     vitehub: {
       inspect: () => {
-        if (queue === false || nitroQueue === false) return
+        const provider = normalizeQueueOptions(queue, { hosting })?.provider
+        if (!provider) return
         return {
           definitions: [{
             kind: "queue",
@@ -208,16 +209,16 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
             },
           }],
           providerOutput: [
-            hosting === "cloudflare"
+            provider === "cloudflare"
               ? {
                   description: "Generated Cloudflare Queue provider config",
                   owner: "queue",
-                  path: resolve(queueOutputRoot(), nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker ? "server/wrangler.json" : "wrangler.json"),
+                  path: resolve(queueOutputRoot(provider), nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker ? "server/wrangler.json" : "wrangler.json"),
                 }
               : {
                   description: "Generated Vercel Queue provider config",
                   owner: "queue",
-                  path: resolve(queueOutputRoot(), "config.json"),
+                  path: resolve(queueOutputRoot(provider), "config.json"),
                 },
           ],
         }

@@ -29,6 +29,18 @@ async function runProviderOutputHooks(plugin: ReturnType<typeof hubQueue>) {
 }
 
 describe("hubQueue", () => {
+  it("resolves Nuxt-owned relative Cloudflare output from the Nuxt project root", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "vitehub-queue-nuxt-inspection-"))
+    roots.push(projectRoot)
+    const viteRoot = join(projectRoot, "app")
+    await mkdir(viteRoot)
+    const plugin = hubQueue({ provider: "cloudflare" })
+    const nitro = { preset: "cloudflare_module", output: { dir: "custom-output" } }
+    await (plugin.configResolved as (config: unknown) => Promise<void>)({ root: viteRoot, command: "build", nitro })
+    await plugin.vitehub?.queue?.createNitroConfig({ nitro, projectRoot, root: viteRoot })
+    expect((await collectViteHubProviderOutputEntries([plugin]))[0]?.path).toBe(join(projectRoot, "custom-output/server/wrangler.json"))
+  })
+
   it.each(["cloudflare", "vercel"] as const)("ignores a Nitro output override for standalone %s inspection", async (provider) => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-queue-inspection-output-"))
     roots.push(root)
@@ -45,9 +57,26 @@ describe("hubQueue", () => {
   })
 
   it.each([
-    { options: false as const, nitro: {} },
-    { options: { provider: "cloudflare" as const }, nitro: { preset: "vercel" } },
-  ])("omits disabled Queue Definitions and provider output for $options", async ({ options, nitro }) => {
+    { provider: "cloudflare" as const, preset: "vercel" },
+    { provider: "vercel" as const, preset: "cloudflare_module" },
+  ])("inspects standalone $provider output when Nitro uses $preset", async ({ provider, preset }) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-queue-mismatch-inspection-"))
+    roots.push(root)
+    await symlink(join(import.meta.dirname, "../../../node_modules"), join(root, "node_modules"), "dir")
+    await writeFile(join(root, "welcome.queue.ts"), "export default { handler: async () => undefined }\n")
+    const plugin = hubQueue({ provider })
+    await (plugin.configResolved as (config: unknown) => Promise<void>)({ root, command: "build", build: { outDir: "dist" }, nitro: { preset }, plugins: [], resolve: { alias: [] } })
+    await runProviderOutputHooks(plugin)
+    const entries = await collectViteHubProviderOutputEntries([plugin])
+    expect(entries).toHaveLength(1)
+    expect(existsSync(entries[0]!.path)).toBe(true)
+    const inspectors = await collectViteHubDefinitionInspectors([plugin])
+    expect(await inspectors[0]!.list()).toHaveLength(1)
+  })
+
+  it("omits explicitly disabled Queue Definitions and provider output", async () => {
+    const options = false
+    const nitro = {}
     const root = await mkdtemp(join(tmpdir(), "vitehub-queue-disabled-inspection-"))
     roots.push(root)
     await writeFile(join(root, "welcome.queue.ts"), "export default { handler: async () => undefined }\n")
@@ -467,6 +496,9 @@ describe("hubQueue", () => {
 
     expect(existsSync(join(root, ".vercel", "output", "functions", "api", "vitehub", "queues", "vercel"))).toBe(true)
     expect(existsSync(join(viteRoot, ".vercel"))).toBe(false)
+    const [entry] = await collectViteHubProviderOutputEntries([plugin])
+    expect(entry?.path).toBe(join(root, ".vercel/output/config.json"))
+    expect(existsSync(entry!.path)).toBe(true)
   })
 
   it("preserves Nitro-owned Vercel output across a sequential Cloudflare build", async () => {
