@@ -361,7 +361,7 @@ if (result.notEnforcedBy) console.warn(`Cancel requested, not enforced by ${resu
 
 Before setup, active runs check for a journal cancellation request. A check that exceeds one second fails startup with `AGENT_R0973`. After startup, active runs read journal requests every 10 seconds, including after a lost lease stops claim renewal. A crashed owner or expired lease does not prove that a Driver stopped. An orphaned record remains pending or running until execution recovery observes its request; cancellation does not recover orphaned work or promise a completion deadline. Repeating the request does not change that state. Read the final journal status to confirm cancellation.
 
-The Development Server command `vitehub agent invocations cancel <id>` checks all registered journals before cancellation. If distinct journals contain the same ID, it rejects the request with HTTP `409` without changing either record. Call the intended Agent's `invocations.cancel(id)` to select its journal. Registry entries that share one journal are checked once.
+The Development Server command `vitehub agent invocations cancel <id>` checks all registered journals before cancellation. If distinct journals contain the same ID, it rejects the request with HTTP `409` without changing either record. Call the intended Agent's `invocations.cancel(id)` to select its journal. Registry entries that share one journal are checked once. If any journal lookup fails, the request fails before cancellation because uniqueness cannot be verified.
 
 If the durable request write fails, cancellation still aborts a local run and propagates the storage error. This does not create a durable request for other processes.
 
@@ -373,7 +373,7 @@ An observed cancel request aborts the Invocation abort signal. That signal stops
 | `provider` (`claude-code`, `codex`) | Enforced. The provider session receives the abort signal. |
 | `run` | Not enforced. The handler receives `context.input.abortSignal` and can stop on its own. ViteHub cannot stop it. |
 
-When the Driver does not enforce cancel, the result has `notEnforcedBy`, and the record keeps `cancelNotEnforcedBy` and `cancelRequestedAt`. The record stays `running` until the Driver returns. ViteHub does not report the Invocation as cancelled.
+Cancellation before Driver dispatch stops startup without a `notEnforcedBy` warning. When a started Driver does not enforce cancel, the result has `notEnforcedBy`, and the record keeps `cancelNotEnforcedBy` and `cancelRequestedAt`. The record stays `running` until the Driver returns. ViteHub does not report the Invocation as cancelled.
 
 ## Inspect invocations in the console
 

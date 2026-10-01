@@ -59,8 +59,8 @@ async function cancelInJournals(journals: readonly AgentInvocations[], id: strin
   if (matches.length > 1) {
     throw new InvocationJournalAmbiguityError("The ID matches multiple Agent invocation journals. Cancel through the intended Agent's invocations.cancel(id).")
   }
-  if (matches[0]) return await matches[0].cancel(id)
   if (failure) throw failure
+  if (matches[0]) return await matches[0].cancel(id)
   return { id, outcome: "not-found" }
 }
 

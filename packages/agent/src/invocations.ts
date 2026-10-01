@@ -247,6 +247,8 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   context: AgentRuntimeContext<TRuntimeConfig>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
   running(): Promise<void>
+  /** Records the Driver dispatch boundary without delaying execution. */
+  driverStarted(): void
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
   /** Registers this run and checks durable cancellation before setup or dispatch consumes {@link abortSignal}. */
   watchCancellation(driver: AgentInvocationCancellationDriver): Promise<void>
@@ -1745,6 +1747,8 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const persistedObservations = new Set<string | number>()
       const retriedObservations = new WeakSet<TraceEventLogEntry>()
       const cancellation = new AbortController()
+      let cancellationDriver: AgentInvocationCancellationDriver | undefined
+      let driverDispatched = false
       let cancelNotEnforcedBy: string | undefined
       let unregisterCancellation: (() => void) | undefined
       let cancellationPolling: ReturnType<typeof setInterval> | undefined
@@ -2198,6 +2202,13 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           })()
           registerAgentInvocationRecovery(context, runningRetry)
         },
+        driverStarted() {
+          if (finished || finishing || driverDispatched) return
+          driverDispatched = true
+          if (!cancellationDriver || cancellationDriver.enforced) return
+          cancelNotEnforcedBy = cancellationDriver.name
+          void update({ cancelNotEnforcedBy, timestamp: new Date().toISOString() }).catch(() => undefined)
+        },
         async setAnnotations(annotations) {
           if (finished || finishing) return
           await update({ annotations: normalizeAnnotations(annotations), timestamp: new Date().toISOString() })
@@ -2205,8 +2216,8 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         async watchCancellation(driver) {
           if (finished || finishing) return
           if (unregisterCancellation) return await cancellationRegistration
-          cancelNotEnforcedBy = driver.enforced ? undefined : driver.name
-          unregisterCancellation = registerAgentInvocationCancellation(store, recordId, { abort: requestCancellation, driver: () => runningRequested ? driver : undefined })
+          cancellationDriver = driver
+          unregisterCancellation = registerAgentInvocationCancellation(store, recordId, { abort: requestCancellation, driver: () => driverDispatched ? driver : undefined })
           // A lost lease stops writes, but the stale Driver still needs journal cancellation.
           cancellationPolling = setInterval(() => { void pollCancellationRequest().catch(() => undefined) }, CLAIM_RENEW_INTERVAL_MS)
           unrefTimer(cancellationPolling)

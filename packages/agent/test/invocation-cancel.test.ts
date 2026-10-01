@@ -90,7 +90,8 @@ describe("Agent Invocation cancel", () => {
     try {
       await journal.watchCancellation(driver)
       await journal.running()
-      expect((await invocations.get(id))?.cancelNotEnforcedBy).toBe(expected)
+      journal.driverStarted()
+      await vi.waitFor(async () => expect((await invocations.get(id))?.cancelNotEnforcedBy).toBe(expected))
       const result = await remoteInvocations.cancel(id)
       expect(result).toMatchObject({ delivery: "journal", outcome: "requested", status: "running" })
       expect(result.notEnforcedBy).toBe(expected)
@@ -511,6 +512,47 @@ describe("Agent Invocation cancel", () => {
     expect(driver).not.toHaveBeenCalled()
     expect(close).toHaveBeenCalledOnce()
     expect((await invocations.get(id))?.status).toBe("cancelled")
+  })
+
+  it.each((["run", "stream"] as const).flatMap(kind => [false, true].map(capacity => ({ capacity, kind }))))("does not warn before $kind Driver dispatch when cancellation interrupts running persistence, capacity=$capacity", async ({ capacity, kind }) => {
+    const backing = createMemoryAgentInvocationStore()
+    const entered = deferred()
+    const release = deferred()
+    let paused = false
+    const store = {
+      ...backing,
+      async update(...args: Parameters<typeof backing.update>) {
+        const record = await backing.update(...args)
+        if (args[1].status === "running" && !paused) {
+          paused = true
+          entered.resolve()
+          await release.promise
+        }
+        return record
+      },
+    }
+    const invocations = defineAgentInvocations({ store })
+    const driver = vi.fn(() => "Must not start")
+    const runId = `running-persistence-cancel-${kind}-${capacity}`
+    const agent = defineAgent({ invocations, driver: { ...(capacity ? { capacity: { concurrency: 1 } } : {}), run: driver } })
+    const running = kind === "run" ? runAgent(agent, runtime(runId), {}) : streamAgent(agent, runtime(runId), {})
+    const settled = running.then(result => result, error => error)
+    const id = await agentInvocationId(runId)
+    try {
+      await entered.promise
+      const cancellation = await invocations.cancel(id)
+      expect(cancellation).toMatchObject({ delivery: "local", outcome: "requested", status: "running" })
+      expect(cancellation).not.toHaveProperty("notEnforcedBy")
+      expect((await invocations.getSummary(id))?.cancelNotEnforcedBy).toBeUndefined()
+      expect(driver).not.toHaveBeenCalled()
+    }
+    finally {
+      release.resolve()
+      await settled
+    }
+    expect(driver).not.toHaveBeenCalled()
+    expect((await invocations.getSummary(id))?.status).toBe("cancelled")
+    expect((await invocations.getSummary(id))?.cancelNotEnforcedBy).toBeUndefined()
   })
 
   it.each(["run", "stream"] as const)("fails %s startup when its initial cancellation read times out", async kind => {
