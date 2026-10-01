@@ -1353,6 +1353,33 @@ function cleanSecret(value: unknown): string | undefined {
   return hasRuntimeType(secret, "string") && secret.trim() ? secret.trim() : undefined
 }
 
+function runtimeEnv<TRuntimeConfig extends AgentRuntimeConfig>(
+  name: string,
+  context: AgentCallbackContext<TRuntimeConfig>,
+): unknown {
+  return context.cloudflare?.env?.[name]
+    ?? globalThis.process?.env?.[name]
+}
+
+const serverEnvModuleId = "#vitehub/env/server"
+
+/** Reads one namespace of the application's Server Env. Returns an empty object without Server Env. */
+async function serverEnvNamespace(name: string, event?: unknown): Promise<Record<string, unknown>> {
+  try {
+    // hubEnv() rewrites the tagged import so Vite can resolve its generated module.
+    // SAFETY: The generated server env module exposes the optional useServerEnv entrypoint.
+    const module = await import(/* @vite-ignore */ /* @vitehub-env */ serverEnvModuleId) as { useServerEnv?: (event?: unknown) => unknown }
+    const env = module.useServerEnv?.(event)
+    const namespace = isRecord(env) ? env[name] : undefined
+    return isRecord(namespace)
+      ? Object.fromEntries(Object.entries(namespace).filter(([, value]) => value !== undefined))
+      : {}
+  }
+  catch {
+    return {}
+  }
+}
+
 async function githubEnv<TRuntimeConfig extends AgentRuntimeConfig>(context: GitHubAppContext<TRuntimeConfig>): Promise<Record<string, unknown>> {
   return Object.fromEntries(Object.entries(await channelEnv("github", context)).filter(([, value]) => value !== undefined))
 }
@@ -2640,17 +2667,17 @@ function telegramAdapterResolver<TRuntimeConfig extends AgentRuntimeConfig>(
       options.webhookSecret === undefined ? channelEnvValue("telegram", "webhookSecret", context) : resolveRuntimeValue(options.webhookSecret, context),
     ])
     const { createTelegramAdapter } = await import("@chat-adapter/telegram")
-    return createTelegramAdapter({
-      ...(allowedUserIds ? { allowedUserIds } : {}),
-      ...(apiBaseUrl ? { apiBaseUrl: cleanSecret(apiBaseUrl) } : {}),
-      ...(apiUrl ? { apiUrl } : {}),
-      ...(botToken ? { botToken: cleanSecret(botToken) } : {}),
-      ...(longPolling ? { longPolling } : {}),
-      ...(options.mode ? { mode: options.mode } : {}),
-      ...(userName ? { userName } : {}),
-      allowUnverifiedWebhooks: webhookSecret === false ? true : undefined,
-      ...(webhookSecret ? { secretToken: cleanSecret(webhookSecret) } : {}),
-    })
+    const adapterOptions: Parameters<typeof createTelegramAdapter>[0] = {}
+    if (allowedUserIds) adapterOptions.allowedUserIds = allowedUserIds
+    if (apiBaseUrl) adapterOptions.apiBaseUrl = cleanSecret(apiBaseUrl)
+    if (apiUrl) adapterOptions.apiUrl = apiUrl
+    if (botToken) adapterOptions.botToken = cleanSecret(botToken)
+    if (longPolling) adapterOptions.longPolling = longPolling
+    if (options.mode) adapterOptions.mode = options.mode
+    if (userName) adapterOptions.userName = userName
+    if (webhookSecret === false) adapterOptions.allowUnverifiedWebhooks = true
+    if (webhookSecret) adapterOptions.secretToken = cleanSecret(webhookSecret)
+    return createTelegramAdapter(adapterOptions)
   }
 }
 
@@ -2684,12 +2711,11 @@ function discordAdapterResolver<TRuntimeConfig extends AgentRuntimeConfig>(
     const applicationId = cleanSecret(adapterOptions.applicationId ?? await channelEnvValue("discord", "applicationId", context))
     const botToken = cleanSecret(adapterOptions.botToken ?? await channelEnvValue("discord", "botToken", context))
     const publicKey = cleanSecret(adapterOptions.publicKey ?? await channelEnvValue("discord", "publicKey", context))
-    const adapter = createDiscordAdapter({
-      ...adapterOptions,
-      ...(applicationId ? { applicationId } : {}),
-      ...(botToken ? { botToken } : {}),
-      ...(publicKey ? { publicKey } : {}),
-    })
+    const adapterConfig: Record<string, unknown> = { ...adapterOptions }
+    if (applicationId) adapterConfig.applicationId = applicationId
+    if (botToken) adapterConfig.botToken = botToken
+    if (publicKey) adapterConfig.publicKey = publicKey
+    const adapter = createDiscordAdapter(adapterConfig)
     addDiscordThreadTitleSupport(adapter, adapterOptions, botToken)
     if (longContent?.mode === "split") {
       Object.defineProperty(adapter, Symbol.for("vitehub.discord.longContent.mode"), {
