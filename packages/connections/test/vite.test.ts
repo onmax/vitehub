@@ -49,10 +49,10 @@ describe("discoverConnectionDefinitions", () => {
 });
 
 describe("hubConnections", () => {
-  it("writes the registry and mounts the management API in development", async () => {
+  it.each(["@vite-hub/connections", "vite-hub/connections"])("writes the registry and mounts the management API through %s in development", async (importBase) => {
     const root = await createTempProject();
     const definition = await writeConnection(root, "server/connections/google.ts");
-    const plugin = hubConnections({ database: "vite-hub/database/drizzle" });
+    const plugin = hubConnections({ database: "vite-hub/database/drizzle", importBase });
     const config = { nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true };
     await (plugin.config as unknown as ConfigHook)(config, {
       command: "serve",
@@ -72,7 +72,7 @@ describe("hubConnections", () => {
       "/_vitehub/connections/**",
     ]);
     await expect(readFile(nitro.handlers[0]!.handler, "utf8")).resolves.toContain(
-      'from "@vite-hub/connections/server"',
+      `from "${importBase}/server"`,
     );
   });
 
