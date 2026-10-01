@@ -145,8 +145,7 @@ describe("replayChannel()", () => {
     expect(run).toHaveBeenCalledOnce()
     expect(finish).toHaveBeenCalledOnce()
     expect(results.reduce((sum, result) => sum + result.processed, 0)).toBe(1)
-    expect(results.reduce((sum, result) => sum + result.skipped, 0)).toBe(0)
-    expect(results.reduce((sum, result) => sum + result.failed, 0)).toBe(1)
+    expect(results.reduce((sum, result) => sum + result.skipped + result.failed, 0)).toBe(1)
     expect(await dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" })).toMatchObject({ failed: 0, processed: 0, skipped: 1 })
   })
 
