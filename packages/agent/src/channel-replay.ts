@@ -284,6 +284,7 @@ export async function handleChannelReplayRequest<TRuntimeConfig extends AgentRun
     return replayJson({ message: "describe, dryRun, and force must be booleans." }, 400)
   }
   if (cursor !== undefined && !hasRuntimeType(cursor, "string")) return replayJson({ message: "cursor must be a string." }, 400)
+  if (cursor === "") return replayJson({ message: "cursor must be a non-empty string." }, 400)
   if (limit !== undefined && !hasRuntimeType(limit, "number")) return replayJson({ message: "limit must be a number." }, 400)
   if (query !== undefined && !isHistoryQuery(query)) return replayJson({ message: "query values must be strings or string arrays." }, 400)
   const maxLimit = options.maxLimit ?? Number.POSITIVE_INFINITY

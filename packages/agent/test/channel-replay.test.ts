@@ -5,6 +5,7 @@ import { defineCollection } from "../../source/src/index.ts"
 import { defineChannel, defineChannelTrigger } from "../src/channels.ts"
 import { pendingAgentInvocationAnnotation } from "../src/invocations.ts"
 import { defineAgent } from "../src/index.ts"
+import { handleChannelReplayRequest } from "../src/channel-replay.ts"
 import { channelReplayRunId, createMemoryAgentInvocationStore, defineAgentInvocations, describeChannelHistory, replayChannel } from "../src/server.ts"
 
 interface Email {
@@ -113,6 +114,20 @@ function memoryInvocations() {
 }
 
 describe("replayChannel()", () => {
+  it.each([false, true])("rejects an empty HTTP cursor before reading history or invoking with force=%s", async force => {
+    const { agent, label, load, run } = labeller({ invocations: memoryInvocations() })
+    const request = new Request("http://localhost/channels/replay", {
+      body: JSON.stringify({ channel: "mailbox", cursor: "", force }),
+      method: "POST",
+    })
+    const response = await handleChannelReplayRequest(agent, await request.json())
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ message: expect.stringContaining("cursor") })
+    expect(load).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+    expect(label).not.toHaveBeenCalled()
+  })
+
   it("replays protected Channels without authenticating the host HTTP request", async () => {
     const { agent, run } = labeller({ invocations: memoryInvocations() })
     const channel = agent.channels?.mailbox
