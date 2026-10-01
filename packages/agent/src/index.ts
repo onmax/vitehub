@@ -33,7 +33,7 @@ import {
   createStatusDeliveryEffectIntent,
 } from "./delivery-effects.ts"
 import { createExecutionContext, createRuntimeContext, createTraceEventLog, deriveTraceRuns, getViteHubErrorShape, isTraceContentAttributeKey, normalizeRuntimeDiagnosticError, traceEventsToOpenTelemetryLogRecords, traceEventsToOpenTelemetrySpans } from "@vite-hub/runtime"
-import { agentTelemetryTask } from "./internal/telemetry-task.ts"
+import { isAmbiguousAgentWorkflowStartFailure } from "./internal/workflow-start.ts"
 import { agentTelemetryWorkspaceSources, getAgentTelemetryConfiguration, safeAgentTelemetryMetadata, setAgentTelemetryConfiguration } from "./internal/agent-telemetry.ts"
 import { getCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { getAgentInvocationRecoveryWorkflowName } from "@vite-hub/internal/agent-workflow"
@@ -985,25 +985,6 @@ async function portableAgentWorkflowRunId(runId: string): Promise<string> {
   return `${generatedPrefix}${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")}`
 }
 
-function isAmbiguousWorkflowStartFailure(error: unknown): boolean {
-  if (!error || !hasRuntimeType(error, "object") || !("code" in error) || !("details" in error)) return false
-  // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-  const details = (error as { details?: unknown }).details
-  // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-  return (error as { code?: unknown }).code === "WORKFLOW_PROVIDER_OPERATION_FAILED"
-    && Boolean(details && hasRuntimeType(details, "object")
-      // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      && (details as { acknowledgement?: unknown }).acknowledgement === "unknown"
-      // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      && (((details as { provider?: unknown }).provider === "cloudflare"
-        // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-        && (details as { operation?: unknown }).operation === "create")
-      // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      || ((details as { provider?: unknown }).provider === "openworkflow"
-        // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-        && (details as { operation?: unknown }).operation === "run")))
-}
-
 async function portableWorkflowMessages(messages: Message[]): Promise<Message[]> {
   const materialized = await materializeMessageAttachmentData(messages)
   return await Promise.all(materialized.map(async message => ({
@@ -1256,7 +1237,7 @@ async function runAgentAsWorkflow<
   }
   catch (error) {
     await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
-    const ambiguous = isAmbiguousWorkflowStartFailure(error)
+    const ambiguous = isAmbiguousAgentWorkflowStartFailure(error)
     const failedRunId = !options.fresh && context.run?.runId
       ? context.run.runId
       : workflowRunId || (ambiguous ? undefined : createTraceId())
@@ -4067,7 +4048,6 @@ function scheduleAgentTelemetry<TRuntimeConfig extends AgentRuntimeConfig>(
   const task = Promise.resolve()
     .then(() => exportAgentTelemetryTraces(telemetry, runtime, context, agent, invocationId))
     .catch(error => reportAgentTelemetryFailure(error, runtime, agent, invocationId, "terminal"))
-  Object.defineProperty(task, agentTelemetryTask, { value: true })
   registerAgentBackgroundTask(runtime, task)
   return task
 }
@@ -4101,7 +4081,6 @@ function createAgentTelemetryScheduler<TRuntimeConfig extends AgentRuntimeConfig
     exports = exports
       .then(task)
       .catch(error => reportAgentTelemetryFailure(error, runtime, agent, invocationId, phase))
-    Object.defineProperty(exports, agentTelemetryTask, { value: true })
     registerAgentBackgroundTask(runtime, exports)
   }
   const flushLogs = () => {
