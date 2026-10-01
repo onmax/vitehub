@@ -292,6 +292,14 @@ async function resetPooledCheckout(checkout: string, repository: string, command
   ] as const) await exec("git", ["-C", checkout, "config", key, value], commandOptions)
   await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "reset", "-q", "--hard"], commandOptions)
   await exec("git", ["-C", checkout, "clean", "-ffdq"], commandOptions)
+  // Drop refs and reflogs left by the previous repository before fetching the new head.
+  // Keeping them would let provider-created refs or stale origin refs influence later Git work.
+  for (const path of [".git/refs", ".git/logs", ".git/packed-refs"]) {
+    await rm(join(checkout, path), { force: true, recursive: true })
+  }
+  await mkdir(join(checkout, ".git/refs/heads"), { recursive: true })
+  await mkdir(join(checkout, ".git/refs/remotes"), { recursive: true })
+  await mkdir(join(checkout, ".git/refs/tags"), { recursive: true })
 }
 
 export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
@@ -757,6 +765,8 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       }
       const fetched = (await exec("git", ["-C", checkout, "rev-parse", "HEAD"], commandOptions)).stdout.trim()
       if (fetched !== pullRequest.headSha) throw agentDiagnostics.AGENT_R0767({ message: `Pull request head changed from ${pullRequest.headSha} to ${fetched}.` })
+      // Apply the incoming head's ignore rules as well as the previous head's rules used during reset.
+      await exec("git", ["-C", checkout, "clean", "-ffdq"], commandOptions)
       operation.signal.throwIfAborted()
       // Only a checkout with a verified head returns to the pool. Reuse resets it again.
       keepCheckout = Boolean(checkoutPool)
