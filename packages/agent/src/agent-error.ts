@@ -172,7 +172,7 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
   if (!afterPrompt) return
 
   // Match timestamps first to keep periods in abbreviations and explicit zones.
-  const timestamp = afterPrompt.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\s+\d{1,2}:\d{2}\s+[ap]\.?m\.?(?:\s+(?:UTC|GMT|UT|[ECMP][DS]T|CET|CEST|EET|EEST|BST|IST|JST|AEST|AEDT|[+-]\d{2}:?\d{2}))?)(?=\.|\s*$)/i)?.[1]
+  const timestamp = afterPrompt.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\s+\d{1,2}:\d{2}\s+[ap]\.?m\.?(?:\s+(?:UTC|GMT|UT|[ECMP][DS]T|CET|CEST|EET|EEST|BST|IST|JST|AEST|AEDT|[+-]\d{2}:?\d{2}))?)(?=\.(?!\d)|\s*$)/i)?.[1]
   const resetText = timestamp?.replace(/\.$/, "")
   if (!resetText || resetText.length > 64) return
   const isoDate = resetText.match(/^(\d{4})-(\d{2})-(\d{2})T/i)
@@ -189,7 +189,7 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
   const namedTime = namedDate && resetText.match(/\s(\d{1,2}):(\d{2})\s+([ap])\.?m\.?(?:\s+(.+))?$/i)
   // Date.parse can normalize invalid clock fields in named dates too.
   if (namedTime && (Number(namedTime[1]) < 1 || Number(namedTime[1]) > 12 || Number(namedTime[2]) > 59)) return
-  const isoTime = isoDate && resetText.match(/T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?/i)
+  const isoTime = isoDate && resetText.match(/T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?/i)
   // Date.parse can normalize invalid ISO clock fields too.
   if (isoTime && (Number(isoTime[1]) > 23 || Number(isoTime[2]) > 59 || Number(isoTime[3] ?? 0) > 59)) return
   const offset = resetText.match(/[+-](\d{2}):?(\d{2})$/)
@@ -200,15 +200,21 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
   if (!Number.isFinite(time)) return
   // Date.parse normalizes nonexistent local wall times during DST transitions.
   // Do not publish a reset instant that differs from the provider's unzoned clock.
-  if (namedTime && !namedTime[4]) {
+  if (namedTime && !namedTime[4] || isoTime && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(resetText)) {
     const parsed = new Date(time)
-    const hour = Number(namedTime[1]) % 12 + (namedTime[3]?.toLowerCase() === "p" ? 12 : 0)
-    const minute = Number(namedTime[2])
+    const hour = namedTime
+      ? Number(namedTime[1]) % 12 + (namedTime[3]?.toLowerCase() === "p" ? 12 : 0)
+      : Number(isoTime?.[1])
+    const minute = Number(namedTime?.[2] ?? isoTime?.[2])
+    const second = Number(isoTime?.[3] ?? 0)
+    const millisecond = Number((isoTime?.[4] ?? "").slice(0, 3).padEnd(3, "0"))
     if (parsed.getFullYear() !== year
       || parsed.getMonth() !== month
       || parsed.getDate() !== day
       || parsed.getHours() !== hour
-      || parsed.getMinutes() !== minute) return
+      || parsed.getMinutes() !== minute
+      || parsed.getSeconds() !== second
+      || parsed.getMilliseconds() !== millisecond) return
   }
   return { resetText, resetAt: new Date(time).toISOString() }
 }
