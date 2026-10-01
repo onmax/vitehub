@@ -201,25 +201,20 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
   const offset = resetText.match(/[+-](\d{2}):?(\d{2})$/)
   if (offset && (Number(offset[1]) > 14 || Number(offset[2]) > 59 || Number(offset[1]) === 14 && Number(offset[2]) !== 0)) return
   const namedZone = resetText.match(/\s(UTC|GMT|UT|[ECMP][DS]T|CET|CEST|EET|EEST|BST|IST|JST|AEST|AEDT)$/i)?.[1]
+  // These abbreviations identify different offsets in different regions.
+  // Without provider locale context, no single reset instant is safe to publish.
+  if (namedZone && /^(?:BST|IST|CST|CDT|EST|EDT|MST|PST)$/i.test(namedZone)) return
   const namedZoneOffsets: Record<string, string> = {
     aest: "+10:00",
     aedt: "+11:00",
-    bst: "+01:00",
     cest: "+02:00",
     cet: "+01:00",
-    cdt: "-05:00",
-    cst: "-06:00",
-    edt: "-04:00",
     eest: "+03:00",
     eet: "+02:00",
-    est: "-05:00",
     gmt: "+00:00",
-    ist: "+05:30",
     jst: "+09:00",
     mdt: "-06:00",
-    mst: "-07:00",
     pdt: "-07:00",
-    pst: "-08:00",
     utc: "+00:00",
     ut: "+00:00",
   }

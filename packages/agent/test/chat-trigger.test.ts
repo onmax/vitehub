@@ -86,8 +86,8 @@ describe("chat error fallback", () => {
   })
 
   it.each([
-    ["PST", "2026-09-15T21:23:00.000Z"],
-    ["EST", "2026-09-15T18:23:00.000Z"],
+    ["-08:00", "2026-09-15T21:23:00.000Z"],
+    ["-05:00", "2026-09-15T18:23:00.000Z"],
   ])("preserves %s after dotted meridiems", (zone, resetAt) => {
     const error = {
       data: { error: { code: "insufficient_quota", message: `Try again at Sep. 15, 2026 1:23 p.m. ${zone}. Please upgrade.` } },
@@ -172,11 +172,11 @@ describe("chat error fallback", () => {
     "Sep 15, 2026 1:99 PM",
     "Sep 15, 2026 0:23 AM",
     "Sep. 15, 2026 13:23 p.m. UTC",
-    "Sep 15, 2026 12:60 AM PST",
+    "Sep 15, 2026 12:60 AM UTC",
     "2100-02-29T01:23:00Z",
     "Feb 29, 2026 1:23 AM",
     "Feb 30, 2026 1:23 AM UTC",
-    "Apr. 31st, 2026 1:23 p.m. PST",
+    "Apr. 31st, 2026 1:23 p.m. UTC",
     "Sep 15, 0000 1:23 PM UTC",
     "Secret 15, 2026 1:23 AM",
   ])("omits private or invalid reset text: %s", async (reset) => {
@@ -196,6 +196,7 @@ describe("chat error fallback", () => {
   })
 
   it.each([
+    ["2026-09-15T01:23:00-00:00", "2026-09-15T01:23:00.000Z"],
     ["2000-02-29T01:23:00Z", "2000-02-29T01:23:00.000Z"],
     ["2028-02-29T23:23:00-07:00", "2028-03-01T06:23:00.000Z"],
     ["2026-09-15T01:23:00-14:00", "2026-09-15T15:23:00.000Z"],
@@ -215,20 +216,12 @@ describe("chat error fallback", () => {
   })
 
   it.each([
-    ["EST", "2026-09-15T18:23:00.000Z"],
-    ["EDT", "2026-09-15T17:23:00.000Z"],
-    ["CST", "2026-09-15T19:23:00.000Z"],
-    ["CDT", "2026-09-15T18:23:00.000Z"],
-    ["MST", "2026-09-15T20:23:00.000Z"],
     ["MDT", "2026-09-15T19:23:00.000Z"],
-    ["PST", "2026-09-15T21:23:00.000Z"],
     ["PDT", "2026-09-15T20:23:00.000Z"],
     ["CET", "2026-09-15T12:23:00.000Z"],
     ["CEST", "2026-09-15T11:23:00.000Z"],
     ["EET", "2026-09-15T11:23:00.000Z"],
     ["EEST", "2026-09-15T10:23:00.000Z"],
-    ["BST", "2026-09-15T12:23:00.000Z"],
-    ["IST", "2026-09-15T07:53:00.000Z"],
     ["JST", "2026-09-15T04:23:00.000Z"],
     ["AEST", "2026-09-15T03:23:00.000Z"],
     ["AEDT", "2026-09-15T02:23:00.000Z"],
@@ -237,6 +230,23 @@ describe("chat error fallback", () => {
     const message = `Quota exhausted. Try again at ${resetText}.`
     expect(toAgentPublicError(agentDiagnostics.AGENT_R0726({ message }), "http").details)
       .toEqual({ resetText, resetAt })
+  })
+
+  it.each(["BST", "IST", "CST", "CDT", "EST", "EDT", "MST", "PST"])("omits ambiguous reset time zones: %s", async (zone) => {
+    for (const meridiem of ["PM", "p.m."]) {
+      const message = `Quota exhausted. Try again at Sep 15, 2026 1:23 ${meridiem} ${zone}.`
+      for (const error of [
+        agentDiagnostics.AGENT_R0726({ message }),
+        { name: "AI_APICallError", statusCode: 429, data: { error: { code: "insufficient_quota", message } } },
+      ]) {
+        for (const context of ["http", "invocation", "serialization"] as const) {
+          const publicError = toAgentPublicError(error, context)
+          expect(publicError.details).toBeUndefined()
+          expect(await resolveChatErrorFallbackText(undefined, { error, publicError } as never))
+            .toBe("The AI provider usage limit has been reached. Usage will reset when the provider quota renews.")
+        }
+      }
+    }
   })
 
   it("reads reset times from AI SDK quota errors", () => {

@@ -133,7 +133,9 @@ private response data.
 `PROVIDER_QUOTA_EXHAUSTED` carries the provider's reset time when the failure
 text says `try again at <time>.` and contains a recognized, parseable timestamp.
 `resetText` keeps the provider's wording, for example `Sep 15th, 2026 1:23 AM`. `resetAt` is the same time as an ISO 8601
-timestamp. Unrecognized or unparseable reset text is omitted. A time without
+timestamp. Unrecognized, unparseable, or ambiguous reset text is omitted. Zone
+abbreviations with multiple regional meanings, such as `IST`, `BST`, and `CST`,
+are ambiguous without provider locale context. A time without
 a zone is read in the server's local time zone.
 
 The mapper includes only bounded identifiers, categories, retry delays, reset
