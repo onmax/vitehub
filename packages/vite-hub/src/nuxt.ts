@@ -32,7 +32,7 @@ import { registeredConsoleAuthMode, resolveConsoleAuthConfig, writeConsoleAuthHa
 import { serializeConsoleRefresh } from "./console/refresh.ts"
 import { assertConsoleProductionAccess, closeConsoleInvocationRootState, consoleHostManagedCloudflareWarning, configureConsoleFixtureLifecycle, consoleInvocationRootPlugin, createConsoleInvocationRootState, generatedConsolePluginRegistration, resolveGeneratedConsolePlugin, type ConsoleInvocationRootState, updateConsoleInvocationRootState } from "./console/vite.ts"
 
-import type { AgentInvocationsOptions } from "@vite-hub/agent/server"
+import type { AgentInvocationRetentionOptions, AgentInvocationsOptions } from "@vite-hub/agent/server"
 import type { DatabaseNuxtIntegrationOptions } from "@vite-hub/database"
 import type { AuthModuleOptions } from "@vite-hub/auth"
 import type { EnvIntegrationOptions, EnvViteConfigOptions, EnvViteUserConfig } from "@vite-hub/env"
@@ -273,6 +273,7 @@ async function installConsole(
   discoveryOptions: Pick<Parameters<typeof discoverConsoleBuildCatalog>[0], "databaseDiscoveryRoot" | "rateLimitDiscoveryRoot" | "rateLimitScanDirs" | "scheduleDiscoveryRoot" | "workspaceDiscoveryRoot"> = {},
   journal?: ConsoleJournal,
   independentAuth: ConsoleAuthMode | false = false,
+  retention?: AgentInvocationRetentionOptions,
 ): Promise<string> {
   const uiModule = (await import("@vite-hub/ui/nuxt")).default
   const uiConfigured = (nuxt.options.modules ?? []).some((entry) => {
@@ -285,7 +286,7 @@ async function installConsole(
   const plugin = resolveGeneratedConsolePlugin(projectRoot, fixture, invocationRootState)
   installConsoleSections(projectRoot, sections, independentAuth)
   installConsoleProjectName(projectRoot, resolveConsoleProjectNameFromRoot(projectRoot))
-  if (installInvocations && nuxt.options.dev && sections.includes("agents") && !fixture) installConsoleInvocations(projectRoot, undefined, observations, journal && "databaseUrl" in journal ? journal.databaseUrl : undefined)
+  if (installInvocations && nuxt.options.dev && sections.includes("agents") && !fixture) installConsoleInvocations(projectRoot, undefined, observations, journal && "databaseUrl" in journal ? journal.databaseUrl : undefined, undefined, retention)
   const routeRules = (nuxt.options.routeRules ??= {})
   for (const route of ["/_vitehub", "/_vitehub/**"]) {
     const rule = (routeRules[route] ??= {})
@@ -445,6 +446,7 @@ async function installConsole(
       () => !invocationRootState?.closed,
       journal,
       independentAuth,
+      retention,
     )
     if (invocationRootState) {
       updateConsoleInvocationRootState(invocationRootState, projectRoot, identity)
@@ -763,6 +765,9 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     ...moduleOptions,
     env: envOptions,
   } as Parameters<typeof vitehub>[0])
+  if (options.connections) {
+    throw viteHubErrorDiagnostics.VITE_HUB_B0012({ message: "[vitehub] connections is not supported by the Nuxt module yet. Use the Vite plugin." })
+  }
   const plan = resolveDeploymentPlan(options.preset)
   const rootDir = nuxt.options.rootDir || process.cwd()
   const projectRoot = resolveViteHubProjectRoot(rootDir)
@@ -1226,6 +1231,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         () => !consoleInvocationRootState.closed,
         replayedConsoleJournal,
         registeredConsoleAuthMode(options.console !== true && options.console.access === "auth" ? options.console.auth : undefined, Boolean(nuxt.options.dev)),
+        options.console === true ? undefined : options.console.retention,
       )
     }
     Object.assign(config, mergeGeneratedSourceNitroConfig(config, generatedSourceHandlers))
@@ -1300,6 +1306,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
       },
       consoleJournal,
       registeredConsoleAuthMode(options.console !== true && options.console.access === "auth" ? options.console.auth : undefined, Boolean(nuxt.options.dev)),
+      options.console === true ? undefined : options.console.retention,
     )
   }
 }

@@ -214,6 +214,24 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   const request = options.fetch ?? ((input: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(input, init))
   const now = options.now ?? Date.now
   const refreshing = new Map<string, Promise<StoredToken>>()
+  // Provider revocation can invalidate an entire grant. Serialize token
+  // replacements with revocation so a callback or refresh cannot replace a
+  // grant after revocation has leased its token but before the provider call.
+  const tokenMutations = new Map<string, Promise<void>>()
+  async function withTokenMutation<T>(name: string, run: () => Promise<T>): Promise<T> {
+    const previous = tokenMutations.get(name)
+    let release!: () => void
+    const current = new Promise<void>(resolve => { release = resolve })
+    tokenMutations.set(name, current)
+    if (previous) await previous
+    try {
+      return await run()
+    }
+    finally {
+      release()
+      if (tokenMutations.get(name) === current) tokenMutations.delete(name)
+    }
+  }
   let store: Promise<ConnectionStore> | undefined
   const definitions = new Map<string, Promise<ConnectionDefinition | undefined>>()
 
@@ -408,7 +426,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const next = toStoredToken(response, latest)
     let revision: string
     try {
-      const replacement = await connections.bridge.replace(envContext("connections"), { expectedRevision: tokenRevision ?? null, key, value: JSON.stringify(next) })
+      const replacement = await withTokenMutation(name, () => connections.bridge.replace(envContext("connections"), { expectedRevision: tokenRevision ?? null, key, value: JSON.stringify(next) }))
       revision = replacement.revision
     }
     catch (error) {
@@ -679,7 +697,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     ])
     token.accountId = account?.id
     // A losing callback must not revoke a provider grant that can include the winning token.
-    const replacement = await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
+    const replacement = await withTokenMutation(name, () => connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) }))
     const timestamp = new Date(now()).toISOString()
     await connections.state.putForToken({
       accountEmail: account?.email,
@@ -714,7 +732,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const stored = await connections.secrets.inspect(key)
     let revision: string | null = null
     if (stored) {
-      revision = await connections.bridge.use(envContext(actor), key, "revoke", async (secret, metadata) => {
+      revision = await withTokenMutation(input.name, () => connections.bridge.use(envContext(actor), key, "revoke", async (secret, metadata) => {
         if (!metadata?.revision) throw new ConnectionError("invalid", "Connection revocation requires the Env Bridge to provide the leased token revision.")
         let token: StoredToken | undefined
         try {
@@ -725,7 +743,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         // Fence the marker with the revision of the token sent to the provider.
         const replacement = await connections.bridge.replace(envContext(actor), { expectedRevision: metadata.revision, key, value: JSON.stringify({ revoked: true }) })
         return replacement.revision
-      })
+      }))
     }
     await setStatus(input.name, { status: "revoked" }, revision)
     return await inspect(input.name)

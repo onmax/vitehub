@@ -8,7 +8,7 @@ import { discoverAgentDefinitionEntries } from "@vite-hub/agent/vite"
 import { resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
-import type { AgentInvocationsOptions } from "@vite-hub/agent/server"
+import type { AgentInvocationRetentionOptions, AgentInvocationsOptions } from "@vite-hub/agent/server"
 import type { AuthModuleOptions, ResolvedAuthViteConfig } from "@vite-hub/auth"
 import type { ViteHubCliContributingPlugin } from "@vite-hub/internal/cli"
 import type { Environment, Plugin } from "vite"
@@ -59,7 +59,7 @@ type ConsoleNitroConfig = {
 export type ConsoleOptions = (
   | { access: "auth", auth?: ConsoleAuthConfig, exposure?: never, invoke?: boolean }
   | { access?: never, exposure: "host-managed", invoke?: boolean }
-) & { databaseUrl?: string, observations?: AgentInvocationsOptions["observations"] }
+) & { databaseUrl?: string, observations?: AgentInvocationsOptions["observations"], retention?: AgentInvocationRetentionOptions }
 
 interface ConsoleVitePluginOptions {
   blobStores?: readonly string[]
@@ -208,6 +208,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   let invoke = false
   let journal: ConsoleJournal | undefined
   let observations: AgentInvocationsOptions["observations"]
+  let retention: AgentInvocationRetentionOptions | undefined
   let consoleAuthHandlers: ConsoleAuthHandlers | undefined
   let refreshConsoleAuthClient: (() => Promise<void>) | undefined
   let hostManagedCloudflareBuild = false
@@ -216,7 +217,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   const refreshConsoleCatalog = serializeConsoleRefresh(async () => {
     if (!generatedPlugin || !projectRoot || !root) return
     const catalog = await discoverConsoleBuildCatalog({ databaseDiscoveryRoot, discoveryRoot: root, projectRoot, rateLimitDiscoveryRoot, rateLimitScanDirs, sandboxDiscoveryRoot: root, scheduleDiscoveryRoot, sections, serverDirs, workspaceDiscoveryRoot })
-    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, journal, consoleAuthHandlers?.auth ?? false)
+    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, journal, consoleAuthHandlers?.auth ?? false, retention)
     if (options.invocationRootState) updateConsoleInvocationRootState(options.invocationRootState, projectRoot, identity)
   })
 
@@ -330,6 +331,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       const configuredDatabaseUrl = (configured === true ? undefined : configured.databaseUrl) ?? options.databaseUrl
       journal = resolveConsoleJournal(configuredDatabaseUrl, build && !configuredDatabaseUrl ? options.resolveD1Binding?.(root, serverDirs) : undefined, build)
       observations = configured === true ? undefined : configured.observations
+      retention = configured === true ? undefined : configured.retention
       invoke = !fixture && (configured === true || configured.invoke === true)
       generatedPlugin = resolveGeneratedConsolePlugin(root, fixture, options.invocationRootState)
       if (fixture && options.invocationRootState) {
@@ -354,6 +356,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
           undefined,
           journal,
           consoleAuthHandlers?.auth ?? false,
+          retention,
         )
       }
       // SAFETY: Nitro extends Vite's user config with this documented top-level configuration object.
@@ -383,7 +386,8 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       const kit = createNitroServerKit(nitro)
       for (const handler of [
         { handler: join(consoleRuntimeRoot, "server/status.get.js"), route: "/api/_vitehub/console/status", method: "get" },
-        { handler: join(consoleRuntimeRoot, "server/usage.get.js"), route: "/api/_vitehub/console/usage", method: "get" },
+        // The Usage section reads the Agent invocation journal, which exists only with the Agents section.
+        ...(sections.includes("agents") && sections.includes("usage") ? [{ handler: join(consoleRuntimeRoot, "server/usage.get.js"), route: "/api/_vitehub/console/usage", method: "get" }] : []),
         ...(consoleAuthHandlers?.signIn ? [{ handler: consoleAuthHandlers.signIn, route: "/_vitehub/sign-in", method: "get" }] : []),
         { handler: join(consoleRuntimeRoot, "server/page.get.js"), route: "/_vitehub" },
         { handler: join(consoleRuntimeRoot, "server/page.get.js"), route: "/_vitehub/**" },

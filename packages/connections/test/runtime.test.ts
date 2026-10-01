@@ -285,6 +285,34 @@ describe("connect", () => {
     expect((await test.runtime.activity({ name: "mail" })).some(event => event.action === "use" && event.operation === "revoke" && event.outcome === "succeeded" && event.revision)).toBe(true)
   })
 
+  it("holds the token mutation fence while the provider revocation is in flight", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    let revokeStarted!: () => void
+    let releaseRevoke!: () => void
+    const started = new Promise<void>(resolve => { revokeStarted = resolve })
+    const released = new Promise<void>(resolve => { releaseRevoke = resolve })
+    const originalFetch = test.provider.fetch
+    test.provider.fetch = async (input, init) => {
+      if (String(input).includes("/revoke")) {
+        revokeStarted()
+        await released
+      }
+      return originalFetch(input, init)
+    }
+    const revocation = test.runtime.revoke({ name: "mail" })
+    await started
+    const concurrent = createConnectionsRuntime({ definitions: { mail: mailConnection() }, fetch: test.provider.fetch, now: () => test.now.value, store: test.store })
+    const authorization = await concurrent.authorize({ name: "mail", redirectUri: "http://127.0.0.1:8976/callback" })
+    test.provider.tokenResponses.push({ body: { access_token: "new-access", expires_in: 3600, id_token: "account-2", refresh_token: "new-refresh", scope: "openid mail.modify", token_type: "Bearer" } })
+    const replacement = concurrent.complete({ code: "code-2", state: authorization.state })
+    await expect(Promise.race([replacement.then(() => "finished"), new Promise(resolve => setTimeout(() => resolve("pending"), 10))])).resolves.toBe("pending")
+    releaseRevoke()
+    await revocation
+    await expect(replacement).rejects.toMatchObject({ code: "ENV_BRIDGE_CONFLICT" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "revoked" })
+  })
+
   it("revokes the grant and blocks later calls", async () => {
     const test = createTestRuntime()
     await connect(test)
