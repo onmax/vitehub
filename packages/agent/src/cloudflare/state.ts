@@ -1,3 +1,4 @@
+import type { AgentStateCacheMutation } from "../internal/state-lock.ts"
 import { DurableObject } from "cloudflare:workers"
 
 import { parseAgentStateQueueEntry } from "../internal/state-queue.ts"
@@ -55,6 +56,18 @@ export class ViteHubAgentStateDO<TEnv = unknown> extends DurableObject<TEnv> {
 
   alarm(): Promise<void> {
     return this.cleanupExpiredState()
+  }
+
+  cacheMutateWithLock(threadId: string, token: string, mutations: readonly AgentStateCacheMutation[]): boolean {
+    return this.ctx.storage.transactionSync(() => {
+      const held = this.sql.exec("SELECT 1 FROM locks WHERE thread_id = ? AND token = ? AND expires_at > ?", threadId, token, Date.now()).toArray()
+      if (held.length === 0) return false
+      for (const mutation of mutations) {
+        if (mutation.type === "delete") this.sql.exec("DELETE FROM cache WHERE key = ?", mutation.key)
+        else this.sql.exec("INSERT OR REPLACE INTO cache (key, value, expires_at) VALUES (?, ?, NULL)", mutation.key, JSON.stringify(mutation.value))
+      }
+      return true
+    })
   }
 
   cacheDelete(key: string): void {

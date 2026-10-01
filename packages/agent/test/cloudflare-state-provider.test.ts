@@ -199,6 +199,15 @@ function createFakeCloudflareStateNamespace(): ViteHubAgentStateDurableObjectNam
       locks.set(threadId, lock)
       return lock
     },
+    cacheMutateWithLock(threadId, token, mutations) {
+      const held = locks.get(threadId)
+      if (!held || held.token !== token || held.expiresAt <= Date.now()) return false
+      for (const mutation of mutations) {
+        if (mutation.type === "delete") values.delete(mutation.key)
+        else values.set(mutation.key, JSON.stringify(mutation.value))
+      }
+      return true
+    },
     cacheDelete(key) {
       values.delete(key)
       lists.delete(key)

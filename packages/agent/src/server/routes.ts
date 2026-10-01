@@ -1,3 +1,4 @@
+import { requireAtomicAgentStateLock, type AgentStateCacheMutation, type AtomicAgentStateLockAdapter } from "../internal/state-lock.ts"
 import { parseStandardSchema } from "@vite-hub/internal/http-request"
 import { runWithActiveCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { createExecutionContext, createRuntimeContext as createHostRuntimeContext } from "@vite-hub/runtime"
@@ -2551,6 +2552,17 @@ class ViteHubInMemoryChatStateAdapter implements StateAdapter {
   private queues = new Map<string, QueueEntry[]>()
   private subscriptions = new Set<string>()
 
+  async mutateWithLock(lock: Lock, mutations: readonly AgentStateCacheMutation[]): Promise<boolean> {
+    this.ensureConnected()
+    const held = this.locks.get(lock.threadId)
+    if (!held || held.token !== lock.token || isExpired(held.expiresAt)) return false
+    for (const mutation of mutations) {
+      if (mutation.type === "delete") this.cache.delete(mutation.key)
+      else this.cache.set(mutation.key, { value: mutation.value })
+    }
+    return true
+  }
+
   async acquireLock(threadId: string, ttlMs: number): Promise<Lock | null> {
     this.ensureConnected()
     const existing = this.locks.get(threadId)
@@ -2747,6 +2759,16 @@ function withChatStateScope(state: StateAdapter, channelPrefix: string, agentPre
       queuePeek: (threadId: string) => atomic.queuePeek!.call(state, key(threadId)),
       queueReplaceHead: (threadId: string, expected: QueueEntry | null, replacement: QueueEntry[], maxSize: number) =>
         atomic.queueReplaceHead!.call(state, key(threadId), expected, replacement, maxSize),
+    })
+  }
+  // SAFETY: State may implement these optional methods; each is checked before forwarding.
+  const leaseState = state as Partial<AtomicAgentStateLockAdapter>
+  if (isRuntimeFunction(leaseState.mutateWithLock)) {
+    Object.assign(scoped, {
+      mutateWithLock: (held: Lock, mutations: readonly AgentStateCacheMutation[]) => leaseState.mutateWithLock!.call(state, lock(held), mutations.map(mutation => ({ ...mutation, key: key(mutation.key) }))),
+      ...(isRuntimeFunction(leaseState.forCacheLocks) ? {
+        forCacheLocks: () => requireAtomicAgentStateLock(withChatStateScope(leaseState.forCacheLocks!.call(state), channelPrefix, agentPrefix)),
+      } : {}),
     })
   }
   return scoped

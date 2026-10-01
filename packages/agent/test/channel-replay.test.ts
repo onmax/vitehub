@@ -131,6 +131,38 @@ describe("replayChannel()", () => {
     expect(results.reduce((sum, result) => sum + result.failed, 0)).toBe(0)
   })
 
+  it.each(["create", "claim"])("recovers an ambiguous %s reservation before a Gmail-style dispatch retry", async operation => {
+    const store = createMemoryAgentInvocationStore()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let started!: () => void
+    const blocked = new Promise<void>(resolve => { started = resolve })
+    let delayed = false
+    const pause = async (name: string) => { if (name === operation && !delayed) { delayed = true; started(); await gate } }
+    const invocations = defineAgentInvocations({ store: {
+      ...store,
+      create: async (...args: Parameters<typeof store.create>) => { await pause("create"); return await store.create(...args) },
+      claim: async (...args: Parameters<typeof store.claim>) => { await pause("claim"); return await store.claim(...args) },
+    } })
+    const { agent, run, label } = labeller({ invocations })
+    const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+    vi.useFakeTimers()
+    const initial = replayChannel(agent, "mailbox", { limit: 1, runtime })
+    try {
+      await blocked
+      await vi.advanceTimersByTimeAsync(1_001)
+      expect((await initial).failed).toBe(1)
+      expect(run).not.toHaveBeenCalled()
+      release()
+      await vi.advanceTimersByTimeAsync(0)
+      const retry = await dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" })
+      expect(retry).toMatchObject({ failed: 0, processed: 1, skipped: 0 })
+      expect(run).toHaveBeenCalledOnce()
+      expect(label).toHaveBeenCalledOnce()
+      expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).skipped).toBe(1)
+    } finally { release(); await initial; vi.useRealTimers() }
+  })
+
   it("replays existing items again with force", async () => {
     const invocations = memoryInvocations()
     const { agent, label } = labeller({ invocations })

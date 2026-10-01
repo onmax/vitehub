@@ -1,3 +1,4 @@
+import { requireAtomicAgentStateLock, type AgentStateCacheMutation } from "./state-lock.ts"
 import * as v from "valibot"
 
 import { agentDiagnostics } from "../agent-diagnostics.ts"
@@ -749,12 +750,12 @@ export async function gmailMailboxAddress(client: GmailClient): Promise<string> 
   return (await gmailRequest(client, profileSchema, { method: "GET", path: "profile" })).emailAddress
 }
 
-async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew: () => Promise<void>): Promise<void> {
+async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew: () => Promise<void>, mutate: (mutations: readonly AgentStateCacheMutation[]) => Promise<void>): Promise<void> {
   const { client, state } = sync
   const cursor = await state.state.get<string>(cursorKey)
   if (!cursor) {
     await renew()
-    await state.state.set(cursorKey, sync.notificationHistoryId)
+    await mutate([{ key: cursorKey, type: "set", value: sync.notificationHistoryId }])
     log("cursor.initialized", { historyId: sync.notificationHistoryId })
     return
   }
@@ -787,7 +788,7 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
   if (failed) return
   // Advance the cursor only while this worker still owns the mailbox lease.
   await renew()
-  await state.state.set(cursorKey, changes.historyId)
+  await mutate([{ key: cursorKey, type: "set", value: changes.historyId }])
 }
 
 /**
@@ -796,7 +797,10 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
  * and the lock holder runs once more, so overlapping notifications never read the same history twice.
  */
 export async function syncGmailMailbox(sync: GmailMailboxSync): Promise<void> {
-  const { keyPrefix, state } = sync.state
+  const keyPrefix = sync.state.keyPrefix
+  const atomic = requireAtomicAgentStateLock(sync.state.state)
+  const state = requireAtomicAgentStateLock(atomic.forCacheLocks?.() ?? atomic)
+  sync = { ...sync, state: { keyPrefix, state } }
   const cursorKey = `${keyPrefix}history-id`
   const lockKey = `${keyPrefix}sync`
   const pendingKey = `${keyPrefix}sync-pending`
@@ -816,6 +820,12 @@ export async function syncGmailMailbox(sync: GmailMailboxSync): Promise<void> {
         throw new Error("Lost ownership of the Gmail mailbox lease.")
       }
     }
+    const mutate = async (mutations: readonly AgentStateCacheMutation[]) => {
+      if (ownershipLost || !await state.mutateWithLock(heldLock, mutations)) {
+        ownershipLost = true
+        throw new Error("Lost ownership of the Gmail mailbox lease.")
+      }
+    }
     let renewalTask = Promise.resolve()
     const timer = setInterval(() => {
       renewalTask = renewalTask.then(renew).catch(() => { ownershipLost = true })
@@ -823,8 +833,8 @@ export async function syncGmailMailbox(sync: GmailMailboxSync): Promise<void> {
     try {
       do {
         await renew()
-        await state.delete(pendingKey)
-        await syncMailboxOnce(sync, cursorKey, renew)
+        await mutate([{ key: pendingKey, type: "delete" }])
+        await syncMailboxOnce(sync, cursorKey, renew, mutate)
       } while (await state.get(pendingKey) !== null)
     }
     finally {
@@ -887,20 +897,25 @@ export function gmailHistoryCollection(
     async page(options) {
       const query = v.parse(historyQuerySchema, options.query)
       const client = await resolveClient()
-      let page: { ids: string[], nextPageToken?: string }
-      try {
-        page = await listGmailMessageIds(client, {
-          labelIds: query.labelIds,
-          limit: Math.min(Math.max(options.limit ?? 50, 1), 100),
-          ...(options.cursor ? { pageToken: options.cursor } : {}),
-          query: query.query,
-        })
+      let cursor = options.cursor
+      while (true) {
+        let page: { ids: string[], nextPageToken?: string }
+        try {
+          page = await listGmailMessageIds(client, {
+            labelIds: query.labelIds,
+            limit: Math.min(Math.max(options.limit ?? 50, 1), 100),
+            ...(cursor ? { pageToken: cursor } : {}),
+            query: query.query,
+          })
+        }
+        catch (error) {
+          if (cursor && gmailErrorStatus(error) === 400) throw new GmailHistoryCursorError()
+          throw error
+        }
+        const items = await getGmailMessages(client, page.ids, bodyLimit)
+        if (items.length || !page.nextPageToken) return { items, nextCursor: page.nextPageToken ?? null }
+        cursor = page.nextPageToken
       }
-      catch (error) {
-        if (options.cursor && gmailErrorStatus(error) === 400) throw new GmailHistoryCursorError()
-        throw error
-      }
-      return { items: await getGmailMessages(client, page.ids, bodyLimit), nextCursor: page.nextPageToken ?? null }
     },
     async parseQuery(input: AgentChannelHistoryQuery): Promise<GmailHistoryQuery> {
       const labelIds = input.labelIds

@@ -3,7 +3,7 @@ import { createRuntimeContext } from "@vite-hub/runtime"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { agentErrorMessage } from "./agent-error.ts"
 import { isResolvedAgentTriggerHandledInvocation, resolveAgentTriggerInvocation, runAgent } from "./index.ts"
-import { AgentInvocationClaimConflict, exclusiveAgentInvocation } from "./invocations.ts"
+import { AgentInvocationClaimConflict, exclusiveAgentInvocation, pendingAgentInvocationAnnotation } from "./invocations.ts"
 import { channelMessageRunId } from "./internal/channel-run-id.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { agentToolJsonSchema } from "./tool-schema.ts"
@@ -162,7 +162,8 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
   item: unknown,
 ): Promise<ReplayChannelItem> {
   const stableId = channelMessageRunId(run.channel, key, run)
-  if (!run.force && await run.invocations?.getByRunId(stableId, run.agentName)) {
+  const existing = !run.force ? await run.invocations?.getByRunId(stableId, run.agentName) : undefined
+  if (existing && !(existing.status === "pending" && existing.annotations?.[pendingAgentInvocationAnnotation] === true)) {
     return { id: stableId, key, reason: "existing", status: "skipped" }
   }
   // A forced run needs a new ID because the stable one already has an Invocation.
@@ -171,7 +172,7 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
     const itemRuntime = { ...run.runtime, ...(!run.force && run.invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), run: { ...run.runtime.run, runId: id } }
     const invocation = await resolveAgentTriggerInvocation(run.agent, itemRuntime, run.triggerId, item)
     if (isResolvedAgentTriggerHandledInvocation(invocation)) return { id, key, reason: "handled", status: "skipped" }
-    const output = await runAgent(run.agent, { ...itemRuntime, run: { ...invocation.run, runId: id } }, {
+    const output = await runAgent(run.agent, { ...itemRuntime, run: { ...itemRuntime.run, ...invocation.run, runId: id } }, {
       ...invocation.input,
       ...(run.dryRun ? { dryRun: true } : {}),
     })

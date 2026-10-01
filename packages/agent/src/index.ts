@@ -1,3 +1,4 @@
+export type { AgentStateCacheMutation, AtomicAgentStateLockAdapter } from "./internal/state-lock.ts"
 import type { AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
 export type { AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
 import { invocationUsageWithAuxiliaryCalls } from "./internal/auxiliary-usage.ts"
@@ -66,7 +67,7 @@ import {
 import { registerMessageChannelDeferredReplyTrace, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
 import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, createAgentInvocationContextStore } from "./invocation-context.ts"
 import { bindAgentRunEvents, type AgentRunEventPublisher } from "./run-events.ts"
-import { AgentInvocationClaimConflict, bindAgentInvocations, exclusiveAgentInvocation, type AgentInvocationJournal } from "./invocations.ts"
+import { AgentInvocationClaimConflict, bindAgentInvocations, exclusiveAgentInvocation, inheritedAgentInvocationClaim, pendingAgentInvocationAnnotations, type AgentInvocationJournal } from "./invocations.ts"
 import { isAttachmentPart, materializeMessageAttachmentData, type AgentMessagePhase, type Message } from "./messages.ts"
 import {
   createFallbackAgentInvoker,
@@ -741,6 +742,7 @@ type AgentDefinitionWithBaseResolve<
   [colocatedAgentSkillsSymbol]?: ColocatedAgentSkills
 }
 interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
+  invocationClaimToken?: string
   capabilities?: Record<string, boolean>
   input?: AgentRunInput<CALL_OPTIONS>
   invocationRecovery?: {
@@ -1036,16 +1038,34 @@ async function runAgentAsWorkflow<
   const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
   let activity = exclusive ? undefined : hasAgentDefinition(agent) ? createActiveAgentActivity(agent, context) : undefined
   let reserved = false
+  let replayJournal: AgentInvocationJournal<TRuntimeConfig> | undefined
   const ensureActivity = async () => {
     if (!exclusive || reserved) return
     const journal = hasAgentDefinition(agent)
-      ? await bindAgentInvocations(agent.invocations, context, { agentName: agent.name || context.agentIdentity?.name, requireNew: true })
+      ? await bindAgentInvocations(agent.invocations, { ...context, run: { ...context.run, runId: context.run?.runId || createTraceId(), annotations: pendingAgentInvocationAnnotations(context.run?.annotations) } }, { agentName: agent.name || context.agentIdentity?.name, recoverPending: true })
       : undefined
     if (journal?.claimStatus !== "owned") {
       if (journal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
       throw new Error("Could not acquire the Invocation execution claim.")
     }
-    await journal.releaseClaim()
+    replayJournal = journal
+    if (!journal.createdNew) {
+      try {
+        const workflowName = resolveAgentWorkflowName(agent, binding, context)
+        const handle = await getAgentWorkflowHandle<TRuntimeConfig, CALL_OPTIONS, TOutput>(agent, workflowName, Boolean(context.agentIdentity))
+        const recoveryConfig = (await loadAgentWorkflowRuntimeStateModule()).getWorkflowRuntimeConfig()
+        const stableId = context.run?.runId || ""
+        const providerId = recoveryConfig && recoveryConfig.provider === "cloudflare" ? await portableAgentWorkflowRunId(stableId) : stableId
+        const accepted = await handle.getRun(providerId)
+        if (accepted.status !== "unknown") {
+          if (!await journal.confirmWorkflowDispatch()) throw new Error("Could not confirm the accepted Workflow Invocation.")
+          throw new AgentInvocationClaimConflict()
+        }
+      } catch (error) {
+        await journal.releaseClaim()
+        throw error
+      }
+    }
     reserved = true
     activity = hasAgentDefinition(agent) ? createActiveAgentActivity(agent, context) : undefined
   }
@@ -1058,7 +1078,7 @@ async function runAgentAsWorkflow<
     const preservesDeliveryRun = isAgentChannelDeliveryWorkflowBinding(input.context?.[agentChannelDeliveryWorkflowContextKey])
     const runId = (!options.fresh || preservesDeliveryRun) && context.run?.runId ? context.run.runId : createTraceId()
     try {
-      const journal = await bindAgentInvocations(agent.invocations, {
+      const journal = replayJournal || await bindAgentInvocations(agent.invocations, {
         ...context,
         run: { ...context.run, runId },
       }, { agentName: agent.name || context.agentIdentity?.name, terminalTakeover: true })
@@ -1217,6 +1237,10 @@ async function runAgentAsWorkflow<
     }
   }
   let run: AgentWorkflowRun<AgentWorkflowOutput<TOutput>>
+  if (replayJournal) {
+    payload.invocationClaimToken = await replayJournal.handoffClaim()
+    if (!payload.invocationClaimToken) throw new Error("Could not transfer the Invocation execution claim.")
+  }
   try {
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     run = await workflowRuntimeState.runWithWorkflowRuntimeEvent(workflowEvent, () => handle.run(
@@ -1244,6 +1268,7 @@ async function runAgentAsWorkflow<
     }
     throw error
   }
+  await replayJournal?.confirmWorkflowDispatch()
   if (run.status === "cancelled" || run.status === "completed" || run.status === "failed") {
     await activity?.update(
       run.status,
@@ -7456,8 +7481,10 @@ async function executeAgentInvocation<
   const definition = hasAgentDefinition(agent) ? agent as object : undefined
   // SAFETY: Replay sets this private boolean marker on its runtime; other runtimes may omit it.
   const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
+  // SAFETY: Only the trusted Workflow worker installs this private claim token.
+  const inheritedClaim = (context as AgentRuntimeContext & { [inheritedAgentInvocationClaim]?: string })[inheritedAgentInvocationClaim]
   // SAFETY: hasAgentDefinition validated the object before this internal contract assertion.
-  let activity = exclusive ? undefined : createActiveAgentActivity(definition as AgentDefinition<TRuntimeConfig> | undefined, context)
+  let activity = exclusive || inheritedClaim ? undefined : createActiveAgentActivity(definition as AgentDefinition<TRuntimeConfig> | undefined, context)
   await activity?.update("queued")
   let invocationJournal: AgentInvocationJournal<TRuntimeConfig> | undefined
   try {
@@ -7465,17 +7492,22 @@ async function executeAgentInvocation<
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
       ? await bindAgentInvocations((definition as AgentDefinition).invocations, {
         ...context,
+        ...(exclusive ? { run: { ...context.run, runId: context.run?.runId || createTraceId(), annotations: pendingAgentInvocationAnnotations(context.run?.annotations) } } : {}),
         // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
         ...((context as AgentRuntimeContext & { [agentInvocationRunId]?: string })[agentInvocationRunId]
           // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
           ? { run: { ...context.run, runId: (context as AgentRuntimeContext & { [agentInvocationRunId]: string })[agentInvocationRunId] } }
           : {}),
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      }, { agentName: (definition as AgentDefinition).name || context.agentIdentity?.name, requireNew: exclusive })
+      }, { agentName: (definition as AgentDefinition).name || context.agentIdentity?.name, recoverPending: exclusive, ...(inheritedClaim ? { replaceClaimToken: inheritedClaim } : {}) })
       : undefined
-    if (exclusive && invocationJournal?.claimStatus !== "owned") {
+    if ((exclusive || inheritedClaim) && invocationJournal?.claimStatus !== "owned") {
       if (invocationJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
       throw new Error("Could not acquire the Invocation execution claim.")
+    }
+    if (inheritedClaim && !await invocationJournal?.confirmWorkflowDispatch()) {
+      await invocationJournal?.releaseClaim()
+      throw new Error("Could not confirm the Workflow Invocation handoff.")
     }
   }
   catch (error) {
@@ -7486,7 +7518,7 @@ async function executeAgentInvocation<
   let preparedInvocation: AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS> | undefined
   let release: (() => void) | undefined
   try {
-    if (exclusive) {
+    if (exclusive || inheritedClaim) {
       // SAFETY: hasAgentDefinition validated the object before this internal contract assertion.
       activity = createActiveAgentActivity(definition as AgentDefinition<TRuntimeConfig> | undefined, context)
       await activity?.update("queued")

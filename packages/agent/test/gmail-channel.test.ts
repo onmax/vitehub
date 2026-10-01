@@ -1,3 +1,8 @@
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { createLibsqlAgentState } from "../src/state/sqlite.ts"
+import type { AgentStateCacheMutation } from "../src/internal/state-lock.ts"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import * as v from "valibot"
 
@@ -202,6 +207,65 @@ afterEach(() => {
 })
 
 describe("gmail() Channel", () => {
+  it.each(["initialize", "advance", "pending"] as const)("atomically fences %s after lease takeover between renewal and mutation", async (phase) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-gmail-fencing-"))
+    const url = `file:${join(root, "state.db")}`
+    const first = createLibsqlAgentState({ url })
+    const second = createLibsqlAgentState({ url })
+    await first.connect()
+    await second.connect()
+    try {
+      const google = await createGoogle()
+      google.history.set("100", { historyId: "105", ids: [] })
+      if (phase === "advance") await first.set("mail:history-id", "100")
+      let successor: Lock | null = null
+      let renewals = 0
+      const state = new Proxy(first, {
+        get(target, property) {
+          if (property === "extendLock") return async (held: Lock, ttl: number) => {
+            const renewed = await target.extendLock(held, ttl)
+            renewals++
+            if (renewed && renewals === (phase === "pending" ? 1 : 2)) {
+              await second.forceReleaseLock(held.threadId)
+              successor = await second.acquireLock(held.threadId, 60_000)
+              await second.set("mail:history-id", "200")
+              await second.set("mail:sync-pending", "successor-notification")
+            }
+            return renewed
+          }
+          const value: unknown = Reflect.get(target, property, target)
+          return typeof value === "function" ? value.bind(target) : value
+        },
+      })
+      await expect(syncGmailMailbox({
+        bodyLimit: 1000,
+        client: gmailClientFromSettings({ clientId: "client", clientSecret: "secret", refreshToken: "refresh-token" }, google.fetch),
+        dispatch: vi.fn(),
+        notificationHistoryId: "105",
+        state: { keyPrefix: "mail:", state },
+      })).rejects.toThrow("Lost ownership")
+      await expect(second.get("mail:history-id")).resolves.toBe("200")
+      await expect(second.get("mail:sync-pending")).resolves.toBe("successor-notification")
+      expect(successor).not.toBeNull()
+      await expect(second.extendLock(successor!, 60_000)).resolves.toBe(true)
+    }
+    finally {
+      await first.disconnect()
+      await second.disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects custom State without atomic mutations before changing mailbox state", async () => {
+    const acquireLock = vi.fn()
+    const set = vi.fn()
+    // SAFETY: This deliberately incomplete adapter verifies the required atomic contract.
+    const state = { acquireLock, set } as unknown as StateAdapter
+    await expect(syncGmailMailbox({ bodyLimit: 1000, client: gmailClientFromSettings({ clientId: "client", clientSecret: "secret", refreshToken: "refresh-token" }), dispatch: vi.fn(), notificationHistoryId: "105", state: { keyPrefix: "mail:", state } })).rejects.toThrow("atomic lease-fenced")
+    expect(acquireLock).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+  })
+
   it("verifies the Pub/Sub OIDC token", async () => {
     const google = await createGoogle()
     const expected = { audience, fetch: google.fetch, serviceAccount }
@@ -235,6 +299,14 @@ describe("gmail() Channel", () => {
         if (lock && lock.expiresAt > Date.now()) return null
         lock = { expiresAt: Date.now() + ttl, threadId: key, token: String(++nextToken) }
         return lock
+      },
+      mutateWithLock: async (held: Lock, mutations: readonly AgentStateCacheMutation[]) => {
+        if (lost || lock?.token !== held.token || lock.expiresAt <= Date.now()) return false
+        for (const mutation of mutations) {
+          if (mutation.type === "delete") values.delete(mutation.key)
+          else values.set(mutation.key, mutation.value)
+        }
+        return true
       },
       delete: async (key: string) => { values.delete(key) },
       extendLock,
@@ -294,6 +366,14 @@ describe("gmail() Channel", () => {
         if (lock && lock.expiresAt > Date.now()) return null
         lock = { expiresAt: Date.now() + ttl, threadId: key, token: crypto.randomUUID() }
         return lock
+      },
+      mutateWithLock: async (held: Lock, mutations: readonly AgentStateCacheMutation[]) => {
+        if (lock?.token !== held.token || lock.expiresAt <= Date.now()) return false
+        for (const mutation of mutations) {
+          if (mutation.type === "delete") values.delete(mutation.key)
+          else values.set(mutation.key, { value: mutation.value })
+        }
+        return true
       },
       delete: async (key: string) => { values.delete(key) },
       extendLock: async (held: Lock, ttl: number) => {
@@ -540,6 +620,28 @@ describe("gmail() Channel", () => {
       { attributes: { "channel.effect.content": "label(\"Work\")", "channel.effect.skipped": "dry-run" } },
       { attributes: { "channel.effect.kind": "trash", "channel.effect.skipped": "dry-run" } },
     ])
+  })
+
+  it.each([false, true])("continues Gmail replay past deleted and empty pages, surviving message: %s", async (survives) => {
+    stubGmailEnv()
+    const google = await createGoogle()
+    const pages: Array<string | null> = []
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input))
+      if (url.pathname.endsWith("/messages") && (init?.method ?? "GET") === "GET") {
+        const token = url.searchParams.get("pageToken")
+        pages.push(token)
+        if (!token) return Response.json({ messages: [{ id: "deleted-message" }], nextPageToken: "empty-page" })
+        if (token === "empty-page") return Response.json({ nextPageToken: "last-page" })
+        return Response.json({ messages: survives ? [{ id: "m3" }] : [{ id: "another-deleted-message" }] })
+      }
+      return await google.fetch(input, init)
+    }
+    const agent = defineAgent({ channels: { gmail: gmail({ fetch }) }, driver: { run: () => "ok" } })
+    const result = await replayChannel(agent, "gmail", { force: true })
+    expect(result.items.map(item => item.key)).toEqual(survives ? ["m3"] : [])
+    expect(pages).toEqual([null, "empty-page", "last-page"])
+    expect(result.nextCursor).toBeNull()
   })
 
   it("pages the history Collection with Gmail page tokens and validates the query", async () => {

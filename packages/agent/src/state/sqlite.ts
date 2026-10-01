@@ -1,3 +1,4 @@
+import type { AgentStateCacheMutation } from "../internal/state-lock.ts"
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -536,6 +537,18 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
       Date.now(),
     ])
     return numberValue(countRows[0]?.count)
+  }
+
+  async mutateWithLock(lock: Lock, mutations: readonly AgentStateCacheMutation[]): Promise<boolean> {
+    return await retrySqliteBusy(() => this.transaction(async (tx) => {
+      const held = await execute(tx, `SELECT 1 FROM ${this.tables.locks} WHERE thread_id = ? AND token = ? AND expires_at > ?`, [lock.threadId, lock.token, Date.now()])
+      if (held.length === 0) return false
+      for (const mutation of mutations) {
+        if (mutation.type === "delete") await execute(tx, `DELETE FROM ${this.tables.cache} WHERE key = ?`, [mutation.key])
+        else await execute(tx, `INSERT OR REPLACE INTO ${this.tables.cache} (key, value, expires_at) VALUES (?, ?, NULL)`, [mutation.key, JSON.stringify(mutation.value)])
+      }
+      return true
+    }))
   }
 
   async releaseLock(lock: Lock): Promise<void> {
