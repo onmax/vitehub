@@ -184,7 +184,8 @@ describe("Console RPC", () => {
   it("keeps the invocation allowance for a method-only envelope", async () => {
     const envelope = JSON.stringify({ method: consoleRpcMethods.agentInvocations })
     const response = await call(envelope.padEnd(80 * 1_024, " "))
-    expect(response.status).not.toBe(413)
+    expect(response.status).toBe(405)
+    await expect(response.json()).resolves.toEqual({ message: "Method not allowed", ok: false, status: 405 })
   })
 
   it("keeps the larger allowance for invocation envelopes", async () => {
