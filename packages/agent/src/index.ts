@@ -1041,6 +1041,7 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
         if (!await journal.confirmWorkflowDispatch()) throw new Error("Could not confirm the accepted Workflow Invocation.")
         throw new AgentInvocationClaimConflict()
       }
+      if (await journal.getWorkflowDispatchAttempted() !== false) throw new Error("Could not reconcile the pending Workflow Invocation while its provider run status is unknown.")
     } catch (error) {
       await journal.releaseClaim()
       throw error
@@ -1252,7 +1253,7 @@ async function runAgentAsWorkflow<
   }
   let run: AgentWorkflowRun<AgentWorkflowOutput<TOutput>>
   if (replayJournal) {
-    payload.invocationClaimToken = await replayJournal.handoffClaim()
+    payload.invocationClaimToken = await replayJournal.handoffClaim({ workflowDispatch: true })
     if (!payload.invocationClaimToken) throw new Error("Could not transfer the Invocation execution claim.")
   }
   try {

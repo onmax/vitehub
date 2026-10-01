@@ -210,11 +210,12 @@ interface BoundAgentInvocations extends AgentInvocations {
 export const exclusiveAgentInvocation: unique symbol = Symbol("vitehub.exclusiveAgentInvocation")
 export const inheritedAgentInvocationClaim: unique symbol = Symbol("vitehub.inheritedAgentInvocationClaim")
 export const pendingAgentInvocationAnnotation = "vitehub.invocation.executionPending"
+export const workflowDispatchAttemptedAnnotation = "vitehub.invocation.workflowDispatchAttempted"
 
 export function pendingAgentInvocationAnnotations(input: AgentRunMetadata["annotations"]): NonNullable<AgentRunMetadata["annotations"]> {
-  const annotations: NonNullable<AgentRunMetadata["annotations"]> = { [pendingAgentInvocationAnnotation]: true }
+  const annotations: NonNullable<AgentRunMetadata["annotations"]> = { [pendingAgentInvocationAnnotation]: true, [workflowDispatchAttemptedAnnotation]: false }
   for (const [key, value] of Object.entries(input || {})) {
-    if (key !== pendingAgentInvocationAnnotation) annotations[key] = value
+    if (key !== pendingAgentInvocationAnnotation && key !== workflowDispatchAttemptedAnnotation) annotations[key] = value
   }
   return annotations
 }
@@ -233,7 +234,8 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   readonly claimStatus?: "owned" | "conflict" | "unavailable"
   context: AgentRuntimeContext<TRuntimeConfig>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
-  handoffClaim(): Promise<string | undefined>
+  getWorkflowDispatchAttempted(): Promise<boolean | undefined>
+  handoffClaim(options?: { workflowDispatch?: boolean }): Promise<string | undefined>
   confirmWorkflowDispatch(): Promise<boolean>
   releaseClaim(): Promise<void>
   running(): Promise<void>
@@ -2031,7 +2033,13 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       return {
         get createdNew() { return createdNew },
         get claimStatus() { return ownsRecord ? "owned" : claimUnavailable ? "unavailable" : "conflict" },
-        async handoffClaim() {
+        async getWorkflowDispatchAttempted() {
+          const record = await boundedStoreOperation(() => store.getSummary(recordId))
+          if (!record || record === storeOperationTimedOut) return undefined
+          const attempted = record.annotations?.[workflowDispatchAttemptedAnnotation]
+          return attempted === true || attempted === false ? attempted : undefined
+        },
+        async handoffClaim(options = {}) {
           stopHeartbeat()
           await heartbeatRenewal
           const record = await boundedStoreOperation(() => store.get(recordId))
@@ -2039,6 +2047,23 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           if (!await renew(false, true)) return undefined
           claimHandedOff = true
           stopHeartbeat()
+          if (options.workflowDispatch) {
+            let attempted = false
+            await write(async () => {
+              const current = await boundedStoreOperation(() => store.get(recordId))
+              if (!current || current === storeOperationTimedOut || terminalStatus(current.status)) return
+              // Keep the reserved marker before caller metadata at the annotation limit.
+              const annotations = { [workflowDispatchAttemptedAnnotation]: true, ...current.annotations }
+              annotations[workflowDispatchAttemptedAnnotation] = true
+              const updated = await boundedStoreOperation(() => store.update(recordId, {
+                annotations,
+                timestamp: new Date().toISOString(),
+              }, claimId))
+              attempted = updated !== undefined && updated !== storeOperationTimedOut
+                && updated.annotations?.[workflowDispatchAttemptedAnnotation] === true
+            })
+            if (!attempted) return undefined
+          }
           const token = await boundedStoreOperation(() => store.getClaimToken(recordId))
           return token === storeOperationTimedOut ? undefined : token
         },
