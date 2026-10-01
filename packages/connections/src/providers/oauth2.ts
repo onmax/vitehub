@@ -1,11 +1,11 @@
 import * as v from "valibot"
 
 import { connectionError } from "../errors.ts"
-import { assertConnectionOrigins, matchesConnectionOrigin } from "../origins.ts"
+import { assertConnectionOrigins, assertConnectionProviderId, matchesConnectionOrigin } from "../origins.ts"
 
 import type {
   ConnectionOAuthClient,
-  ConnectionProvider,
+  ConnectionOAuth2Provider,
   ConnectionProviderContext,
   ConnectionSecret,
   ConnectionTokenSet,
@@ -21,7 +21,7 @@ export interface OAuth2ProviderOptions {
   client: (context: { event?: unknown }) => ConnectionOAuthClient | Promise<ConnectionOAuthClient>
   /** How the client authenticates at the token endpoint. Default: `"body"`. */
   clientAuth?: "basic" | "body"
-  /** Provider identifier shown in the Console. Default: `"oauth2"`. */
+  /** Provider identifier shown in the Console. It cannot contain `:`. Default: `"oauth2"`. */
   id?: string
   /**
    * API origins that may receive the access token, for example `["https://api.example.com"]`.
@@ -71,7 +71,7 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 /** Creates an OAuth 2 authorization code provider with PKCE S256. */
-export function oauth2(options: OAuth2ProviderOptions): ConnectionProvider {
+export function oauth2(options: OAuth2ProviderOptions): ConnectionOAuth2Provider {
   if (!options.authorizationUrl || !options.tokenUrl || !options.scopes.length) {
     throw connectionError("invalid", { path: "provider" })
   }
@@ -150,7 +150,7 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionProvider {
   }
 
   return {
-    id: options.id ?? "oauth2",
+    id: assertConnectionProviderId(options.id ?? "oauth2"),
     kind: "oauth2",
     origins,
     scopes: options.scopes,

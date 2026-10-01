@@ -17,6 +17,7 @@ const busy = ref(false);
 const confirmDisconnect = ref(false);
 const error = ref("");
 const notice = ref("");
+const key = ref("");
 watch(
   () => props.connection.name,
   () => {
@@ -24,8 +25,10 @@ watch(
     confirmDisconnect.value = false;
     error.value = "";
     notice.value = "";
+    key.value = "";
   },
 );
+const apiKey = computed(() => props.connection.kind === "api-key");
 const connected = computed(
   () => props.connection.status === "active" || props.connection.status === "error",
 );
@@ -75,6 +78,20 @@ function refresh() {
     notice.value = "Access token refreshed.";
   });
 }
+function setKey() {
+  if (!key.value) return;
+  return run(async () => {
+    const result = await requestConnectionsManagement(
+      props.endpoint,
+      "set-key",
+      connectionResultSchema,
+      { key: key.value, name: props.connection.name },
+    );
+    key.value = "";
+    emit("update", result.connection);
+    notice.value = "Key saved. The next request uses it.";
+  });
+}
 function disconnect() {
   if (!confirmDisconnect.value) {
     confirmDisconnect.value = true;
@@ -89,7 +106,9 @@ function disconnect() {
       { name: props.connection.name },
     );
     emit("update", result.connection);
-    notice.value = "Disconnected. ViteHub deleted the grant.";
+    notice.value = apiKey.value
+      ? "Disconnected. ViteHub deleted the key."
+      : "Disconnected. ViteHub deleted the grant.";
   });
 }
 </script>
@@ -152,21 +171,61 @@ function disconnect() {
           <dt class="text-muted">Token expires</dt>
           <dd class="tabular-nums">{{ new Date(connection.expiresAt).toLocaleString() }}</dd>
         </template>
+        <template v-if="connection.header">
+          <dt class="text-muted">Key header</dt>
+          <dd class="break-all font-mono text-xs">{{ connection.header }}</dd>
+        </template>
         <template v-if="connection.lastError">
           <dt class="text-muted">Last error</dt>
           <dd class="break-words text-error">{{ connection.lastError }}</dd>
         </template>
-        <dt class="text-muted">Scopes</dt>
-        <dd>
-          <ul v-if="connection.scopes.length" role="list" class="space-y-1">
-            <li v-for="scope in connection.scopes" :key="scope" class="break-all font-mono text-xs">
-              {{ scope }}
-            </li>
-          </ul>
-          <span v-else class="text-muted">None</span>
-        </dd>
+        <template v-if="!apiKey">
+          <dt class="text-muted">Scopes</dt>
+          <dd>
+            <ul v-if="connection.scopes.length" role="list" class="space-y-1">
+              <li
+                v-for="scope in connection.scopes"
+                :key="scope"
+                class="break-all font-mono text-xs"
+              >
+                {{ scope }}
+              </li>
+            </ul>
+            <span v-else class="text-muted">None</span>
+          </dd>
+        </template>
       </dl>
-      <div v-if="admin" class="flex flex-wrap gap-2 border-t border-default pt-5">
+      <form
+        v-if="admin && apiKey"
+        class="space-y-3 border-t border-default pt-5"
+        @submit.prevent="setKey"
+      >
+        <UFormField
+          :label="connection.status === 'disconnected' ? 'Set key' : 'Replace key'"
+          name="key"
+          help="ViteHub seals the key and never shows it again."
+        >
+          <UInput
+            v-model="key"
+            type="password"
+            autocomplete="new-password"
+            class="w-full"
+            :disabled="busy"
+          />
+        </UFormField>
+        <div class="flex flex-wrap gap-2">
+          <UButton type="submit" label="Save key" :loading="busy" :disabled="!key" />
+          <UButton
+            v-if="connection.status !== 'disconnected'"
+            :label="confirmDisconnect ? 'Confirm disconnect' : 'Disconnect'"
+            color="error"
+            :variant="confirmDisconnect ? 'solid' : 'ghost'"
+            :disabled="busy"
+            @click="disconnect"
+          />
+        </div>
+      </form>
+      <div v-else-if="admin" class="flex flex-wrap gap-2 border-t border-default pt-5">
         <UButton
           :label="connection.status === 'disconnected' ? 'Connect' : 'Reconnect'"
           :loading="busy"

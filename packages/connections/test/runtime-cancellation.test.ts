@@ -104,6 +104,21 @@ describe("Connection Operation cancellation", () => {
     expect((await store.tokens(name))?.tokens).toEqual(original)
   })
 
+  it("does not persist a refresh when cancellation wins before the store write", async () => {
+    const controller = new AbortController()
+    const provider = fakeProvider({ refresh: async token => {
+      queueMicrotask(() => controller.abort(new Error("refresh cancelled before write")))
+      return { ...token, accessToken: "cancelled-token" }
+    } }).provider
+    const { name, runtime, store } = setupRuntime({ definition: { provider } })
+    const original = tokenSet({ expiresAt: Date.now() - 1 })
+    await store.write({ name, provider: "fake", tokens: original })
+
+    const pending = runtime.call(name, readOperation, { id: "42" }, { actor: { id: "server", kind: "service" }, signal: controller.signal })
+    await expect(pending).rejects.toThrow("refresh cancelled before write")
+    expect((await store.tokens(name))?.tokens).toEqual(original)
+  })
+
   it("does not report a refresh successful when cancellation wins during the store write", async () => {
     const controller = new AbortController()
     let started: (() => void) | undefined

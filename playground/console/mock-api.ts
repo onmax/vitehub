@@ -85,6 +85,7 @@ const connections = new Map<string, ConnectionSummary>([
     connectedAt: "2026-09-28T09:12:00.000Z",
     description: "Gmail for the release inbox.",
     expiresAt: "2026-09-29T10:12:00.000Z",
+    kind: "oauth2",
     name: "google",
     origins: ["https://*.googleapis.com"],
     provider: "google",
@@ -93,11 +94,25 @@ const connections = new Map<string, ConnectionSummary>([
   }],
   ["github", {
     access: { agents: { "release-engineer": { allow: ["github.repos.*"], deny: ["github.repos.delete"] } } },
+    kind: "oauth2",
     name: "github",
     origins: ["https://api.github.com"],
     provider: "oauth2",
     scopes: ["repo"],
     status: "disconnected",
+  }],
+  ["executor", {
+    access: { agents: { "interface-engineer": { allow: ["mcp.executor.tools.*"] } } },
+    account: "acme workspace",
+    connectedAt: "2026-09-28T08:30:00.000Z",
+    description: "Executor MCP tool catalog.",
+    header: "authorization",
+    kind: "api-key",
+    name: "executor",
+    origins: ["https://executor.sh"],
+    provider: "executor",
+    scopes: [],
+    status: "active",
   }],
 ])
 const connectionActivity: ConnectionActivity[] = [
@@ -105,6 +120,8 @@ const connectionActivity: ConnectionActivity[] = [
   { action: "call", actor: { id: "interface-engineer", kind: "agent" }, connection: "google", effect: "write", id: "cact_003", invocationId: "ainv_console_navigation", operation: "gmail.drafts.create", outcome: "approval-required", timestamp: "2026-09-28T10:03:00.000Z", tool: "gmail_draft" },
   { action: "call", actor: { id: "/api/labels", kind: "route" }, connection: "google", durationMs: 97, effect: "write", id: "cact_002", operation: "gmail.messages.modify", outcome: "succeeded", status: 200, target: "gmail.googleapis.com/gmail/v1/users/me/messages/18f/modify", timestamp: "2026-09-28T09:40:00.000Z" },
   { action: "connect", actor: { id: "console", kind: "user" }, connection: "google", id: "cact_001", outcome: "succeeded", timestamp: "2026-09-28T09:12:00.000Z" },
+  { action: "call", actor: { id: "interface-engineer", kind: "agent" }, connection: "executor", durationMs: 412, effect: "write", id: "cact_006", invocationId: "ainv_console_navigation", operation: "mcp.executor.tools.execute", outcome: "succeeded", status: 200, target: "executor.sh/acme/mcp", timestamp: "2026-09-28T10:06:00.000Z", tool: "mcp_executor_execute" },
+  { action: "connect", actor: { id: "console", kind: "user" }, connection: "executor", id: "cact_005", outcome: "succeeded", timestamp: "2026-09-28T08:30:00.000Z" },
 ]
 
 // Synthetic Connections management. The playground has no provider, so "start" returns to the Console as if consent succeeded.
@@ -126,8 +143,13 @@ async function handleConnections(request: IncomingMessage, response: ServerRespo
     connections.set(name, next)
     return json(response, { connection: next })
   }
+  if (action === "set-key") {
+    const next: ConnectionSummary = { ...connection, connectedAt: new Date().toISOString(), status: "active" }
+    connections.set(name, next)
+    return json(response, { connection: next })
+  }
   if (action === "disconnect") {
-    const next: ConnectionSummary = { access: connection.access, name, origins: connection.origins, provider: connection.provider, scopes: connection.scopes, status: "disconnected" }
+    const next: ConnectionSummary = { access: connection.access, kind: connection.kind, name, origins: connection.origins, provider: connection.provider, scopes: connection.scopes, status: "disconnected", ...(connection.header ? { header: connection.header } : {}) }
     connections.set(name, next)
     return json(response, { connection: next })
   }

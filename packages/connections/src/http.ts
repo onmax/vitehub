@@ -8,7 +8,7 @@ import type { ConnectionActor } from "./types.ts"
 
 export interface ConnectionsAccess {
   actor: ConnectionActor
-  /** Admins can start, refresh, and disconnect Connections. Others can only read. */
+  /** Admins can start, refresh, disconnect, and set API keys. Others can only read. */
   admin: boolean
 }
 
@@ -29,6 +29,7 @@ const manageInput = v.variant("action", [
   v.object({ action: v.literal("start"), name }),
   v.object({ action: v.literal("refresh"), name }),
   v.object({ action: v.literal("disconnect"), name }),
+  v.object({ action: v.literal("set-key"), key: v.pipe(v.string(), v.minLength(1), v.maxLength(8192)), name }),
 ])
 const stateCookie = "vitehub_connection_state"
 
@@ -79,7 +80,7 @@ function errorResponse(error: unknown, cookie?: string): Response {
   if (!isConnectionError(error)) return json({ code: "CONNECTIONS_FAILED", message: "Connection request failed." }, 500)
   const status = error.code === "CONNECTIONS_NOT_FOUND"
     ? 404
-    : error.code === "CONNECTIONS_INVALID"
+    : error.code === "CONNECTIONS_INVALID" || error.code === "CONNECTIONS_KEY_REJECTED" || error.code === "CONNECTIONS_UNSUPPORTED"
       ? 400
       : error.code === "CONNECTIONS_DENIED" || error.code === "CONNECTIONS_APPROVAL_REQUIRED"
         ? 403
@@ -131,7 +132,7 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions): (r
     if (!parsed.success) throw connectionError("invalid")
     const input = parsed.output
     const { runtime } = options
-    if ((input.action === "start" || input.action === "refresh" || input.action === "disconnect") && !access.admin) {
+    if ((input.action === "start" || input.action === "refresh" || input.action === "disconnect" || input.action === "set-key") && !access.admin) {
       return json({ code: "CONNECTIONS_DENIED", message: "This caller cannot change Connections." }, 403)
     }
     switch (input.action) {
@@ -141,6 +142,8 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions): (r
       case "start": return json(await runtime.start(input.name, { actor: access.actor, basePath: options.basePath, event, origin: new URL(request.url).origin }))
       case "refresh": return json({ connection: await runtime.refresh(input.name, { actor: access.actor, event }) })
       case "disconnect": return json({ connection: await runtime.disconnect(input.name, { actor: access.actor, event }) })
+      // The response never echoes the key.
+      case "set-key": return json({ connection: await runtime.setKey(input.name, input.key, { actor: access.actor, event }) })
     }
   }
 

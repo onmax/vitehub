@@ -4,6 +4,7 @@ const messages = {
   approval_required: "Approval is required for this Connection Operation.",
   denied: "Connection access denied.",
   invalid: "Invalid Connection request.",
+  key_rejected: "The provider rejected the API key.",
   key_mismatch: "The Connection was sealed with a different encryption key. Reconnect it.",
   missing: "The Connection is not connected.",
   needs_reconnect: "The Connection needs to be reconnected.",
@@ -12,6 +13,7 @@ const messages = {
   origin_not_allowed: "The request URL is not an allowed origin for this Connection.",
   provider_failed: "The Connection provider request failed.",
   unavailable: "The Connection is busy. Try again.",
+  unsupported: "This action does not apply to this kind of Connection.",
 } as const
 
 export type ConnectionErrorCode = keyof typeof messages

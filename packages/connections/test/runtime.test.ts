@@ -441,7 +441,7 @@ describe("Connections runtime lifecycle", () => {
   it("summarizes Connections without tokens", async () => {
     const { name, runtime, store } = setupRuntime({ definition: { description: "Inbox", provider: fakeProvider().provider } })
     expect(runtime.names()).toEqual([name])
-    expect(await runtime.list()).toEqual([{ access: {}, description: "Inbox", name, origins: ["https://api.example"], provider: "fake", scopes: ["test.read"], status: "disconnected" }])
+    expect(await runtime.list()).toEqual([{ access: {}, description: "Inbox", kind: "oauth2", name, origins: ["https://api.example"], provider: "fake", scopes: ["test.read"], status: "disconnected" }])
 
     await store.write({ name, provider: "fake", tokens: tokenSet() })
     const summary = await runtime.inspect(name)

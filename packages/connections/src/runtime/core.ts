@@ -1,4 +1,7 @@
+import * as v from "valibot"
+
 import { decideConnectionAccess } from "../access.ts"
+import { defineConnection } from "../definition.ts"
 import { connectionError, isConnectionError } from "../errors.ts"
 import { matchesConnectionOrigin } from "../origins.ts"
 import { createConnectionsStore } from "../store.ts"
@@ -11,7 +14,9 @@ import type {
   ConnectionDefinition,
   ConnectionDefinitionRegistry,
   ConnectionEffect,
+  ConnectionOAuth2Provider,
   ConnectionOperation,
+  ConnectionProvider,
   ConnectionProviderContext,
   ConnectionRequest,
   ConnectionSkipped,
@@ -19,6 +24,12 @@ import type {
   ConnectionTokenSet,
   ConnectionTrace,
 } from "../types.ts"
+
+const apiKeyVerificationSchema = v.pipe(
+  v.unknown(),
+  v.check(value => !Array.isArray(value)),
+  v.union([v.literal(false), v.object({ account: v.optional(v.string()) })]),
+)
 
 export const CONNECTIONS_BASE_PATH = "/_vitehub/connections"
 /** Refresh this long before the access token expires. */
@@ -81,9 +92,10 @@ export interface ConnectionsRuntime {
   open: (input: { event?: unknown, name: string, ticket: string }) => Promise<{ authorizationUrl: string, state: string }>
   record: (activity: Omit<ConnectionActivity, "id" | "timestamp">, event?: unknown) => Promise<void>
   refresh: (name: string, options: ConnectionLifecycleOptions) => Promise<ConnectionSummary>
-  /** Creates a single-use connect ticket. `origin` is the public origin of the app. `basePath` overrides the mounted route path. */
-  start: (name: string, options: ConnectionLifecycleOptions & { basePath?: string, origin: string }) => Promise<{ expiresAt: string, url: string }>
-}
+  /** Stores the key of an API key Connection. Runs the provider `verify` check first. */
+  setKey: (name: string, key: string, options: ConnectionLifecycleOptions) => Promise<ConnectionSummary>
+  /** Creates a single-use connect ticket. `origin` is the public origin of the app. */
+  start: (name: string, options: ConnectionLifecycleOptions & { basePath?: string, origin: string }) => Promise<{ expiresAt: string, url: string }>}
 
 function isDefinition(value: unknown): value is ConnectionDefinition {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry modules are loaded with dynamic import and are unknown values.
@@ -122,6 +134,34 @@ function requestUrl(request: ConnectionRequest): URL {
     else url.searchParams.set(key, String(value))
   }
   return url
+}
+
+// Visible ASCII only, so a key cannot add a header line or hide whitespace.
+const apiKeyPattern = /^[\x21-\x7e]{1,8192}$/
+
+function oauth2Provider(name: string, provider: ConnectionProvider): ConnectionOAuth2Provider {
+  if (provider.kind !== "oauth2") throw connectionError("unsupported", { connection: name })
+  return provider
+}
+
+/**
+ * Provider identity stored with a grant. API key grants carry the kind too, so an OAuth grant never
+ * passes as an API key, or the reverse, when both providers use the same `id`.
+ */
+function grantProvider(provider: ConnectionProvider): string {
+  return provider.kind === "api-key" ? `api-key:${provider.id}` : provider.id
+}
+
+const redirectStatuses = new Set([301, 302, 303, 307, 308])
+// Fetch drops these on a cross-origin redirect. ViteHub follows redirects itself, so it drops them too.
+const crossOriginHeaders = ["authorization", "cookie", "proxy-authorization"]
+// A redirect that turns the request into GET removes the body, so these no longer describe anything.
+const bodyHeaders = ["content-encoding", "content-language", "content-length", "content-location", "content-type"]
+const maxRedirects = 5
+
+function authorization(provider: ConnectionProvider, token: ConnectionTokenSet): [header: string, value: string] {
+  if (provider.kind === "api-key") return [provider.header, provider.scheme ? `${provider.scheme} ${token.accessToken}` : token.accessToken]
+  return ["authorization", `${token.tokenType.toLowerCase() === "bearer" ? "Bearer" : token.tokenType} ${token.accessToken}`]
 }
 
 function target(url: URL): string {
@@ -175,9 +215,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const entry = options.registry[name]
       if (!entry) return Promise.reject(connectionError("not_found", { connection: name }))
       loaded = entry().then((module) => {
-        if (isDefinition(module)) return module
+        if (isDefinition(module)) return defineConnection(module)
         // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry modules are loaded with dynamic import and are unknown values.
-        if (typeof module === "object" && module !== null && "default" in module && isDefinition(module.default)) return module.default
+        if (typeof module === "object" && module !== null && "default" in module && isDefinition(module.default)) return defineConnection(module.default)
         throw connectionError("not_found", { connection: name })
       })
       loaded.catch(() => definitions.delete(name))
@@ -221,13 +261,15 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   function summary(name: string, value: ConnectionDefinition, grant: StoredGrant | undefined): ConnectionSummary {
     const base = {
       access: value.access ?? {},
+      kind: value.provider.kind,
       name,
       origins: value.provider.origins,
+      ...(value.provider.kind === "api-key" ? { header: value.provider.header } : {}),
       provider: value.provider.id,
       ...(value.description ? { description: value.description } : {}),
     }
     if (!grant) return { ...base, scopes: value.provider.scopes, status: "disconnected" }
-    const current = grant.keyMatches && grant.provider === value.provider.id
+    const current = grant.keyMatches && grant.provider === grantProvider(value.provider)
     return {
       ...base,
       connectedAt: grant.connectedAt,
@@ -238,7 +280,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       ...(grant.expiresAt ? { expiresAt: new Date(grant.expiresAt).toISOString() } : {}),
       ...(!grant.keyMatches
         ? { lastError: "CONNECTIONS_KEY_MISMATCH" }
-        : grant.provider !== value.provider.id
+        : grant.provider !== grantProvider(value.provider)
           ? { lastError: "CONNECTIONS_PROVIDER_CHANGED" }
           : grant.lastError ? { lastError: grant.lastError } : {}),
     }
@@ -261,8 +303,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       signal?.throwIfAborted()
       if (!stored) throw connectionError("missing", { connection: name })
       if (stored.grant.status === "needs-reconnect") throw connectionError("needs_reconnect", { connection: name })
-      // A grant from another provider must never reach the new provider.
-      if (stored.grant.provider !== value.provider.id) throw connectionError("needs_reconnect", { connection: name })
+      // A grant from another provider or credential kind must never reach the new provider.
+      if (stored.grant.provider !== grantProvider(value.provider)) throw connectionError("needs_reconnect", { connection: name })
+      // An API key does not expire. Replacing it is a Console action.
+      if (value.provider.kind === "api-key") return stored.tokens
       initialRevision ??= stored.grant.revision
       const now = Date.now()
       const refreshedByOther = force && stored.grant.revision !== initialRevision
@@ -276,12 +320,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         const started = Date.now()
         try {
           signal?.throwIfAborted()
-          const refreshed = await cancellable(value.provider.refresh(stored.tokens, providerContext(event, signal)), signal)
+          const refreshed = await cancellable(oauth2Provider(name, value.provider).refresh(stored.tokens, providerContext(event, signal)), signal)
           signal?.throwIfAborted()
-          // Once the store write starts it cannot be rolled back through the store
-          // contract. The refresh may commit, but cancellation must still prevent
-          // this invocation from reporting a successful acquisition.
-          await db.write({ expectedRevision: stored.grant.revision, name, provider: value.provider.id, tokens: { ...refreshed, account: refreshed.account ?? stored.tokens.account } })
+          await db.write({ expectedRevision: stored.grant.revision, name, provider: grantProvider(value.provider), tokens: { ...refreshed, account: refreshed.account ?? stored.tokens.account } })
           signal?.throwIfAborted()
           await recordQuietly({ action: "refresh", actor, connection: name, durationMs: Date.now() - started, outcome: "succeeded" }, event)
           return refreshed
@@ -300,12 +341,49 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     }
   }
 
-  async function send(name: string, value: ConnectionDefinition, url: URL, init: RequestInit, event: unknown, actor: ConnectionActor): Promise<Response> {
-    const authorize = (token: ConnectionTokenSet) => {
-      const headers = new Headers(init.headers)
-      headers.set("authorization", `${token.tokenType.toLowerCase() === "bearer" ? "Bearer" : token.tokenType} ${token.accessToken}`)
-      return fetcher(url, { ...init, headers })
+  /**
+   * Sends the credential only to the origin of the first request. Fetch keeps custom headers on a
+   * cross-origin redirect, so ViteHub follows redirects itself and drops the credential header there.
+   */
+  async function withCredential(url: URL, init: RequestInit, credential: [header: string, value: string]): Promise<Response> {
+    // Once the chain leaves the first origin, sensitive headers stay removed, as in Fetch. A redirect back to the
+    // first origin must not turn a request that another origin chose into an authenticated one.
+    let crossed = false
+    const withHeaders = (target: URL, request: RequestInit) => {
+      const headers = new Headers(request.headers)
+      crossed ||= target.origin !== url.origin
+      if (!crossed) {
+        headers.set(...credential)
+        return headers
+      }
+      for (const name of [credential[0], ...crossOriginHeaders]) headers.delete(name)
+      return headers
     }
+    // The caller handles redirects, so ViteHub sends one request.
+    if (init.redirect && init.redirect !== "follow") return fetcher(url, { ...init, headers: withHeaders(url, init) })
+    let target = url
+    let request = init
+    for (let hop = 0; ; hop += 1) {
+      const response = await fetcher(target, { ...request, headers: withHeaders(target, request), redirect: "manual" })
+      const location = response.headers.get("location")
+      if (!redirectStatuses.has(response.status) || !location || hop === maxRedirects) return response
+      const method = (request.method ?? "GET").toUpperCase()
+      // Fetch turns a 303, and a 301 or 302 after POST, into GET. Other redirects keep the method and the body.
+      const toGet = (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) && method !== "GET" && method !== "HEAD"
+      // A stream body was read by the first request and cannot be sent again.
+      if (!toGet && request.body instanceof ReadableStream) return response
+      await response.body?.cancel().catch(() => undefined)
+      if (toGet) {
+        const headers = new Headers(request.headers)
+        for (const name of bodyHeaders) headers.delete(name)
+        request = { ...request, body: undefined, headers, method: "GET" }
+      }
+      target = new URL(location, target)
+    }
+  }
+
+  async function send(name: string, value: ConnectionDefinition, url: URL, init: RequestInit, event: unknown, actor: ConnectionActor): Promise<Response> {
+    const authorize = (token: ConnectionTokenSet) => withCredential(url, init, authorization(value.provider, token))
     const token = await tokens(name, value, event, actor, false, init.signal)
     const response = await authorize(token)
     // A stream body was read by the first request and cannot be sent again.
@@ -424,7 +502,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const value = await definition(name)
       let revokeError: string | undefined
       // Only the provider that issued the grant may receive it for revocation.
-      if (snapshot?.tokens && snapshot.grant.provider === value.provider.id && value.provider.revoke) {
+      if (snapshot?.tokens && snapshot.grant.provider === grantProvider(value.provider) && value.provider.revoke) {
         await value.provider.revoke(snapshot.tokens, providerContext(lifecycle.event)).catch((error: unknown) => {
           revokeError = errorCode(error)
         })
@@ -456,7 +534,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const value = await definition(name)
       const pending = await store(event).openPending(ticket, Date.now())
       if (!pending || pending.name !== name) throw connectionError("invalid", { connection: name })
-      const authorizationUrl = await value.provider.authorizationUrl({
+      const authorizationUrl = await oauth2Provider(name, value.provider).authorizationUrl({
         codeChallenge: await codeChallenge(pending.verifier),
         redirectUri: pending.redirectUri,
         state: pending.state,
@@ -475,8 +553,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const started = Date.now()
       try {
         if (input.error || !input.code) throw connectionError("provider_failed", { connection: input.name })
-        const tokenSet = await value.provider.exchange({ code: input.code, codeVerifier: pending.verifier, redirectUri: pending.redirectUri }, providerContext(input.event))
-        const grant = await db.write({ name: input.name, provider: value.provider.id, tokens: tokenSet })
+        const tokenSet = await oauth2Provider(input.name, value.provider).exchange({ code: input.code, codeVerifier: pending.verifier, redirectUri: pending.redirectUri }, providerContext(input.event))
+        const grant = await db.write({ name: input.name, provider: grantProvider(value.provider), tokens: tokenSet })
         // The grant is active now. An audit failure must not report the connect as failed.
         await recordQuietly({ action: "connect", actor: pending.actor, connection: input.name, durationMs: Date.now() - started, outcome: "succeeded" }, input.event)
         return summary(input.name, value, grant)
@@ -488,11 +566,39 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     },
     async refresh(name, lifecycle) {
       const value = await definition(name)
+      oauth2Provider(name, value.provider)
       await tokens(name, value, lifecycle.event, lifecycle.actor, true)
       return inspect(name, lifecycle.event)
     },
+    async setKey(name, key, lifecycle) {
+      const value = await definition(name)
+      const provider = value.provider
+      if (provider.kind !== "api-key") throw connectionError("unsupported", { connection: name })
+      if (!apiKeyPattern.test(key)) throw connectionError("invalid", { connection: name })
+      const db = store(lifecycle.event)
+      const started = Date.now()
+      try {
+        const result = provider.verify ? await provider.verify(key, providerContext(lifecycle.event)) : {}
+        const verification = v.safeParse(apiKeyVerificationSchema, result)
+        if (!verification.success) throw connectionError("invalid", { connection: name })
+        const verified = verification.output
+        if (verified === false) throw connectionError("key_rejected", { connection: name })
+        const grant = await db.write({
+          name,
+          provider: grantProvider(provider),
+          tokens: { accessToken: key, scopes: [], tokenType: "api-key", ...(verified.account ? { account: verified.account } : {}) },
+        })
+        // The key is stored now. An audit failure must not report the change as failed.
+        await recordQuietly({ action: "connect", actor: lifecycle.actor, connection: name, durationMs: Date.now() - started, outcome: "succeeded" }, lifecycle.event)
+        return summary(name, value, grant)
+      }
+      catch (error) {
+        await recordQuietly({ action: "connect", actor: lifecycle.actor, connection: name, durationMs: Date.now() - started, error: errorCode(error), outcome: "failed" }, lifecycle.event)
+        throw error
+      }
+    },
     async start(name, lifecycle) {
-      await definition(name)
+      oauth2Provider(name, (await definition(name)).provider)
       const origin = new URL(lifecycle.origin).origin
       const connectBasePath = (lifecycle.basePath ?? basePath).replace(/\/$/, "")
       const ticket = randomToken()

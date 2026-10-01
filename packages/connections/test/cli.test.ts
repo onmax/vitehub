@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { createConnectionsCliContributor } from "../src/cli.ts"
+import { Readable } from "node:stream"
+
+import { assertKeyTarget, createConnectionsCliContributor, readPipedKey } from "../src/cli.ts"
 
 import type { ViteHubCliContext } from "@vite-hub/internal/cli"
 import type { ConnectionActivity, ConnectionSummary } from "../src/types.ts"
@@ -9,6 +11,7 @@ const summary: ConnectionSummary = {
   access: {},
   account: "owner@example.com",
   expiresAt: "2026-09-29T12:00:00.000Z",
+  kind: "oauth2",
   name: "gmail",
   origins: ["https://*.googleapis.com"],
   provider: "google",
@@ -36,8 +39,8 @@ function stubFetch(response: () => Response) {
   return fetch
 }
 
-function feature(name: string) {
-  const [namespace] = createConnectionsCliContributor().namespaces
+function feature(name: string, readKey?: () => Promise<string>) {
+  const [namespace] = createConnectionsCliContributor(readKey ? { readKey } : {}).namespaces
   const found = namespace!.features.find(item => item.name === name)
   if (!found) throw new Error(`Missing feature ${name}.`)
   return found
@@ -163,5 +166,43 @@ describe("connections CLI", () => {
     expect(await feature("status").run(["--help"], io.context)).toBe(0)
     expect(io.stdout.join("")).toContain("Usage: vitehub connections <command> [name] [--url <url>]")
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it("sets an API key from stdin without printing it", async () => {
+    const fetch = stubFetch(() => Response.json({ connection: { ...summary, account: undefined, expiresAt: undefined, kind: "api-key", name: "executor", provider: "api-key" } }))
+    const io = context()
+
+    expect(await feature("set-key", async () => "sk_cli_marker").run(["executor"], io.context)).toBe(0)
+    expect(request(fetch).body).toEqual({ action: "set-key", key: "sk_cli_marker", name: "executor" })
+    // A redirect would resend the key to another URL.
+    expect(fetch.mock.calls[0]?.[1]?.redirect).toBe("error")
+    // Other commands have no key in the body and follow redirects.
+    await feature("list").run([], context().context)
+    expect(fetch.mock.calls[1]?.[1]?.redirect).toBe("follow")
+    expect(io.stdout.join("")).toMatch(/^executor\s+api-key\s+active/)
+    expect(io.stdout.join("") + io.stderr.join("")).not.toContain("sk_cli_marker")
+  })
+
+  it("sends a key only over HTTPS or to a loopback server", async () => {
+    for (const url of ["https://app.example", "http://localhost:5173", "http://app.localhost:3000", "http://127.0.0.1:4000", "http://[::1]:5173"]) {
+      expect(() => assertKeyTarget(url)).not.toThrow()
+    }
+    for (const url of ["http://remote-host:5173", "http://10.0.0.2:5173", "http://localhost.example.com"]) {
+      expect(() => assertKeyTarget(url)).toThrow("only over HTTPS or to a loopback server")
+    }
+    const fetch = stubFetch(() => Response.json({}))
+    const readKey = vi.fn(async () => "sk_never_sent")
+    const io = context()
+    expect(await feature("set-key", readKey).run(["executor", "--url", "http://remote-host:5173"], io.context)).toBe(1)
+    expect(readKey).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it("reads a piped key and rejects a terminal or an empty pipe", async () => {
+    // SAFETY: A Readable stream matches the parts of NodeJS.ReadStream that readPipedKey uses.
+    const pipe = (text: string, isTTY = false) => Object.assign(Readable.from([text]), { isTTY }) as unknown as NodeJS.ReadStream
+    await expect(readPipedKey(pipe("  sk_piped\n"))).resolves.toBe("sk_piped")
+    await expect(readPipedKey(pipe("\n"))).rejects.toThrow("empty")
+    await expect(readPipedKey(pipe("sk", true))).rejects.toThrow("Pipe the key on stdin")
   })
 })

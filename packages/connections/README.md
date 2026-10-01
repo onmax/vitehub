@@ -1,6 +1,6 @@
 # @vite-hub/connections
 
-`@vite-hub/connections` connects one provider account to an application with OAuth 2 and lets server code and Agents call that provider. Each call checks access rules, refreshes the access token when necessary, and records activity without request or response bodies.
+`@vite-hub/connections` connects one provider account to an application with OAuth 2 or an API key and lets server code and Agents call that provider. Each call checks access rules, refreshes the access token when necessary, and records activity without request or response bodies.
 
 Most ViteHub applications should install the `vite-hub` framework distribution and use `vitehub({ connections: true, database: true })` with the `vite-hub/connections` imports. Install this owner package directly when you are building a library, a custom framework integration, or another focused composition.
 
@@ -35,10 +35,11 @@ export default defineConnection({
 
 Access rules check `deny`, then `approve`, then `allow`. When no pattern matches, reads are allowed and writes are denied. `approve` makes the call fail with `CONNECTIONS_APPROVAL_REQUIRED`.
 
+Use `oauth2()` from `@vite-hub/connections` for other OAuth 2 providers. Use `apiKey()` for a provider that takes a static key. A Console admin sets the key, and ViteHub sends it in one request header. Both need `origins`: the API origins that may receive the credential, for example `["https://api.example.com"]`. Calls to other origins fail with `CONNECTIONS_ORIGIN_NOT_ALLOWED`.
+
 The low-level server runtime accepts `actor` and `approved` from trusted integration code. It does not authenticate callers or collect approvals. Set `approved` only after approval for the exact call and Operation, and never copy it from HTTP requests or Agent tool input. Agent Capabilities are trusted server code; their tool input is untrusted.
 
 Use `oauth2()` from `@vite-hub/connections` for other OAuth 2 providers. Its required `origins` option lists the API origins that may receive the token, for example `["https://api.example.com"]`. Calls to other origins fail with `CONNECTIONS_ORIGIN_NOT_ALLOWED`.
-
 ## Call the provider
 
 ```ts

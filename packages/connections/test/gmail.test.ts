@@ -24,7 +24,7 @@ function fakeClient() {
       return { recorded: operation.id } as never
     },
     fetch: async () => new Response(null),
-    status: async () => ({ access: {}, name: "gmail", origins: [], provider: "google", scopes: [], status: "active" }),
+    status: async () => ({ access: {}, kind: "oauth2", name: "gmail", origins: [], provider: "google", scopes: [], status: "active" }),
   }
   return { calls, client }
 }

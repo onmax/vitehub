@@ -11,6 +11,8 @@ export const connectionSummarySchema: v.GenericSchema<unknown, ConnectionSummary
   connectedAt: v.optional(v.string()),
   description: v.optional(v.string()),
   expiresAt: v.optional(v.string()),
+  header: v.optional(v.string()),
+  kind: v.picklist(["api-key", "oauth2"]),
   lastError: v.optional(v.string()),
   name: v.string(),
   origins: v.array(v.string()),
@@ -53,13 +55,38 @@ function fallbackMessage(status: number): string {
   return "Could not complete the request. Try again."
 }
 
+const locationSchema = v.looseObject({ href: v.string() })
+
+/** URL of the Console page, which resolves a relative management endpoint. */
+function pageUrl(): string | undefined {
+  const location = v.safeParse(locationSchema, Reflect.get(globalThis, "location"))
+  return location.success ? location.output.href : undefined
+}
+
+/** The Console sends an API key only over HTTPS or to a loopback host, like `vitehub connections set-key`. */
+export function assertSecureKeyEndpoint(url: URL): void {
+  const host = url.hostname
+  const loopback = host === "localhost" || host.endsWith(".localhost") || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host)
+  if (url.protocol === "https:" || (url.protocol === "http:" && loopback)) return
+  throw new ConsoleRequestError(400, "The Console sends API keys only over HTTPS or on localhost. Open the Console over HTTPS to set a key.")
+}
+
 export async function requestConnectionsManagement<T extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>>(
   endpoint: string,
-  action: "activity" | "disconnect" | "inspect" | "list" | "refresh" | "start",
+  action: "activity" | "disconnect" | "inspect" | "list" | "refresh" | "set-key" | "start",
   schema: T,
   input: Record<string, unknown> = {},
 ): Promise<v.InferOutput<T>> {
-  const response = await fetch(endpoint, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...input, action }) })
+  const target = action === "set-key" ? new URL(endpoint, pageUrl()) : endpoint
+  if (target instanceof URL) assertSecureKeyEndpoint(target)
+  const response = await fetch(target, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...input, action }),
+    // A redirect would resend the body. For set-key, the body holds the API key.
+    redirect: action === "set-key" ? "error" : "follow",
+  })
   if (!response.ok) {
     // Connections errors carry safe messages, for example a missing encryption key.
     const body = v.safeParse(errorBodySchema, await response.json().catch(() => undefined))

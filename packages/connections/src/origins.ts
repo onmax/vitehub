@@ -3,6 +3,13 @@ import { connectionError } from "./errors.ts"
 // `https://api.example.com`, `https://*.example.com`, or `http://localhost:8787`. No path, query, or credentials.
 const originPattern = /^(https?):\/\/(\*\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])(?::(\d{1,5}))?$/i
 
+/** Provider ids cannot contain `:`, so the stored `api-key:<id>` identity never matches an OAuth provider id. */
+export function assertConnectionProviderId(id: unknown): string {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Provider objects can come from JavaScript definitions.
+  if (typeof id !== "string" || !/^[^\s:]+$/.test(id)) throw connectionError("invalid", { path: "provider.id" })
+  return id
+}
+
 function isLoopback(host: string): boolean {
   return host === "localhost" || host.endsWith(".localhost") || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host)
 }
