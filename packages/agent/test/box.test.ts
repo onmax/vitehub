@@ -267,7 +267,7 @@ describe("Agent Box environment", () => {
 
   it("reports boxed provider inspection as unsupported", async () => {
     const agent = defineAgent({ box: { runtime: "trusted-host" }, driver: { kind: "codex" } })
-    expect(await agent.status({ runtime: "unknown", memo: vi.fn(), waitUntil: vi.fn() })).toMatchObject({
+    expect(await agent.status?.({ runtime: "unknown", memo: vi.fn(), waitUntil: vi.fn() })).toMatchObject({
       readiness: "unsupported",
       reason: "Provider inspection inside an Agent Box is not supported.",
     })
