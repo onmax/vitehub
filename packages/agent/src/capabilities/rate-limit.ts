@@ -25,8 +25,8 @@ export type RateLimitIdentityResolver = (
   context: AgentCapabilityRuntimeContext,
 ) => MaybePromise<string | null | undefined>
 
-/** The Rate Limiter operations that the Capability uses. A limiter from `createRateLimiter()` satisfies it. */
-export type RateLimitCapabilityLimiter = Pick<RateLimiter, "capabilities" | "consume" | "policy">
+/** Required Capability operations, with optional inspection methods. `createRateLimiter()` supplies all methods. */
+export type RateLimitCapabilityLimiter = Pick<RateLimiter, "capabilities" | "consume" | "policy"> & Partial<Pick<RateLimiter, "peek" | "reset">>
 
 export type RateLimitLimiter =
   | RateLimitCapabilityLimiter
@@ -53,7 +53,7 @@ export type RateLimitDecision = WithRateLimitDecisionContext<CoreRateLimitDecisi
 export interface RateLimitEvent {
   context: AgentCapabilityRuntimeContext
   decision: RateLimitDecision
-  limiter: RateLimitCapabilityLimiter
+  limiter: RateLimiter
 }
 
 export interface RateLimitOptions {
@@ -187,12 +187,18 @@ async function resolveScope(
 async function resolveLimiter(
   limiter: RateLimitLimiter,
   context: AgentCapabilityRuntimeContext,
-): Promise<RateLimitCapabilityLimiter> {
+): Promise<RateLimiter> {
   const resolved = typeof limiter === "function" ? await limiter(context) : limiter
   if (!resolved || typeof resolved.consume !== "function") {
     throw agentDiagnostics.AGENT_R0162({ message: "[vitehub] rateLimit({ limiter }) must be a RateLimiter." })
   }
-  return resolved
+  return {
+    capabilities: resolved.capabilities,
+    consume: resolved.consume.bind(resolved),
+    policy: resolved.policy,
+    peek: resolved.peek?.bind(resolved) ?? (async () => ({ limit: resolved.policy.limit, reason: "This Capability limiter does not support peek().", status: "unsupported", windowMs: resolved.policy.windowMs })),
+    reset: resolved.reset?.bind(resolved) ?? (async () => ({ reason: "This Capability limiter does not support reset().", status: "unsupported" })),
+  }
 }
 
 function resolveRejectedMessage(
