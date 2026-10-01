@@ -61,7 +61,7 @@ const scheduleSummary = (name: string) => ({
 
 function installSchedules(handler: () => unknown = () => {}) {
   installConsoleSections("/schedule-run", ["schedules"])
-  installConsoleDefinitions("/schedule-run", { schedules: [scheduleSummary("sync"), scheduleSummary("nightly")] })
+  installConsoleDefinitions("/schedule-run", { schedules: { definitions: [scheduleSummary("sync"), scheduleSummary("nightly")], kind: "definition-catalog" } })
   installConsoleSchedules("/schedule-run", {
     sync: async () => ({ default: defineSchedule("*/5 * * * *", handler, { manual: true }) }),
   })
@@ -80,7 +80,7 @@ describe("Console Schedule runs", () => {
     const root = await temporaryRoot("vitehub-console-schedule-run-")
     const plugin = join(root, "console.mjs")
     const handler = join(root, "server/schedules/sync.ts")
-    const catalog = { agents: [], definitions: { schedules: [scheduleSummary("sync")] }, manualSchedules: [{ handler, name: "sync" }] }
+    const catalog = { agents: [], content: { schedules: { definitions: [scheduleSummary("sync")], kind: "definition-catalog" as const } }, manualSchedules: [{ handler, name: "sync" }] }
 
     await writeConsoleNitroPlugin(plugin, root, ["schedules"], [], catalog, [], [], undefined, undefined, true)
     const invokeEnabled = await readFile(plugin, "utf8")
@@ -97,7 +97,7 @@ describe("Console Schedule runs", () => {
     const root = await temporaryRoot("vitehub-console-schedule-prototype-")
     const plugin = join(root, "console.mjs")
     const handler = join(root, "server/schedules/__proto__.ts")
-    const catalog = { agents: [], definitions: { schedules: [scheduleSummary("__proto__")] }, manualSchedules: [{ handler, name: "__proto__" }] }
+    const catalog = { agents: [], content: { schedules: { definitions: [scheduleSummary("__proto__")], kind: "definition-catalog" as const } }, manualSchedules: [{ handler, name: "__proto__" }] }
 
     await writeConsoleNitroPlugin(plugin, root, ["schedules"], [], catalog, [], [], undefined, undefined, true)
 
@@ -120,6 +120,7 @@ describe("Console Schedule runs", () => {
 
     expect(definitionsHandler({ method: "GET", req: { method: "GET", url: "http://localhost/api/_vitehub/console/definitions?section=schedules" } })).toEqual({
       definitions: [{ ...scheduleSummary("sync"), runnable: true }, scheduleSummary("nightly")],
+      kind: "definition-catalog",
       section: "schedules",
     })
   })
