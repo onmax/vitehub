@@ -181,7 +181,7 @@ The same callback signature protects [Blob serve routes](/docs/server-primitives
 
 `requireAuthAccessRoutes(input, routeIndexes, definition, requiredAuthorizeRouteIndexes, { redirectToSignIn: false })` returns `401` for an unauthenticated browser request instead of starting the configured provider sign-in redirect. Use this when the host presents its own sign-in page and starts provider sign-in after an explicit action. The default retains the Auth Definition's `access.signIn` redirect behavior.
 
-Read [Console](/docs/development/console#protect-the-console-route) for its page, RPC endpoint, provider status route, and disabled behavior. The Console can also use its own Console Auth instead of these access routes. On Cloudflare Workers, the [Cloudflare Access provider](/docs/development/console#cloudflare-access) protects the Console without a Better Auth database.
+Read [Console](/docs/development/console#protect-the-console-route) for its page, RPC endpoint, provider status route, and disabled behavior. The Console can also use its own Console Auth instead of these access routes. On Cloudflare Workers, the [Cloudflare Access provider](/docs/development/console#protect-the-console-route) protects the Console without a Better Auth database.
 
 ## Storage placement metadata
 
