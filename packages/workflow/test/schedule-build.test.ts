@@ -42,7 +42,7 @@ describe("Workflow preparation for Schedule", () => {
           resolve: { alias: [{ find: "build-alias", replacement: join(root, "alias.ts") }] },
           [VITEHUB_SERVER_DIRS]: [server],
         }
-        await (plugin.config as (config: UserConfig) => void)(input)
+        await (plugin.config as { handler: (config: UserConfig, env: { command: string }) => Promise<void> }).handler(input, { command: "build" })
         // Model a host config clone that omits the framework's forwarded-directory field.
         const config = { ...input, command: "build" } as unknown as ResolvedConfig
         if (!retainForwardedDirs) Reflect.deleteProperty(config, VITEHUB_SERVER_DIRS)
@@ -85,7 +85,7 @@ describe("Workflow preparation for Schedule", () => {
           workflow: { provider: "vercel" },
           [VITEHUB_SERVER_DIRS]: [server],
         }
-        await (plugin.config as (config: UserConfig) => void)(input)
+        await (plugin.config as { handler: (config: UserConfig, env: { command: string }) => Promise<void> }).handler(input, { command: "build" })
         configs.push({
           ...input,
           build: { outDir: "dist" },
