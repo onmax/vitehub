@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { consoleInvocationUrl, registerPublicUrlAgentName, resolvePublicUrl } from "../src/index.ts"
+import { consoleInvocationUrl, registerPublicUrlAgentName, resetPublicUrlAgentNames, resolvePublicUrl } from "../src/index.ts"
 
 describe("public URL", () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+    resetPublicUrlAgentNames()
   })
 
   it("falls back to the request origin when no public URL is configured", () => {
@@ -32,6 +33,20 @@ describe("public URL", () => {
     registerPublicUrlAgentName("ambiguous", "discovered")
     registerPublicUrlAgentName("ambiguous", "exact")
     expect(resolvePublicUrl({ agentName: "ambiguous" })).toBeUndefined()
+  })
+
+  it("replaces aliases when another generated registry is installed", () => {
+    vi.stubGlobal("__VITEHUB_PUBLIC_URL__", { agents: { first: "https://first.example.com", second: "https://second.example.com" } })
+    registerPublicUrlAgentName("declared", "first")
+    expect(resolvePublicUrl({ agentName: "declared" })).toBe("https://first.example.com")
+    resetPublicUrlAgentNames()
+    registerPublicUrlAgentName("declared", "second")
+    expect(resolvePublicUrl({ agentName: "declared" })).toBe("https://second.example.com")
+    registerPublicUrlAgentName("declared", "first")
+    expect(resolvePublicUrl({ agentName: "declared" })).toBeUndefined()
+    resetPublicUrlAgentNames()
+    registerPublicUrlAgentName("declared", "first")
+    expect(resolvePublicUrl({ agentName: "declared" })).toBe("https://first.example.com")
   })
 
   it("builds one Console invocation URL with the application base path", () => {

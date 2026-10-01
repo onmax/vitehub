@@ -3,7 +3,7 @@ import { ViteHubError } from "./errors.ts"
 import { runtimeErrorDiagnostics } from "./error-diagnostics.ts"
 
 export { decodeRouteSegment, encodeRouteSegment } from "./route-segment.ts"
-export { consoleInvocationUrl, registerPublicUrlAgentName, resolvePublicUrl, type PublicUrlConfig } from "./public-url.ts"
+export { consoleInvocationUrl, registerPublicUrlAgentName, resetPublicUrlAgentNames, resolvePublicUrl, type PublicUrlConfig } from "./public-url.ts"
 
 export {
   formatRuntimeDiagnosticError,

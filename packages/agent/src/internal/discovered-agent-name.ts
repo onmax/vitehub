@@ -45,3 +45,5 @@ export function readDiscoveredAgentName(agent: unknown): string | undefined {
   if (names.includes(null)) return
   return names.find((name): name is string => hasRuntimeType(name, "string") && name.length > 0)
 }
+
+export { resetPublicUrlAgentNames } from "@vite-hub/runtime"

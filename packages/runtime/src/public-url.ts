@@ -13,6 +13,11 @@ declare const __VITEHUB_APP_BASE_URL__: string | undefined
 
 const publicUrlAgentNames = new Map<string, string | null>()
 
+/** Replace aliases when a generated Agent registry is installed. */
+export function resetPublicUrlAgentNames(): void {
+  publicUrlAgentNames.clear()
+}
+
 /** Associate an evaluated Agent name with the identity used by build-time URL configuration. */
 export function registerPublicUrlAgentName(name: string, discoveredName: string): void {
   const previous = publicUrlAgentNames.get(name)

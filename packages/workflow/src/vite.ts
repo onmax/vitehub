@@ -1,3 +1,4 @@
+import { resolveViteHubBundleDefines } from "@vite-hub/internal/build/esbuild"
 import { randomUUID } from "node:crypto"
 import { createRequire } from "node:module"
 import { resolve } from "node:path"
@@ -293,6 +294,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
               agentImportBase: internalOptions?.agentImportBase,
               artifacts,
               clientOutDir: resolve(config.root, config.build.outDir),
+              bundleDefines: resolveViteHubBundleDefines(config),
               hosting: internalOptions?.hosting,
               importBase: internalOptions?.importBase,
               providerImportAliases: retainedImportAliases,
