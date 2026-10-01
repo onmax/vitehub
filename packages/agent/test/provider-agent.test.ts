@@ -4617,6 +4617,31 @@ cli_auth_credentials_store = "keyring"
     expect(session.close).toHaveBeenCalledOnce()
   })
 
+  it("skips provider workspace diffs when auto-commit is disabled", async () => {
+    const threadId = "thread-workspace-no-auto-commit"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    const session = {
+      close: vi.fn(async () => undefined),
+      commit: vi.fn(async () => undefined),
+      diff: vi.fn(async () => ({ entries: [{ path: "result.md", type: "modified" }] })),
+      exec: vi.fn(async () => ({ code: 0, stderr: "", stdout: "" })),
+      readFile: vi.fn(async () => new Uint8Array()),
+    }
+    const workspace = { fs: {}, startSession: vi.fn(async () => session), tools: {} }
+
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    await createProviderAgentAdapter({ provider: "codex" }).generate(context(threadId, {
+      workspace,
+      workspaceAutoCommit: false,
+      workspaceDefinition: { commit: false, name: "docs" },
+      workspaceMode: "write",
+    }) as never)
+
+    expect(session.diff).not.toHaveBeenCalled()
+    expect(session.commit).not.toHaveBeenCalled()
+    expect(session.close).toHaveBeenCalledOnce()
+  })
+
   it.each(["direct", "inferred", "resolved", "resolved-inferred"])("supplies verified %s GitHub source provenance without serializing unsafe source configuration", async (form) => {
     const threadId = "thread-source-provenance"
     let root = ""
