@@ -13,6 +13,7 @@ const props = withDefaults(defineProps<{
 // Loop length per scene in milliseconds. Long rests keep the grid quiet.
 const cycles: Record<string, number> = {
   kv: 5400,
+  connections: 6000,
   queue: 3600,
   sandbox: 4400,
   email: 4400,
@@ -70,13 +71,18 @@ const id = useId();
     </template>
 
     <template v-else-if="name === 'connections'">
+      <path d="M18 18 42 9.5M18 20h24M18 22l24 8.5" class="line link" />
       <rect x="6" y="14" width="12" height="12" rx="2.5" class="line" />
-      <rect x="10" y="18" width="4" height="4" rx="1" class="soft a conn-app" />
-      <path d="M18 20h22" class="line dashed" />
-      <circle cx="46" cy="20" r="6" class="line" />
-      <circle cx="46" cy="20" r="2.25" class="soft a conn-service" />
-      <circle cx="20" cy="20" r="2" class="token a conn-request" />
-      <circle cx="38" cy="20" r="1.75" class="token a conn-response" />
+      <rect x="10" y="18" width="4" height="4" rx="1" class="soft" />
+      <circle cx="46" cy="9" r="4" class="line" />
+      <circle cx="46" cy="20" r="4" class="line" />
+      <circle cx="46" cy="31" r="4" class="line" />
+      <circle cx="46" cy="9" r="1.5" class="soft a conn-service-1" />
+      <circle cx="46" cy="20" r="1.5" class="soft a conn-service-2" />
+      <circle cx="46" cy="31" r="1.5" class="soft a conn-service-3" />
+      <circle cx="18" cy="18" r="1.75" class="token a conn-call-1" />
+      <circle cx="18" cy="20" r="1.75" class="token a conn-call-2" />
+      <circle cx="18" cy="22" r="1.75" class="token a conn-call-3" />
     </template>
 
     <template v-else-if="name === 'rate-limit'">
@@ -294,6 +300,9 @@ const id = useId();
 .line {
   opacity: 0.55;
 }
+.link {
+  opacity: 0.4;
+}
 .ink-line {
   opacity: 0.85;
 }
@@ -445,32 +454,45 @@ const id = useId();
   76%, 100% { opacity: 0.35; }
 }
 
-/* Connections: a call goes to the connected account's API and the response returns. */
-.conn-request { animation-name: conn-request; }
-.conn-response { animation-name: conn-response; }
-.conn-service { animation-name: conn-service; }
-.conn-app { animation-name: conn-app; }
-@keyframes conn-request {
-  0%, 6% { opacity: 0; transform: translateX(0); }
-  10% { opacity: 0.85; transform: translateX(0); }
-  30% { opacity: 0.85; transform: translateX(18px); }
-  34%, 100% { opacity: 0; transform: translateX(20px); }
+/* Connections: one app calls several connected accounts, one after another. */
+.conn-call-1 { animation-name: conn-call-1; }
+.conn-call-2 { animation-name: conn-call-2; }
+.conn-call-3 { animation-name: conn-call-3; }
+.conn-service-1 { animation-name: conn-service-1; }
+.conn-service-2 { animation-name: conn-service-2; }
+.conn-service-3 { animation-name: conn-service-3; }
+@keyframes conn-call-1 {
+  0%, 4% { opacity: 0; transform: translate(0, 0); }
+  7% { opacity: 0.85; transform: translate(0, 0); }
+  20% { opacity: 0.85; transform: translate(21px, -7.5px); }
+  23%, 100% { opacity: 0; transform: translate(23px, -8.2px); }
 }
-@keyframes conn-service {
-  0%, 30% { opacity: 0.35; }
-  36%, 44% { opacity: 0.8; }
-  54%, 100% { opacity: 0.35; }
+@keyframes conn-service-1 {
+  0%, 19% { opacity: 0.35; }
+  24%, 30% { opacity: 0.85; }
+  40%, 100% { opacity: 0.35; }
 }
-@keyframes conn-response {
-  0%, 42% { opacity: 0; transform: translateX(0); }
-  46% { opacity: 0.6; transform: translateX(0); }
-  64% { opacity: 0.6; transform: translateX(-16px); }
-  68%, 100% { opacity: 0; transform: translateX(-18px); }
+@keyframes conn-call-3 {
+  0%, 36% { opacity: 0; transform: translate(0, 0); }
+  39% { opacity: 0.85; transform: translate(0, 0); }
+  52% { opacity: 0.85; transform: translate(21px, 7.5px); }
+  55%, 100% { opacity: 0; transform: translate(23px, 8.2px); }
 }
-@keyframes conn-app {
-  0%, 64% { opacity: 0.35; }
-  70%, 76% { opacity: 0.8; }
-  86%, 100% { opacity: 0.35; }
+@keyframes conn-service-3 {
+  0%, 51% { opacity: 0.35; }
+  56%, 62% { opacity: 0.85; }
+  72%, 100% { opacity: 0.35; }
+}
+@keyframes conn-call-2 {
+  0%, 68% { opacity: 0; transform: translateX(0); }
+  71% { opacity: 0.85; transform: translateX(0); }
+  84% { opacity: 0.85; transform: translateX(21px); }
+  87%, 100% { opacity: 0; transform: translateX(23px); }
+}
+@keyframes conn-service-2 {
+  0%, 83% { opacity: 0.35; }
+  88%, 94% { opacity: 0.85; }
+  100% { opacity: 0.35; }
 }
 
 /* Rate Limit: three calls pass the gate and spend the budget, the fourth is refused, and the budget refills. */

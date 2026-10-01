@@ -85,19 +85,20 @@ export const agentStory = {
   ],
 } as const;
 
-// Ordered like the Server Primitives docs navigation. Realtime has only a reference page.
+// Ordered by importance to an Agent: what it works in and calls first, supporting primitives last.
+// Realtime has only a reference page.
 export const landingPrimitives = [
   {
-    id: "env",
-    name: "Env",
-    description: "Typed configuration",
-    to: "/docs/server-primitives/env",
+    id: "workspace",
+    name: "Workspace",
+    description: "Persistent file trees",
+    to: "/docs/server-primitives/workspace",
   },
   {
-    id: "auth",
-    name: "Auth",
-    description: "Users and sessions",
-    to: "/docs/server-primitives/auth",
+    id: "sandbox",
+    name: "Sandbox",
+    description: "Isolated execution",
+    to: "/docs/server-primitives/sandbox",
   },
   {
     id: "connections",
@@ -106,10 +107,10 @@ export const landingPrimitives = [
     to: "/docs/server-primitives/connections",
   },
   {
-    id: "rate-limit",
-    name: "Rate Limit",
-    description: "Request budgets",
-    to: "/docs/server-primitives/rate-limit",
+    id: "workflow",
+    name: "Workflow",
+    description: "Durable orchestration",
+    to: "/docs/server-primitives/workflows",
   },
   {
     id: "kv",
@@ -124,40 +125,10 @@ export const landingPrimitives = [
     to: "/docs/server-primitives/database",
   },
   {
-    id: "blob",
-    name: "Blob",
-    description: "Files and uploads",
-    to: "/docs/server-primitives/blob",
-  },
-  {
-    id: "workspace",
-    name: "Workspace",
-    description: "Persistent file trees",
-    to: "/docs/server-primitives/workspace",
-  },
-  {
-    id: "source",
-    name: "Source",
-    description: "Read-only content",
-    to: "/docs/server-primitives/source",
-  },
-  {
-    id: "content",
-    name: "Content",
-    description: "Parse and search",
-    to: "/docs/server-primitives/content",
-  },
-  {
     id: "queue",
     name: "Queue",
     description: "Background jobs",
     to: "/docs/server-primitives/queue",
-  },
-  {
-    id: "workflow",
-    name: "Workflow",
-    description: "Durable orchestration",
-    to: "/docs/server-primitives/workflows",
   },
   {
     id: "schedule",
@@ -166,10 +137,16 @@ export const landingPrimitives = [
     to: "/docs/server-primitives/schedule",
   },
   {
-    id: "sandbox",
-    name: "Sandbox",
-    description: "Isolated execution",
-    to: "/docs/server-primitives/sandbox",
+    id: "blob",
+    name: "Blob",
+    description: "Files and uploads",
+    to: "/docs/server-primitives/blob",
+  },
+  {
+    id: "auth",
+    name: "Auth",
+    description: "Users and sessions",
+    to: "/docs/server-primitives/auth",
   },
   {
     id: "browser",
@@ -184,10 +161,34 @@ export const landingPrimitives = [
     to: "/docs/server-primitives/shell",
   },
   {
+    id: "source",
+    name: "Source",
+    description: "Read-only content",
+    to: "/docs/server-primitives/source",
+  },
+  {
+    id: "content",
+    name: "Content",
+    description: "Parse and search",
+    to: "/docs/server-primitives/content",
+  },
+  {
     id: "email",
     name: "Email",
     description: "Transactional email",
     to: "/docs/server-primitives/email",
+  },
+  {
+    id: "env",
+    name: "Env",
+    description: "Typed configuration",
+    to: "/docs/server-primitives/env",
+  },
+  {
+    id: "rate-limit",
+    name: "Rate Limit",
+    description: "Request budgets",
+    to: "/docs/server-primitives/rate-limit",
   },
   {
     id: "realtime",

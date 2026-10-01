@@ -92,23 +92,23 @@ describe("landing page", () => {
     );
 
     expect(landingPrimitives.map((primitive) => primitive.id)).toEqual([
-      "env",
-      "auth",
+      "workspace",
+      "sandbox",
       "connections",
-      "rate-limit",
+      "workflow",
       "kv",
       "database",
-      "blob",
-      "workspace",
-      "source",
-      "content",
       "queue",
-      "workflow",
       "schedule",
-      "sandbox",
+      "blob",
+      "auth",
       "browser",
       "shell",
+      "source",
+      "content",
       "email",
+      "env",
+      "rate-limit",
       "realtime",
     ]);
     for (const primitive of landingPrimitives) {
