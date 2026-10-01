@@ -284,7 +284,7 @@ History must contain valid ViteHub Messages with `user` or `assistant` roles and
 
 When `invoke` is enabled for an Agent, its session header shows two actions:
 
-- **Rerun** starts a new invocation with the recorded prompt and the same Invoker Profile, if that profile is still configured. The action is available only when the journal kept the complete prompt. It is unavailable for sessions that started with prior `messages` or attachments, for metadata-only journals, and for prompts that the journal truncated. The tooltip gives the reason.
+- **Rerun** starts a new invocation with the recorded prompt and the same Invoker Profile. The action is available only when the journal kept the complete prompt. It is unavailable if the recorded Invoker Profile is no longer configured, for sessions that started with prior `messages` or attachments, for metadata-only journals, and for prompts that the journal truncated. The tooltip gives the reason.
 - **Delete** removes a completed, failed, or cancelled session and its usage record after you confirm. It uses the same journal operation as `vitehub agent invocations delete`. Pending and running sessions cannot be deleted.
 
 The `vitehub:console:invocation` RPC operation returns these actions as `invocation.actions`. With `method: 'POST'` and the body `{ action: 'delete' }`, it deletes the record. It returns `403` when Console invocation is disabled for the Agent and `409` when the record is not terminal. When invocation is disabled, the Console stays read-only and does not show the actions.

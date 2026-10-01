@@ -2046,11 +2046,11 @@ describe("Agent invocation console", () => {
       invoker: { profiles: [{ id: "support", kind: "person", label: "Support agent" }], resolve: () => ({ id: "resolved-support", kind: "person" }) },
       name: "support",
     })
-    const start = (prompt: string) => agentInvocationsHandler({
+    const start = (prompt: string, invokerProfileId: string | null = "support") => agentInvocationsHandler({
       context: { params: { agent: "support" } },
       method: "POST",
       req: {
-        json: async () => ({ invokerProfileId: "support", prompt }),
+        json: async () => ({ ...invokerProfileId ? { invokerProfileId } : {}, prompt }),
         method: "POST",
         url: "http://localhost/api/_vitehub/console/agents/support/invocations",
       },
@@ -2082,6 +2082,33 @@ describe("Agent invocation console", () => {
           },
         },
       })
+
+      for (const profiles of [[], [{ id: "renamed-support", kind: "person" as const }]]) {
+        const reconfigured = defineAgent({
+          driver: { run: () => "done" },
+          invoker: { profiles },
+          name: "support",
+        })
+        installConsoleAgentDefinitions([
+          { definition: { default: reconfigured }, fallbackName: "help" },
+        ], { invoke: true, projectRoot: root })
+        await expect(invocationHandler(detailEvent(completed.id))).resolves.toMatchObject({
+          invocation: {
+            actions: {
+              delete: { available: true },
+              rerun: { available: false, reason: "invoker-profile-unavailable" },
+            },
+          },
+        })
+      }
+      install(true)
+
+      const withoutProfile = await start("Use the default invoker.", null)
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(withoutProfile.id)).resolves.toMatchObject({ status: "completed" })
+      })
+      const defaultDetail = await invocationHandler(detailEvent(withoutProfile.id))
+      expect(defaultDetail.invocation.actions?.rerun).toEqual({ available: true, prompt: "Use the default invoker." })
 
       blocked = true
       const running = await start("Keep running.")

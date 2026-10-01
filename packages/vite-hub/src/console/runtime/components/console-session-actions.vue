@@ -29,6 +29,7 @@ const rerunUnavailable: Record<string, string> = {
   "input-has-messages": "Rerun is unavailable: this session received messages or attachments",
   "input-not-captured": "Rerun is unavailable: the prompt was not recorded",
   "input-truncated": "Rerun is unavailable: the recorded prompt is incomplete",
+  "invoker-profile-unavailable": "Rerun is unavailable: the recorded Invoker Profile is no longer configured",
 };
 const rerunLabel = computed(() => {
   if (props.rerun.available) return "Rerun with the same prompt";

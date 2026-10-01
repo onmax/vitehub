@@ -13,7 +13,7 @@ import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
 
 type ConsoleInvocationRerun =
   | { available: true, invokerProfileId?: string, prompt: string }
-  | { available: false, reason: AgentInvocationRerunUnavailableReason }
+  | { available: false, reason: AgentInvocationRerunUnavailableReason | "invoker-profile-unavailable" }
 
 /** Record actions that Console invoke access allows. */
 interface ConsoleInvocationActions {
@@ -64,11 +64,12 @@ function invocationActions(invocation: AgentInvocationRecord): ConsoleInvocation
   const profile = input.available && input.invokerProfileId
     ? consoleAgentInvokerProfiles(agent).find(candidate => candidate.id === input.invokerProfileId)
     : undefined
+  const rerun: ConsoleInvocationRerun = input.available && input.invokerProfileId && !profile
+    ? { available: false, reason: "invoker-profile-unavailable" }
+    : input
   return {
     delete: { available: terminalStatuses.has(invocation.status) },
-    rerun: input.available
-      ? { available: true, ...profile ? { invokerProfileId: profile.id } : {}, prompt: input.prompt }
-      : input,
+    rerun,
   }
 }
 
