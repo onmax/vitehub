@@ -1,3 +1,4 @@
+import { agentDefinitionSourceSymbol } from "./agent-definition-source.ts"
 import { hasRuntimeType } from "./runtime-type.ts"
 import type { WorkspaceSourceInput } from "@vite-hub/workspace"
 
@@ -49,6 +50,7 @@ export function withColocatedAgentSkills<Agent>(agent: Agent, skills: ColocatedA
   // original definition.
   Object.defineProperty(agent, colocatedAgentSkillsSymbol, descriptor)
   Object.defineProperty(resolved, colocatedAgentSkillsSymbol, descriptor)
+  Object.defineProperty(resolved, agentDefinitionSourceSymbol, { configurable: true, value: agent })
   return resolved
 }
 
