@@ -111,6 +111,7 @@ export const babysitter: BabysitterAgent = defineAgent({
     });
     // Keep preset-only policy on the configured definition so runtime hosts
     // can read it alongside the other Babysitter options.
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- Object.assign preserves the configured AgentDefinition and adds the preset-owned reviewChecks policy.
     return Object.assign(definition, { reviewChecks }) as BabysitterDefinition;
   },
 });
