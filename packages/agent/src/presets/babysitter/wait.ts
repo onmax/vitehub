@@ -14,6 +14,8 @@ export interface BabysitterWaitPolicy {
   pendingReviewChecks: ReadonlySet<string>;
   /** Wake when required checks pass, so the host can merge a ready PR. */
   wakeWhenReady: boolean;
+  /** Body prefixes of reviews that report no findings. Such reviews never wake a wait. */
+  noFindingsReviews: readonly string[];
 }
 
 function login(value: GitHubEvidence): string {
@@ -35,11 +37,24 @@ function stableFeedback(value: unknown): unknown {
     .map(([key, item]) => [key, stableFeedback(item)]));
 }
 
+type ContextPolicy = Pick<BabysitterWaitPolicy, "workerAuthors" | "noFindingsReviews">;
+
+/**
+ * A comment-only review that asks for nothing. An empty body only groups inline comments, which the
+ * context keeps. A review bot can submit that empty review first and edit it to a no-findings verdict.
+ */
+function withoutFindings(review: GitHubEvidence, policy: ContextPolicy): boolean {
+  if (String(review.state ?? "").toLowerCase() !== "commented") return false;
+  const body = hasRuntimeType(review.body, "string") ? review.body.trimStart() : "";
+  return !body || policy.noFindingsReviews.some(prefix => body.startsWith(prefix));
+}
+
 /** Feedback, intent, and base that need a model pass when they change. CI results are excluded. */
-export function repairContextKey(s: Snapshot, policy: Pick<BabysitterWaitPolicy, "workerAuthors">): string {
+export function repairContextKey(s: Snapshot, policy: ContextPolicy): string {
   const pr = s.pr;
   const fromWorker = (value: GitHubEvidence) => policy.workerAuthors.has(login(value));
   const external = (values: Record<string, GitHubEvidence>) => Object.fromEntries(Object.entries(values).filter(([, value]) => !fromWorker(value)));
+  const reviews = Object.fromEntries(Object.entries(external(s.reviews)).filter(([, value]) => !withoutFindings(value, policy)));
   const ownCommentIds = new Set(Object.values(s.reviewComments).filter(fromWorker).flatMap(commentIds));
   const threads = s.threads.map((thread) => {
     const { isResolved: _resolved, node_id, comments, ...metadata } = thread;
@@ -49,7 +64,7 @@ export function repairContextKey(s: Snapshot, policy: Pick<BabysitterWaitPolicy,
     return { ...metadata, id: node_id ?? thread.id, comments: identities };
   });
   return hash({ title: pr?.title, body: pr?.body, draft: pr?.draft, state: pr?.state, base: [pr?.base?.sha, pr?.base?.ref],
-    comments: stableFeedback(external(s.comments)), reviews: stableFeedback(external(s.reviews)),
+    comments: stableFeedback(external(s.comments)), reviews: stableFeedback(reviews),
     reviewComments: stableFeedback(external(s.reviewComments)), threads: stableFeedback(threads) });
 }
 
@@ -75,7 +90,7 @@ export function failureKeys(s: Snapshot): string[] {
 }
 
 /** The wait that a pass parks on: feedback the model saw and failures it already knew. */
-export function createCheckWait(observed: Snapshot, policy: Pick<BabysitterWaitPolicy, "workerAuthors">): Omit<PullRequestWait, "headSha"> {
+export function createCheckWait(observed: Snapshot, policy: ContextPolicy): Omit<PullRequestWait, "headSha"> {
   return { reason: "checks", evidenceKey: repairContextKey(observed, policy), knownFailures: failureKeys(observed) };
 }
 
@@ -84,23 +99,31 @@ export function createCheckWait(observed: Snapshot, policy: Pick<BabysitterWaitP
  * passes; it never authorizes a merge.
  */
 export function shouldKeepWaiting(s: Snapshot, requiredChecks: GitHubRequiredCheckState, policy: BabysitterWaitPolicy): boolean {
+  return wakeReasons(s, requiredChecks, policy).length === 0;
+}
+
+/** Why a parked PR needs a model pass or a direct merge. Empty means it keeps waiting. */
+export function wakeReasons(s: Snapshot, requiredChecks: GitHubRequiredCheckState, policy: BabysitterWaitPolicy): string[] {
   const wait = s.wait;
-  if (!wait || s.pr?.state !== "open") return false;
+  if (!wait) return ["no-wait"];
+  if (s.pr?.state !== "open") return ["not-open"];
   // The synchronize event for a pushed head has not arrived yet.
-  if (wait.headSha !== s.pr.head?.sha) return true;
-  if (wait.evidenceKey !== repairContextKey(s, policy)) return false;
-  if (s.pr.mergeable === false || s.pr.mergeable_state === "dirty") return false;
-  if (s.threads.some(thread => thread.isResolved !== true)) return false;
+  if (wait.headSha !== s.pr.head?.sha) return [];
+  const reasons: string[] = [];
+  if (wait.evidenceKey !== repairContextKey(s, policy)) reasons.push("feedback-changed");
+  if (s.pr.mergeable === false || s.pr.mergeable_state === "dirty") reasons.push("merge-conflict");
+  if (s.threads.some(thread => thread.isResolved !== true)) reasons.push("unresolved-thread");
   const known = new Set(wait.knownFailures ?? []);
-  if (failureKeys(s).some(key => !known.has(key))) return false;
+  if (failureKeys(s).some(key => !known.has(key))) reasons.push("new-failure");
+  if (reasons.length) return reasons;
   // The same failures are not new repair work. A later green result wakes below.
-  if (requiredChecks === "failed") return true;
+  if (requiredChecks === "failed") return [];
   const reviewing = currentCheckSignals(s).some(signal => policy.pendingReviewChecks.has(String(signal.name).toLowerCase())
     && pending.has(String(signal.status ?? signal.state)));
-  if (reviewing || requiredChecks === "pending") return true;
-  if (requiredChecks === "passed") return !policy.wakeWhenReady;
+  if (reviewing || requiredChecks === "pending") return [];
+  if (requiredChecks === "passed") return policy.wakeWhenReady ? ["ready-to-merge"] : [];
   // Unknown policy cannot prove readiness. Feedback and new failures still wake the PR.
-  return true;
+  return [];
 }
 
 const externalWait = [

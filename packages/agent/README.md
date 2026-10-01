@@ -791,7 +791,10 @@ or an unresolved review thread. Pending checks, the pushed head's synchronize
 event, and repeated results for failures the pass already saw keep it waiting.
 With `merge: "direct"`, passing required checks also wake it, so the host can
 merge. `reviewChecks` lists check names, such as a review bot's check, that keep
-a PR waiting while they run. A PR that ends three passes on one head without a
+a PR waiting while they run. A comment-only review with an empty body does not
+wake a waiting PR; its inline comments do. `noFindingsReviews` lists body
+prefixes, such as `"> ✅ No new issues found."`, of comment-only reviews that
+report no findings; these do not wake it either. A PR that ends three passes on one head without a
 push waits for new evidence. A stacked PR whose parent merged into the default
 branch is retargeted to the default branch. A provider rate limit is retried
 three times; after that, the host admits no PR work for an hour.

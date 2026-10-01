@@ -32,6 +32,11 @@ export interface BabysitterOptions {
    * A parked PR keeps waiting while one runs. Defaults to none.
    */
   reviewChecks: string[];
+  /**
+   * Body prefixes of comment-only reviews that report no findings, such as a review bot's
+   * `"> ✅ No new issues found."`. These reviews do not wake a parked PR. Defaults to none.
+   */
+  noFindingsReviews: string[];
   /** PRs repaired at the same time. Defaults to 1. */
   concurrency: number;
   /** @deprecated Use `merge: "auto"`. */
@@ -124,7 +129,7 @@ type BabysitterDefinition = AgentDefinition<
   AgentInvokerProfile,
   AgentInvocationContextValues,
   BabysitterPassResult
-> & { reviewChecks: string[] };
+> & { reviewChecks: string[]; noFindingsReviews: string[] };
 
 export type BabysitterAgent = ConfiguredAgentDefinition<BabysitterOptions, BabysitterDefinition>;
 
@@ -137,15 +142,20 @@ export const babysitter: BabysitterAgent = defineAgent({
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The default widens to the documented merge union.
     merge: false as BabysitterMerge,
     reviewChecks: [] as string[],
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented prefix list.
+    noFindingsReviews: [] as string[],
     concurrency: 1,
     autoMerge: false,
   },
-  configure: ({ driver, merge, reviewChecks, autoMerge, concurrency }) => {
+  configure: ({ driver, merge, reviewChecks, noFindingsReviews, autoMerge, concurrency }) => {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
       throw new TypeError("[vitehub] Babysitter concurrency must be a positive integer.");
     }
     if (driver !== "codex" && driver !== "claude-code") {
       throw new TypeError('[vitehub] Babysitter driver must be "codex" or "claude-code".');
+    }
+    if (noFindingsReviews.some((prefix) => prefix.length === 0)) {
+      throw new TypeError("[vitehub] Babysitter noFindingsReviews cannot contain an empty prefix.");
     }
     // Validate merge settings when the Agent is defined, not on the first PR.
     resolveBabysitterMerge(merge, autoMerge);
@@ -162,6 +172,6 @@ export const babysitter: BabysitterAgent = defineAgent({
         output: { schema: babysitterPassResultSchema },
       },
     });
-    return withAgentProcessHost(Object.assign(definition, { reviewChecks }), babysitterHost);
+    return withAgentProcessHost(Object.assign(definition, { reviewChecks, noFindingsReviews }), babysitterHost);
   },
 });
