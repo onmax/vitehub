@@ -21,7 +21,7 @@ it.each([
   await expect(kind === "method"
     ? client.call("mail.messages.modify", { id: "m1", userId: "me" })
     : client.fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { method: "POST", body: "{}" })).rejects.toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
-  const id = (await test.runtime.approvals({ status: "pending" }))[0]!.id
+  const id = (await test.runtime.approvals({ status: "pending" })).approvals[0]!.id
   let effects = 0
   const runtime = createConnectionsRuntime({ definitions: { mail: definition }, store: test.store, now: () => test.now.value, fetch: async (input, init) => {
     const response = await test.provider.fetch(input, init)
@@ -64,7 +64,7 @@ it("preserves a confirmed provider rejection when an approved write returns HTTP
   const test = createTestRuntime(mailConnection({ "agent:writer": { read: true, write: ["mail.messages.modify"] } }))
   await connect(test)
   await expect(test.runtime.client("mail", { actor: "agent:writer" }).call("mail.messages.modify", { id: "m1", userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
-  const id = (await test.runtime.approvals({ status: "pending" }))[0]!.id
+  const id = (await test.runtime.approvals({ status: "pending" })).approvals[0]!.id
   const runtime = createConnectionsRuntime({ definitions: { mail: mailConnection() }, store: test.store, now: () => test.now.value, fetch: async (input, init) =>
     String(input).endsWith("/modify") ? Response.json({ error: { message: "Invalid label" } }, { status: 400 }) : await test.provider.fetch(input, init) })
   await expect(runtime.approve({ id })).rejects.toMatchObject({ code: "CONNECTION_PROVIDER" })

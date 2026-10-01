@@ -258,7 +258,7 @@ More history remains. Continue with --cursor Im0zIg
 
 The command reads the history query schema first. When the schema converts to JSON Schema, which Zod 4 and Valibot schemas do, `--help` with `--agent` and `--channel` lists its keys as flags, and an unknown flag fails before replay starts. Other schemas accept `--filter key=value`. Array query fields receive an array even for one value, such as `--label work` or `--filter label=work`; repeat the key to add more values. The server always validates the query with the same schema.
 
-With `--url`, the command posts to `/_vitehub/channels/replay` on the deployment. That route requires the [Console](/docs/development/console#replay-channel-history) with invocation enabled, and it is protected like every other Console route. Set `VITEHUB_CONSOLE_AUTHORIZATION` to an `Authorization` header value that the Console access policy accepts, or `VITEHUB_CONSOLE_COOKIE` to a signed-in Console session cookie. For Cloudflare Access, set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to a service token. The command forwards them as `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Each request replays at most 10 messages, so progress appears while a long replay runs, and the command prints a cursor when history remains.
+With `--url`, the command posts to `/_vitehub/channels/replay` on the deployment. That route requires the [Console](/docs/development/console#start-agent-invocations) with invocation enabled, and it is protected like every other Console route. Set `VITEHUB_CONSOLE_AUTHORIZATION` to an `Authorization` header value that the Console access policy accepts, or `VITEHUB_CONSOLE_COOKIE` to a signed-in Console session cookie. For Cloudflare Access, set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to a service token. The command forwards them as `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Each request replays at most 10 messages, so progress appears while a long replay runs, and the command prints a cursor when history remains.
 ## Manage Connections
 
 `vitehub connections` calls the Connections management API of a running app. It uses `http://localhost:5173` unless you pass `--url` or set `VITEHUB_CONNECTIONS_URL`.
@@ -298,7 +298,7 @@ pnpm vitehub schedule run sync
 
 Without `--url`, the command posts to the running Vite Development Server at `VITEHUB_DEV_SERVER_URL` or `http://localhost:5173`. Use `--server <url>` to select another local server.
 
-With `--url`, the command posts to `/_vitehub/schedules/run` on the deployment. That route runs only when the deployment enables the [Console](/docs/development/console#run-schedules-on-demand) with `invoke: true`, and the Console access policy protects it like every other `/_vitehub/**` route. Set the credentials for that policy in the environment:
+With `--url`, the command posts to `/_vitehub/schedules/run` on the deployment. That route runs only when the deployment enables the [Console](/docs/development/console#start-agent-invocations) with `invoke: true`, and the Console access policy protects it like every other `/_vitehub/**` route. Set the credentials for that policy in the environment:
 
 | Variable                        | Value                                                                                                                                           |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |

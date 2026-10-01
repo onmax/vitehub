@@ -136,6 +136,57 @@ describe("createConnectionsHandler", () => {
     }
   });
 
+  it("dispatches and completes OAuth under an application base", async () => {
+    const test = createTestRuntime()
+    const handler = createConnectionsHandler({ actor: () => "user:local", basePath: "/portal/_vitehub/connections", runtime: () => test.runtime })
+    const response = await handler(new Request(`${origin}/portal/_vitehub/connections`, {
+      body: JSON.stringify({ action: "list" }), headers: { "content-type": "application/json", origin }, method: "POST",
+    }))
+    expect(response.status).toBe(200)
+    const start = await handler(new Request(`${origin}/portal/_vitehub/connections/connect/mail`))
+    expect(start.status).toBe(302)
+    const location = new URL(start.headers.get("location")!)
+    expect(location.searchParams.get("redirect_uri")).toBe(`${origin}/portal/_vitehub/connections/callback`)
+    expect(start.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections;")
+    const state = location.searchParams.get("state")!
+    test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, id_token: "account-1", refresh_token: REFRESH_TOKEN } })
+    const callback = await handler(new Request(`${origin}/portal/_vitehub/connections/callback?code=code-1&state=${state}`, {
+      headers: { cookie: `vitehub_connection_state=${state}` },
+    }))
+    expect(callback.status).toBe(200)
+    expect(callback.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections;")
+  })
+
+  it("pages pending approvals above the history limit", async () => {
+    const test = createTestRuntime()
+    for (let index = 0; index < 101; index++) {
+      await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:mail", createdAt: new Date().toISOString(), id: `approval-${index}`, input: {}, name: "mail", status: "pending" })
+    }
+    const handler = createConnectionsHandler({ actor: () => "user:local", runtime: () => test.runtime })
+    const response = await handler(post({ action: "approvals", name: "mail", status: "pending" }))
+    // SAFETY: The local handler serializes the approval list from the real test store.
+    const result = await response.json() as { approvals: Array<{ id: string }>, nextCursor: string }
+    expect(result.approvals).toHaveLength(100)
+    expect(result.nextCursor).toBe("approval-1")
+    const older = await handler(post({ action: "approvals", before: result.nextCursor, name: "mail", status: "pending" }))
+    expect(older.status).toBe(200)
+    expect(await older.json()).toMatchObject({ approvals: [{ id: "approval-0" }] })
+    const denied = await handler(post({ action: "deny", id: "approval-0" }))
+    expect(denied.status).toBe(200)
+    expect(await test.store.approvals.get("approval-0")).toMatchObject({ status: "denied" })
+    expect((await test.runtime.approvals({})).approvals).toHaveLength(100)
+  })
+
+  it("serves Console approval summaries and counts", async () => {
+    const test = createTestRuntime()
+    await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:test", createdAt: new Date().toISOString(), id: "summary-1", input: { to: "ada@example.com" }, name: "mail", status: "pending" })
+    const handler = createConnectionsHandler({ actor: () => "user:local", runtime: () => test.runtime })
+    const page = await handler(post({ action: "approval-summaries", name: "mail", status: "pending" }))
+    expect(await page.json()).toEqual({ approvals: [{ action: "mail.messages.modify", actor: "agent:test", createdAt: expect.any(String), id: "summary-1", name: "mail", status: "pending" }] })
+    const counts = await handler(post({ action: "approval-counts" }))
+    expect(await counts.json()).toEqual({ counts: { mail: 1 } })
+  })
+
   it("rejects cross-origin, non-JSON, and invalid requests", async () => {
     const test = createTestRuntime();
     const handler = createConnectionsHandler({

@@ -553,7 +553,7 @@ describe("calls", () => {
     expect(await test.runtime.activity({ name: "mail" })).toEqual(before)
     expect(error).toMatchObject({ code: "CONNECTION_INVALID" })
     expect(await rejection(client.fetch("https://mail.example.com/mail/v1/users/me/labels"))).toMatchObject({ code: "CONNECTION_INVALID" })
-    expect(await test.runtime.approvals({})).toEqual([])
+    expect((await test.runtime.approvals({})).approvals).toEqual([])
     expect(test.provider.calls).toHaveLength(calls)
     expect(await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).toMatchObject({ labels: [{ id: "INBOX" }] })
   })
@@ -732,11 +732,11 @@ describe("approvals", () => {
     const client = test.runtime.client("mail", { actor: "agent:labeller" })
     expect(await rejection(client.call("mail.messages.modify", { id: "m1", userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
     expect(await rejection(client.fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { method: "POST" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
-    expect(await test.runtime.approvals({ status: "pending" })).toEqual([])
+    expect((await test.runtime.approvals({ status: "pending" })).approvals).toEqual([])
     expect(test.provider.calls).toHaveLength(calls)
     await connect(test)
     expect(await rejection(client.call("mail.messages.modify", { id: "m1", userId: "me" }))).toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
-    const [approval] = await test.runtime.approvals({ status: "pending" })
+    const [approval] = (await test.runtime.approvals({ status: "pending" })).approvals
     expect(await test.runtime.approve({ id: approval!.id })).toMatchObject({ approval: { status: "executed" } })
   })
 
@@ -746,7 +746,7 @@ describe("approvals", () => {
     const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller" }).fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { method: "Egg" }))
     expect(error).toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
     const id = isConnectionError(error) ? error.requestId! : ""
-    expect(await test.runtime.approvals({ status: "pending" })).toEqual([expect.objectContaining({ input: expect.objectContaining({ method: "Egg" }) })])
+    expect((await test.runtime.approvals({ status: "pending" })).approvals).toEqual([expect.objectContaining({ input: expect.objectContaining({ method: "Egg" }) })])
     await test.runtime.approve({ id })
     expect(test.provider.calls.at(-1)?.method).toBe("Egg")
   })
@@ -766,7 +766,7 @@ describe("approvals", () => {
     await connect(test)
     const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller", invocationId: "inv-1" }).call("mail.messages.modify", { id: "m1", requestBody: { addLabelIds: ["L1"] }, userId: "me" }))
     const id = isConnectionError(error) ? error.requestId! : ""
-    expect(await test.runtime.approvals({ status: "pending" })).toEqual([expect.objectContaining({ action: "mail.messages.modify", actor: "agent:labeller", id, invocationId: "inv-1", name: "mail", status: "pending" })])
+    expect((await test.runtime.approvals({ status: "pending" })).approvals).toEqual([expect.objectContaining({ action: "mail.messages.modify", actor: "agent:labeller", id, invocationId: "inv-1", name: "mail", status: "pending" })])
     const calls = test.provider.calls.length
     const approved = await test.runtime.approve({ actor: "user:owner", id })
     expect(approved).toMatchObject({ approval: { decidedBy: "user:owner", status: "executed" }, result: { id: "message-1" } })
@@ -816,7 +816,7 @@ describe("approvals", () => {
       for (let minute = 0; minute < 6; minute++) {
         test.now.value += 60_000
         await vi.advanceTimersByTimeAsync(60_000)
-        expect(await inspecting.approvals({ status: "approved" })).toEqual([
+        expect((await inspecting.approvals({ status: "approved" })).approvals).toEqual([
           expect.objectContaining({ id, status: "approved" }),
         ])
       }
@@ -829,7 +829,7 @@ describe("approvals", () => {
         result: { id: "message-1" },
       })
       test.now.value += 5 * 60_000
-      expect(await inspecting.approvals({ status: "failed" })).toEqual([])
+      expect((await inspecting.approvals({ status: "failed" })).approvals).toEqual([])
     } finally {
       finish(Response.json({ id: "message-1" }))
       await replay
@@ -872,11 +872,11 @@ describe("approvals", () => {
         now: () => test.now.value,
         store: test.store,
       })
-      expect(await restarted.approvals({ status: "approved" })).toEqual([
+      expect((await restarted.approvals({ status: "approved" })).approvals).toEqual([
         expect.objectContaining({ id, status: "approved" }),
       ])
       test.now.value += 5 * 60_000
-      expect(await restarted.approvals({ status: "failed" })).toEqual([
+      expect((await restarted.approvals({ status: "failed" })).approvals).toEqual([
         expect.objectContaining({ error: "CONNECTION_EXECUTION_UNKNOWN", id, status: "failed" }),
       ])
       expect(await rejection(restarted.approve({ id }))).toMatchObject({
@@ -894,7 +894,7 @@ describe("approvals", () => {
       await test.store.approvals.transition(id, "pending", "approved", { decidedAt: new Date(test.now.value).toISOString() })
     }
     test.now.value += 5 * 60_000
-    expect(await test.runtime.approvals({ status: "approved" })).toEqual([])
+    expect((await test.runtime.approvals({ status: "approved" })).approvals).toEqual([])
     expect(await test.store.approvals.get("interrupted-0")).toMatchObject({ error: "CONNECTION_EXECUTION_UNKNOWN", status: "failed" })
     expect(test.provider.calls).toEqual([])
   })
@@ -917,6 +917,6 @@ describe("approvals", () => {
     const id = isConnectionError(error) ? error.requestId! : ""
     await test.runtime.revoke({ name: "mail" })
     expect(await rejection(test.runtime.approve({ id }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
-    expect(await test.runtime.approvals({})).toEqual([expect.objectContaining({ error: "CONNECTION_REAUTH_REQUIRED", id, status: "failed" })])
+    expect((await test.runtime.approvals({})).approvals).toEqual([expect.objectContaining({ error: "CONNECTION_REAUTH_REQUIRED", id, status: "failed" })])
   })
 })

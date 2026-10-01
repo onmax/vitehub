@@ -33,6 +33,7 @@ import { createNoExternalAddition, isServerEnvironment, resolveViteHubProjectRoo
 import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 
 import { viteHubTypesPlugin } from "./internal/types.ts"
+import { consoleConnectionsActorId } from "./console/auth-build.ts"
 import { agentChannelEnvPlugin } from "./agent-channel-env.ts"
 import { consoleInvocationRootPlugin, consoleVitePlugin, type ConsoleOptions } from "./console/vite.ts"
 import { observabilityVitePlugin, type ObservabilityOptions } from "./observability-vite.ts"
@@ -967,6 +968,9 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     }
     plugins.push(hubConnections({
       ...(options.connections === true ? {} : options.connections),
+      ...(options.connections !== true && options.connections.management === true && options.console && consoleSections.includes("connections")
+        ? { management: { actor: consoleConnectionsActorId } }
+        : {}),
       database: "vite-hub/database/drizzle",
       importBase: "vite-hub/connections",
     }))
