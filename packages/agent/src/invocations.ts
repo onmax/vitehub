@@ -274,6 +274,7 @@ export class AgentInvocationClaimConflict extends Error {
 export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   configuration?: TraceEventContentPolicy
   /** Whether this journal holds the store execution claim, lost it, or could not reach the store. */
+  readonly createdNew: boolean
   readonly claimStatus?: "owned" | "conflict" | "unavailable"
   context: AgentRuntimeContext<TRuntimeConfig>
   /** The stored `traceId`, available after creation confirms the record identity. */
@@ -282,7 +283,7 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   ready(): Promise<void>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
   handoffClaim(): Promise<string | undefined>
-  confirmWorkflowDispatch(): Promise<void>
+  confirmWorkflowDispatch(): Promise<boolean>
   releaseClaim(): Promise<void>
   running(): Promise<void>
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
@@ -2095,6 +2096,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         writeNextObservation()
       }
       return {
+        get createdNew() { return createdNew },
         get claimStatus() { return ownsRecord ? "owned" : claimUnavailable ? "unavailable" : "conflict" },
         async handoffClaim() {
           stopHeartbeat()
@@ -2105,15 +2107,18 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           return token === storeOperationTimedOut ? undefined : token
         },
         async confirmWorkflowDispatch() {
+          let confirmed = false
           // Renewing here would rotate the token already sent to the worker.
           await write(async () => {
             const record = await boundedStoreOperation(() => store.get(recordId))
             if (!record || record === storeOperationTimedOut) return
-            await boundedStoreOperation(() => store.update(recordId, {
+            const updated = await boundedStoreOperation(() => store.update(recordId, {
               annotations: { ...record.annotations, [pendingAgentInvocationAnnotation]: false },
               timestamp: new Date().toISOString(),
             }, claimId))
+            confirmed = updated !== undefined && updated !== storeOperationTimedOut
           })
+          return confirmed
         },
         async releaseClaim() {
           stopHeartbeat()

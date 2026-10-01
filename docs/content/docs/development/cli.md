@@ -43,21 +43,6 @@ Package-contributed namespaces appear only when their package is enabled. For ex
 
 ## Commands
 
-| Command | Status | Owner | Use it for |
-| --- | --- | --- | --- |
-| `vitehub agent eval` | Opt-in tooling | Agent Package | Run discovered Agent Evals through ViteHub defaults. |
-| `vitehub agent info` | Available | Agent Package | Inspect resolved Agent metadata through a running Vite Development Server. |
-| `vitehub agent dev` | Available | Agent Package | Talk to a discovered Agent through a running Vite Development Server. |
-| `vitehub agent invocations` | Available | Agent Package | List, inspect, or follow records in the application's Agent Invocation journal. |
-| `vitehub channels history` | Available | Agent Package | Download one deployed conversation and its attachments. |
-| `vitehub channels replay` | Available | Agent Package | Send past Channel messages from a Channel history through its trigger. |
-| `vitehub channels sync` | Available | Agent Package | Inspect or apply provider-owned webhook registrations for a deployed stage. |
-| `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
-| `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
-| `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
-| `vitehub workspace dev` | Available | Workspace Package | Run commands through a Workspace Session exposed by a Compatible Vite Development Server. |
-| `vitehub types prepare` | Available | ViteHub Framework | Prepare generated TypeScript declarations for editors and type checking. |
-| `vitehub provision run` | Available | ViteHub CLI plus package Provision Steps | Create missing provider resources idempotently. |
 | Command                     | Status         | Owner                                             | Use it for                                                                                |
 | --------------------------- | -------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | `vitehub agent eval`        | Opt-in tooling | Agent Package                                     | Run discovered Agent Evals through ViteHub defaults.                                      |
@@ -65,6 +50,7 @@ Package-contributed namespaces appear only when their package is enabled. For ex
 | `vitehub agent dev`         | Available      | Agent Package                                     | Talk to a discovered Agent through a running Vite Development Server.                     |
 | `vitehub agent invocations` | Available      | Agent Package                                     | List, inspect, or follow records in the application's Agent Invocation journal. Delete or prune terminal records.           |
 | `vitehub channels history`  | Available      | Agent Package                                     | Download one deployed conversation and its attachments.                                   |
+| `vitehub channels replay` | Available | Agent Package | Send past Channel messages from a Channel history through its trigger. |
 | `vitehub channels sync`     | Available      | Agent Package                                     | Inspect or apply provider-owned webhook registrations for a deployed stage.               |
 | `vitehub console dev`       | Available      | Console integration                               | Start the app's development command with deterministic Console fixture data.              |
 | `vitehub db generate`       | Available      | Database Package                                  | Refresh generated Database artifacts and generate Drizzle migrations.                     |

@@ -1048,6 +1048,34 @@ export async function portableAgentWorkflowInput<CALL_OPTIONS>(input: AgentRunIn
   return cloneWorkflowJsonValue(workflowInput) as AgentRunInput<CALL_OPTIONS>
 }
 
+export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>, context: AgentRuntimeContext<TRuntimeConfig>): Promise<AgentInvocationJournal<TRuntimeConfig> | undefined> {
+  if (!agent.invocations) return
+  const journal = await bindAgentInvocations(agent.invocations, { ...context, run: { ...context.run, runId: context.run?.runId || createTraceId(), annotations: pendingAgentInvocationAnnotations(context.run?.annotations) } }, { agentName: agentInvocationName(agent, context), recoverPending: true })
+  if (journal?.claimStatus !== "owned") {
+    if (journal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
+    throw new Error("Could not acquire the Invocation execution claim.")
+  }
+  const binding = resolveAgentWorkflowRuntimeBinding<TRuntimeConfig>(agent)
+  if (binding && !journal.createdNew) {
+    try {
+      const workflowName = resolveAgentWorkflowName(agent, binding, context)
+      const handle = await getAgentWorkflowHandle<TRuntimeConfig, unknown, unknown>(agent, workflowName, Boolean(context.agentIdentity))
+      const recoveryConfig = (await loadAgentWorkflowRuntimeStateModule()).getWorkflowRuntimeConfig()
+      const stableId = context.run?.runId || ""
+      const providerId = recoveryConfig && recoveryConfig.provider === "cloudflare" ? await portableAgentWorkflowRunId(stableId) : stableId
+      const accepted = await handle.getRun(providerId)
+      if (accepted.status !== "unknown") {
+        if (!await journal.confirmWorkflowDispatch()) throw new Error("Could not confirm the accepted Workflow Invocation.")
+        throw new AgentInvocationClaimConflict()
+      }
+    } catch (error) {
+      await journal.releaseClaim()
+      throw error
+    }
+  }
+  return journal
+}
+
 async function runAgentAsWorkflow<
   TRuntimeConfig extends AgentRuntimeConfig,
   CALL_OPTIONS,
@@ -1069,7 +1097,10 @@ async function runAgentAsWorkflow<
   const ensureActivity = async () => {
     if (!exclusive || replayReserved) return
     const journal = hasAgentDefinition(agent)
-      ? await bindAgentInvocations(agent.invocations, { ...context, run: { ...context.run, runId: context.run?.runId || createTraceId(), annotations: pendingAgentInvocationAnnotations(context.run?.annotations) } }, { agentName: agentInvocationName(agent, context), recoverPending: true })
+      ? await bindAgentInvocations(agent.invocations, { ...context, run: { ...context.run, runId: context.run?.runId || createTraceId(), annotations: pendingAgentInvocationAnnotations(context.run?.annotations) } }, { agentName: agentInvocationName(agent, context), recoverPending: true,
+          // SAFETY: Channel dispatch installs the trusted private handoff token before running its Agent.
+          replaceClaimToken: (context as AgentRuntimeContext & { [inheritedAgentInvocationClaim]?: string })[inheritedAgentInvocationClaim],
+        })
       : undefined
     if (journal?.claimStatus !== "owned") {
       if (journal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
@@ -7754,7 +7785,10 @@ async function executeAgentInvocation<
       if (invocationJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
       throw new Error("Could not acquire the Invocation execution claim.")
     }
-    if (inheritedClaim) await invocationJournal?.confirmWorkflowDispatch()
+    if (inheritedClaim && !await invocationJournal?.confirmWorkflowDispatch()) {
+      await invocationJournal?.releaseClaim()
+      throw new Error("Could not confirm the Workflow Invocation handoff.")
+    }
   }
   catch (error) {
     await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
