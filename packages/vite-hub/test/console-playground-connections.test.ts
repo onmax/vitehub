@@ -32,10 +32,10 @@ it.each(["approve", "deny"])("runs playground Connections refresh and %s through
   const endpoint = "/_vitehub/connections"
   const counts = await requestConnectionsManagement(endpoint, "approval-counts", connectionApprovalCountsSchema)
   expect(counts.counts.gmail).toBe(1)
-  const page = await requestConnectionsManagement(endpoint, "approvals", connectionApprovalsSchema, { name: "gmail", status: "pending" })
+  const page = await requestConnectionsManagement(endpoint, "approval-summaries", connectionApprovalsSchema, { name: "gmail", status: "pending" })
   expect(page.approvals).toHaveLength(1)
   expect(page.approvals[0]).not.toHaveProperty("input")
-  const decision = await requestConnectionsManagement(endpoint, action, connectionApprovalResultSchema, { id: page.approvals[0]!.id })
+  const decision = await requestConnectionsManagement(endpoint, `${action}-summary`, connectionApprovalResultSchema, { id: page.approvals[0]!.id })
   expect(decision.approval.status).toBe(action === "approve" ? "executed" : "denied")
   expect(decision.approval).not.toHaveProperty("input")
   expect(decision).not.toHaveProperty("result")
