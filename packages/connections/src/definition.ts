@@ -30,6 +30,7 @@ function assertApiKeyProvider(provider: ConnectionProvider): void {
   if (!text(provider.id) || !provider.id || !text(provider.header) || !tokenPattern.test(provider.header) || provider.header !== provider.header.toLowerCase()) {
     throw connectionError("invalid", { path: "provider" })
   }
+  if (!Array.isArray(provider.scopes) || provider.scopes.some(scope => !text(scope))) throw connectionError("invalid", { path: "provider.scopes" })
   if (provider.scheme !== undefined && (!text(provider.scheme) || !tokenPattern.test(provider.scheme))) throw connectionError("invalid", { path: "provider.scheme" })
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Connection Definitions can come from JavaScript files, so the shape is checked at runtime.
   if (provider.verify !== undefined && typeof provider.verify !== "function") throw connectionError("invalid", { path: "provider.verify" })

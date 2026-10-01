@@ -5,7 +5,9 @@ import { createConnectionsHandler } from "../src/http.ts"
 import { apiKey } from "../src/providers/api-key.ts"
 
 import type { ApiKeyProviderOptions } from "../src/providers/api-key.ts"
-import { expectCode, mockFetch, readOperation, rows, setupRuntime, writeOperation } from "./helpers.ts"
+import { createConnectionsRuntime } from "../src/runtime/core.ts"
+
+import { expectCode, fakeProvider, mockFetch, readOperation, rows, setupRuntime, writeOperation } from "./helpers.ts"
 
 import type { ConnectionsAccess } from "../src/http.ts"
 import type { ConnectionActor, ConnectionDefinition } from "../src/types.ts"
@@ -65,6 +67,9 @@ describe("key()", () => {
       { header: "x-api-key", id: "", kind: "api-key", origins: ["https://api.example"], scopes: [] },
       { header: "authorization", id: "custom", kind: "api-key", origins: ["https://api.example"], scheme: "Bearer token", scopes: [] },
       { header: "authorization", id: "custom", kind: "api-key", origins: ["https://api.example"], scopes: [], verify: "yes" },
+      { header: "authorization", id: "custom", kind: "api-key", origins: ["https://api.example"] },
+      { header: "authorization", id: "custom", kind: "api-key", origins: ["https://api.example"], scopes: "read" },
+      { header: "authorization", id: "custom", kind: "api-key", origins: ["https://api.example"], scopes: [123] },
     ]) {
       expect(() => defineConnection(untyped(provider))).toThrow("Invalid Connection request.")
     }
@@ -72,6 +77,24 @@ describe("key()", () => {
 })
 
 describe("API key Connections", () => {
+  it.each(["direct", "default"])("validates %s registry exports before accessing stored grants", async (form) => {
+    for (const provider of [
+      { ...fakeProvider().provider, id: "api-key:foo" },
+      { ...key(), id: "api-key:foo" },
+      { ...key(), scopes: undefined },
+    ]) {
+      const database = vi.fn(() => undefined)
+      const definition = { provider }
+      const runtime = createConnectionsRuntime({
+        database,
+        encryptionKey: () => new Uint8Array(32),
+        registry: { api: async () => form === "direct" ? definition : { default: definition } },
+      })
+      await expectCode(runtime.inspect("api"), "CONNECTIONS_INVALID")
+      expect(database).not.toHaveBeenCalled()
+    }
+  })
+
   it("stores the key sealed and sends it with each request", async () => {
     const upstream = api()
     const { db, name, runtime } = setupRuntime({ definition: { provider: key({ header: "x-api-key" }) }, fetch: upstream.fetch })

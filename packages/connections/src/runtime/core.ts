@@ -1,6 +1,7 @@
 import * as v from "valibot"
 
 import { decideConnectionAccess } from "../access.ts"
+import { defineConnection } from "../definition.ts"
 import { connectionError, isConnectionError } from "../errors.ts"
 import { matchesConnectionOrigin } from "../origins.ts"
 import { createConnectionsStore } from "../store.ts"
@@ -198,9 +199,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const entry = options.registry[name]
       if (!entry) return Promise.reject(connectionError("not_found", { connection: name }))
       loaded = entry().then((module) => {
-        if (isDefinition(module)) return module
+        if (isDefinition(module)) return defineConnection(module)
         // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry modules are loaded with dynamic import and are unknown values.
-        if (typeof module === "object" && module !== null && "default" in module && isDefinition(module.default)) return module.default
+        if (typeof module === "object" && module !== null && "default" in module && isDefinition(module.default)) return defineConnection(module.default)
         throw connectionError("not_found", { connection: name })
       })
       loaded.catch(() => definitions.delete(name))
