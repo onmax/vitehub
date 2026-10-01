@@ -556,7 +556,21 @@ async function gitIgnoredWorkspacePaths(root: string): Promise<string[]> {
     "git",
     ["-C", root, "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
     { encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, maxBuffer: 64 * 1024 * 1024 },
-    (error, stdout) => error ? reject(error) : resolveOutput(stdout),
+    (error, stdout, stderr) => {
+      // `ignore: "git"` is also valid for ordinary directories. Treat a
+      // non-repository root as having no Git exclusions, while preserving
+      // failures from an unavailable or unreadable Git checkout.
+      if (error) {
+        const code = Reflect.get(Object(error), "code")
+        if (code === 128 && /not a git repository/i.test(stderr)) {
+          resolveOutput("")
+          return
+        }
+        reject(error)
+        return
+      }
+      resolveOutput(stdout)
+    },
   ))
   return [".git", ...output.split("\0").filter(Boolean).map(path => path.replace(/\/$/, ""))]
 }
