@@ -181,9 +181,10 @@ it.each([
   '{ id: "storage", get workspace() { return {} } }',
   '({ id: "storage", workspace: {} }).other',
   '{ id: "storage", ...getContribution() }',
+  '{ id: "storage", workspace: process.env.ENABLED ? {} : false }',
 ])("rejects opaque literal Capability ownership: %s", async capability => {
   const source = `${imports} export default defineAgent({ channels: { custom: webChat({ capabilities: [${capability}] }) } })`
-  await expect(discover(source)).rejects.toThrow(/opaque Channel|opaque Capability|opaque Agent settings/)
+  await expect(discover(source)).rejects.toThrow(/opaque Channel|opaque Capability|opaque Agent settings|conditional Capability Workspace/)
   const explicit = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
   expect(explicit?.workspace).toBe("review")
 })
@@ -785,6 +786,9 @@ it.each([
   'delete (options.pullRequest.workspace)',
   'let alias; alias = options; alias.pullRequest = true',
   'let alias; alias ??= options; alias.pullRequest = true',
+  'let alias; (alias) ??= options; alias.pullRequest = true',
+  'let alias; ((alias)) ||= options; alias.pullRequest = true',
+  'let alias = {}; (alias) &&= options; alias.pullRequest = true',
   'let alias; alias ||= options; alias.pullRequest = true',
   'let alias = {}; alias &&= options; alias.pullRequest = true',
   'let alias; alias ??= getOptions(); alias.pullRequest = true',
@@ -1043,6 +1047,8 @@ it.each([
   'Object["freeze"] = value => value;',
   'Object.defineProperty(Object, "freeze", { value: value => value });',
   'Object.defineProperties(Object, { freeze: { value: value => ({ pullRequest: true }) } });',
+  '(Object.defineProperties)(Object, { freeze: { value: value => ({ pullRequest: true }) } });',
+  '((Object["defineProperties"]))(Object, { freeze: { value: value => ({ pullRequest: true }) } });',
   'Object["defineProperties"](globalThis["Object"], { ["freeze"]: { value: value => ({ pullRequest: true }) } });',
   'globalThis.Object.defineProperties(Object, descriptors);',
   'globalThis.Object.freeze = value => value;',
@@ -1209,6 +1215,15 @@ it.each([
 })
 
 it.each([
+  ...([
+    ["false ? {} : false", false],
+    ["true ? false : {}", false],
+    ["true ? {} : false", true],
+    ["false ? false : {}", true],
+    ["((true as boolean)) ? false : {}", false],
+    ["false ? true ? {} : {} : false", false],
+    ["true ? false ? {} : false : {}", false],
+  ] as const).map(([value, ownsWorkspace]) => [`{ id: "cache", workspace: ${value} }`, ownsWorkspace] as const),
   ['{ id: "stateless", workspace: false }', false],
   ['defineCapability({ workspace: false })', false],
   ['{ id: "stateless", workspace: null }', false],
@@ -1265,6 +1280,7 @@ it.each([
   'function getOptions() { return options }; getOptions()["pullRequest"] = true',
   'const getOptions = () => ({ nested: options }); getOptions().nested.pullRequest = true',
   'const getOptions = () => options; getOptions().pullRequest++',
+  'const getOptions = () => options; delete getOptions().pullRequest',
 ])("rejects mutations through opaque call results: %s", async mutation => {
   const source = `${imports} const options = { pullRequest: false }; ${mutation}; export default github(options)`
   await expect(discover(source.replace("export default github(options)", "export default defineAgent({ channels: { custom: github(options) } })"))).rejects.toThrow(/opaque Channel/)
@@ -1280,6 +1296,9 @@ it("keeps read-only opaque call results from invalidating Channel options", asyn
 
 it.each([
   'tag`x`.pullRequest = true',
+  'delete tag`x`.pullRequest',
+  'delete (tag)`x`["pullRequest"]',
+  'delete wrapper["tag"]`x`.nested.pullRequest',
   'tag`x`["pullRequest"] = true',
   '(tag)`x`.pullRequest++',
   'const alias = tag`x`; alias.pullRequest = true',

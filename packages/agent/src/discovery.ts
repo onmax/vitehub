@@ -790,7 +790,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if ((propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion)
       && !isFunctionParameter(i)) mutatedBindings.add(name)
 
-    const initializer = declaratorInitializers.get(i) ?? assignmentInitializer(i + 1)
+    let assignmentEnd = i + 1
+    for (let opening = i - 1; tokens[opening] === "(" && openingDelimiters.get(assignmentEnd) === opening; opening--) assignmentEnd++
+    const initializer = declaratorInitializers.get(i) ?? assignmentInitializer(assignmentEnd)
     if (initializer !== undefined) {
       const targets = containerAliasTargets(initializer)
       const aliases = assignedAliases.get(name) ?? new Set<string>()
@@ -1043,8 +1045,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (receiverEnd === undefined) continue
     const member = memberAccess(receiverEnd - 1)
     if (objectEnd !== undefined && member?.name === "freeze" && assignmentOperator(member.end)) mutatedBindings.add("Object")
-    if ((member?.name === "defineProperty" || (objectEnd !== undefined && member?.name === "defineProperties")) && tokens[member.end] === "(") {
-      const target = resolveReference(member.end + 1, new Set(), true)
+    const call = member === undefined ? undefined : memberCallEnd(member.end - 1, index)
+    if ((member?.name === "defineProperty" || (objectEnd !== undefined && member?.name === "defineProperties")) && call !== undefined && tokens[call] === "(") {
+      const target = resolveReference(call + 1, new Set(), true)
       const targetEnd = intrinsicObjectEnd(target)
       if (targetEnd === undefined || tokens[targetEnd] !== ",") continue
       // Descriptor maps may be opaque or contain computed freeze properties.
@@ -1152,7 +1155,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (callNesting === 0) {
       const memberEnd = memberCallEnd(close - 1, call)
       const update = ["+", "-"].includes(tokens[memberEnd] ?? "") && tokens[memberEnd + 1] === tokens[memberEnd]
-      if (memberEnd > close && (assignmentOperator(memberEnd) || update || tokens[memberEnd] === "(")) {
+      let receiver = call - 1
+      while (receiver >= 0) {
+        const opening = openingDelimiters.get(receiver)
+        if (opening !== undefined) { receiver = opening - 1; continue }
+        if (tokens[receiver] === "delete") break
+        if (!isIdentifier(tokens[receiver]) && ![".", "("].includes(tokens[receiver])) break
+        receiver--
+      }
+      if (memberEnd > close && (assignmentOperator(memberEnd) || update || tokens[memberEnd] === "(" || tokens[receiver] === "delete")) {
         invalidateCapturedBindings()
       }
     }
@@ -1570,7 +1581,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function capabilityWorkspaceOwnsWorkspace(index: number, seen = new Set<number>()): boolean {
+    const outerBranch = staticConditionalBranch(index)
+    if (outerBranch !== undefined) return capabilityWorkspaceOwnsWorkspace(outerBranch, new Set(seen))
+    const outerBranches = conditionalBranches(index)
     index = resolveReference(index)
+    const staticBranch = staticConditionalBranch(index)
+    if (staticBranch !== undefined) return capabilityWorkspaceOwnsWorkspace(staticBranch, new Set(seen))
+    if (outerBranches !== undefined || conditionalBranches(index) !== undefined) {
+      throw new Error("[vitehub] Agent Workspace discovery cannot inspect a conditional Capability Workspace expression. Use a statically known condition, or add workspace: {} to the Agent definition when the Capability owns a Workspace.")
+    }
     if (seen.has(index)) throw new Error("[vitehub] Agent Workspace discovery cannot inspect a cyclic Capability Workspace expression. Use a literal Workspace value.")
     seen.add(index)
     if (undefinedValue(index)) return false
@@ -1610,7 +1629,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           expressionScope = scopeParents.get(expressionScope!)
           continue
         }
-        if (depth === 0 && [",", ";", ")", "]", "}"].includes(token)) break
+        if (depth === 0 && [",", ";", ":", ")", "]", "}"].includes(token)) break
         if ((token === "|" && tokens[cursor + 1] === "|") || token === "?") {
           throw new Error("[vitehub] Agent Workspace discovery cannot inspect a compound Capability Workspace expression. Use a literal Workspace value, or add workspace: {} to the Agent definition when the Capability owns a Workspace.")
         }
@@ -1619,7 +1638,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
       return false
     }
-    return ![",", ";", ")", "]", "}"].includes(tokens[end])
+    return ![",", ";", ":", ")", "]", "}"].includes(tokens[end])
   }
 
   function undefinedValue(index: number): boolean {
