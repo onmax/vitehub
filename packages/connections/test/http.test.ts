@@ -176,6 +176,16 @@ describe("createConnectionsHandler", () => {
     expect((await test.runtime.approvals({})).approvals).toHaveLength(100)
   })
 
+  it("serves Console approval summaries and counts", async () => {
+    const test = createTestRuntime()
+    await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:test", createdAt: new Date().toISOString(), id: "summary-1", input: { to: "ada@example.com" }, name: "mail", status: "pending" })
+    const handler = createConnectionsHandler({ actor: () => "user:local", runtime: () => test.runtime })
+    const page = await handler(post({ action: "approval-summaries", name: "mail", status: "pending" }))
+    expect(await page.json()).toEqual({ approvals: [{ action: "mail.messages.modify", actor: "agent:test", createdAt: expect.any(String), id: "summary-1", name: "mail", status: "pending" }] })
+    const counts = await handler(post({ action: "approval-counts" }))
+    expect(await counts.json()).toEqual({ counts: { mail: 1 } })
+  })
+
   it("rejects cross-origin, non-JSON, and invalid requests", async () => {
     const test = createTestRuntime();
     const handler = createConnectionsHandler({

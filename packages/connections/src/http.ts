@@ -40,6 +40,13 @@ const actionSchema = v.variant("action", [
     name: v.optional(name),
     status: v.optional(v.picklist(["approved", "denied", "executed", "failed", "pending"])),
   }),
+  v.object({
+    action: v.literal("approval-summaries"),
+    before: v.optional(id),
+    name: v.optional(name),
+    status: v.optional(v.picklist(["approved", "denied", "executed", "failed", "pending"])),
+  }),
+  v.object({ action: v.literal("approval-counts") }),
   v.object({ action: v.literal("approve"), id }),
   v.object({ action: v.literal("deny"), id }),
 ]);
@@ -238,6 +245,10 @@ export function createConnectionsHandler(
         );
       const input = parsed.output;
       const connections = runtime();
+      const approvalSummary = (approval: Awaited<ReturnType<ConnectionsRuntime["approvals"]>>["approvals"][number]) => {
+        const { input: _input, ...summary } = approval;
+        return summary;
+      };
       switch (input.action) {
         case "list":
           return json({ connections: await connections.list() });
@@ -259,6 +270,24 @@ export function createConnectionsHandler(
           return json({ activity: await connections.activity(input) });
         case "approvals":
           return json(await connections.approvals(input));
+        case "approval-summaries": {
+          const page = await connections.approvals(input);
+          return json({ ...page, approvals: page.approvals.map(approvalSummary) });
+        }
+        case "approval-counts": {
+          const counts: Record<string, number> = {};
+          for (const connection of await connections.list()) {
+            let before: string | undefined;
+            let count = 0;
+            do {
+              const page = await connections.approvals({ name: connection.name, status: "pending", before });
+              count += page.approvals.length;
+              before = page.nextCursor;
+            } while (before);
+            counts[connection.name] = count;
+          }
+          return json({ counts });
+        }
         case "approve":
           return json(await connections.approve({ actor, id: input.id }));
         case "deny":
