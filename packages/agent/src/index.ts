@@ -66,7 +66,7 @@ import {
 import { registerMessageChannelDeferredReplyTrace, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
 import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, createAgentInvocationContextStore } from "./invocation-context.ts"
 import { bindAgentRunEvents, type AgentRunEventPublisher } from "./run-events.ts"
-import { bindAgentInvocations, type AgentInvocationJournal } from "./invocations.ts"
+import { AgentInvocationClaimConflict, bindAgentInvocations, exclusiveAgentInvocation, type AgentInvocationJournal } from "./invocations.ts"
 import { isAttachmentPart, materializeMessageAttachmentData, type AgentMessagePhase, type Message } from "./messages.ts"
 import {
   createFallbackAgentInvoker,
@@ -7432,8 +7432,10 @@ async function executeAgentInvocation<
 ): Promise<Response | AsyncIterable<StreamEvent> | unknown> {
   // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
   const definition = hasAgentDefinition(agent) ? agent as object : undefined
+  // SAFETY: Replay sets this private boolean marker on its runtime; other runtimes may omit it.
+  const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
   // SAFETY: hasAgentDefinition validated the object before this internal contract assertion.
-  const activity = createActiveAgentActivity(definition as AgentDefinition<TRuntimeConfig> | undefined, context)
+  let activity = exclusive ? undefined : createActiveAgentActivity(definition as AgentDefinition<TRuntimeConfig> | undefined, context)
   await activity?.update("queued")
   let invocationJournal: AgentInvocationJournal<TRuntimeConfig> | undefined
   try {
@@ -7449,6 +7451,10 @@ async function executeAgentInvocation<
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
       }, { agentName: (definition as AgentDefinition).name || context.agentIdentity?.name })
       : undefined
+    if (exclusive && invocationJournal?.claimStatus !== "owned") {
+      if (invocationJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
+      throw new Error("Could not acquire the Invocation execution claim.")
+    }
   }
   catch (error) {
     await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
@@ -7458,6 +7464,11 @@ async function executeAgentInvocation<
   let preparedInvocation: AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS> | undefined
   let release: (() => void) | undefined
   try {
+    if (exclusive) {
+      // SAFETY: hasAgentDefinition validated the object before this internal contract assertion.
+      activity = createActiveAgentActivity(definition as AgentDefinition<TRuntimeConfig> | undefined, context)
+      await activity?.update("queued")
+    }
     if (definition && inspectAgentCapacity(definition)) {
       preparedInvocation = await createAgentInvocationContextWithWorkflowFailureDelivery(
         // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.

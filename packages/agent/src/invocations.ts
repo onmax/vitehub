@@ -205,8 +205,19 @@ interface BoundAgentInvocations extends AgentInvocations {
   ): Promise<AgentInvocationJournal<TRuntimeConfig>>
 }
 
+export const exclusiveAgentInvocation: unique symbol = Symbol("vitehub.exclusiveAgentInvocation")
+
+export class AgentInvocationClaimConflict extends Error {
+  constructor() {
+    super("Invocation already exists or is claimed.")
+    this.name = "AgentInvocationClaimConflict"
+  }
+}
+
 export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   configuration?: TraceEventContentPolicy
+  /** Whether this journal holds the store execution claim, lost it, or could not reach the store. */
+  readonly claimStatus?: "owned" | "conflict" | "unavailable"
   context: AgentRuntimeContext<TRuntimeConfig>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
   running(): Promise<void>
@@ -1675,6 +1686,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       let boundToTerminalRecord = false
       let finishing = false
       let ownsRecord = false
+      let claimUnavailable = true
       let limits = configuredObservationLimits
       let observationCount = 0
       let observationsTruncated = false
@@ -1744,6 +1756,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const renew = async (force = false): Promise<boolean> => {
         if (!await ensureCreated()) return false
         const claim = await boundedStoreOperation(() => store.claim(recordId, claimId, CLAIM_LEASE_MS, force ? { replaceExisting: true } : undefined))
+        claimUnavailable = claim !== true && claim !== false
         ownsRecord = claim === true
         if (ownsRecord && finished) {
           await boundedStoreOperation(() => store.release(recordId, claimId))
@@ -1946,6 +1959,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         writeNextObservation()
       }
       return {
+        get claimStatus() { return ownsRecord ? "owned" : claimUnavailable ? "unavailable" : "conflict" },
         configuration: options.configuration,
         context: {
           ...context,

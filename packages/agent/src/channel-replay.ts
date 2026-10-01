@@ -1,5 +1,6 @@
 import { createRuntimeContext } from "@vite-hub/runtime"
 
+import { AgentInvocationClaimConflict, exclusiveAgentInvocation } from "./invocations.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { agentErrorMessage } from "./agent-error.ts"
 import { isResolvedAgentTriggerHandledInvocation, resolveAgentTriggerInvocation, runAgent } from "./index.ts"
@@ -104,7 +105,7 @@ export function describeChannelHistory<TRuntimeConfig extends AgentRuntimeConfig
  * Dry runs use their own IDs; a dry run never blocks a later live replay.
  */
 export function channelReplayRunId(channel: string, key: string, options: { dryRun?: boolean } = {}): string {
-  return `${options.dryRun ? "channel-replay-dry-run" : "channel-replay"}:${channel}:${key}`
+  return `${options.dryRun ? "channel-replay-dry-run" : "channel-replay"}:${encodeURIComponent(channel)}:${encodeURIComponent(key)}`
 }
 
 function assertReplayOptions<TRuntimeConfig extends AgentRuntimeConfig>(options: ReplayChannelOptions<TRuntimeConfig>): void {
@@ -186,7 +187,7 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
     // A forced replay needs a new ID because the stable one already has an Invocation.
     const id = options.force ? `${stableId}:${crypto.randomUUID()}` : stableId
     try {
-      const itemRuntime: AgentRuntimeContext<TRuntimeConfig> = { ...runtime, memo: createMemo(), run: { ...runtime.run, runId: id } }
+      const itemRuntime = { ...runtime, ...(!options.force && invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), run: { ...runtime.run, runId: id } }
       const invocation = await resolveAgentTriggerInvocation(agent, itemRuntime, triggerId, item)
       if (isResolvedAgentTriggerHandledInvocation(invocation)) return { id, key, reason: "handled", status: "skipped" }
       const output = await runAgent(agent, { ...itemRuntime, run: { ...invocation.run, runId: id } }, {
@@ -196,6 +197,7 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
       return { id, key, status: isWorkflowRun(output) ? "started" : "completed" }
     }
     catch (error) {
+      if (error instanceof AgentInvocationClaimConflict) return { id, key, reason: "existing", status: "skipped" }
       return { error: agentErrorMessage(error), id, key, status: "failed" }
     }
   }

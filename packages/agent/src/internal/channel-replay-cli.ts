@@ -198,7 +198,8 @@ export function channelReplayQueryHelp(schema: unknown): string[] {
       property.type === "array" ? "repeatable" : undefined,
       hasRuntimeType(property.description, "string") ? property.description : undefined,
     ].filter(Boolean).join(", ")
-    return `  --${name} <${values}>${notes ? `  ${notes}` : ""}`
+    const reserved = valueOptions.has(`--${name}`) || ["dry-run", "force", "help"].includes(name)
+    return reserved ? `  --filter ${name}=<${values}>${notes ? `  ${notes}` : ""}` : `  --${name} <${values}>${notes ? `  ${notes}` : ""}`
   })
 }
 

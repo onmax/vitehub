@@ -60,7 +60,7 @@ function mailbox(options: { maxLimit?: number } = {}) {
 
 function labeller(options: { invocations?: ReturnType<typeof defineAgentInvocations>, maxLimit?: number } = {}) {
   const { channel, label, load } = mailbox(options)
-  const run = vi.fn(({ input }: { input: { prompt?: unknown } }) => `label:${String(input.prompt)}`)
+  const run = vi.fn(async ({ input }: { input: { prompt?: unknown } }) => `label:${String(input.prompt)}`)
   const agent = defineAgent({
     channels: { mailbox: channel },
     driver: { run },
@@ -74,6 +74,38 @@ function labeller(options: { invocations?: ReturnType<typeof defineAgentInvocati
   })
   return { agent, label, load, run }
 }
+
+it("encodes Channel and item keys without collisions", () => {
+  expect(channelReplayRunId("a:b", "c")).not.toBe(channelReplayRunId("a", "b:c"))
+  expect(channelReplayRunId("a%3Ab", "c")).not.toBe(channelReplayRunId("a:b", "c"))
+})
+
+it("claims overlapping replays before executing the Driver", async () => {
+  const store = createMemoryAgentInvocationStore()
+  // Separate Invocation definitions model two hosts sharing one durable store.
+  const first = labeller({ invocations: defineAgentInvocations({ store }) })
+  const second = labeller({ invocations: defineAgentInvocations({ store }) })
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  first.run.mockImplementation(async () => { await gate; return "label" })
+  const firstReplay = replayChannel(first.agent, "mailbox", { limit: 1 })
+  await vi.waitFor(() => expect(first.run).toHaveBeenCalledOnce())
+  // Model the losing host having read absence before the first host claimed the item.
+  vi.spyOn(second.agent.invocations!, "getByRunId").mockResolvedValue(undefined)
+  const result = await replayChannel(second.agent, "mailbox", { limit: 1 })
+  expect(result).toMatchObject({ processed: 0, skipped: 1 })
+  expect(second.run).not.toHaveBeenCalled()
+  release()
+  expect(await firstReplay).toMatchObject({ processed: 1, skipped: 0 })
+})
+
+it("reports an unavailable claim store as failed instead of an existing item", async () => {
+  const store = createMemoryAgentInvocationStore()
+  vi.spyOn(store, "claim").mockImplementation(async () => { throw new Error("store unavailable") })
+  const { agent, run } = labeller({ invocations: defineAgentInvocations({ store }) })
+  expect(await replayChannel(agent, "mailbox", { limit: 1 })).toMatchObject({ failed: 1, processed: 0, skipped: 0 })
+  expect(run).not.toHaveBeenCalled()
+})
 
 function memoryInvocations() {
   return defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
