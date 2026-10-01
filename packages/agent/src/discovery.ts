@@ -1917,23 +1917,20 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   function channelOwnsWorkspace(channel: number, channelId?: string): boolean {
     let channelOptions = resolveReference(channel, new Set(), true)
-    // TypeScript non-null assertions have no runtime effect. Remove them
-    // before deciding whether a relative Channel import is inspectable.
-    while (tokens[channelOptions + 1] === "!") channelOptions++
     const moduleNamespace = moduleNamespaces.get(tokens[channelOptions])
     if (moduleNamespace && isModuleBinding(channelOptions)) {
       const member = memberAccess(channelOptions)
-      if (!member || hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?", "!"].includes(tokens[member.end]) || mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
+      if (!member || hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?"].includes(tokens[member.end]) || mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleNamespace, member.name, channelId)
     }
     const moduleImport = moduleImports.get(tokens[channelOptions])
     const namespaceMember = memberAccess(channelOptions)
     if (moduleImport && namespaceMember && isModuleBinding(channelOptions)
       && !mutatedBindings.has(tokens[channelOptions]!)) {
-      if (hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?", "!"].includes(tokens[namespaceMember.end])) throw opaqueChannelError()
+      if (hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?"].includes(tokens[namespaceMember.end])) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId, namespaceMember.name)
     }
-    if (moduleImport && isModuleBinding(channelOptions) && !["(", "<", ".", "[", "?", "!"].includes(tokens[channelOptions + 1])) {
+    if (moduleImport && isModuleBinding(channelOptions) && !["(", "<", ".", "[", "?"].includes(tokens[channelOptions + 1])) {
       if (mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId)
     }
