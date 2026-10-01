@@ -536,6 +536,15 @@ The plugin starts it and closes it with Nitro, and serves drain status at
 `/api/drain`, configurable with `drainRoute`. SIGUSR2 starts a drain.
 Use the runtime drain CLI before replacing the process.
 
+On SIGTERM or SIGINT, the plugin first calls `host.close()`. The host stops
+admission and waits only for the invocations it tracks. HTTP stays up during this
+drain, so webhooks still reach durable queues. Then the plugin runs the server's
+own signal listeners, which close HTTP, and calls `process.exit(0)`. It waits at
+most 10 seconds for HTTP to close. A second signal does not start more work.
+The Nitro Node server adds its srvx shutdown listeners after plugins run, and
+Nitro has no option to order them after a plugin. The plugin therefore detaches
+the listeners added during startup and calls them after the drain.
+
 `@vite-hub/agent/server/github-inbox` provides a SQLite PR inbox for Node hosts.
 Construct `PullRequestInbox({ path, repositories, filter })`, seed discovered PRs,
 and ingest verified webhook deliveries with `ingest(deliveryId, event, payload)`.
