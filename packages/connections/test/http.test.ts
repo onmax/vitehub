@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import { createConnectionsHandler } from "../src/http.ts"
 import { ACCESS_TOKEN, createTestRuntime, REFRESH_TOKEN } from "./helpers.ts"
@@ -43,21 +43,51 @@ describe("createConnectionsHandler", () => {
     expect(callback.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections;")
   })
 
-  it("exposes all pending approvals above the history limit", async () => {
+  it("pages every pending approval without unbounded reads or decision gaps", async () => {
     const test = createTestRuntime()
-    for (let index = 0; index < 101; index++) {
+    for (let index = 0; index < 205; index++) {
       await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:mail", createdAt: new Date().toISOString(), id: `approval-${index}`, input: {}, name: "mail", status: "pending" })
     }
     const handler = createConnectionsHandler({ runtime: () => test.runtime })
-    const response = await handler(post({ action: "approvals", name: "mail", status: "pending" }))
-    // SAFETY: The local handler serializes the approval list from the real test store.
-    const result = await response.json() as { approvals: Array<{ id: string }> }
-    expect(result.approvals).toHaveLength(101)
-    expect(result.approvals.some(approval => approval.id === "approval-0")).toBe(true)
+    const page = async (before?: string) => {
+      const response = await handler(post({ action: "approvals", name: "mail", status: "pending", ...(before ? { before } : {}) }))
+      expect(response.status).toBe(200)
+      // SAFETY: The real local handler serializes an approval page from SQLite.
+      return await response.json() as { approvals: Array<{ id: string }>, nextCursor?: string }
+    }
+    const first = await page()
+    expect(first.approvals).toHaveLength(100)
+    expect(first.nextCursor).toBe("approval-105")
+    // Decisions remove rows from the pending filter, but cannot shift the cursor.
+    expect((await handler(post({ action: "deny", id: first.nextCursor }))).status).toBe(200)
+    const second = await page(first.nextCursor)
+    expect(second.approvals).toHaveLength(100)
+    expect(second.nextCursor).toBe("approval-5")
+    const third = await page(second.nextCursor)
+    expect(third.approvals).toHaveLength(5)
+    expect(third.nextCursor).toBeUndefined()
+    const discovered = [...first.approvals, ...second.approvals, ...third.approvals].map(approval => approval.id)
+    expect(new Set(discovered).size).toBe(205)
+    expect(discovered).toContain("approval-0")
     const denied = await handler(post({ action: "deny", id: "approval-0" }))
     expect(denied.status).toBe(200)
     expect(await test.store.approvals.get("approval-0")).toMatchObject({ status: "denied" })
-    expect(await test.runtime.approvals({})).toHaveLength(100)
+    expect((await test.runtime.approvals({})).approvals).toHaveLength(100)
+  })
+
+  it("returns grouped pending counts without loading approval inputs", async () => {
+    const test = createTestRuntime()
+    for (let index = 0; index < 205; index++) {
+      await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:mail", createdAt: new Date().toISOString(), id: `approval-${index}`, input: { body: "private-call-input".repeat(100) }, name: "mail", status: "pending" })
+    }
+    await test.store.approvals.create({ action: "removed.messages.modify", actor: "agent:removed", createdAt: new Date().toISOString(), id: "removed", input: {}, name: "removed", status: "pending" })
+    await test.store.approvals.transition("approval-0", "pending", "denied")
+    const list = vi.spyOn(test.store.approvals, "list")
+    const handler = createConnectionsHandler({ runtime: () => test.runtime })
+    const response = await handler(post({ action: "approval-counts" }))
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe(JSON.stringify({ counts: { mail: 204 } }))
+    expect(list).not.toHaveBeenCalled()
   })
 
   it("rejects cross-origin, non-JSON, and invalid requests", async () => {

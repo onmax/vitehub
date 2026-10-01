@@ -647,7 +647,6 @@ async function applyNitroConfig(
   }
   restoreReplayOwnership()
   config.build ??= {}
-  config.base = nuxt.options.app?.baseURL ?? "/"
   config.nitro = nitroConfig
   config.server ??= {}
   const transformWorkflowRegistry = plugins.map(agentWorkflowRegistryTransform).find(Boolean)

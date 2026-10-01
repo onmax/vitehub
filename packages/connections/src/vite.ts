@@ -74,15 +74,14 @@ function renderRegistryTypes(definitions: DiscoveredConnectionDefinition[]): str
 }
 
 function renderHandler(importBase: string, actor: string | undefined, basePath: string): string {
-  const imports = `import { createConnectionsHandler } from ${JSON.stringify(`${importBase}/server`)}`
-  if (!actor) {
-    return [imports, "", `const handle = createConnectionsHandler({ basePath: ${JSON.stringify(basePath)} })`, "", "export default (event: { req: Request }) => handle(event.req)", ""].join("\n")
-  }
   return [
-    imports,
-    `import actor from ${JSON.stringify(actor)}`,
+    `import { createConnectionsHandler } from ${JSON.stringify(`${importBase}/server`)}`,
+    ...(actor ? [`import actor from ${JSON.stringify(actor)}`] : []),
     "",
-    `export default (event: { req: Request }) => createConnectionsHandler({ actor: () => actor(event), basePath: ${JSON.stringify(basePath)} })(event.req)`,
+    "export default (event: { req: Request }) => {",
+    `  const basePath = new URL(event.req.url).pathname.match(/^(.*?\\/_vitehub\\/connections)(?:\\/connect\\/.*|\\/callback)?\\/?$/)?.[1] ?? ${JSON.stringify(basePath)}`,
+    `  return createConnectionsHandler({ ${actor ? "actor: () => actor(event), " : ""}basePath })(event.req)`,
+    "}",
     "",
   ].join("\n")
 }
@@ -154,7 +153,8 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
       nitro.externals = { ...externals, inline }
 
       if (environment.command === "serve" || options.management) {
-        await writeFileIfChanged(handlerFile, renderHandler(importBase, options.actor, `${(config.base ?? "/").replace(/\/+$/, "")}/_vitehub/connections`))
+        // SAFETY: Nitro baseURL is a normalized mount string when provided by the Nitro config boundary.
+        await writeFileIfChanged(handlerFile, renderHandler(importBase, options.actor, `${((nitro.baseURL as string | undefined) ?? "/").replace(/\/+$/, "")}/_vitehub/connections`))
         const kit = createNitroServerKit(nitro)
         // Mount only the API routes. Other requests, such as `GET /_vitehub/connections`, reach the Console page.
         kit.addHandler({ handler: handlerFile, method: "post", route: "/_vitehub/connections" })

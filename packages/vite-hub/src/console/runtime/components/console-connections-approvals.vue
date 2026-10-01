@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, shallowRef } from "vue";
 import {
   connectionApprovalResultSchema,
   loadConnectionApprovals,
@@ -8,6 +8,9 @@ import {
 const props = defineProps<{ endpoint: string; name: string }>();
 const emit = defineEmits<{ changed: [] }>();
 const approvals = ref<Awaited<ReturnType<typeof loadConnectionApprovals>>["history"]>([]);
+const pendingCursors = ref<(string | undefined)[]>([undefined]);
+const pendingPage = shallowRef(0);
+const nextCursor = shallowRef<string>();
 const loaded = ref(false);
 const busy = ref(false);
 const error = ref("");
@@ -26,14 +29,29 @@ async function run(action: () => Promise<void>) {
     busy.value = false;
   }
 }
-async function fetchApprovals() {
-  const result = await loadConnectionApprovals(props.endpoint, props.name);
+async function fetchApprovals(before?: string) {
+  const result = await loadConnectionApprovals(props.endpoint, props.name, before);
   approvals.value = result.history;
   pending.value = result.pending;
+  nextCursor.value = result.nextCursor;
   loaded.value = true;
 }
 function load() {
-  return run(fetchApprovals);
+  return run(async () => {
+    await fetchApprovals();
+    pendingCursors.value = [undefined];
+    pendingPage.value = 0;
+  });
+}
+function changePage(direction: "next" | "previous") {
+  return run(async () => {
+    const page = pendingPage.value + (direction === "next" ? 1 : -1);
+    const before = direction === "next" ? nextCursor.value : pendingCursors.value[page];
+    if (page < 0 || (direction === "next" && !before)) return;
+    await fetchApprovals(before);
+    pendingCursors.value = [...pendingCursors.value.slice(0, page), before];
+    pendingPage.value = page;
+  });
 }
 function decide(id: string, decision: "approve" | "deny") {
   return run(async () => {
@@ -54,7 +72,7 @@ function decide(id: string, decision: "approve" | "deny") {
     } catch (cause) {
       failure = cause;
     }
-    await fetchApprovals();
+    await fetchApprovals(pendingCursors.value[pendingPage.value]);
     emit("changed");
     if (!failure) return;
     const message = failure instanceof Error ? failure.message : "Could not complete the request.";
@@ -105,6 +123,11 @@ onMounted(load);
         </div>
       </li>
     </ol>
+    <nav v-if="pendingPage > 0 || nextCursor" aria-label="Pending approval pages" class="flex items-center gap-2">
+      <UButton label="Previous" color="neutral" variant="outline" size="xs" :disabled="busy || pendingPage === 0" @click="changePage('previous')" />
+      <span class="text-xs text-muted">Page {{ pendingPage + 1 }}</span>
+      <UButton label="Next" color="neutral" variant="outline" size="xs" :disabled="busy || !nextCursor" @click="changePage('next')" />
+    </nav>
     <section v-if="decided.length" class="space-y-2">
       <h3 class="text-sm text-muted">Decided</h3>
       <ol role="list" aria-label="Decided approvals" class="divide-y divide-default">

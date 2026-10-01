@@ -28,7 +28,8 @@ const actionSchema = v.variant("action", [
   v.object({ action: v.literal("complete"), code: v.pipe(v.string(), v.minLength(1), v.maxLength(4096)), state: id }),
   v.object({ action: v.literal("revoke"), name }),
   v.object({ action: v.literal("activity"), before: v.optional(id), name }),
-  v.object({ action: v.literal("approvals"), name: v.optional(name), status: v.optional(v.picklist(["approved", "denied", "executed", "failed", "pending"])) }),
+  v.object({ action: v.literal("approval-counts") }),
+  v.object({ action: v.literal("approvals"), before: v.optional(id), name: v.optional(name), status: v.optional(v.picklist(["approved", "denied", "executed", "failed", "pending"])) }),
   v.object({ action: v.literal("approve"), id }),
   v.object({ action: v.literal("deny"), id }),
 ])
@@ -149,7 +150,8 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions = {}
         case "complete": return json({ connection: await connections.complete(input) })
         case "revoke": return json({ connection: await connections.revoke({ actor, name: input.name }) })
         case "activity": return json({ activity: await connections.activity(input) })
-        case "approvals": return json({ approvals: await connections.approvals({ ...(input.name ? { name: input.name } : {}), ...(input.status ? { status: input.status } : {}) }) })
+        case "approval-counts": return json({ counts: await connections.approvalCounts() })
+        case "approvals": return json(await connections.approvals({ ...(input.before ? { before: input.before } : {}), ...(input.name ? { name: input.name } : {}), ...(input.status ? { status: input.status } : {}) }))
         case "approve": return json(await connections.approve({ actor, id: input.id }))
         case "deny": return json({ approval: await connections.deny({ actor, id: input.id }) })
       }

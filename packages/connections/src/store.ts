@@ -7,7 +7,7 @@ import { ConnectionError } from "./errors.ts"
 
 import type { EnvAccessStore, EnvBridge, EnvSecretStore } from "@vite-hub/env/bridge"
 import type { EnvDatabase } from "@vite-hub/env/database"
-import type { ConnectionApproval, ConnectionApprovalStatus } from "./types.ts"
+import type { ConnectionApproval, ConnectionApprovalPage, ConnectionApprovalStatus } from "./types.ts"
 
 export interface ConnectionState {
   accountEmail?: string
@@ -34,8 +34,10 @@ export interface ConnectionStore {
   approvals: {
     create: (approval: ConnectionApproval) => Promise<void>
     get: (id: string) => Promise<ConnectionApproval | undefined>
-    /** Pending queries return every actionable approval. Other queries return the newest 100. */
-    list: (input: { name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApproval[]>
+    /** Return at most 100 approvals in insertion order, newest first. */
+    list: (input: { before?: string, name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApprovalPage>
+    /** Count pending approvals for the configured Connection names without loading call inputs. */
+    pendingCounts: (names: readonly string[]) => Promise<Record<string, number>>
     /** Move an approval from one status to another. Returns `undefined` when the status was not `from`. */
     transition: (id: string, from: ConnectionApprovalStatus, to: ConnectionApprovalStatus, patch?: { decidedAt?: string, decidedBy?: string, error?: string }) => Promise<ConnectionApproval | undefined>
   }
@@ -191,10 +193,21 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
         const row = (await db.all(sql`SELECT ${approvalColumns} FROM vitehub_connection_approvals WHERE id = ${id}`))[0]
         return row === undefined ? undefined : toApproval(row)
       },
-      async list({ name, status }) {
+      async list({ before, name, status }) {
         await initialize()
-        const rows = await db.all(sql`SELECT ${approvalColumns} FROM vitehub_connection_approvals WHERE 1 = 1 ${name ? sql`AND name = ${name}` : sql``} ${status ? sql`AND status = ${status}` : sql``} ORDER BY sequence DESC ${status === "pending" ? sql`` : sql`LIMIT 100`}`)
-        return rows.map(toApproval)
+        const rows = await db.all(sql`SELECT ${approvalColumns} FROM vitehub_connection_approvals WHERE 1 = 1 ${name ? sql`AND name = ${name}` : sql``} ${status ? sql`AND status = ${status}` : sql``} ${before ? sql`AND sequence < (SELECT sequence FROM vitehub_connection_approvals WHERE id = ${before})` : sql``} ORDER BY sequence DESC LIMIT 101`)
+        const approvals = rows.slice(0, 100).map(toApproval)
+        const nextCursor = rows.length > 100 ? approvals.at(-1)?.id : undefined
+        return nextCursor ? { approvals, nextCursor } : { approvals }
+      },
+      async pendingCounts(names) {
+        await initialize()
+        if (!names.length) return {}
+        const rows = await db.all(sql`SELECT name, COUNT(*) AS count FROM vitehub_connection_approvals WHERE status = 'pending' AND name IN (${sql.join(names.map(name => sql`${name}`), sql`, `)}) GROUP BY name`)
+        return Object.fromEntries(rows.map(row => {
+          const stored = v.parse(v.object({ name: identifier, count: v.pipe(v.number(), v.integer(), v.minValue(0)) }), row)
+          return [stored.name, stored.count]
+        }))
       },
       async transition(id, from, to, patch = {}) {
         await initialize()

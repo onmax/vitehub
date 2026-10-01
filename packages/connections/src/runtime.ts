@@ -6,6 +6,7 @@ import type { ConnectionState, ConnectionStore } from "./store.ts"
 import type {
   ConnectionApiCatalog,
   ConnectionApproval,
+  ConnectionApprovalPage,
   ConnectionApprovalStatus,
   ConnectionDefinition,
   ConnectionInspection,
@@ -64,7 +65,9 @@ export interface ConnectionRuntimeClient {
 
 export interface ConnectionsRuntime {
   activity: (input: { before?: string, name: string }) => Promise<readonly EnvActivity[]>
-  approvals: (input?: { name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApproval[]>
+  /** Return a bounded page. Pass `nextCursor` as `before` to continue. */
+  approvals: (input?: { before?: string, name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApprovalPage>
+  approvalCounts: () => Promise<Record<string, number>>
   /** Approve a pending write and run it under the actor that requested it. */
   approve: (input: { actor?: string, id: string }) => Promise<{ approval: ConnectionApproval, result?: unknown }>
   /** Start an authorization code flow with PKCE. Returns the provider URL. */
@@ -617,8 +620,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return await (await getStore()).bridge.activity(envContext("connections"), tokenKey(input.name), input.before)
   }
 
-  async function approvals(input: { name?: string, status?: ConnectionApprovalStatus } = {}): Promise<ConnectionApproval[]> {
+  async function approvals(input: { before?: string, name?: string, status?: ConnectionApprovalStatus } = {}): Promise<ConnectionApprovalPage> {
     return await (await getStore()).approvals.list(input)
+  }
+
+  async function approvalCounts(): Promise<Record<string, number>> {
+    return await (await getStore()).approvals.pendingCounts(Object.keys(options.definitions))
   }
 
   async function approve(input: { actor?: string, id: string }): Promise<{ approval: ConnectionApproval, result?: unknown }> {
@@ -673,6 +680,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   return {
     activity,
     approvals,
+    approvalCounts,
     approve,
     authorize,
     client: buildClient,

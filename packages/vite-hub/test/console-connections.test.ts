@@ -8,6 +8,7 @@ import { consoleSessionActor } from "../src/console/auth.ts"
 import { consoleConnectionsActorId, writeConsoleConnectionsActor } from "../src/console/auth-build.ts"
 import {
   connectionApprovalsSchema,
+  connectionApprovalCountsSchema,
   connectionConnectURL,
   connectionListSchema,
   loadConnectionApprovals,
@@ -56,6 +57,34 @@ describe("Connections management client", () => {
     const result = await loadConnectionApprovals("/_vitehub/connections", "gmail")
     expect(result.history).toHaveLength(100)
     expect(result.pending).toEqual([pending])
+  })
+
+  it("requests an older bounded pending page using the returned cursor", async () => {
+    const base = { action: "gmail.users.messages.modify", actor: "agent:mail", createdAt: "2026-09-29T08:00:00.000Z", name: "gmail", status: "pending" }
+    const fetch = vi.fn(async (_endpoint, init: RequestInit) => {
+      const input = JSON.parse(String(init.body)) as { before?: string, status?: string }
+      if (!input.status) return Response.json({ approvals: [] })
+      return Response.json(input.before
+        ? { approvals: [{ ...base, id: "old-pending" }] }
+        : { approvals: Array.from({ length: 100 }, (_, index) => ({ ...base, id: `pending-${index}` })), nextCursor: "pending-99" })
+    })
+    vi.stubGlobal("fetch", fetch)
+    const first = await loadConnectionApprovals("/_vitehub/connections", "gmail")
+    expect(first.pending).toHaveLength(100)
+    expect(first.nextCursor).toBe("pending-99")
+    const second = await loadConnectionApprovals("/_vitehub/connections", "gmail", first.nextCursor)
+    expect(second.pending).toEqual([{ ...base, id: "old-pending" }])
+    expect(second.nextCursor).toBeUndefined()
+    expect(fetch).toHaveBeenCalledWith("/_vitehub/connections", expect.objectContaining({
+      body: JSON.stringify({ name: "gmail", status: "pending", before: "pending-99", action: "approvals" }),
+    }))
+  })
+
+  it("validates grouped approval counts without requiring approval rows", async () => {
+    const fetch = vi.fn().mockResolvedValue(Response.json({ counts: { gmail: 205 } }))
+    vi.stubGlobal("fetch", fetch)
+    expect(await requestConnectionsManagement("/_vitehub/connections", "approval-counts", connectionApprovalCountsSchema)).toEqual({ counts: { gmail: 205 } })
+    expect(fetch).toHaveBeenCalledWith("/_vitehub/connections", expect.objectContaining({ body: JSON.stringify({ action: "approval-counts" }) }))
   })
 
   it("does not keep approval inputs", async () => {

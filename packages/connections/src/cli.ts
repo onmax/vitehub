@@ -3,7 +3,7 @@ import { createServer } from "node:http"
 import { CONNECTIONS_ROUTE } from "./route.ts"
 
 import type { ViteHubCliContext, ViteHubCliContributor, ViteHubCliFeature } from "@vite-hub/internal/cli"
-import type { ConnectionApproval, ConnectionInspection } from "./types.ts"
+import type { ConnectionApproval, ConnectionApprovalPage, ConnectionInspection } from "./types.ts"
 
 type CliContext = Pick<ViteHubCliContext, "env" | "stderr" | "stdout">
 
@@ -240,7 +240,7 @@ const commands: Record<string, { description: string, run: Command, usage: strin
   },
   approvals: {
     description: "List, approve, or deny writes that wait for approval.",
-    usage: "vitehub connections approvals [approve|deny <id>] [--name <name>] [--status <status>] [--url <app>] [--json]",
+    usage: "vitehub connections approvals [approve|deny <id>] [--name <name>] [--status <status>] [--before <cursor>] [--url <app>] [--json]",
     async run(parsed, context, options) {
       const [subcommand, id] = parsed.positionals
       if (subcommand === "approve" || subcommand === "deny") {
@@ -256,12 +256,17 @@ const commands: Record<string, { description: string, run: Command, usage: strin
       }
       if (subcommand) throw new CliError(`Unknown approvals command: ${subcommand}.`)
       const name = flag(parsed, "--name")
-      const { approvals } = await request<{ approvals: ConnectionApproval[] }>(parsed, options, {
+      const before = flag(parsed, "--before")
+      const page = await request<ConnectionApprovalPage>(parsed, options, {
         action: "approvals",
+        ...(before ? { before } : {}),
         ...(name ? { name } : {}),
         status: flag(parsed, "--status") ?? "pending",
       })
-      write(context, parsed, approvals, () => approvals.length ? approvals.map(describeApproval).join("\n") : "No approvals.")
+      write(context, parsed, page, () => [
+        page.approvals.length ? page.approvals.map(describeApproval).join("\n") : "No approvals.",
+        ...(page.nextCursor ? [`Next page: repeat this command with --before ${page.nextCursor}.`] : []),
+      ].join("\n"))
     },
   },
   revoke: {
@@ -287,7 +292,8 @@ function usage(): string {
     "Options:",
     "  --url <url>   App origin. Defaults to VITEHUB_CONNECTIONS_URL or http://localhost:5173.",
     "  --port <port> Loopback callback port for connect. The OAuth client must allow http://127.0.0.1:<port>/callback.",
-    "  --json        Print JSON.",
+    "  --before <id> Read older activity or approval pages.",
+    "  --json        Print JSON. Approval lists return { approvals, nextCursor? }.",
     "",
   ].join("\n")
 }
