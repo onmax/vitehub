@@ -10,7 +10,8 @@ const clientRoot = resolve(import.meta.dirname, "src/console/runtime/client");
 const katexStyleImport = /^@import\s+["']katex\/dist\/katex\.min\.css["'];?\s*$/m;
 
 export default defineConfig({
-  base: "/_vitehub/assets/",
+  // Resolve lazy chunks from the served bundle URL, including application mounts.
+  base: "./",
   resolve: {
     alias: {
       "vite-hub/agent/vue": resolve(import.meta.dirname, "../agent/src/vue.ts"),
