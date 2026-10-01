@@ -113,13 +113,17 @@ function toAdvocaatQuestion(name: string, question: AskQuestion): AdvocaatQuesti
   // Keep the public Jev contract's number and boolean values intact at this boundary.
   switch (question.type) {
     case "chance":
-      return { criteria: question.criteria, instructions: question.instructions, type: "noul" } as unknown as AdvocaatQuestion
+      const chanceQuestion: unknown = { criteria: question.criteria, instructions: question.instructions, type: "noul" }
+      // SAFETY: advocaat 0.0.6 calls this question type "noul" while the public ask API calls it "chance".
+      return chanceQuestion as AdvocaatQuestion
     case "choice":
     case "score":
     case "if":
     case "switch":
       validateQuestionCriteria(name, question)
-      return question as unknown as AdvocaatQuestion
+      const compatibleQuestion: unknown = question
+      // SAFETY: ask question criteria are validated above and advocaat accepts these shared JSON shapes.
+      return compatibleQuestion as AdvocaatQuestion
   }
   throw invalidQuestion(name)
 }
@@ -144,7 +148,9 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
   }))
   const advocaat = await loadAdvocaat()
   const options = await typesafeOptions(context)
-  const answers = await advocaat.ask(toEntry(state) as unknown as AdvocaatEntry, wire, { ...options, signal: context.abortSignal })
+  // SAFETY: toEntry removes unsupported undefined/functions and preserves JSON scalars; advocaat's declaration omits scalar entries.
+  const entry: AdvocaatEntry = toEntry(state) as AdvocaatEntry
+  const answers = await advocaat.ask(entry, wire, { ...options, signal: context.abortSignal })
   // SAFETY: advocaat answers under the same keys, with the answer shapes that AskAnswers describes for each question type.
   return answers as AskAnswers<Q>
 }

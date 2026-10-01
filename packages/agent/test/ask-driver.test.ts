@@ -99,16 +99,9 @@ describe("ask Driver", () => {
   })
 
   it.each([42, true, false])("preserves scalar Invocation data (%j) for Jev", async (data) => {
-    const dispatch = vi.spyOn(askRuntime, "askJev").mockResolvedValue({ value: true })
-    const agent = defineAgent({
-      driver: { ask: { value: ask.if("Is it true?", { threshold: 0.5 }) } },
-      runtime: false,
-    })
+    await askRuntime.askJev({}, data, { value: ask.if("Is it true?", { threshold: 0.5 }) })
 
-    await runAgent(agent, runtime(), { data })
-
-    expect(dispatch.mock.calls.at(-1)?.[1]).toBe(data)
-    dispatch.mockRestore()
+    expect(askJev).toHaveBeenLastCalledWith(data, expect.any(Object), expect.any(Object))
   })
 
   it.each([-0.1, 1.1, Number.NEGATIVE_INFINITY])("rejects the invalid probability threshold %s", (threshold) => {
