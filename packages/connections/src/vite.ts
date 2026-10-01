@@ -101,25 +101,23 @@ async function removeTrackedTypes(root: string, retainedRoot?: string): Promise<
 }
 
 async function recordGeneratedTypes(root: string, projectRoot: string, hash: string): Promise<void> {
-  await withManifestLock(root, async () => {
-    const manifest = resolve(root, generatedTypesManifest);
-    const content = await readOptionalFile(manifest);
-    let input: unknown = [];
-    if (content !== undefined) {
-      try {
-        input = JSON.parse(content);
-      } catch (error) {
-        if (!(error instanceof SyntaxError)) throw error;
-      }
+  const manifest = resolve(root, generatedTypesManifest);
+  const content = await readOptionalFile(manifest);
+  let input: unknown = [];
+  if (content !== undefined) {
+    try {
+      input = JSON.parse(content);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
     }
-    const parsed = v.safeParse(generatedTypesManifestSchema, Array.isArray(input) ? input : input ? [input] : []);
-    const entries = parsed.success ? parsed.output : [];
-    const next = [
-      ...entries.filter(entry => resolve(root, entry.root) !== projectRoot),
-      { root: relative(root, projectRoot), hash },
-    ];
-    await writeFileIfChanged(manifest, JSON.stringify(next));
-  });
+  }
+  const parsed = v.safeParse(generatedTypesManifestSchema, Array.isArray(input) ? input : input ? [input] : []);
+  const entries = parsed.success ? parsed.output : [];
+  const next = [
+    ...entries.filter(entry => resolve(root, entry.root) !== projectRoot),
+    { root: relative(root, projectRoot), hash },
+  ];
+  await writeFileIfChanged(manifest, JSON.stringify(next));
 }
 
 export interface ConnectionsVitePluginOptions {
@@ -216,16 +214,18 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
 
   async function refreshGeneratedFiles(): Promise<void> {
     if (projectRoot !== defaultProjectRoot) await removeLegacyDefaultTypes(defaultProjectRoot)
-    await Promise.all([
-      writeFileIfChanged(
-        resolve(projectRoot, ".vitehub", "types", "connections.d.ts"),
-        renderRegistryTypes(definitions),
-      ),
-      ...(nitroRegistryFile
-        ? [writeFileIfChanged(nitroRegistryFile, renderRegistry(definitions, database))]
-        : []),
-    ]);
-    await recordGeneratedTypes(defaultProjectRoot, projectRoot, typeHash(renderRegistryTypes(definitions)));
+    await withManifestLock(defaultProjectRoot, async () => {
+      await Promise.all([
+        writeFileIfChanged(
+          resolve(projectRoot, ".vitehub", "types", "connections.d.ts"),
+          renderRegistryTypes(definitions),
+        ),
+        ...(nitroRegistryFile
+          ? [writeFileIfChanged(nitroRegistryFile, renderRegistry(definitions, database))]
+          : []),
+      ]);
+      await recordGeneratedTypes(defaultProjectRoot, projectRoot, typeHash(renderRegistryTypes(definitions)));
+    });
     generatedRoot = projectRoot;
   }
 
