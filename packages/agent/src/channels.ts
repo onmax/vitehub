@@ -23,6 +23,7 @@ import type {
   AgentActivityTask,
   AgentActivityUpdate,
   AgentCallbackContext,
+  AgentGitHub,
   AgentCapabilityDefinition,
   AgentChatFinishExtension,
   AgentChatMessage,
@@ -52,7 +53,7 @@ import type {
   PublishedAgentDeliveryArtifact,
 } from "./types.ts"
 import { defineMessageChannelInstructions } from "./internal/channels.ts"
-import { chatFinishDeliveryRegistrarKey, setMessageChannelDeferredReplyTrace } from "./internal/chat-finish-delivery.ts"
+import { chatFinalReplyIntent, chatFinalReplyText, chatFinishDeliveryRegistrarKey, setChatFinalReplyText, setMessageChannelDeferredReplyTrace } from "./internal/chat-finish-delivery.ts"
 import type { ChatFinishDeliveryRegistrar } from "./internal/chat-finish-delivery.ts"
 import { withAgentChannelSyncDefinition } from "./internal/channel-sync.ts"
 import { channelDeliveryHandlers } from "./internal/channel-delivery-handlers.ts"
@@ -120,6 +121,7 @@ export type {
   AgentChannelMessageOf,
   AgentChannelReplyCalls,
   AgentChannels,
+  AgentGitHub,
   AgentDeliveryArtifact,
   AgentDeliveryArtifactPlacement,
   AgentGitHubMessageCalls,
@@ -496,7 +498,11 @@ export interface GitHubChannelOptions<
 >
   extends AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods> {
   activity?: boolean | GitHubChannelActivityOptions<TRuntimeConfig>
-  app?: true | GitHubAppOptions<TRuntimeConfig>
+  /**
+   * GitHub App settings, or an Agent GitHub identity such as `createGitHubHost()`.
+   * An identity also becomes the Agent `github` identity when `defineAgent({ github })` is not set.
+   */
+  app?: true | GitHubAppOptions<TRuntimeConfig> | AgentGitHub
   pullRequest?: boolean | GitHubPullRequestCommentEventOptions<TRuntimeConfig>
 }
 
@@ -2143,6 +2149,18 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     return
   }
   let body = messageChannelReplyBody(context)
+  // Skip matching non-streaming text-only hook replies after confirmed final delivery.
+  const finalText = context.effect.intent === chatFinalReplyIntent ? undefined : chatFinalReplyText(context.context)
+  const payload = context.effect.payload
+  const textOnly = !artifacts.length && (!isRecord(payload) || (payload.attachments === undefined && payload.files === undefined))
+  if (!stream && textOnly && finalText !== undefined && body?.trim() === finalText) {
+    setMessageChannelDeliveredReplyBody(context, body)
+    setMessageChannelDeferredReplyTrace(context, (callback) => {
+      void callback({ content: finalText.slice(0, 16 * 1024), skipped: "Same text as the final reply.", truncated: finalText.length > 16 * 1024 }).catch(() => undefined)
+      return true
+    })
+    return
+  }
   if (stream) {
     for await (const chunk of stream) body = `${body || ""}${chunk}`
   }
@@ -2162,7 +2180,13 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     // SAFETY: Chat finish extensions are created by the route boundary, which also owns the optional delivery registrar.
     const registrar = chat as AgentChatFinishExtension & ChatFinishDeliveryRegistrar
     if (registrar[chatFinishDeliveryRegistrarKey]) {
-      setMessageChannelDeferredReplyTrace(context, callback => registrar[chatFinishDeliveryRegistrarKey]?.(message, callback) ?? false)
+      setMessageChannelDeferredReplyTrace(context, callback => registrar[chatFinishDeliveryRegistrarKey]?.(message, async (capture) => {
+        if (context.effect.intent === chatFinalReplyIntent && body && !capture.error && !capture.skipped) setChatFinalReplyText(context.context, body.trim())
+        await callback(capture)
+      }, {
+        continueOnError: context.effect.intent === chatFinalReplyIntent,
+        shouldSkip: () => !stream && context.effect.intent !== chatFinalReplyIntent && textOnly && body?.trim() === chatFinalReplyText(context.context),
+      }) ?? false)
     }
     return
   }
@@ -2172,6 +2196,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     : undefined
   if (adapter && context.run?.threadId) {
     await adapter.postMessage(adapter.channelIdFromThreadId(context.run.threadId), message)
+    if (context.effect.intent === chatFinalReplyIntent && body) setChatFinalReplyText(context.context, body.trim())
   }
 }
 
@@ -3183,6 +3208,33 @@ export function discord<
   })
 }
 
+const githubChannelIdentityKey = Symbol.for("vitehub.githubChannelIdentity")
+
+function isAgentGitHub(value: unknown): value is AgentGitHub {
+  return isRecord(value) && hasRuntimeType(value.access, "function")
+}
+
+function githubChannelAppOptions<TRuntimeConfig extends AgentRuntimeConfig>(input: GitHubChannelOptions<TRuntimeConfig>["app"]): true | GitHubAppOptions<TRuntimeConfig> | undefined {
+  if (!isAgentGitHub(input)) return input
+  const identity = input
+  const login = identity.identity?.()
+  return {
+    token: async (_context, scope) => (await identity.access(scope.repository ? { repository: scope.repository } : {})).token,
+    ...(login ? { identity: { login } } : {}),
+  }
+}
+
+/** Return the GitHub identity shared by the Agent's github() Channels, when there is exactly one. */
+export function githubChannelIdentity(channels: Readonly<Record<string, object>> | undefined): AgentGitHub | undefined {
+  const identities = new Set<AgentGitHub>()
+  for (const channel of Object.values(channels || {})) {
+    // SAFETY: github() stores its identity under this private symbol.
+    const identity = (channel as { [githubChannelIdentityKey]?: AgentGitHub })[githubChannelIdentityKey]
+    if (identity) identities.add(identity)
+  }
+  return identities.size === 1 ? [...identities][0] : undefined
+}
+
 export function github<
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -3232,7 +3284,9 @@ export function github<
 >(
   options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods> = {},
 ): AgentChannelDefinitionOf<TRuntimeConfig, "github", TData, TMethods> {
-  const { activity, app: appOptions, pullRequest, ...channelOptions } = options
+  const { activity, app: appInput, pullRequest, ...channelOptions } = options
+  const identity = isAgentGitHub(appInput) ? appInput : undefined
+  const appOptions = githubChannelAppOptions(appInput)
   const activityDefinition = activity ? githubAgentActivity(appOptions) : undefined
   const openedActivityDefinition = activity ? githubAgentActivity(appOptions, "initialize") : undefined
   const app = githubAppOptions(appOptions)
@@ -3249,7 +3303,7 @@ export function github<
         userAgent: app?.userAgent,
       })
     : undefined
-  return defineChannel("github", {
+  const channel = defineChannel("github", {
     ...channelOptions,
     activity: activityDefinition,
     capabilities: [
@@ -3264,6 +3318,8 @@ export function github<
     },
     webhooks: githubWebhookDefaults(options.webhooks, appOptions),
   })
+  if (identity) Object.defineProperty(channel, githubChannelIdentityKey, { enumerable: true, value: identity })
+  return channel
 }
 
 export function http<

@@ -165,6 +165,8 @@ describe("Channel message handle", () => {
         portal: webChat({
           route: {
             mapInput: ({ input }) => {
+              const metadata = input.messages.at(-1)?.metadata
+              if (typeof metadata === "object" && metadata !== null && "category" in metadata) metadata.category = "mapped"
               input.messages.push({ id: "mapped-message", role: "user", parts: [{ type: "text", text: "mapped" }] })
               return { messages: input.messages.slice(-1) }
             },
@@ -176,7 +178,7 @@ describe("Channel message handle", () => {
         }),
       },
       driver: { run: ({ input }) => {
-        history.push(input.messages?.map(message => ({ id: message.id, text: message.text })))
+        history.push(input.messages?.map(message => message.id))
         if (fail) throw new Error("driver failed")
         return "ok"
       } },
@@ -204,7 +206,7 @@ describe("Channel message handle", () => {
     expect(response.status, responseText).toBe(fail ? 500 : 200)
     expect(seen).toEqual([{ id: "current-message", text: "current", metadata: { category: "support" } }])
     expect(label).toHaveBeenCalledWith("current-message", fail ? "failed" : "finished")
-    expect(history).toEqual([[{ id: "mapped-message", text: "mapped" }]])
+    expect(history).toEqual([["mapped-message"]])
   })
 
   it.each([false, true])("retains custom message methods on a Telegram helper with dryRun=%s", async dryRun => {

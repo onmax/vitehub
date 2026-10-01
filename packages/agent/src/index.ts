@@ -35,7 +35,7 @@ import { agentTelemetryWorkspaceSources, getAgentTelemetryConfiguration, safeAge
 import { getCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { getAgentInvocationRecoveryWorkflowName } from "@vite-hub/internal/agent-workflow"
 import { parseStandardSchema } from "@vite-hub/internal/http-request"
-import { agentResultKind, agentStreamErrorSymbol, appendLatestFinalText, finalTextFromAgentOutput, hasTraceableStreamResult, isAsyncIterable, resolveAgentUsageRecord, streamAgentOutputToEvents, toAgentRunResult, toAgentStreamEvent, usageRecordFromStreamChunk } from "./agent-output.ts"
+import { agentResultKind, agentStreamErrorSymbol, agentToolStreamDefaults, appendLatestFinalText, finalTextFromAgentOutput, hasTraceableStreamResult, isAsyncIterable, resolveAgentUsageRecord, streamAgentOutputToEvents, toAgentRunResult, toAgentStreamEvent, usageRecordFromStreamChunk } from "./agent-output.ts"
 import { defineChatCapability, durableChatErrorFallbackTimeout, getAgentChatContext, getChatCapabilityOptions, isDurableChatErrorFallbackEffect, resolveChatMessageContextInstructions, resolveChatMessageRunMetadata, resolveDurableChatErrorFallbackIntents } from "./chat-trigger.ts"
 import { agentWorkflowExecutionContextKey } from "./internal/workflow-execution.ts"
 import { consumeParsedAgentWorkflowInput } from "./internal/workflow-parsed-input.ts"
@@ -63,8 +63,9 @@ import {
   teams as builtInTeams,
   telegram as builtInTelegram,
   webChat as builtInWebChat,
+  githubChannelIdentity,
 } from "./channels.ts"
-import { registerMessageChannelDeferredReplyTrace, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
+import { registerMessageChannelDeferredReplyTrace, setChatFinalReplyText, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
 import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, createAgentInvocationContextStore } from "./invocation-context.ts"
 import { bindAgentRunEvents, type AgentRunEventPublisher } from "./run-events.ts"
 import { bindAgentInvocations, type AgentInvocationJournal } from "./invocations.ts"
@@ -249,11 +250,15 @@ export { agentInvocationId } from "./invocations.ts"
 
 export type {
   AgentInvocationAnnotationValue,
+  AgentInvocationDeleteOutcome,
   AgentInvocationListOptions,
   AgentInvocationListResult,
   AgentInvocationObservationOptions,
+  AgentInvocationPruneOptions,
+  AgentInvocationPruneResult,
   AgentInvocationRecord,
   AgentInvocationRecordStatus,
+  AgentInvocationRetentionOptions,
   AgentInvocationSummary,
   AgentInvocations,
   AgentInvocationStore,
@@ -470,6 +475,8 @@ export type {
   AgentRunResult,
   AgentRuntime,
   AgentBoxContext,
+  AgentGitHub,
+  AgentGitHubAccess,
   AgentBoxDefinitions,
   AgentBoxInput,
   AgentBoxValue,
@@ -839,6 +846,7 @@ function withAgentBox<TRuntimeConfig extends AgentRuntimeConfig>(
   agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
   context: AgentRuntimeContext<TRuntimeConfig>,
 ): AgentRuntimeContext<TRuntimeConfig> {
+  if (agent.github && !context.githubIdentity) context = { ...context, githubIdentity: agent.github }
   if (context.box) return context
   const input = agent.box
   const configured = hasRuntimeType(input, "function") ? input() : input
@@ -1859,6 +1867,7 @@ async function callChannelMessageMethod<
 export { applyAgentToolPolicies, withAgentToolStepReporting } from "./tool-runtime.ts"
 export { inspectAgentTools } from "./tool-inspection.ts"
 export { defineCapability } from "./capability-runtime.ts"
+export { agentWithSkills } from "./internal/colocated-agent-skills.ts"
 export { isResolvedAgentTriggerHandledInvocation, verifyAgentWebhookRequest } from "./trigger-runtime.ts"
 export type { AgentWebhookVerificationResult, ResolvedAgentTriggerHandledInvocation, ResolvedAgentTriggerInvocation, ResolvedAgentTriggerInvocationResult } from "./trigger-runtime.ts"
 export * from "./messages.ts"
@@ -1990,6 +1999,7 @@ function defineBaseAgent<
   const driver = normalizeAgentDriver(options)
   const { box, capabilities, cli, description, hooks, invocations, messages, name, runtime = defaultAgentWorkflowRuntime(), runEvents, uiMessageStream, version, workspace } = options
   const channels = normalizeAgentChannels(options.channels)
+  const github = options.github ?? githubChannelIdentity(channels)
   const run = driver.kind === "run" ? driver.run : undefined
   const capabilitiesResolver = hasRuntimeType(capabilities, "function")
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
@@ -2061,6 +2071,7 @@ function defineBaseAgent<
     [baseAgentResolve]: resolveBaseAgent,
     health: options.health || { handler: (request: Request, healthOptions?: Record<string, unknown>) => createAgentHealthHandler(definition)(request, healthOptions) },
     box,
+    ...(github ? { github } : {}),
     channels,
     chat,
     cli,
@@ -3624,7 +3635,7 @@ function agentTelemetryConfigurationForContent(
         } : {}),
     })),
     ...(policy.instructions === true && instructions ? { instructions } : {}),
-    ...(tools ? { tools: policy.instructions === true ? tools : tools.map(({ name, capabilityId }) => ({ name, ...(capabilityId ? { capabilityId } : {}) })) } : {}),
+    ...(tools ? { tools: policy.instructions === true ? tools : tools.map(({ capabilityId, icon, label, name }) => ({ name, ...(capabilityId ? { capabilityId } : {}), ...(icon ? { icon } : {}), ...(label ? { label } : {}) })) } : {}),
   }
 }
 
@@ -4791,9 +4802,6 @@ function toTraceContext<
   }
 }
 
-function agentToolActivities(tools: AgentToolSet | undefined) {
-  return new Map(Object.entries(tools || {}).flatMap(([name, tool]) => tool.activity ? [[name, tool.activity]] : []))
-}
 
 function maybeTraceAgentStream<
   TRuntimeConfig extends AgentRuntimeConfig,
@@ -4801,14 +4809,15 @@ function maybeTraceAgentStream<
 >(stream: AsyncIterable<StreamEvent>, context: InvocationRunContext<TRuntimeConfig, CALL_OPTIONS>): AsyncIterable<StreamEvent> {
   if (!context.runtimeContext.traceLog && !context.activity) return stream
   const toolNames = new Map<string, string>()
-  const toolActivities = agentToolActivities(context.tools)
+  const toolTitles = new Map<string, string>()
+  const toolDefaults = agentToolStreamDefaults(context.tools)
   const textPhases = new Map<string, AgentMessagePhase | "hidden">()
   const messageState: { messageId?: string } = {}
   const tracer = context.runtimeContext.traceLog ? createAgentStreamEventTracer(toTraceContext(context)) : undefined
   return (async function* () {
     try {
       for await (const event of stream) {
-        const normalized = toAgentStreamEvent(event, toolNames, textPhases, toolActivities, messageState)
+        const normalized = toAgentStreamEvent(event, toolNames, textPhases, toolDefaults, messageState, toolTitles)
         if (normalized) {
           await tracer?.write(normalized)
           await context.activity?.event(normalized)
@@ -5488,7 +5497,8 @@ function withStreamedResult(
   tools?: AgentToolSet,
 ) {
   const toolNames = new Map<string, string>()
-  const toolActivities = agentToolActivities(tools)
+  const toolTitles = new Map<string, string>()
+  const toolDefaults = agentToolStreamDefaults(tools)
   const textPhases = new Map<string, AgentMessagePhase | "hidden">()
   const messageState: { messageId?: string } = {}
   let explicitTextPhaseSeen = false
@@ -5513,7 +5523,7 @@ function withStreamedResult(
     },
     stream: (async function* () {
       for await (const chunk of stream) {
-        const event = toAgentStreamEvent(chunk, toolNames, textPhases, toolActivities, messageState)
+        const event = toAgentStreamEvent(chunk, toolNames, textPhases, toolDefaults, messageState, toolTitles)
         if (toolResults && event?.type === "tool-result" && !event.error) {
           appendAgentToolResult(toolResults, {
             output: event.output,
@@ -5617,7 +5627,8 @@ function traceUiMessageStream<
 >(stream: ReadableStream<unknown>, context: InvocationRunContext<TRuntimeConfig, CALL_OPTIONS>): ReadableStream<unknown> {
   const reader = stream.getReader()
   const toolNames = new Map<string, string>()
-  const toolActivities = agentToolActivities(context.tools)
+  const toolTitles = new Map<string, string>()
+  const toolDefaults = agentToolStreamDefaults(context.tools)
   const textPhases = new Map<string, AgentMessagePhase | "hidden">()
   const messageState: { messageId?: string } = {}
   const tracer = context.runtimeContext.traceLog ? createAgentStreamEventTracer(toTraceContext(context)) : undefined
@@ -5639,7 +5650,7 @@ function traceUiMessageStream<
           controller.close()
           return
         }
-        const event = toAgentStreamEvent(result.value, toolNames, textPhases, toolActivities, messageState)
+        const event = toAgentStreamEvent(result.value, toolNames, textPhases, toolDefaults, messageState, toolTitles)
         if (event) {
           if (event.type === "finish") finished = true
           await tracer?.write(event)
@@ -6206,6 +6217,7 @@ async function finishAgentInvocation<
             })
           })
           setChatFinishPrimaryReplyTrace(chatFinish, async (capture) => {
+            if (!capture.error && !capture.skipped && finishEvent.text?.trim()) setChatFinalReplyText(context.context, finishEvent.text.trim())
             await traceAgentChannelDeliveryEffect(toTraceContext(context), {
               kind: "reply",
               payload: "",

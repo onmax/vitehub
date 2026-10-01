@@ -36,7 +36,7 @@ import { inheritAgentCapacity, inspectAgentCapacity } from "./internal/agent-cap
 import { normalizeAgentDriver } from "./internal/agent-driver.ts"
 import { gatewayModelDescriptor } from "./internal/agent-model.ts"
 import { consumesMessageChannelInstructions, inspectMessageChannelInstructions } from "./internal/channels.ts"
-import { colocatedAgentSkillsSymbol, type ColocatedAgentSkills } from "./internal/colocated-agent-skills.ts"
+import { colocatedAgentSkillsSymbol, discoveredSkillsSetter, type ColocatedAgentSkills } from "./internal/colocated-agent-skills.ts"
 
 import type {
   AgentAdapterInstructions,
@@ -302,6 +302,10 @@ export function workspaceAgentWithSourceRoot<Agent>(agent: Agent, sourceRootDir:
     // SAFETY: Workspace definition normalization establishes the asserted owned Workspace contract.
     ...workspaceDefinitionFromOptions(workspaceOptions as never),
     __vitehubWorkspaceAgentOptions: workspaceOptions,
+  }
+  for (const key of [colocatedAgentSkillsSymbol, discoveredSkillsSetter]) {
+    const descriptor = Object.getOwnPropertyDescriptor(workspaceAgent, key)
+    if (descriptor) Object.defineProperty(decoratedAgent, key, descriptor)
   }
   inheritAgentCapacity(workspaceAgent, decoratedAgent)
   inheritAgentLayerOptions(workspaceAgent, decoratedAgent, {

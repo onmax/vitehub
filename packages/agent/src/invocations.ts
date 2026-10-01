@@ -140,8 +140,44 @@ export interface AgentInvocationStore {
   listCapabilityIds?(agentName?: string): MaybePromise<readonly string[]>
   listTriggeredBy?(agentName?: string): MaybePromise<readonly string[]>
   release(id: string, claimId: string): MaybePromise<void>
+  /** Deletes one terminal record and the claim the store keeps for it. Pending and running records remain. */
+  delete?(id: string): MaybePromise<AgentInvocationDeleteOutcome>
+  /** Deletes terminal records selected by `updatedBefore`, or by the store's configured retention when it is omitted. */
+  prune?(options: AgentInvocationStorePruneOptions): MaybePromise<AgentInvocationPruneResult>
   /** Updates are idempotent for observations carrying the ViteHub observation identity attribute. */
   update(id: string, input: AgentInvocationStoreUpdateInput, claimId?: string): MaybePromise<AgentInvocationRecord | undefined>
+}
+
+/** Retention limits for terminal records. Pending and running records are never removed by retention. */
+export interface AgentInvocationRetentionOptions {
+  /** Maximum age of terminal records, measured from their last update. Set to false to disable age-based retention. */
+  maxAgeMs?: false | number
+  /** Maximum number of terminal records. Set to false to disable count-based retention. */
+  maxRecords?: false | number
+}
+
+/** `not-terminal` means the record is pending or running and was kept. */
+export type AgentInvocationDeleteOutcome = "deleted" | "not-found" | "not-terminal"
+
+export interface AgentInvocationStorePruneOptions {
+  /** Report the selected record IDs without deleting them. */
+  dryRun?: boolean
+  /** ISO timestamp. Selects terminal records last updated before this time. */
+  updatedBefore?: string
+}
+
+export interface AgentInvocationPruneOptions {
+  /** Report the selected record IDs without deleting them. */
+  dryRun?: boolean
+  /** Selects terminal records last updated more than this many milliseconds ago. Omit it to apply the store's configured retention. */
+  olderThanMs?: number
+}
+
+export interface AgentInvocationPruneResult {
+  /** True when the store reported the selection without deleting it. */
+  dryRun: boolean
+  /** Deleted record IDs, or the IDs a dry run selected. */
+  ids: readonly string[]
 }
 
 export interface AgentInvocationObservationOptions {
@@ -194,6 +230,8 @@ export interface AgentInvocations {
   /** Durably append evidence to a live or terminal invocation. Repeated IDs return the existing observation. */
   appendObservation(id: string, event: TraceEvent, options: { id: string }): Promise<AgentInvocationRecord | undefined>
   readonly [agentInvocationsBrand]: true
+  /** Deletes one terminal record. Rejects when the store does not implement deletion. */
+  delete(id: string): Promise<AgentInvocationDeleteOutcome>
   get(id: string, options?: { observationNames?: readonly string[] }): Promise<AgentInvocationRecord | undefined>
   getByRunId(runId: string, agentName?: string): Promise<AgentInvocationRecord | undefined>
   /** Reads invocation metadata without observation payloads. */
@@ -202,6 +240,8 @@ export interface AgentInvocations {
   listAgentNames(): Promise<readonly string[]>
   listCapabilityIds(agentName?: string): Promise<readonly string[]>
   listTriggeredBy(agentName?: string): Promise<readonly string[]>
+  /** Deletes terminal records. Rejects when the store does not implement pruning. */
+  prune(options?: AgentInvocationPruneOptions): Promise<AgentInvocationPruneResult>
 }
 
 interface BoundAgentInvocations extends AgentInvocations {
@@ -1301,6 +1341,29 @@ export function createMemoryAgentInvocationStore(): AgentInvocationStore {
     release(id, claimId) {
       if (claims.get(id)?.claimId === claimId) claims.delete(id)
     },
+    delete(id) {
+      const record = records.get(id)
+      if (!record) return "not-found"
+      if (!terminalStatus(record.status)) return "not-terminal"
+      records.delete(id)
+      claims.delete(id)
+      return "deleted"
+    },
+    prune(options) {
+      // The memory store has no configured retention, so only an explicit cutoff selects records.
+      const ids = options.updatedBefore === undefined
+        ? []
+        : [...records.values()]
+            .filter(record => terminalStatus(record.status) && record.updatedAt < options.updatedBefore!)
+            .map(record => record.id)
+      if (!options.dryRun) {
+        for (const id of ids) {
+          records.delete(id)
+          claims.delete(id)
+        }
+      }
+      return { dryRun: options.dryRun === true, ids }
+    },
     update(id, input, claimId) {
       const record = records.get(id)
       if (!record || (claimId && claims.get(id)?.claimId !== claimId)) return
@@ -2165,6 +2228,30 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         throw agentDiagnostics.AGENT_R0902({ message: "[vitehub] Invocation store did not persist appended observation." })
       }
       return persisted
+    },
+    async delete(id) {
+      assertInvocationId(id)
+      if (!store.delete) {
+        throw agentDiagnostics.AGENT_R0932({ message: "[vitehub] This Agent Invocation store does not support deletion. Implement store.delete() or use a ViteHub store." })
+      }
+      return await store.delete(id)
+    },
+    async prune(pruneOptions = {}) {
+      if (!store.prune) {
+        throw agentDiagnostics.AGENT_R0932({ message: "[vitehub] This Agent Invocation store does not support pruning. Implement store.prune() or use a ViteHub store." })
+      }
+      const { dryRun, olderThanMs } = pruneOptions
+      if (olderThanMs !== undefined && (!Number.isSafeInteger(olderThanMs) || olderThanMs < 0)) {
+        throw agentDiagnostics.AGENT_R0929({ message: "[vitehub] Agent Invocation prune olderThanMs must be a non-negative safe integer." })
+      }
+      const cutoff = olderThanMs === undefined ? undefined : new Date(Date.now() - olderThanMs)
+      if (cutoff && Number.isNaN(cutoff.getTime())) {
+        throw agentDiagnostics.AGENT_R0929({ message: "[vitehub] Agent Invocation prune olderThanMs must produce a cutoff within JavaScript's Date range." })
+      }
+      return await store.prune({
+        ...(dryRun ? { dryRun: true } : {}),
+        ...(cutoff === undefined ? {} : { updatedBefore: cutoff.toISOString() }),
+      })
     },
     async get(id, options) {
       assertInvocationId(id)
