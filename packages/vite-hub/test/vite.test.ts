@@ -576,6 +576,7 @@ describe("vitehub", () => {
       "@vite-hub/markdown-template/vite",
       "vite-hub/deployment-preset",
       "vite-hub/deployment-output",
+      "vite-hub/public-url",
       "vite-hub/dependencies",
       "@vite-hub/env/vite",
       "@vite-hub/connections/types-cleanup",
@@ -602,8 +603,10 @@ describe("vitehub", () => {
       workspace: true,
     }))).toEqual([
       "@vite-hub/markdown-template/vite",
+      "vite-hub/agent-channel-env",
       "vite-hub/deployment-preset",
       "vite-hub/deployment-output",
+      "vite-hub/public-url",
       "vite-hub/dependencies",
       "@vite-hub/env/vite",
       "@vite-hub/auth/vite",
@@ -1187,7 +1190,7 @@ describe("vitehub", () => {
     // SAFETY: The preset config hook populated Nitro commands and modules above.
     const nitroConfig = config.nitro as { commands: Record<string, unknown>, modules: unknown[] }
     nitroConfig.commands.deploy = "npx wrangler --cwd ./ deploy"
-    callHook(output.configResolved, [{ command: "build", nitro: nitroConfig }])
+    callHook(output.configResolved, [{ command: "build", root: "/app", nitro: nitroConfig }])
     const nitro = {
       hooks: { hook: vi.fn() },
       options: {
@@ -1347,6 +1350,7 @@ describe("vitehub", () => {
     const customResolver = { resolveId: vi.fn() }
 
     expect(() => callHook(plugin.configResolved, [{
+      root: "/app",
       command: "build",
       nitro: { preset: "deno-deploy" },
       plugins: [],
