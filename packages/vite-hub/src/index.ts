@@ -952,7 +952,10 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     importBase: "vite-hub/source",
   })
   plugins.push(sourcePlugin)
-  plugins.push(viteHubTypesPlugin({ prepareSources: sourcePlugin.api.prepareSources }))
+  plugins.push(viteHubTypesPlugin({
+    additionalProjectRoots: options.connections && options.connections !== true && options.connections.projectRoot ? [options.connections.projectRoot] : [],
+    prepareSources: sourcePlugin.api.prepareSources,
+  }))
   // SAFETY: Each branch above contributes Vite-compatible plugins or nested plugin options.
   return plugins as PluginOption[]
 }

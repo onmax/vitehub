@@ -28,6 +28,7 @@ const integrationMocks = vi.hoisted(() => ({
   hubBrowser: vi.fn(() => ({ name: "@vite-hub/browser/vite" })),
   hubChannels: vi.fn(() => ({ name: "@vite-hub/channels/vite" })),
   hubConnections: vi.fn(() => ({ name: "@vite-hub/connections/vite" })),
+  hubConnectionsTypesCleanup: vi.fn(() => ({ name: "@vite-hub/connections/types-cleanup" })),
   hubDb: vi.fn(() => ({ name: "@vite-hub/database/vite" })),
   hubEmail: vi.fn(() => ({ name: "@vite-hub/email/vite" })),
   hubEmailOptionalPeerResolver: vi.fn(() => ({ name: "@vite-hub/email/optional-peer-resolver" })),
@@ -76,7 +77,10 @@ vi.mock("@vite-hub/blob/vite", () => ({
 }))
 vi.mock("@vite-hub/browser/vite", () => ({ hubBrowser: integrationMocks.hubBrowser }))
 vi.mock("@vite-hub/channels/vite", () => ({ hubChannels: integrationMocks.hubChannels }))
-vi.mock("@vite-hub/connections/vite", () => ({ hubConnections: integrationMocks.hubConnections }))
+vi.mock("@vite-hub/connections/vite", () => ({
+  hubConnections: integrationMocks.hubConnections,
+  hubConnectionsTypesCleanup: integrationMocks.hubConnectionsTypesCleanup,
+}))
 vi.mock("@vite-hub/database/vite", () => ({ hubDb: integrationMocks.hubDb }))
 vi.mock("@vite-hub/email/vite", () => ({
   hubEmail: integrationMocks.hubEmail,
@@ -574,6 +578,7 @@ describe("vitehub", () => {
       "vite-hub/deployment-output",
       "vite-hub/dependencies",
       "@vite-hub/env/vite",
+      "@vite-hub/connections/types-cleanup",
       "@vite-hub/email/optional-peer-resolver",
       "@vite-hub/kv/optional-peers",
       "@vite-hub/source/vite",
@@ -605,6 +610,7 @@ describe("vitehub", () => {
       "@vite-hub/agent/vite",
       "@vite-hub/channels/vite",
       "@vite-hub/database/vite",
+      "@vite-hub/connections/types-cleanup",
       "@vite-hub/blob/vite",
       "@vite-hub/email/vite",
       "@vite-hub/kv/vite",
@@ -783,6 +789,21 @@ describe("vitehub", () => {
     })
     expect(pluginNames(vitehub({ database: true, preset: "node" }))).not.toContain("@vite-hub/connections/vite")
     expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
+  })
+
+  it("includes custom Connections roots in the generated type entry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-connection-types-"))
+    try {
+      await mkdir(join(root, "packages/api/.vitehub/types"), { recursive: true })
+      await writeFile(join(root, "packages/api/.vitehub/types/connections.d.ts"), "export {}\n")
+      const plugin = dependencyPluginByName(vitehub({ connections: { projectRoot: "packages/api" }, database: true, preset: "node" }), "vite-hub/types")
+      await callHook(plugin.configResolved, [{ root }])
+      expect(await readFile(join(root, ".vitehub/types.d.ts"), "utf8"))
+        .toContain('/// <reference path="./../packages/api/.vitehub/types/connections.d.ts" />')
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it("mounts the Connections management API only behind Console access", () => {
