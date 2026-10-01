@@ -145,8 +145,9 @@ describe("replayChannel()", () => {
     expect(run).toHaveBeenCalledOnce()
     expect(finish).toHaveBeenCalledOnce()
     expect(results.reduce((sum, result) => sum + result.processed, 0)).toBe(1)
-    expect(results.reduce((sum, result) => sum + result.skipped, 0)).toBe(1)
-    expect(results.reduce((sum, result) => sum + result.failed, 0)).toBe(0)
+    expect(results.reduce((sum, result) => sum + result.skipped, 0)).toBe(0)
+    expect(results.reduce((sum, result) => sum + result.failed, 0)).toBe(1)
+    expect(await dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" })).toMatchObject({ failed: 0, processed: 0, skipped: 1 })
   })
 
   it.each(["create", "claim"])("recovers an ambiguous %s reservation before a Gmail-style dispatch retry", async operation => {
@@ -181,6 +182,73 @@ describe("replayChannel()", () => {
     } finally { release(); await initial; vi.useRealTimers() }
   })
 
+  it("keeps a late pending claim retryable until its cleanup releases ownership", async () => {
+    const store = createMemoryAgentInvocationStore()
+    let releaseClaim!: () => void
+    const claimGate = new Promise<void>(resolve => { releaseClaim = resolve })
+    let releaseCleanup!: () => void
+    const cleanupGate = new Promise<void>(resolve => { releaseCleanup = resolve })
+    let claimStarted!: () => void
+    const started = new Promise<void>(resolve => { claimStarted = resolve })
+    let cleanupStarted!: () => void
+    const cleaning = new Promise<void>(resolve => { cleanupStarted = resolve })
+    let firstClaim = true
+    let firstRelease = true
+    const invocations = defineAgentInvocations({ store: {
+      ...store,
+      claim: async (...args: Parameters<typeof store.claim>) => {
+        if (firstClaim) { firstClaim = false; claimStarted(); await claimGate }
+        return await store.claim(...args)
+      },
+      release: async (...args: Parameters<typeof store.release>) => {
+        if (firstRelease) { firstRelease = false; cleanupStarted(); await cleanupGate }
+        return await store.release(...args)
+      },
+    } })
+    const { agent, run, label } = labeller({ invocations })
+    const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+    vi.useFakeTimers()
+    const initial = replayChannel(agent, "mailbox", { limit: 1, runtime })
+    try {
+      await started
+      await vi.advanceTimersByTimeAsync(1_001)
+      expect((await initial).failed).toBe(1)
+      releaseClaim()
+      await cleaning
+      const overlapping = await dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" })
+      expect(overlapping).toMatchObject({ failed: 1, processed: 0, skipped: 0 })
+      expect(run).not.toHaveBeenCalled()
+      releaseCleanup()
+      await vi.advanceTimersByTimeAsync(0)
+      const retry = await dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" })
+      expect(retry).toMatchObject({ failed: 0, processed: 1, skipped: 0 })
+      expect(run).toHaveBeenCalledOnce()
+      expect(label).toHaveBeenCalledOnce()
+    } finally { releaseClaim(); releaseCleanup(); await initial; vi.useRealTimers() }
+  })
+
+  it.each([
+    { channelName: "mailbox", dryRun: false, key: "m1" },
+    { channelName: "mail box:%", dryRun: false, key: "m 1:%" },
+    { channelName: "mailbox", dryRun: true, key: "m1" },
+  ])("preserves legacy replay journals for $channelName/$key, dry run: $dryRun", async ({ channelName, dryRun, key }) => {
+    const invocations = memoryInvocations()
+    const { channel, label } = mailbox()
+    if (!channel.history) throw new Error("Expected history")
+    channel.history.key = () => key
+    const run = vi.fn(() => "done")
+    const agent = defineAgent({ channels: { [channelName]: channel }, driver: { run }, invocations, runtime: false })
+    const legacyId = `${dryRun ? "channel-replay-dry-run" : "channel-replay"}:${encodeURIComponent(channelName)}:${encodeURIComponent(key)}`
+    const journal = await bindAgentInvocations(invocations, { memo: vi.fn(), run: { runId: legacyId }, runtime: "unknown", waitUntil: () => {} })
+    await journal?.running()
+    await journal?.finish("completed")
+    expect(await replayChannel(agent, channelName, { dryRun, limit: 1 })).toMatchObject({ failed: 0, processed: 0, skipped: 1 })
+    expect(run).not.toHaveBeenCalled()
+    expect(label).not.toHaveBeenCalled()
+    expect(await replayChannel(agent, channelName, { dryRun, force: true, limit: 1 })).toMatchObject({ processed: 1, skipped: 0 })
+    if (dryRun) expect(await replayChannel(agent, channelName, { limit: 1 })).toMatchObject({ processed: 1, skipped: 0 })
+  })
+
   it("keeps inline execution recoverable while its claim excludes concurrent replay", async () => {
     const invocations = memoryInvocations()
     const { channel } = mailbox()
@@ -210,7 +278,7 @@ describe("replayChannel()", () => {
       expect(journal?.claimStatus).toBe("owned")
       if (status === "running") await journal?.running()
       await journal?.handoffClaim()
-      expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).skipped).toBe(1)
+      expect(await replayChannel(agent, "mailbox", { limit: 1, runtime })).toMatchObject({ failed: status === "pending" ? 1 : 0, processed: 0, skipped: status === "pending" ? 0 : 1 })
       await vi.advanceTimersByTimeAsync(30_001)
       expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).processed).toBe(1)
       expect(run).toHaveBeenCalledOnce()
@@ -240,7 +308,7 @@ describe("replayChannel()", () => {
     const first = replayChannel(agent, "mailbox", { limit: 1 })
     try {
       await Promise.race([running, first])
-      expect((await replayChannel(agent, "mailbox", { limit: 1 })).skipped).toBe(1)
+      expect(await replayChannel(agent, "mailbox", { limit: 1 })).toMatchObject({ failed: 1, processed: 0, skipped: 0 })
       expect(invoke).toHaveBeenCalledOnce()
       release()
       expect((await first).failed).toBe(1)

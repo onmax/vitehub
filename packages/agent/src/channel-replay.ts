@@ -162,6 +162,9 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
   item: unknown,
 ): Promise<ReplayChannelItem> {
   const stableId = channelMessageRunId(run.channel, key, run)
+  const legacyId = `${run.dryRun ? "channel-replay-dry-run" : "channel-replay"}:${encodeURIComponent(run.channel)}:${encodeURIComponent(key)}`
+  const legacy = !run.force ? await run.invocations?.getByRunId(legacyId, run.agentName) : undefined
+  if (legacy) return { id: stableId, key, reason: "existing", status: "skipped" }
   const existing = !run.force ? await run.invocations?.getByRunId(stableId, run.agentName) : undefined
   if (existing && !((existing.status === "pending" || existing.status === "running") && existing.annotations?.[pendingAgentInvocationAnnotation] === true)) {
     return { id: stableId, key, reason: "existing", status: "skipped" }
@@ -184,7 +187,12 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
   }
   catch (error) {
     await reservation?.releaseClaim()
-    if (error instanceof AgentInvocationClaimConflict) return { id, key, reason: "existing", status: "skipped" }
+    if (error instanceof AgentInvocationClaimConflict) {
+      const conflicting = await run.invocations?.getByRunId(id, run.agentName)
+      if (conflicting && !(conflicting.status === "pending" && conflicting.annotations?.[pendingAgentInvocationAnnotation] === true)) {
+        return { id, key, reason: "existing", status: "skipped" }
+      }
+    }
     return { error: agentErrorMessage(error), id, key, status: "failed" }
   }
 }
