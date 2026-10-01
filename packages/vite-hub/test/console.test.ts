@@ -27,7 +27,6 @@ import {
   consoleInvocationsRevisionRegistryKey,
   consoleInvocationsRootIdentityRegistryKey,
   consoleInvocationsRootKey,
-  consoleProjectRootKey,
   consoleProjectNameKey,
   consoleSectionsKey,
   consoleSectionsRootKey,
@@ -36,7 +35,6 @@ import {
   installConsoleInvocationFallback,
   resolveConsoleInvocations,
   resolveConsoleProjectName,
-  resolveConsoleProjectRoot,
 } from "../src/console/internal.ts"
 import { serializeConsoleRefresh } from "../src/console/refresh.ts"
 import { consoleFixtureEnvironmentVariable, consoleFixtureFallbackAgentName, consoleFixtureRevision, parseConsoleFixture } from "../src/console/fixture.ts"
@@ -155,7 +153,6 @@ afterEach(() => {
   Reflect.deleteProperty(process, consoleBlobRootKey)
   Reflect.deleteProperty(process, consoleBlobRegistryKey)
   Reflect.deleteProperty(process, consoleInvocationsKey)
-  Reflect.deleteProperty(process, consoleProjectRootKey)
   Reflect.deleteProperty(process, consoleInvocationsRegistryKey)
   Reflect.deleteProperty(process, consoleInvocationsRootIdentityRegistryKey)
   Reflect.deleteProperty(process, consoleInvocationsRevisionRegistryKey)
@@ -1685,7 +1682,7 @@ describe("Agent invocation console", () => {
       agents: ["billing"],
     })
 
-    scope[consoleProjectRootKey] = "/first"
+    scope[consoleInvocationsRootKey] = "/first"
     await expect(agentsHandler(event("127.0.0.1"))).resolves.toEqual({
       agents: ["review", "support"],
     })
@@ -1746,7 +1743,7 @@ describe("Agent invocation console", () => {
 
     installConsoleSections("/second", ["kv"])
 
-    expect(resolveConsoleProjectRoot()).toBe("/first")
+    expect(scope[consoleInvocationsRootKey]).toBe("/first")
     expect(resolveConsoleInvocations()).toBe(first)
     expect(sectionsHandler(event("127.0.0.1"))).toEqual({ sections: ["kv"] })
   })
@@ -4030,7 +4027,7 @@ describe("Agent invocation console", () => {
     expect(
       resolveConsoleInvocations({
         process,
-        [consoleProjectRootKey]: "/project",
+        [consoleInvocationsRootKey]: "/project",
       }),
     ).toBe(fallback)
   })
@@ -4091,8 +4088,8 @@ describe("Agent invocation console", () => {
   it("keeps process-shared journals scoped to their project root", () => {
     const first = fakeInvocations("first")
     const second = fakeInvocations("second")
-    const firstScope = { process, [consoleProjectRootKey]: "/first" }
-    const secondScope = { process, [consoleProjectRootKey]: "/second" }
+    const firstScope = { process, [consoleInvocationsRootKey]: "/first" }
+    const secondScope = { process, [consoleInvocationsRootKey]: "/second" }
 
     installConsoleInvocationFallback(first, "/first", firstScope)
     installConsoleInvocationFallback(second, "/second", secondScope)
@@ -4151,8 +4148,8 @@ describe("Agent invocation console", () => {
       return runInNewContext(`${code}\nglobalThis`, realm) as object
     }
 
-    expect(Reflect.has(firstAgentRealm, consoleProjectRootKey)).toBe(false)
-    expect(Reflect.has(secondAgentRealm, consoleProjectRootKey)).toBe(false)
+    expect(Reflect.has(firstAgentRealm, consoleInvocationsRootKey)).toBe(false)
+    expect(Reflect.has(secondAgentRealm, consoleInvocationsRootKey)).toBe(false)
     expect(resolveConsoleInvocations(unboundAgentRealm)).toBeUndefined()
 
     const boundFirstAgentRealm = await bind("/first", firstAgentRealm)
