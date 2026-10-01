@@ -207,7 +207,18 @@ function inspectValue(value: unknown, seen = new WeakSet<object>()): unknown {
   }
   seen.add(value)
   try {
-    if (Array.isArray(value)) return Array.from(value, (entry: unknown) => inspectValue(entry, seen))
+    const ownKeys = Reflect.ownKeys(value)
+    const dataKeys = Array.isArray(value) ? ownKeys.filter(key => key !== "length") : ownKeys
+    const descriptors = dataKeys.map(key => Object.getOwnPropertyDescriptor(value, key))
+    if (descriptors.some(descriptor => !descriptor?.enumerable || !("value" in descriptor))) {
+      throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
+    }
+    if (Array.isArray(value)) {
+      if (dataKeys.length !== value.length || dataKeys.some(key => !v.is(v.string(), key) || String(Number(key)) !== key || !Number.isInteger(Number(key)) || Number(key) < 0 || Number(key) >= value.length)) {
+        throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
+      }
+      return Array.from(value, (entry: unknown) => inspectValue(entry, seen))
+    }
     const prototype: unknown = Object.getPrototypeOf(value)
     if (prototype !== Object.prototype && prototype !== null || Object.getOwnPropertySymbols(value).length) {
       throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")

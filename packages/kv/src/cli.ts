@@ -210,12 +210,19 @@ function parseArgs(command: KVCommand, args: readonly string[], env: NodeJS.Proc
   return parsed
 }
 
+function validateJSONNumbers(value: unknown): void {
+  if (v.is(v.number(), value) && !Number.isFinite(value)) throw kvErrorDiagnostics.KV_R0019({ message: "JSON numbers must be finite." })
+  if (Array.isArray(value)) value.forEach(validateJSONNumbers)
+  else if (v.is(v.record(v.string(), v.unknown()), value)) Object.values(value).forEach(validateJSONNumbers)
+}
+
 async function readValue(parsed: ParsedKVArgs, cwd: string): Promise<unknown> {
   const raw = parsed.value!
   const text = raw.startsWith("@") ? await readFile(resolve(cwd, raw.slice(1)), "utf8") : raw
   if (!parsed.jsonValue) return text
   try {
     const value: unknown = JSON.parse(text)
+    validateJSONNumbers(value)
     return value
   }
   catch (error) {
@@ -357,7 +364,12 @@ async function runKVCommand(command: KVCommand, args: string[], context: KVCliCo
   const server = await discoverViteHubDevServer<KVDevDiscovery>({
     endpoint: kvDevEndpoint,
     fetch: fetchImpl,
+    parseDiscovery: (value) => {
+      const parsed = v.safeParse(v.object({ message: v.optional(v.string()), root: v.optional(v.string()), runtime: v.optional(v.string()) }), value)
+      return parsed.success ? parsed.output : {}
+    },
     rootDir: context.rootDir,
+    ...withTimeout(parsed.timeout),
     serverUrl: parsed.url,
     stderr: parsed.json ? { write: (chunk) => { discoveryError += chunk; return true } } : context.stderr,
   })
