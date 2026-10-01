@@ -287,7 +287,7 @@ export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { st
     return hasRuntimeType(value, "number") && Number.isInteger(value) ? value : undefined
   }
   return (host) => {
-    const installed: ["request" | "evlog:drain" | "error" | "close", unknown][] = []
+    const installed: ["request" | "evlog:drain" | "error" | "close", unknown, unknown][] = []
     const started: { stop(): Promise<void> }[] = []
     let cleanupPromise: Promise<void> | undefined
     const cleanup = () => cleanupPromise ??= (async () => {
@@ -297,14 +297,17 @@ export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { st
       finally {
         try { await telemetry.flush() }
         finally {
-          for (const [name, callback] of installed) host.hooks.removeHook?.(name, callback)
+          for (const [name, callback, disposer] of installed) {
+            if (typeof disposer === "function") disposer()
+            else host.hooks.removeHook?.(name, callback)
+          }
           onClose?.()
         }
       }
     })()
     const register = (name: "request" | "evlog:drain" | "error" | "close", callback: unknown) => {
-      host.hooks.hook(name as never, callback as never)
-      installed.push([name, callback])
+      const disposer = host.hooks.hook(name as never, callback as never)
+      installed.push([name, callback, disposer])
     }
     try {
       register("request", (event: { req: Request & { context?: { requestId?: string } } }) => {

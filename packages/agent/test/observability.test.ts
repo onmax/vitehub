@@ -344,6 +344,27 @@ it("cleans up telemetry when a later host attachment hook fails", async () => {
   expect(() => useObservability()).toThrow("Observability is not configured")
 })
 
+it("uses hook disposers when a host does not expose removeHook", async () => {
+  const { installObservability } = await import("../src/observability/host.ts")
+  const { useObservability } = await import("../src/observability.ts")
+  const flush = vi.fn(async () => {})
+  const disposers: Array<() => void> = []
+  const plugin = installObservability({ service: "disposer-attachment", exporter: { capture: async () => {}, exception: async () => {}, logs: async () => {}, flush } })
+  expect(() => plugin({ hooks: {
+    hook(name) {
+      if (name === "close") throw new Error("close hook failed")
+      const dispose = vi.fn()
+      disposers.push(dispose)
+      return dispose
+    },
+  } })).toThrow("close hook failed")
+  await new Promise(resolve => setTimeout(resolve, 10))
+  expect(flush).toHaveBeenCalledOnce()
+  expect(disposers).toHaveLength(3)
+  for (const dispose of disposers) expect(dispose).toHaveBeenCalledOnce()
+  expect(() => useObservability()).toThrow("Observability is not configured")
+})
+
 it("preserves host ownership and replaces injected Capabilities after shutdown", async () => {
   const { useObservability } = await import("../src/observability.ts")
   const { installObservability } = await import("../src/observability/host.ts")
