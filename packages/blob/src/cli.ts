@@ -60,10 +60,6 @@ interface BlobDevDiscovery {
   runtime?: unknown
 }
 
-interface BlobDevFailure {
-  error?: { code?: unknown, message?: unknown }
-}
-
 interface BlobCliFailure {
   code?: string
   message: string
@@ -177,6 +173,7 @@ function parseArgs(command: BlobCommand, args: readonly string[], env: NodeJS.Pr
     }
     const store = readOptionValue(args, index, "store")
     if (store) {
+      if (!store.value.trim()) throw blobErrorDiagnostics.BLOB_R0029({ message: "--store needs a nonempty name." })
       parsed.store = store.value
       index += store.consumed
       continue
@@ -222,7 +219,12 @@ async function readUpload(path: string): Promise<{ data: string } | BlobCliFailu
       message: `The file is ${info.size} bytes. \`vitehub blob put\` accepts at most ${blobDevMaximumUploadBytes} bytes (8 MiB), because the dev endpoint sends the file as base64 JSON.`,
     }
   }
-  return { data: (await readFile(path)).toString("base64") }
+  try {
+    return { data: (await readFile(path)).toString("base64") }
+  }
+  catch (error) {
+    return { message: `Could not read ${path}: ${error instanceof Error ? error.message : String(error)}` }
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -258,11 +260,49 @@ function formatObject(object: BlobDevObject, store: string): string {
   return `${formatTable(present)}\n`
 }
 
-function writeResult(operation: Exclude<BlobDevOperation, "get">, result: Record<string, unknown>, context: BlobCliContext): void {
-  // SAFETY: the Blob dev handler of the same package version writes these shapes.
-  switch (operation) {
+type BlobCliResult =
+  | { operation: "list", value: BlobDevListResult }
+  | { operation: "head", value: BlobDevHeadResult }
+  | { operation: "put", value: BlobDevPutResult }
+  | { operation: "del", value: BlobDevDeleteResult }
+
+function isStrings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === "string")
+}
+
+function isBlobObject(value: unknown): value is BlobDevObject {
+  return isRecord(value) && typeof value.pathname === "string" && typeof value.uploadedAt === "string"
+    && isRecord(value.customMetadata) && isRecord(value.httpMetadata)
+    && (value.size === undefined || (typeof value.size === "number" && Number.isFinite(value.size)))
+    && (value.contentType === undefined || typeof value.contentType === "string")
+    && (value.httpEtag === undefined || typeof value.httpEtag === "string")
+    && (value.urlAvailable === undefined || value.urlAvailable === true)
+}
+
+function parseResult(operation: Exclude<BlobDevOperation, "get">, value: unknown): BlobCliResult | undefined {
+  if (!isRecord(value) || typeof value.store !== "string") return undefined
+  if (operation === "del") {
+    return typeof value.deleted === "boolean" && typeof value.pathname === "string"
+      ? { operation, value: { deleted: value.deleted, pathname: value.pathname, store: value.store } } : undefined
+  }
+  if (operation === "list") {
+    if (!Array.isArray(value.blobs) || !value.blobs.every(isBlobObject) || typeof value.hasMore !== "boolean"
+      || typeof value.limit !== "number" || !Number.isFinite(value.limit) || typeof value.prefix !== "string"
+      || !isStrings(value.stores) || (value.cursor !== undefined && typeof value.cursor !== "string")) return undefined
+    return { operation, value: {
+      blobs: value.blobs, hasMore: value.hasMore, limit: value.limit, prefix: value.prefix, store: value.store, stores: value.stores,
+      ...(typeof value.cursor === "string" ? { cursor: value.cursor } : {}),
+    } }
+  }
+  if (!isBlobObject(value.object)) return undefined
+  if (operation === "head") return { operation, value: { object: value.object, store: value.store } }
+  return typeof value.created === "boolean" ? { operation, value: { created: value.created, object: value.object, store: value.store } } : undefined
+}
+
+function writeResult(result: BlobCliResult, context: BlobCliContext): void {
+  switch (result.operation) {
     case "list": {
-      const page = result as unknown as BlobDevListResult
+      const page = result.value
       if (page.blobs.length === 0 && page.cursor) context.stdout.write("No blobs on this page.\n")
       else if (page.blobs.length === 0) context.stdout.write(`No blobs${page.prefix ? ` with prefix ${page.prefix}` : ""} in store ${page.store}.\n`)
       else {
@@ -277,18 +317,18 @@ function writeResult(operation: Exclude<BlobDevOperation, "get">, result: Record
       return
     }
     case "head": {
-      const value = result as unknown as BlobDevHeadResult
+      const value = result.value
       context.stdout.write(formatObject(value.object, value.store))
       return
     }
     case "put": {
-      const value = result as unknown as BlobDevPutResult
+      const value = result.value
       const details = [formatSize(value.object.size), value.object.contentType].filter(Boolean).join(", ")
       context.stdout.write(`${value.created ? "Created" : "Replaced"} blob ${value.object.pathname} in store ${value.store} (${details}).\n`)
       return
     }
     case "del": {
-      const value = result as unknown as BlobDevDeleteResult
+      const value = result.value
       context.stdout.write(value.deleted
         ? `Deleted blob ${value.pathname} from store ${value.store}.\n`
         : `Blob ${value.pathname} did not exist in store ${value.store}. Nothing changed.\n`)
@@ -299,8 +339,8 @@ function writeResult(operation: Exclude<BlobDevOperation, "get">, result: Record
 async function readFailure(response: Response): Promise<BlobCliFailure> {
   const text = await response.text()
   try {
-    const body: BlobDevFailure = JSON.parse(text)
-    if (typeof body.error?.message === "string") {
+    const body: unknown = JSON.parse(text)
+    if (isRecord(body) && isRecord(body.error) && typeof body.error.message === "string") {
       return { ...(typeof body.error.code === "string" ? { code: body.error.code } : {}), message: body.error.message }
     }
   }
@@ -379,14 +419,17 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
     data = upload.data
   }
   const fetchImpl = options.fetch ?? globalThis.fetch
+  let discoveryError = ""
   const server = await discoverViteHubDevServer<BlobDevDiscovery>({
     endpoint: blobDevEndpoint,
     fetch: fetchImpl,
     rootDir: context.rootDir,
     serverUrl: parsed.url,
-    stderr: context.stderr,
+    ...withTimeout(parsed.timeout),
+    stderr: parsed.json ? { write: (chunk) => { discoveryError += chunk; return true } } : context.stderr,
   })
   if (!server) {
+    if (parsed.json) return writeFailure(parsed, context, { message: `${discoveryError.trim()} ${blobDevServerHint}` })
     context.stderr.write(`${blobDevServerHint}\n`)
     return 1
   }
@@ -422,10 +465,10 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
   }
   if (!response.ok) return writeFailure(parsed, context, await readFailure(response))
   if (command.name === "get") return await writeDownload(response, parsed, context)
-  const result: unknown = await response.json().catch(() => undefined)
-  if (!isRecord(result)) return writeFailure(parsed, context, { message: "The Blob Dev response is not valid JSON." })
-  if (parsed.json) context.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
-  else writeResult(command.name, result, context)
+  const result = parseResult(command.name, await response.json().catch(() => undefined))
+  if (!result) return writeFailure(parsed, context, { message: "The Blob Dev response is invalid." })
+  if (parsed.json) context.stdout.write(`${JSON.stringify(result.value, null, 2)}\n`)
+  else writeResult(result, context)
   return 0
 }
 

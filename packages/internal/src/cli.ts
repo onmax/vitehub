@@ -153,6 +153,7 @@ export interface ViteHubDevServerDiscoveryOptions {
   isCompatibleRoot?: (rootDir: string, serverRoot: string) => boolean
   rootDir: string
   serverUrl: string
+  signal?: AbortSignal | null
   stderr: ViteHubCliStreams["stderr"]
 }
 
@@ -256,6 +257,7 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   try {
     response = await fetchViteHubDevEndpoint(options.fetch, url, options.endpoint, {
       headers: { accept: "application/json" },
+      signal: options.signal,
     })
   }
   catch {
@@ -268,6 +270,10 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   }
   // SAFETY: the owner endpoint defines the discovery shape. Callers check each field before use.
   const discovery = await response.json().catch(() => ({})) as TDiscovery
+  if (options.signal?.aborted) {
+    options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
+    return
+  }
   const isCompatibleRoot = options.isCompatibleRoot ?? ((rootDir: string, serverRoot: string) => serverRoot === rootDir)
   if (typeof discovery.root === "string" && !isCompatibleRoot(options.rootDir, discovery.root)) {
     options.stderr.write(`Compatible Vite Development Server root mismatch: ${discovery.root}\n`)

@@ -14,6 +14,11 @@ import { hubBlob } from "../src/vite.ts"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { BlobDevServer } from "../src/vite-dev.ts"
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>()
+  return { ...actual, readFile: vi.fn(actual.readFile) }
+})
+
 let cwd: string
 
 beforeEach(async () => {
@@ -65,6 +70,12 @@ const binary = Uint8Array.from([0, 255, 1, 128, 10, 13, 0xef, 0xbb, 0xbf, 0xc3, 
 const object = { contentType: "image/png", customMetadata: {}, httpEtag: "\"abc\"", httpMetadata: {}, pathname: "images/a.png", size: 1234, uploadedAt: "2026-09-29T10:00:00.000Z" }
 
 describe("vitehub blob", () => {
+  it.each([[], ["--json"]])("reports malformed blob rows with flags %j", async (flags) => {
+    const output = context()
+    await expect(runBlobCli(["list", ...flags], output.context, { fetch: devServer({ blobs: [{}], hasMore: false, limit: 100, prefix: "", store: "default", stores: ["default"] }) })).resolves.toBe(1)
+    expect(output.stdout.output() + output.stderr.output()).toContain("response is invalid")
+  })
+
   it("lists blobs as a table and as JSON", async () => {
     const result = { blobs: [object, { ...object, contentType: undefined, pathname: "images/b", size: 5 }], cursor: "next", hasMore: true, limit: 2, prefix: "images/", store: "default", stores: ["default", "media"] }
     const human = context()
@@ -218,6 +229,39 @@ describe("vitehub blob", () => {
     ].join("\n"))
   })
 
+  it("reports upload read errors as JSON failures", async () => {
+    await writeFile(join(cwd, "unreadable.bin"), binary)
+    vi.mocked(readFile).mockRejectedValueOnce(new Error("read denied"))
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runBlobCli(["put", "target.bin", "unreadable.bin", "--json"], output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toEqual({ error: { message: `Could not read ${join(cwd, "unreadable.bin")}: read denied` } })
+    expect(output.stderr.output()).toBe("")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it("reports discovery failures as JSON without stderr diagnostics", async () => {
+    for (const fetch of [vi.fn(async () => { throw new Error("offline") }), devServer({}, { discovery: { root: "/other" } })]) {
+      const output = context()
+      await expect(runBlobCli(["list", "--json"], output.context, { fetch })).resolves.toBe(1)
+      expect(JSON.parse(output.stdout.output())).toMatchObject({ error: { message: expect.stringContaining("Compatible Vite Development Server") } })
+      expect(output.stderr.output()).toBe("")
+      expect(fetch).toHaveBeenCalledOnce()
+    }
+  })
+
+  it("times out discovery before sending an operation", async () => {
+    const output = context()
+    const fetch = vi.fn((_url: string | URL | Request, request?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      request?.signal?.addEventListener("abort", () => reject(request.signal?.reason), { once: true })
+    }))
+    await expect(runBlobCli(["list", "--json", "--timeout", "10"], output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message")
+    expect(output.stderr.output()).toBe("")
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+  })
+
   it("validates arguments before it calls the server", async () => {
     const fetch = vi.fn()
     const cases: Array<[string[], string]> = [
@@ -230,6 +274,8 @@ describe("vitehub blob", () => {
       [["list", "--output", "x"], "Unknown option: --output."],
       [["head", "a.txt", "--prefix", "x"], "Unknown option: --prefix."],
       [["list", "--store"], "--store needs a value."],
+      [["del", "a.txt", "--store", ""], "--store needs a nonempty name."],
+      [["del", "a.txt", "--store="], "--store needs a nonempty name."],
     ]
     for (const [args, message] of cases) {
       const invalid = context()
