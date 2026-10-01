@@ -86,9 +86,11 @@ describe("connect", () => {
     expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected", account: { id: "account-1" } })
   })
 
-  it("rejects an unidentified replacement grant without clearing the account", async () => {
+  it("quarantines an unidentified replacement grant without clearing the account", async () => {
     const test = createTestRuntime()
     await connect(test)
+    // Model a provider consuming the existing grant while issuing the rejected account token.
+    test.provider.valid.delete(ACCESS_TOKEN)
     await expect(connect(test, { id_token: undefined, access_token: "unknown-access", refresh_token: "unknown-refresh" })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
     expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toHaveLength(0)
     expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" }, status: "reauth_required" })
