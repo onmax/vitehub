@@ -27,7 +27,7 @@ describe("landing page", () => {
   });
 
   it("offers one-click skill and package commands in the hero", () => {
-    expect(installOptions.skill.command).toBe("npx skills add https://vitehub.dev");
+    expect(installOptions.skill.command).toBe("npx skills add https://vitehub.dev --skill vitehub");
     expect(installOptions.packages.map((option) => option.value)).toEqual([
       "pnpm",
       "npm",

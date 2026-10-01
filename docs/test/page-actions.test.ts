@@ -70,7 +70,11 @@ describe("docs page actions", () => {
     const component = read("app/components/DocsPageHeaderLinks.vue");
 
     expect(component).toContain("pageActionLinks(route.path)");
-    for (const page of ["app/pages/docs/index.vue", "app/pages/docs/[...slug].vue"]) {
+    for (const page of [
+      "app/pages/docs/index.vue",
+      "app/pages/docs/[...slug].vue",
+      "app/components/SupportMatrix.vue",
+    ]) {
       expect(read(page)).toContain("<DocsPageHeaderLinks />");
     }
   });
