@@ -419,6 +419,8 @@ Publish the exported definition on npm and import it into `presets`. There is no
 
 Configure telemetry once with `vitehub({ observability })`. ViteHub registers the evlog Nitro module, installs one host instance, and adds its Capability to every Agent. Read it at runtime with `useObservability()` from `@vite-hub/agent/observability` (`vite-hub/agent/observability` in applications). It returns `event`, `capture`, `exception`, `capability`, `status`, and `flush`. Install `evlog`, and `posthog-node` for the PostHog exporter.
 
+Observability currently requires Nitro-hosted Agents. Netlify and Deno standalone Agent output are rejected when observability is configured. Close the current host before installing another observability instance.
+
 Hosts without `vitehub()` call `installObservability(options)` from `@vite-hub/agent/observability/host` and pass the result the Nitro app. `@vite-hub/agent/observability/posthog` exports the `posthog()` exporter.
 
 `createPapercutReporter()` from `@vite-hub/agent/capabilities` journals reports in persistent Agent Invocations before delivery and replays pending reports after restart. `observability.papercuts` configures it with the Console journal. See [Observability](../../docs/content/docs/agents/observability.md) for delivery, privacy and shutdown contracts.

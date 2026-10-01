@@ -65,6 +65,8 @@ Ordinary logs and events are best effort. `maxPending` defaults to 1,000 for eve
 
 Raw prompts, model outputs, tool payloads, credentials and common personal identifiers are excluded from exported properties. Unknown error messages are replaced with generic text. This filtering reduces accidental disclosure; it is not a general detector for sensitive prose. Only send properties intended for telemetry.
 
+Observability currently requires Nitro-hosted Agents. Netlify and Deno standalone Agent output are not supported. Close the current host before installing another observability instance.
+
 ## Deliver papercut reports durably
 
 Set `papercuts: true`, or `{ eventPrefix, uuidNamespace, intervalMs }`. It requires `agent` and `console`, because reports are journaled in the Console invocation store. The reporter starts only when an exporter is configured.

@@ -266,3 +266,34 @@ it("installs one host instance for useObservability() and every Agent", async ()
   expect(observability.status().closed).toBe(true)
   expect(() => useObservability()).toThrow("Observability is not configured")
 })
+
+it("preserves host ownership and replaces injected Capabilities after shutdown", async () => {
+  const { useObservability } = await import("../src/observability.ts")
+  const { installObservability } = await import("../src/observability/host.ts")
+  const firstClose: Function[] = []
+  const secondClose: Function[] = []
+  const first = installObservability({ service: "first", exporter: { capture: vi.fn(async () => {}), exception: vi.fn(async () => {}), logs: vi.fn(async () => {}), flush: vi.fn(async () => {}) } })
+  first({ hooks: { hook(name, callback) { if (name === "close") firstClose.push(callback) } } })
+  const firstInstance = useObservability()
+  let firstClosed = false
+  try {
+    expect(() => installObservability({ service: "second" })).toThrow("Close its host")
+    expect(useObservability()).toBe(firstInstance)
+    expect(() => defineAgent({ capabilities: [{ id: "observability" }], driver: { run: () => "answer" } })).toThrow()
+    expect(() => defineAgent({ capabilities: [{ id: "custom", capabilities: [{ id: "observability" }] }], driver: { run: () => "answer" } })).toThrow()
+    const agent = defineAgent({ driver: { run: () => "answer" } })
+    for (const close of firstClose) await close()
+    firstClosed = true
+    const capture = vi.fn(async () => {})
+    const second = installObservability({ service: "second", exporter: { capture, exception: vi.fn(async () => {}), logs: vi.fn(async () => {}), flush: vi.fn(async () => {}) } })
+    second({ hooks: { hook(name, callback) { if (name === "close") secondClose.push(callback) } } })
+    await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil, agentIdentity: { name: "bot" }, run: { runId: "replacement" } }, { prompt: "hello" })
+    await Promise.allSettled(background.splice(0))
+    expect(capture).toHaveBeenCalledWith("$ai_trace", expect.objectContaining({ service: "second", status: "completed" }), expect.anything())
+  }
+  finally {
+    if (!firstClosed) for (const close of firstClose) await close()
+    for (const close of secondClose) await close()
+  }
+  expect(() => useObservability()).toThrow("Observability is not configured")
+})

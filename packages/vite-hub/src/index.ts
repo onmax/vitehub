@@ -819,7 +819,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
       throw viteHubErrorDiagnostics.VITE_HUB_R0127({ message: "[vitehub] observability.papercuts stores reports in the Console invocation journal. Enable agent and console." })
     }
     // Before Env, so Env reads the PostHog key declaration.
-    plugins.push(observabilityVitePlugin(options.observability))
+    plugins.push(observabilityVitePlugin(options.observability, { agent: options.agent, hosting: plan.nitroPreset }))
   }
   if (envPlugin) plugins.push(envPlugin)
 

@@ -47,6 +47,24 @@ describe("vitehub({ observability })", () => {
     }
   })
 
+  it.each([
+    { preset: "netlify" as const, agent: true },
+    { preset: "node" as const, agent: { runtime: "deno" as const } },
+  ])("rejects standalone Agent output: %j", (target) => {
+    const plugin = observabilityPlugin({ ...target, observability: { service: "support" } })
+    // SAFETY: The hook reads only the hosting and Agent config supplied through vitehub().
+    const hook = plugin.configResolved as (config: {}) => void
+    expect(() => hook({})).toThrow("Nitro-hosted Agents")
+  })
+
+  it("rejects a final config override to standalone Agents", () => {
+    const plugin = observabilityPlugin({ preset: "node", agent: true, observability: { service: "support" } })
+    // SAFETY: The hook only reads these public config keys.
+    const hook = plugin.configResolved as (config: { agent?: { runtime: string }, nitro?: { preset: string } }) => void
+    expect(() => hook({ agent: { runtime: "deno" } })).toThrow("Nitro-hosted Agents")
+    expect(() => hook({ nitro: { preset: "netlify" } })).toThrow("Nitro-hosted Agents")
+  })
+
   it("rejects options it cannot honor", () => {
     expect(() => vitehub({ preset: "node", observability: { service: " " } })).toThrow("non-empty service name")
     expect(() => vitehub({ preset: "node", agent: true, observability: { service: "support", papercuts: true } })).toThrow("Enable agent and console")

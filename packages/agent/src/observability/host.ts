@@ -18,6 +18,7 @@ export interface InstallObservabilityOptions {
 
 /** Create the host instance for `vitehub({ observability })`, attach it to every Agent, and return its Nitro plugin. */
 export function installObservability(options: InstallObservabilityOptions): (host: AgentEvlogHost) => void {
+  if (hostObservability()) throw new TypeError("[vitehub] Observability is already installed. Close its host before installing another instance.")
   const telemetry = createAgentEvlog(options)
   const observability: Observability = {
     capability: telemetry.capability,

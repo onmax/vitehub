@@ -1,7 +1,7 @@
 import { supportsSkillPersistence } from "./internal/skill-persistence.ts"
 import { markCapabilityInspection } from "./internal/capability-inspection.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
-import { hostObservability } from "./internal/observability-host.ts"
+import { hostObservability, isHostObservabilityCapability } from "./internal/observability-host.ts"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { resolveRuntimeValue } from "@vite-hub/runtime"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
@@ -288,17 +288,16 @@ export function normalizeCapabilities(
   if (capabilities.some(capability => (capability as Record<symbol, unknown>)?.[Symbol.for("eve.mounted-extension")] === true)) {
     throw agentDiagnostics.AGENT_B0001()
   }
-  // `vitehub({ observability })` attaches its Capability to every Agent. Lists that
-  // were normalized before already contain it, so drop those copies by identity.
+  // Remove host-injected copies retained by definitions from an earlier host.
   const observability = hostObservability()?.capability
-  const observabilityParts = new Set<unknown>(observability ? [observability, ...(observability.capabilities || [])] : [])
   // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-  const explicit = capabilities.filter(capability => !observabilityParts.has(capability)).map(capability => defineCapability(capability as AgentCapabilityDefinition))
+  const explicit = capabilities.filter(capability => !isHostObservabilityCapability(capability as AgentCapabilityDefinition)).map(capability => defineCapability(capability as AgentCapabilityDefinition))
   const explicitById = new Map<string, AgentCapabilityDefinition>()
   for (const capability of explicit) {
     if (explicitById.has(capability.id)) {
       throw agentDiagnostics.AGENT_C0009({ id: capability.id })
     }
+    if (observability && capability.id === observability.id) throw agentDiagnostics.AGENT_C0009({ id: capability.id })
     explicitById.set(capability.id, capability)
   }
 
@@ -317,7 +316,10 @@ export function normalizeCapabilities(
   }
 
   for (const capability of explicit) add(capability)
-  if (observability && !explicitById.has(observability.id)) add(observability)
+  if (observability) {
+    if (seen.has(observability.id)) throw agentDiagnostics.AGENT_C0009({ id: observability.id })
+    add(observability)
+  }
   return normalized
 }
 

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
+import { getHostingProvider } from "@vite-hub/internal/hosting"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
 import type { EnvVariableDeclaration } from "@vite-hub/env"
@@ -70,12 +71,31 @@ async function writeIfChanged(file: string, contents: string): Promise<void> {
 }
 
 /** Register the evlog Nitro module and a generated plugin that installs `useObservability()`. */
-export function observabilityVitePlugin(options: ObservabilityOptions): Plugin {
+export function observabilityVitePlugin(options: ObservabilityOptions, target: {
+  agent?: boolean | { runtime?: string }
+  hosting?: string
+} = {}): Plugin {
   if (!options.service?.trim()) {
     throw viteHubErrorDiagnostics.VITE_HUB_R0125({ message: "[vitehub] observability requires a non-empty service name." })
   }
   return {
     name: "vite-hub/observability",
+    configResolved(config) {
+      // SAFETY: ViteHub and Agent plugins extend these public Vite config keys.
+      const resolved = config as typeof config & {
+        agent?: boolean | { runtime?: string }
+        vitehub?: { preset?: string }
+        preset?: string
+        nitro?: { preset?: string }
+      }
+      const agent = resolved.agent ?? target.agent
+      const hosting = [resolved.vitehub?.preset, resolved.preset, resolved.nitro?.preset, target.hosting, process.env.VITEHUB_HOSTING]
+        .map(preset => getHostingProvider(preset)).find(Boolean)
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vite config may contain a Boolean shorthand or an Agent options object.
+      if (agent && ((typeof agent === "object" && agent.runtime === "deno") || hosting === "netlify")) {
+        throw viteHubErrorDiagnostics.VITE_HUB_R0129({ message: "[vitehub] observability currently requires Nitro-hosted Agents. Netlify and Deno Agent output are not supported." })
+      }
+    },
     async config(config) {
       const { default: evlog } = await import("evlog/nitro/v3").catch(() => {
         throw viteHubErrorDiagnostics.VITE_HUB_B0012({ message: "[vitehub] vitehub({ observability }) requires the evlog package. Install evlog." })
