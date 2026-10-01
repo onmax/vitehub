@@ -10,8 +10,16 @@ export interface ViteHubProviderImportContributor {
   vitehub?: {
     providerOutput?: {
       getImportAliases?: () => Promise<Record<string, string>> | Record<string, string>
+      prepareSources?: (sources: { resolve: (path: string) => string }) => Promise<void> | void
     }
   }
+}
+
+export async function prepareViteHubProviderSources(
+  plugins: ViteHubProviderImportContributor[],
+  sources: { resolve: (path: string) => string },
+): Promise<void> {
+  for (const plugin of plugins) await plugin.vitehub?.providerOutput?.prepareSources?.(sources)
 }
 
 export async function collectViteHubProviderImportAliases(
@@ -26,6 +34,7 @@ const generatedViteHubFilesPattern = "**/.vitehub/**"
 const projectRootDirectoryMarkers = [
   ["server", "agents"],
   ["server", "channels"],
+  ["server", "connections"],
   ["server", "browsers"],
   ["server", "emails"],
   ["server", "schedules"],

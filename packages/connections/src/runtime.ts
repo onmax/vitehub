@@ -217,6 +217,24 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   const request = options.fetch ?? ((input: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(input, init))
   const now = options.now ?? Date.now
   const refreshing = new Map<string, Promise<StoredToken>>()
+  // Provider revocation can invalidate an entire grant. Serialize token
+  // replacements with revocation so a callback or refresh cannot replace a
+  // grant after revocation has leased its token but before the provider call.
+  const tokenMutations = new Map<string, Promise<void>>()
+  async function withTokenMutation<T>(name: string, run: () => Promise<T>): Promise<T> {
+    const previous = tokenMutations.get(name)
+    let release!: () => void
+    const current = new Promise<void>(resolve => { release = resolve })
+    tokenMutations.set(name, current)
+    if (previous) await previous
+    try {
+      return await run()
+    }
+    finally {
+      release()
+      if (tokenMutations.get(name) === current) tokenMutations.delete(name)
+    }
+  }
   let store: Promise<ConnectionStore> | undefined
   const definitions = new Map<string, Promise<ConnectionDefinition | undefined>>()
 
@@ -414,7 +432,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const next = toStoredToken(response, latest)
     let revision: string
     try {
-      const replacement = await connections.bridge.replace(envContext("connections"), { expectedRevision: tokenRevision ?? null, key, value: JSON.stringify(next) })
+      const replacement = await withTokenMutation(name, () => connections.bridge.replace(envContext("connections"), { expectedRevision: tokenRevision ?? null, key, value: JSON.stringify(next) }))
       revision = replacement.revision
     }
     catch (error) {

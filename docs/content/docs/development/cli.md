@@ -25,7 +25,7 @@ Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types` and `box`, and the CLI includes the built-in `provision` namespace. `box` does not load the project config, so it also runs in a deployed container without Vite.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types` and `box`, and the CLI includes the built-in `provision` namespace. `box` does not load the project config, so it also runs in a deployed container without Vite.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
@@ -39,6 +39,8 @@ Available namespaces:
   box         Serve and check an SSH Box runner. Does not load the project config.
 ```
 
+Package-contributed namespaces appear only when their package is enabled. For example, `schedule` appears when the app enables Schedule.
+
 ## Commands
 
 | Command                     | Status         | Owner                                             | Use it for                                                                                |
@@ -46,13 +48,14 @@ Available namespaces:
 | `vitehub agent eval`        | Opt-in tooling | Agent Package                                     | Run discovered Agent Evals through ViteHub defaults.                                      |
 | `vitehub agent info`        | Available      | Agent Package                                     | Inspect resolved Agent metadata through a running Vite Development Server.                |
 | `vitehub agent dev`         | Available      | Agent Package                                     | Talk to a discovered Agent through a running Vite Development Server.                     |
-| `vitehub agent invocations` | Available      | Agent Package                                     | List, inspect, or follow records in the application's Agent Invocation journal.           |
+| `vitehub agent invocations` | Available      | Agent Package                                     | List, inspect, or follow records in the application's Agent Invocation journal. Delete or prune terminal records.           |
 | `vitehub channels history`  | Available      | Agent Package                                     | Download one deployed conversation and its attachments.                                   |
 | `vitehub channels sync`     | Available      | Agent Package                                     | Inspect or apply provider-owned webhook registrations for a deployed stage.               |
 | `vitehub connections`       | Available      | Connections Package                               | Connect OAuth accounts, list Connections, read activity, and approve or deny writes.      |
 | `vitehub console dev`       | Available      | Console integration                               | Start the app's development command with deterministic Console fixture data.              |
 | `vitehub db generate`       | Available      | Database Package                                  | Refresh generated Database artifacts and generate Drizzle migrations.                     |
 | `vitehub db migrate`        | Available      | Database Package                                  | Refresh generated Database artifacts and apply Drizzle migrations.                        |
+| `vitehub schedule run`      | Available      | Schedule Package                                  | Run a manual Static Schedule Definition now, locally or on a deployment.                  |
 | `vitehub workspace dev`     | Available      | Workspace Package                                 | Run commands through a Workspace Session exposed by a Compatible Vite Development Server. |
 | `vitehub types prepare`     | Available      | ViteHub Framework                                 | Prepare generated TypeScript declarations for editors and type checking.                  |
 | `vitehub provision run`     | Available      | ViteHub CLI plus package Provision Steps          | Create missing provider resources idempotently.                                           |
@@ -180,6 +183,32 @@ pnpm vitehub db migrate
 ```
 
 `db generate` forwards Drizzle Kit arguments, supports `--name <name>` for a migration name, and uses `--custom` to create an empty custom migration. `db migrate` accepts forwarded Drizzle Kit migration arguments.
+
+## Run a Schedule on demand
+
+`schedule run` starts a Static Schedule Definition that sets `manual: true`. It prints the run status, duration, and run id, and exits with `1` when the run fails. Add `--json` to print the run record.
+
+```bash [Terminal]
+pnpm vitehub schedule run sync
+```
+
+Without `--url`, the command posts to the running Vite Development Server at `VITEHUB_DEV_SERVER_URL` or `http://localhost:5173`. Use `--server <url>` to select another local server.
+
+With `--url`, the command posts to `/_vitehub/schedules/run` on the deployment. That route runs only when the deployment enables the [Console](/docs/development/console#run-schedules-on-demand) with `invoke: true`, and the Console access policy protects it like every other `/_vitehub/**` route. Set the credentials for that policy in the environment:
+
+| Variable                        | Value                                                                                                                                           |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITEHUB_CONSOLE_AUTHORIZATION` | An `Authorization` header value that the Console access policy accepts, for example the Basic or Bearer credential that host middleware checks. |
+| `VITEHUB_CONSOLE_COOKIE`        | A `Cookie` header value from a signed-in Console session.                                                                                       |
+| `CF_ACCESS_CLIENT_ID`           | Cloudflare Access service-token client ID. Forwarded as `CF-Access-Client-Id`.                                                                 |
+| `CF_ACCESS_CLIENT_SECRET`       | Cloudflare Access service-token client secret. Forwarded as `CF-Access-Client-Secret`.                                                         |
+
+```bash [Terminal]
+VITEHUB_CONSOLE_AUTHORIZATION="Basic $(printf 'admin:%s' "$ADMIN_TOKEN" | base64)" \
+  pnpm vitehub schedule run sync --url https://app.example.com
+```
+
+The command requires HTTPS for remote URLs and does not follow redirects. A `401`, `403`, or redirect response reports a Console authentication failure. The command never sends the credential to the local Development Server.
 
 ## Run Agent Evals
 
