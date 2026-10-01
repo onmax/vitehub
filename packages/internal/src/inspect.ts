@@ -100,7 +100,7 @@ const secretKeyPattern = /secret|token|passw(?:or)?d|credential|api[-_\s]?key|pr
 const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s:?#]*:[^/\s?#]+@|bearer\s)/i
 
 const embeddedUrlCredentialPattern = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:?#]*:[^/\s?#]+@/gi
-const embeddedCookiePattern = /\b([\w-]*cookie[\w-]*["']?\s*[:=]\s*)(?:"(?:\\[^\r\n]|[^"\\\r\n])*"(?:\s*;\s*[\w.-]+\s*=[^;\r\n]*)*|'(?:\\[^\r\n]|[^'\\\r\n])*'(?:\s*;\s*[\w.-]+\s*=[^;\r\n]*)*|[^\r\n]+?(?=\s*;\s*[^;\s=]+\s*(?:\r?\n|$)|\r?\n|$))/gi
+const embeddedCookiePattern = /\b([\w-]*cookie[\w-]*["']?\s*[:=]\s*)(?:"(?:\\[^\r\n]|[^"\\\r\n])*"(?:\s*;\s*[\w.-]+\s*=[^;\r\n]*)*|'(?:\\[^\r\n]|[^'\\\r\n])*'(?:\s*;\s*[\w.-]+\s*=[^;\r\n]*)*|[^\r\n]+?(?=\s*;\s*[^;=\r\n/]+\s*(?:\r?\n|$)|\r?\n|$))/gi
 const embeddedBearerPattern = /\bbearer\s+[^\s,;]+/gi
 const embeddedAuthorizationPattern = new RegExp(
   String.raw`\b([\w-]*authorization[\w-]*["']?\s*[:=]\s*)(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|'(?:\\[^\r\n]|[^'\\\r\n])*'|[^\r\n]+?(?=\s*(?:[,;])?\s*(?:${secretKeyPattern.source})[\w-]*\s*[:=]|\s+rejected\b|$))`,

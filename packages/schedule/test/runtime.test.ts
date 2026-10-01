@@ -935,6 +935,24 @@ describe("KV Schedule Run Store", () => {
     expect(await store.getRun("srun_runtime_actual_opaque%_29")).toEqual(latest[0])
   })
 
+  it("parses each indexed key once for a multi-Schedule history batch", async () => {
+    const store = createKVScheduleRunStore({ kvStore: createTestKVStore() })
+    const scheduledAt = new Date("2026-05-23T09:00:00.000Z")
+    for (const scheduleId of ["alpha", "beta", "gamma"]) {
+      await store.createRun({ id: `srun_runtime_${scheduleId}`, scheduleId, target: "report", scheduledAt,
+        createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+    }
+    const decode = vi.spyOn(globalThis, "decodeURIComponent")
+    try {
+      const results = await store.listRunsBatch!(["alpha", "beta", "gamma"].map(scheduleId => ({ scheduleId, runtimeOnly: true, limit: 1 })))
+      expect(results.map(runs => runs[0]?.scheduleId)).toEqual(["alpha", "beta", "gamma"])
+      expect(decode).toHaveBeenCalledTimes(12)
+    }
+    finally {
+      decode.mockRestore()
+    }
+  })
+
   it("shares key enumeration and opaque legacy reads within each history batch", async () => {
     const kvStore = createTestKVStore()
     const store = createKVScheduleRunStore({ kvStore })

@@ -87,6 +87,18 @@ describe("Runtime Schedule inspection", () => {
     expect((await readScheduleConsoleRecords())[0]?.id).toBe("runtime:definition:daily")
   })
 
+  it.each(["enable", "disable"])("preserves %s success when optional history is unavailable", async (operation) => {
+    installTargets()
+    await schedules.dynamic.create({ cron: "0 9 * * *", enabled: operation === "disable", id: "digest", target: "report" })
+    setScheduleRunStore({ ...createMemoryScheduleRunStore(), listRuns: () => { throw new Error("history unavailable") } })
+    const response = await handleScheduleDevRequest(devRequest({ operation, id: "digest" }))
+    expect(response.status).toBe(200)
+    const body = await readBody(response)
+    expect(body.schedule).toMatchObject({ id: "digest", enabled: operation === "enable" })
+    expect(body.schedule?.lastRun).toBeUndefined()
+    expect((await schedules.get("digest"))?.enabled).toBe(operation === "enable")
+  })
+
   it("reports persistence failures after the run record was created", async () => {
     installTargets()
     await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })

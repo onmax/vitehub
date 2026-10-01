@@ -400,7 +400,13 @@ async function runOperation(body: ScheduleDevRequestBody): Promise<Response> {
     case "disable":
       try {
         const updated = body.operation === "enable" ? await schedules.enable(id) : await schedules.disable(id)
-        const runs = await getScheduleRunStore().listRuns({ scheduleId: id, runtimeOnly: true, limit: 1 })
+        let runs: ScheduleRunRecord[] = []
+        try {
+          runs = await getScheduleRunStore().listRuns({ scheduleId: id, runtimeOnly: true, limit: 1 })
+        }
+        catch {
+          // History is optional after the Schedule mutation has persisted.
+        }
         return json({ schedule: summarizeRuntimeSchedule(updated, runs) })
       }
       catch (error) {

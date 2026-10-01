@@ -402,20 +402,16 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
   }
 
   async function readSnapshot() {
-    return {
-      keys: await store.keys(scheduleRunBase(prefix)),
-      indexKeys: await store.keys(joinKey(prefix, "schedule-run-index")),
-      recordsByKey: new Map<string, StoredScheduleRunRecord | null | undefined>(),
-    }
-  }
-
-  async function listRuns(options: ScheduleRunListOptions, snapshot: Awaited<ReturnType<typeof readSnapshot>>) {
-    const { keys, indexKeys, recordsByKey } = snapshot
+    const keys = await store.keys(scheduleRunBase(prefix))
+    const indexKeys = await store.keys(joinKey(prefix, "schedule-run-index"))
     const metadataById = new Map(indexKeys.flatMap(key => {
       const metadata = runIndexMetadata(key)
       return metadata ? [[metadata.id, metadata] as const] : []
     }))
-    const known: { key: string, scheduledAt: number }[] = []
+    type IndexedRun = { key: string, scheduledAt: number }
+    const known: IndexedRun[] = []
+    const runtime: IndexedRun[] = []
+    const bySchedule = new Map<string, { all: IndexedRun[], runtime: IndexedRun[] }>()
     const unknown: string[] = []
     for (const key of keys) {
       let id: string
@@ -427,19 +423,37 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
         continue
       }
       const metadata = metadataById.get(id)
-      if (!metadata) unknown.push(key)
-      else if ((options.scheduleId === undefined || metadata.scheduleId === options.scheduleId)
-        && (!options.runtimeOnly || metadata.id.startsWith("srun_runtime_"))) {
-        known.push({ key, scheduledAt: metadata.scheduledAt })
+      if (!metadata) {
+        unknown.push(key)
+        continue
+      }
+      const entry = { key, scheduledAt: metadata.scheduledAt }
+      known.push(entry)
+      const group = bySchedule.get(metadata.scheduleId) ?? { all: [], runtime: [] }
+      bySchedule.set(metadata.scheduleId, group)
+      group.all.push(entry)
+      if (metadata.id.startsWith("srun_runtime_")) {
+        runtime.push(entry)
+        group.runtime.push(entry)
       }
     }
-    known.sort((left, right) => right.scheduledAt - left.scheduledAt)
+    for (const entries of [known, runtime, ...[...bySchedule.values()].flatMap(group => [group.all, group.runtime])]) {
+      entries.sort((left, right) => right.scheduledAt - left.scheduledAt)
+    }
+    return { keys, known, runtime, bySchedule, unknown, unknownKeys: new Set(unknown), recordsByKey: new Map<string, StoredScheduleRunRecord | null | undefined>() }
+  }
+
+  async function listRuns(options: ScheduleRunListOptions, snapshot: Awaited<ReturnType<typeof readSnapshot>>) {
+    const { keys, unknown, unknownKeys, recordsByKey } = snapshot
+    const group = options.scheduleId === undefined ? undefined : snapshot.bySchedule.get(options.scheduleId)
+    const known = options.scheduleId === undefined
+      ? (options.runtimeOnly ? snapshot.runtime : snapshot.known)
+      : (options.runtimeOnly ? group?.runtime : group?.all) ?? []
     // Read legacy records without an index with bounded concurrency, preserving their history.
     const records: ScheduleRunRecord[] = []
     const selectedKeys = options.scheduleId === undefined && options.limit === undefined && !options.runtimeOnly
       ? keys
       : [...unknown, ...known.slice(0, options.limit).map(entry => entry.key)]
-    const unknownKeys = new Set(unknown)
     for (let index = 0; index < selectedKeys.length; index += 16) {
       const batch = await Promise.all(selectedKeys.slice(index, index + 16).map(async (key) => {
         const cached = recordsByKey.has(key)

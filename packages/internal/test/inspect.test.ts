@@ -118,6 +118,12 @@ describe("redactInspectionText", () => {
     expect(redactInspectionText(`${key}=theme=dark; sessionid=abc123\nRequest failed`)).toBe(`${key}=[redacted]\nRequest failed`)
   })
 
+  it.each(["Cookie", "request_cookie", "cookie_header"])("preserves diagnostic phrases after %s credentials", key => {
+    expect(redactInspectionText(`${key}: session=abc; request failed`)).toBe(`${key}: [redacted]; request failed`)
+    expect(redactInspectionText(`${key}: theme=dark; sessionid=abc123; retry the request`)).toBe(`${key}: [redacted]; retry the request`)
+    expect(redactInspectionText(`${key}: session=abc; path=/private; request failed`)).toBe(`${key}: [redacted]; request failed`)
+  })
+
   it.each(["proxy_authorization", "X-Authorization", "authorization_header", "ProxyAuthorization"])("redacts compound normalized authorization key %s", key => {
     expect(redactInspectionText(`${key}=Basic dXNlcjpwYXNz`)).toBe(`${key}=[redacted]`)
     expect(redactInspectionText(`${key}: Digest username="u", response="deadbeef"`)).toBe(`${key}: [redacted]`)
