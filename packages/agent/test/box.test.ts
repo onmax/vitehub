@@ -250,7 +250,7 @@ describe("Agent Box environment", () => {
   it("forwards Driver and provider runtime values but keeps host values on the host", () => {
     expect(providerBoxEnvironment({
       explicit: ["DRIVER_VALUE", "PATH_OVERRIDE"],
-      host: { HOST_SECRET: "host", PATH: "/host/bin" },
+      host: { HOST_SECRET: "host", PATH: "/host/bin", T3_MCP_BEARER_TOKEN: "stale-host-token" },
       prepared: { DRIVER_VALUE: "driver", PATH: "/host/bin", PATH_OVERRIDE: "/driver/bin" },
       received: {
         "BAD-NAME": "value",
@@ -263,6 +263,14 @@ describe("Agent Box environment", () => {
         XDG_CONFIG_HOME: "/host/config",
       },
     })).toEqual({ DRIVER_VALUE: "driver", PATH_OVERRIDE: "/driver/bin", T3_MCP_BEARER_TOKEN: "runtime" })
+  })
+
+  it("reports boxed provider inspection as unsupported", async () => {
+    const agent = defineAgent({ box: { runtime: "trusted-host" }, driver: { kind: "codex" } })
+    expect(await agent.status({ runtime: "unknown", memo: vi.fn(), waitUntil: vi.fn() })).toMatchObject({
+      readiness: "unsupported",
+      reason: "Provider inspection inside an Agent Box is not supported.",
+    })
   })
 
   it("identifies runtimes that share the ViteHub network", () => {
@@ -311,8 +319,12 @@ describe("Agent Box relay", () => {
     const launcherClosed = new Promise(resolve => launcher.once("close", resolve))
     await spawnCalled
     // Closing the relay closes the connection before the Box process exists.
-    await relay.close()
+    let closed = false
+    const closing = relay.close().then(() => { closed = true })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(closed).toBe(false)
     finishSpawn?.()
+    await closing
     await vi.waitFor(() => expect(kill).toHaveBeenCalled())
     launcher.kill("SIGKILL")
     await launcherClosed
@@ -387,7 +399,7 @@ describe("Agent Box provider execution", () => {
     let launched: LauncherResult | undefined
     providerRuntime(threadId, async ({ cwd }) => {
       const options = createProviderRuntime.mock.lastCall?.[0]
-      launched = await runLauncher(String(options?.settings?.binaryPath), ["-e", "process.stderr.write('box failed\\n'); process.exit(7)"], {
+      launched = await runLauncher(String(options?.settings?.binaryPath), ["-e", "process.stderr.write(process.env.BOX_TOKEN + '\\n'); process.exit(7)"], {
         cwd,
         env: { ...options?.environment },
         stdin: "",
@@ -402,9 +414,9 @@ describe("Agent Box provider execution", () => {
       // SAFETY: The fixture provides the provider invocation fields read by the adapter.
     }).generate(invocationContext(threadId, { prompt: "review", options: { ref: "refs/heads/first", sha: first, token: "token" } }) as never)).rejects.toMatchObject({
       code: "PROVIDER_LAUNCH_FAILED",
-      details: { exitCode: 7, stderr: "box failed" },
+      details: { exitCode: 7, stderr: "[REDACTED]" },
     })
-    expect(launched).toMatchObject({ code: 7, stderr: "box failed\n" })
+    expect(launched).toMatchObject({ code: 7, stderr: "token\n" })
   })
 
   it("checks Box requirements before the provider starts", async () => {

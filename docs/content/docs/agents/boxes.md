@@ -207,3 +207,5 @@ The invocation fails when the Box session cannot close. For example, a Crabbox B
 | Sandbox | Package-project discovery, preparation, invocation, timeout, and lifecycle orchestration. |
 
 Use `@vite-hub/box` directly when application code owns the process lifecycle. Use [`sandbox()`](/docs/capabilities/sandbox) to give a model-backed Agent an allowlisted executable tool.
+
+Provider status inspection inside an Agent Box is currently unsupported. `agent.status()` reports `readiness: "unsupported"` for boxed provider Drivers. Invocation execution still uses the configured Box.

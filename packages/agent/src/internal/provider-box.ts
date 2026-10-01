@@ -27,6 +27,8 @@ const frameStderr = 2
 const frameExit = 3
 
 export interface ProviderBoxSession {
+  /** Actual Box environment values, retained only for diagnostic redaction. */
+  readonly environment?: Readonly<Record<string, string | undefined>>
   /** Absolute Home path inside the Box. */
   readonly home: string
   readonly session: BoxSession
@@ -62,8 +64,15 @@ export async function openProviderBox<Context>(options: {
     }
     generated[path] = { contents }
   }
+  const environment: Record<string, string> = {}
+  const env = Object.fromEntries(Object.entries(options.definition.env ?? {}).map(([name, value]) => [name, async (context: Context) => {
+    const resolved = hasRuntimeType(value, "function") ? await value(context) : value
+    if (hasRuntimeType(resolved, "string")) environment[name] = resolved
+    return resolved
+  }]))
   const box = await resolveBox({
     ...options.definition,
+    env,
     home: { ...options.definition.home, files: { ...declared, ...generated } },
   }, options.context, { requires: [options.command] })
   const session = await box.open({ signal: options.signal })
@@ -76,7 +85,7 @@ export async function openProviderBox<Context>(options: {
     if (!home.ok || !home.stdout.startsWith("/")) {
       throw agentDiagnostics.AGENT_R0952({ message: "[vitehub] Agent Box did not report an absolute HOME path." })
     }
-    return { home: home.stdout, session, spawn: spawn.bind(session) }
+    return { environment, home: home.stdout, session, spawn: spawn.bind(session) }
   }
   catch (error) {
     await session.close().catch(() => undefined)
@@ -117,12 +126,15 @@ export async function startProviderBoxRelay(options: ProviderBoxRelayOptions): P
   const launcherPath = join(options.launchRoot, "provider")
   const processes = new Set<BoxProcess>()
   const sockets = new Set<Socket>()
+  const handlers = new Set<Promise<void>>()
   const server: Server = createServer({ allowHalfOpen: true }, (socket) => {
     sockets.add(socket)
     socket.once("close", () => sockets.delete(socket))
     // A launcher can disconnect at any time. Socket errors close the connection and do not reach the host process.
     socket.on("error", () => socket.destroy())
-    void handleRelayConnection(socket, token, options, processes).catch(() => socket.destroy())
+    const handler = handleRelayConnection(socket, token, options, processes).catch(() => { socket.destroy() })
+    handlers.add(handler)
+    void handler.finally(() => handlers.delete(handler))
   })
   server.listen(socketPath)
   await once(server, "listening")
@@ -137,6 +149,7 @@ export async function startProviderBoxRelay(options: ProviderBoxRelayOptions): P
         await Promise.all([...processes].map(child => child.kill().catch(() => undefined)))
         for (const socket of sockets) socket.destroy()
         await new Promise<void>(resolve => server.close(() => resolve()))
+        await Promise.all([...handlers])
       })()
     },
   }
@@ -149,6 +162,8 @@ async function handleRelayConnection(
   processes: Set<BoxProcess>,
 ) {
   const { args, env, input } = await readRelayHeader(socket, token)
+  const redact = (text: string) => Object.values(options.box.environment ?? {}).filter((value): value is string => Boolean(value)).toSorted((left, right) => right.length - left.length)
+    .reduce((safe, value) => safe.replaceAll(value, "[REDACTED]"), text)
   const boxCwd = options.box.session.cwd
   const mapPath = (value: string) => value === options.localRoot
     ? boxCwd
@@ -167,7 +182,7 @@ async function handleRelayConnection(
     child = await options.box.spawn(options.command, selectedArgs.map(mapText), { env: environment })
   }
   catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = redact(error instanceof Error ? error.message : String(error))
     await writeDiagnostic(options.diagnosticPath, { exitCode: 127, spawnError: message })
     socket.write(frame(frameStderr, Buffer.from(`${message}\n`)))
     socket.end(exitFrame(127))
@@ -217,7 +232,7 @@ async function handleRelayConnection(
   if (exit.code !== 0) {
     const diagnostic: Record<string, unknown> = {
       exitCode: exit.code,
-      stderr: stderrTail.toString("utf8"),
+      stderr: redact(stderrTail.toString("utf8")),
       stderrBytes,
     }
     if (stderrBytes > stderrTail.byteLength) diagnostic.stderrTruncated = true
@@ -404,7 +419,7 @@ export function providerBoxEnvironment(options: {
     if (!environmentNamePattern.test(name) || boxRuntimeEnvironmentKeys.has(name)) continue
     // Values added by the provider runtime, such as the MCP bearer token, are forwarded.
     // Host values, such as PATH, stay on the host unless driver.env names them.
-    if (explicit.has(name) || (options.prepared[name] === undefined && options.host[name] === undefined)) selected[name] = value
+    if (name === "T3_MCP_BEARER_TOKEN" || explicit.has(name) || (options.prepared[name] === undefined && options.host[name] === undefined)) selected[name] = value
   }
   return selected
 }

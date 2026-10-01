@@ -1872,6 +1872,7 @@ function defineBaseAgent<
     async status(context, statusOptions) {
       const checkedAt = new Date().toISOString()
       if (driver.kind !== "provider") return { agent: name ?? "agent", checkedAt, stale: false, readiness: "unsupported" }
+      if (box) return { agent: name ?? "agent", checkedAt, stale: false, readiness: "unsupported", reason: "Provider inspection inside an Agent Box is not supported." }
       const { inspectAgentProvider } = await import("./provider-agent.ts")
       return inspectAgentProvider(driver, {
         ...createAgentCallbackContext(withAgentIdentityOwner(definition, context)),
