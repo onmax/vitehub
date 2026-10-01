@@ -9,7 +9,7 @@ import { papercuts } from "./capabilities/papercuts.ts"
 import { diagnostics } from "./capabilities/diagnostics.ts"
 import { agentInvocationId } from "./invocations.ts"
 import { sanitizeAgentLog } from "./evlog/privacy.ts"
-import { encodeRouteSegment } from "@vite-hub/runtime"
+import { consoleInvocationUrl, resolvePublicUrl } from "@vite-hub/runtime"
 import type { AgentCapabilityDefinition, AgentFinishEvent, ResolvedAgentRuntimeContext } from "./types.ts"
 import type { RuntimeDiagnosticReporter } from "@vite-hub/runtime"
 
@@ -35,9 +35,8 @@ export interface AgentEvlogOptions {
   level?: "minimal" | "standard" | "full"
   /** HTTP request logs sent through the exporter. Defaults to failures only. */
   logs?: "all" | "failures" | false
-  sessionUrl?: (invocation: { agentName: string, id: string }) => string
-  /** Build Console links for all events and reports from one origin. */
-  console?: { origin: string | ((agent: string) => string), base?: string }
+  /** Console link for an invocation. Defaults to `vitehub({ publicUrl })`. */
+  sessionUrl?: (invocation: { agentName: string, id: string }) => string | undefined
   /** Enable resource diagnostics on the same drain. */
   resources?: NonNullable<Parameters<typeof diagnostics>[0]>["resources"]
   /** Durable papercut delivery shares the exporter and its shutdown lifecycle. */
@@ -91,11 +90,11 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
   if (!Number.isSafeInteger(maxPending) || maxPending < 1) throw new TypeError("[vitehub] evlog maxPending must be a positive integer.")
   const timeoutMs = options.deliveryTimeoutMs ?? 10_000
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) throw new TypeError("[vitehub] evlog deliveryTimeoutMs must be a positive timer duration.")
-  const sessionUrl = options.sessionUrl ?? (options.console ? ({ agentName, id }: { agentName: string, id: string }) => {
-    const origin = hasRuntimeType(options.console!.origin, "function") ? options.console!.origin(agentName) : options.console!.origin
-    const base = (options.console!.base ?? "/_vitehub").replace(/\/$/, "")
-    return new URL(`${base}/agents/${encodeRouteSegment(agentName)}/invocations/${encodeURIComponent(id)}`, origin).href
-  } : undefined)
+  const sessionUrl = ({ agentName, id }: { agentName: string, id: string }, discoveredName = agentName) => {
+    if (options.sessionUrl) return options.sessionUrl({ agentName, id })
+    const origin = resolvePublicUrl({ agentName: discoveredName })
+    return origin ? consoleInvocationUrl(origin, agentName, id) : undefined
+  }
   const exporter = options.exporter
   const level = options.level ?? "standard"
   const exportedLogs = options.logs ?? "failures"
@@ -174,14 +173,13 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
     void track(withExportDeadline(timeoutMs, signal => exporter.exception(safe.error, attributes, signal)))
   }
 
-  async function invocationMetadata(runtime: Pick<ResolvedAgentRuntimeContext, "agentIdentity" | "run" | "trace">, run = runtime.run) {
-    const agentName = runtime.agentIdentity?.name
+  async function invocationMetadata(runtime: Pick<ResolvedAgentRuntimeContext, "agentIdentity" | "run" | "trace">, agentName: string | undefined, run = runtime.run) {
     const id = run?.runId
     return {
       agent_name: agentName, run_id: run?.runId, invocation_id: id, thread_id: run?.threadId,
       trace_id: runtime.trace?.id, parent_trace_id: runtime.trace?.parentId,
       $ai_trace_id: runtime.trace?.id || id,
-      session_url: agentName && id ? sessionUrl?.({ agentName, id }) : undefined,
+      session_url: agentName && id ? sessionUrl({ agentName, id: await agentInvocationId(id, agentName) }, runtime.agentIdentity?.name) : undefined,
     }
   }
 
@@ -199,7 +197,7 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
         if (!span?.endTime) return
         const summary = summaries.get(context.runtime)
         summaries.delete(context.runtime)
-        const attributes = await invocationMetadata(context.runtime)
+        const attributes = await invocationMetadata(context.runtime, context.agent.name)
         const cancelled = summary?.cancelled === true || span.events?.some(event => event.name === "agent.invocation.cancelled") === true
         const failed = !cancelled && span.status.code === "ERROR"
         if (failed) exception(summary?.error || new Error("Agent invocation failed"), attributes)

@@ -83,7 +83,7 @@ export function createInlineConsoleAuth(config: InlineConsoleAuth): ConsoleAuthD
   // The database holds sessions and OAuth tokens.
   chmodSync(databasePath, 0o600)
   return defineConsoleAuth({
-    auth: defineAuth(({ requestOrigin }) => {
+    auth: defineAuth(() => {
       const github: GitHubProviderOptions = {
         clientId: requiredEnv(config.clientIdEnv ?? "GITHUB_CLIENT_ID"),
         clientSecret: requiredEnv(config.clientSecretEnv ?? "GITHUB_CLIENT_SECRET"),
@@ -92,7 +92,8 @@ export function createInlineConsoleAuth(config: InlineConsoleAuth): ConsoleAuthD
       const secret = requiredEnv(config.secretEnv ?? "BETTER_AUTH_SECRET")
       return {
         appName: "ViteHub Console",
-        baseURL: config.baseURL ?? process.env.CONSOLE_AUTH_BASE_URL ?? requestOrigin,
+        // Unset falls back to `vitehub({ publicUrl })`, then the request origin.
+        baseURL: config.baseURL ?? process.env.CONSOLE_AUTH_BASE_URL,
         database,
         // A cookie signed under a different organization policy must require a new OAuth exchange.
         secret: orgs.length ? createHmac("sha256", secret).update(`vitehub-console-org:${orgPolicy}`).digest("hex") : secret,

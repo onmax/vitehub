@@ -123,7 +123,7 @@ import { github } from 'vite-hub/agent/channels'
 export const agent = defineAgent({
   channels: {
     github: github({
-      activity: { publicUrl: 'https://agent.example.com' },
+      activity: true,
       app: true,
     }),
   },
@@ -131,7 +131,7 @@ export const agent = defineAgent({
 })
 ```
 
-Set `activity.publicUrl` to the public origin of the Agent's ViteHub Console. GitHub pull request webhook runs then receive a link to their own invocation as soon as they start. Use `activity: true` when the application supplies activity links itself.
+When `vitehub({ publicUrl })` is set, GitHub pull request webhook runs receive a link to their own Console invocation as soon as they start. Set `activity.publicUrl` to override the origin for this Channel. Without either, the run has no default link and the application can supply its own.
 
 Select the Channel and its destination when the application starts the invocation. Links are application-owned; use them for the current session, memory, or another inspection surface.
 

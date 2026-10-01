@@ -3812,7 +3812,7 @@ async function exportAgentTelemetryTraces<TRuntimeConfig extends AgentRuntimeCon
   const id = runtime.run?.runId || runtime.trace?.id
   const run = (id ? runs.find(candidate => candidate.id === id) : undefined) || (runs.length === 1 ? runs[0] : undefined)
   if (!run || run.status === "running") return
-  const name = runtime.agentIdentity?.name || agent.name
+  const name = agentInvocationName(agent, runtime)
   const configuration = getAgentTelemetryConfiguration(context)
   const model = configuration?.value.driver.model
   const provider = model?.provider || configuration?.value.driver.provider
@@ -3896,7 +3896,7 @@ async function exportAgentTelemetryLogs<TRuntimeConfig extends AgentRuntimeConfi
   includeConfiguration = false,
 ): Promise<void> {
   if (!telemetry.length || !runtime.traceLog) return
-  const name = runtime.agentIdentity?.name || agent.name
+  const name = agentInvocationName(agent, runtime)
   const invocationEvents = agentTelemetryTraceEvents(runtime.traceLog).filter(event => event.sequence <= throughSequence
     && event.attributes?.["agent.invocation.id"] === invocationId)
   const exports = await Promise.allSettled(telemetry.map(async (item) => {
@@ -3975,7 +3975,7 @@ async function exportAgentTelemetryConfiguration<TRuntimeConfig extends AgentRun
   configurationDelivered: Set<AgentCapabilityRegistries["telemetry"][number]>,
 ): Promise<void> {
   if (!telemetry.length || !runtime.traceLog) return
-  const name = runtime.agentIdentity?.name || agent.name
+  const name = agentInvocationName(agent, runtime)
   const events = runtime.traceLog.entries().filter(event => event.attributes?.["agent.invocation.id"] === invocationId)
   const terminalSequence = events.at(-1)?.sequence
   if (terminalSequence === undefined) return
@@ -4031,7 +4031,7 @@ function reportAgentTelemetryFailure<TRuntimeConfig extends AgentRuntimeConfig>(
   phase: "live" | "terminal",
 ): void {
   const failure = error instanceof AgentTelemetryCapabilityError ? error.cause : error
-  const name = runtime.agentIdentity?.name || agent.name
+  const name = agentInvocationName(agent, runtime)
   const capabilityIds = error instanceof AggregateError
     ? error.errors.flatMap(item => item instanceof AgentTelemetryCapabilityError ? [item.capabilityId] : [])
     : []
