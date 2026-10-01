@@ -105,9 +105,10 @@ async function readOwners(root: string) {
 
 async function writeOwners(root: string, owners: GeneratedTypesOwner[]): Promise<void> {
   // Keep the complete shared owner list recoverable without scanning other app roots.
-  // Both files are replaced atomically under the target's ownership lock.
-  await writeTypesManifest(root, generatedTypesOwnersRecoveryManifest, owners);
+  // Publish the authoritative copy first. If the process exits before the
+  // recovery copy is replaced, readers still see the complete new owner list.
   await writeTypesManifest(root, generatedTypesOwnersManifest, owners);
+  await writeTypesManifest(root, generatedTypesOwnersRecoveryManifest, owners);
 }
 
 async function removeOwners(root: string): Promise<void> {

@@ -415,6 +415,24 @@ describe("hubConnections", () => {
     await expect(readFile(join(root, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
   });
 
+  it("cleans safely when publication stops after the primary owner manifest", async () => {
+    const firstRoot = await createTempProject();
+    const secondRoot = await createTempProject();
+    const sharedTarget = await createTempProject();
+    const options = { projectRoot: sharedTarget };
+
+    await hubConnections(options).api.prepareTypes({ projectRoot: firstRoot });
+    await hubConnections(options).api.prepareTypes({ projectRoot: secondRoot });
+    // Simulate an interruption after the authoritative rename and before the
+    // recovery copy is replaced. Cleanup must use the complete primary list.
+    await rm(join(sharedTarget, ".vitehub/connections-types-owners-recovery.json"));
+
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: firstRoot });
+    await expect(readFile(join(sharedTarget, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: secondRoot });
+    await expect(readFile(join(sharedTarget, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it.each(["malformed", "missing"])("recovers %s shared metadata and retires output after the final owner", async (state) => {
     const firstRoot = await createTempProject();
     const secondRoot = await createTempProject();
