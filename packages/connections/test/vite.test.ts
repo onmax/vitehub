@@ -7,7 +7,7 @@ import { mergeConfig } from "vite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { discoverConnectionDefinitions } from "../src/discovery.ts";
-import { CONNECTIONS_REGISTRY_ID, hubConnections } from "../src/vite.ts";
+import { CONNECTIONS_REGISTRY_ID, hubConnections, hubConnectionsTypesCleanup } from "../src/vite.ts";
 
 const tempDirs: string[] = [];
 
@@ -141,5 +141,17 @@ describe("hubConnections", () => {
       readFile(join(root, ".vitehub/types/connections.d.ts"), "utf8"),
     ).resolves.toContain(`"slack": typeof import(${JSON.stringify(added)})`);
     expect(plugin.api.getDefinitions().map((definition) => definition.name)).toEqual(["slack"]);
+  });
+
+  it("removes declarations from a previously configured custom root when disabled", async () => {
+    const root = await createTempProject();
+    const projectRoot = join(root, "packages/api");
+    const plugin = hubConnections({ projectRoot: "packages/api" });
+    await plugin.api.prepareTypes({ projectRoot: root });
+    await expect(readFile(join(projectRoot, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+
+    await expect(readFile(join(projectRoot, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

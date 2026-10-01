@@ -683,6 +683,7 @@ describe("vitehub", () => {
     })
     vitehub({
       connections: { management: { actor: "./server/connections-auth.ts" }, projectRoot: "/app", database: false, importBase: "consumer/connections" },
+      console: { exposure: "host-managed" },
       database: true,
       preset: "node",
     })

@@ -24,6 +24,7 @@ export const CONNECTIONS_VITE_PLUGIN_NAME = "@vite-hub/connections/vite";
 
 const resolvedConnectionsRegistryId = `\0${CONNECTIONS_REGISTRY_ID}`;
 const noExternalAddition = createNoExternalAddition("@vite-hub/connections");
+const generatedConnectionsTypeRoots = new Set<string>();
 
 export interface ConnectionsVitePluginOptions {
   /** Module that exports the ViteHub Database as `db`. Set `false` when the app has no database. */
@@ -116,6 +117,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
   }
 
   async function refreshGeneratedFiles(): Promise<void> {
+    generatedConnectionsTypeRoots.add(projectRoot)
     if (projectRoot !== defaultProjectRoot) await rm(resolve(defaultProjectRoot, ".vitehub/types/connections.d.ts"), { force: true })
     await Promise.all([
       writeFileIfChanged(
@@ -260,7 +262,12 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
 export function hubConnectionsTypesCleanup(): Plugin<{ prepareTypes: (options: { projectRoot: string }) => Promise<void> }> {
   const prepareTypes = async (options: { projectRoot: string }): Promise<void> => {
     const root = resolveViteHubProjectRoot(options.projectRoot)
-    await rm(resolve(root, ".vitehub/types/connections.d.ts"), { force: true })
+    await Promise.all([
+      rm(resolve(root, ".vitehub/types/connections.d.ts"), { force: true }),
+      ...Array.from(generatedConnectionsTypeRoots, projectRoot =>
+        rm(resolve(projectRoot, ".vitehub/types/connections.d.ts"), { force: true }),
+      ),
+    ])
   }
   return {
     name: "@vite-hub/connections/types-cleanup",
