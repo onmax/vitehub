@@ -258,7 +258,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       const merged = await pullRequestInbox.merge(claim, async () => {
         const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${head}`], { repository, timeout: 60_000, signal });
         const response: unknown = JSON.parse(result.stdout);
-        return Boolean(response && typeof response === "object" && "merged" in response && response.merged === true);
+        return Boolean(response && hasRuntimeType(response, "object") && "merged" in response && response.merged === true);
       }, `Merged ${head} directly: required checks passed and review threads were resolved.`);
       if (!merged) {
         if (await pullRequestInbox.hasMergeIntent(claim)) {

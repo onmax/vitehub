@@ -58,6 +58,7 @@ function parseSnapshot(value: unknown): Snapshot {
     ('threadsHydrated' in input && input.threadsHydrated !== true && input.threadsHydrated !== false) ||
     ('lastResult' in input && Object.prototype.toString.call(input.lastResult) !== '[object String]') ||
     ('mergeIntent' in input && (input.mergeIntent === null || Object.prototype.toString.call(input.mergeIntent) !== '[object Object]'
+      // SAFETY: the preceding tag check establishes a non-null record.
       || Object.prototype.toString.call((input.mergeIntent as Record<string, unknown>).head) !== '[object String]'
       || Object.prototype.toString.call((input.mergeIntent as Record<string, unknown>).text) !== '[object String]'))) {
     throw new TypeError('Invalid inbox snapshot')
@@ -622,8 +623,10 @@ export class PullRequestInbox {
   async hasMergeIntent(claim: Claim): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
-      return Boolean(s && s.lease === claim.token && s.generation === claim.generation
-        && (s.revision ?? 0) === (claim.snapshot.revision ?? 0) && s.mergeIntent)
+      // An outstanding intent fences the whole lease, including evidence that
+      // arrived after the claim was taken. Requiring the old generation here
+      // would let a recovered merge fall through into a repair pass.
+      return Boolean(s && s.lease === claim.token && s.mergeIntent)
     })
   }
   /** Reserve a claim, run an external side effect, then persist its terminal result. */

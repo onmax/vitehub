@@ -366,6 +366,18 @@ test('an inconclusive open read keeps an interrupted merge fenced', async t => {
   assert.equal(retried, false)
 })
 
+test('an outstanding merge intent fences a claim after newer evidence arrives', async t => {
+  const inbox = memory(t); await inbox.seed(repository, pr())
+  const [claim] = await inbox.claim(1); assert.ok(claim)
+  let releaseAction!: () => void
+  const merge = inbox.merge(claim, () => new Promise<boolean>(resolve => { releaseAction = () => resolve(true) }), 'merged')
+  while (!releaseAction) await new Promise(resolve => setImmediate(resolve))
+  await post(inbox, 'during-merge-fence', 'issue_comment', { action: 'created', issue: { number: 7, pull_request: {} }, comment: comment() })
+  assert.equal(await inbox.hasMergeIntent(claim), true)
+  releaseAction()
+  await merge
+})
+
 test('merge finalization preserves feedback delivered during the GitHub request', async t => {
   const inbox = memory(t); await inbox.seed(repository, pr())
   const [claim] = await inbox.claim(1); assert.ok(claim)
