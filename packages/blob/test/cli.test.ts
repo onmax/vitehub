@@ -70,6 +70,22 @@ const binary = Uint8Array.from([0, 255, 1, 128, 10, 13, 0xef, 0xbb, 0xbf, 0xc3, 
 const object = { contentType: "image/png", customMetadata: {}, httpEtag: "\"abc\"", httpMetadata: {}, pathname: "images/a.png", size: 1234, uploadedAt: "2026-09-29T10:00:00.000Z" }
 
 describe("vitehub blob", () => {
+  it.each([{ flags: [] }, { flags: ["--json", "--output", "failed.bin"] }])("reports failed download body reads with flags %j", async ({ flags }) => {
+    const response = new Response(new ReadableStream({ start(controller) { controller.error(new Error("download interrupted")) } }))
+    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json({ root: cwd, runtime: "nitro" }))
+    const output = context()
+    await expect(runBlobCli(["get", "source.bin", ...flags], output.context, { fetch })).resolves.toBe(1)
+    if (flags.includes("--json")) {
+      expect(JSON.parse(output.stdout.output())).toEqual({ error: { message: "Could not read the Blob download: download interrupted" } })
+      expect(output.stderr.output()).toBe("")
+      await expect(readFile(join(cwd, "failed.bin"))).rejects.toMatchObject({ code: "ENOENT" })
+    }
+    else {
+      expect(output.stdout.bytes()).toEqual([])
+      expect(output.stderr.output()).toContain("download interrupted")
+    }
+  })
+
   it.each([{ flags: [] }, { flags: ["--json"] }])("reports malformed blob rows with flags %j", async ({ flags }) => {
     const output = context()
     await expect(runBlobCli(["list", ...flags], output.context, { fetch: devServer({ blobs: [{}], hasMore: false, limit: 100, prefix: "", store: "default", stores: ["default"] }) })).resolves.toBe(1)

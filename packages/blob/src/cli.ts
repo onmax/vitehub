@@ -369,7 +369,13 @@ function readFileHeader(response: Response, fallback: { pathname: string, store:
 }
 
 async function writeDownload(response: Response, parsed: ParsedBlobArgs, context: BlobCliContext): Promise<number> {
-  const bytes = new Uint8Array(await response.arrayBuffer())
+  let bytes: Uint8Array
+  try {
+    bytes = new Uint8Array(await response.arrayBuffer())
+  }
+  catch (error) {
+    return writeFailure(parsed, context, { message: `Could not read the Blob download: ${error instanceof Error ? error.message : String(error)}` })
+  }
   const header = readFileHeader(response, { pathname: parsed.pathname!, store: parsed.store ?? "default" }, bytes.byteLength)
   if (!parsed.output) {
     context.stdout.write(bytes)
