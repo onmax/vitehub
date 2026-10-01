@@ -6,21 +6,33 @@ navigation.group: Deployment hosts
 icon: i-simple-icons-deno
 ---
 
-Deno is an Agent Package runtime target and a host boundary for Deno-shaped Provider Output.
-ViteHub keeps Agent Definitions, Schedule Definitions, KV Stores, and Runtime Helpers portable; Deno-specific code stays in generated output and driver configuration.
+Use the `deno` preset to deploy a ViteHub application to Deno Deploy. Nitro
+builds the server at `.output/server/index.mjs`. Agent Definitions, Schedule
+Definitions, KV Stores, and Runtime Helpers stay portable; Deno-specific code
+stays in generated output and driver configuration.
 
 ## Deno boundaries
 
 | Concern | ViteHub boundary |
 | --- | --- |
-| Agent chat and webhook routes | Agent Package writes `.vitehub/agent/deno-server.ts` when `runtime: 'deno'` and hosted Agent Definitions exist. It mounts the conventional chat dispatcher and webhook route; route-enabled Channels select which Agents answer chat requests. |
-| Static cron schedules | Schedule Package writes `.vitehub/schedule/deno-cron.mjs` for Deno `Deno.cron` wake output. |
-| Lightweight state | KV Package can use `driver: 'deno-kv'` and native `Deno.openKv()`. |
-| Deployment | Deno Deploy owns app entrypoint configuration, environment variables, permissions, logs, and production rollout. |
+| Agent chat and webhook routes | The Nitro server mounts the conventional chat dispatcher and webhook route. Route-enabled Channels select which Agents answer chat requests. |
+| Static cron schedules | The Schedule integration writes `.vitehub/schedule/deno-cron.mjs` for Deno `Deno.cron` wake output. `vitehub({ schedule })` fails on this preset, so add `hubSchedule()` directly. |
+| Lightweight state | KV defaults to `driver: 'deno-kv'` and native `Deno.openKv()`. |
+| Not available | Blob without an explicit store, Queue, Rate Limit, and Sandbox fail the build. |
+| Deployment | Deno Deploy owns environment variables, permissions, logs, and production rollout. |
 
-## Deno output boundary
+The Agent integration option `runtime: 'deno'` writes a separate
+`.vitehub/agent/deno-server.ts`. The `deno` preset rejects that option because
+the separate server is outside the deployed Nitro entry.
 
-The Agent integration selects Deno when generated Agent routes run through `Deno.serve`. Other primitives retain their package-owned runtime options.
+## Configure the preset
+
+Select the `deno` preset. This example also adds static Schedule output, so
+install the Schedule owner package first.
+
+```bash [Terminal]
+pnpm add @vite-hub/schedule
+```
 
 ```ts [vite.config.ts]
 import { hubSchedule } from '@vite-hub/schedule/vite'
@@ -47,7 +59,7 @@ export default defineConfig({
 ```
 
 The generated Nitro server imports discovered Agent Definitions and mounts both the webhook route pattern and the conventional `/api/_vitehub/agents/[agent]/chat` dispatcher.
-Schedule keeps its package-owned `.vitehub/schedule/deno-cron.mjs` output. Use one application entrypoint to register that output before starting the server.
+Schedule output needs a project-root `main.ts` that registers the cron output before it starts the server. The build bundles this file into `.output/main.ts` and fails when the file is missing.
 
 ```ts [main.ts]
 await import(new URL('./schedule/deno-cron.mjs', import.meta.url).href)
@@ -56,7 +68,7 @@ await import(new URL('./server/index.mjs', import.meta.url).href)
 
 ## Generated output
 
-A production-shaped build stages the Deno server, application entrypoint, and Schedule output under `.output`.
+A production build stages the Deno server, the `main.ts` entrypoint, and Schedule output under `.output`. Without `main.ts`, the entrypoint is `.output/server/index.mjs`.
 
 ```bash [Terminal]
 pnpm build
@@ -87,7 +99,7 @@ curl -X POST http://127.0.0.1:8000/api/_vitehub/agents/support/chat \
 
 ## Production notes
 
-Deno Deploy uses the staged `.output/main.ts` as the application entrypoint. It registers generated static schedules before starting `.output/server/index.mjs`.
+Deno Deploy uses the staged `.output/main.ts` as the application entrypoint when it exists. It registers generated static schedules before starting `.output/server/index.mjs`.
 Keep generated-file imports confined to this deployment entrypoint. Agent Definitions and other application code should use Runtime Helpers and stable ViteHub imports.
 
 Use Deno environment variables for model keys and other Runtime Env.

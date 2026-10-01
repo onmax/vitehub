@@ -7,7 +7,11 @@ navigation.group: Choose a target
 icon: i-lucide-table-properties
 ---
 
-`Package-specific` means support belongs to the named package or generated output, not the host as a whole.
+Use this page before you claim that a feature works on a host. The first table
+names the provider that each primitive uses on each host. The second table shows
+how the repository proves each host and how fresh that proof is.
+`Package-specific` means support belongs to the named package or generated
+output, not the host as a whole.
 
 ## Server primitives
 

@@ -1,4 +1,4 @@
-import { defineDatabase } from '@vite-hub/database'
+import { defineDatabase } from 'vite-hub/database'
 import { notes } from './schema'
 
 export default defineDatabase({

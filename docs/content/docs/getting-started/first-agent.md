@@ -6,21 +6,21 @@ navigation.lanes: [agents]
 icon: i-lucide-bot
 ---
 
-An Agent is a server file that tells ViteHub what to run. Every Agent needs a
-Driver, which can be a function, model, or coding provider such as Codex or Claude
-Code, among others. You can add Capabilities, Channels, Workspace access, and
-other options later.
+Use this quickstart to run your first Agent Invocation. An Agent is a server
+file that tells ViteHub what to run. Every Agent needs a Driver: a function, a
+model, or a coding provider such as Codex or Claude Code. You can add
+Capabilities, Channels, Workspace access, and other options later.
 
-This tutorial starts with a function that returns a fixed greeting. It runs
+This quickstart uses a function Driver that returns a fixed greeting. It runs
 offline and needs no credentials.
 
 ::note
 You need Node.js 24.15 or newer and `pnpm`. This project runs completely offline.
 ::
 
-## Install ViteHub and the server packages
+## Create the project
 
-Create an empty project, then install ViteHub with Vite and H3.
+Create an empty ESM project, then install ViteHub with Vite and H3.
 
 ```bash [Terminal]
 mkdir vitehub-agent-start
@@ -32,8 +32,9 @@ pnpm add vite-hub h3 vite
 
 ## Configure the server build
 
-Add `vitehub()` to the Vite config. Vite builds `src/server.ts` for Node.js, and
-ViteHub discovers Agent Definitions under `server/agents`.
+Add `vitehub()` with the `node` preset and `agent: true`. Vite builds
+`src/server.ts` into `dist/server.js`, and ViteHub discovers Agent Definitions
+under `server/agents`.
 
 ```ts [vite.config.ts]
 import { resolve } from "node:path"
@@ -131,7 +132,8 @@ request.
 
 ## Run the Agent and see the response
 
-Build the project and start the generated Node.js server.
+Build the project and start the generated Node.js server. The server listens on
+port `5173` unless you set `PORT`.
 
 ```bash [Terminal]
 pnpm vite build
@@ -152,7 +154,9 @@ The Agent returns the greeting:
 {"text":"Hello, Ada. This result came from an Agent Invocation."}
 ```
 
-From here, add only what your Agent needs:
+## Next steps
+
+Add only what your Agent needs:
 
 - Read [Agent Definitions](/docs/agents/agent-definitions) to choose another Driver or add Channels, Workspace context, trusted caller settings, or hooks.
 - Read [Capabilities](/docs/capabilities) before you give a model tools, triggers, policy, metadata, or context values.
