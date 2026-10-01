@@ -192,6 +192,7 @@ async function resolveLimiter(
   if (!resolved || typeof resolved.consume !== "function") {
     throw agentDiagnostics.AGENT_R0162({ message: "[vitehub] rateLimit({ limiter }) must be a RateLimiter." })
   }
+  if (typeof resolved.peek === "function" && typeof resolved.reset === "function") return resolved
   return {
     capabilities: resolved.capabilities,
     consume: resolved.consume.bind(resolved),
