@@ -567,6 +567,66 @@ describe("independent Console Auth", () => {
     }
   })
 
+  it("selects an allowlisted verified email for organization members across pages", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-auth-combined-"))
+    vi.stubEnv("GITHUB_CLIENT_ID", "client-id")
+    vi.stubEnv("GITHUB_CLIENT_SECRET", "client-secret")
+    vi.stubEnv("BETTER_AUTH_SECRET", "test-secret-at-least-32-bytes-long")
+    const emailsPath = "/user/emails?per_page=100&page="
+    const github: Record<string, unknown> = {
+      "/user": { id: 1, login: "octocat" },
+      "/user/memberships/orgs/acme": { state: "active" },
+    }
+    vi.stubGlobal("fetch", async (input: string | URL) => {
+      const url = new URL(input)
+      const path = `${url.pathname}${url.search}`
+      return path in github ? Response.json(github[path]) : new Response("{}", { status: 404 })
+    })
+    let database: DatabaseSync | undefined
+    try {
+      const input = createInlineConsoleAuth({
+        provider: "github", org: "acme", allowedEmails: ["Secondary@example.com", "allowed@example.com"],
+        databasePath: join(root, "console-auth.sqlite"),
+      })
+      const options = input.auth.options
+      if (typeof options !== "function") throw new TypeError("Expected resolved Console Auth options.")
+      const resolved = options({ env: {}, requestOrigin: "https://example.com" })
+      if (!(resolved.database instanceof DatabaseSync)) throw new TypeError("Expected a SQLite database.")
+      database = resolved.database
+      const provider = resolved.socialProviders?.github
+      const getUserInfo = provider && typeof provider !== "function" ? provider.getUserInfo : undefined
+      if (!getUserInfo) throw new TypeError("Expected a GitHub organization check.")
+      const primary = { email: "primary@example.com", primary: true, verified: true }
+      const secondary = { email: "SECONDARY@example.com", verified: true }
+      github[`${emailsPath}1`] = [primary, secondary]
+      const admitted = await getUserInfo({ accessToken: "token" })
+      expect(admitted?.user.email).toBe(secondary.email)
+      expect(await input.authorize({ user: admitted?.user } as never)).toBe(true)
+
+      // An unallowlisted primary must not stop lookup before a later allowed email.
+      github[`${emailsPath}1`] = Array.from({ length: 100 }, () => primary)
+      github[`${emailsPath}2`] = [secondary]
+      expect((await getUserInfo({ accessToken: "token" }))?.user.email).toBe(secondary.email)
+
+      github[`${emailsPath}1`] = Array.from({ length: 100 }, () => secondary)
+      github[`${emailsPath}2`] = [{ email: "allowed@example.com", primary: true, verified: true }]
+      expect((await getUserInfo({ accessToken: "token" }))?.user.email).toBe("allowed@example.com")
+      delete github[`${emailsPath}2`]
+      expect(await getUserInfo({ accessToken: "token" })).toBeNull()
+      github[`${emailsPath}1`] = [primary, { ...secondary, verified: false }]
+      expect(await getUserInfo({ accessToken: "token" })).toBeNull()
+      github[`${emailsPath}1`] = [secondary]
+      github["/user/memberships/orgs/acme"] = { state: "pending" }
+      expect(await getUserInfo({ accessToken: "token" })).toBeNull()
+    }
+    finally {
+      database?.close()
+      vi.unstubAllEnvs()
+      vi.unstubAllGlobals()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it("requires new session cookies when the organization gate changes", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-auth-policy-"))
     vi.stubEnv("GITHUB_CLIENT_ID", "client-id")

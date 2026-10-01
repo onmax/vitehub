@@ -48,8 +48,8 @@ async function githubGet(path: string, accessToken: string): Promise<unknown> {
   return response.ok ? await response.json() : undefined
 }
 
-/** Admit an active member of one of `orgs` with a verified email. A primary email is preferred. */
-async function githubOrgUserInfo(orgs: readonly string[], accessToken: string | undefined) {
+/** Admit an active member of one of `orgs` with an allowed verified email. A primary email is preferred. */
+async function githubOrgUserInfo(orgs: readonly string[], allowedEmails: ReadonlySet<string> | undefined, accessToken: string | undefined) {
   if (!accessToken) return null
   const profile = await githubGet("/user", accessToken)
   if (!isGitHubProfile(profile)) return null
@@ -59,7 +59,7 @@ async function githubOrgUserInfo(orgs: readonly string[], accessToken: string | 
   for (let page = 1; ; page++) {
     const emails = await githubGet(`/user/emails?per_page=100&page=${page}`, accessToken)
     if (!Array.isArray(emails)) return null
-    const verified = emails.filter(isVerifiedEmail)
+    const verified = emails.filter(isVerifiedEmail).filter(item => !allowedEmails || allowedEmails.has(item.email.toLowerCase()))
     const primary = verified.find(item => item.primary === true)
     email ??= verified[0]?.email
     if (primary) {
@@ -88,7 +88,7 @@ export function createInlineConsoleAuth(config: InlineConsoleAuth): ConsoleAuthD
         clientId: requiredEnv(config.clientIdEnv ?? "GITHUB_CLIENT_ID"),
         clientSecret: requiredEnv(config.clientSecretEnv ?? "GITHUB_CLIENT_SECRET"),
       }
-      if (orgs.length) github.getUserInfo = token => githubOrgUserInfo(orgs, token.accessToken)
+      if (orgs.length) github.getUserInfo = token => githubOrgUserInfo(orgs, allowedEmails, token.accessToken)
       const secret = requiredEnv(config.secretEnv ?? "BETTER_AUTH_SECRET")
       return {
         appName: "ViteHub Console",
