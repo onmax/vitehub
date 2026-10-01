@@ -387,6 +387,20 @@ console: {
 
 These limits apply only to the Console fallback journal. If discovered Agent Definitions configure a shared journal, set its limits in `defineAgentInvocations()` instead. See [Agent Invocations](/docs/agents/invocations) for defaults and supported bounds. Larger limits increase record storage and memory use.
 
+The SQLite and libSQL fallback journal keeps every completed, failed, and cancelled record by default. The D1 fallback uses the Agent store defaults of 30 days and 10,000 terminal records. Set `retention` to change these limits:
+
+```ts
+console: {
+  exposure: 'host-managed',
+  retention: {
+    maxAgeMs: 14 * 24 * 60 * 60 * 1000,
+    maxRecords: 5000,
+  },
+}
+```
+
+Both limits are optional. The journal applies them after it creates a record and after a record reaches a terminal state. Pending and running records are always kept. Like `observations`, `retention` applies only to the Console fallback journal.
+
 Set `VITEHUB_CONSOLE_DATABASE_URL` when the journal belongs on another volume or libSQL endpoint. Relative `file:` paths resolve from the ViteHub project root:
 
 ```dotenv [.env]
@@ -400,7 +414,15 @@ VITEHUB_CONSOLE_DATABASE_URL=libsql://my-database.turso.io
 VITEHUB_CONSOLE_DATABASE_AUTH_TOKEN=secret-token
 ```
 
-The journal has no automatic TTL or deletion. In production, the operator must define how long to retain the file and how to remove records that may contain sensitive data. Workflow, Queue, and Schedule Definition inspection do not use the journal. Workflow and Queue do not expose run or message history because ViteHub does not yet have provider-independent contracts for listing that operational data. The Schedule page is a build-time Definition catalog; it does not include runtime-created Schedule records or their run store yet.
+The SQLite and libSQL journal has no automatic TTL unless you set `retention`. In production, the operator must define how long to retain records that may contain sensitive data. Delete one terminal record or prune old ones from the CLI:
+
+```sh
+vitehub agent invocations delete INVOCATION_ID
+vitehub agent invocations prune --older-than 14d --dry-run
+vitehub agent invocations prune --older-than 14d
+```
+
+These commands open `.vitehub/data/console.sqlite`, or `VITEHUB_CONSOLE_DATABASE_URL` when it is set. Pass `--database` when `dataDir` or `databaseUrl` moves the journal. Deleting a record also removes its row in the Console usage index. It does not delete Blob attachments, because Console uploads are not keyed by invocation and a later conversation can reference the same image. Workflow, Queue, and Schedule Definition inspection do not use the journal. Workflow and Queue do not expose run or message history because ViteHub does not yet have provider-independent contracts for listing that operational data. The Schedule page is a build-time Definition catalog; it does not include runtime-created Schedule records or their run store yet.
 
 The fallback applies only when an Agent Definition does not configure `invocations`. An explicit `defineAgent({ invocations })` store remains authoritative, and its sessions are not copied into `console.sqlite` or read by the built-in Console.
 

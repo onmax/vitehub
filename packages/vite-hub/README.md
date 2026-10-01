@@ -149,7 +149,7 @@ The Console RPC transport accepts browser requests only from its own origin, inc
 
 Console invocation requests accept a `prompt`, optional `invokerProfileId`, and optional prior `messages`. Use the `ConsoleAgentInvocationInput` type from `vite-hub/console`. History requires valid user or assistant Messages with unique IDs and only text, file, image, or audio parts. The Console rejects tool and approval parts, appends the new user prompt, and starts a new invocation. See the [Console guide](https://vitehub.dev/docs/development/console#start-agent-invocations) for the access and history contracts.
 
-Set `console.observations` to configure the fallback journal's observation count, string length, byte budget, and flush timeout. Discovered Agent Definitions with an explicit shared journal retain that journal's settings.
+Set `console.observations` to configure the fallback journal's observation count, string length, byte budget, and flush timeout. Set `console.retention` with `maxAgeMs` or `maxRecords` to remove old terminal records. The SQLite and libSQL fallback keeps them all by default; the D1 fallback defaults to 30 days and 10,000 terminal records. Discovered Agent Definitions with an explicit shared journal retain that journal's settings.
 
 On the `cloudflare` preset, production builds store the fallback journal in the D1 binding of the default or only Database Definition. Its Cloudflare config takes precedence over the `driver: "d1"` integration binding. Without a discovered Definition, the Console keeps libSQL. The D1 store creates its table on first use. Development, `console.databaseUrl`, and `VITEHUB_CONSOLE_DATABASE_URL` keep libSQL. See [Cloudflare journal](https://vitehub.dev/docs/development/console#cloudflare-journal).
 
