@@ -141,6 +141,45 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it.each(["private", "protected", "public", "readonly", "private readonly", "public override readonly"])("treats %s constructor parameter properties as local bindings", (modifier) => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      class Runner {
+        constructor(${modifier} telegram: () => void) { telegram() }
+        run() { telegram() }
+      }
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
+  it.each([
+    "enabled ? configuredToken : undefined",
+    "enabled ? undefined : configuredToken",
+    "enabled ? configuredToken : (void 0)",
+    "config?.token",
+    "config?.[key]",
+    "configuredToken ?? undefined",
+    "(enabled ? configuredToken : undefined)",
+    "enabled ? configuredToken ?? fallback : undefined",
+    "enabled && undefined",
+  ])("requires Env when botToken can be undefined: %s", (token) => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { telegram } from "vite-hub/agent/channels"
+      telegram({ botToken: ${token} })
+      defineAgent({ channels: { telegram: { botToken: ${token} } } })
+    `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: [] }])
+  })
+
+  it("preserves supplied tokens with undefined inside call arguments", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram({ botToken: getToken(undefined) })
+      telegram({ botToken: config?.token ?? configuredToken })
+      telegram({ botToken: config?.token ? configuredToken : fallback })
+      telegram({ botToken: config?.token || configuredToken })
+    `)).toEqual(Array.from({ length: 4 }, () => ({ kind: "telegram", keys: ["botToken"] })))
+  })
+
   it("treats method and constructor parameters as shadowing imports", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
@@ -736,6 +775,11 @@ describe("built-in Channel discovery", () => {
 describe("Telegram adapter Env requirements", () => {
   it.each([
     ["adapter() { return customAdapter }", false],
+    ["adapter<T>() { return customAdapter }", false],
+    ["adapter<T, U>() { return customAdapter }", false],
+    ["async adapter<T>() { return customAdapter }", false],
+    ["*adapter<T>() { yield customAdapter }", false],
+    ["async *adapter<T>() { yield customAdapter }", false],
     ["async adapter() { return customAdapter }", false],
     ["*adapter() { yield customAdapter }", false],
     ["get adapter() { return undefined }", true],

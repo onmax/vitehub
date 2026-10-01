@@ -32,6 +32,11 @@ function closingDelimiter(tokens: string[], start: number): number {
 }
 
 // Visit the top-level properties of the object literal that opens at `start`.
+function objectMethodParameters(tokens: string[], key: number): number | undefined {
+  const next = tokens[key + 1] === "<" ? skipTypeArguments(tokens, key + 1) : key + 1
+  return tokens[next] === "(" ? next : undefined
+}
+
 // `value` is the index of the first value token, or undefined for a method.
 // Returns false when a spread or computed key makes the property list unknown.
 function visitObjectProperties(tokens: string[], start: number, visit: (key: string, value: number | undefined, method: boolean) => void): boolean {
@@ -50,13 +55,16 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
           expectKey = false
           continue
         }
-        if (["async", "get", "set"].includes(token) && tokens[i + 2] === "(") continue
+        if (["async", "get", "set"].includes(token) && objectMethodParameters(tokens, i + (tokens[i + 1] === "*" ? 2 : 1)) !== undefined) continue
+        if (token === "*" && objectMethodParameters(tokens, i + 1) !== undefined) continue
         if (/^[A-Za-z_$][\w$]*$/.test(token) || isStringToken(token)) {
           const key = isStringToken(token) ? token.slice(1, -1) : token
           // A shorthand property `{ telegram }` is its own value.
           const shorthand = !isStringToken(token) && [",", "}"].includes(tokens[i + 1]!)
-          visit(key, tokens[i + 1] === ":" ? i + 2 : shorthand ? i : undefined, tokens[i + 1] === "(" && !["get", "set"].includes(tokens[i - 1]!))
+          const parameters = objectMethodParameters(tokens, i)
+          visit(key, tokens[i + 1] === ":" ? i + 2 : shorthand ? i : undefined, parameters !== undefined && !["get", "set"].includes(tokens[i - 1]!))
           expectKey = false
+          if (parameters !== undefined && tokens[i + 1] === "<") i = parameters - 1
         }
       }
     }
@@ -82,7 +90,7 @@ function staticOptionKeys(tokens: string[], start: number, empty: string, typesc
   if (tokens[start] !== "{") return undefined
   const keys = new Set<string>()
   return visitObjectProperties(tokens, start, (key, value, method) => {
-    const omitted = value !== undefined && isUndefinedValue(tokens, value, new Set([",", "}"]))
+    const omitted = value !== undefined && (isUndefinedValue(tokens, value, new Set([",", "}"])) || (key === "botToken" && canResolveUndefined(tokens, value)))
     if (!omitted && (key !== "adapter" || (method || (value !== undefined && isStaticAdapter(tokens, value))))) keys.add(key)
   }) ? keys : undefined
 }
@@ -273,6 +281,43 @@ function isUndefinedValue(tokens: string[], start: number, terminators: Readonly
   return isValueEnd(tokens, after, terminators)
 }
 
+// Conditional branches and optional access can fall back to Server Env at runtime.
+function canResolveUndefined(tokens: string[], start: number, end?: number): boolean {
+  const topLevel: number[] = []
+  for (let index = start; index < (end ?? tokens.length); index++) {
+    if (end === undefined && [",", "}", ")"].includes(tokens[index]!)) { end = index; break }
+    topLevel.push(index)
+    if (["{", "[", "("].includes(tokens[index]!)) index = closingDelimiter(tokens, index)
+  }
+  end ??= tokens.length
+  const comma = topLevel.findLast(index => tokens[index] === ",")
+  if (comma !== undefined) return canResolveUndefined(tokens, comma + 1, end)
+  const conditional = topLevel.find(index => tokens[index] === "?" && !["?", "."].includes(tokens[index + 1]!) && tokens[index - 1] !== "?")
+  if (conditional !== undefined) {
+    let depth = 0
+    const colon = topLevel.find(index => {
+      if (index <= conditional) return false
+      if (tokens[index] === "?" && !["?", "."].includes(tokens[index + 1]!) && tokens[index - 1] !== "?") depth++
+      if (tokens[index] !== ":") return false
+      return depth-- === 0
+    })
+    if (colon !== undefined) return canResolveUndefined(tokens, conditional + 1, colon) || canResolveUndefined(tokens, colon + 1, end)
+  }
+  const fallback = topLevel.findLast(index => ["?", "|"].includes(tokens[index]!) && tokens[index + 1] === tokens[index])
+  if (fallback !== undefined) return canResolveUndefined(tokens, fallback + 2, end)
+  const conjunction = topLevel.findLast(index => tokens[index] === "&" && tokens[index + 1] === "&")
+  if (conjunction !== undefined) return canResolveUndefined(tokens, start, conjunction) || canResolveUndefined(tokens, conjunction + 2, end)
+  if (isUndefinedValue(tokens, start, new Set([tokens[end]!]))) return true
+  for (const index of topLevel) {
+    if (["as", "satisfies"].includes(tokens[index]!)) break
+    if (tokens[index] === "?" && tokens[index + 1] === ".") return true
+    // Arguments do not describe a call's return value. Grouped expressions do.
+    if (tokens[index] === "(" && (index === start || ["&", "|", "!"].includes(tokens[index - 1]!))
+      && canResolveUndefined(tokens, index + 1, closingDelimiter(tokens, index))) return true
+  }
+  return false
+}
+
 // Unknown adapter expressions can resolve to undefined and select the built-in
 // adapter. Only a complete object or function literal guarantees an override.
 function isStaticAdapter(tokens: string[], start: number): boolean {
@@ -437,6 +482,7 @@ function parameterListHasName(tokens: string[], start: number, end: number, name
     if (tokens[entry] === ",") { entry++; continue }
     let binding = entry
     if (tokens[binding] === ".") binding += 3
+    while (["private", "protected", "public", "readonly", "override"].includes(tokens[binding]!)) binding++
     if (bindingPatternHasName(tokens, binding, name, closes)) return true
     const nestedEnd = closes.get(binding)
     entry = nestedEnd !== undefined ? nestedEnd + 1 : binding + 1
