@@ -70,6 +70,27 @@ const binary = Uint8Array.from([0, 255, 1, 128, 10, 13, 0xef, 0xbb, 0xbf, 0xc3, 
 const object = { contentType: "image/png", customMetadata: {}, httpEtag: "\"abc\"", httpMetadata: {}, pathname: "images/a.png", size: 1234, uploadedAt: "2026-09-29T10:00:00.000Z" }
 
 describe("vitehub blob", () => {
+  it.each(["", " "])("rejects an empty output path %j before downloading", async outputPath => {
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runBlobCli(["get", "source.bin", "--output", outputPath], output.context, { fetch })).resolves.toBe(1)
+    expect(output.stderr.output()).toContain("--output needs a nonempty path")
+    expect(output.stdout.bytes()).toEqual([])
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([{ flags: [] }, { flags: ["--json"] }])("reports failed error body reads with flags %j", async ({ flags }) => {
+    const response = new Response(new ReadableStream({ start(controller) { controller.error(new Error("error body interrupted")) } }), { status: 502 })
+    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json({ root: cwd, runtime: "nitro" }))
+    const output = context()
+    await expect(runBlobCli(["list", ...flags], output.context, { fetch })).resolves.toBe(1)
+    if (flags.includes("--json")) {
+      expect(JSON.parse(output.stdout.output())).toEqual({ error: { message: "Could not read the Blob error response: error body interrupted" } })
+      expect(output.stderr.output()).toBe("")
+    }
+    else expect(output.stderr.output()).toContain("error body interrupted")
+  })
+
   it.each([{ flags: [] }, { flags: ["--json", "--output", "failed.bin"] }])("reports failed download body reads with flags %j", async ({ flags }) => {
     const response = new Response(new ReadableStream({ start(controller) { controller.error(new Error("download interrupted")) } }))
     const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json({ root: cwd, runtime: "nitro" }))

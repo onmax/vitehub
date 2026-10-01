@@ -205,6 +205,7 @@ function parseArgs(command: BlobCommand, args: readonly string[], env: NodeJS.Pr
   if (parsed.limit !== undefined && parsed.limit > blobDevMaximumListLimit) {
     throw blobErrorDiagnostics.BLOB_R0029({ message: `--limit must be at most ${blobDevMaximumListLimit}.` })
   }
+  if (parsed.output !== undefined && !parsed.output.trim()) throw blobErrorDiagnostics.BLOB_R0029({ message: "--output needs a nonempty path." })
   if (command.name === "get" && parsed.json && !parsed.output) {
     throw blobErrorDiagnostics.BLOB_R0029({ message: "--json needs --output, because stdout carries the file bytes otherwise." })
   }
@@ -327,7 +328,13 @@ function writeResult(result: BlobCliResult, context: BlobCliContext): void {
 }
 
 async function readFailure(response: Response): Promise<BlobCliFailure> {
-  const text = await response.text()
+  let text: string
+  try {
+    text = await response.text()
+  }
+  catch (error) {
+    return { message: `Could not read the Blob error response: ${error instanceof Error ? error.message : String(error)}` }
+  }
   try {
     const body: unknown = JSON.parse(text)
     const parsed = v.safeParse(v.object({ error: v.object({ code: v.optional(v.string()), message: v.string() }) }), body)
