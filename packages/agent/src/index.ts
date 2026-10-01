@@ -143,6 +143,7 @@ import {
   workspaceAgentOwnsWorkspaceDefinition,
   workspaceAgentUsesRegisteredDefinition,
   workspaceDefinitionFromOptions,
+  workspaceAutoCommitDisabled,
   workspaceDefinitionWithAutoCommitRules,
   workspaceModeFromOptions,
   workspaceNameFromOptions,
@@ -545,6 +546,7 @@ export type {
   AgentProviderLaunchContext,
   AgentProviderLaunchResolver,
   AgentProviderSealedCredential,
+  AgentProviderWorkingDirectoryResolver,
   ClaudeCodeDriverOptions,
   CodexDriverOptions,
   CodexReasoningEffort,
@@ -2167,6 +2169,7 @@ function defineBaseAgent<
           ? await (providerAdapter ??= import("#vitehub/agent/provider-agent").then(module => module.createProviderAgentAdapter<CALL_OPTIONS, TRuntimeConfig>({
             credentialProfile: driver.credentialProfile,
             credentials: driver.credentials,
+            cwd: driver.cwd,
             env: driver.env,
             execution: driver.execution,
             instructions: driver.instructions,
@@ -5926,6 +5929,8 @@ async function commitWorkspaceChanges<
   CALL_OPTIONS,
 >(context: InvocationRunContext<TRuntimeConfig, CALL_OPTIONS>): Promise<void> {
   if (!context.workspaceDefinition || !isWritableWorkspaceFacade(context.workspace)) return
+  // With no commit rule, a whole-tree diff has no consumer.
+  if (workspaceAutoCommitDisabled(context.workspaceDefinition, context.workspaceAutoCommit)) return
 
   const diff = await context.workspace.diff()
   const { isWorkspaceConflict, resolveWorkspaceAutoCommit } = await import("@vite-hub/workspace")

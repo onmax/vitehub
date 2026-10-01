@@ -16,6 +16,7 @@ import type { Plugin } from "vite"
 import databaseFixture from "./database.fixture.json" with { type: "json" }
 import fixtureDocument from "./console.fixture.json" with { type: "json" }
 import manifest from "./package.json" with { type: "json" }
+import { playgroundConsoleContributions } from "./sections.ts"
 
 const fixture = parseConsoleFixture(fixtureDocument)
 const store = createMemoryAgentInvocationStore()
@@ -261,7 +262,7 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
     return true
   }
   if (path === "/api/_vitehub/console/sections") {
-    json(response, { projectName: manifest.name, sections })
+    json(response, { contributions: playgroundConsoleContributions, projectName: manifest.name, sections })
     return true
   }
 
@@ -402,7 +403,7 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       json(response, { error: "A valid definition section is required" }, 400)
       return true
     }
-    json(response, { definitions: definitions[section], section })
+    json(response, { definitions: definitions[section], kind: "definition-catalog", section })
     return true
   }
 

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 
 import {
-  consoleSectionIds,
+  consoleBuiltinSectionIds,
   prioritizeConsoleSectionIds,
   readLastConsoleSection,
   rememberConsoleSection,
@@ -76,7 +76,8 @@ describe("Console section preferences", () => {
     expect(readLastConsoleSection(storage)).toBeUndefined()
     rememberConsoleSection("schedules", storage)
     expect(readLastConsoleSection(storage)).toBe("schedules")
-    expect(readLastConsoleSection(memoryStorage("future-primitive"))).toBeUndefined()
+    expect(readLastConsoleSection(memoryStorage("future-primitive"))).toBe("future-primitive")
+    expect(readLastConsoleSection(memoryStorage("Future Primitive"))).toBeUndefined()
   })
 
   it("keeps navigation usable when browser storage is unavailable", () => {
@@ -91,10 +92,12 @@ describe("Console section preferences", () => {
 })
 
 describe("Console section routes", () => {
-  it("gives every section a client route and no route an unknown section", () => {
+  it("gives every built-in section a client route and adds owner contributions dynamically", () => {
     const client = readFileSync(new URL("../src/console/runtime/client/main.js", import.meta.url), "utf8")
     const routedSections = new Set([...client.matchAll(/consoleSection: "([^"]+)"/g)].map(match => match[1]))
 
-    expect([...routedSections].sort()).toEqual([...consoleSectionIds].sort())
+    expect([...routedSections].sort()).toEqual([...consoleBuiltinSectionIds].sort())
+    expect(client).toContain("subscribeConsoleNavigation(sectionsBase, addContributedRoutes)")
+    expect(client).toContain("const name = consoleSectionRouteName(section)")
   })
 })
