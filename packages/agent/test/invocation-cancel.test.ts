@@ -88,7 +88,7 @@ describe("Agent Invocation cancel", () => {
     const journal = await bindAgentInvocations(invocations, runtime(runId))
     if (!journal) throw new Error("Expected recovered invocation journal")
     try {
-      journal.watchCancellation(driver)
+      await journal.watchCancellation(driver)
       await journal.running()
       expect((await invocations.get(id))?.cancelNotEnforcedBy).toBe(expected)
       const result = await remoteInvocations.cancel(id)
@@ -513,6 +513,48 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.get(id))?.status).toBe("cancelled")
   })
 
+  it.each((["run", "stream"] as const).flatMap(kind => [false, true].map(capacity => ({ capacity, kind }))))("rechecks durable cancellation at registration before $kind setup, capacity=$capacity", async ({ capacity, kind }) => {
+    const backing = createMemoryAgentInvocationStore()
+    const entered = deferred()
+    const release = deferred()
+    let waiting = true
+    const store = {
+      ...backing,
+      async getSummary(id: string) {
+        const snapshot = await backing.getSummary(id)
+        if (waiting) {
+          waiting = false
+          entered.resolve()
+          await release.promise
+        }
+        return snapshot
+      },
+    }
+    const invocations = defineAgentInvocations({ store })
+    const remote = defineAgentInvocations({ store: { ...backing } })
+    const driver = vi.fn(() => "Must not run")
+    const prepare = vi.fn()
+    const hook = vi.fn()
+    const runId = `registration-gap-${kind}-${capacity}`
+    const agent = defineAgent({
+      invocations,
+      driver: { capacity: capacity ? { concurrency: 1 } : undefined, run: driver },
+      capabilities: [defineCapability({ id: "setup", prepare })],
+      hooks: { "agent:input": hook },
+    })
+    const running = kind === "run" ? runAgent(agent, runtime(runId), {}) : streamAgent(agent, runtime(runId), {})
+    const settled = running.then(() => undefined, error => error)
+    await entered.promise
+    const id = await agentInvocationId(runId)
+    expect(await remote.cancel(id)).toMatchObject({ delivery: "journal", outcome: "requested", status: "pending" })
+    release.resolve()
+    expect(await settled).toBeInstanceOf(Error)
+    expect(driver).not.toHaveBeenCalled()
+    expect(prepare).not.toHaveBeenCalled()
+    expect(hook).not.toHaveBeenCalled()
+    expect((await invocations.get(id))?.status).toBe("cancelled")
+  })
+
   it("stops startup when cancellation wins its initial claim", async () => {
     const backing = createMemoryAgentInvocationStore()
     const entered = deferred()
@@ -593,7 +635,7 @@ describe("Agent Invocation cancel", () => {
     const runId = `stale-terminal-owner-${status}`
     const journal = await bindAgentInvocations(invocations, runtime(runId))
     if (!journal) throw new Error("Expected invocation journal")
-    journal.watchCancellation({ enforced: true, name: "model" })
+    await journal.watchCancellation({ enforced: true, name: "model" })
     try {
       await journal.running()
       const id = await agentInvocationId(runId)
@@ -667,7 +709,7 @@ describe("Agent Invocation cancel", () => {
     const runId = `terminal-renewal-handle-${status}`
     const journal = await bindAgentInvocations(invocations, runtime(runId))
     if (!journal) throw new Error("Expected invocation journal")
-    journal.watchCancellation({ enforced: true, name: "model" })
+    await journal.watchCancellation({ enforced: true, name: "model" })
     try {
       await journal.running()
       const id = await agentInvocationId(runId)

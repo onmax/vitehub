@@ -248,8 +248,8 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
   running(): Promise<void>
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
-  /** Lets cancellation requests reach this run. Call it from the run that consumes {@link abortSignal}. */
-  watchCancellation(driver: AgentInvocationCancellationDriver): void
+  /** Registers this run and checks durable cancellation before setup or dispatch consumes {@link abortSignal}. */
+  watchCancellation(driver: AgentInvocationCancellationDriver): Promise<void>
 }
 
 function cloneObservation(observation: TraceEventLogEntry): TraceEventLogEntry {
@@ -1748,6 +1748,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       let cancelNotEnforcedBy: string | undefined
       let unregisterCancellation: (() => void) | undefined
       let cancellationPolling: ReturnType<typeof setInterval> | undefined
+      let cancellationRegistration: Promise<void> | undefined
       const requestCancellation = (reason: unknown = createAgentInvocationCancellationError(recordId)) => {
         if (!cancellation.signal.aborted) cancellation.abort(reason)
       }
@@ -2198,13 +2199,16 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           if (finished || finishing) return
           await update({ annotations: normalizeAnnotations(annotations), timestamp: new Date().toISOString() })
         },
-        watchCancellation(driver) {
-          if (finished || finishing || unregisterCancellation) return
+        async watchCancellation(driver) {
+          if (finished || finishing) return
+          if (unregisterCancellation) return await cancellationRegistration
           cancelNotEnforcedBy = driver.enforced ? undefined : driver.name
           unregisterCancellation = registerAgentInvocationCancellation(store, recordId, { abort: requestCancellation, driver: () => runningRequested ? driver : undefined })
           // A lost lease stops writes, but the stale Driver still needs journal cancellation.
           cancellationPolling = setInterval(() => { void pollCancellationRequest().catch(() => undefined) }, CLAIM_RENEW_INTERVAL_MS)
           unrefTimer(cancellationPolling)
+          cancellationRegistration = pollCancellationRequest()
+          await cancellationRegistration
         },
       }
     },

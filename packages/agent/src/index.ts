@@ -7301,7 +7301,7 @@ async function executeAgentInvocation<
       ...input,
       abortSignal: input.abortSignal ? AbortSignal.any([input.abortSignal, invocationJournal.abortSignal]) : invocationJournal.abortSignal,
     }
-    invocationJournal.watchCancellation(invocationCancellationDriver(definition))
+    await invocationJournal.watchCancellation(invocationCancellationDriver(definition))
   }
   let preparedInvocation: AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS> | undefined
   let release: (() => void) | undefined
