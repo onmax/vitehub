@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
@@ -262,7 +263,7 @@ async function addNitroKVDevHandler(value: unknown, root: string, importBase: st
 function readNitroBaseURL(config: ResolvedConfig | undefined): string | undefined {
   const nitro = config ? getResolvedNitroConfig(config) : undefined
   const baseURL: unknown = isPlainObject(nitro) ? Reflect.get(nitro, "baseURL") : undefined
-  return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
+  return v.is(v.string(), baseURL) ? baseURL : process.env.NITRO_APP_BASE_URL
 }
 
 export function hubKv(options?: KVModuleOptions, internalOptions: KVVitePluginInternalOptions = {}): KVVitePlugin {

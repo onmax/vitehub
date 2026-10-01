@@ -99,7 +99,7 @@ export function listKVDevStores(): KVDevStore[] {
 
 function errorCode(cause: unknown): string | undefined {
   const code: unknown = cause instanceof Object ? Reflect.get(cause, "code") : undefined
-  return typeof code === "string" ? code : undefined
+  return v.is(v.string(), code) ? code : undefined
 }
 
 function unwrap<TResult>(result: KVResult<TResult>): TResult {
@@ -114,6 +114,7 @@ function valueType(value: unknown): string {
   if (value === null) return "null"
   if (Array.isArray(value)) return "array"
   if (value instanceof Uint8Array) return "bytes"
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This reports the stored value representation; it does not validate an input contract.
   return typeof value
 }
 
@@ -122,17 +123,17 @@ function ttlNotice(driver: KVDriver, ttl: number): string | undefined {
   if (driver === "cloudflare-kv-binding" && ttl < 60) return "Cloudflare KV raises a TTL below 60 seconds to 60 seconds."
 }
 
-function readString(body: object, name: string): string | undefined {
+function readString(body: Record<string, unknown>, name: string): string | undefined {
   const value: unknown = Reflect.get(body, name)
   if (value === undefined) return
-  if (typeof value !== "string") throw new KVDevRequestError(`${name} must be a string.`, 400)
+  if (!v.is(v.string(), value)) throw new KVDevRequestError(`${name} must be a string.`, 400)
   return value
 }
 
-function readPositiveInteger(body: object, name: string): number | undefined {
+function readPositiveInteger(body: Record<string, unknown>, name: string): number | undefined {
   const value: unknown = Reflect.get(body, name)
   if (value === undefined) return
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+  if (!v.is(v.pipe(v.number(), v.integer(), v.minValue(1)), value)) {
     throw new KVDevRequestError(`${name} must be a positive integer.`, 400)
   }
   return value
@@ -146,16 +147,17 @@ function readTTL(body: unknown): number | undefined {
 
 async function readBody(request: Request): Promise<KVDevRequestBody> {
   const body: unknown = await request.json().catch(() => undefined)
-  if (!body || typeof body !== "object" || Array.isArray(body)) throw new KVDevRequestError("The KV Dev request body is invalid.", 400)
-  const operation: unknown = Reflect.get(body, "operation")
+  const record = v.safeParse(v.record(v.string(), v.unknown()), body)
+  if (!record.success) throw new KVDevRequestError("The KV Dev request body is invalid.", 400)
+  const operation: unknown = Reflect.get(record.output, "operation")
   if (!isKVDevOperation(operation)) throw new KVDevRequestError("The KV Dev request body is invalid.", 400)
   const parsed: KVDevRequestBody = { operation }
-  const cursor = readString(body, "cursor")
-  const key = readString(body, "key")
-  const limit = readPositiveInteger(body, "limit")
-  const prefix = readString(body, "prefix")
-  const store = readString(body, "store")
-  const ttl = readTTL(body)
+  const cursor = readString(record.output, "cursor")
+  const key = readString(record.output, "key")
+  const limit = readPositiveInteger(record.output, "limit")
+  const prefix = readString(record.output, "prefix")
+  const store = readString(record.output, "store")
+  const ttl = readTTL(record.output)
   if (cursor) parsed.cursor = cursor
   if (key !== undefined) parsed.key = key
   if (limit !== undefined) parsed.limit = limit
@@ -165,7 +167,7 @@ async function readBody(request: Request): Promise<KVDevRequestBody> {
     parsed.store = store
   }
   if (ttl !== undefined) parsed.ttl = ttl
-  if (Reflect.has(body, "value")) parsed.value = Reflect.get(body, "value")
+  if (Reflect.has(record.output, "value")) parsed.value = Reflect.get(record.output, "value")
   return parsed
 }
 
