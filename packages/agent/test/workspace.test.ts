@@ -610,6 +610,7 @@ describe("defineAgent workspace option", () => {
 
     await expect(agent.run!(context())).resolves.toBe("workspace_shell")
     expect(inspectTools).toHaveBeenCalledTimes(1)
+    expect(inspectTools).toHaveBeenCalledWith({ sourceRequests: true })
     expect(writeTools).not.toHaveBeenCalled()
   })
 
@@ -643,6 +644,7 @@ describe("defineAgent workspace option", () => {
 
     await expect(agent.run!(context())).resolves.toBe("workspace_write")
     expect(writeTools).toHaveBeenCalledTimes(1)
+    expect(writeTools).toHaveBeenCalledWith({ sourceRequests: true })
     expect(inspectTools).not.toHaveBeenCalled()
   })
 
