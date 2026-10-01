@@ -256,7 +256,7 @@ Payload fields such as `payload`, `region`, and `id` remain business data. ViteH
 | Option | Type | Cloudflare | Vercel | Description |
 | --- | --- | --- | --- | --- |
 | `id` | `string` | Yes | Yes | ViteHub message id. If omitted, ViteHub generates one. |
-| `contentType` | `CloudflareQueueContentType` | Yes | No | Cloudflare message content type. Values: `bytes`, `json`, `text`, `v8`. |
+| `contentType` | `'bytes' \| 'json' \| 'text' \| 'v8'` | Yes | No | Cloudflare message content type. |
 | `delaySeconds` | `number` | Yes | Yes | Provider-supported enqueue delay. |
 | `idempotencyKey` | `string` | No | Yes | Vercel idempotency key. Defaults to the message `id` when omitted. |
 | `region` | `string` | No | Yes | Vercel send region for this Queue Enqueue. |
