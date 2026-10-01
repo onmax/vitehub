@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
 import { join } from "node:path"
@@ -79,7 +80,10 @@ function parseArgs(args: string[]): ParsedEnvCliArgs {
 }
 
 function isInspection(value: unknown): value is ServerEnvInspection {
-  return typeof value === "object" && value !== null && "entries" in value && Array.isArray(value.entries)
+  return v.is(v.object({ entries: v.array(v.object({
+    masked: v.boolean(), path: v.optional(v.string()), provider: v.optional(v.string()), required: v.boolean(),
+    source: v.picklist(["env", "literal", "provider"]), status: v.picklist(["available", "defaulted", "error", "invalid", "missing"]),
+  })) }), value)
 }
 
 async function inspectStage(input: EnvCliInspectInput, resolveProjectRoot: (viteRoot: string) => string): Promise<ServerEnvInspection> {
@@ -119,7 +123,7 @@ async function inspectStage(input: EnvCliInspectInput, resolveProjectRoot: (vite
     const modulePath = viteHubEnvServerModulePath(resolveProjectRoot(server.config.root))
     const generated = await server.ssrLoadModule(pathToFileURL(modulePath).href)
     const inspect: unknown = generated.inspectServerEnv
-    if (typeof inspect !== "function") throw envErrorDiagnostics.ENV_R0024({ message: `[vitehub] The generated Server Env module does not export inspectServerEnv(): ${modulePath}` })
+    if (!v.is(v.function(), inspect)) throw envErrorDiagnostics.ENV_R0024({ message: `[vitehub] The generated Server Env module does not export inspectServerEnv(): ${modulePath}` })
     const inspection: unknown = await inspect()
     if (!isInspection(inspection)) throw envErrorDiagnostics.ENV_R0025({ message: "[vitehub] inspectServerEnv() returned an invalid result." })
     return inspection
