@@ -543,6 +543,22 @@ describe("built-in Channel discovery", () => {
     `)).toEqual(Array.from({ length: 3 }, () => ({ kind: "telegram", keys: undefined })))
   })
 
+  it.each(["settings", "(settings)", "settings as AgentOptions", "({ channels: { telegram: {} } })"])("scans locally resolved Agent settings: %s", (settings) => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      const settings = { channels: { telegram: {} }, driver: customDriver }
+      defineAgent(${settings})
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
+  it.each([
+    'const unused = {}, channels = { telegram: {} }; defineAgent({ channels })',
+    'const unused = call(1, 2), channels = { telegram: {} }, settings = { channels }; defineAgent(settings)',
+    'const unused = [1, 2], channels = ({ telegram: {} }); defineAgent({ channels })',
+  ])("resolves later const declarators: %s", (source) => {
+    expect(uses(`import { defineAgent } from "vite-hub/agent"; ${source}`)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
   it("unwraps TypeScript angle assertions on Channel options", () => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"

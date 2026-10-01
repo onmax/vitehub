@@ -174,8 +174,10 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
     if (factory) uses.push({ index: i, kind: factory.name, optionKeys: staticOptionKeys(tokens, factory.open + 1, ")", typescript) })
     // Shorthands count only in the top-level `channels` option of defineAgent(), not in types or other objects.
     const agent = !isShadowedAt(tokens, i, tokens[i]!, agentShadowBindings, lineBreaks) && factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames, lineBreaks, typescript)
-    if (!agent || tokens[agent.open + 1] !== "{") continue
-    visitObjectProperties(tokens, agent.open + 1, (option, channelsValue) => {
+    if (!agent) continue
+    const settings = localObject(tokens, agent.open + 1, declarations, typescript)
+    if (settings === undefined) continue
+    visitObjectProperties(tokens, settings, (option, channelsValue) => {
       const channels = channelsValue === undefined ? undefined : localObject(tokens, channelsValue, declarations, typescript)
       if (option !== "channels" || channels === undefined) return
       visitObjectProperties(tokens, channels, (key, value) => {
@@ -709,9 +711,12 @@ function moduleObjectDeclarations(tokens: string[], lineBreaks: ReadonlySet<numb
   const statementEnd = (index: number) => index === tokens.length || (lineBreaks.has(index)
     && /^[A-Za-z_$][\w$]*$/.test(tokens[index]!) && !["as", "satisfies", "in", "instanceof"].includes(tokens[index]!))
   let depth = 0
+  let constantDeclaration = false
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!
-    if (depth === 0 && token === "const" && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 1] ?? "")) {
+    if (depth === 0 && (token === ";" || (token !== "const" && statementEnd(i)))) constantDeclaration = false
+    if (depth === 0 && token === "const") constantDeclaration = true
+    if (depth === 0 && constantDeclaration && ["const", ","].includes(token) && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 1] ?? "")) {
       let equals = i + 2
       while (tokens[equals] && tokens[equals] !== "=" && tokens[equals] !== ";") equals++
       if (tokens[equals] === "=") {
