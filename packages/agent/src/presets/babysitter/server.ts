@@ -5,7 +5,7 @@ import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
 import { hasRuntimeType } from "../../internal/runtime-type.ts";
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
 import { createMessage, defineAgent, runAgent } from "../../index.ts";
-import type { AgentInput, CodexDriverOptions } from "../../index.ts";
+import type { AgentInput, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
 import {
   createGitHubPullRequestRun,
   createGitHubPullRequestOperations,
@@ -27,6 +27,8 @@ import { babysitterPassResultSchema } from "../babysitter.ts";
 import type { BabysitterAgent, BabysitterPassResult } from "../babysitter.ts";
 import { getAgentLayerOptions } from "../../agent-layers.ts";
 import { repairCapability, repairEnvironment } from "./repair.ts";
+import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
+import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence } from "./merge.ts";
 
 export interface BabysitterRuntimeOptions {
   agent: AgentInput;
@@ -66,6 +68,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const baseAgent = options.agent;
   assertBabysitterAgent(baseAgent);
   const presetOptions = baseAgent.options;
+  const merge = resolveBabysitterMerge(presetOptions.merge, presetOptions.autoMerge);
   const github = options.github;
   const hostIdentity = github.identity()?.trim();
   const normalizedActivityAuthors = options.activityAuthors.map((author) => author.trim().toLowerCase());
@@ -178,6 +181,105 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       stopped = true;
       clearInterval(interval);
     };
+  }
+
+  const requiredChecks = createGitHubRequiredCheckPolicyReader(async (path) => {
+    const repository = path.split("/").slice(1, 3).join("/");
+    try {
+      const result = await github.command(["api", "--paginate", "--slurp", path], { repository, timeout: 60_000 });
+      const pages: unknown = JSON.parse(result.stdout);
+      if (!Array.isArray(pages)) return { status: 0 };
+      // gh returns one entry per page. Rules are a list; protection endpoints return one object.
+      return { status: 200, data: path.includes("/rules/") ? pages.flat() : pages[0], nextPage: null };
+    } catch (error) {
+      return { status: Number(String(error).match(/HTTP\s+(\d{3})/i)?.[1] ?? 0) };
+    }
+  });
+
+  /**
+   * Merges a PR that inbox evidence, the merge policy, and GitHub's live state all report ready.
+   * Returns false, and the PR gets a normal pass, on any doubt.
+   */
+  async function mergeReadyPullRequest(claim: Claim, owner: Record<string, unknown>, signal: AbortSignal): Promise<boolean> {
+    if (merge.mode !== "direct") return false;
+    const { snapshot } = claim;
+    const { repository, number } = snapshot;
+    // A recovered claim may still represent an interrupted merge whose outcome
+    // has not been proven by a closed live read. Keep it out of the repair pass
+    // until hydration clears the fence.
+    if (await pullRequestInbox.hasMergeIntent(claim)) {
+      await pullRequestInbox.release(claim);
+      return true;
+    }
+    const base = snapshot.pr?.base?.ref;
+    if (!base) return false;
+    const policy = await requiredChecks.read(repository, base);
+    const evaluation = evaluateGitHubRequiredChecks(policy, snapshotCheckEvidence(snapshot));
+    let decision = directMergeReadiness(snapshot, evaluation.state);
+    if (!decision.ready) {
+      schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: decision.reason });
+      return false;
+    }
+    let mergedHead = decision.head;
+    try {
+      // Refresh review threads and atomically revalidate the claim after all
+      // readiness checks. A webhook received during this read invalidates the
+      // claim, so newly arrived feedback cannot be merged accidentally.
+      const threads = await readThreads(repository, number, signal);
+      if (!(await pullRequestInbox.hydrate(claim, { threads, threadsHydrated: true, feedbackRefresh: false }))) return false;
+      const currentSnapshot = claim.snapshot;
+      const currentPolicy = await requiredChecks.read(repository, base);
+      const currentEvaluation = evaluateGitHubRequiredChecks(currentPolicy, snapshotCheckEvidence(currentSnapshot));
+      decision = directMergeReadiness(currentSnapshot, currentEvaluation.state);
+      if (!decision.ready) {
+        schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: decision.reason });
+        return false;
+      }
+      const head = decision.head;
+      mergedHead = head;
+      if (merge.ready) {
+        const ready = await merge.ready({ repository, number, head, snapshot: structuredClone(currentSnapshot), requiredChecks: currentEvaluation.state });
+        if (ready !== true) {
+          schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: ready });
+          return false;
+        }
+      }
+      const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", signal);
+      const current = liveMergeReadiness(live, head);
+      if (!current.ready) {
+        schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: current.reason });
+        return false;
+      }
+      if (await pullRequestInbox.hasMergeIntent(claim)) {
+        await pullRequestInbox.release(claim);
+        return true;
+      }
+      // GitHub rejects the merge when the head no longer matches sha.
+      const merged = await pullRequestInbox.merge(claim, async () => {
+        const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${head}`], { repository, timeout: 60_000, signal });
+        const response: unknown = JSON.parse(result.stdout);
+        return Boolean(response && hasRuntimeType(response, "object") && "merged" in response && response.merged === true);
+      }, `Merged ${head} directly: required checks passed and review threads were resolved.`);
+      if (!merged) {
+        if (await pullRequestInbox.hasPersistedMergeIntent(repository, number)) {
+          await pullRequestInbox.release(claim);
+          return true;
+        }
+        schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "inbox claim changed or GitHub did not merge the pull request" });
+        return false;
+      }
+    } catch (error) {
+      schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
+      const pending = await pullRequestInbox.get(repository, number);
+      if (pending?.mergeIntent) {
+        await pullRequestInbox.release(claim);
+        // The next owner must read GitHub before dispatching any repair.
+        return true;
+      }
+      return false;
+    }
+    schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: mergedHead, avoided_invocation: true });
+    return true;
   }
 
   function workload() {
@@ -310,6 +412,15 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             await pullRequestInbox.release(inboxClaim);
             return;
           }
+          // A merge intent is a durable fence. Hydration clears it only after
+          // a closed PR read proves the external merge completed. Keep a
+          // recovered or superseded claim out of the repair path while the
+          // outcome is still inconclusive, even when its lease identity has
+          // changed since the intent was recorded.
+          if (await pullRequestInbox.hasPersistedMergeIntent(repository, number)) {
+            await pullRequestInbox.release(inboxClaim);
+            return;
+          }
           if (!pullRequestInbox.eligible(repository, inboxClaim.snapshot.pr)) {
             await pullRequestInbox.finish(inboxClaim, {
               text: "PR closed or outside the configured filter.",
@@ -317,6 +428,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             });
             return;
           }
+          if (merge.mode === "direct" && (await mergeReadyPullRequest(inboxClaim, owner, passSignal))) return;
           const pullRequest = snapshotPullRequest(inboxClaim.snapshot);
           const webhookSnapshot = inboxClaim.snapshot;
           await github.withPullRequestCheckout(
@@ -374,7 +486,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 number,
                 expectedHeadOid: pullRequest.headRefOid,
                 signal: abortSignal,
-                autoMerge: presetOptions.autoMerge,
+                autoMerge: merge.mode === "auto",
                 eligible: (current) =>
                   pullRequestInbox.eligible(repository, normalizePullRequest(current)),
                 push: async () => {
@@ -406,16 +518,16 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Server capability inputs are untyped until this runtime boundary validates them.
                 typeof driver !== "object" ||
                 !("kind" in driver) ||
-                driver.kind !== "codex"
+                (driver.kind !== "codex" && driver.kind !== "claude-code")
               ) {
                 throw new Error(
-                  "Babysitter requires a Codex driver for its isolated Git checkout.",
+                  "Babysitter requires a Codex or Claude Code driver for its isolated Git checkout.",
                 );
               }
   // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The preceding schema guard establishes the asserted operation shape.
-              const workerDriver = driver as CodexDriverOptions<BabysitterPassResult> & {
-                kind: "codex";
-              };
+              const workerDriver = driver as
+                | (CodexDriverOptions<BabysitterPassResult> & { kind: "codex" })
+                | (ClaudeCodeDriverOptions<BabysitterPassResult> & { kind: "claude-code" });
               const activityEnabled = !!verifiedHostIdentity;
               const workerName = "babysitter-worker";
               const agent = defineAgent({
@@ -427,7 +539,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                     pullRequest: { filter: presetOptions.filter },
                   }),
                 },
-                capabilities: [repairCapability(operations, presetOptions.autoMerge)],
+                capabilities: [repairCapability(operations, merge.mode === "auto")],
                 driver: {
                   ...workerDriver,
                   permissions: "allow-edits",
