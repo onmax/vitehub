@@ -186,6 +186,7 @@ function parseArgs(command: KVCommand, args: readonly string[], env: NodeJS.Proc
       if (!command.options.includes(option)) continue
       const read = readOptionValue(args, index, option)
       if (!read) continue
+      if (option === "cursor" && !read.value.trim()) throw kvErrorDiagnostics.KV_R0019({ message: "--cursor needs a nonempty value." })
       if (option === "ttl") parsed.ttl = parseTTL(read.value)
       else if (option === "limit") parsed.limit = parsePositiveInteger(option, read.value)
       else parsed[option] = read.value
@@ -340,6 +341,8 @@ async function runKVCommand(command: KVCommand, args: string[], context: KVCliCo
     if (command.value && !parsed.help) value = await readValue(parsed, context.cwd)
   }
   catch (error) {
+    const terminator = args.indexOf("--")
+    if (args.slice(0, terminator < 0 ? args.length : terminator).includes("--json")) return writeFailure({ json: true }, context, { message: error instanceof Error ? error.message : String(error) })
     context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     writeUsage(command, context.stderr)
     return 1
