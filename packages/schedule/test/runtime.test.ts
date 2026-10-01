@@ -838,6 +838,52 @@ describe("Schedule Run bookkeeping", () => {
 })
 
 describe("KV Schedule Run Store", () => {
+  it("reads only attempts for the requested run and sees another store's writes", async () => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    const createdAt = new Date("2026-05-23T09:00:00Z")
+    for (let index = 0; index < 200; index++) {
+      await store.createAttempt({ id: `opaque/attempt%_${index}`, runId: index < 2 ? "target/run%" : `other_${index}`,
+        createdAt, startedAt: createdAt, updatedAt: createdAt, status: "running" })
+    }
+    const get = vi.spyOn(kvStore, "get")
+    expect((await store.listAttempts("target/run%")).map(attempt => attempt.id)).toEqual(["opaque/attempt%_0", "opaque/attempt%_1"])
+    expect(get).toHaveBeenCalledTimes(2)
+    await createKVScheduleRunStore({ kvStore }).createAttempt({ id: "external/attempt%", runId: "target/run%",
+      createdAt, startedAt: createdAt, updatedAt: createdAt, status: "running" })
+    get.mockClear()
+    expect(await store.listAttempts("target/run%")).toHaveLength(3)
+    expect(get).toHaveBeenCalledTimes(3)
+    get.mockClear()
+    expect(await store.listAttempts("target/run")).toEqual([])
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])("preserves legacy attempts when index writes are available: %s", async (indexAvailable) => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore, prefix: "attempt-tests/custom" })
+    const createdAt = new Date("2026-05-23T09:00:00Z")
+    for (let index = 0; index < 40; index++) {
+      await store.createAttempt({ id: `legacy/opaque%_${index}`, runId: index < 2 ? "target" : "other",
+        createdAt, startedAt: createdAt, updatedAt: createdAt, status: "running" })
+    }
+    for (const key of await kvStore.keys("attempt-tests/custom/schedule-run-attempt-index/")) await kvStore.del(key)
+    if (!indexAvailable) {
+      const set = kvStore.set.bind(kvStore)
+      vi.spyOn(kvStore, "set").mockImplementation(async (key, value) => {
+        if (key.includes("/schedule-run-attempt-index/")) throw new Error("index unavailable")
+        return set(key, value)
+      })
+    }
+    const get = vi.spyOn(kvStore, "get")
+    expect(await store.listAttempts("target")).toHaveLength(2)
+    expect(get).toHaveBeenCalledTimes(40)
+    get.mockClear()
+    expect(await store.listAttempts("target")).toHaveLength(2)
+    expect(get).toHaveBeenCalledTimes(indexAvailable ? 2 : 40)
+    expect(await store.getAttempt("legacy/opaque%_0")).toMatchObject({ runId: "target" })
+  })
+
   it("limits provider reads to the newest matching indexed run keys", async () => {
     const kvStore = createTestKVStore()
     const store = createKVScheduleRunStore({ kvStore })

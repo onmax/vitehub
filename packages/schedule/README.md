@@ -247,4 +247,6 @@ Use `schedules.dynamic.create()` and `schedules.dynamic.update()` when names or 
 
 This is a breaking change: include the generated declarations for typed application calls, and move operational calls with unknown names to `schedules.dynamic`. There is no permissive string overload on typed creation.
 
+The KV Run Store indexes attempts by run ID before reading their payloads. `listAttempts(runId)` reads only matching indexed attempts. Legacy attempts or failed index writes require a scan with at most 16 concurrent reads; successful backfill makes later queries read only matches. Each query uses fresh index keys and sees attempts written by other runtimes.
+
 The built-in KV Run Store supports `listRunsBatch()` for several filtered histories. CLI lists and Console inspection share one fresh key snapshot per request and read each unindexed record once. Each new request sees runs written by other runtimes. Custom Run Stores can implement this optional method or keep `listRuns()`.

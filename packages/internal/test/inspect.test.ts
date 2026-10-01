@@ -79,6 +79,12 @@ describe("redactInspectionValue", () => {
     expect(redactInspectionText("https://public.test/path?contact=user@example.test")).toBe("https://public.test/path?contact=user@example.test")
   })
 
+  it.each(["redis://:hunter2@localhost", "https://:hunter2@example.test/path", "postgres://:p@ssword@host/db"])("redacts password-only URL credentials in %s", (url) => {
+    expect(redactInspectionValue({ url })).toEqual({ url: "[redacted]" })
+    const redacted = redactInspectionText(`Connection ${url} failed`)
+    expect(redacted).toBe(`Connection ${url.slice(0, url.indexOf("://") + 3)}[redacted]@${url.slice(url.lastIndexOf("@") + 1)} failed`)
+  })
+
   it("redacts complete compound classified credentials", () => {
     expect(redactInspectionText('Authorization: Digest username="u", response="deadbeef"')).toBe('Authorization: [redacted]')
     expect(redactInspectionText('Cookie: theme=dark; sessionid=abc123')).toBe('Cookie: [redacted]')
@@ -92,6 +98,21 @@ describe("redactInspectionValue", () => {
 })
 
 describe("redactInspectionText", () => {
+  it.each([
+    String.raw`Authorization: "Digest username=\"u\", response=\"deadbeef\""`,
+    String.raw`Authorization: 'Digest username=\'u\', response=\'deadbeef\''`,
+  ])("redacts escaped quoted Authorization values in %s", (input) => {
+    const output = redactInspectionText(input)
+    expect(output).toBe("Authorization: [redacted]")
+    expect(output).not.toContain("username")
+    expect(output).not.toContain("response")
+    expect(output).not.toContain("deadbeef")
+  })
+
+  it("redacts escaped quotes inside secret assignments", () => {
+    expect(redactInspectionText(String.raw`password="hunter\" 2" failed`)).toBe("password=[redacted] failed")
+  })
+
   it.each([
     ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: [redacted]'],
     ['Authorization: Bearer abc rejected', 'Authorization: [redacted] rejected'],

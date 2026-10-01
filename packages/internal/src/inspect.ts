@@ -97,18 +97,18 @@ export function summarizeDefinitions(
 export const redactedInspectionValue = "[redacted]"
 
 const secretKeyPattern = /secret|token|passw(?:or)?d|credential|api[-_\s]?key|private[-_\s]?key|authorization|cookie|signature|dsn|connection[-_\s]?string/i
-const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s:?#]+:[^/\s?#]+@|bearer\s)/i
+const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s:?#]*:[^/\s?#]+@|bearer\s)/i
 
-const embeddedUrlCredentialPattern = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:?#]+:[^/\s?#]+@/gi
+const embeddedUrlCredentialPattern = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:?#]*:[^/\s?#]+@/gi
 const embeddedCookiePattern = /(?<![\w-])cookie\s*:\s*[^\r\n]+/gi
 const embeddedBearerPattern = /\bbearer\s+[^\s,;]+/gi
 const embeddedAuthorizationPattern = new RegExp(
-  String.raw`\b(authorization\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]+?(?=\s*(?:[,;])?\s*(?:${secretKeyPattern.source})[\w-]*\s*[:=]|\s+rejected\b|$))`,
+  String.raw`\b(authorization\s*[:=]\s*)(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|'(?:\\[^\r\n]|[^'\\\r\n])*'|[^\r\n]+?(?=\s*(?:[,;])?\s*(?:${secretKeyPattern.source})[\w-]*\s*[:=]|\s+rejected\b|$))`,
   "gi",
 )
 
 const embeddedSecretAssignmentPattern = new RegExp(
-  String.raw`\b([\w-]*(?:${secretKeyPattern.source})[\w-]*["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;&]+)`,
+  String.raw`\b([\w-]*(?:${secretKeyPattern.source})[\w-]*["']?\s*[:=]\s*)(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|'(?:\\[^\r\n]|[^'\\\r\n])*'|[^\s,;&]+)`,
   "gi",
 )
 

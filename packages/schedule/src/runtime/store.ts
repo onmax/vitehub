@@ -392,6 +392,15 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
     }
   }
 
+  async function indexAttempt(attempt: ScheduleRunAttemptRecord): Promise<void> {
+    try {
+      await store.set(joinKey(prefix, "schedule-run-attempt-index", attempt.runId, attempt.id), true)
+    }
+    catch {
+      // Attempt records remain authoritative if their derived index is unavailable.
+    }
+  }
+
   async function readSnapshot() {
     return {
       keys: await store.keys(scheduleRunBase(prefix)),
@@ -454,6 +463,7 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
           throw scheduleErrorDiagnostics.SCHEDULE_R0032({ message: `Schedule Run Attempt already exists: ${attempt.id}` })
         }
         await store.set(key, serializeScheduleRunAttempt(attempt))
+        await indexAttempt(attempt)
         return cloneScheduleRunAttempt(attempt)
       })
     },
@@ -477,9 +487,41 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
       return run ? deserializeScheduleRun(run) : undefined
     },
     async listAttempts(runId) {
-      const keys = await store.keys(scheduleRunAttemptBase(prefix))
-      const attempts = await Promise.all(keys.map(key => store.get<StoredScheduleRunAttemptRecord>(key)))
-      return attempts.flatMap(attempt => attempt && attempt.runId === runId ? [deserializeScheduleRunAttempt(attempt)] : [])
+      const [keys, indexKeys] = await Promise.all([
+        store.keys(`${scheduleRunAttemptBase(prefix)}/`),
+        store.keys(`${joinKey(prefix, "schedule-run-attempt-index")}/`),
+      ])
+      const runByAttemptId = new Map<string, string>()
+      for (const key of indexKeys) {
+        try {
+          const parts = key.split("/").slice(-2).map(decodeURIComponent)
+          runByAttemptId.set(parts[1]!, parts[0]!)
+        }
+        catch {}
+      }
+      const selectedKeys = keys.filter((key) => {
+        try {
+          const id = decodeURIComponent(key.slice(key.lastIndexOf("/") + 1))
+          const indexedRunId = runByAttemptId.get(id)
+          return indexedRunId === undefined || indexedRunId === runId
+        }
+        catch {
+          return true
+        }
+      })
+      const attempts: ScheduleRunAttemptRecord[] = []
+      // Backfill legacy or missing indexes with bounded reads, without hiding retained attempts.
+      for (let offset = 0; offset < selectedKeys.length; offset += 16) {
+        const batch = await Promise.all(selectedKeys.slice(offset, offset + 16).map(async (key) => {
+          const stored = await store.get<StoredScheduleRunAttemptRecord>(key)
+          if (!stored) return
+          const attempt = deserializeScheduleRunAttempt(stored)
+          if (!runByAttemptId.has(attempt.id)) await indexAttempt(attempt)
+          return attempt.runId === runId ? attempt : undefined
+        }))
+        attempts.push(...batch.flatMap(attempt => attempt ? [attempt] : []))
+      }
+      return attempts
     },
     async listRuns(options = {}) {
       return listRuns(options, await readSnapshot())
