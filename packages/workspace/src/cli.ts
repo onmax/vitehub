@@ -1,3 +1,5 @@
+import { isPlainObject } from "@vite-hub/internal/object"
+
 import {
   discoverViteHubDevServer,
   fetchViteHubDevEndpoint,
@@ -51,11 +53,6 @@ interface WorkspaceDevCliOptions {
   fetch?: typeof fetch
 }
 
-interface WorkspaceDevDiscovery {
-  root?: unknown
-  workspaceDevTokenServerId?: unknown
-  workspaces?: Array<{ name?: unknown }>
-}
 
 interface WorkspaceDevTarget {
   tokenOptions: WorkspaceDevTokenOptions
@@ -246,9 +243,17 @@ async function readWorkspaceDiscovery(parsed: ParsedWorkspaceDevArgs, context: W
     context.stderr.write("Missing Workspace Dev target.\n")
     return
   }
-  const server = await discoverViteHubDevServer<WorkspaceDevDiscovery>({
+  const server = await discoverViteHubDevServer({
     endpoint: workspaceDevEndpoint,
     fetch: fetchImpl,
+    parseDiscovery(value: unknown) {
+      const response = isPlainObject(value) ? value : {}
+      return {
+        root: response.root,
+        workspaceDevTokenServerId: response.workspaceDevTokenServerId,
+        workspaces: Array.isArray(response.workspaces) ? response.workspaces.filter(isPlainObject) : [],
+      }
+    },
     rootDir: context.rootDir,
     serverUrl: parsed.url,
     stderr: context.stderr,

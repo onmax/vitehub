@@ -114,6 +114,14 @@ describe("dev server discovery", () => {
     }
   })
 
+  it("validates the discovery object and accepts an owner parser", async () => {
+    const output = captureStderr()
+    const options = { endpoint, rootDir: "/app", serverUrl: "http://localhost:5173", stderr: output.stderr }
+    expect((await discoverViteHubDevServer({ ...options, fetch: async () => Response.json(null) }))?.discovery).toEqual({})
+    const target = await discoverViteHubDevServer({ ...options, fetch: async () => Response.json({ id: 7 }), parseDiscovery: () => ({ root: "/app", id: 7 }) })
+    expect(target?.discovery.id).toBe(7)
+  })
+
   it("uses the owner root check", async () => {
     const output = captureStderr()
     const target = await discoverViteHubDevServer({
