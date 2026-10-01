@@ -84,4 +84,4 @@ The provider copies the command list at creation. Later changes to the supplied 
 
 Built on [just-bash](https://www.npmjs.com/package/just-bash) for the built-in shell provider and [sh-syntax](https://www.npmjs.com/package/sh-syntax) for command analysis.
 
-Read the complete [Shell guide](https://vitehub.dev/docs/server-primitives/shell), the [Bash contract](https://vitehub.dev/docs/concepts/bash), and the [official Capabilities guide](https://vitehub.dev/docs/capabilities/official-capabilities).
+Read the complete [Shell guide](https://vitehub.dev/docs/server-primitives/shell), the [Workspace shell Capability](https://vitehub.dev/docs/capabilities/workspace-shell), and the [official Capabilities guide](https://vitehub.dev/docs/capabilities/official-capabilities).

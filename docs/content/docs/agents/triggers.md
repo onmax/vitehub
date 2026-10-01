@@ -78,6 +78,12 @@ export default defineEventHandler(async (event) => {
     getRuntimeContext(event),
     'chat.message',
     {
+      context: {
+        invoker: {
+          id: user.id,
+          kind: 'customer',
+        },
+      },
       messages,
       run: {
         channelId: 'portal',
@@ -112,10 +118,10 @@ return the stream does not cover work that starts later. See
 
 ## Add an application-owned Trigger
 
-Use `defineChannel()` from `vite-hub/agent/channels` when your application
-owns an event source, such as a ticketing system. This is a different function
-from `defineOutboundChannel()` in `vite-hub/channels`, which sends messages
-and does not start an Agent.
+Use `defineChannel()` from `vite-hub/agent/channels` when an application-owned
+Channel Kind prepares its own event, such as a ticketing system. This is not
+the outbound [`defineOutboundChannel()`](/docs/server-primitives/channels) from
+`vite-hub/channels`, which sends messages and does not start an Agent.
 
 ```ts [server/agents/support.ts]
 import { defineAgent } from 'vite-hub/agent'

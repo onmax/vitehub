@@ -74,6 +74,6 @@ Capabilities attach through the Agent Definition, so the Schedule extends the Ag
 
 ## Related pages
 
-- [Channels](/docs/reference/channels)
+- [Channels](/docs/server-primitives/channels)
 - [Schedule](/docs/capabilities/schedule)
 - [Custom capabilities](/docs/capabilities/custom-capabilities)

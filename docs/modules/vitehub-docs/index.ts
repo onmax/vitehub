@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { defineNuxtModule } from "nuxt/kit";
 import { writeDocsArtifacts } from "./artifacts";
 import { createCapabilityReferences, writeCapabilityReferences } from "./capability-references";
+import { createDocsRedirectRouteRules } from "./redirects";
 
 function collectPrerenderRoutes(manifest: { sections: Array<{ pages: Array<{ path: string }> }> }) {
   const routes: string[] = ["/docs", "/about", "/contact", "/privacy"];
@@ -44,6 +45,8 @@ export default defineNuxtModule({
     const manifest = writeDocsArtifacts({ capabilityReferences, docsRoot, outputDir });
     nuxt.options.alias["#vitehub-capability-references"] = capabilityReferencesPath;
     nuxt.options.alias["#vitehub-docs-manifest"] = resolve(outputDir, "docs-manifest.mjs");
+    // Explicit route rules in nuxt.config.ts take precedence over removed-page redirects.
+    nuxt.options.routeRules = { ...createDocsRedirectRouteRules(), ...nuxt.options.routeRules };
     nuxt.hook("builder:watch", (_event, path) => {
       if (isDocsArtifactSource(path)) {
         writeDocsArtifacts({ capabilityReferences, docsRoot, outputDir });
