@@ -132,6 +132,12 @@ describe("landing page", () => {
 
     expect(reducedMotion).toContain("animation: none;");
     expect(primitiveMotion).toContain(".primitive-motion:not(.is-playing) .a {\n  animation-play-state: paused;");
+    expect(primitiveMotion).toContain("animation-iteration-count: 1;");
+    const primitives = await readFile(
+      new URL("../app/components/landing/Primitives.vue", import.meta.url),
+      "utf8",
+    );
+    expect(primitives).toContain('@click="replay += 1"');
     expect(installCommand).toContain(
       `:class="activeTab === 'package' ? 'w-[16.5rem]' : 'w-0'"`,
     );

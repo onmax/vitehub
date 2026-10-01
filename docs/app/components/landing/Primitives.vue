@@ -4,6 +4,7 @@ import { landingPrimitives } from "./content";
 
 const grid = useTemplateRef<HTMLElement>("grid");
 const visible = ref(false);
+const replay = ref(0);
 
 // Loops run only while the grid is on screen.
 useIntersectionObserver(
@@ -54,8 +55,9 @@ function offset(index: number) {
         ref="grid"
         class="mt-10 grid grid-cols-2 gap-px border border-default bg-[var(--ui-border)] sm:grid-cols-3 lg:mt-12 lg:grid-cols-6"
         role="list"
+        @click="replay += 1"
       >
-        <li v-for="(primitive, index) in landingPrimitives" :key="primitive.id" class="min-w-0 bg-default">
+        <li v-for="(primitive, index) in landingPrimitives" :key="`${primitive.id}-${replay}`" class="min-w-0 bg-default">
           <NuxtLink
             :to="primitive.to"
             class="primitive-tile group flex h-full flex-col gap-3 p-4 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
