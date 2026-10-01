@@ -81,6 +81,7 @@ const outboxState = Symbol.for("vitehub.email.outbox")
 type OutboxGlobal = typeof globalThis & { [outboxState]?: Map<string, EmailOutboxState> }
 
 function state(runtimeId = "default"): EmailOutboxState | undefined {
+  // SAFETY: Generated Email bundles share this optional symbol-keyed registry.
   return (globalThis as OutboxGlobal)[outboxState]?.get(runtimeId)
 }
 
@@ -97,6 +98,7 @@ function installState(limit: number, runtimeId: string): EmailOutboxState {
     return current
   }
   const created: EmailOutboxState = { limit, messages: [], nextId: 1 }
+  // SAFETY: This owner installs the optional symbol-keyed registry shared by generated bundles.
   const global = globalThis as OutboxGlobal
   global[outboxState] ??= new Map()
   global[outboxState].set(runtimeId, created)

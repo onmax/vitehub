@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises"
 import { relative, resolve } from "node:path"
 
+import * as v from "valibot"
+
 import {
   discoverViteHubDevServer,
   fetchViteHubDevEndpoint,
@@ -15,7 +17,7 @@ import { discoverEmailTemplates } from "./templates.ts"
 
 import type { ViteHubCliContext, ViteHubCliContributor, ViteHubCliStreams } from "@vite-hub/internal/cli"
 import type { EmailDevOperation, EmailDevRequestBody } from "./dev.ts"
-import type { EmailOutboxAttachment, EmailOutboxDelivery, EmailOutboxList, EmailOutboxListItem, EmailOutboxMessage } from "./runtime/console.ts"
+import type { EmailOutboxDelivery, EmailOutboxList, EmailOutboxMessage } from "./runtime/console.ts"
 
 export type EmailCliContext = Pick<ViteHubCliContext, "cwd" | "env" | "rootDir"> & ViteHubCliStreams
 
@@ -218,45 +220,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function isStrings(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === "string")
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return isRecord(value) && Object.values(value).every(item => typeof item === "string")
-}
-
-function isDelivery(value: unknown): value is EmailOutboxDelivery {
-  if (!isRecord(value)) return false
-  if (value.status === "captured" || value.status === "pending") return true
-  if (value.status === "sent") return typeof value.id === "string"
-  return value.status === "failed" && isRecord(value.error) && typeof value.error.message === "string"
-    && (value.error.code === undefined || typeof value.error.code === "string")
-}
-
-function hasMessageFields(value: Record<string, unknown>): boolean {
-  return ["capturedAt", "from", "id", "provider", "subject"].every(key => typeof value[key] === "string")
-    && isStrings(value.to) && isDelivery(value.delivery)
-}
-
-function isListItem(value: unknown): value is EmailOutboxListItem {
-  return isRecord(value) && hasMessageFields(value) && typeof value.attachments === "number"
-    && Number.isSafeInteger(value.attachments) && value.attachments >= 0
-}
-
-function isAttachment(value: unknown): value is EmailOutboxAttachment {
-  return isRecord(value) && typeof value.filename === "string" && typeof value.size === "number" && Number.isFinite(value.size)
-    && (value.disposition === undefined || value.disposition === "inline" || value.disposition === "attachment")
-    && ["cid", "contentType"].every(key => value[key] === undefined || typeof value[key] === "string")
-}
-
-function isMessage(value: unknown): value is EmailOutboxMessage {
-  return isRecord(value) && hasMessageFields(value) && isStringRecord(value.headers)
-    && Array.isArray(value.attachments) && value.attachments.every(isAttachment)
-    && ["bcc", "cc", "replyTo"].every(key => value[key] === undefined || isStrings(value[key]))
-    && ["html", "preheader", "scheduledAt", "stream", "template", "text"].every(key => value[key] === undefined || typeof value[key] === "string")
-    && (value.metadata === undefined || isStringRecord(value.metadata))
-    && (value.tags === undefined || (Array.isArray(value.tags) && value.tags.every(tag => isRecord(tag) && typeof tag.name === "string" && typeof tag.value === "string")))
+const deliverySchema = v.variant("status", [
+  v.object({ status: v.literal("captured") }),
+  v.object({ status: v.literal("pending") }),
+  v.object({ id: v.string(), status: v.literal("sent") }),
+  v.object({ error: v.object({ code: v.optional(v.string()), message: v.string() }), status: v.literal("failed") }),
+])
+const messageFields = { capturedAt: v.string(), delivery: deliverySchema, from: v.string(), id: v.string(), provider: v.string(), subject: v.string(), to: v.array(v.string()) }
+const attachmentSchema = v.object({ cid: v.optional(v.string()), contentType: v.optional(v.string()), disposition: v.optional(v.picklist(["attachment", "inline"])), filename: v.string(), size: v.pipe(v.number(), v.finite()) })
+const outboxMessageSchema = v.object({
+  ...messageFields, attachments: v.array(attachmentSchema), bcc: v.optional(v.array(v.string())), cc: v.optional(v.array(v.string())),
+  headers: v.record(v.string(), v.string()), html: v.optional(v.string()), metadata: v.optional(v.record(v.string(), v.string())),
+  preheader: v.optional(v.string()), replyTo: v.optional(v.array(v.string())), scheduledAt: v.optional(v.string()), stream: v.optional(v.string()),
+  tags: v.optional(v.array(v.object({ name: v.string(), value: v.string() }))), template: v.optional(v.string()), text: v.optional(v.string()),
+})
+const nonnegativeInteger = v.pipe(v.number(), v.safeInteger(), v.minValue(0))
+const resultSchemas = {
+  list: v.object({ limit: v.nullable(v.pipe(v.number(), v.finite())), messages: v.array(v.object({ ...messageFields, attachments: nonnegativeInteger })) }),
+  get: v.object({ message: outboxMessageSchema }),
+  clear: v.object({ cleared: nonnegativeInteger }),
 }
 
 type OutboxResult =
@@ -265,13 +247,11 @@ type OutboxResult =
   | { operation: "clear", value: { cleared: number } }
 
 function parseOutboxResult(operation: EmailDevOperation, value: unknown): OutboxResult | undefined {
-  if (!isRecord(value)) return undefined
-  if (operation === "get") return isMessage(value.message) ? { operation, value: { message: value.message } } : undefined
-  if (operation === "clear") return typeof value.cleared === "number" && Number.isSafeInteger(value.cleared) && value.cleared >= 0
-    ? { operation, value: { cleared: value.cleared } } : undefined
-  if ((value.limit !== null && (typeof value.limit !== "number" || !Number.isFinite(value.limit)))
-    || !Array.isArray(value.messages) || !value.messages.every(isListItem)) return undefined
-  return { operation, value: { limit: value.limit, messages: value.messages } }
+  switch (operation) {
+    case "list": { const parsed = v.safeParse(resultSchemas.list, value); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "get": { const parsed = v.safeParse(resultSchemas.get, value); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "clear": { const parsed = v.safeParse(resultSchemas.clear, value); return parsed.success ? { operation, value: parsed.output } : undefined }
+  }
 }
 
 async function readFailure(response: Response): Promise<{ code?: string, message: string }> {

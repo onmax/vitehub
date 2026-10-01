@@ -68,7 +68,7 @@ const listResult = {
 }
 
 describe("Email discovery failure output", () => {
-  it.each([[], ["--json"]])("reports malformed outbox rows with flags %j", async (flags) => {
+  it.each([{ flags: [] }, { flags: ["--json"] }])("reports malformed outbox rows with flags %j", async ({ flags }) => {
     const output = context()
     await expect(runEmailOutboxCli(["list", ...flags], output.context, { fetch: devServer({ ...listResult, messages: [{}] }) })).resolves.toBe(1)
     expect(output.stdout.output() + output.stderr.output()).toContain("response is invalid")
