@@ -276,7 +276,7 @@ export class PullRequestInbox {
     const attempt = value as Record<string, unknown>
     if (!isRuntimeString(attempt.token) || !Number.isFinite(attempt.generation) || !Number.isFinite(attempt.revision) ||
       !isRuntimeString(attempt.head) || !Number.isFinite(attempt.startedAt)) return undefined
-    // SAFETY: each required field was validated above before narrowing the metadata record.
+    // SAFETY: the required fields were validated above before this DirectMergeAttempt assertion.
     return attempt as DirectMergeAttempt
   }
   async clearDirectMerge(repository: string, number: number, token: string): Promise<boolean> {
