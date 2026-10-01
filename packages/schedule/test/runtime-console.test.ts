@@ -272,6 +272,24 @@ describe("Schedule dev request handler", () => {
     expect(JSON.stringify(body)).not.toContain("abc.def.ghi")
   })
 
+  it.each(["Error", "Authorization: Bearer error-name-secret"])("redacts stored run and attempt error names: %s", async (name) => {
+    installTargets(() => {
+      const error = new Error("Target failed")
+      error.name = name
+      throw error
+    })
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
+    const response = await handleScheduleDevRequest(devRequest({ id: "digest", operation: "run" }))
+    expect(response.status).toBe(200)
+    const body = await readBody(response)
+    const expectedName = name === "Error" ? name : "Authorization: [redacted]"
+    expect(body.run?.error).toEqual({ message: "Target failed", name: expectedName })
+    const attempts = await readBody(await handleScheduleDevRequest(devRequest({ id: body.run?.id, operation: "attempts" })))
+    expect(attempts.run?.error?.name).toBe(expectedName)
+    expect(attempts.attempts?.[0]?.error?.name).toBe(expectedName)
+    expect(JSON.stringify({ body, attempts })).not.toContain("error-name-secret")
+  })
+
   it("reports missing records and a missing registry", async () => {
     expect(await readBody(await handleScheduleDevRequest(devRequest({ id: "missing", operation: "get" })))).toMatchObject({
       error: { code: "SCHEDULE_NOT_FOUND" },

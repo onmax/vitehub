@@ -103,7 +103,7 @@ function summarizeError(error: ScheduleRunError | undefined): ScheduleRunErrorSu
   if (!error) return
   return {
     message: redactInspectionText(error.message),
-    ...(error.name ? { name: error.name } : {}),
+    ...(error.name ? { name: redactInspectionText(error.name) } : {}),
   }
 }
 

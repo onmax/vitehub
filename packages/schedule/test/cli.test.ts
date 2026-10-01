@@ -8,6 +8,7 @@ import { Readable } from "node:stream"
 import { describe, expect, it, vi } from "vitest"
 
 import { createScheduleCliContributor, runScheduleCli } from "../src/cli.ts"
+import { summarizeScheduleRun } from "../src/runtime/console.ts"
 import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute, scheduleDevRuntimeRoute } from "../src/dev.ts"
 import { registerScheduleDevEndpoint, scheduleDevRuntimeUnavailableMessage } from "../src/vite-dev.ts"
 
@@ -184,6 +185,17 @@ describe("vitehub schedule", () => {
     const json = context()
     await expect(runScheduleCli(["run", "digest", "--json"], json.context, { fetch: devServer({ run: failed }) })).resolves.toBe(1)
     expect(JSON.parse(json.stdout.output())).toEqual({ run: failed })
+  })
+
+  it.each([false, true])("keeps redacted error names in CLI output with json %s", async (json) => {
+    const scheduledAt = new Date(digest.lastRun.scheduledAt)
+    const run = summarizeScheduleRun({ ...digest.lastRun, scheduledAt, createdAt: scheduledAt, updatedAt: scheduledAt,
+      error: { message: "Target failed", name: "Authorization: Bearer error-name-secret" }, status: "failed" })
+    const output = context()
+    expect(await runScheduleCli(["run", "digest", ...(json ? ["--json"] : [])], output.context, { fetch: devServer({ run }) })).toBe(1)
+    expect(output.stdout.output()).not.toContain("error-name-secret")
+    if (json) expect(JSON.parse(output.stdout.output()).run.error.name).toBe("Authorization: [redacted]")
+    else expect(output.stdout.output()).toContain("Error: Authorization: [redacted]: Target failed")
   })
 
   it("reports runtime errors on stderr, or as JSON with --json", async () => {
