@@ -1,3 +1,4 @@
+import { redactInspectionText, redactInspectionValue } from "./inspect.ts"
 import type { ProvisionStep } from "./provision.ts"
 
 export interface ViteHubCliStreams {
@@ -240,16 +241,24 @@ export async function fetchViteHubDevEndpoint(
 function devServerDisplayUrl(value: string): string {
   try {
     const url = new URL(value)
-    if (!url.username && !url.password) {
-      return url.origin === "null" ? value.replace(/^[\s\S]+@/, "[redacted]@") : value
+    let hasSecretQuery = false
+    for (const [key, queryValue] of [...url.searchParams]) {
+      if (redactInspectionValue(queryValue, key) === "[redacted]") {
+        url.searchParams.set(key, "[redacted]")
+        hasSecretQuery = true
+      }
+    }
+    if (!url.username && !url.password && !hasSecretQuery) {
+      return redactInspectionText(url.origin === "null" ? value.replace(/^[\s\S]+@/, "[redacted]@") : value)
     }
     if (url.username) url.username = "[redacted]"
     if (url.password) url.password = "[redacted]"
-    return url.href
+    const display = url.href.replace(/%5Bredacted%5D/g, "[redacted]")
+    return redactInspectionText(url.origin === "null" ? display.replace(/^[\s\S]+@/, "[redacted]@") : display)
   }
   catch {
     const redacted = value.replace(/\/\/[\s\S]+@/g, "//[redacted]@")
-    return redacted === value ? value.replace(/^[\s\S]+@/, "[redacted]@") : redacted
+    return redactInspectionText(redacted === value ? value.replace(/^[\s\S]+@/, "[redacted]@") : redacted)
   }
 }
 

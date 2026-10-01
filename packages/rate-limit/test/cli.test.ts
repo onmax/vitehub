@@ -108,6 +108,39 @@ describe("Rate Limit review regressions", () => {
     }
   })
 
+  it.each([
+    { source: "flag", json: false },
+    { source: "flag", json: true },
+    { source: "environment", json: false },
+    { source: "environment", json: true },
+  ])("redacts secret query parameters from $source with JSON $json", async ({ source, json }) => {
+    const url = "http://localhost:5173/?token=hidden-token&token=hidden-repeat&credential=hidden-adjacent&api_key=hidden-api&password=hidden-password&credential=hidden-credential&private_key=hidden-private&authorization=hidden-auth&cookie=hidden-cookie&signature=hidden-signature&dsn=hidden-dsn&connection_string=hidden-connection&%74oken=hidden-encoded&mode=inspect"
+    const output = context()
+    if (source === "environment") Object.assign(output.context.env, { VITEHUB_DEV_SERVER_URL: url })
+    const fetch = vi.fn(async () => { throw new Error("offline") })
+    await expect(runRateLimitCli(["peek", "login", "key", ...(source === "flag" ? ["--url", url] : []), ...(json ? ["--json"] : [])], output.context, { fetch })).resolves.toBe(1)
+    const diagnostic = output.stdout.output() + output.stderr.output()
+    expect(diagnostic).not.toContain("hidden-")
+    expect(diagnostic).toContain("[redacted]")
+    expect(diagnostic).toContain("mode=inspect")
+    expect(fetch).toHaveBeenCalledOnce()
+    if (json) expect(output.stderr.output()).toBe("")
+    else expect(output.stdout.output()).toBe("")
+  })
+
+  it.each([false, true])("redacts secret queries alongside opaque or invalid credentials with JSON %s", async json => {
+    for (const url of ["user:opaque-password@host?token=hidden-token", "http://user:opaque-password@host:bad?token=hidden-token"]) {
+      const output = context()
+      const fetch = vi.fn()
+      await expect(runRateLimitCli(["peek", "login", "key", "--url", url, ...(json ? ["--json"] : [])], output.context, { fetch })).resolves.toBe(1)
+      const diagnostic = output.stdout.output() + output.stderr.output()
+      expect(diagnostic).not.toContain("hidden-token")
+      expect(diagnostic).not.toContain("opaque-password")
+      expect(diagnostic).toContain("[redacted]")
+      expect(fetch).not.toHaveBeenCalled()
+    }
+  })
+
   it.each([false, true])("redacts whitespace credentials from environment URL with JSON %s", async json => {
     const output = context()
     Object.assign(output.context.env, { VITEHUB_DEV_SERVER_URL: "http://user:sec ret@host:bad" })
