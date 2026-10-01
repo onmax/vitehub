@@ -17,7 +17,7 @@ describe("renderMarkdownTemplate", () => {
   })
 
   it("keeps colliding arrays separate without truncating nested elements", async () => {
-    const nested = ["nested", , "kept"]
+    const nested = ["nested", undefined, "kept"]
     const flat = ["flat"]
     const data = { group: { items: nested }, "group.items": flat }
     await expect(renderMarkdownTemplate("{{ data.group.items.0 }} {{ data.group.items.2 }} {{ data.group.items.length }}", { data }))
@@ -505,23 +505,23 @@ Unavailable
     ["indented", "    ::else\n    ::if{:condition=\"data.missing\"}\n    {{ data.missing }}"],
     ["multiline inline", "``\n::else\n::if{:condition=\"data.missing\"}\n{{ data.missing }}\n``"],
   ])("ignores malformed branches in %s code while validating authored branches", async (_kind, code) => {
-    const template = `::if{:condition=\"data.enabled\"}\nSelected\n\n${code}\n\n::else-if{:condition=\"data.fallback\"}\nFallback\n::else\nNeither\n::\n::\n::`
+    const template = `::if{:condition="data.enabled"}\nSelected\n\n${code}\n\n::else-if{:condition="data.fallback"}\nFallback\n::else\nNeither\n::\n::\n::`
     const selected = await renderMarkdownTemplate(template, { data: { enabled: true } })
     expect(selected).toContain("Selected")
     expect(selected).toContain("::else")
-    expect(selected).toContain("::if{:condition=\"data.missing\"}")
+    expect(selected).toContain('::if{:condition="data.missing"}')
     expect(selected).toContain("{{ data.missing }}")
     expect(selected).not.toContain("VITEHUBMARKDOWNTEMPLATE")
     await expect(renderMarkdownTemplate(template, { data: { enabled: false, fallback: true } }))
       .resolves.toBe("Fallback")
     await expect(renderMarkdownTemplate(template, { data: { enabled: false, fallback: false } }))
       .resolves.toBe("Neither")
-    await expect(renderMarkdownTemplate(`${code}\n\n::if{:condition=\"data.enabled\"}\nUnclosed`))
+    await expect(renderMarkdownTemplate(`${code}\n\n::if{:condition="data.enabled"}\nUnclosed`))
       .rejects.toThrow("missing a closing")
   })
 
   it("isolates protected syntax across concurrent renders and a rejected render", async () => {
-    const template = "`{{ data.literal }}`\n\n<policy :name=\"data.name\">\n::if{:condition=\"data.enabled\"}\n:insert{:markdown=\"data.section\"}\n::else\nHidden\n::\n::\n</policy>"
+    const template = '`{{ data.literal }}`\n\n<policy :name="data.name">\n::if{:condition="data.enabled"}\n:insert{:markdown="data.section"}\n::else\nHidden\n::\n::\n</policy>'
     const results = await Promise.allSettled([
       renderMarkdownTemplate(template, { data: { enabled: true, name: "First", section: "First fragment" } }),
       renderMarkdownTemplate(template, { data: { enabled: true, name: "Missing section" } }),
