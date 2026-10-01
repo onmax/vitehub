@@ -223,6 +223,13 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: ["botToken"] }, { kind: "telegram", keys: [] }])
   })
 
+  it("decodes escaped static Channel keys", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      defineAgent({ channels: { ["tele\\u0067ram"]: {} } })
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
   it("treats method and constructor parameters as shadowing imports", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"

@@ -22,6 +22,34 @@ function isStringToken(token: string | undefined): boolean {
   return /^["'`]/.test(token ?? "")
 }
 
+function stringTokenValue(token: string): string | undefined {
+  if (!isStringToken(token) || token.at(-1) !== token[0]) return undefined
+  const body = token.slice(1, -1)
+  let value = ""
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] !== "\\") {
+      value += body[i]
+      continue
+    }
+    const next = body[++i]
+    if (next === undefined) return undefined
+    if (next === "u") {
+      const code = body[i + 1] === "{" ? body.slice(i + 2, body.indexOf("}", i + 2)) : body.slice(i + 1, i + 5)
+      if (!/^[0-9a-fA-F]+$/.test(code)) return undefined
+      i += body[i + 1] === "{" ? code.length + 2 : 4
+      value += String.fromCodePoint(Number.parseInt(code, 16))
+    } else if (next === "x") {
+      const code = body.slice(i + 1, i + 3)
+      if (!/^[0-9a-fA-F]{2}$/.test(code)) return undefined
+      i += 2
+      value += String.fromCharCode(Number.parseInt(code, 16))
+    } else {
+      value += ({ n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", v: "\v", "0": "\0" }[next] ?? next)
+    }
+  }
+  return value
+}
+
 function closingDelimiter(tokens: string[], start: number): number {
   let depth = 0
   for (let i = start; i < tokens.length; i++) {
@@ -64,7 +92,8 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
         if (["async", "get", "set"].includes(token) && objectMethodParameters(tokens, i + (tokens[i + 1] === "*" ? 2 : 1)) !== undefined) continue
         if (token === "*" && objectMethodParameters(tokens, i + 1) !== undefined) continue
         if (/^[A-Za-z_$][\w$]*$/.test(token) || isStringToken(token)) {
-          const key = isStringToken(token) ? token.slice(1, -1) : token
+          const key = isStringToken(token) ? stringTokenValue(token) : token
+          if (key === undefined) return false
           // A shorthand property `{ telegram }` is its own value.
           const shorthand = !isStringToken(token) && [",", "}"].includes(tokens[i + 1]!)
           const parameters = objectMethodParameters(tokens, i)
