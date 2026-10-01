@@ -621,7 +621,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       await revokeProviderToken(loaded, response.refresh_token ?? response.access_token)
       throw new ConnectionError("invalid", `Connection "${name}" belongs to another account. Revoke it before you connect a different account.`, { details: { connection: name } })
     }
-    const token = toStoredToken(response, undefined, [
+    const token = toStoredToken(response, previous?.success ? previous.output : undefined, [
       ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),
     ])
     token.accountId = account?.id

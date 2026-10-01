@@ -50,6 +50,17 @@ describe("connect", () => {
     expect(await rejection(test.runtime.authorize({ name: "mail", redirectUri: "http://example.com/callback" }))).toMatchObject({ code: "CONNECTION_INVALID" })
   })
 
+  it("retains the refresh grant when the same account authorizes again", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    await connect(test, { refresh_token: undefined, expires_in: 1 })
+    test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600 } })
+    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    const refresh = test.provider.calls.find(call => call.body?.includes("grant_type=refresh_token"))
+    expect(new URLSearchParams(refresh?.body).get("refresh_token")).toBe(REFRESH_TOKEN)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected", account: { id: "account-1" } })
+  })
+
   it("keeps one account per Connection", async () => {
     const test = createTestRuntime()
     await connect(test)
