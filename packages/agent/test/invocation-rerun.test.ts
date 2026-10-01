@@ -54,6 +54,14 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-messages" })
   })
 
+  it("rejects an explicitly supplied empty messages array", async () => {
+    const record = await journaled({ messages: [], prompt: "Hi" })
+    expect(record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes).toMatchObject({
+      "input.hasMessages": true,
+    })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-messages" })
+  })
+
   it.each([false, true])("preserves dry-run provenance: %s", async (dryRun) => {
     const record = await journaled({ dryRun, prompt: "Hi" })
     expect(agentInvocationRerunInput(record)).toEqual(dryRun

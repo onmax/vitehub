@@ -104,7 +104,7 @@ function invocationAttributes(
     "input.hasTimeout": context.input.timeout !== undefined,
     "input.hasAbortSignal": context.input.abortSignal !== undefined,
     "input.hasData": context.input.data !== undefined,
-    "input.hasMessages": context.input.message !== undefined || Boolean(context.input.messages?.length),
+    "input.hasMessages": context.input.message !== undefined || context.input.messages !== undefined,
     "input.hasOptions": context.input.options !== undefined,
     "input.hasPrompt": Boolean(context.input.prompt),
     ...(includeInput && context.input.data !== undefined ? { "input.data": context.input.data } : {}),
