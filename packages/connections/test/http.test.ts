@@ -48,8 +48,8 @@ describe("createConnectionsHandler", () => {
     const test = createTestRuntime()
     await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:mail", createdAt: new Date().toISOString(), id: "private-approval", input: { body: "private-message-content", recipient: "private@example.com" }, name: "mail", status: "pending" })
     const handler = createConnectionsHandler({ runtime: () => test.runtime })
-    for (const action of ["approvals", "deny"]) {
-      const response = await handler(post(action === "approvals" ? { action, name: "mail" } : { action, id: "private-approval" }))
+    for (const action of ["approval-summaries", "deny-summary"]) {
+      const response = await handler(post(action === "approval-summaries" ? { action, name: "mail" } : { action, id: "private-approval" }))
       expect(response.status).toBe(200)
       const text = await response.text()
       expect(text).not.toContain("private-message-content")
@@ -79,7 +79,7 @@ describe("createConnectionsHandler", () => {
     const pending = (await test.runtime.approvals({ status: "pending" })).approvals[0]!
     const approve = vi.spyOn(test.runtime, "approve")
     const handler = createConnectionsHandler({ actor: () => "user:owner", runtime: () => test.runtime })
-    const response = await handler(post({ action: "approve", id: pending.id }))
+    const response = await handler(post({ action: "approve-summary", id: pending.id }))
     expect(response.status).toBe(200)
     const text = await response.text()
     expect(JSON.parse(text)).toEqual({ approval: expect.objectContaining({ id: pending.id, status: "executed", decidedBy: "user:owner" }) })

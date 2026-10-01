@@ -73,6 +73,26 @@ describe("vitehub connections", () => {
     expect(harness.output.stdout).toContain("revoked")
   })
 
+  it("keeps stored write input and provider results in approval JSON output", async () => {
+    const harness = cli()
+    await connect(harness.test)
+    const input = { id: "m1", requestBody: { addLabelIds: ["private-input-label"] }, userId: "me" }
+    await expect(harness.test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.messages.modify", input)).rejects.toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
+    expect(await harness.run("approvals", ["--json"])).toBe(0)
+    const listed = JSON.parse(harness.output.stdout) as { approvals: Array<{ id: string }> }
+    expect(JSON.parse(harness.output.stdout)).toMatchObject({ approvals: [{ input: { input } }] })
+    harness.output.stdout = ""
+    expect(await harness.run("approvals", ["approve", listed.approvals[0]!.id, "--json"])).toBe(0)
+    expect(JSON.parse(harness.output.stdout)).toMatchObject({ approval: { status: "executed", input: { input } }, result: { id: "message-1" } })
+    expect(harness.output.stderr).toBe("")
+
+    await expect(harness.test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.messages.modify", input)).rejects.toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
+    const pending = (await harness.test.runtime.approvals({ status: "pending" })).approvals[0]!
+    harness.output.stdout = ""
+    expect(await harness.run("approvals", ["deny", pending.id, "--json"])).toBe(0)
+    expect(JSON.parse(harness.output.stdout)).toMatchObject({ approval: { status: "denied", input: { input } } })
+  })
+
   it("exposes approval cursors in JSON and supports older-page decisions", async () => {
     const harness = cli()
     for (let index = 0; index < 101; index++) {

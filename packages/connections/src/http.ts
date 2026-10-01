@@ -22,6 +22,7 @@ export interface ConnectionsHandlerOptions {
 
 const name = v.pipe(v.string(), v.regex(/^[\w.-]{1,128}$/))
 const id = v.pipe(v.string(), v.minLength(1), v.maxLength(256))
+const approvalPageFilters = { before: v.optional(id), name: v.optional(name), status: v.optional(v.picklist(["approved", "denied", "executed", "failed", "pending"])) }
 const actionSchema = v.variant("action", [
   v.object({ action: v.literal("list") }),
   v.object({ action: v.literal("inspect"), name }),
@@ -30,7 +31,10 @@ const actionSchema = v.variant("action", [
   v.object({ action: v.literal("revoke"), name }),
   v.object({ action: v.literal("activity"), before: v.optional(id), name }),
   v.object({ action: v.literal("approval-counts") }),
-  v.object({ action: v.literal("approvals"), before: v.optional(id), name: v.optional(name), status: v.optional(v.picklist(["approved", "denied", "executed", "failed", "pending"])) }),
+  v.object({ action: v.literal("approvals"), ...approvalPageFilters }),
+  v.object({ action: v.literal("approval-summaries"), ...approvalPageFilters }),
+  v.object({ action: v.literal("approve-summary"), id }),
+  v.object({ action: v.literal("deny-summary"), id }),
   v.object({ action: v.literal("approve"), id }),
   v.object({ action: v.literal("deny"), id }),
 ])
@@ -156,15 +160,21 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions = {}
         case "revoke": return json({ connection: await connections.revoke({ actor, name: input.name }) })
         case "activity": return json({ activity: await connections.activity(input) })
         case "approval-counts": return json({ counts: await connections.approvalCounts() })
-        case "approvals": {
+        case "approvals":
+        case "approval-summaries": {
           const page = await connections.approvals({ ...(input.before ? { before: input.before } : {}), ...(input.name ? { name: input.name } : {}), ...(input.status ? { status: input.status } : {}) })
-          return json({ ...page, approvals: page.approvals.map(approvalSummary) })
+          return json(input.action === "approval-summaries" ? { ...page, approvals: page.approvals.map(approvalSummary) } : page)
         }
-        case "approve": {
+        case "approve":
+        case "approve-summary": {
           const result = await connections.approve({ actor, id: input.id })
-          return json({ approval: approvalSummary(result.approval) })
+          return json(input.action === "approve-summary" ? { approval: approvalSummary(result.approval) } : result)
         }
-        case "deny": return json({ approval: approvalSummary(await connections.deny({ actor, id: input.id })) })
+        case "deny":
+        case "deny-summary": {
+          const approval = await connections.deny({ actor, id: input.id })
+          return json({ approval: input.action === "deny-summary" ? approvalSummary(approval) : approval })
+        }
       }
     }
     catch (error) {

@@ -143,6 +143,8 @@ vitehub connections approvals deny approval_3kq2...
 
 Approval lists return at most 100 rows. JSON output has `{ approvals, nextCursor? }`. Pass `nextCursor` to `--before` with the same name and status filters to read older approvals. The Console provides Previous and Next controls for pending approvals and uses grouped pending counts for its Connections list.
 
+CLI approval JSON output includes the stored write input. Approval execution JSON also includes the provider result. The Console requests approval summaries that omit both fields from browser responses.
+
 Approving runs the call once, as the actor that requested it. The access rules still apply. The approval then has status `executed` or `failed`.
 
 ## Preview writes

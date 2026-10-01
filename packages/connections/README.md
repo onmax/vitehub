@@ -68,6 +68,8 @@ setConnectionsRuntime({
 | `management` | `false` | Mount the management API in production. Protect it with authentication. |
 | `projectRoot` | Vite root | Project root for discovery. |
 
+CLI approval JSON output includes the stored write input. Approval execution JSON also includes the provider result. The Console requests approval summaries that omit both fields from browser responses.
+
 ## Generate API catalogs
 
 `pnpm --dir packages/connections run generate` reads the Google Discovery document and writes `src/google/gmail.ts`.

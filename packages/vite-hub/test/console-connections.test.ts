@@ -8,6 +8,7 @@ import { consoleSessionActor } from "../src/console/auth.ts"
 import { consoleConnectionsActorId, writeConsoleConnectionsActor } from "../src/console/auth-build.ts"
 import {
   connectionApprovalsSchema,
+  connectionApprovalResultSchema,
   connectionApprovalCountsSchema,
   connectionConnectURL,
   connectionListSchema,
@@ -76,8 +77,16 @@ describe("Connections management client", () => {
     expect(second.pending).toEqual([{ ...base, id: "old-pending" }])
     expect(second.nextCursor).toBeUndefined()
     expect(fetch).toHaveBeenCalledWith("/_vitehub/connections", expect.objectContaining({
-      body: JSON.stringify({ name: "gmail", status: "pending", before: "pending-99", action: "approvals" }),
+      body: JSON.stringify({ name: "gmail", status: "pending", before: "pending-99", action: "approval-summaries" }),
     }))
+  })
+
+  it.each(["approve", "deny"])("requests the Console summary action for %s", async (action) => {
+    const approval = { action: "gmail.users.messages.modify", actor: "agent:mail", createdAt: "2026-09-29T08:00:00Z", id: "a1", name: "gmail", status: action === "approve" ? "executed" : "denied" }
+    const fetch = vi.fn().mockResolvedValue(Response.json({ approval }))
+    vi.stubGlobal("fetch", fetch)
+    expect(await requestConnectionsManagement("/_vitehub/connections", action, connectionApprovalResultSchema, { id: "a1" })).toEqual({ approval })
+    expect(fetch).toHaveBeenCalledWith("/_vitehub/connections", expect.objectContaining({ body: JSON.stringify({ id: "a1", action: `${action}-summary` }) }))
   })
 
   it("validates grouped approval counts without requiring approval rows", async () => {
