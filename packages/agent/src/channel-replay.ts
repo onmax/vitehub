@@ -3,7 +3,7 @@ import { createRuntimeContext } from "@vite-hub/runtime"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { agentErrorMessage } from "./agent-error.ts"
 import { isResolvedAgentTriggerHandledInvocation, resolveAgentTriggerInvocation, reserveAgentChannelItem, runAgent } from "./index.ts"
-import { AgentInvocationClaimConflict, exclusiveAgentInvocation, inheritedAgentInvocationClaim, type AgentInvocationJournal, pendingAgentInvocationAnnotation } from "./invocations.ts"
+import { AgentInvocationClaimConflict, exclusiveAgentInvocation, inheritedAgentInvocationClaim, type AgentInvocationJournal, pendingAgentInvocationAnnotation, pendingAgentInvocationAnnotations } from "./invocations.ts"
 import { channelMessageRunId } from "./internal/channel-run-id.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { agentToolJsonSchema } from "./tool-schema.ts"
@@ -95,7 +95,7 @@ function resolveChannelHistory<TRuntimeConfig extends AgentRuntimeConfig>(
   const triggerNames = Object.keys(definition.triggers || {})
   const triggerName = history.trigger
   if (triggerName === undefined) {
-    if (triggerNames.length !== 1) throw agentDiagnostics.AGENT_R0930({ message: `[vitehub] Channel "${channel}" history requires an explicit trigger when the Channel has ${triggerNames.length} triggers.` })
+    if (triggerNames.length !== 1) throw agentDiagnostics.AGENT_R0933({ message: `[vitehub] Channel "${channel}" history requires an explicit trigger when the Channel has ${triggerNames.length} triggers.` })
     return { history, triggerId: `${channel}.${triggerNames[0]}`, triggerName: triggerNames[0]! }
   }
   if (!hasRuntimeType(triggerName, "string") || !triggerNames.includes(triggerName)) {
@@ -194,9 +194,13 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
     if (!run.force && run.invocations) reservation = await reserveAgentChannelItem(run.agent, itemRuntime)
     const invocation = await resolveAgentTriggerInvocation(run.agent, itemRuntime, run.triggerId, item)
     if (isResolvedAgentTriggerHandledInvocation(invocation)) { await reservation?.finish("completed"); return { id, key, reason: "handled", status: "skipped" } }
+    const runMetadata = { ...itemRuntime.run, ...invocation.run, runId: id }
+    if (reservation && !await reservation.setRunMetadata({ ...runMetadata, annotations: pendingAgentInvocationAnnotations(runMetadata.annotations) })) {
+      throw new Error("Could not persist the claimed Invocation run metadata.")
+    }
     const token = await reservation?.handoffClaim()
     if (reservation && !token) throw new Error("Could not transfer the Invocation execution claim.")
-    const output = await runAgent(run.agent, { ...itemRuntime, ...(token ? { [inheritedAgentInvocationClaim]: token } : {}), run: { ...itemRuntime.run, ...invocation.run, runId: id } }, {
+    const output = await runAgent(run.agent, { ...itemRuntime, ...(token ? { [inheritedAgentInvocationClaim]: token } : {}), run: runMetadata }, {
       ...invocation.input,
       ...(run.dryRun ? { dryRun: true } : {}),
     })
