@@ -21,6 +21,10 @@ describe("built-in Agent Driver selection", () => {
     });
     // SAFETY: This fixture supplies a shell expression to test runtime validation.
     expect(() => defineAgent({ driver: { kind: "codex", requirements: ["git; rm -rf /"] } } as never)).toThrow("driver.requirements");
+    expect(normalizeAgentDriver({ driver: { kind: "codex", launch: { command: "ssh", args: ["host", "codex"] }, requirements: [] } })).toMatchObject({
+      launch: { command: "ssh", args: ["host", "codex"] },
+      requirements: [],
+    });
     expect(() => defineAgent({ driver: { kind: "codex", launch: { command: "ssh", args: ["host", "codex"] }, requirements: ["git"] } } as never)).toThrow("launch resolver");
   });
 
