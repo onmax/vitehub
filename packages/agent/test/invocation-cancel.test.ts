@@ -126,6 +126,38 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.get(id))?.status).toBe("completed")
   })
 
+  it.each(["unrelated", "reason", "wrapped-reason", "abort-error"] as const)("classifies a cancelled custom handler's %s rejection by its actual error", async (failureKind) => {
+    const release = deferred()
+    const started = deferred()
+    const failure = new Error("Independent handler failure")
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const runId = `custom-cancel-failure-${failureKind}`
+    let signal: AbortSignal | undefined
+    const run = runAgent(defineAgent({
+      driver: { run: async (context) => {
+        signal = context.input.abortSignal
+        started.resolve()
+        await release.promise
+        if (failureKind === "reason") throw signal?.reason
+        if (failureKind === "wrapped-reason") throw new Error("Handler stopped", { cause: signal?.reason })
+        if (failureKind === "abort-error") throw new DOMException("Handler stopped", "AbortError")
+        throw failure
+      } },
+      invocations,
+    }), runtime(runId), {})
+    const rejected = expect(run).rejects.toThrow()
+    await started.promise
+    const { id } = await recordWithStatus(invocations, runId, "running")
+    await invocations.cancel(id)
+    expect(signal?.aborted).toBe(true)
+    release.resolve()
+    await rejected
+    const record = await invocations.get(id)
+    expect(record?.status).toBe(failureKind === "unrelated" ? "failed" : "cancelled")
+    expect(record?.observations.some(entry => entry.name === "agent.invocation.cancelled")).toBe(failureKind !== "unrelated")
+    if (failureKind === "unrelated") expect(record?.error?.message).toBe(failure.message)
+  })
+
   it("completes a started custom run Invocation when its handler ignores cancel", async () => {
     const release = deferred<string>()
     const started = deferred()

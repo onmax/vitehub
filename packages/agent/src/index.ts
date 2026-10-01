@@ -2833,6 +2833,7 @@ type AgentInvocationContext<
   CALL_OPTIONS,
 > = AgentRunContext<TRuntimeConfig, CALL_OPTIONS> & {
   activity?: ActiveAgentActivity
+  cancellationEnforced?: boolean
   channels?: AgentChannels<TRuntimeConfig>
   close: () => Promise<void>
   deliveryEffectIntents: AgentChannelDeliveryEffectIntent[]
@@ -4326,6 +4327,7 @@ type InvocationRunContext<
   CALL_OPTIONS,
 > = {
   activity?: ActiveAgentActivity
+  cancellationEnforced?: boolean
   channels?: AgentChannels<TRuntimeConfig>
   close: () => Promise<void>
   context: AgentInvocationContextStore
@@ -5633,6 +5635,21 @@ async function prepareProvisionalTitleDeliverySupport<
   return activeFinishDeliveryEffectProviders(context, provisionalFinishEvent(context, eventBase))
 }
 
+function invocationFailureWasCancelled(error: unknown, signal: AbortSignal | undefined, enforced: boolean): boolean {
+  if (!signal?.aborted) return false
+  if (enforced) return true
+  const seen = new Set<unknown>()
+  let current = error
+  while (!seen.has(current)) {
+    if (current === signal.reason) return true
+    if (!(current instanceof Error)) return false
+    if (current.name === "AbortError") return true
+    seen.add(current)
+    current = current.cause
+  }
+  return false
+}
+
 async function finishAgentInvocation<
   TRuntimeConfig extends AgentRuntimeConfig,
   CALL_OPTIONS,
@@ -5863,7 +5880,7 @@ async function finishAgentInvocation<
     if (!failed) {
       await runFinishActivity(teardownActivity, async () => await commitWorkspaceChanges(context))
     }
-    const status = outcomeCancelled || (failed && context.input.abortSignal?.aborted) ? "cancelled" : failed ? "failed" : "completed"
+    const status = outcomeCancelled || (failed && invocationFailureWasCancelled(error, context.input.abortSignal, context.cancellationEnforced !== false)) ? "cancelled" : failed ? "failed" : "completed"
     if (status === "cancelled") {
       await traceAgentInvocationCancelled(toTraceContext(context))
     }
@@ -5891,7 +5908,7 @@ async function finishAgentInvocation<
     if (outcomeFailed) await traceFinishError(error, "outcome")
     if (closeError !== undefined) await traceFinishError(closeError, "teardown", teardownActivity)
     if (!throwingCloseError) await traceFinishError(finishError, "finish", finishFailureActivity)
-    const status = outcomeCancelled || (failed && context.input.abortSignal?.aborted) ? "cancelled" : "failed"
+    const status = outcomeCancelled || (failed && invocationFailureWasCancelled(error, context.input.abortSignal, context.cancellationEnforced !== false)) ? "cancelled" : "failed"
     if (status === "cancelled") {
       await traceAgentInvocationCancelled(toTraceContext(context))
     }
@@ -6212,6 +6229,7 @@ async function executeAgentInvocationWithCapacityLease<
   const invocation = preparedInvocation
     ?? await createAgentInvocationContextWithWorkflowFailureDelivery(definition, context, input, options.kind, invocationJournal, options.tools)
   invocation.activity = activity
+  invocation.cancellationEnforced = !customRun
   const shouldHoldInvocationOutput = () => options.holdCapacity === true || shouldWrapInvocationOutput(invocation)
   const lifecycle = await openAgentInvocationLifecycle<AgentInvocationFinishOutcome>(
     async (outcome) => {
