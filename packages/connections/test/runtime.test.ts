@@ -61,6 +61,24 @@ describe("connect", () => {
     expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected", account: { id: "account-1" } })
   })
 
+  it("rejects an unidentified replacement grant without clearing the account", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    await expect(connect(test, { id_token: undefined, access_token: "unknown-access", refresh_token: "unknown-refresh" })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(test.provider.calls.at(-1)).toMatchObject({ body: "token=unknown-refresh", url: "https://auth.example.com/revoke" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" }, status: "connected" })
+    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    expect(test.provider.calls.at(-1)?.headers.get("authorization")).toBe(`Bearer ${ACCESS_TOKEN}`)
+  })
+
+  it("reports reduced scopes returned during a token refresh", async () => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600, scope: "openid" } })
+    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ scopes: { granted: ["openid"], missing: ["mail.modify"] } })
+  })
+
   it("keeps one account per Connection", async () => {
     const test = createTestRuntime()
     await connect(test)

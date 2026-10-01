@@ -365,7 +365,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       if (!current) throw new ConnectionError("reauth_required", `Connection "${name}" is not connected.`, { details: { connection: name } })
       return parseToken(current.value, name)
     }
-    await setStatus(name, { refreshedAt: new Date(now()).toISOString() })
+    await setStatus(name, { refreshedAt: new Date(now()).toISOString(), scopes: next.scopes })
     return next
   }
 
@@ -617,9 +617,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const previous = current ? v.safeParse(storedTokenSchema, JSON.parse(current.value)) : undefined
     const state = await connections.state.get(name)
     const accountId = previous?.success ? previous.output.accountId ?? state?.accountId : state?.status === "revoked" ? undefined : state?.accountId
-    if (accountId && account && accountId !== account.id) {
+    if (accountId && (!account || accountId !== account.id)) {
       await revokeProviderToken(loaded, response.refresh_token ?? response.access_token)
-      throw new ConnectionError("invalid", `Connection "${name}" belongs to another account. Revoke it before you connect a different account.`, { details: { connection: name } })
+      throw new ConnectionError("invalid", account ? `Connection "${name}" belongs to another account. Revoke it before you connect a different account.` : `Provider "${loaded.provider.id}" did not identify the account. The existing Connection was not replaced.`, { details: { connection: name } })
     }
     const token = toStoredToken(response, previous?.success ? previous.output : undefined, [
       ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),
