@@ -1771,7 +1771,9 @@ async function createChannelMessageHandle<
   context: InvocationRunContext<TRuntimeConfig, CALL_OPTIONS>,
   finish: AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS>,
 ): Promise<AgentChannelMessage | undefined> {
-  const active = activeAgentChannel(context.channels, context.context, context.run)
+  const trigger = context.context.get("agent.trigger")
+  if (!trigger?.channelId && context.context.get(channelMessageContextKey) === undefined) return
+  const active = activeAgentChannel(context.channels, context.context, trigger?.channelId ? undefined : context.run)
   if (!active) return
   const data = await channelMessageData(active.channel, active.channelId, context.context)
   const delivery = createFinishDeliveryEffectContext(finish, context)

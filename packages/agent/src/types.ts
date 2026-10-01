@@ -2249,7 +2249,12 @@ type AgentChannelMessageFromInput<TName extends string, TInput> =
         AgentChannelMessageData<TInput>,
         Omit<AgentBuiltInChannelMessageCalls<TKind>, keyof AgentChannelDeclaredMethods<TInput>> & AgentChannelMessageCalls<AgentChannelDeclaredMethods<TInput>>
       >
-      : AgentChannelMessage<TName, AgentChannelInputKind<TName>, unknown, AgentBuiltInChannelMessageCalls<AgentChannelInputKind<TName>>>
+      : AgentChannelMessage<
+        TName,
+        AgentChannelInputKind<TName>,
+        AgentChannelMessageData<TInput>,
+        Omit<AgentBuiltInChannelMessageCalls<AgentChannelInputKind<TName>>, keyof AgentChannelDeclaredMethods<TInput>> & AgentChannelMessageCalls<AgentChannelDeclaredMethods<TInput>>
+      >
 
 /** Hook `event.message` type for an Agent's `channels` option. */
 export type AgentChannelMessageOf<TChannels> =

@@ -483,6 +483,27 @@ describe("Channel message handle", () => {
     expect(message).toBeUndefined()
   })
 
+  it.each([false, true])("leaves event.message undefined for direct Channel delivery (error: %s)", async fail => {
+    const seen: unknown[] = []
+    const label = vi.fn()
+    const agent = defineAgent({
+      channels: { mail: mailChannel({ label, subject: () => "Invoice" }) },
+      driver: { run: () => {
+        if (fail) throw new Error("driver failed")
+        return "ok"
+      } },
+      hooks: {
+        "agent:finish"(event) { seen.push(event.message) },
+        "agent:error"(event) { seen.push(event.message) },
+      },
+    })
+    const invocation = runAgent(agent, { ...runtimeContext(), run: { channelId: "mail", runId: "direct-mail" } }, { prompt: "hello" })
+    if (fail) await expect(invocation).rejects.toThrow("driver failed")
+    else await expect(invocation).resolves.toBe("ok")
+    expect(seen).toEqual([undefined])
+    expect(label).not.toHaveBeenCalled()
+  })
+
   it("rejects message methods that use reserved names or invalid shapes", () => {
     expect(() => defineChannel("bad", { message: { methods: { data: (() => undefined) as never } } })).toThrow(/reserved name/)
     expect(() => defineChannel("bad", { message: { methods: { then: (() => undefined) as never } } })).toThrow(/reserved name/)

@@ -407,6 +407,33 @@ describe("agent public types", () => {
       },
     })
 
+    defineAgent({
+      channels: {
+        slack: {
+          message: {
+            data: mailSchema,
+            methods: {
+              label: (_context: AgentChannelMessageContext, label: string) => ({ applied: label }),
+              reply: { read: true, handler: (_context: AgentChannelMessageContext, id: number) => id },
+            },
+          },
+        },
+      },
+      driver: { run: () => "ok" },
+      hooks: {
+        "agent:finish"(event) {
+          if (!event.message) return
+          expectTypeOf(event.message.kind).toEqualTypeOf<"slack">()
+          expectTypeOf(event.message.data).toEqualTypeOf<{ id: string }>()
+          expectTypeOf(event.message.label).toEqualTypeOf<(label: string) => Promise<{ applied: string } | undefined>>()
+          expectTypeOf(event.message.reply).toEqualTypeOf<(id: number) => Promise<number>>()
+        },
+        "agent:error"(event) {
+          expectTypeOf(event.message?.label).toEqualTypeOf<((label: string) => Promise<{ applied: string } | undefined>) | undefined>()
+        },
+      },
+    })
+
     expectTypeOf<AgentFinishHookEvent["message"]>().toEqualTypeOf<AgentChannelMessage | undefined>()
     expectTypeOf<AgentRunInput["dryRun"]>().toEqualTypeOf<boolean | undefined>()
     // @ts-expect-error Message methods cannot use the handle's reserved names.
