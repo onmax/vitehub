@@ -93,6 +93,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const activityAuthors = verifiedHostIdentity ? [verifiedHostIdentity] : [];
   const pullRequestInbox = new PullRequestInbox({
     ...(options.inboxStorage ? { storage: options.inboxStorage } : { path: options.inboxPath }),
+    ...(options.inboxStorage ? { scope: options.agentName ?? baseAgent.name ?? "babysitter" } : {}),
     repositories: options.repositories,
     filter: presetOptions.filter,
     activityAuthors,
