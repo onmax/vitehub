@@ -22,7 +22,7 @@ import {
   startLiveAgentInvocation,
 } from "./agent-invocation.ts"
 import { agentInvocationInputSupport, sendAgentInvocationInput } from "./internal/agent-invocation-control.ts"
-import { agentInvocationCancellationDriver } from "./internal/invocation-cancellation.ts"
+import { agentInvocationCancellationDriver, isAgentInvocationAbortError } from "./internal/invocation-cancellation.ts"
 import type { AgentInvocationCancellationDriver } from "./internal/invocation-cancellation.ts"
 import { withAgentInvocationResponseOwner } from "./internal/agent-invocation-response-owner.ts"
 import {
@@ -1016,7 +1016,7 @@ async function runAgentAsWorkflow<
   const activity = hasAgentDefinition(agent) ? createActiveAgentActivity(agent, context) : undefined
   // Preparation failures happen before a provider run can create its journal.
   const recordPreparationFailure = async (error: unknown) => {
-    const status = input.abortSignal?.aborted ? "cancelled" : "failed"
+    const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
     await activity?.update(status, error)
     if (!hasAgentDefinition(agent)) return
     const preservesDeliveryRun = isAgentChannelDeliveryWorkflowBinding(input.context?.[agentChannelDeliveryWorkflowContextKey])
@@ -1187,7 +1187,8 @@ async function runAgentAsWorkflow<
     )) as AgentWorkflowRun<AgentWorkflowOutput<TOutput>>
   }
   catch (error) {
-    await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
+    const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
+    await activity?.update(status, error)
     const ambiguous = isAmbiguousWorkflowStartFailure(error)
     const failedRunId = !options.fresh && context.run?.runId
       ? context.run.runId
@@ -1201,7 +1202,7 @@ async function runAgentAsWorkflow<
           ...context,
           run: { ...context.run, runId: failedRunId },
         }, { agentName: agent.name || context.agentIdentity?.name, deferClaim: ambiguous, terminalTakeover: true })
-        if (!ambiguous) await invocationJournal?.finish("failed", error)
+        if (!ambiguous) await invocationJournal?.finish(status, error)
       }
     }
     throw error
@@ -5651,11 +5652,7 @@ function invocationFailureWasCancelled(error: unknown, signal: AbortSignal | und
       if (Array.isArray(errors)) pending.push(...errors)
     }
     catch {}
-    try {
-      const tag = Object.prototype.toString.call(current)
-      if (current === error && (tag === "[object Error]" || tag === "[object DOMException]") && Reflect.get(current, "name") === "AbortError") return true
-    }
-    catch {}
+    if (current === error && isAgentInvocationAbortError(current, ["AbortError"])) return true
   }
   return false
 }
@@ -7294,7 +7291,7 @@ async function executeAgentInvocation<
       : undefined
   }
   catch (error) {
-    await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
+    await activity?.update(invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed", error)
     throw error
   }
   if (invocationJournal) {
@@ -7337,8 +7334,9 @@ async function executeAgentInvocation<
       const workflowExecution = Boolean((context as AgentRuntimeContext & { [agentWorkflowExecutionContextKey]?: boolean })[agentWorkflowExecutionContextKey])
       await finishPreparedInvocationFailure(preparedInvocation, error, workflowExecution)
     }
-    await invocationJournal?.finish(input.abortSignal?.aborted ? "cancelled" : "failed", error)
-    await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
+    const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
+    await invocationJournal?.finish(status, error)
+    await activity?.update(status, error)
     throw error
   }
   if (!release) {
@@ -7349,8 +7347,9 @@ async function executeAgentInvocation<
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
     }
     catch (error) {
-      await invocationJournal?.finish(input.abortSignal?.aborted ? "cancelled" : "failed", error)
-      await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
+      const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
+      await invocationJournal?.finish(status, error)
+      await activity?.update(status, error)
       throw error
     }
   }
@@ -7380,8 +7379,9 @@ async function executeAgentInvocation<
     }, preparedInvocation, invocationJournal, activity)
   }
   catch (error) {
-    await invocationJournal?.finish(input.abortSignal?.aborted ? "cancelled" : "failed", error)
-    await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
+    const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
+    await invocationJournal?.finish(status, error)
+    await activity?.update(status, error)
     releaseOnce()
     throw error
   }
@@ -7776,7 +7776,7 @@ async function runAgentWithContext<
     const error = agentDiagnostics.AGENT_R0444({ message: "[vitehub] Durable Channel delivery requires this Agent invocation to start a Workflow. Disable durable delivery or remove nonportable Capabilities and configure a Workflow provider." })
     const activity = hasAgentDefinition(agent) ? createActiveAgentActivity(agent, invocationContext) : undefined
     await activity?.update("queued")
-    await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
+    await activity?.update(invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed", error)
     throw error
   }
   const result = await runAgentInline(agent, invocationContext, input, { tools: hasInvocationTools ? options.tools : undefined })

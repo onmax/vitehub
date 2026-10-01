@@ -9139,6 +9139,62 @@ describe("server helpers", () => {
     }
   })
 
+  it.each(["foreign abort", "foreign canceled", "dom abort", "plain abort", "tagged abort", "hostile tag", "unrelated", "unrequested foreign abort"] as const)("settles queued webhook cancellation from its journal for %s", async failureKind => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { github } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { agentInvocationId, createMemoryAgentInvocationStore, defineAgentInvocations } = await import("../src/invocations.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-journal-cancel-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    const retry = vi.spyOn(state, "retryWebhookDelivery")
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const id = await agentInvocationId("journal-webhook-invocation", "review")
+    const run = vi.fn(async () => {
+      if (failureKind !== "unrequested foreign abort") await invocations.cancel(id)
+      if (failureKind === "foreign abort" || failureKind === "unrequested foreign abort") throw runInNewContext("Object.assign(new Error('Provider aborted'), { name: 'AbortError' })")
+      if (failureKind === "foreign canceled") throw runInNewContext("Object.assign(new Error('Provider cancelled'), { name: 'CanceledError' })")
+      if (failureKind === "dom abort") throw new DOMException("Provider aborted", "AbortError")
+      if (failureKind === "plain abort") throw { name: "AbortError", message: "Plain abort-shaped record" }
+      if (failureKind === "tagged abort") throw { name: "AbortError", [Symbol.toStringTag]: "Error" }
+      if (failureKind === "hostile tag") {
+        const error = { name: "AbortError" }
+        Object.defineProperty(error, Symbol.toStringTag, { get() { throw new Error("Unreadable error tag") } })
+        throw error
+      }
+      throw new Error("Independent failure")
+    })
+    const agent = defineAgent({
+      name: "review",
+      invocations,
+      channels: { github: github({
+        triggers: { webhook: { invoke: () => ({
+          input: { prompt: "Review the pull request." },
+          run: { runId: "journal-webhook-invocation" },
+          webhook: { concurrencyLimit: 1, deliveryId: "delivery-journal-cancel" },
+        }) } },
+        webhooks: { secretToken: false },
+      }) },
+      driver: { run },
+    })
+    const cancelled = ["foreign abort", "foreign canceled", "dom abort"].includes(failureKind)
+    try {
+      const response = await createChannelWebhookRouteHandler(agent as never)(new Request("https://example.com/api/github/webhook", {
+        body: "{}", method: "POST", headers: { "content-type": "application/json", "x-github-delivery": "delivery-journal-cancel", "x-github-event": "pull_request" },
+      }), "github", { agentName: "review", webhookState: state })
+      expect(response.status).toBe(200)
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce(), { timeout: 10_000 })
+      await vi.waitFor(() => expect(cancelled ? complete : retry).toHaveBeenCalledOnce(), { timeout: 1_000 })
+      expect(run).toHaveBeenCalledOnce()
+      expect(cancelled ? retry : complete).not.toHaveBeenCalled()
+    }
+    finally {
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
   it.each(["own", "child", "wrapped child", "aggregate own", "aggregate child", "foreign wrapped own", "foreign wrapped child", "foreign aggregate own", "foreign aggregate child"] as const)("scopes queued webhook cancellation to its %s invocation", async cancellationScope => {
     const { defineAgent } = await import("../src/index.ts")
     const { github } = await import("../src/channels.ts")

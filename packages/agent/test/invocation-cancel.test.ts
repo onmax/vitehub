@@ -18,7 +18,7 @@ vi.mock("../src/internal/ai-sdk-runtime.ts", () => ({
 import { agentInvocationId, defineAgent, defineCapability, runAgent, streamAgent, startAgentInvocation } from "../src/index.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
 import { bindAgentInvocations } from "../src/invocations.ts"
-import { abortLocalAgentInvocation } from "../src/internal/invocation-cancellation.ts"
+import { abortLocalAgentInvocation, isAgentInvocationAbortError } from "../src/internal/invocation-cancellation.ts"
 
 import type { AgentInvocationRecordStatus, AgentInvocations } from "../src/index.ts"
 
@@ -55,6 +55,23 @@ afterEach(() => {
 })
 
 describe("Agent Invocation cancel", () => {
+  it("recognizes genuine abort errors when the native Error brand check is unavailable", () => {
+    const original = Object.getOwnPropertyDescriptor(Error, "isError")
+    Object.defineProperty(Error, "isError", { configurable: true, value: undefined })
+    try {
+      expect(isAgentInvocationAbortError(Object.assign(new Error("Aborted"), { name: "AbortError" }))).toBe(true)
+      expect(isAgentInvocationAbortError(runInNewContext("Object.assign(new Error('Aborted'), { name: 'AbortError' })"))).toBe(true)
+      expect(isAgentInvocationAbortError(new DOMException("Aborted", "AbortError"))).toBe(true)
+      expect(isAgentInvocationAbortError({ name: "AbortError" })).toBe(false)
+      expect(isAgentInvocationAbortError({ name: "AbortError", [Symbol.toStringTag]: "Error" })).toBe(false)
+      expect(isAgentInvocationAbortError({ name: "AbortError", [Symbol.toStringTag]: "DOMException" })).toBe(false)
+    }
+    finally {
+      if (original) Object.defineProperty(Error, "isError", original)
+      else Reflect.deleteProperty(Error, "isError")
+    }
+  })
+
   it.each([
     { driver: { enforced: true, name: "model" }, expected: undefined },
     { driver: { enforced: true, name: "codex" }, expected: undefined },
@@ -429,6 +446,44 @@ describe("Agent Invocation cancel", () => {
     await expect(runAgent(defineAgent({ driver: { run: driver }, invocations }), runtime("queued-cancel"), { prompt: "Late worker" })).rejects.toThrow()
     expect(driver).not.toHaveBeenCalled()
     expect((await invocations.get(id))?.status).toBe("cancelled")
+  })
+
+  it.each((["run", "stream"] as const).flatMap(kind =>
+    [false, true].flatMap(capacity => (["hook", "prepare"] as const).flatMap(stage =>
+      (["unrelated", "wrapped reason"] as const).map(failure => ({ capacity, failure, kind, stage })),
+    )),
+  ))("classifies $failure setup rejection during $stage, kind=$kind, capacity=$capacity", async ({ capacity, failure, kind, stage }) => {
+    const entered = deferred()
+    const release = deferred()
+    const close = vi.fn()
+    const driver = vi.fn(() => "Must not run")
+    let setupError: Error | undefined
+    const suspend = async (signal: AbortSignal | undefined) => {
+      entered.resolve()
+      await release.promise
+      setupError = failure === "unrelated" ? new Error("Independent setup failure") : new Error("Setup cancelled", { cause: signal?.reason })
+      throw setupError
+    }
+    const runId = `setup-failure-${kind}-${capacity}-${stage}-${failure}`
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const agent = defineAgent({
+      invocations,
+      driver: { capacity: capacity ? { concurrency: 1 } : undefined, run: driver },
+      capabilities: [defineCapability({ id: "setup", close, prepare: stage === "prepare" ? context => suspend(context.input.get().abortSignal) : undefined })],
+      hooks: { "agent:input": stage === "hook" ? context => suspend(context.input.abortSignal) : undefined },
+    })
+    const running = kind === "run" ? runAgent(agent, runtime(runId), {}) : streamAgent(agent, runtime(runId), {})
+    const settled = running.then(() => undefined, error => error)
+    await entered.promise
+    const id = await agentInvocationId(runId)
+    expect(await invocations.cancel(id)).toMatchObject({ delivery: "local", outcome: "requested" })
+    release.resolve()
+    expect(await settled).toBe(setupError)
+    expect(driver).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+    const record = await invocations.get(id)
+    expect(record?.status).toBe(failure === "unrelated" ? "failed" : "cancelled")
+    expect(record?.error?.message).toBe(setupError?.message)
   })
 
   it.each(["run", "stream"] as const)("stops %s dispatch when cancellation arrives during input preparation", async (kind) => {

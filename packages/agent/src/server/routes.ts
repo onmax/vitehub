@@ -36,7 +36,7 @@ import { withAgentInvocationResponseOwner } from "../internal/agent-invocation-r
 import { sameInlineInvoker } from "../internal/inline-invoker.ts"
 import { agentInvocationId, isAgentInvocations } from "../invocations.ts"
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
-import { isAgentInvocationCancellationError } from "../internal/invocation-cancellation.ts"
+import { isAgentInvocationAbortError, isAgentInvocationCancellationError } from "../internal/invocation-cancellation.ts"
 import { finalChannelOutputContextKey, hasOnlyPortableAgentWorkflowCapabilities, requireAgentWorkflowContextKey } from "../internal/final-channel-output.ts"
 import { agentChannelHistoryHeader } from "../internal/channel-history.ts"
 import { agentChannelSyncProviderHeader } from "../internal/channel-sync.ts"
@@ -1382,7 +1382,7 @@ async function queuedWebhookInvocationCancelled(
   if (isAgentInvocationCancellationError(error, id)) return true
   if (!isRuntimeRecord(agent) || !isAgentInvocations(agent.invocations)) return false
   const summary = await agent.invocations.getSummary(id).catch(() => undefined)
-  return Boolean(summary?.cancelRequestedAt && error instanceof Error && (error.name === "AbortError" || error.name === "CanceledError"))
+  return Boolean(summary?.cancelRequestedAt && isAgentInvocationAbortError(error))
 }
 
 async function executeQueuedWebhookDelivery(

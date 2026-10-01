@@ -1,7 +1,7 @@
 import type { AgentInvocationStore } from "../invocations.ts"
 import { Diagnostic } from "nostics"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
-import { isRuntimeRecord } from "./runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 
 /**
  * Agent Driver that runs a journaled Invocation, and whether ViteHub can stop it.
@@ -80,6 +80,29 @@ export function createAgentInvocationCancellationError(id: string): Error {
   const error = agentDiagnostics.AGENT_R0970({ message: `[vitehub] Cancellation was requested for Agent Invocation ${JSON.stringify(id)}.` })
   Object.defineProperty(error, cancellationInvocationId, { value: id })
   return error
+}
+
+/** Recognizes genuine abort errors across realms without accepting abort-shaped records. */
+export function isAgentInvocationAbortError(error: unknown, names: readonly string[] = ["AbortError", "CanceledError"]): boolean {
+  if (!isRuntimeRecord(error)) return false
+  try {
+    const nativeIsError: unknown = Reflect.get(Error, "isError")
+    let branded = hasRuntimeType(nativeIsError, "function")
+      ? nativeIsError(error) === true
+      : error instanceof Error || (!(Symbol.toStringTag in error) && Object.prototype.toString.call(error) === "[object Error]")
+    if (!branded && hasRuntimeType(globalThis.DOMException, "function")) {
+      const nameGetter = Object.getOwnPropertyDescriptor(globalThis.DOMException.prototype, "name")?.get
+      try {
+        branded = Boolean(nameGetter && hasRuntimeType(nameGetter.call(error), "string"))
+      }
+      catch {}
+    }
+    const name: unknown = Reflect.get(error, "name")
+    return branded && hasRuntimeType(name, "string") && names.includes(name)
+  }
+  catch {
+    return false
+  }
 }
 
 /** True when the error, its causes, or aggregate failures contain cancellation for the selected Invocation. */
