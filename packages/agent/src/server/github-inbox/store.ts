@@ -551,6 +551,7 @@ export class PullRequestInbox {
         const s = await this.getIn(tx, repository, number)
         if (!s) continue
         if (s.pr && !this.eligible(s.repository, s.pr)) continue
+        if (s.mergeIntent) { s.refresh = true; s.hydrated = false }
         s.lease = randomUUID(); s.leaseUntil = now + 2 * 60 * 60_000; s.status = 'working'
         await this.put(tx, s); claims.push({ token: s.lease, generation: s.generation, snapshot: structuredClone(s) })
       }
@@ -565,6 +566,9 @@ export class PullRequestInbox {
         const pr = normalizePullRequest(patch.pr)
         if (s.pr && stamp(pr) < stamp(s.pr)) return false
         patch = { ...patch, pr }
+        // A fresh PR read resolves an interrupted merge before another action.
+        delete s.mergeIntent
+        delete claim.snapshot.mergeIntent
       }
       Object.assign(s, patch)
       if (s.pr && !this.eligible(s.repository, s.pr)) s.status = 'terminal'
@@ -590,7 +594,7 @@ export class PullRequestInbox {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token) return false
       s.lease = null; s.leaseUntil = 0
-      delete s.mergeIntent
+      if (s.mergeIntent) { s.refresh = true; s.hydrated = false }
       if (s.status !== 'terminal') s.status = 'ready'
       await this.put(tx, s); return true
     })
@@ -616,7 +620,7 @@ export class PullRequestInbox {
     const reserved = await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token || s.generation !== claim.generation
-        || (s.revision ?? 0) !== (claim.snapshot.revision ?? 0)) return false
+        || (s.revision ?? 0) !== (claim.snapshot.revision ?? 0) || s.mergeIntent) return false
       s.mergeIntent = { head: claim.snapshot.pr?.head?.sha ?? '', text }
       await this.put(tx, s)
       return true
@@ -630,8 +634,13 @@ export class PullRequestInbox {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token) return false
       s.lease = null; s.leaseUntil = 0; s.lastResult = text
-      delete s.mergeIntent
-      s.status = 'terminal'; s.handled = s.generation
+      if (s.generation === claim.generation && (s.revision ?? 0) === (claim.snapshot.revision ?? 0)) {
+        delete s.mergeIntent
+        s.status = 'terminal'; s.handled = s.generation
+      } else {
+        s.status = 'ready'; s.nextAt = 0; s.handled = Math.max(s.handled, claim.generation)
+        s.refresh = true; s.hydrated = false
+      }
       await this.put(tx, s)
       return true
     })
@@ -705,6 +714,7 @@ export class PullRequestInbox {
         const s = await this.getIn(tx, stringValue(row.repository), Number(row.number))
         if (!s?.lease || s.leaseUntil > now) continue
         s.lease = null; s.leaseUntil = 0
+        if (s.mergeIntent) { s.refresh = true; s.hydrated = false }
         if (s.status !== 'terminal') s.status = 'ready'
         await this.put(tx, s)
       }

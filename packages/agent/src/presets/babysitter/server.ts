@@ -255,6 +255,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       }
     } catch (error) {
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
+      const pending = await pullRequestInbox.get(repository, number);
+      if (pending?.mergeIntent) {
+        await pullRequestInbox.release(claim);
+        // The next owner must read GitHub before dispatching any repair.
+        return true;
+      }
       return false;
     }
     schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: mergedHead, avoided_invocation: true });

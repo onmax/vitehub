@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { hydrateSnapshot } from '../src/server/github-inbox/snapshot-sync.ts'
 import { PullRequestInbox, normalizePullRequest } from '../src/server/github-inbox.ts'
 const repository = 'vite-hub/vitehub'
 const repo = { full_name: repository }
@@ -318,4 +319,50 @@ test('persisted status values are validated without coercion by both snapshot re
     await assert.rejects(async () => inbox.get(repository, 7), /Invalid inbox snapshot/)
     await assert.rejects(async () => inbox.all(), /Invalid inbox snapshot/)
   }
+})
+
+
+test('an interrupted merge forces live hydration after expired lease recovery', async t => {
+  let now = 0
+  const inbox = new PullRequestInbox({ path: ':memory:', repositories: [repository], clock: () => now })
+  t.onTestFinished(() => inbox.close())
+  await inbox.seed(repository, pr())
+  const [claim] = await inbox.claim(1); assert.ok(claim)
+  await inbox.hydrate(claim, { hydrated: true, refresh: false })
+  await assert.rejects(inbox.merge(claim, async () => { throw new Error('response lost after merge') }, 'merged'))
+  now = 3 * 60 * 60_000
+  await inbox.recoverLeases()
+  const [recovered] = await inbox.claim(1); assert.ok(recovered)
+  assert.equal(recovered.snapshot.refresh, true)
+  assert.equal(recovered.snapshot.hydrated, false)
+  let retried = false
+  assert.equal(await inbox.merge(recovered, async () => { retried = true; return true }, 'again'), false)
+  assert.equal(retried, false)
+  const paths: string[] = []
+  assert.equal(await hydrateSnapshot(inbox, recovered, async path => {
+    paths.push(path)
+    return [pr({ state: 'closed' })]
+  }), true)
+  assert.deepEqual(paths, ["repos/" + repository + "/pulls/7"])
+  assert.equal((await inbox.get(repository, 7))?.mergeIntent, undefined)
+  assert.equal((await inbox.get(repository, 7))?.status, 'terminal')
+})
+
+test('merge finalization preserves feedback delivered during the GitHub request', async t => {
+  const inbox = memory(t); await inbox.seed(repository, pr())
+  const [claim] = await inbox.claim(1); assert.ok(claim)
+  assert.equal(await inbox.merge(claim, async () => {
+    await post(inbox, 'during-merge', 'issue_comment', { action: 'created', issue: { number: 7, pull_request: {} }, comment: comment() })
+    return true
+  }, 'merged'), true)
+  const snapshot = (await inbox.get(repository, 7))!
+  assert.equal(snapshot.status, 'ready')
+  assert.equal(snapshot.handled, claim.generation)
+  assert.ok(snapshot.generation > snapshot.handled)
+  assert.equal(snapshot.comments['1']?.body, 'Please repair this')
+  assert.equal(snapshot.refresh, true)
+  const [next] = await inbox.claim(1); assert.ok(next)
+  assert.equal(await hydrateSnapshot(inbox, next, async () => [pr({ state: 'closed' })]), true)
+  assert.equal((await inbox.get(repository, 7))?.status, 'terminal')
+  assert.equal((await inbox.get(repository, 7))?.comments['1']?.body, 'Please repair this')
 })
