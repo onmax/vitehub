@@ -248,6 +248,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: current.reason });
         return false;
       }
+      // Revalidate the durable lease and revision after the live provider read and
+      // immediately before the irreversible merge request. A webhook or another
+      // worker that changed the inbox invalidates this claim.
+      if (!(await pullRequestInbox.isClaimCurrent(claim))) {
+        schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "claim changed before merge" });
+        return false;
+      }
       // GitHub rejects the merge when the head no longer matches sha.
       await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000 });
     } catch (error) {

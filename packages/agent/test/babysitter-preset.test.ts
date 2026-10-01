@@ -329,6 +329,31 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
+  it("does not directly merge when feedback changes during the live readiness read", async () => {
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    let delivered = false;
+    f.command.mockImplementation(async (args, request) => {
+      const result = await command(args, request);
+      if (!delivered && args.includes("repos/acme/app/pulls/12")) {
+        const snapshot = await f.runtime.inbox.get("acme/app", 12);
+        if (snapshot?.hydrated && snapshot.lease) {
+          delivered = true;
+          await f.runtime.inbox.ingest("merge-race-feedback", "issue_comment", {
+            repository: { full_name: "acme/app" }, issue: { number: 12, pull_request: {} },
+            action: "created", comment: { id: 99, body: "Please address this before merging", user: { login: "developer" } },
+          });
+        }
+      }
+      return result;
+    });
+    try {
+      await f.reconcile();
+      expect(delivered).toBe(true);
+      expect(f.command.mock.calls.some(([args]) => args.join(" ").includes("-X PUT"))).toBe(false);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it.each([
     ["GitHub reports the PR is not clean", { merge: "direct", mergeableState: "blocked" }],
     ["merge.ready vetoes the merge", { merge: { strategy: "direct", ready: () => "needs a maintainer approval" } }],
