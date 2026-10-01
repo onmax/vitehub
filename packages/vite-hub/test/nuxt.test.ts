@@ -318,6 +318,17 @@ describe("ViteHub Nuxt integration", () => {
     ])
   })
 
+  it.each(["cloudflare", "vercel"] as const)("retains %s deployment inspection metadata without installing the writer", async (preset) => {
+    const { nuxt } = createNuxt()
+    nuxt.options.vitehubCliDiscovery = true
+    nuxt.options.nitro = { rootDir: "/tmp/nuxt-nitro-root", output: { dir: "custom-output" } }
+    await viteHubNuxtModule({ preset }, nuxt)
+    const entries = await collectViteHubProviderOutputEntries(nuxt.options.vite.plugins ?? [])
+    expect(entries).toContainEqual(expect.objectContaining({ owner: "vite-hub", path: "/tmp/nuxt-nitro-root/custom-output/deployment.json" }))
+    expect(entries).toContainEqual(expect.objectContaining({ owner: "vite-hub", path: preset === "cloudflare" ? "/tmp/nuxt-nitro-root/custom-output/server/wrangler.json" : "/tmp/nuxt-nitro-root/custom-output/config.json" }))
+    expect(nuxt.options.vite.plugins).not.toContainEqual(expect.objectContaining({ name: "vite-hub/deployment-output" }))
+  })
+
   it("keeps ViteHub discovery rooted at the Nuxt project", async () => {
     const { nuxt } = createNuxt()
     delete nuxt.options.vite.root
