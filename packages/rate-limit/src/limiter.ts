@@ -7,13 +7,14 @@ import type {
   RateLimitDecision,
   RateLimitDriverCapabilities,
   RateLimitDriverInput,
-  RateLimitDriverPeekResult,
   RateLimitDriverResult,
   RateLimiter,
   RateLimitPeekResult,
   ResolvedRateLimitPolicy,
 } from "./types.ts"
 import { rateLimitErrorDiagnostics } from "./error-diagnostics.ts"
+
+const driverErrorSchema = v.custom<Error>(value => Object.prototype.toString.call(value) === "[object Error]" && v.is(v.object({ message: v.string(), name: v.string() }), value))
 
 function resolveDriverCapabilities(options: CreateRateLimiterOptions): RateLimitDriverCapabilities {
   const capabilities = options.driver.capabilities
@@ -57,7 +58,7 @@ function normalizeDriverResult(
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0025({ message: "[vitehub] Rate Limit driver consume() must return an object with an allowed boolean." })
   }
   const resetAt = result.resetAt
-  if (resetAt !== undefined && (!Number.isFinite(resetAt) || resetAt <= 0)) {
+  if (resetAt !== undefined && (!v.is(v.number(), resetAt) || !Number.isFinite(resetAt) || resetAt <= 0)) {
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0026({ message: "[vitehub] Rate Limit driver result resetAt must be a positive timestamp." })
   }
 
@@ -85,12 +86,12 @@ function assertDriverSupportsPolicy(options: CreateRateLimiterOptions, capabilit
   }
 }
 
-function normalizePeekResult(result: RateLimitDriverPeekResult, policy: ResolvedRateLimitPolicy): RateLimitPeekResult {
-  if (!v.is(v.object({ used: v.pipe(v.number(), v.integer(), v.minValue(0)) }), result)) {
+function normalizePeekResult(result: unknown, policy: ResolvedRateLimitPolicy): RateLimitPeekResult {
+  if (!v.is(v.object({ resetAt: v.optional(v.unknown()), used: v.pipe(v.number(), v.integer(), v.minValue(0)) }), result)) {
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0037({ message: "[vitehub] Rate Limit driver peek() must return an object with a non-negative integer used count." })
   }
   const resetAt = result.resetAt
-  if (resetAt !== undefined && (!Number.isFinite(resetAt) || resetAt <= 0)) {
+  if (resetAt !== undefined && (!v.is(v.number(), resetAt) || !Number.isFinite(resetAt) || resetAt <= 0)) {
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0037({ message: "[vitehub] Rate Limit driver peek() resetAt must be a positive timestamp." })
   }
   return {
@@ -154,7 +155,13 @@ export function createRateLimiter(options: CreateRateLimiterOptions): RateLimite
       if (!v.is(v.function(), driver.peek)) {
         return { limit: policy.limit, reason: unsupportedReason(driver.name, "peek"), status: "unsupported", windowMs: policy.windowMs }
       }
-      const [error, result] = await driver.peek(driverInput(input))
+      const outcome: unknown = await driver.peek(driverInput(input))
+      const parsed = v.safeParse(v.union([
+        v.strictTuple([v.null(), v.unknown()]),
+        v.strictTuple([driverErrorSchema, v.undefined()]),
+      ]), outcome)
+      if (!parsed.success) throw rateLimitErrorDiagnostics.RATE_LIMIT_R0043({ message: "[vitehub] Rate Limit driver peek() must return [null, value] or [Error, undefined]." })
+      const [error, result] = parsed.output
       if (error) return { cause: error.cause ?? error, limit: policy.limit, status: "unavailable", windowMs: policy.windowMs }
       return normalizePeekResult(result, policy)
     },
@@ -166,7 +173,7 @@ export function createRateLimiter(options: CreateRateLimiterOptions): RateLimite
         return { reason: unsupportedReason(driver.name, "reset"), status: "unsupported" }
       }
       const outcome: unknown = await driver.reset(driverInput(input))
-      const parsed = v.safeParse(v.strictTuple([v.nullable(v.custom<Error>(value => Object.prototype.toString.call(value) === "[object Error]" && v.is(v.object({ message: v.string(), name: v.string() }), value)))]), outcome)
+      const parsed = v.safeParse(v.strictTuple([v.nullable(driverErrorSchema)]), outcome)
       if (!parsed.success) throw rateLimitErrorDiagnostics.RATE_LIMIT_R0042({ message: "[vitehub] Rate Limit driver reset() must return [null] or [Error]." })
       const [error] = parsed.output
       return error ? { cause: error.cause ?? error, status: "unavailable" } : { status: "reset" }
