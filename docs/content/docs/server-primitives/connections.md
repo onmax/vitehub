@@ -12,38 +12,15 @@ Connections need the ViteHub [Database](/docs/server-primitives/database). Token
 
 ## Enable Connections
 
-Enable `database` and `connections` in the ViteHub configuration. ViteHub discovers the Connection Definitions and uses its Database to store grants and activity.
-
 ```ts [vite.config.ts]
 import { defineConfig } from 'vite'
 import { vitehub } from 'vite-hub'
 
 export default defineConfig({
-  plugins: [vitehub({ preset: 'node', database: true, connections: true })],
-})
-```
-
-In Nuxt, use the same options under `vitehub`.
-
-```ts [nuxt.config.ts]
-export default defineNuxtConfig({
-  modules: ['vite-hub/nuxt'],
-  vitehub: { preset: 'node', database: true, connections: true },
-})
-```
-
-For a standalone owner-package integration, install `@vite-hub/connections` and add `hubConnections()` alongside the Database plugin. Set `database` to the module that exports `db`.
-
-```ts [vite.config.ts]
-import { defineConfig } from 'vite'
-import { vitehub } from 'vite-hub'
-import { hubConnections } from '@vite-hub/connections/vite'
-
-export default defineConfig({
-  plugins: [
-    vitehub({ preset: 'node', database: true }),
-    hubConnections({ database: 'vite-hub/database/drizzle' }),
-  ],
+  plugins: [vitehub({
+    database: true,
+    connections: true,
+  })],
 })
 ```
 
@@ -54,8 +31,8 @@ Set `VITEHUB_CONNECTIONS_KEY` to 32 random bytes in base64 or hex. Create one wi
 Put each definition in `server/connections/<name>.ts`, or in a `*.connection.ts` file. The file name is the Connection name.
 
 ```ts [server/connections/google.ts]
-import { defineConnection } from '@vite-hub/connections'
-import { google } from '@vite-hub/connections/google'
+import { defineConnection } from 'vite-hub/connections'
+import { google } from 'vite-hub/connections/google'
 
 export default defineConnection({
   provider: google({
@@ -95,22 +72,16 @@ Start the development server, then run:
 vitehub connections connect google --port 8976
 ```
 
-Connection state writes are conditional on the current encrypted token revision. Authorization-code exchange, refresh, and revoke share a durable per-Connection mutation lease. A callback waits for provider revocation to finish before it exchanges its code.
-
-An expired unresolved lease blocks token mutations even after the token revision changes. Confirm that the old request can no longer affect the provider grant before repairing its lease in the application store. The default SQLite table is `vitehub_connection_refresh_leases`. Inspect its `name`, `owner`, `revision`, and `expires_at` columns, then remove only the confirmed former operation's `name` and `owner` row. Expiry alone does not permit removal. Connect again after repair.
-
 The command prints the provider URL. Open it, grant access, and the loopback callback stores the token. A Connection has one account. To change the account, revoke the Connection first.
 
-In production, configure `hubConnections({ database: 'vite-hub/database/drizzle', management: { actor: './server/connections-actor.ts' } })`. The actor module must export a default function that checks the request's authenticated session and returns `user:<id>`, or `undefined` to deny access. `management: true` fails the production build because it has no authenticated identity resolver.
-
-Open `https://<your-app>/_vitehub/connections/connect/google` while signed in to your app. `vitehub connections connect google --url https://<your-app>` prints that URL.
+The development server mounts the management API at `/_vitehub/connections`. Production builds mount it only with `connections: { management: true }`. This option requires Console production access, `console: { access: 'auth' }` or `console: { exposure: 'host-managed' }`, because that access protects every `/_vitehub/**` route. Then open `https://<your-app>/_vitehub/connections/connect/google` while you are signed in to the Console. `vitehub connections connect google --url https://<your-app>` prints that URL.
 
 With the Console enabled, open **Connections** in the Console and select **Connect** or **Reconnect**. The same page shows activity, decides approvals, and revokes a Connection. When Console auth is active, these actions record the signed-in Console user as `user:<id>`. See [Console](/docs/development/console#manage-connections).
 
 ## Call the API
 
 ```ts [server/tasks/label.ts]
-import { useConnection } from '@vite-hub/connections/server'
+import { useConnection } from 'vite-hub/connections/server'
 
 const gmail = useConnection('google', { actor: 'schedule:gmail' }).gmail
 
@@ -126,19 +97,17 @@ for (const message of messages) {
 
 Method inputs and responses come from the provider API description. Only methods selected in `api` exist on the client. Path parameters and query parameters are fields of the input. The JSON body is `requestBody`.
 
-`fetch()` calls a URL on a catalog origin with the Connection token. Use it for endpoints that the catalog does not describe. The token is never sent to another origin. `ConnectionFetchInit` accepts `method`, `headers`, `redirect`, `signal`, and a string `body`. It preserves the method, headers, redirect mode, and body for approval replay. Encode form parameters with `URLSearchParams.toString()` and set `content-type` to `application/x-www-form-urlencoded`.
+`fetch()` calls a URL on a catalog origin with the Connection token. Use it for endpoints that the catalog does not describe. The token is never sent to another origin.
 
 ```ts
 const response = await useConnection('google').fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile')
 ```
 
-Connection names must not exceed 501 characters, including path separators. Discovery rejects longer names before authorization, so their default Env keys fit the 512-character storage limit.
-
 ## Control access
 
 The actor comes from `useConnection(name, { actor })`. It defaults to `server`. Use a stable name for each caller, for example `schedule:gmail` or `agent:labeller`.
 
-GET, HEAD, and OPTIONS methods are reads. Other methods are writes. Providers mark some writes as high risk, for example `gmail.users.messages.send`. A rule must name a high-risk write exactly. A subtree pattern does not match it.
+GET methods are reads. Other methods are writes. Providers mark some writes as high risk, for example `gmail.users.messages.send`. A rule must name a high-risk write exactly. A subtree pattern does not match it.
 
 Without `access`:
 
@@ -166,12 +135,15 @@ A denied call throws `ConnectionError` with code `CONNECTION_DENIED` and records
 A write that needs approval throws `ConnectionError` with code `CONNECTION_APPROVAL_REQUIRED`. `error.requestId` is the approval id. The approval stores the method and its input.
 
 ```sh
-vitehub connections approvals
+vitehub connections approvals --json
+vitehub connections approvals --before approval_older_page...
 vitehub connections approvals approve approval_3kq2...
 vitehub connections approvals deny approval_3kq2...
 ```
 
-Approving runs the call once, as the actor that requested it. The access rules still apply. The approval then has status `executed` or `failed`. Execution has a five-minute abort deadline. An active execution renews its database lease every 100 seconds until the provider call settles. Recovery waits for that lease to expire, so concurrent inspection does not fail an active call. A lost response, a provider server error, or a local failure after dispatch reports `CONNECTION_EXECUTION_UNKNOWN`. If a process stops during execution, the next approval inspection or approval attempt marks expired executions as `failed` with `CONNECTION_EXECUTION_UNKNOWN`. The provider may have completed the write. Check the provider before requesting another approval; the runtime never replays an interrupted execution.
+Approval lists return at most 100 rows. JSON output has `{ approvals, nextCursor? }`. Pass `nextCursor` to `--before` with the same name and status filters to read older approvals. The Console provides Previous and Next controls for pending approvals and uses grouped pending counts for its Connections list.
+
+Approving runs the call once, as the actor that requested it. The access rules still apply. The approval then has status `executed` or `failed`.
 
 ## Preview writes
 
@@ -205,7 +177,6 @@ The Connection refreshes the access token when it expires within 60 seconds, and
 | `CONNECTION_REAUTH_REQUIRED` | The Connection is not connected, was revoked, or the provider rejected the refresh token. Connect it again. |
 | `CONNECTION_DENIED` | The access rules deny the call. |
 | `CONNECTION_APPROVAL_REQUIRED` | The call waits for approval. |
-| `CONNECTION_EXECUTION_UNKNOWN` | The provider may have completed the approved write. Check the provider before requesting another approval. The management HTTP handler returns 409. |
 | `CONNECTION_PROVIDER` | The provider returned an error. `error.status` is the HTTP status. |
 | `CONNECTION_INVALID` | The request or configuration is invalid. |
 
