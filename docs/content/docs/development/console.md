@@ -370,6 +370,10 @@ const body = {
 
 History must contain valid ViteHub Messages with `user` or `assistant` roles and unique IDs. Parts must be `text`, `file`, `image`, or `audio`. The Console preserves message metadata and appends the new prompt as a user Message. It rejects malformed Messages, `system` or `tool` roles, and other parts before starting the Agent. This includes tool calls, tool results, and approval parts nested in user or assistant Messages. Omit `messages` for a prompt-only invocation. Each request creates a new invocation; history does not resume a previous runtime session.
 
+### Replay Channel history
+
+The Console exposes `POST /_vitehub/channels/replay` for the [`vitehub channels replay`](/docs/development/cli#replay-channel-history) command. The request must name an Agent and Channel, and the Channel must declare a history Collection. The route validates the Collection query and replays at most 10 messages per request, returning a cursor when more history remains. It requires Console invocation access and the same authentication and origin checks as other Console RPC routes. Use the CLI's `--url` mode for deployed Console access; it forwards the configured authorization, session cookie, or Cloudflare Access credentials.
+
 ### Rerun and delete sessions
 
 Rerun is available after the session completes, fails, or is cancelled.
@@ -519,6 +523,37 @@ Session details also show the normalized usage record for one invocation. Add th
 
 The Console does not calculate missing provider data. Token counts, model metadata, and provider-reported cost remain absent when the provider does not report them.
 
+### Session history
+
+The **Usage** page lists completed, failed, and cancelled sessions, newest first. Open a session title to return to its conversation and inspector. Active sessions stay in the Agents panel.
+
+Each history row uses the same Agent Invocation ID as the session panel. A transport thread ID can contain separate executions, so history does not merge invocations by thread or title. Tokens and cost come from the recorded usage for that invocation, including its model calls.
+
+Filter by date, Agent, status, or session title and ID. The search also matches Agent names. Filters stay in the URL, so the selected history view returns when you come back from a session. Sessions stay visible when usage is missing. An unavailable value is not zero, and partial totals are labeled `recorded`.
+
+Expand **Usage breakdown** for charts, model totals, averages, and the most expensive invocations. **Provider status** shows readiness and subscription quota. A readiness check inspects the configured provider account without sending a model prompt. A successful check is evidence at its checked time. It does not guarantee the next reply.
+
+All history filters apply to totals, average cost, the most expensive invocations, and the paginated history table. Completed, failed, and cancelled invocations contribute the cost they recorded. Subscription quota is separate from USD cost. Providers without cost evidence keep token and session history. Monetary panels appear only when cost is configured or recorded.
+
+Averages divide the recorded decimal cost by the number of priced invocations. Unknown cost is not zero, and a recorded zero counts in coverage and averages. Model averages combine calls to the same model within one invocation, so auxiliary calls count once for that invocation and model. Estimated amounts have a `~` prefix.
+
+### Usage API
+
+`GET /api/_vitehub/console/usage?window=30d&agent=bot&status=failed&search=release` uses the same Console access policy as session inspection. The Console client sends this operation over its RPC connection. The response contains `sessions`, `sessionCount`, time buckets, totals, Agent and model groups, and the ten most expensive invocations. Each session includes its invocation ID, Agent, recorded title when available, status, last activity, models, and usage totals.
+
+| Parameter | Values |
+| --- | --- |
+| `window` | `24h`, `7d`, `30d`, or `90d`. The default is `30d`. |
+| `status` | Optional. `completed`, `failed`, or `cancelled`. |
+| `search` | Optional. A case-insensitive literal match against title, ID, and Agent name. |
+| `cursor` | Optional. The opaque cursor from the previous page. |
+
+A page has at most fifty session rows. Pass the returned `cursor` unchanged to get the next page with the same filters. The cursor fixes the date cutoff of the first page, so newly completed sessions appear after **Refresh** resets pagination. Totals cover all matching sessions within that cutoff. Deletion and historical backfill can still change rows and totals, because the cursor does not hold a database snapshot. An invalid cursor or changed filters return HTTP `400`. Date filters use the completion time. When it is absent, they use the last update or creation time.
+
+The standard Console SQLite database keeps a rebuildable usage projection. Change triggers queue changed invocation IDs. Historical backfill reads only the final usage observation in SQLite and stores compact usage summaries. Aggregates use indexed date and Agent queries. Decimal cost groups are summed with bigint arithmetic, so SQLite floating-point conversion cannot change a monetary total.
+
+Backfill runs in bounded batches. `projection.complete: false` and `partial: true` mean that totals are not complete yet. Refresh after backfill finishes. The projection does not change invocation retention and does not hold transcripts. Deleting an invocation removes its projection, and a process restart resumes pending work. The version 2 projection has separate tables and triggers, so an older process can keep its version 1 projection during a rolling update. A custom invocation store uses its paginated read interface instead of the Console SQLite projection.
+
 ## Fix common failures
 
 | Symptom | Check |
@@ -547,6 +582,12 @@ Use [Agent Invocations](/docs/agents/invocations) for custom stores and invocati
 Console image uploads require `console.invoke` to be enabled. The Agent and invoker profile selected when you submit stay fixed while images upload. If you switch Agents, the pending request does not redirect the input or open its result in the new Agent view.
 
 Images must be PNG, JPEG, WebP, or GIF, with at most ten images and 10 MiB combined per invocation. Blob storage must return an HTTP or relative serving URL. The Console rolls back new uploads if storage or invocation setup fails before the Agent takes ownership. Images handed to an Agent remain under `vitehub-console-attachments/` and follow your Blob storage retention policy.
+
+The server stores image bytes in Blob storage and gives the Driver a reference with a download callback. Invocation journals keep image metadata and URLs, not callbacks or image bytes. Use durable Blob storage and content-enabled invocation storage to keep the images and their message references after a restart. The Console renders image references in input and output messages. An Agent can publish a generated image with the [Blob Capability](/docs/capabilities/blob) and include its URL in Markdown.
+
+The new-invocation composer sends image data with the invocation request. The Console validates the Agent, profile, and history before it stores the images, so rejected requests do not leave orphan uploads. If Agent or Workflow preparation fails before provider dispatch, the Console removes the new objects.
+
+Before rollback, the Console writes cleanup records to `vitehub-console-attachment-cleanup/` in the same Blob store. These records survive when deletion fails or the server stops during rollback. Each later upload retries up to 100 records before it stores new images. A retry failure rejects that upload and keeps the record for the next attempt. Cleanup needs another upload request and an available Blob store. It does not run on a timer. After input reaches a runtime, the Console keeps the objects, because a rejected start can still have durable work. Durable cleanup for a server crash before rollback starts, or for a failure after handoff, is not implemented.
 
 ## Inspect capabilities
 

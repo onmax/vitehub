@@ -6,10 +6,10 @@ import { createAgentRuntimeContext } from "./context.ts"
 import { workspaceAgentWithSourceRoot } from "../workspace-agent.ts"
 import { decodeColocatedAgentSkills, withColocatedAgentSkills } from "../internal/colocated-agent-skills.ts"
 import { loadAgentWorkflowModule, loadAgentWorkflowRuntimeStateModule, loadConfiguredAgentWorkflowCapabilities } from "../internal/workflow-runtime-loaders.ts"
-import { agentInvocationRunId } from "../invocation-context.ts"
+import { agentInvocationRunId, agentInvocationWorkflowBinding } from "../invocation-context.ts"
 import { markAgentInvocationCallerAbortSignal } from "../internal/invocation-input.ts"
 import { agentInvocationRecoveryTasks } from "../internal/invocation-recovery.ts"
-import { bindAgentInvocations } from "../invocations.ts"
+import { bindAgentInvocations, inheritedAgentInvocationClaim } from "../invocations.ts"
 import { cloneWorkflowJsonValue, workflowBytesToBase64 } from "../internal/workflow-portability.ts"
 import { restoreResolvedAgentInvokerInput } from "../invoker.ts"
 import { hasParsedAgentMessageMeta, restoreParsedAgentMessageMeta } from "../internal/message-meta.ts"
@@ -52,6 +52,7 @@ export function agentWithColocatedSkills<Agent>(agent: Agent, sources: Parameter
 
 export interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
   journalAgentName?: string
+  invocationClaimToken?: string
   agentIdentity?: AgentHostIdentity
   capabilities?: Record<string, boolean>
   input?: AgentRunInput<CALL_OPTIONS>
@@ -334,6 +335,11 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
       enumerable: true,
       value: payload.run.runId,
     })
+  }
+
+  if (payload.invocationClaimToken) {
+    Object.defineProperty(runtimeContext, agentInvocationWorkflowBinding, { enumerable: true, value: { name: context.name, provider: context.provider, id: context.id } })
+    Object.defineProperty(runtimeContext, inheritedAgentInvocationClaim, { enumerable: true, value: payload.invocationClaimToken })
   }
 
   Object.defineProperty(runtimeContext, agentWorkflowExecutionContextKey, {
