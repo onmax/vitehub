@@ -196,6 +196,23 @@ process.exit(result.status ?? 1)
     await expect(access(root)).rejects.toThrow()
   })
 
+  it.each(["wrapper warning", "x".repeat(20_000)])("captures requirements after unterminated wrapper stderr", async warning => {
+    const launch = ({ command }: { command: string }) => ({
+      command: "sh",
+      args: ["-c", 'printf "%s" "$1" >&2; shift; exec "$@"', "wrapper", warning, command],
+    })
+    inspectProvider.mockImplementation(async options => {
+      const result = childProcess.spawnSync(options.settings.binaryPath, ["-e", 'process.stdout.write("provider output")'], { encoding: "utf8" })
+      expect(result.status).toBe(0)
+      expect(result.stdout).toBe("provider output")
+      expect(result.stderr).toBe(warning)
+      return ready()
+    })
+
+    const status = await inspectAgentProvider({ provider: "codex", providerSettings: { binaryPath: process.execPath }, launch, requirements: ["sh", "vitehub-missing-fragment-command"] }, context())
+    expect(status).toMatchObject({ missingCommands: ["vitehub-missing-fragment-command"], readiness: "unavailable" })
+  })
+
   it("keeps requirement readiness unknown when the launcher produces no frame", async () => {
     inspectProvider.mockResolvedValue(ready())
     const status = await inspectAgentProvider({ provider: "codex", launch: () => ({ command: "sh" }), requirements: ["sh"] }, context())

@@ -24,6 +24,20 @@ describe("built-in Agent Driver selection", () => {
     expect(() => defineAgent({ driver: { kind: "codex", launch: { command: "ssh", args: ["host", "codex"] }, requirements: ["git"] } } as never)).toThrow("launch resolver");
   });
 
+  it.each(["-v", "--", "-missing"])("rejects option-like Driver requirement %s", requirement => {
+    expect(() => defineAgent({ driver: { kind: "codex", requirements: [requirement] } })).toThrow("driver.requirements");
+  });
+
+  it("accepts callback and object launch resolvers with requirements", () => {
+    const launch = ({ command }: { command: string }) => ({ command: "ssh", args: ["host", command] });
+    for (const resolver of [launch, { resolve: launch }]) {
+      expect(normalizeAgentDriver({ driver: { kind: "codex", launch: resolver, requirements: ["git"] } })).toMatchObject({
+        launch: resolver,
+        requirements: ["git"],
+      });
+    }
+  });
+
   it("exposes provider requirements in inspection metadata", () => {
     const agent = defineAgent({ driver: { kind: "codex", requirements: ["git", "gh"] } });
     expect(createAgentInspectionMetadata(agent).config?.driver.provider).toMatchObject({ requirements: ["git", "gh"] });

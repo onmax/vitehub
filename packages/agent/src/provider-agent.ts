@@ -555,7 +555,6 @@ let stderr = Buffer.alloc(0)
 let stderrBytes = 0
 const requirementCapture = ${JSON.stringify(requirementCapture ?? null)}
 let requirementOutput = Buffer.alloc(0)
-let requirementLineOverflow = false
 const secretEnvironmentKeys = ${JSON.stringify(secretEnvironmentKeys)}
 const diagnosticSecrets = [...new Set(secretEnvironmentKeys
   .map(key => process.env[key])
@@ -620,19 +619,20 @@ child.stderr.on("data", (chunk) => {
   while ((newline = requirementOutput.indexOf(10)) !== -1) {
     const line = requirementOutput.subarray(0, newline + 1)
     requirementOutput = requirementOutput.subarray(newline + 1)
-    if (!requirementLineOverflow && line.toString("utf8").startsWith(requirementCapture.prefix)) {
-      const missing = line.toString("utf8").slice(requirementCapture.prefix.length).trim().split(",").filter(Boolean)
+    const marker = line.indexOf(requirementCapture.prefix)
+    if (marker !== -1) {
+      if (marker) forwardStderr(line.subarray(0, marker))
+      const missing = line.subarray(marker + Buffer.byteLength(requirementCapture.prefix)).toString("utf8").trim().split(",").filter(Boolean)
       const frame = missing.every(command => requirementCapture.commands.includes(command)) ? missing : null
       appendFileSync(requirementCapture.path, JSON.stringify(frame) + "\\n", { mode: 0o600 })
     }
     else forwardStderr(line)
-    requirementLineOverflow = false
   }
   const frameLimit = Buffer.byteLength(requirementCapture.prefix + requirementCapture.commands.join(",")) + 2
   if (requirementOutput.length > frameLimit) {
-    forwardStderr(requirementOutput)
-    requirementOutput = Buffer.alloc(0)
-    requirementLineOverflow = true
+    const retainedBytes = Buffer.byteLength(requirementCapture.prefix) - 1
+    forwardStderr(requirementOutput.subarray(0, -retainedBytes))
+    requirementOutput = requirementOutput.subarray(-retainedBytes)
   }
 })
 

@@ -228,10 +228,10 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
   if (value.sessionStorePath !== undefined && (!isRuntimeString(value.sessionStorePath) || !value.sessionStorePath.trim())) {
     throw agentDiagnostics.AGENT_R0476({ message: "[vitehub] defineAgent({ driver.sessionStorePath }) must be a non-empty string." })
   }
-  if (value.requirements !== undefined && (!Array.isArray(value.requirements) || !value.requirements.every(item => isRuntimeString(item) && /^[A-Za-z0-9._+-]+$/.test(item)))) {
+  if (value.requirements !== undefined && (!Array.isArray(value.requirements) || !value.requirements.every(item => isRuntimeString(item) && /^[A-Za-z0-9._+][A-Za-z0-9._+-]*$/.test(item)))) {
     throw agentDiagnostics.AGENT_R0970({ message: "[vitehub] defineAgent({ driver.requirements }) must be a list of command names, such as [\"git\", \"gh\"]." })
   }
-  if (value.requirements !== undefined && value.launch !== undefined && !isResolver(value.launch)) {
+  if (value.requirements !== undefined && value.launch !== undefined && !isRuntimeFunction(value.launch) && !isResolver(value.launch)) {
     throw agentDiagnostics.AGENT_R0970({ message: "[vitehub] defineAgent({ driver.requirements }) requires a launch resolver when driver.launch is set." })
   }
   const codexOptions = ["credentialProfile", "credentials", "reasoningEffort", "reasoningSummary"].filter(key => value[key] !== undefined)
