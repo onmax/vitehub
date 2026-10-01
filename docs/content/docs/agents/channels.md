@@ -110,7 +110,7 @@ The Console shows the recorded call, such as `label(["Receipts"])`. The call tex
 
 ## Replay Channel history
 
-Add `history` to a Channel to run an Agent on messages that arrived before the Agent existed, or to run them again after a change. `history.collection` is a [Collection](/docs/server-primitives/source#expose-a-typed-collection). Each item has the shape of the Channel trigger input, so a replayed message takes the same trigger path as a live one. `history.key` returns a stable key for each item, such as the provider message ID.
+Add `history` to a Channel to run an Agent on messages that arrived before the Agent existed, or to run them again after a change. `history.collection` is a [Collection](/docs/server-primitives/source#expose-a-typed-collection). Each item has the shape of the Channel trigger input, so a replayed message takes the same trigger path as a live one. `history.key` returns a stable key for each item, such as the provider message ID. The built-in Channel helpers accept the same `history` options and infer the Collection item type in `history.key`.
 
 ```ts [server/agents/labeller.ts]
 import { defineAgent } from 'vite-hub/agent'
@@ -196,7 +196,7 @@ Replay persists the trigger's run metadata on the claimed Invocation before exec
 
 Native Vercel replay retains the logical replay ID in the Invocation and stores the provider-assigned Workflow ID in `workflow`. Dispatch intent is persisted before submission. If acknowledgement is lost before a provider ID can be retained, replay reports the unknown outcome and blocks resubmission. The Workflow worker confirms its physical ID before Driver execution. Recovery and cancellation use the provider ID.
 
-A pending replay reservation for a discovery-default Workflow requires the discovered Agent identity to recover. Without that identity, replay skips the existing item, including legacy records without Workflow metadata, because a provider run may already have been accepted. Use the host runtime context for provider reconciliation. `runtime: false` permits inline retries when no Workflow dispatch is recorded. Fresh items can still execute inline without a discovered identity.
+A pending replay reservation for a discovery-default Workflow requires the discovered Agent identity to recover. Without that identity, replay skips the existing item, including legacy records without Workflow metadata, because a provider run may already have been accepted. Use the host runtime context for provider reconciliation. `runtime: false` permits inline retries for trigger preparation failures when no Workflow dispatch is recorded. Inline replay must persist the running state before execution. A later replay skips that Invocation if completion persistence fails. Fresh items can still execute inline without a discovered identity.
 
 An inline Agent runs each item before it reads the next one and reports it as `completed`. An Agent with a [Workflow runtime](/docs/agents/invocations) starts one durable Workflow run per item and reports it as `started`. A trigger error, such as invalid item input, marks that item `failed`, and replay continues.
 

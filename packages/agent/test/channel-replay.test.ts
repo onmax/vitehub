@@ -185,6 +185,52 @@ describe("replayChannel()", () => {
     expect(label).not.toHaveBeenCalled()
   })
 
+  it("keeps completed inline side effects skipped when finish persistence is lost", async () => {
+    const store = createMemoryAgentInvocationStore()
+    const update = store.update.bind(store)
+    const invocations = defineAgentInvocations({ store: { ...store, update: async (id, input, token) => {
+      if (input.status && input.status !== "running") return undefined
+      return await update(id, input, token)
+    } } })
+    const { agent, run, label } = labeller({ invocations })
+    const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+    vi.useFakeTimers()
+    try {
+      expect(await replayChannel(agent, "mailbox", { limit: 1, runtime })).toMatchObject({ processed: 1, failed: 0 })
+      expect(run).toHaveBeenCalledOnce()
+      expect(label).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(61_000)
+      expect((await invocations.getByRunId(channelReplayRunId("mailbox", "m1")))?.status).toBe("running")
+      expect(await replayChannel(agent, "mailbox", { limit: 1, runtime })).toMatchObject({ processed: 0, skipped: 1, failed: 0 })
+      expect(run).toHaveBeenCalledOnce()
+      expect(label).toHaveBeenCalledOnce()
+    } finally { vi.useRealTimers() }
+  })
+
+  it("does not execute inline side effects without a durable running marker", async () => {
+    const store = createMemoryAgentInvocationStore()
+    const update = store.update.bind(store)
+    const invocations = defineAgentInvocations({ store: { ...store, update: async (id, input, token) => {
+      if (input.status) return undefined
+      return await update(id, input, token)
+    } } })
+    const { agent, run, label } = labeller({ invocations })
+    const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+    vi.useFakeTimers()
+    try {
+      const result = await replayChannel(agent, "mailbox", { limit: 1, runtime })
+      expect(result).toMatchObject({ processed: 0, failed: 1 })
+      expect(result.items[0]?.error).toContain("Could not persist the Invocation running state before execution")
+      expect(run).not.toHaveBeenCalled()
+      expect(label).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(61_000)
+      expect((await invocations.getByRunId(channelReplayRunId("mailbox", "m1")))?.status).toBe("pending")
+      expect(await replayChannel(agent, "mailbox", { limit: 1, runtime })).toMatchObject({ processed: 0, skipped: 1, failed: 0 })
+      expect(run).not.toHaveBeenCalled()
+      expect(label).not.toHaveBeenCalled()
+    } finally { vi.useRealTimers() }
+  })
+
   it.each(["create", "claim"])("recovers an ambiguous %s reservation before retrying history replay", async operation => {
     const store = createMemoryAgentInvocationStore()
     let release!: () => void
