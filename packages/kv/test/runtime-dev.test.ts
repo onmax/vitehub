@@ -46,6 +46,31 @@ async function run(body: unknown): Promise<{ body: Record<string, unknown>, stat
 }
 
 describe("KV dev runtime handler", () => {
+  it("represents native bigint values and rejects cyclic values with a protocol error", async () => {
+    const get = vi.spyOn(kv, "get")
+    try {
+      get.mockResolvedValue([null, 9007199254740993n])
+      expect((await run({ key: "native", operation: "get" })).body).toMatchObject({ found: true, type: "bigint", value: "9007199254740993" })
+      get.mockResolvedValue([null, { nested: [42n] }])
+      expect((await run({ key: "native", operation: "get" })).body).toMatchObject({ value: { nested: ["42"] } })
+      const cyclic: { self?: unknown } = {}
+      cyclic.self = cyclic
+      get.mockResolvedValue([null, cyclic])
+      expect(await run({ key: "native", operation: "get" })).toMatchObject({ status: 422, body: { error: { code: "KV_VALUE_UNSUPPORTED" } } })
+    }
+    finally { get.mockRestore() }
+  })
+
+  it("reports the effective Cloudflare TTL when fractional seconds are rounded", async () => {
+    const set = vi.spyOn(kv, "set").mockResolvedValue([null, undefined])
+    try {
+      const response = await handleKVDevRequest(devRequest({ key: "fractional", operation: "set", ttl: 60.5, value: "x" }), [{ driver: "cloudflare-kv-binding", name: "default" }])
+      expect(set).toHaveBeenCalledWith("fractional", "x", { ttl: 61 })
+      expect(await response.json()).toMatchObject({ ttl: 61, notice: expect.stringContaining("61 seconds") })
+    }
+    finally { set.mockRestore() }
+  })
+
   it("lists stores in the Console order", () => {
     expect(listKVDevStores()).toEqual([
       { driver: "fs-lite", name: "default" },
@@ -103,7 +128,7 @@ describe("KV dev runtime handler", () => {
       const response = await handleKVDevRequest(devRequest({ key: "clamped", operation: "set", ttl: 1.5, value: "x" }), [{ driver: "cloudflare-kv-binding", name: "default" }])
       expect(response.status).toBe(200)
       expect(set).toHaveBeenCalledWith("clamped", "x", { ttl: 60 })
-      expect(await response.json()).toMatchObject({ ttl: 1.5, notice: expect.stringContaining("60 seconds") })
+      expect(await response.json()).toMatchObject({ ttl: 60, notice: expect.stringContaining("60 seconds") })
     }
     finally {
       set.mockRestore()
