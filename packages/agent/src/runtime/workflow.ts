@@ -1,4 +1,3 @@
-import { setWorkflowJournalName } from "../internal/workflow-journal-name.ts"
 import { getActiveCloudflareEnv, getCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { createExecutionContext, getViteHubErrorShape } from "@vite-hub/runtime"
 
@@ -6,8 +5,7 @@ import { createAgentRuntimeContext } from "./context.ts"
 import { workspaceAgentWithSourceRoot } from "../workspace-agent.ts"
 import { decodeColocatedAgentSkills, withColocatedAgentSkills } from "../internal/colocated-agent-skills.ts"
 import { loadAgentWorkflowModule, loadAgentWorkflowRuntimeStateModule, loadConfiguredAgentWorkflowCapabilities } from "../internal/workflow-runtime-loaders.ts"
-import { agentInvocationRunId, agentInvocationWorkflowBinding } from "../invocation-context.ts"
-import { markAgentInvocationCallerAbortSignal } from "../internal/invocation-input.ts"
+import { agentInvocationRunId } from "../invocation-context.ts"
 import { agentInvocationRecoveryTasks } from "../internal/invocation-recovery.ts"
 import { bindAgentInvocations, inheritedAgentInvocationClaim } from "../invocations.ts"
 import { cloneWorkflowJsonValue, workflowBytesToBase64 } from "../internal/workflow-portability.ts"
@@ -25,7 +23,6 @@ import {
   withAgentChannelDeliveryOwnershipVerifier,
 } from "../internal/channel-delivery.ts"
 import { agentWorkflowExecutionContextKey } from "../internal/workflow-execution.ts"
-import { markParsedAgentWorkflowInput } from "../internal/workflow-parsed-input.ts"
 import { agentWorkflowRetryRegistrar } from "../internal/workflow-retry.ts"
 import { isRuntimeBoolean, isRuntimeFunction, isRuntimeNumber, isRuntimeObject, isRuntimeString, isRuntimeSymbol } from "../internal/runtime-value.ts"
 
@@ -51,12 +48,10 @@ export function agentWithColocatedSkills<Agent>(agent: Agent, sources: Parameter
 }
 
 export interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
-  journalAgentName?: string
   invocationClaimToken?: string
   agentIdentity?: AgentHostIdentity
   capabilities?: Record<string, boolean>
   input?: AgentRunInput<CALL_OPTIONS>
-  callerAbortSignal?: boolean
   invocationRecovery?: {
     agentName?: string
     runId: string
@@ -64,7 +59,6 @@ export interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
     workflowName: string
   }
   requestUrl?: string
-  parsedInputData?: boolean
   parsedMessageMeta?: ParsedAgentMessageMetaState
   resolvedInvoker?: boolean
   run?: Partial<AgentRunMetadata>
@@ -329,7 +323,6 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
     ...createAgentRuntimeContext<TRuntimeConfig>(runtimeInput),
     runtimeConfig,
   }) as ResolvedAgentRuntimeContext<TRuntimeConfig>
-  if (payload.journalAgentName) setWorkflowJournalName(runtimeContext, agent, payload.journalAgentName)
   if (payload.run?.runId && payload.run.runId !== runId) {
     Object.defineProperty(runtimeContext, agentInvocationRunId, {
       enumerable: true,
@@ -338,7 +331,6 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
   }
 
   if (payload.invocationClaimToken) {
-    Object.defineProperty(runtimeContext, agentInvocationWorkflowBinding, { enumerable: true, value: { name: context.name, provider: context.provider, id: context.id } })
     Object.defineProperty(runtimeContext, inheritedAgentInvocationClaim, { enumerable: true, value: payload.invocationClaimToken })
   }
 
@@ -375,7 +367,7 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
         ...payload.input,
         abortSignal: payload.input?.abortSignal ? AbortSignal.any([payload.input.abortSignal, channelOwnership.abortSignal]) : channelOwnership.abortSignal,
       }
-    : { ...payload.input }
+    : (payload.input ?? {})
 
   let channelDeliveryStatus: "completed" | "failed" = "failed"
   let channelDeliveryJournaled = !channelDelivery
@@ -405,11 +397,6 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
     if (payload.resolvedInvoker && !derivedInvokerNeedsResolution) {
       restoredWorkflowInput = restoreResolvedAgentInvokerInput(restoredWorkflowInput)
     }
-    if (payload.parsedInputData === true) {
-      markParsedAgentWorkflowInput(restoredWorkflowInput, agent)
-    }
-    markAgentInvocationCallerAbortSignal(restoredWorkflowInput,
-      isRuntimeBoolean(payload.callerAbortSignal) ? payload.callerAbortSignal : undefined)
     const inlineResult = await runAgentInline(
       agent,
       runtimeContext,

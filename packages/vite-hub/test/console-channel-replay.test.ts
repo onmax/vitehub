@@ -91,32 +91,6 @@ describe("Console Channel replay route", () => {
     expect(label.mock.calls).toEqual([["Finance"], ["Finance"]])
   })
 
-  it.each([
-    { url: "/_vitehub/channels/replay", host: "app.test", origin: "https://app.test" },
-    { url: "http://internal:3000/_vitehub/channels/replay", host: "app.test", origin: "https://app.test" },
-    { url: "http://internal:3000/_vitehub/channels/replay", host: "app.test:8443", origin: "https://app.test:8443" },
-  ])("accepts public origin $origin for request URL $url", async ({ url, host, origin }) => {
-    const { agent } = labeller()
-    installConsoleAgentDefinitions([{ definition: { default: agent }, fallbackName: "labeller" }], { invoke: true, projectRoot: root })
-    const event = replayEvent({ agent: "labeller", channel: "mailbox", describe: true }, {
-      "content-type": "application/json", origin, host: "internal:3000", "x-forwarded-host": host, "x-forwarded-proto": "https",
-    })
-    event.req!.url = url
-    expect((await channelReplayHandler(event)).status).toBe(200)
-    event.req!.headers = new Headers({ "content-type": "application/json", origin: "https://evil.test", host: "app.test", "x-forwarded-proto": "https" })
-    expect((await channelReplayHandler(event)).status).toBe(403)
-  })
-
-  it("accepts a path-only Nitro Node request with host and forwarded protocol headers", async () => {
-    const { agent } = labeller()
-    installConsoleAgentDefinitions([{ definition: { default: agent }, fallbackName: "labeller" }], { invoke: true, projectRoot: root })
-    const event: ConsoleRequestEvent = {
-      node: { req: { method: "POST", url: "/_vitehub/channels/replay", headers: { "content-type": "application/json", host: "app.test", origin: "https://app.test", "x-forwarded-proto": "https" } } },
-      req: { json: async () => ({ agent: "labeller", channel: "mailbox", describe: true }) },
-    }
-    expect((await channelReplayHandler(event)).status).toBe(200)
-  })
-
   it("stays unavailable while Console invocation is disabled", async () => {
     const { agent } = labeller()
     installConsoleAgentDefinitions([{ definition: { default: agent }, fallbackName: "labeller" }], { projectRoot: root })

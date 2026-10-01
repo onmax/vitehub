@@ -38,7 +38,7 @@ const replayBatchSize = 10
 const valueOptions = new Set(["--agent", "--channel", "--cursor", "--filter", "--limit", "--server", "--url"])
 
 function cliError(message: string): Error {
-  return agentDiagnostics.AGENT_R0936({ message })
+  return agentDiagnostics.AGENT_R0934({ message })
 }
 
 function writeUsage(context: ChannelReplayCliContext, queryHelp: string[] = []): void {
@@ -49,7 +49,7 @@ function writeUsage(context: ChannelReplayCliContext, queryHelp: string[] = []):
     "Without --url, the command uses the running Vite Development Server.",
     "",
     "Options:",
-    "  --url <url>          Deployed Console URL. Set VITEHUB_CONSOLE_AUTHORIZATION, VITEHUB_CONSOLE_COOKIE, or CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET to authenticate.",
+    "  --url <url>          Deployed Console URL. Set VITEHUB_CONSOLE_AUTHORIZATION or VITEHUB_CONSOLE_COOKIE to authenticate.",
     "  --server <url>       Vite Development Server URL. Defaults to VITEHUB_DEV_SERVER_URL or http://localhost:5173.",
     "  --dry-run            Record Channel message writes in the trace instead of sending them.",
     "  --force              Replay items that already have an Invocation.",
@@ -130,8 +130,6 @@ function replayTarget(parsed: ParsedChannelReplayArgs & { agent: string }, env: 
     const base = baseUrl(parsed.url, "--url")
     if (env.VITEHUB_CONSOLE_AUTHORIZATION) headers.set("authorization", env.VITEHUB_CONSOLE_AUTHORIZATION)
     if (env.VITEHUB_CONSOLE_COOKIE) headers.set("cookie", env.VITEHUB_CONSOLE_COOKIE)
-    if (env.CF_ACCESS_CLIENT_ID) headers.set("cf-access-client-id", env.CF_ACCESS_CLIENT_ID)
-    if (env.CF_ACCESS_CLIENT_SECRET) headers.set("cf-access-client-secret", env.CF_ACCESS_CLIENT_SECRET)
     return {
       body: replay => ({ agent: parsed.agent, ...replay }),
       headers,
@@ -164,7 +162,7 @@ async function sendReplay(target: ReplayTarget, replay: Record<string, unknown>,
     throw cliError(target.remote ? `Channel replay request to ${target.url} failed.` : `No Compatible Vite Development Server found at ${new URL(target.url).origin}.`)
   }
   if (target.remote && (response.status === 401 || response.status === 403 || (response.status >= 300 && response.status < 400))) {
-    throw cliError(`Console authentication failed with HTTP ${response.status}. Set VITEHUB_CONSOLE_AUTHORIZATION, VITEHUB_CONSOLE_COOKIE, or CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET.`)
+    throw cliError(`Console authentication failed with HTTP ${response.status}. Set VITEHUB_CONSOLE_AUTHORIZATION or VITEHUB_CONSOLE_COOKIE.`)
   }
   const text = await response.text()
   let json: unknown
@@ -200,8 +198,7 @@ export function channelReplayQueryHelp(schema: unknown): string[] {
       property.type === "array" ? "repeatable" : undefined,
       hasRuntimeType(property.description, "string") ? property.description : undefined,
     ].filter(Boolean).join(", ")
-    const reserved = valueOptions.has(`--${name}`) || ["dry-run", "force", "help"].includes(name)
-    return reserved ? `  --filter ${name}=<${values}>${notes ? `  ${notes}` : ""}` : `  --${name} <${values}>${notes ? `  ${notes}` : ""}`
+    return `  --${name} <${values}>${notes ? `  ${notes}` : ""}`
   })
 }
 
@@ -217,12 +214,8 @@ export function channelReplayQuery(parsed: Pick<ParsedChannelReplayArgs, "filter
   }
   const query: Record<string, string | string[]> = {}
   for (const [name, value] of [...parsed.queryFlags, ...parsed.filters]) {
-    // Query keys come from user supplied schema and flags. Define each key as
-    // an own property so names such as `__proto__` cannot invoke Object's
-    // prototype setter or accidentally read an inherited value.
-    const current = Object.hasOwn(query, name) ? query[name] : undefined
-    const next = current === undefined ? (properties?.[name]?.type === "array" ? [value] : value) : [...(Array.isArray(current) ? current : [current]), value]
-    Object.defineProperty(query, name, { configurable: true, enumerable: true, value: next, writable: true })
+    const current = query[name]
+    query[name] = current === undefined ? value : [...(Array.isArray(current) ? current : [current]), value]
   }
   return query
 }
