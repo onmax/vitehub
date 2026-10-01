@@ -452,10 +452,11 @@ function createChatMessageTrigger<TRuntimeConfig extends AgentRuntimeConfig>(
     output: "ui-message-stream",
     webhooks: resolveChatWebhookRegistrations(options),
     async invoke(_context, triggerInput) {
-      const { hookArgs, input } = createChatMessageTriggerInput(options, triggerInput)
+      const { currentMessage, hookArgs, input } = createChatMessageTriggerInput(options, triggerInput)
       const thinkingFallback = await resolveChatThinkingFallback(options, hookArgs)
       return {
         input,
+        message: currentMessage,
         ...(thinkingFallback !== undefined ? { metadata: { thinkingFallback } } : {}),
         run: resolveChatMessageRunMetadata(triggerInput.run, input.context?.invoker, input.messages || []),
       }

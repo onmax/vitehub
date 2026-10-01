@@ -147,6 +147,8 @@ export default defineAgent({
 
 The Trigger translates the validated event and attaches trusted context. Keep model selection, tools, and execution behavior in the Agent Definition.
 
+When the Channel declares message methods, also return `message`: JSON data that identifies the provider message. Hooks use it through `event.message`. See [Act on the Channel message in hooks](/docs/agents/channels#act-on-the-channel-message-in-hooks).
+
 ### Verify webhook signatures
 
 Add `webhooks` to the Channel to receive the Trigger over HTTP. `secretHeader` names the header that carries the signature, and `secretToken` supplies the shared secret. `signature` selects how ViteHub checks the header:
