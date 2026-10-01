@@ -451,13 +451,15 @@ Publish the exported definition on npm and import it into `presets`. There is no
 
 
 
-## evlog integration
+## Observability
 
-Import `observability()` and `createAgentEvlog()` from `@vite-hub/agent/evlog`, not `@vite-hub/agent/capabilities`. This keeps unrelated Capabilities usable without the optional `evlog` peer. Applications can use `vite-hub/agent/evlog`. Install `evlog` when using this integration.
+Configure telemetry once with `vitehub({ observability })`. ViteHub registers the evlog Nitro module, installs one host instance, and adds its Capability to every Agent. Read it at runtime with `useObservability()` from `@vite-hub/agent/observability` (`vite-hub/agent/observability` in applications). It returns `event`, `capture`, `exception`, `capability`, `status`, and `flush`. Install `evlog`, and `posthog-node` for the PostHog exporter.
 
-`createAgentEvlog()` from `@vite-hub/agent/evlog` exports invocation lifecycle events through evlog. Add its `capability` to your Agent, connect its `drain` to the host, and await `flush()` after invocation background tasks finish. `@vite-hub/agent/evlog/posthog` adds PostHog events, Error Tracking and the official evlog log drain through optional dependencies.
+Observability currently requires Nitro-hosted Agents. Netlify and Deno standalone Agent output are rejected when observability is configured. Close the current host before installing another observability instance.
 
-`createPapercutReporter()` from `@vite-hub/agent/capabilities` journals reports in persistent Agent Invocations before delivery and replays pending reports after restart. See [evlog](../../docs/content/docs/agents/evlog.md) for delivery, privacy and shutdown contracts.
+Hosts without `vitehub()` call `installObservability(options)` from `@vite-hub/agent/observability/host` and pass the result the Nitro app. `@vite-hub/agent/observability/posthog` exports the `posthog()` exporter.
+
+`createPapercutReporter()` from `@vite-hub/agent/capabilities` journals reports in persistent Agent Invocations before delivery and replays pending reports after restart. `observability.papercuts` configures it with the Console journal. See [Observability](../../docs/content/docs/agents/observability.md) for delivery, privacy and shutdown contracts.
 
 GitHub Channels with `activity: true` keep one managed comment per pull request. A single table lists current and recent session links, status, relative start times, and completed durations. Task checkboxes and the latest result appear below; previous results are collapsed. Full transcripts stay in the linked sessions.
 
@@ -612,7 +614,7 @@ agent: {
 
 The generated `/api/_vitehub/ready` route supports GET and HEAD, returning 503 until preparation succeeds. `requireNonEmpty` rejects an empty prepared Workspace; it is opt-in. Set `route` to change the readiness path.
 
-`agentEvlogPlugin(telemetry, reporters)` from `@vite-hub/agent/evlog` owns Nitro request IDs, drain and error hooks, reporter lifecycle, and shutdown flush. See the [evlog guide](https://vitehub.dev/docs/agents/evlog) for host drain reuse and background delivery.
+The observability host plugin owns Nitro request IDs, drain and error hooks, papercut replay, and shutdown flush. See the [Observability guide](https://vitehub.dev/docs/agents/observability) for host drain reuse and background delivery.
 
 Set `transcripts: { retention: "forever" }` in `createLibsqlAgentState()` to preserve Chat transcript rows before startup expiry cleanup and ignore future transcript TTLs. Other state still expires normally. This cannot recover rows already deleted.
 
