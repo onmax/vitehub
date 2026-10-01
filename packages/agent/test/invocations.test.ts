@@ -1100,6 +1100,60 @@ describe("Agent Invocations", () => {
     }
   })
 
+  it.each(["memory", "sqlite"] as const)("fences the losing outcome between two finalizers on %s", async (backend) => {
+    const directory = await mkdtemp(join(tmpdir(), "vitehub-finalizer-race-"))
+    const client = backend === "sqlite" ? createClient({ url: `file:${join(directory, "invocations.sqlite")}` }) : undefined
+    vi.useFakeTimers()
+    try {
+      const backing = client ? createLibsqlAgentInvocationStore({ client }) : createMemoryAgentInvocationStore()
+      let rejectFailed = true
+      let started!: () => void
+      const active = new Promise<void>(resolve => started = resolve)
+      const recoveryTasks: Array<Promise<unknown>> = []
+      const invocations = defineAgentInvocations({
+        content: "content",
+        store: {
+          ...backing,
+          async update(id, input, claimId) {
+            if (input.observation?.name === "blocked-ordinary") {
+              started()
+              return await new Promise(() => {})
+            }
+            if (rejectFailed && input.status === "failed") return undefined
+            return await backing.update(id, input, claimId)
+          },
+        },
+      })
+      const loser = await bindAgentInvocations(invocations, { ...runtime(`finalizer-race-${backend}`), waitUntil: task => recoveryTasks.push(task) })
+      if (!loser) throw new Error("Expected a journal")
+      await loser.running()
+      await loser.context.traceLog?.append({ name: "blocked-ordinary", type: "run" })
+      await active
+      await loser.context.traceLog?.append({ attributes: { "channel.effect.content": "Losing finalizer outcome" }, name: "agent.channel.delivery.effect", type: "run" })
+      const finishing = loser.finish("failed", new Error("Losing finalizer error"))
+      await vi.advanceTimersByTimeAsync(3_000)
+      await finishing
+      const winner = await bindAgentInvocations(invocations, runtime(`finalizer-race-${backend}`), { terminalTakeover: true })
+      if (!winner) throw new Error("Expected a competing journal")
+      await winner.finish("completed")
+      const completed = await invocations.getByRunId(`finalizer-race-${backend}`)
+      expect(completed?.status).toBe("completed")
+      rejectFailed = false
+      await vi.advanceTimersByTimeAsync(1_000)
+      await Promise.all(recoveryTasks)
+      const settled = await invocations.getByRunId(`finalizer-race-${backend}`)
+      expect(settled?.status).toBe("completed")
+      expect(settled?.error).toBeUndefined()
+      expect(settled?.observations).toEqual(completed?.observations)
+      expect(settled?.completedAt).toBe(completed?.completedAt)
+    }
+    finally {
+      vi.useRealTimers()
+      client?.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it("persists delivery observations emitted while terminal finalization retries", async () => {
     vi.useFakeTimers()
     try {

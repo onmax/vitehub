@@ -1719,6 +1719,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       let finished = false
       let boundToTerminalRecord = false
       let finishing = false
+      let terminalWriteCommitted = false
       let ownsRecord = false
       let limits = configuredObservationLimits
       let observationCount = 0
@@ -1815,8 +1816,14 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           const latest = await boundedStoreOperation(() => store.getSummary(recordId))
           if (latest && latest !== storeOperationTimedOut) {
             readCancellationRequest(latest)
-            // The claim-owning finalizer still needs to persist truncation and other cleanup metadata.
-            if (terminalStatus(latest.status) && !finishing) finished = true
+            // Only this finalizer's acknowledged terminal write permits subsequent cleanup metadata.
+            if (terminalStatus(latest.status) && (!finishing || !terminalWriteCommitted)) {
+              finished = true
+              if (!terminalWriteCommitted) {
+                boundToTerminalRecord = true
+                stopWatchingCancellation()
+              }
+            }
           }
         }
         if (ownsRecord && finished) {
@@ -1859,7 +1866,10 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         let updated = false
         await write(async () => {
           if (!await renew(force)) return
-          const operation = Promise.resolve().then(() => store.update(recordId, input, claimId))
+          const operation = Promise.resolve().then(() => store.update(recordId, input, claimId)).then(result => {
+            if (result && input.status && terminalStatus(input.status) && result.status === input.status) terminalWriteCommitted = true
+            return result
+          })
           const result = await boundedStoreOperation(() => operation)
           updated = result !== undefined && result !== storeOperationTimedOut
           if (result !== undefined && result !== storeOperationTimedOut) readCancellationRequest(result)
@@ -1954,9 +1964,9 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const persistLateObservation = async (observation: TraceEventLogEntry): Promise<void> => {
         const deadline = Date.now() + TERMINAL_RETRY_TIMEOUT_MS
         let persisted = false
-        while (!persisted && Date.now() < deadline) {
+        while (!persisted && !boundToTerminalRecord && Date.now() < deadline) {
           await write(async () => {
-            if (!await ensureCreated()) return
+            if (boundToTerminalRecord || !await ensureCreated()) return
             const claimed = await boundedStoreOperation(() => store.claim(recordId, claimId, CLAIM_LEASE_MS, { replaceExisting: true }))
             if (claimed !== true) return
             try {
