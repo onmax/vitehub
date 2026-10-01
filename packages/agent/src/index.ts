@@ -4173,10 +4173,11 @@ async function createAgentInvocationContext<
 ): Promise<AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS>> {
   const startedAt = Date.now()
   const replayHasContext = hasUnreplayableAgentInputContext(input.context)
+  const replayCallerAbortSignal = agentInvocationCallerAbortSignal(input)
   // Preparation can replace or mutate input. Replay must retain the caller's input metadata.
   const replayInput = {
     ...input,
-    ...(agentInvocationCallerAbortSignal(input) === false ? { abortSignal: undefined } : {}),
+    ...(replayCallerAbortSignal === false ? { abortSignal: undefined } : {}),
     ...(input.context ? { context: { ...input.context } } : {}),
     ...(input.messages ? { messages: [...input.messages] } : {}),
     ...(Array.isArray(input.prompt) ? { prompt: [...input.prompt] } : {}),
@@ -4721,7 +4722,7 @@ async function createAgentInvocationContext<
     capabilityPreparationPending = false
     await invocationContext.get(agentInvocationConfigurationUpdatedContextKey)?.()
     await traceAgentInvocationStart(toTraceContext(invocation), replayInput, replayHasContext,
-      replayInput.abortSignal !== undefined || capabilities.input.abortSignal !== input.abortSignal || agentInvocationCallerAbortSignal(input) === true)
+      replayInput.abortSignal !== undefined || capabilities.input.abortSignal !== input.abortSignal || replayCallerAbortSignal === true)
     try {
       await applyChannelDeliveryEffectIntents(invocation, invocation.deliveryEffectIntents)
     }

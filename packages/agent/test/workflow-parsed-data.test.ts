@@ -1,7 +1,7 @@
 import * as v from "valibot"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { defineAgent, runAgentInline, startAgentInvocation, workflow } from "../src/index.ts"
+import { agentInvocationRerunInput, defineAgent, runAgentInline, startAgentInvocation, workflow } from "../src/index.ts"
 import { setAgentWorkflowRuntimeLoaders } from "../src/internal/workflow-runtime-loaders.ts"
 import { runAgentWorkflowDefinition } from "../src/runtime/workflow.ts"
 import { markDiscoveredAgentName } from "../src/internal/discovered-agent-name.ts"
@@ -23,6 +23,45 @@ afterEach(() => {
 })
 
 describe("durable Agent data handoff", () => {
+  it.each([false, true])("preserves caller cancellation provenance across remote dispatch: %s", async (supplied) => {
+    const invocations = defineAgentInvocations({ metadataContent: ["input.prompt"], store: createMemoryAgentInvocationStore() })
+    const createAgent = () => defineAgent({ driver: { run: () => "completed" }, invocations, runtime: workflow("replay-cancellation") })
+    let payload: unknown
+    setAgentWorkflowRuntimeLoaders({
+      state: async () => ({
+        ...await import("@vite-hub/workflow/runtime/state"),
+        getWorkflowRuntimeConfig: () => ({ provider: "openworkflow" as const }),
+      }),
+      workflow: async () => ({
+        ...await import("@vite-hub/workflow"),
+        // SAFETY: This fixture supplies the remote dispatch boundary used by the test.
+        createWorkflow: () => ({
+          run: async (input: unknown) => {
+            payload = JSON.parse(JSON.stringify(input))
+            return { id: "replay-cancellation-run", provider: "openworkflow", status: "queued" }
+          },
+        }) as never,
+      }),
+    })
+    await startAgentInvocation(createAgent(), { memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }, {
+      prompt: "Hi",
+      ...(supplied ? { abortSignal: new AbortController().signal } : {}),
+    })
+    expect(payload).toMatchObject({ input: { prompt: "Hi" } })
+    expect(payload).not.toHaveProperty("input.abortSignal")
+    await runAgentWorkflowDefinition(createAgent(), {
+      id: "replay-cancellation-run", name: "replay-cancellation",
+      // SAFETY: The captured payload comes from the Workflow boundary under test.
+      payload: payload as never, provider: "openworkflow",
+    }, runAgentInline)
+    const summary = (await invocations.list({ limit: 10 })).invocations.find(record => record.status === "completed")!
+    const record = (await invocations.get(summary.id))!
+    expect(record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes).toMatchObject({ "input.hasAbortSignal": supplied })
+    expect(agentInvocationRerunInput(record)).toEqual(supplied
+      ? { available: false, reason: "input-has-abort-signal" }
+      : { available: false, reason: "input-has-run-metadata" })
+  })
+
   it.each([undefined, "host-agent"])("preserves the invocation name across remote Workflow dispatch with host %s", async (hostName) => {
     const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
     const run = vi.fn(() => "completed")

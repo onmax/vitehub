@@ -37,7 +37,7 @@ async function journaled(input: Parameters<typeof runAgent>[2], options: Partial
 }
 
 const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
-  attributes: { "input.replay.version": 4, "input.promptChanged": false, "input.hasContext": false, "input.hasRunMetadata": false, "input.hasTimeout": false, "input.hasAbortSignal": false, "input.hasInvoker": false, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false, ...attributes },
+  attributes: { "input.replay.version": 5, "input.promptChanged": false, "input.hasContext": false, "input.hasRunMetadata": false, "input.hasTimeout": false, "input.hasAbortSignal": false, "input.hasDryRun": false, "input.hasInvoker": false, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false, ...attributes },
   name: "agent.invocation.start",
   sequence: 1,
   timestamp: new Date(0).toISOString(),
@@ -45,6 +45,21 @@ const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
 })
 
 describe("agentInvocationRerunInput", () => {
+  it.each([
+    "different text",
+    createMessage({ role: "user", text: "attached message", parts: [{ type: "file", mediaType: "text/plain", data: "attachment" }] }),
+  ])("rejects singular message input alongside a prompt: %s", async (message) => {
+    const record = await journaled({ message, prompt: "Hi" })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-messages" })
+  })
+
+  it.each([false, true])("preserves dry-run provenance: %s", async (dryRun) => {
+    const record = await journaled({ dryRun, prompt: "Hi" })
+    expect(agentInvocationRerunInput(record)).toEqual(dryRun
+      ? { available: false, reason: "input-has-dry-run" }
+      : { available: true, prompt: "Hi" })
+  })
+
   it.each(["capability", "hook"] as const)("rejects prompts rewritten by an input %s", async (source) => {
     const invocations = defineAgentInvocations({ metadataContent: ["input.prompt"], store: createMemoryAgentInvocationStore() })
     const run = vi.fn(({ prompt }: { prompt?: string }) => prompt)
@@ -181,7 +196,7 @@ describe("agentInvocationRerunInput", () => {
           : observation,
       })
       const attributes = record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes
-      expect(attributes).toMatchObject({ "input.replay.version": 4, "input.promptChanged": false, "input.hasInvoker": direct, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false })
+      expect(attributes).toMatchObject({ "input.replay.version": 5, "input.promptChanged": false, "input.hasInvoker": direct, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false })
       expect(agentInvocationRerunInput(record).available).toBe(false)
     }
   })
@@ -233,6 +248,7 @@ describe("agentInvocationRerunInput", () => {
       { "input.prompt": "Hi", "input.replay.version": 1 },
       { "input.prompt": "Hi", "input.replay.version": 2 },
       { "input.prompt": "Hi", "input.replay.version": 3 },
+      { "input.prompt": "Hi", "input.replay.version": 4 },
       { "input.prompt": "Hi", "input.promptChanged": undefined },
       { "input.prompt": "Hi", "input.hasAbortSignal": undefined },
     ]) {
@@ -241,7 +257,7 @@ describe("agentInvocationRerunInput", () => {
     }
   })
 
-  it.each(["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages"])("rejects replay metadata missing %s", (key) => {
+  it.each(["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasDryRun"])("rejects replay metadata missing %s", (key) => {
     const observation = start({ "input.prompt": "Hi" })
     delete observation.attributes![key]
     expect(agentInvocationRerunInput({ observations: [observation] }))
@@ -268,7 +284,7 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
   })
 
-  it.each(["input.replay.version", "input.promptChanged", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal"])("rejects replay when redaction changes %s", async (key) => {
+  it.each(["input.replay.version", "input.promptChanged", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"])("rejects replay when redaction changes %s", async (key) => {
     for (const replacement of [undefined, key === "agent.invoker.profile.id" ? "other-profile" : key === "input.replay.version" ? 1 : key !== "input.hasPrompt"]) {
       const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Original prompt" }, {
         redact: observation => observation.name === "agent.invocation.start"

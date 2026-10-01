@@ -8,7 +8,7 @@ import {
   useConsoleSessionBootstrap,
 } from "../src/console/runtime/components/console-session-bootstrap";
 import { computed, effectScope, nextTick, ref, watch } from "vue";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const consolePage = readFileSync(
   new URL("../src/console/runtime/components/console-app.vue", import.meta.url),
@@ -266,3 +266,38 @@ describe.each(["agents-first", "invocations-first"] as const)(
     });
   },
 );
+
+// Execute the component's deletion handler with reactive state and a router boundary.
+it.each([false, true])("clears a deleted route before list changes when refresh fails: %s", async (refreshFails) => {
+  const selectedInvocationId = ref<string | undefined>("deleted");
+  const route = { name: "vitehub-console-invocation", params: { invocation: "deleted" as string | undefined } };
+  const selectedAgentName = ref("agent");
+  const list = {
+    invocations: ref([{ id: "deleted" }, { id: "remaining" }]),
+    refresh: vi.fn(async () => { if (refreshFails) throw new Error("Refresh failed"); }),
+  };
+  const closeDetails = vi.fn();
+  const router = { replace: vi.fn(async () => { route.params.invocation = undefined; }) };
+  const stop = watch(list.invocations, () => {
+    // A list change must not allow route synchronization to restore the deleted ID.
+    expect(route.params.invocation).toBeUndefined();
+    if (route.params.invocation) selectedInvocationId.value = route.params.invocation;
+  }, { flush: "sync" });
+  const source = consolePage.slice(consolePage.indexOf("async function removeDeletedInvocation("), consolePage.indexOf("async function startNewChat("))
+    .replace("(id: string): Promise<void>", "(id)");
+  // SAFETY: The function is read from the component and receives its declared dependencies.
+  const remove = new Function("list", "selectedAgentName", "route", "selectedInvocationId", "closeDetails", "router", "resolveConsoleRouteName", "encodeAgentRouteParam", `${source}; return removeDeletedInvocation;`)(
+    list, selectedAgentName, route, selectedInvocationId, closeDetails, router, (_name: unknown, target: string) => target, (name: string) => name,
+  ) as (id: string) => Promise<void>;
+  try {
+    await expect(remove("deleted")).resolves.toBeUndefined();
+    expect(router.replace).toHaveBeenCalledExactlyOnceWith({ name: "vitehub-console-agent", params: { agent: "agent" } });
+    expect(closeDetails).toHaveBeenCalledOnce();
+    expect(list.invocations.value).toEqual([{ id: "remaining" }]);
+    expect(selectedInvocationId.value).not.toBe("deleted");
+    expect(route.params.invocation).toBeUndefined();
+    expect(list.refresh).toHaveBeenCalledOnce();
+  } finally {
+    stop();
+  }
+});

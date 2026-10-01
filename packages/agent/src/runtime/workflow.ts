@@ -370,7 +370,6 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
         abortSignal: payload.input?.abortSignal ? AbortSignal.any([payload.input.abortSignal, channelOwnership.abortSignal]) : channelOwnership.abortSignal,
       }
     : { ...payload.input }
-  if (payload.callerAbortSignal) markAgentInvocationCallerAbortSignal(workflowInput, true)
 
   let channelDeliveryStatus: "completed" | "failed" = "failed"
   let channelDeliveryJournaled = !channelDelivery
@@ -403,6 +402,7 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
     if (payload.parsedInputData === true) {
       markParsedAgentWorkflowInput(restoredWorkflowInput, agent)
     }
+    if (payload.callerAbortSignal) markAgentInvocationCallerAbortSignal(restoredWorkflowInput, true)
     const inlineResult = await runAgentInline(
       agent,
       runtimeContext,
