@@ -670,7 +670,7 @@ function factoryCall(
     && (!["await", "yield", "return", "throw", "new", "typeof", "void", "delete", "in", "instanceof"].includes(previous) || (previous === "void" && tokens[index - 2] === ":"))
   // Method keys are declarations. A call can precede a ternary colon, so also
   // require the key to follow a property boundary or a method modifier.
-  if (["{", ":"].includes(after!) && (afterType || ["{", "}", ",", ";", "async", "get", "set", "*", "static", "public", "private", "protected", "abstract", "declare"].includes(previous)) && isMethodContainer(tokens, index)) return undefined
+  if (["{", ":"].includes(after!) && (afterType || ["{", "}", ",", ";", "async", "get", "set", "*", "static", "public", "private", "protected", "abstract", "declare", "override"].includes(previous)) && isMethodContainer(tokens, index)) return undefined
   return { name, open: next }
 }
 

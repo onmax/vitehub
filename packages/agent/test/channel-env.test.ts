@@ -99,6 +99,16 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it.each(["override", "public override"])("ignores %s method declarations but preserves calls in their bodies", (modifier) => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      class Base { telegram() {} }
+      class Derived extends Base {
+        ${modifier} telegram() { telegram({ botToken: token }) }
+      }
+    `)).toEqual([{ kind: "telegram", keys: ["botToken"] }])
+  })
+
   it("ignores method declarations while keeping calls inside method bodies", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
