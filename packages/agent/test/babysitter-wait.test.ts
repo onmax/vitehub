@@ -7,7 +7,7 @@ import { evaluateGitHubRequiredChecks } from "../src/server/github-required-chec
 
 const repository = "acme/app";
 const head = "a".repeat(40);
-const policy: BabysitterWaitPolicy = { workerAuthors: new Set(["repair-bot[bot]"]), pendingReviewChecks: new Set(["review-bot"]), wakeWhenReady: false };
+const policy: BabysitterWaitPolicy = { workerAuthors: new Set(["repair-bot[bot]"]), pendingReviewChecks: new Set(["review-bot"]), wakeWhenReady: false, noFindingsReviews: ["> ✅ No new issues found."] };
 
 async function parked(update: (snapshot: Snapshot) => void = () => {}): Promise<Snapshot> {
   const inbox = new PullRequestInbox({ path: ":memory:", repositories: [repository] });
@@ -40,6 +40,25 @@ describe("Babysitter check waits", () => {
   it("ignores feedback from the worker's own identity", async () => {
     const own = { id: 10, body: "Repair pushed", user: { login: "repair-bot[bot]" } };
     expect(shouldKeepWaiting(await parked(s => { s.comments["10"] = own }), "pending", policy)).toBe(true);
+  });
+
+  it("keeps waiting through an empty review and its no-findings verdict", async () => {
+    // A review bot submits an empty comment-only review, then edits it to its verdict.
+    const review = { id: 11, state: "COMMENTED", body: "", user: { login: "review-bot[bot]" } };
+    expect(shouldKeepWaiting(await parked(s => { s.reviews["11"] = review }), "pending", policy)).toBe(true);
+    const verdict = { ...review, body: "> ✅ No new issues found.\n\n**Reviewed changes**\n\nOne commit." };
+    expect(shouldKeepWaiting(await parked(s => { s.reviews["11"] = verdict }), "pending", policy)).toBe(true);
+    expect(shouldKeepWaiting(await parked(s => { s.reviews["11"] = verdict }), "pending", { ...policy, noFindingsReviews: [] })).toBe(false);
+  });
+
+  it("wakes for reviews that report findings or request changes", async () => {
+    for (const review of [
+      { id: 12, state: "COMMENTED", body: "> [!IMPORTANT]\n> This PR leaves two lifecycle gaps.", user: { login: "review-bot[bot]" } },
+      { id: 13, state: "CHANGES_REQUESTED", body: "", user: { login: "dev" } },
+      { id: 14, state: "COMMENTED", body: "Please split this module. > ✅ No new issues found.", user: { login: "reviewer" } },
+    ]) {
+      expect(shouldKeepWaiting(await parked(s => { s.reviews[String(review.id)] = review }), "pending", policy)).toBe(false);
+    }
   });
 
   it("wakes a ready PR only when the host can merge it", async () => {
