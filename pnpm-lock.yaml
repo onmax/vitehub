@@ -752,6 +752,9 @@ importers:
       nostics:
         specifier: catalog:runtime
         version: 1.2.0
+      proper-lockfile:
+        specifier: 'catalog:'
+        version: 4.1.2
       valibot:
         specifier: catalog:runtime
         version: 1.4.2(typescript@6.0.3)
@@ -777,6 +780,9 @@ importers:
       '@types/node':
         specifier: catalog:tooling
         version: 24.13.3
+      '@types/proper-lockfile':
+        specifier: 'catalog:'
+        version: 4.1.4
       '@vercel/functions':
         specifier: catalog:vercel
         version: 3.9.5(@aws-sdk/credential-provider-web-identity@3.972.76)(ws@8.21.3)
@@ -1194,9 +1200,6 @@ importers:
       pathe:
         specifier: catalog:unjs
         version: 2.0.3
-      proper-lockfile:
-        specifier: 'catalog:'
-        version: 4.1.2
       valibot:
         specifier: catalog:runtime
         version: 1.4.2(typescript@6.0.3)
@@ -1210,9 +1213,6 @@ importers:
       '@types/node':
         specifier: catalog:tooling
         version: 24.13.3
-      '@types/proper-lockfile':
-        specifier: 'catalog:'
-        version: 4.1.4
       '@vite-hub/internal':
         specifier: workspace:*
         version: link:../internal
