@@ -54,6 +54,7 @@ function errorResponse(error: unknown): Response {
     const status = {
       approval_required: 409,
       denied: 403,
+      execution_unknown: 409,
       invalid: 400,
       provider: 502,
       reauth_required: 409,
@@ -104,29 +105,26 @@ function sameOrigin(request: Request, url: URL): boolean {
 }
 
 async function readBody(request: Request): Promise<unknown> {
-  if (!request.body) return undefined
-  const reader = request.body.getReader()
-  const decoder = new TextDecoder()
-  let size = 0
-  let text = ""
+  if (!request.body) return undefined;
+  const reader = request.body.getReader();
+  const bytes = new Uint8Array(MAX_BODY_BYTES);
+  let size = 0;
   try {
-    while (true) {
-      const chunk = await reader.read()
-      if (chunk.done) break
-      size += chunk.value.byteLength
-      if (size > MAX_BODY_BYTES) {
-        await reader.cancel()
-        return undefined
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.byteLength > MAX_BODY_BYTES - size) {
+        await reader.cancel().catch(() => undefined);
+        return undefined;
       }
-      text += decoder.decode(chunk.value, { stream: true })
+      bytes.set(value, size);
+      size += value.byteLength;
     }
-    text += decoder.decode()
-  }
-  finally {
-    reader.releaseLock()
+  } finally {
+    reader.releaseLock();
   }
   try {
-    return JSON.parse(text);
+    return JSON.parse(new TextDecoder().decode(bytes.subarray(0, size)));
   } catch {
     return undefined;
   }

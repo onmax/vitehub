@@ -30,7 +30,7 @@ import type { RateLimitDeclaration, RateLimitModuleOptions, RateLimitRuntimeConf
 import { rateLimitErrorDiagnostics } from "./error-diagnostics.ts"
 
 export { discoverRateLimitDeclarations } from "./discovery.ts"
-export { inspectRateLimitDefinitions, type RateLimitInspectionOptions } from "./inspect.ts"
+export { inspectRateLimitDefinitions, type RateLimitInspectionOptions, rateLimitConsoleSection } from "./inspect.ts"
 
 const packageName = "@vite-hub/rate-limit"
 const pluginName = "@vite-hub/rate-limit/vite"
