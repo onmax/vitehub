@@ -336,6 +336,23 @@ describe("hubRateLimit", () => {
     expect(JSON.stringify(buildConfig.nitro ?? {})).not.toContain("dev-handler")
   })
 
+  it.each([false, true])("does not create or rewrite the dev token during CLI discovery with existing handler %s", async existing => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-rate-limit-cli-discovery-"))
+    roots.push(root)
+    const config = { build: { outDir: "dist" }, command: "serve", plugins: [], resolve: { alias: [] }, root }
+    const devHandler = join(root, ".vitehub", "nitro", "rate-limit", "dev-handler.ts")
+    let original: string | undefined
+    if (existing) {
+      const serverPlugin = hubRateLimit()
+      await (serverPlugin.configResolved as (config: unknown) => Promise<void>)(config as never)
+      original = await readFile(devHandler, "utf8")
+    }
+    const discoveryPlugin = hubRateLimit()
+    await (discoveryPlugin.configResolved as (config: unknown) => Promise<void>)({ ...config, vitehubCliDiscovery: true } as never)
+    if (existing) expect(await readFile(devHandler, "utf8")).toBe(original)
+    else await expect(access(devHandler)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
   it("contributes the `vitehub rate-limit` CLI commands", async () => {
     const cli = hubRateLimit().vitehub.cli
     const contributor = typeof cli === "function" ? await cli() : cli

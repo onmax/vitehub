@@ -201,6 +201,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
       ;(config as { nitro?: unknown }).nitro = nitro
     },
     async configResolved(config) {
+      const cliDiscovery = "vitehubCliDiscovery" in config && config.vitehubCliDiscovery === true
       resolved = config
       rateLimit = config.rateLimit ?? rateLimit
       composedOutput = useProviderOutputCatalog(config)
@@ -227,7 +228,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
       await Promise.all([
         writeFileIfChanged(pluginFile, renderRuntimeInstaller(runtimeConfig, importBase, true)),
         writeFileIfChanged(runtimeFile, renderRuntimeInstaller(runtimeConfig, importBase, false)),
-        ...(config.command === "serve" && devHandler
+        ...(config.command === "serve" && !cliDiscovery && devHandler
           ? [writeFileIfChanged(devHandler, renderViteHubNitroDevHandler({ arguments: [runtimeToken], export: "handleRateLimitDevRequest", module: `${importBase}/runtime/console` }))]
           : []),
       ])

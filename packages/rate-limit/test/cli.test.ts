@@ -96,6 +96,21 @@ describe("Rate Limit review regressions", () => {
     expect(output.stdout.output() + output.stderr.output()).toContain("[redacted]")
   })
 
+  it.each([false, true])("handles interrupted error-response bodies with JSON %s", async json => {
+    const output = context()
+    const response = new Response(new ReadableStream({ start(controller) { controller.error(new Error("body interrupted")) } }), { status: 500 })
+    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json({ root: rootDir, runtime: "nitro" }))
+    await expect(runRateLimitCli(["peek", "login", "key", ...(json ? ["--json"] : [])], output.context, { fetch })).resolves.toBe(1)
+    if (json) {
+      expect(JSON.parse(output.stdout.output()).error.message).toContain("body interrupted")
+      expect(output.stderr.output()).toBe("")
+    }
+    else {
+      expect(output.stderr.output()).toContain("body interrupted")
+      expect(output.stdout.output()).toBe("")
+    }
+  })
+
   it("applies timeout to discovery", async () => {
     const output = context()
     const fetch = vi.fn((_url: string | URL | Request, request?: RequestInit) => new Promise<Response>((_resolve, reject) => {
