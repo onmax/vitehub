@@ -222,7 +222,7 @@ Read the complete [Env guide](https://vitehub.dev/docs/server-primitives/env), t
 
 ### Managed credentials
 
-`createEnvBridge` from `@vite-hub/env/bridge` adapts a secret store to Env with credential-scoped permissions and durable activity. `createDatabaseEnvStore` from `@vite-hub/env/database` supplies encrypted storage, grants, and activity using a ViteHub SQLite/Drizzle database. Keep its 32-byte encryption key in host configuration and back it up separately from the database.
+`createEnvBridge` from `@vite-hub/env/bridge` adapts a secret store to Env with credential-scoped permissions and durable activity. `createDatabaseEnvStore` from `@vite-hub/env/database` supplies encrypted storage, grants, and activity using a ViteHub SQLite/Drizzle database. Use `await store.revisionCondition(key, revision)` to build a SQL predicate that updates related metadata only while that secret revision is current. A `null` revision requires the secret to be absent. Keep its 32-byte encryption key in host configuration and back it up separately from the database.
 
 `@vite-hub/env/seal` exports the AES-GCM helpers that the database store uses: `importSealKey`, `seal`, `unseal`, and `sealKeyId`. Other owner packages use them to store sealed values in the same format.
 

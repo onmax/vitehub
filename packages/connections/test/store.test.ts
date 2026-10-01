@@ -99,3 +99,20 @@ describe("approval execution leases", () => {
     }
   })
 })
+
+it("updates Connection metadata atomically at the token revision", async () => {
+  const client = createClient({ url: ":memory:" })
+  try {
+    const store = createDatabaseConnectionStore({ db: drizzle(client), encryptionKey: new Uint8Array(32).fill(9) })
+    const state = { name: "mail", scopes: ["mail.read"], status: "connected" as const, updatedAt: "2026-09-30T00:00:00Z" }
+    expect(await store.state.putForToken(state, null)).toBe(true)
+    const first = await store.secrets.replace({ key: "connection/mail", value: "token-one", expectedRevision: null })
+    expect(await store.state.putForToken(state, null)).toBe(false)
+    expect(await store.state.putForToken(state, first.revision)).toBe(true)
+    const second = await store.secrets.replace({ key: "connection/mail", value: "token-two", expectedRevision: first.revision })
+    expect(await store.state.putForToken({ ...state, status: "revoked" }, second.revision)).toBe(true)
+    expect(await store.state.putForToken(state, first.revision)).toBe(false)
+    expect(await store.state.get("mail")).toMatchObject({ status: "revoked" })
+  }
+  finally { client.close() }
+})

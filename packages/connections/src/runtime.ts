@@ -314,17 +314,24 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return token.expiresAt !== undefined && token.expiresAt - now() < REFRESH_WINDOW_MS
   }
 
-  async function setStatus(name: string, patch: Partial<ConnectionState>): Promise<void> {
+  async function setStatus(name: string, patch: Partial<ConnectionState>, revision: string | null): Promise<boolean> {
     const connections = await getStore()
     const current = await connections.state.get(name)
-    await connections.state.put({
+    const state: ConnectionState = {
       name,
       scopes: [],
       status: "connected",
       ...current,
       ...patch,
       updatedAt: new Date(now()).toISOString(),
-    })
+    }
+    return await connections.state.putForToken(state, revision)
+  }
+
+  async function readCurrentToken(name: string): Promise<StoredToken> {
+    const current = await (await getStore()).secrets.read(tokenKey(name))
+    if (!current) throw new ConnectionError("reauth_required", `Connection "${name}" is not connected.`, { details: { connection: name } })
+    return parseToken(current.value, name)
   }
 
   /**
@@ -336,11 +343,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const key = tokenKey(name)
     const stored = await connections.secrets.read(key)
     if (!stored) throw new ConnectionError("reauth_required", `Connection "${name}" is not connected.`, { details: { connection: name } })
+    if (!stored.revision) throw new ConnectionError("invalid", "The Connection secret store must return token revisions.")
     const latest = parseToken(stored.value, name)
     if (latest.accessToken !== stale && !expiresSoon(latest)) return latest
     if (!force && !expiresSoon(latest)) return latest
     if (!latest.refreshToken) {
-      await setStatus(name, { status: "reauth_required" })
+      if (!await setStatus(name, { status: "reauth_required" }, stored.revision)) return await readCurrentToken(name)
       throw new ConnectionError("reauth_required", `Connection "${name}" has no refresh token. Connect it again.`, { details: { connection: name } })
     }
     let response: ConnectionTokenResponse
@@ -349,14 +357,16 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     }
     catch (error) {
       if (isConnectionError(error) && error.reason === "reauth_required") {
-        await setStatus(name, { status: "reauth_required" })
+        if (!await setStatus(name, { status: "reauth_required" }, stored.revision)) return await readCurrentToken(name)
         throw new ConnectionError("reauth_required", `Connection "${name}" must be connected again. Run \`vitehub connections connect ${name}\`.`, { details: { connection: name } })
       }
       throw error
     }
     const next = toStoredToken(response, latest)
+    let revision: string
     try {
-      await connections.bridge.replace(envContext("connections"), { expectedRevision: stored.revision ?? null, key, value: JSON.stringify(next) })
+      const replacement = await connections.bridge.replace(envContext("connections"), { expectedRevision: stored.revision ?? null, key, value: JSON.stringify(next) })
+      revision = replacement.revision
     }
     catch (error) {
       if (!isEnvBridgeError(error, "ENV_BRIDGE_CONFLICT")) throw error
@@ -365,7 +375,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       if (!current) throw new ConnectionError("reauth_required", `Connection "${name}" is not connected.`, { details: { connection: name } })
       return parseToken(current.value, name)
     }
-    await setStatus(name, { refreshedAt: new Date(now()).toISOString(), scopes: next.scopes })
+    await setStatus(name, { refreshedAt: new Date(now()).toISOString(), scopes: next.scopes, status: "connected" }, revision)
     return next
   }
 
@@ -625,9 +635,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),
     ])
     token.accountId = account?.id
-    await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
+    const replacement = await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
     const timestamp = new Date(now()).toISOString()
-    await connections.state.put({
+    await connections.state.putForToken({
       accountEmail: account?.email,
       accountId: account?.id,
       connectedAt: timestamp,
@@ -636,7 +646,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       scopes: token.scopes,
       status: "connected",
       updatedAt: timestamp,
-    })
+    }, replacement.revision)
     return await inspect(name)
   }
 
@@ -658,6 +668,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const key = tokenKey(input.name)
     const actor = input.actor ?? "user:local"
     const stored = await connections.secrets.inspect(key)
+    let revision: string | null = null
     if (stored) {
       await connections.bridge.use(envContext(actor), key, "revoke", async (secret) => {
         let token: StoredToken | undefined
@@ -668,9 +679,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         if (token) await revokeProviderToken(loaded, token.refreshToken ?? token.accessToken)
       })
       // Env Bridge has no delete. A revoked marker replaces the token.
-      await connections.bridge.replace(envContext(actor), { expectedRevision: stored.revision, key, value: JSON.stringify({ revoked: true }) })
+      const replacement = await connections.bridge.replace(envContext(actor), { expectedRevision: stored.revision, key, value: JSON.stringify({ revoked: true }) })
+      revision = replacement.revision
     }
-    await setStatus(input.name, { status: "revoked" })
+    await setStatus(input.name, { status: "revoked" }, revision)
     return await inspect(input.name)
   }
 

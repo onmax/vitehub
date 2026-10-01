@@ -53,6 +53,8 @@ export interface ConnectionStore {
   state: {
     get: (name: string) => Promise<ConnectionState | undefined>
     put: (state: ConnectionState) => Promise<void>
+    /** Write metadata only while the Connection token still has this revision. */
+    putForToken: (state: ConnectionState, revision: string | null) => Promise<boolean>
   }
 }
 
@@ -203,6 +205,12 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
       async put(state) {
         await initialize()
         await db.run(sql`INSERT INTO vitehub_connection_state (name, status, account_id, account_email, scopes, connected_at, refreshed_at, updated_at) VALUES (${state.name}, ${state.status}, ${state.accountId ?? null}, ${state.accountEmail ?? null}, ${JSON.stringify(state.scopes)}, ${state.connectedAt ?? null}, ${state.refreshedAt ?? null}, ${state.updatedAt}) ON CONFLICT (name) DO UPDATE SET status = excluded.status, account_id = excluded.account_id, account_email = excluded.account_email, scopes = excluded.scopes, connected_at = excluded.connected_at, refreshed_at = excluded.refreshed_at, updated_at = excluded.updated_at`)
+      },
+      async putForToken(state, revision) {
+        await initialize()
+        const condition = await envStore.revisionCondition(`connection/${state.name}`, revision)
+        const rows = await db.all(sql`INSERT INTO vitehub_connection_state (name, status, account_id, account_email, scopes, connected_at, refreshed_at, updated_at) SELECT ${state.name}, ${state.status}, ${state.accountId ?? null}, ${state.accountEmail ?? null}, ${JSON.stringify(state.scopes)}, ${state.connectedAt ?? null}, ${state.refreshedAt ?? null}, ${state.updatedAt} WHERE ${condition} ON CONFLICT (name) DO UPDATE SET status = excluded.status, account_id = excluded.account_id, account_email = excluded.account_email, scopes = excluded.scopes, connected_at = excluded.connected_at, refreshed_at = excluded.refreshed_at, updated_at = excluded.updated_at WHERE ${condition} RETURNING name`)
+        return rows.length === 1
       },
     },
     authorizations: {

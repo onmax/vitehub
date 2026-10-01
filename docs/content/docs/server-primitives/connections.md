@@ -75,6 +75,8 @@ Start the development server, then run:
 vitehub connections connect google --port 8976
 ```
 
+Connection state writes are conditional on the current encrypted token revision. A delayed callback or failed refresh cannot replace metadata from a newer grant or revoke.
+
 The command prints the provider URL. Open it, grant access, and the loopback callback stores the token. A Connection has one account. To change the account, revoke the Connection first.
 
 In production, configure `hubConnections({ database: 'vite-hub/database/drizzle', management: { actor: './server/connections-actor.ts' } })`. The actor module must export a default function that checks the request's authenticated session and returns `user:<id>`, or `undefined` to deny access. `management: true` fails the production build because it has no authenticated identity resolver.

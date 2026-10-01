@@ -82,3 +82,5 @@ Development uses `user:local` when no actor module is configured. A directly mou
 `pnpm --dir packages/connections run generate` reads the Google Discovery document and writes `src/google/gmail.ts`.
 
 See the [Connections documentation](https://vitehub.dev/docs/server-primitives/connections).
+
+Connection stores must implement `state.putForToken(state, revision)` as an atomic write that succeeds only while the encrypted token has that revision. A `null` revision requires the token to be absent. OAuth, refresh, and revocation use this check so older work cannot replace newer Connection metadata.

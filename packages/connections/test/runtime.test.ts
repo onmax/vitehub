@@ -79,6 +79,77 @@ describe("connect", () => {
     expect(await test.runtime.inspect("mail")).toMatchObject({ scopes: { granted: ["openid"], missing: ["mail.modify"] } })
   })
 
+  it("does not let a stale failed refresh invalidate a reconnected account", async () => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    let enter!: () => void
+    let resume!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const release = new Promise<void>(resolve => { resume = resolve })
+    const request = test.provider.fetch
+    test.runtime = createConnectionsRuntime({ definitions: { mail: mailConnection() }, store: test.store, now: () => test.now.value, fetch: async (input, init) => {
+      if (String(init?.body).includes("grant_type=refresh_token")) {
+        enter()
+        await release
+        return Response.json({ error: "invalid_grant" }, { status: 400 })
+      }
+      return await request(input, init)
+    } })
+    const call = test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    await entered
+    await connect(test)
+    resume()
+    await expect(call).resolves.toMatchObject({ labels: [{ id: "INBOX" }] })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
+  })
+
+  it("restores connected state when another refresh fails before the winning refresh", async () => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    let enter!: () => void
+    let resume!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const release = new Promise<void>(resolve => { resume = resolve })
+    const options = { definitions: { mail: mailConnection() }, store: test.store, now: () => test.now.value }
+    const winner = createConnectionsRuntime({ ...options, fetch: async (input, init) => {
+      if (String(init?.body).includes("grant_type=refresh_token")) {
+        enter()
+        await release
+        return Response.json({ access_token: ACCESS_TOKEN, expires_in: 3600 })
+      }
+      return await test.provider.fetch(input, init)
+    } })
+    const loser = createConnectionsRuntime({ ...options, fetch: async (input, init) => String(init?.body).includes("grant_type=refresh_token")
+      ? Response.json({ error: "invalid_grant" }, { status: 400 })
+      : await test.provider.fetch(input, init) })
+    const call = winner.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    await entered
+    await expect(loser.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    resume()
+    await call
+    expect(await winner.inspect("mail")).toMatchObject({ status: "connected" })
+  })
+
+  it("does not resurrect state when revocation follows token replacement", async () => {
+    const test = createTestRuntime()
+    let enter!: () => void
+    let resume!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const release = new Promise<void>(resolve => { resume = resolve })
+    const put = test.store.state.putForToken
+    test.store.state.putForToken = async (state, revision) => {
+      if (state.status === "connected") { enter(); await release }
+      return await put(state, revision)
+    }
+    const callback = connect(test)
+    await entered
+    await test.runtime.revoke({ name: "mail" })
+    resume()
+    await callback
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "revoked" })
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+  })
+
   it("keeps one account per Connection", async () => {
     const test = createTestRuntime()
     await connect(test)
@@ -99,11 +170,11 @@ describe("connect", () => {
     let resume!: () => void
     const entered = new Promise<void>(resolve => { enter = resolve })
     const release = new Promise<void>(resolve => { resume = resolve })
-    const put = test.store.state.put
-    test.store.state.put = async (state) => {
+    const put = test.store.state.putForToken
+    test.store.state.putForToken = async (state, revision) => {
       enter()
       await release
-      await put(state)
+      return await put(state, revision)
     }
     const first = connect(test)
     await entered
