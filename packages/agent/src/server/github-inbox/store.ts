@@ -692,7 +692,9 @@ export class PullRequestInbox {
         for (const row of meta) {
           const key = stringValue(row.key)
           if (key.startsWith('snapshot-probe:') || key === 'snapshot-reconcile-next') continue
-          await tx.execute(`INSERT OR REPLACE INTO ${this.tables.meta} (scope, key, value) VALUES (?,?,?)`, [this.scope, key, stringValue(row.value)])
+          // Destination metadata is authoritative when both files contain a key.
+          // Preserve newer durable evidence during the one-shot migration.
+          await tx.execute(`INSERT OR IGNORE INTO ${this.tables.meta} (scope, key, value) VALUES (?,?,?)`, [this.scope, key, stringValue(row.value)])
         }
         for (const row of deliveries) {
           await tx.execute(`INSERT OR IGNORE INTO ${this.tables.deliveries} (scope, id, event, received, payload, result) VALUES (?,?,?,?,NULL,NULL)`,
