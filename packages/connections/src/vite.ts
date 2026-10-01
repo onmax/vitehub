@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises"
+import { readFile, rm } from "node:fs/promises"
 import { resolve } from "node:path";
 
 import * as v from "valibot";
@@ -24,7 +24,18 @@ export const CONNECTIONS_VITE_PLUGIN_NAME = "@vite-hub/connections/vite";
 
 const resolvedConnectionsRegistryId = `\0${CONNECTIONS_REGISTRY_ID}`;
 const noExternalAddition = createNoExternalAddition("@vite-hub/connections");
-const generatedConnectionsTypeRoots = new Set<string>();
+const connectionsTypeRootsFile = (projectRoot: string): string =>
+  resolve(projectRoot, ".vitehub", "types", "connections-roots.json");
+
+async function readGeneratedConnectionsTypeRoots(projectRoot: string): Promise<string[]> {
+  try {
+    const contents = await readFile(connectionsTypeRootsFile(projectRoot), "utf8");
+    const roots: unknown = JSON.parse(contents);
+    return Array.isArray(roots) && roots.every(root => typeof root === "string") ? roots : [];
+  } catch {
+    return [];
+  }
+}
 
 export interface ConnectionsVitePluginOptions {
   /** Module that exports the ViteHub Database as `db`. Set `false` when the app has no database. */
@@ -117,13 +128,15 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
   }
 
   async function refreshGeneratedFiles(): Promise<void> {
-    generatedConnectionsTypeRoots.add(projectRoot)
     if (projectRoot !== defaultProjectRoot) await rm(resolve(defaultProjectRoot, ".vitehub/types/connections.d.ts"), { force: true })
+    const roots = await readGeneratedConnectionsTypeRoots(defaultProjectRoot);
+    if (!roots.includes(projectRoot)) roots.push(projectRoot);
     await Promise.all([
       writeFileIfChanged(
         resolve(projectRoot, ".vitehub", "types", "connections.d.ts"),
         renderRegistryTypes(definitions),
       ),
+      writeFileIfChanged(connectionsTypeRootsFile(defaultProjectRoot), `${JSON.stringify(roots)}\n`),
       ...(nitroRegistryFile
         ? [writeFileIfChanged(nitroRegistryFile, renderRegistry(definitions, database))]
         : []),
@@ -262,9 +275,11 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
 export function hubConnectionsTypesCleanup(): Plugin<{ prepareTypes: (options: { projectRoot: string }) => Promise<void> }> {
   const prepareTypes = async (options: { projectRoot: string }): Promise<void> => {
     const root = resolveViteHubProjectRoot(options.projectRoot)
+    const generatedRoots = await readGeneratedConnectionsTypeRoots(root)
     await Promise.all([
       rm(resolve(root, ".vitehub/types/connections.d.ts"), { force: true }),
-      ...Array.from(generatedConnectionsTypeRoots, projectRoot =>
+      rm(connectionsTypeRootsFile(root), { force: true }),
+      ...generatedRoots.map(projectRoot =>
         rm(resolve(projectRoot, ".vitehub/types/connections.d.ts"), { force: true }),
       ),
     ])
