@@ -960,6 +960,12 @@ export type AgentInvocationRerunUnavailableReason =
   | "input-has-data"
   /** The Invocation received call options, which the journal does not replay. */
   | "input-has-options"
+  /** The Invocation received context values, which the journal does not replay. */
+  | "input-has-context"
+  /** The Invocation had runtime run metadata, which the journal does not replay. */
+  | "input-has-run"
+  /** The Invocation had a timeout, which the journal does not replay. */
+  | "input-has-timeout"
   /** The journal redactor changed the captured input or replay metadata. */
   | "input-redacted"
   /** The journal bounded the captured prompt or selected Invoker Profile. */
@@ -992,9 +998,12 @@ export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "o
   if (attributes["input.hasMessages"] === true || attributes["input.messages"] !== undefined) return { available: false, reason: "input-has-messages" }
   const prompt = attributes["input.prompt"]
   if (!hasRuntimeType(prompt, "string") || !prompt.trim()) return { available: false, reason: "input-not-captured" }
-  if (attributes["input.replay.version"] !== 1 || ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages"]
+  if (attributes["input.replay.version"] !== 1 || ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasContext", "input.hasRun", "input.hasTimeout", "input.hasMessages"]
     .some(key => !hasRuntimeType(attributes[key], "boolean"))) return { available: false, reason: "replay-metadata-unavailable" }
   if (attributes["input.hasInvoker"] === true) return { available: false, reason: "input-has-invoker" }
+  if (attributes["input.hasContext"] === true) return { available: false, reason: "input-has-context" }
+  if (attributes["input.hasRun"] === true) return { available: false, reason: "input-has-run" }
+  if (attributes["input.hasTimeout"] === true) return { available: false, reason: "input-has-timeout" }
   const invokerProfileId = attributes["agent.invoker.profile.id"]
   return { available: true, ...hasRuntimeType(invokerProfileId, "string") && invokerProfileId ? { invokerProfileId } : {}, prompt }
 }
@@ -1814,7 +1823,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const identity = observationIdentity(observation)
       if (!redacted) return
       const inputRedacted = observation.name === "agent.invocation.start"
-        && ["input.prompt", "input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt"]
+        && ["input.prompt", "input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasContext", "input.hasRun", "input.hasTimeout", "input.hasMessages", "input.hasPrompt"]
           .some(key => observation.attributes?.[key] !== redacted.attributes?.[key])
       return {
         ...redacted,

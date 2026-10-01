@@ -37,7 +37,7 @@ async function journaled(input: Parameters<typeof runAgent>[2], options: Partial
 }
 
 const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
-  attributes: { "input.replay.version": 1, "input.hasInvoker": false, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false, ...attributes },
+  attributes: { "input.replay.version": 1, "input.hasInvoker": false, "input.hasData": false, "input.hasOptions": false, "input.hasContext": false, "input.hasRun": false, "input.hasTimeout": false, "input.hasMessages": false, ...attributes },
   name: "agent.invocation.start",
   sequence: 1,
   timestamp: new Date(0).toISOString(),
@@ -96,7 +96,7 @@ describe("agentInvocationRerunInput", () => {
     }
   })
 
-  it.each(["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages"])("rejects replay metadata missing %s", (key) => {
+  it.each(["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasContext", "input.hasRun", "input.hasTimeout", "input.hasMessages"])("rejects replay metadata missing %s", (key) => {
     const observation = start({ "input.prompt": "Hi" })
     delete observation.attributes![key]
     expect(agentInvocationRerunInput({ observations: [observation] }))
@@ -123,7 +123,7 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
   })
 
-  it.each(["input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt"])("rejects replay when redaction changes %s", async (key) => {
+  it.each(["input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasContext", "input.hasRun", "input.hasTimeout", "input.hasMessages", "input.hasPrompt"])("rejects replay when redaction changes %s", async (key) => {
     for (const replacement of [undefined, key === "agent.invoker.profile.id" ? "other-profile" : key === "input.replay.version" ? 2 : key !== "input.hasPrompt"]) {
       const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Original prompt" }, {
         redact: observation => observation.name === "agent.invocation.start"
@@ -142,7 +142,7 @@ describe("agentInvocationRerunInput", () => {
     ]) {
       const record = await journaled(input, {
         redact: observation => observation.name === "agent.invocation.start"
-          ? { ...observation, attributes: { ...observation.attributes, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false } }
+          ? { ...observation, attributes: { ...observation.attributes, "input.hasData": false, "input.hasOptions": false, "input.hasContext": false, "input.hasRun": false, "input.hasTimeout": false, "input.hasMessages": false } }
           : observation,
       })
       expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
@@ -157,6 +157,16 @@ describe("agentInvocationRerunInput", () => {
     const withOptions = await journaled({ options: { temperature: 0.2 }, prompt: "Use the configured model." })
     expect(withOptions.observations.find(observation => observation.name === "agent.invocation.start")?.attributes?.["input.hasOptions"]).toBe(true)
     expect(agentInvocationRerunInput(withOptions)).toEqual({ available: false, reason: "input-has-options" })
+
+    const withContext = await journaled({ context: { trustedScope: "customer-a" }, prompt: "Use the customer scope." })
+    expect(agentInvocationRerunInput(withContext)).toEqual({ available: false, reason: "input-has-context" })
+
+    const withRun = await journaled({ prompt: "Use the run metadata." }, {}, undefined, "reviewer")
+    withRun.observations.find(observation => observation.name === "agent.invocation.start")!.attributes!["input.hasRun"] = true
+    expect(agentInvocationRerunInput(withRun)).toEqual({ available: false, reason: "input-has-run" })
+
+    const withTimeout = await journaled({ prompt: "Respect the deadline.", timeout: 1000 })
+    expect(agentInvocationRerunInput(withTimeout)).toEqual({ available: false, reason: "input-has-timeout" })
 
     const withMessages = await journaled({ messages: [createMessage({ role: "user", text: "Earlier turn" })], prompt: "Continue." })
     expect(agentInvocationRerunInput(withMessages)).toEqual({ available: false, reason: "input-has-messages" })
