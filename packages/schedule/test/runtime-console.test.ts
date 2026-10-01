@@ -12,11 +12,15 @@ import {
 import type { RuntimeScheduleSummary, ScheduleRunAttemptSummary, ScheduleRunSummary } from "../src/runtime/console.ts"
 import type { RuntimeScheduleRecord } from "../src/types.ts"
 import { createMemoryScheduleRunStore } from "../src/runtime/store.ts"
-import { handleScheduleDevRequest } from "../src/runtime/dev.ts"
+import { handleScheduleDevRequest as handleAuthenticatedScheduleDevRequest } from "../src/runtime/dev.ts"
 import { nextRuntimeScheduleRunAt } from "../src/runtime/due.ts"
 import { resetScheduleRuntime, setScheduleRunStore, setScheduleRuntimeRegistry, setScheduleWakeDriverActive } from "../src/runtime/state.ts"
 
 let credential: { serverId: string, token: string }
+
+function handleScheduleDevRequest(request: Request) {
+  return handleAuthenticatedScheduleDevRequest(request, { rootDir: process.cwd(), serverId: credential.serverId })
+}
 
 beforeEach(async () => { credential = await createViteHubDevToken(process.cwd(), scheduleDevTokenNamespace) })
 
@@ -225,7 +229,7 @@ describe("Runtime Schedule inspection", () => {
 })
 
 describe("Schedule dev request handler", () => {
-  it("rejects a credential from a superseded server instance", async () => {
+  it("rejects another instance credential at the replacement server handler", async () => {
     const previous = credential
     const replacement = await createViteHubDevToken(process.cwd(), scheduleDevTokenNamespace)
     try {
@@ -235,7 +239,10 @@ describe("Schedule dev request handler", () => {
           [scheduleDevTokenServerHeader]: previous.serverId,
         },
       })
-      expect((await handleScheduleDevRequest(request)).status).toBe(403)
+      expect((await handleAuthenticatedScheduleDevRequest(request, {
+        rootDir: process.cwd(), serverId: replacement.serverId,
+      })).status).toBe(403)
+      expect((await handleScheduleDevRequest(request)).status).toBe(200)
     }
     finally {
       await removeViteHubDevToken(process.cwd(), { namespace: scheduleDevTokenNamespace, serverId: replacement.serverId })

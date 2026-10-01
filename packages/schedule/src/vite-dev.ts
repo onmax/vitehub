@@ -14,6 +14,8 @@ export type ScheduleDevServer = ViteHubNitroDevServer & {
 }
 
 export interface ScheduleDevEndpointOptions {
+  /** Server identity already embedded in the generated Nitro handler. */
+  serverId?: string
   /** Nitro `baseURL`. Nitro routes use this prefix. */
   nitroBaseURL?: () => string | undefined
 }
@@ -27,7 +29,7 @@ export interface ScheduleDevEndpointOptions {
  */
 export async function registerScheduleDevEndpoint(server: ScheduleDevServer, options: ScheduleDevEndpointOptions = {}): Promise<() => Promise<void>> {
   const rootDir = server.config.root
-  const { serverId, token } = await createViteHubDevToken(rootDir, scheduleDevTokenNamespace)
+  const { serverId, token } = await createViteHubDevToken(rootDir, scheduleDevTokenNamespace, options.serverId)
   const close = () => removeViteHubDevToken(rootDir, { namespace: scheduleDevTokenNamespace, serverId })
   server.httpServer?.once("close", () => { void close().catch(() => {}) })
   try {
