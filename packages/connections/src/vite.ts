@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
-import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { lstat, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path";
 
-import { lock } from "proper-lockfile";
 import * as v from "valibot";
 
 import {
@@ -16,6 +15,7 @@ import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog";
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit";
 
 import { discoverConnectionDefinitions } from "./discovery.ts";
+import { withConnectionsTypesLock } from "./internal/types-lock.ts";
 
 import type { ViteHubCliContributor } from "@vite-hub/internal/cli";
 import type { Plugin, ResolvedConfig } from "vite";
@@ -61,17 +61,7 @@ async function readOptionalFile(file: string): Promise<string | undefined> {
 }
 
 async function withManifestLock<T>(root: string, action: () => Promise<T>): Promise<T> {
-  await mkdir(resolve(root, ".vitehub"), { recursive: true });
-  const release = await lock(resolve(root, generatedTypesManifest), {
-    realpath: false,
-    stale: 10_000,
-    retries: { retries: 100, minTimeout: 10, maxTimeout: 1000 },
-  });
-  try {
-    return await action();
-  } finally {
-    await release();
-  }
+  return await withConnectionsTypesLock(resolve(root, `${generatedTypesManifest}.lock`), action);
 }
 
 async function readManifest(root: string) {
