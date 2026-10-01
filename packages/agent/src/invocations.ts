@@ -232,6 +232,7 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   /** Whether this journal holds the store execution claim, lost it, or could not reach the store. */
   readonly createdNew: boolean
   readonly claimStatus?: "owned" | "conflict" | "unavailable"
+  ready(): Promise<void>
   context: AgentRuntimeContext<TRuntimeConfig>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
   getWorkflowDispatchAttempted(): Promise<boolean | undefined>
@@ -2032,6 +2033,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       }
       return {
         get createdNew() { return createdNew },
+        async ready() {},
         get claimStatus() { return ownsRecord ? "owned" : claimUnavailable ? "unavailable" : "conflict" },
         async getWorkflowDispatchAttempted() {
           const record = await boundedStoreOperation(() => store.getSummary(recordId))
