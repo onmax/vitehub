@@ -22,6 +22,29 @@ async function viteHubDevTokenActiveFile(rootDir: string, namespace: string): Pr
   return join(tmpdir(), "vitehub-dev-tokens", hash(namespace), hash(resolve(rootDir)), "active")
 }
 
+async function withViteHubDevTokenActiveLock<T>(rootDir: string, namespace: string, action: () => Promise<T>): Promise<T> {
+  const [{ mkdir, rm }, { dirname, join }] = await Promise.all([import("node:fs/promises"), import("node:path")])
+  const active = await viteHubDevTokenActiveFile(rootDir, namespace)
+  const lock = join(dirname(active), "active.lock")
+  await mkdir(dirname(lock), { mode: 0o700, recursive: true })
+  for (;;) {
+    try {
+      await mkdir(lock, { mode: 0o700 })
+      break
+    }
+    catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+  }
+  try {
+    return await action()
+  }
+  finally {
+    await rm(lock, { recursive: true, force: true })
+  }
+}
+
 export async function createViteHubDevToken(rootDir: string, namespace: string): Promise<{ serverId: string, token: string }> {
   const serverId = globalThis.crypto.randomUUID()
   const token = [...globalThis.crypto.getRandomValues(new Uint8Array(32))].map(byte => byte.toString(16).padStart(2, "0")).join("")
@@ -29,11 +52,13 @@ export async function createViteHubDevToken(rootDir: string, namespace: string):
   const file = await viteHubDevTokenFile(rootDir, { namespace, serverId })
   await mkdir(dirname(file), { mode: 0o700, recursive: true })
   await writeFile(file, `${token}\n`, { flag: "wx", mode: 0o600 })
-  const active = await viteHubDevTokenActiveFile(rootDir, namespace)
-  await mkdir(dirname(active), { mode: 0o700, recursive: true })
-  const temporary = join(dirname(active), `.active-${serverId}`)
-  await writeFile(temporary, `${serverId}\n${token}\n`, { mode: 0o600 })
-  await rename(temporary, active)
+  await withViteHubDevTokenActiveLock(rootDir, namespace, async () => {
+    const active = await viteHubDevTokenActiveFile(rootDir, namespace)
+    await mkdir(dirname(active), { mode: 0o700, recursive: true })
+    const temporary = join(dirname(active), `.active-${serverId}`)
+    await writeFile(temporary, `${serverId}\n${token}\n`, { mode: 0o600 })
+    await rename(temporary, active)
+  })
   return { serverId, token }
 }
 
@@ -73,9 +98,19 @@ export async function readViteHubDevToken(rootDir: string, scope: ViteHubDevToke
 }
 
 export async function removeViteHubDevToken(rootDir: string, scope: ViteHubDevTokenScope): Promise<void> {
-  const [{ rm, rmdir }, { dirname }] = await Promise.all([import("node:fs/promises"), import("node:path")])
+  const [{ readFile, rm, rmdir }, { dirname }] = await Promise.all([import("node:fs/promises"), import("node:path")])
   const file = await viteHubDevTokenFile(rootDir, scope)
-  await rm(file, { force: true })
-  // Leave the active snapshot in place. A superseded server must never remove a replacement's marker.
-  await rmdir(dirname(file)).catch(() => {})
+  await withViteHubDevTokenActiveLock(rootDir, scope.namespace, async () => {
+    const active = await viteHubDevTokenActiveFile(rootDir, scope.namespace)
+    let activeServerId: string | undefined
+    try {
+      activeServerId = (await readFile(active, "utf8")).split("\n", 1)[0]?.trim() || undefined
+    }
+    catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
+    }
+    if (activeServerId === scope.serverId) await rm(active, { force: true })
+    await rm(file, { force: true })
+    await rmdir(dirname(file)).catch(() => {})
+  })
 }

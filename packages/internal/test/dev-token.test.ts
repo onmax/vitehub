@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { describe, expect, it } from "vitest"
 
-import { createViteHubDevToken, readViteHubDevToken, removeViteHubDevToken, viteHubDevTokenFile } from "../src/dev-token.ts"
+import { createViteHubDevToken, readViteHubDevToken, readViteHubDevTokenActive, removeViteHubDevToken, viteHubDevTokenFile } from "../src/dev-token.ts"
 
 describe("private dev tokens", () => {
   it("isolates credentials by project, namespace, and server and removes only the closed server token", async () => {
@@ -23,6 +23,9 @@ describe("private dev tokens", () => {
       await removeViteHubDevToken(root, scope)
       expect(await readViteHubDevToken(root, scope)).toBeUndefined()
       expect(await readViteHubDevToken(root, { ...scope, serverId: second.serverId })).toBe(second.token)
+      expect(await readViteHubDevTokenActive(root, "schedule")).toMatchObject(second)
+      await removeViteHubDevToken(root, { ...scope, serverId: second.serverId })
+      expect(await readViteHubDevTokenActive(root, "schedule")).toBeUndefined()
     }
     finally {
       await removeViteHubDevToken(root, scope)
