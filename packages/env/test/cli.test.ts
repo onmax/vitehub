@@ -177,13 +177,33 @@ async function createStageFixture(): Promise<string> {
   return root
 }
 
-function realFeature(name: "check" | "inspect"): ViteHubCliFeature {
-  const found = hubEnv().vitehub.cli().namespaces[0]?.features.find(item => item.name === name)
+function realFeature(name: "check" | "inspect", projectRoot?: string): ViteHubCliFeature {
+  const found = hubEnv({ projectRoot }).vitehub.cli().namespaces[0]?.features.find(item => item.name === name)
   if (!found) throw new Error(`Missing env ${name} feature.`)
   return found
 }
 
 describe("Env CLI stage regeneration for Nuxt", () => {
+  it("loads Nuxt from the application root with custom Env output roots", async () => {
+    const root = await createStageFixture()
+    await writeFile(join(root, "nuxt.config.mjs"), "export default {}\n")
+    const kitRoot = join(root, "node_modules", "nuxt")
+    await mkdir(kitRoot, { recursive: true })
+    await writeFile(join(kitRoot, "package.json"), JSON.stringify({ type: "module", exports: { "./kit": "./kit.mjs" } }))
+    await writeFile(join(kitRoot, "kit.mjs"), [
+      'import { hubEnv, env } from "@vite-hub/env/vite"',
+      'export async function loadNuxt(options) {',
+      `  if (options.cwd !== ${JSON.stringify(root)}) throw new Error("Incorrect application root")`,
+      '  if (process.env.ENV_CLI_REGION !== "stage-region") throw new Error("Application env file not loaded")',
+      '  return { close: async () => {}, options: { vite: { plugins: [hubEnv({ projectRoot: "packages/config", diagnostics: "off" })], env: { server: { [options.envName]: env({ source: env.source("ENV_CLI_API_TOKEN") }) } } } } }',
+      '}',
+    ].join("\n"))
+    const { context, output } = captureContext(root, {})
+    expect(await realFeature("inspect", "packages/discovery").run(["--stage", "staging", "--json"], context)).toBe(0)
+    expect(JSON.parse(output.stdout)).toMatchObject({ entries: [{ path: "env.server.staging", status: "available" }], stage: "staging" })
+    expect(output.stdout).not.toContain(secretValue)
+  }, 60_000)
+
   it("keeps process precedence when the input environment is process.env itself", async () => {
     const root = await createStageFixture()
     await writeFile(join(root, "nuxt.config.mjs"), "export default {}\n")

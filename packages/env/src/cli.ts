@@ -86,10 +86,10 @@ function isInspection(value: unknown): value is ServerEnvInspection {
   })) }), value)
 }
 
-async function inspectStage(input: EnvCliInspectInput, resolveProjectRoot: (viteRoot: string) => string): Promise<ServerEnvInspection> {
+async function inspectStage(input: EnvCliInspectInput): Promise<ServerEnvInspection> {
   const explicitEnv = { ...input.env }
   const vite = await import("vite")
-  const projectRoot = resolveProjectRoot(input.rootDir)
+  const projectRoot = input.rootDir
   const hasNuxtConfig = ["js", "mjs", "cjs", "ts", "mts", "cts"].some(extension => existsSync(join(projectRoot, `nuxt.config.${extension}`)))
   const stageVite = {
     loadEnv: vite.loadEnv,
@@ -193,7 +193,7 @@ async function runEnvCli(command: EnvCliCommand, args: string[], context: ViteHu
   const input: EnvCliInspectInput = { env: context.env, rootDir: context.rootDir, stage: parsed.stage ?? defaultEnvCliStage }
   const inspection = options.inspect
     ? await options.inspect(input)
-    : await inspectStage(input, options.resolveProjectRoot)
+    : await inspectStage(input)
   const report: EnvCliReport = {
     entries: inspection.entries,
     ok: !inspection.entries.some(isBlockingServerEnvEntry),
