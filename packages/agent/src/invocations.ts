@@ -158,6 +158,8 @@ export interface AgentInvocationStoreUpdateInput {
 
 export interface AgentInvocationStore {
   claim(id: string, claimId: string, leaseMs: number, options?: {
+    /** Atomically rotate only an absent claim or one of these owned generations, unless replaceExisting is true. */
+    expectedClaimIds?: readonly string[]
     replaceClaimToken?: string
     replaceExisting?: boolean
   }): MaybePromise<boolean>
@@ -1440,7 +1442,9 @@ export function createMemoryAgentInvocationStore(): AgentInvocationStore {
       const now = Date.now()
       const replace = options?.replaceExisting
         || (options?.replaceClaimToken !== undefined && claim?.token === options.replaceClaimToken)
-      if (!records.has(id) || (!replace && claim && claim.claimId !== claimId && claim.expiresAt > now)) return false
+      const expected = options?.expectedClaimIds
+      const expectedMatch = expected !== undefined && (claim === undefined || expected.includes(claim.claimId))
+      if (!records.has(id) || (!replace && !expectedMatch && claim && claim.claimId !== claimId && claim.expiresAt > now)) return false
       claims.set(id, { claimId, expiresAt: now + leaseMs, token: globalThis.crypto.randomUUID() })
       return true
     },
@@ -1944,7 +1948,13 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const runId = context.run?.runId || createInvocationId()
       const agentName = bindOptions.agentName || context.agentIdentity?.name
       const recordId = await agentInvocationId(runId, agentName)
-      const claimId = createInvocationId()
+      let claimId = createInvocationId()
+      let claimConfirmed = false
+      let claimUncertain = false
+      let claimHandedOff = false
+      let claimAttempt = 0
+      let claimRenewals = Promise.resolve()
+      const pendingClaimIds = new Set<string>()
       let traceId = await boundedIdentity(context.trace?.id || runId)
       const annotations = normalizeAnnotations(context.run?.annotations)
       let writes = Promise.resolve()
@@ -2025,22 +2035,47 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         if (result === storeOperationTimedOut) creationTimedOut = true
         return created
       }
-      const renew = async (force = false): Promise<boolean> => {
-        if (!await ensureCreated()) return false
+      const renewClaim = async (force = false, rotate = false): Promise<boolean> => {
+        if (!await ensureCreated() || (finished && !runningRequested) || (claimHandedOff && !rotate)) return false
         if ((bindOptions.requireNew && !createdNew) || (bindOptions.recoverPending && !workflowDispatchAllowed)) {
           claimUnavailable = false
           return false
         }
-        const claimTask = Promise.resolve().then(() => store.claim(recordId, claimId, CLAIM_LEASE_MS, force ? { replaceExisting: true } : bindOptions.replaceClaimToken ? { replaceClaimToken: bindOptions.replaceClaimToken } : undefined))
+        if (!force && pendingClaimIds.size >= 2) {
+          claimUnavailable = true
+          ownsRecord = false
+          stopHeartbeat()
+          return false
+        }
+        const attempt = ++claimAttempt
+        const attemptId = claimConfirmed && !claimUncertain && !rotate && pendingClaimIds.size === 0 ? claimId : createInvocationId()
+        const expectedClaimIds = [...pendingClaimIds, ...(claimConfirmed ? [claimId] : [])]
+        pendingClaimIds.add(attemptId)
+        const claimTask = Promise.resolve().then(() => store.claim(recordId, attemptId, CLAIM_LEASE_MS,
+          force ? { replaceExisting: true }
+            : expectedClaimIds.length ? { expectedClaimIds }
+              : bindOptions.replaceClaimToken ? { replaceClaimToken: bindOptions.replaceClaimToken } : undefined))
         const claim = await boundedStoreOperation(() => claimTask)
-        if (claim === storeOperationTimedOut) {
+        if (claim !== true && claim !== false) {
+          claimUncertain = true
           // An execution that never started must not leave a late claim blocking recovery.
-          void claimTask.then(owned => owned ? store.release(recordId, claimId) : undefined).catch(() => {})
+          void claimTask.then(owned => owned ? store.release(recordId, attemptId) : undefined, () => store.release(recordId, attemptId)).catch(() => {}).finally(() => pendingClaimIds.delete(attemptId))
+        } else {
+          pendingClaimIds.delete(attemptId)
+        }
+        if (attempt !== claimAttempt) {
+          if (claim === true && attemptId !== claimId) await boundedStoreOperation(() => store.release(recordId, attemptId))
+          return false
+        }
+        if (claim === true) {
+          claimId = attemptId
+          claimConfirmed = true
+          claimUncertain = false
         }
         claimUnavailable = claim !== true && claim !== false
         ownsRecord = claim === true
         if (ownsRecord && finished) {
-          await boundedStoreOperation(() => store.release(recordId, claimId))
+          await boundedStoreOperation(() => store.release(recordId, attemptId))
           ownsRecord = false
           stopHeartbeat()
           return false
@@ -2048,6 +2083,11 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         if (ownsRecord) startHeartbeat()
         else stopHeartbeat()
         return ownsRecord
+      }
+      const renew = (force = false, rotate = false): Promise<boolean> => {
+        const task = claimRenewals.then(() => renewClaim(force, rotate))
+        claimRenewals = task.then(() => {}, () => {})
+        return task
       }
       const write = async (operation: () => MaybePromise<unknown>): Promise<void> => {
         writes = writes.then(async () => {
@@ -2248,7 +2288,8 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         async handoffClaim() {
           stopHeartbeat()
           await heartbeatRenewal
-          if (!await renew()) return undefined
+          if (!await renew(false, true)) return undefined
+          claimHandedOff = true
           stopHeartbeat()
           const token = await boundedStoreOperation(() => store.getClaimToken(recordId))
           return token === storeOperationTimedOut ? undefined : token
