@@ -1,5 +1,5 @@
 import type { TraceEventLogEntry } from "@vite-hub/runtime";
-import type { AgentInvocationView } from "../types.ts";
+import type { AgentInvocationView, AgentToolInspection } from "../types.ts";
 import { hasRuntimeType } from "./runtime-type.ts";
 
 type InvocationActivityKind =
@@ -49,6 +49,8 @@ export interface InvocationActivity {
   skills?: readonly InvocationSkillRead[];
   startedAt?: string;
   status: "running" | "completed" | "failed";
+  /** Display metadata the called tool declares in the configuration catalog. */
+  toolDisplay?: Pick<AgentToolInspection, "icon" | "label">;
   totalTokens?: number;
   truncated?: boolean;
 }
@@ -306,8 +308,18 @@ function numericAttribute(attributes: Record<string, unknown>, ...keys: string[]
   }
 }
 
+function isRecordedTool(value: unknown): value is Pick<AgentToolInspection, "icon" | "label" | "name"> {
+  const tool = record(value);
+  return hasRuntimeType(tool?.name, "string")
+    && (tool.icon === undefined || hasRuntimeType(tool.icon, "string"))
+    && (tool.label === undefined || hasRuntimeType(tool.label, "string"));
+}
+
 export function invocationActivities(invocation: AgentInvocationView): InvocationActivity[] {
   const groups = new Map<string, TraceEventLogEntry[]>();
+  // Historical journals can hold truncation markers in place of tool entries.
+  const recordedTools: readonly unknown[] = Array.isArray(invocation.configuration?.tools) ? invocation.configuration.tools : [];
+  const toolCatalog = new Map(recordedTools.flatMap(tool => isRecordedTool(tool) ? [[tool.name, tool] as const] : []));
   const traceTruncated = invocation.observationsTruncated === true
     || (invocation.observations?.some(observation => observation.attributes?.["vitehub.trace.truncated"] === true) ?? false);
   const hasAgentMessages = (invocation.observations ?? []).some(observation =>
@@ -453,6 +465,11 @@ export function invocationActivities(invocation: AgentInvocationView): Invocatio
       const terminalStartedAt = !started && endedAt && durationMs !== undefined
         ? new Date(Date.parse(endedAt) - durationMs).toISOString()
         : undefined;
+      const catalogTool = kind === "tool" ? toolCatalog.get(String(attributes["tool.name"] ?? "")) : undefined;
+      const toolDisplay = {
+        ...(catalogTool?.icon ? { icon: catalogTool.icon } : {}),
+        ...(catalogTool?.label ? { label: catalogTool.label } : {}),
+      };
       const draft = {
         attributes,
         body: patches.join("") || messageBody || activityBody(attributes),
@@ -472,6 +489,7 @@ export function invocationActivities(invocation: AgentInvocationView): Invocatio
           : {}),
         ...(role ? { role } : {}),
         status: failed || approvalDenied ? "failed" : completed || !started ? "completed" : unfinishedTerminalStatus ?? "running",
+        ...(Object.keys(toolDisplay).length ? { toolDisplay } : {}),
         ...(sorted.some(item => item.attributes?.["vitehub.observation.truncated"] === true)
           && !(first.name === "agent.invocation.finish" && completeAssistantTexts.has(stringAttribute(attributes, "result.text") ?? ""))
           ? { truncated: true }
@@ -525,7 +543,7 @@ export function invocationActivityTitle(activity: InvocationActivity): string {
   if (activity.kind === "action") return String(activity.attributes["channel.effect.kind"] ?? activity.attributes["vitehub.action.name"] ?? "Product action");
   if (activity.kind === "plan") return "Updated plan";
   if (activity.kind === "change") return normalizedTitle(String(activity.attributes["tool.name"] ?? "Changed files"));
-  if (activity.kind === "tool") return normalizedTitle(String(activity.attributes["tool.title"] ?? activity.attributes["tool.name"] ?? "Used a tool"));
+  if (activity.kind === "tool") return normalizedTitle(String(activity.attributes["tool.title"] ?? activity.toolDisplay?.label ?? activity.attributes["tool.name"] ?? "Used a tool"));
   if (activity.kind === "approval") {
     if (activity.attributes["approval.approved"] === true) return "Approval granted";
     if (activity.attributes["approval.approved"] === false) return "Approval denied";

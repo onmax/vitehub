@@ -34,17 +34,17 @@ export default defineConfig({
 
 ## Define a named Channel
 
-Create `server/channels/alerts.ts`. Read typed Server Env inside the connector's `send()` method so the value is resolved when the message is delivered. Unseal a secret only when the provider call needs the raw value.
+Create `server/channels/alerts.ts` with `defineOutboundChannel()`. Read typed Server Env inside the connector's `send()` method so the value is resolved when the message is delivered. Unseal a secret only when the provider call needs the raw value.
 
 ```ts [server/channels/alerts.ts]
-import { defineChannel } from 'vite-hub/channels'
+import { defineOutboundChannel } from 'vite-hub/channels'
 import { useServerEnv } from '#vitehub/env/server'
 
 type TelegramOptions = {
   chatId: string
 }
 
-export default defineChannel({
+export default defineOutboundChannel({
   connectors: {
     telegram: {
       async send(text: string, { chatId }: TelegramOptions) {
@@ -96,7 +96,11 @@ The handler returns a result like this:
 }
 ```
 
-Each send emits metadata-only JSON events with the `vitehub.channel.send` scope for `started`, `completed`, and `failed`. The events include `deliveryId`, Channel, connector, provider message id, and error message, but never include message text or connector options. This outbound-only package has no State Adapter, so durability comes from the application's configured log drain; use Agent Channels when inbound custody and recovery are required.
+For each connector delivery, Channels attempts to write `outbound.started` and either `outbound.completed` or `outbound.failed` JSON events under the `vitehub.channel.send` scope. Input validation and definition-loading failures return before delivery logging starts. Logging is best effort. A logging failure does not change the send result.
+
+The events include `deliveryId`, Channel, connector, and, when available, a provider message id or error message. ViteHub omits message text and connector options. Failed events include up to 2,000 characters of the thrown error message, so connectors must redact credentials and message content before throwing provider errors.
+
+Configure the application's log drain to retain received events. This outbound-only package has no State Adapter. Use Agent Channels when inbound custody and recovery are required.
 
 ## Add another connector
 
@@ -118,5 +122,7 @@ Keep `connector` explicit when a Channel has more than one delivery path. This m
 Channels provide discovery, connector selection, and a normalized outbound send contract. The current package does not ship Telegram or Slack adapters and does not generate inbound webhook routes; implement those connectors on top of the contract or add them as a later provider package.
 
 `vite-hub/channels` is separate from `vite-hub/agent/channels`. Ordinary Channels send application messages. Agent Channels describe Agent conversation origins, inbound events, and Agent delivery policy; the Agent API stays unchanged.
+
+`defineOutboundChannel()` replaces the earlier `defineChannel()` export of `vite-hub/channels`. That export remains as a deprecated alias for one release so it does not clash with `defineChannel()` from `vite-hub/agent/channels`.
 
 See [Agent Channels](/docs/agents/channels) when the destination starts or drives an Agent Invocation.
