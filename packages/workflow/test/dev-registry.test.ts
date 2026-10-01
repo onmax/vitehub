@@ -161,7 +161,7 @@ describe("Workflow dev registry", () => {
     expect(registry).not.toContain("server/workflows/welcome.ts")
   })
 
-  it("does not add the registry plugin to build output or to disabled Workflows", async () => {
+  it("keeps build output free of dev plugins and installs a disabled dev bootstrap", async () => {
     const projectRoot = await createApp()
     const build: Record<string, unknown> = { root: projectRoot }
     await configHook({ provider: "vercel" })(build, { command: "build", mode: "production" })
@@ -169,8 +169,26 @@ describe("Workflow dev registry", () => {
 
     const disabled: Record<string, unknown> = { root: projectRoot, workflow: false }
     await configHook()(disabled, { command: "serve", mode: "development" })
-    expect(disabled.nitro).toBeUndefined()
-    expect(existsSync(join(projectRoot, workflowDevGeneratedDir))).toBe(false)
+    expect(disabled.nitro).toMatchObject({ plugins: [join(projectRoot, workflowDevGeneratedDir, "dev-plugin.mjs")] })
+    const generated = await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-plugin.mjs"), "utf8")
+    expect(generated).toContain("setWorkflowRuntimeConfig(false)")
+    expect(await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs"), "utf8")).not.toContain("welcome")
+  })
+
+  it("installs the final enabled registry after an initially disabled config", async () => {
+    const projectRoot = await createApp()
+    const plugin = hubWorkflow(false)
+    const hook = plugin.config
+    if (!hook || typeof hook !== "object") throw new TypeError("Expected config hook")
+    type ConfigHook = (config: Record<string, unknown>, env: { command: "build" | "serve", mode: string }) => Promise<void>
+    const config: Record<string, unknown> = { root: projectRoot, workflow: false }
+    await (hook.handler as unknown as ConfigHook)(config, { command: "serve", mode: "development" })
+    expect(config.nitro).toMatchObject({ plugins: [join(projectRoot, workflowDevGeneratedDir, "dev-plugin.mjs")] })
+    await (plugin.configResolved as (config: unknown) => Promise<void>)({ root: projectRoot, workflow: { provider: "vercel" } })
+    const generated = await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-plugin.mjs"), "utf8")
+    expect(generated).toContain('"provider":"vercel"')
+    expect(generated).not.toContain("setWorkflowRuntimeConfig(false)")
+    expect(await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs"), "utf8")).toContain("welcome")
   })
 
   it("disables the generated startup registry after a final Workflow override", async () => {
@@ -238,6 +256,12 @@ describe("Workflow dev registry", () => {
 
     const registryFile = join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs")
     const registryModule = { file: registryFile }
+    const writeRegistry = devRegistry.writeWorkflowDevRegistryFiles
+    vi.spyOn(devRegistry, "writeWorkflowDevRegistryFiles").mockImplementation(async options => {
+      const result = await writeRegistry(options)
+      return { ...result, changed: result.changed.map(file => file.replace(/\//g, "\\")) }
+    })
+    const queriedFiles: string[] = []
     const invalidated: unknown[] = []
     const reloads: unknown[] = []
     const errors: string[] = []
@@ -248,7 +272,10 @@ describe("Workflow dev registry", () => {
         [environmentName]: {
           hot: { send: (message: unknown) => reloads.push(message) },
           moduleGraph: {
-            getModulesByFile: (file: string) => file === registryFile ? new Set([registryModule]) : undefined,
+            getModulesByFile: (file: string) => {
+              queriedFiles.push(file)
+              return file === registryFile ? new Set([registryModule]) : undefined
+            },
             invalidateModule: (module: unknown) => invalidated.push(module),
           },
         },
@@ -284,6 +311,7 @@ describe("Workflow dev registry", () => {
       { type: "full-reload", triggeredBy: report },
       { type: "full-reload", triggeredBy: join(projectRoot, "server/workflows/welcome.ts") },
     ])
+    expect(queriedFiles.every(file => !file.includes("\\"))).toBe(true)
     expect(errors).toEqual([])
   })
 })

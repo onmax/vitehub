@@ -203,11 +203,11 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
         if (env.command !== "serve") return
         devWorkflow = resolveDevWorkflow()
-        if (!devWorkflow) return
         const projectRoot = Reflect.get(config, VITEHUB_PROJECT_ROOT)
         // doctor-disable-next-line typescript/strict/no-runtime-typeof -- ViteHub adds its authoritative project root to otherwise opaque Vite config extensions.
         devRootDir = resolveViteHubProjectRoot(resolve(config.root || process.cwd()), { projectRoot: typeof projectRoot === "string" ? projectRoot : undefined })
-        const { plugin } = await writeDevRegistry(devRootDir, devWorkflow)
+        // Reserve the startup plugin before Nitro reads config. Later hooks may enable Workflows.
+        const { plugin } = await writeDevRegistry(devRootDir, devWorkflow ?? false)
         const kit = createNitroServerKit(Reflect.get(config, "nitro"))
         kit.addPlugin(plugin, "start")
         Reflect.set(config, "nitro", kit.config)
@@ -227,7 +227,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         const filesToInvalidate = new Set([
           ...changed,
           resolve(rootDir, workflowDevGeneratedDir, "dev-registry.mjs"),
-        ])
+        ].map(file => file.replace(/\\/g, "/")))
         let invalidated = false
         for (const changedFile of filesToInvalidate) {
           for (const module of environment?.moduleGraph.getModulesByFile(changedFile) ?? []) {
