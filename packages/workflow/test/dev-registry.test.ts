@@ -2,7 +2,7 @@ import { existsSync } from "node:fs"
 import { EventEmitter } from "node:events"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -268,6 +268,45 @@ describe("Workflow dev registry", () => {
     expect(generated).toContain("./final-workflow.sqlite")
   })
 
+  it.each(["nested", "external"])("watches Workflow additions and deletions in %s roots", async (layout) => {
+    const sandbox = await createApp()
+    const projectRoot = join(sandbox, "project")
+    const appRoot = join(projectRoot, "app")
+    const serverRoot = layout === "nested" ? join(projectRoot, "server") : join(sandbox, "external-server")
+    await mkdir(appRoot, { recursive: true })
+    await mkdir(join(serverRoot, "workflows"), { recursive: true })
+    await writeFile(join(projectRoot, "package.json"), '{"type":"module"}')
+    const plugin = hubWorkflow({ provider: "vercel" })
+    const hook = plugin.config
+    if (!hook || typeof hook === "function") throw new TypeError("Expected config object hook")
+    await (hook.handler as unknown as ConfigHook)({ root: appRoot }, { command: "serve", mode: "development" })
+    await (plugin.configResolved as (config: unknown) => Promise<void>)({
+      root: appRoot,
+      ...(layout === "nested" ? {} : { [VITEHUB_SERVER_DIRS]: [serverRoot] }),
+    })
+
+    const watched = new Set([appRoot])
+    const watcher = Object.assign(new EventEmitter(), {
+      add: vi.fn((directories: string[]) => { for (const directory of directories) watched.add(resolve(directory)) }),
+    })
+    const server = { watcher, environments: {}, config: { logger: { error: vi.fn() } } }
+    if (typeof plugin.configureServer !== "function") throw new TypeError("Expected configureServer")
+    await plugin.configureServer.call({} as never, server as never)
+    expect(watcher.add).toHaveBeenCalled()
+    const notify = (event: string, file: string) => {
+      if ([...watched].some(directory => file.startsWith(`${directory}/`))) watcher.emit(event, file)
+    }
+    const report = join(serverRoot, "workflows/report.ts")
+    const registry = join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs")
+    await writeFile(report, workflowModule("report"))
+    notify("add", report)
+    await waitFor(async () => (await readFile(registry, "utf8")).includes('"report"'))
+    await rm(report)
+    notify("unlink", report)
+    await waitFor(async () => !(await readFile(registry, "utf8")).includes('"report"'))
+    expect(server.config.logger.error).not.toHaveBeenCalled()
+  })
+
   it("serializes overlapping refreshes and writes the latest discovery last", async () => {
     const projectRoot = await createApp()
     const plugin = hubWorkflow({ provider: "vercel" })
@@ -279,7 +318,7 @@ describe("Workflow dev registry", () => {
     const originalWrite = devRegistry.writeWorkflowDevRegistryFiles
     const write = vi.spyOn(devRegistry, "writeWorkflowDevRegistryFiles")
       .mockImplementationOnce(async options => { await barrier; return originalWrite(options) })
-    const watcher = new EventEmitter()
+    const watcher = Object.assign(new EventEmitter(), { add: vi.fn() })
     const server = { watcher, environments: {}, config: { logger: { error: vi.fn() } } }
     if (typeof plugin.configureServer !== "function") throw new TypeError("Expected configureServer")
     await plugin.configureServer.call({} as never, server as never)
@@ -319,7 +358,7 @@ describe("Workflow dev registry", () => {
     const invalidated: unknown[] = []
     const reloads: unknown[] = []
     const errors: string[] = []
-    const watcher = new EventEmitter()
+    const watcher = Object.assign(new EventEmitter(), { add: vi.fn() })
     const server = {
       config: { logger: { error: (message: string) => errors.push(message) } },
       environments: {

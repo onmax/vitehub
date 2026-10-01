@@ -220,6 +220,8 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       const rootDir = devRootDir
       const workflowConfig = devWorkflow
       if (!rootDir || !workflowConfig) return
+      const watchedDirectories = (serverDirs ?? [resolve(rootDir, "server")]).map(directory => resolve(rootDir, directory))
+      server.watcher.add([...watchedDirectories, rootDir])
       // Vite does not call `handleHotUpdate` for new or deleted files, so watch them directly.
       const refresh = async (path: string) => {
         const file = path.replace(/\\/g, "/")
@@ -272,6 +274,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       workflow = config.workflow ?? workflow
       // Later config hooks may replace the server directories after this plugin's pre-config hook.
       // Keep development discovery and production provider output aligned with the final config.
+      // SAFETY: ViteHub supplies this optional string-array extension during framework configuration.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       if (devRootDir) {
         const projectRoot = Reflect.get(config, VITEHUB_PROJECT_ROOT)
