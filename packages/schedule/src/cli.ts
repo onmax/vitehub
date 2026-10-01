@@ -20,6 +20,11 @@ import type {
   ScheduleRunSummary,
 } from "./runtime/console.ts"
 
+/** Legacy development route retained for the standalone Static Schedule runner. */
+export const scheduleDevRunRoute = "/__vitehub/schedule/run"
+/** Legacy request marker retained for the standalone Static Schedule runner. */
+export const scheduleDevRunHeader = "x-vitehub-schedule-run"
+
 export type ScheduleCliContext = Pick<ViteHubCliContext, "cwd" | "env" | "rootDir"> & ViteHubCliStreams
 
 export interface ScheduleCliOptions {
