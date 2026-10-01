@@ -18959,11 +18959,12 @@ describe("server helpers", () => {
         }),
       },
       driver: { run: () => "Final answer" },
+      hooks: { "agent:finish": event => event.reply(event.text!) },
     })
 
     // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
     const loading = createChannelWebhookRouteHandler(agent(loadingAdapter, { loading: { text: "Loading…" } }) as never)
-    expect((await loading(chatWebhookRequest(91_220), "telegram")).status).toBe(200)
+    expect((await loading(chatWebhookRequest(91_222), "telegram")).status).toBe(200)
     expect(loadingAdapter.postMessage).toHaveBeenCalledTimes(2)
     expect(loadingAdapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", {
       markdown: "Final answer\n\nposthog was unavailable.",

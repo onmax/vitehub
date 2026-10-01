@@ -53,7 +53,7 @@ import type {
   PublishedAgentDeliveryArtifact,
 } from "./types.ts"
 import { defineMessageChannelInstructions } from "./internal/channels.ts"
-import { chatFinalReplyIntent, chatFinalReplyText, chatFinishDeliveryRegistrarKey, setChatFinalReplyText, setMessageChannelDeferredReplyTrace } from "./internal/chat-finish-delivery.ts"
+import { chatFinalReplyIntent, chatFinalReplyMode, chatFinalReplyText, chatFinishDeliveryRegistrarKey, setChatFinalReplyText, setMessageChannelDeferredReplyTrace } from "./internal/chat-finish-delivery.ts"
 import type { ChatFinishDeliveryRegistrar } from "./internal/chat-finish-delivery.ts"
 import { withAgentChannelSyncDefinition } from "./internal/channel-sync.ts"
 import { channelDeliveryHandlers } from "./internal/channel-delivery-handlers.ts"
@@ -2149,6 +2149,9 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     return
   }
   let body = messageChannelReplyBody(context)
+  const deliveredFinalText = context.effect.intent === chatFinalReplyIntent && chatFinalReplyMode(context.input) === "pending"
+    ? context.finish?.text?.trim()
+    : undefined
   // Skip matching non-streaming text-only hook replies after confirmed final delivery.
   const finalText = context.effect.intent === chatFinalReplyIntent ? undefined : chatFinalReplyText(context.context)
   const payload = context.effect.payload
@@ -2181,7 +2184,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     const registrar = chat as AgentChatFinishExtension & ChatFinishDeliveryRegistrar
     if (registrar[chatFinishDeliveryRegistrarKey]) {
       setMessageChannelDeferredReplyTrace(context, callback => registrar[chatFinishDeliveryRegistrarKey]?.(message, async (capture) => {
-        if (context.effect.intent === chatFinalReplyIntent && body && !capture.error && !capture.skipped) setChatFinalReplyText(context.context, body.trim())
+        if (deliveredFinalText && !capture.error && !capture.skipped) setChatFinalReplyText(context.context, deliveredFinalText)
         await callback(capture)
       }, {
         continueOnError: context.effect.intent === chatFinalReplyIntent,
@@ -2196,7 +2199,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     : undefined
   if (adapter && context.run?.threadId) {
     await adapter.postMessage(adapter.channelIdFromThreadId(context.run.threadId), message)
-    if (context.effect.intent === chatFinalReplyIntent && body) setChatFinalReplyText(context.context, body.trim())
+    if (deliveredFinalText) setChatFinalReplyText(context.context, deliveredFinalText)
   }
 }
 
