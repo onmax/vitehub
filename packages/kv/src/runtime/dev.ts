@@ -198,17 +198,23 @@ function encodeBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-/** JSON inspection represents bigint values as decimal strings, including nested values. */
-function inspectValue(value: unknown): unknown {
-  try {
-    const text = JSON.stringify(value, (_key, entry: unknown) => v.is(v.bigint(), entry) ? entry.toString() : entry)
-    if (text === undefined) throw new Error("The value has no JSON representation.")
-    const result: unknown = JSON.parse(text)
-    return result
-  }
-  catch {
+/** JSON inspection accepts JSON values and represents bigint values as decimal strings. */
+function inspectValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (v.is(v.bigint(), value)) return value.toString()
+  if (v.is(v.union([v.null(), v.string(), v.boolean(), v.pipe(v.number(), v.finite())]), value) && !Object.is(value, -0)) return value
+  if (!v.is(v.record(v.string(), v.unknown()), value) || seen.has(value)) {
     throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
   }
+  seen.add(value)
+  try {
+    if (Array.isArray(value)) return Array.from(value, (entry: unknown) => inspectValue(entry, seen))
+    const prototype: unknown = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null || Object.getOwnPropertySymbols(value).length) {
+      throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
+    }
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, inspectValue(entry, seen)]))
+  }
+  finally { seen.delete(value) }
 }
 
 async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[]): Promise<unknown> {
