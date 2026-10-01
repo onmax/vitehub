@@ -102,7 +102,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   });
   const waitPolicy: BabysitterWaitPolicy = {
     workerAuthors: new Set(activityAuthors.flatMap(author => [author.toLowerCase(), `${author.toLowerCase().replace(/\[bot\]$/, "")}[bot]`])),
-    pendingReviewChecks: new Set((presetOptions.reviewChecks ?? []).map(name => name.toLowerCase())),
+    pendingReviewChecks: new Set((baseAgent.reviewChecks ?? presetOptions.reviewChecks ?? []).map(name => name.toLowerCase())),
     wakeWhenReady: merge.mode === "direct",
   };
   const schedulerEvent = (name: string, properties: Record<string, unknown> = {}) =>
