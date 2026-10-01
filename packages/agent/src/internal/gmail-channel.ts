@@ -761,14 +761,21 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string): Promi
     if (gmailErrorStatus(error) !== 404) throw error
     // Gmail keeps about a week of history. Recover recent Inbox mail, then continue from now.
     const { historyId } = await gmailRequest(client, profileSchema, { method: "GET", path: "profile" })
-    const recent = await listGmailMessageIds(client, { limit: 100, query: "in:inbox newer_than:2d" })
-    log("history.expired", { historyId: cursor, recovered: recent.ids.length })
-    changes = { historyId, ids: recent.ids }
+    const ids: string[] = []
+    let pageToken: string | undefined
+    do {
+      const recent = await listGmailMessageIds(client, { limit: 100, query: "in:inbox newer_than:2d", ...(pageToken ? { pageToken } : {}) })
+      ids.push(...recent.ids)
+      pageToken = recent.nextPageToken
+    } while (pageToken)
+    log("history.expired", { historyId: cursor, recovered: ids.length })
+    changes = { historyId, ids }
   }
   const messages = await getGmailMessages(client, changes.ids, sync.bodyLimit)
   if (messages.length) {
     const result = await sync.dispatch(messages)
     log("messages.dispatched", { failed: result.failed, processed: result.processed, skipped: result.skipped })
+    if (result.failed) return
   }
   // Advance the cursor after every message has an Invocation, so a failure retries the same history.
   await state.state.set(cursorKey, changes.historyId)

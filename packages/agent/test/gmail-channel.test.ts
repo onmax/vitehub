@@ -89,6 +89,7 @@ async function createGoogle() {
     ["m3", apiMessage("m3", "Offer")],
   ])
   const history = new Map<string, { historyId: string, ids: string[] }>()
+  const expiredHistory = new Set<string>()
   const watchExpiration = Date.now() + 7 * 24 * 60 * 60 * 1000
   const pages = new Map<string, { ids: string[], nextPageToken?: string }>([
     ["", { ids: ["m1", "m2"], nextPageToken: "page-2" }],
@@ -141,6 +142,7 @@ async function createGoogle() {
     if (method === "GET" && path === "profile") return Response.json({ emailAddress: "max@example.com", historyId: "300" })
     if (method === "GET" && path === "history") {
       const start = url.searchParams.get("startHistoryId") || ""
+      if (expiredHistory.has(start)) return Response.json({ error: { code: 404, message: "History expired" } }, { status: 404 })
       const changes = history.get(start) ?? { historyId: start, ids: [] }
       return Response.json({
         history: changes.ids.map(id => ({ id: "1", messagesAdded: [{ message: { id, labelIds: ["INBOX"], threadId: `thread-${id}` } }] })),
@@ -165,7 +167,7 @@ async function createGoogle() {
 
   const writes = () => calls.filter(call => call.method !== "GET").map(call => `${call.method} ${call.path}`)
   // SAFETY: The fake implements the fetch calls that the Gmail Channel makes.
-  return { calls, fetch: fetch as typeof globalThis.fetch, history, labels, otherKey: otherKeyPair.privateKey, token, watchExpiration, writes }
+  return { calls, fetch: fetch as typeof globalThis.fetch, history, expiredHistory, labels, otherKey: otherKeyPair.privateKey, token, watchExpiration, writes }
 }
 
 function stubGmailEnv() {
@@ -220,10 +222,14 @@ describe("gmail() Channel", () => {
     const google = await createGoogle()
     const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
     const prompts: string[] = []
+    let releaseDriver!: () => void
+    const driverGate = new Promise<void>((resolve) => { releaseDriver = resolve })
+
     const agent = defineAgent({
       channels: { gmail: gmail({ fetch: google.fetch }) },
       driver: {
-        run: ({ input }) => {
+        run: async ({ input }) => {
+          await driverGate
           prompts.push(String(input.prompt))
           return "ok"
         },
@@ -232,7 +238,7 @@ describe("gmail() Channel", () => {
       name: "labeller",
     })
     const handler = createChannelWebhookRouteHandler(agent)
-    const push = async (historyId: string, options: { authorization?: string, subscription?: string } = {}) => {
+    const push = async (historyId: string, options: { authorization?: string, subscription?: string, onResponse?: () => void } = {}) => {
       const tasks: Promise<unknown>[] = []
       const response = await handler(new Request(audience, {
         body: JSON.stringify({
@@ -242,6 +248,7 @@ describe("gmail() Channel", () => {
         headers: { authorization: options.authorization ?? `Bearer ${await google.token()}`, "content-type": "application/json" },
         method: "POST",
       }), "gmail", { agentName: "labeller", waitUntil: task => void tasks.push(task) })
+      options.onResponse?.()
       await Promise.all(tasks)
       return response
     }
@@ -255,7 +262,7 @@ describe("gmail() Channel", () => {
     expect(prompts).toEqual([])
 
     google.history.set("100", { historyId: "105", ids: ["m1", "m2"] })
-    expect((await push("105")).status).toBe(204)
+    expect((await push("105", { onResponse: releaseDriver })).status).toBe(204)
     expect(prompts).toHaveLength(2)
     expect(prompts[0]).toContain("Subject: Invoice")
     expect(prompts[1]).toContain("Hello Receipt")
@@ -275,6 +282,45 @@ describe("gmail() Channel", () => {
     // The first sync with a topic starts the watch; later syncs keep it until it is due.
     expect(google.writes().filter(write => write === "POST watch")).toHaveLength(1)
     expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("labelId"))).toEqual(["INBOX", "INBOX", "INBOX"])
+  })
+
+  it.each([false, true])("retries unjournaled dispatch failures and recovers every expired-history page: %s", async (expired) => {
+    stubGmailEnv()
+    const google = await createGoogle()
+    let fail = true
+    const agentName = expired ? "expired-labeller" : "retry-labeller"
+    const prompts: string[] = []
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const agent = defineAgent({
+      channels: { gmail: gmail({ fetch: google.fetch, prompt: message => {
+        if (fail && message.id === "m2") throw new Error("prompt unavailable")
+        return message.id
+      } }) },
+      driver: { run: ({ input }) => { prompts.push(String(input.prompt)); return "ok" } },
+      invocations,
+      name: agentName,
+    })
+    const handler = createChannelWebhookRouteHandler(agent)
+    const push = async (historyId: string) => {
+      const tasks: Promise<unknown>[] = []
+      const response = await handler(new Request(audience, {
+        body: JSON.stringify({ message: { data: base64Url(JSON.stringify({ emailAddress: "max@example.com", historyId })), messageId: `retry-${historyId}` }, subscription }),
+        headers: { authorization: `Bearer ${await google.token()}`, "content-type": "application/json" },
+        method: "POST",
+      }), "gmail", { agentName, waitUntil: task => void tasks.push(task) })
+      await Promise.all(tasks)
+      expect(response.status).toBe(204)
+    }
+    await push("100")
+    if (expired) google.expiredHistory.add("100")
+    else google.history.set("100", { historyId: "105", ids: ["m1", "m2"] })
+    await push("105")
+    expect(prompts).toEqual(expired ? ["m1", "m3"] : ["m1"])
+    fail = false
+    await push("105")
+    expect(prompts).toEqual(expired ? ["m1", "m3", "m2"] : ["m1", "m2"])
+    expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("startHistoryId"))).toEqual(["100", "100"])
+    if (expired) expect(google.calls.filter(call => call.path === "messages").map(call => call.query.get("pageToken"))).toEqual([null, "page-2", null, "page-2"])
   })
 
   it("gives hooks Gmail message methods that map label names to IDs", async () => {
