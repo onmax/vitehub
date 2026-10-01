@@ -1,8 +1,9 @@
+import * as v from "valibot"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { redactInspectionText } from "@vite-hub/internal/inspect"
 
 import { peekRateLimit, resetRateLimit } from "../counters.ts"
-import { isRateLimitDevOperation, rateLimitDevHeader, rateLimitDevHeaderValue, rateLimitDevRuntimeTokenHeader } from "../dev.ts"
+import { rateLimitDevHeader, rateLimitDevHeaderValue, rateLimitDevRuntimeTokenHeader } from "../dev.ts"
 
 import type { RateLimitPeekInspection, RateLimitResetInspection } from "../counters.ts"
 import type { RateLimitDevRequestBody } from "../dev.ts"
@@ -17,13 +18,8 @@ function failure(message: string, status: number, code?: string): Response {
 
 async function readBody(request: Request): Promise<RateLimitDevRequestBody | undefined> {
   const body: unknown = await request.json().catch(() => undefined)
-  if (!body || typeof body !== "object" || Array.isArray(body)) return
-  const operation: unknown = Reflect.get(body, "operation")
-  const name: unknown = Reflect.get(body, "name")
-  const key: unknown = Reflect.get(body, "key")
-  if (!isRateLimitDevOperation(operation)) return
-  if (typeof name !== "string" || !name.trim() || typeof key !== "string" || !key) return
-  return { key, name, operation }
+  const parsed = v.safeParse(v.object({ operation: v.picklist(["peek", "reset"]), name: v.pipe(v.string(), v.check(name => name.trim().length > 0)), key: v.pipe(v.string(), v.minLength(1)) }), body)
+  return parsed.success ? parsed.output : undefined
 }
 
 /** Removes credentials from the echoed key and from driver error text before the result leaves the runtime. */

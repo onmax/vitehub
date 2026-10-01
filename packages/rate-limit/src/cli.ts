@@ -237,7 +237,7 @@ async function runRateLimitCommand(
   if (server.discovery.runtime !== "nitro") {
     return writeFailure(parsed, context, {
       code: "RATE_LIMIT_DEV_RUNTIME_UNAVAILABLE",
-      message: typeof server.discovery.message === "string"
+      message: v.is(v.string(), server.discovery.message)
         ? server.discovery.message
         : "This Vite Development Server cannot reach the Rate Limit runtime.",
     })

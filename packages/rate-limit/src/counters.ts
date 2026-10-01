@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { rateLimitErrorDiagnostics } from "./error-diagnostics.ts"
 import { listMemoryRateLimiters } from "./guard.ts"
 import { getRateLimitRuntimeConfig } from "./runtime/state.ts"
@@ -47,10 +48,10 @@ function unavailableReason(cause: unknown): string {
 }
 
 function assertTarget(name: string, key: string): void {
-  if (typeof name !== "string" || !name.trim()) {
+  if (!v.is(v.string(), name) || !name.trim()) {
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0039({ message: "[vitehub] Rate Limit name must be a non-empty string." })
   }
-  if (typeof key !== "string" || !key) {
+  if (!v.is(v.string(), key) || !key) {
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0039({ message: "[vitehub] Rate Limit key must be a non-empty string." })
   }
 }
