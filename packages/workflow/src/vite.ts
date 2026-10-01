@@ -327,6 +327,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       // Vite clones environment configs by copying the build options. Keep a
       // stable owner token on that object so clones retain their full
       // Workflow and Provider Output association.
+      // SAFETY: This plugin owns the private association token on resolved build options.
       const buildWithAssociation = config.build as typeof config.build & { [workflowBuildAssociation]?: object }
       if (!buildWithAssociation[workflowBuildAssociation]) {
         Object.defineProperty(buildWithAssociation, workflowBuildAssociation, {

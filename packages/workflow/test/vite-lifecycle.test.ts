@@ -180,7 +180,7 @@ describe("Workflow Provider Output lifecycle", () => {
       build: { outDir: configs[0]!.build.outDir },
       workflow: undefined,
     }
-    await expect(plugin.vitehub?.workflow?.prepareScheduleRuntime?.(undefined, clone as unknown as ResolvedConfig)).resolves.toBeUndefined()
+    await expect(plugin.vitehub?.workflow?.prepareScheduleRuntime?.(undefined, clone as unknown as ResolvedConfig)).rejects.toThrow("Cannot identify the owning Workflow build")
   })
 
   it("keeps Provider Output work in the Nuxt 4 SSR environment", async () => {

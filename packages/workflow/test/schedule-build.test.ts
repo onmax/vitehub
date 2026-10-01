@@ -37,6 +37,7 @@ describe("Workflow preparation for Schedule", () => {
         await writeFile(join(server, "workflows", `${name}.ts`), "export default async function run() { return 'ok' }\n")
         const input: UserConfig & { [VITEHUB_SERVER_DIRS]?: string[] } = {
           root,
+          build: { outDir: "dist" },
           plugins: [],
           workflow: { provider: "vercel" },
           resolve: { alias: [{ find: "build-alias", replacement: join(root, "alias.ts") }] },
