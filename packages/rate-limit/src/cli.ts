@@ -1,3 +1,5 @@
+import * as v from "valibot"
+
 import {
   discoverViteHubDevServer,
   fetchViteHubDevEndpoint,
@@ -9,7 +11,7 @@ import { rateLimitDevHeader, rateLimitDevHeaderValue, rateLimitDevRoute } from "
 import { rateLimitErrorDiagnostics } from "./error-diagnostics.ts"
 
 import type { ViteHubCliContext, ViteHubCliContributor, ViteHubCliStreams } from "@vite-hub/internal/cli"
-import type { RateLimitCounterSnapshot, RateLimitPeekInspection, RateLimitResetInspection } from "./counters.ts"
+import type { RateLimitPeekInspection, RateLimitResetInspection } from "./counters.ts"
 import type { RateLimitDevOperation, RateLimitDevRequestBody } from "./dev.ts"
 import type { RateLimitWindow } from "./types.ts"
 
@@ -148,52 +150,39 @@ function formatReset(result: RateLimitResetInspection): string {
   return `Reset Rate Limit ${result.name} for key ${result.key}.\nProvider: ${result.provider}\n${scopeNotice(result.scope)}\n`
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
+const windowSchema = v.custom<RateLimitWindow>(value => v.is(v.pipe(v.string(), v.regex(/^\d+(?:\.\d+)?(?:ms|s|m|h|d)$/)), value))
+const finiteNumber = v.pipe(v.number(), v.finite())
+const targetFields = { key: v.string(), name: v.string(), provider: v.picklist(["memory", "cloudflare"]) }
+const scopeSchema = v.picklist(["global", "location", "process"])
+const counterSchema = v.object({
+  limit: finiteNumber, remaining: finiteNumber, resetAt: v.optional(v.pipe(finiteNumber, v.minValue(-8.64e15), v.maxValue(8.64e15))),
+  used: finiteNumber, window: windowSchema, windowMs: finiteNumber,
+})
+const unavailableSchema = v.object({ ...targetFields, reason: v.string(), status: v.literal("unavailable") })
+const unsupportedSchema = v.object({ ...targetFields, reason: v.string(), status: v.literal("unsupported") })
+const peekSchema = v.variant("status", [
+  v.object({ ...targetFields, counters: v.array(counterSchema), scope: scopeSchema, status: v.literal("known") }),
+  v.object({ ...targetFields, reason: v.string(), status: v.literal("unused") }),
+  unavailableSchema, unsupportedSchema,
+])
+const resetSchema = v.variant("status", [v.object({ ...targetFields, scope: scopeSchema, status: v.literal("reset") }), unavailableSchema, unsupportedSchema])
+type RateLimitCliResult = { operation: "peek", value: RateLimitPeekInspection } | { operation: "reset", value: RateLimitResetInspection }
 
-function isWindow(value: unknown): value is RateLimitWindow {
-  return typeof value === "string" && /^\d+(?:\.\d+)?(?:ms|s|m|h|d)$/.test(value)
-}
-
-function parseCounter(value: unknown): RateLimitCounterSnapshot | undefined {
-  if (!isRecord(value) || typeof value.limit !== "number" || !Number.isFinite(value.limit)
-    || typeof value.remaining !== "number" || !Number.isFinite(value.remaining)
-    || typeof value.used !== "number" || !Number.isFinite(value.used)
-    || typeof value.windowMs !== "number" || !Number.isFinite(value.windowMs) || !isWindow(value.window)
-    || (value.resetAt !== undefined && (typeof value.resetAt !== "number" || !Number.isFinite(value.resetAt) || Math.abs(value.resetAt) > 8.64e15))) return undefined
-  return {
-    limit: value.limit, remaining: value.remaining, used: value.used, window: value.window, windowMs: value.windowMs,
-    ...(typeof value.resetAt === "number" ? { resetAt: value.resetAt } : {}),
+function parseInspection(operation: RateLimitDevOperation, value: unknown): RateLimitCliResult | undefined {
+  if (operation === "peek") {
+    const parsed = v.safeParse(peekSchema, value)
+    return parsed.success ? { operation, value: parsed.output } : undefined
   }
-}
-
-function parseInspection(value: unknown): RateLimitPeekInspection | RateLimitResetInspection | undefined {
-  if (!isRecord(value) || typeof value.key !== "string" || typeof value.name !== "string"
-    || (value.provider !== "memory" && value.provider !== "cloudflare")) return undefined
-  const target: Pick<RateLimitPeekInspection, "key" | "name" | "provider"> = { key: value.key, name: value.name, provider: value.provider }
-  if (value.status === "unavailable" || value.status === "unsupported" || value.status === "unused") {
-    return typeof value.reason === "string" ? { ...target, reason: value.reason, status: value.status } : undefined
-  }
-  if (value.scope !== "global" && value.scope !== "location" && value.scope !== "process") return undefined
-  if (value.status === "reset") return { ...target, scope: value.scope, status: value.status }
-  if (value.status !== "known" || !Array.isArray(value.counters)) return undefined
-  const counters: RateLimitCounterSnapshot[] = []
-  for (const counter of value.counters) {
-    const parsed = parseCounter(counter)
-    if (!parsed) return undefined
-    counters.push(parsed)
-  }
-  return { ...target, counters, scope: value.scope, status: value.status }
+  const parsed = v.safeParse(resetSchema, value)
+  return parsed.success ? { operation, value: parsed.output } : undefined
 }
 
 async function readFailure(response: Response): Promise<{ code?: string, message: string }> {
   const text = await response.text()
   try {
     const body: unknown = JSON.parse(text)
-    if (isRecord(body) && isRecord(body.error) && typeof body.error.message === "string") {
-      return { ...(typeof body.error.code === "string" ? { code: body.error.code } : {}), message: body.error.message }
-    }
+    const parsed = v.safeParse(v.object({ error: v.object({ code: v.optional(v.string()), message: v.string() }) }), body)
+    if (parsed.success) return parsed.output.error
   }
   catch {
     // Guard rejections use plain text.
@@ -267,17 +256,12 @@ async function runRateLimitCommand(
     return writeFailure(parsed, context, { message: `Rate Limit Dev request failed: ${error instanceof Error ? error.message : String(error)}` })
   }
   if (!response.ok) return writeFailure(parsed, context, await readFailure(response))
-  const result = parseInspection(await response.json().catch(() => undefined))
-  if (!result || (command.name === "peek" && result.status === "reset")
-    || (command.name === "reset" && (result.status === "known" || result.status === "unused"))) {
-    return writeFailure(parsed, context, { message: "The Rate Limit Dev response is invalid." })
-  }
-  const output = result.status === "known" || result.status === "unused"
-    ? formatPeek(result)
-    : result.status === "reset" ? formatReset(result) : command.name === "peek" ? formatPeek(result) : formatReset(result)
-  context.stdout.write(parsed.json ? `${JSON.stringify(result, null, 2)}\n` : output)
+  const result = parseInspection(command.name, await response.json().catch(() => undefined))
+  if (!result) return writeFailure(parsed, context, { message: "The Rate Limit Dev response is invalid." })
+  const output = result.operation === "peek" ? formatPeek(result.value) : formatReset(result.value)
+  context.stdout.write(parsed.json ? `${JSON.stringify(result.value, null, 2)}\n` : output)
   // A counter that the provider cannot read or reset is a command failure, so scripts can check the exit code.
-  return result.status === "unsupported" || result.status === "unavailable" ? 1 : 0
+  return result.value.status === "unsupported" || result.value.status === "unavailable" ? 1 : 0
 }
 
 /**
