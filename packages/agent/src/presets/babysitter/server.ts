@@ -213,6 +213,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: decision.reason });
       return false;
     }
+    let mergedHead = decision.head;
     try {
       // Refresh review threads and atomically revalidate the claim after all
       // readiness checks. A webhook received during this read invalidates the
@@ -227,25 +228,27 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: decision.reason });
         return false;
       }
+      const head = decision.head;
+      mergedHead = head;
       if (merge.ready) {
-        const ready = await merge.ready({ repository, number, head: decision.head, snapshot: structuredClone(currentSnapshot), requiredChecks: currentEvaluation.state });
+        const ready = await merge.ready({ repository, number, head, snapshot: structuredClone(currentSnapshot), requiredChecks: currentEvaluation.state });
         if (ready !== true) {
           schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: ready });
           return false;
         }
       }
       const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", signal);
-      const current = liveMergeReadiness(live, decision.head);
+      const current = liveMergeReadiness(live, head);
       if (!current.ready) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: current.reason });
         return false;
       }
       // GitHub rejects the merge when the head no longer matches sha.
       const merged = await pullRequestInbox.merge(claim, async () => {
-        const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000, signal });
+        const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${head}`], { repository, timeout: 60_000, signal });
         const response: unknown = JSON.parse(result.stdout);
         return Boolean(response && typeof response === "object" && "merged" in response && response.merged === true);
-      }, `Merged ${decision.head} directly: required checks passed and review threads were resolved.`);
+      }, `Merged ${head} directly: required checks passed and review threads were resolved.`);
       if (!merged) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "inbox claim changed or GitHub did not merge the pull request" });
         return false;
@@ -254,7 +257,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
       return false;
     }
-    schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: decision.head, avoided_invocation: true });
+    schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: mergedHead, avoided_invocation: true });
     return true;
   }
 
