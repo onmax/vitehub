@@ -549,9 +549,25 @@ async function withWorkspacePathLock<T>(root: string, path: string, operation: (
 
 type LocalWorkspaceStoreLockOptions = Pick<LocalWorkspaceStoreOptions, "ignore" | "locks">
 
+/** Check whether a path belongs to a Git worktree before classifying Git errors. */
+async function hasGitMetadata(root: string): Promise<boolean> {
+  let current = resolve(root)
+  while (true) {
+    const metadata = await lstat(join(current, ".git")).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined
+      throw error
+    })
+    if (metadata) return true
+    const parent = resolve(current, "..")
+    if (parent === current) return false
+    current = parent
+  }
+}
+
 /** Paths that Git ignores under a checkout root. Ignored directories are listed once, not descended. */
 async function gitIgnoredWorkspacePaths(root: string): Promise<string[]> {
   const { execFile } = await import("node:child_process")
+  const gitMetadata = await hasGitMetadata(root)
   const output = await new Promise<string>((resolveOutput, reject) => execFile(
     "git",
     ["-C", root, "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
@@ -562,7 +578,7 @@ async function gitIgnoredWorkspacePaths(root: string): Promise<string[]> {
       // failures from an unavailable or unreadable Git checkout.
       if (error) {
         const code = Reflect.get(Object(error), "code")
-        if (code === 128 && /not a git repository/i.test(stderr)) {
+        if (code === 128 && /not a git repository/i.test(stderr) && !gitMetadata) {
           resolveOutput("")
           return
         }

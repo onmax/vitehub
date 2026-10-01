@@ -2221,4 +2221,16 @@ describe("local workspace store Git ignore", () => {
     const fromProvider = createWorkspaceStoreFromProvider({ name: "docs", store: { provider: "local", root, ignore: "git" } })
     expect((await fromProvider.list("", { recursive: true })).map(entry => entry.path)).not.toContain("dist/out.js")
   })
+
+  it("reports an unusable Git root instead of disabling exclusions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-broken-git-"))
+    tempDirs.push(root)
+    await writeFile(join(root, ".git"), "gitdir: missing-worktree")
+    await writeFile(join(root, ".gitignore"), "ignored/\n")
+    await mkdir(join(root, "ignored"), { recursive: true })
+    await writeFile(join(root, "ignored/file.txt"), "ignored")
+
+    await expect(createLocalWorkspaceStore(root, { ignore: "git" }).list("", { recursive: true }))
+      .rejects.toThrow(/not a git repository|gitdir|repository/i)
+  })
 })
