@@ -205,16 +205,16 @@ describe("replayChannel()", () => {
     const invocations = memoryInvocations()
     const { agent, run } = labeller({ invocations })
 
-    await expect(replayChannel(agent, "mailbox", { query: { folder: "spam" } })).rejects.toMatchObject({ code: "AGENT_R0935" })
-    await expect(replayChannel(agent, "mailbox", { cursor: "not-a-cursor" })).rejects.toMatchObject({ code: "AGENT_R0936" })
-    await expect(replayChannel(agent, "unknown")).rejects.toMatchObject({ code: "AGENT_R0931" })
-    await expect(replayChannel(agent, "mailbox", { limit: 0 })).rejects.toMatchObject({ code: "AGENT_R0934" })
+    await expect(replayChannel(agent, "mailbox", { query: { folder: "spam" } })).rejects.toMatchObject({ code: "AGENT_R0937" })
+    await expect(replayChannel(agent, "mailbox", { cursor: "not-a-cursor" })).rejects.toMatchObject({ code: "AGENT_R0938" })
+    await expect(replayChannel(agent, "unknown")).rejects.toMatchObject({ code: "AGENT_R0933" })
+    await expect(replayChannel(agent, "mailbox", { limit: 0 })).rejects.toMatchObject({ code: "AGENT_R0936" })
     expect(run).not.toHaveBeenCalled()
   })
 
   it("requires Agent Invocations for a live replay without force", async () => {
     const { agent } = labeller()
-    await expect(replayChannel(agent, "mailbox")).rejects.toMatchObject({ code: "AGENT_R0932" })
+    await expect(replayChannel(agent, "mailbox")).rejects.toMatchObject({ code: "AGENT_R0934" })
     await expect(replayChannel(agent, "mailbox", { dryRun: true, limit: 1 })).resolves.toMatchObject({ processed: 1 })
   })
 

@@ -38,7 +38,7 @@ const replayBatchSize = 10
 const valueOptions = new Set(["--agent", "--channel", "--cursor", "--filter", "--limit", "--server", "--url"])
 
 function cliError(message: string): Error {
-  return agentDiagnostics.AGENT_R0934({ message })
+  return agentDiagnostics.AGENT_R0936({ message })
 }
 
 function writeUsage(context: ChannelReplayCliContext, queryHelp: string[] = []): void {

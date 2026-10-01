@@ -8,7 +8,7 @@ import { collectViteHubCliNamespaces, collectViteHubProvisionSteps } from "@vite
 import { formatRuntimeDiagnosticError } from "@vite-hub/runtime"
 import { resolve } from "pathe"
 
-import { runProvision } from "./provision.ts"
+import { provisionUsage, runProvision, runProvisionStatus } from "./provision.ts"
 
 import type { InlineConfig } from "vite"
 import type { ViteHubCliCommandNamespace, ViteHubCliContext } from "@vite-hub/internal/cli"
@@ -56,6 +56,8 @@ export interface RunViteHubCliOptions {
   args?: string[]
   cwd?: string
   env?: NodeJS.ProcessEnv
+  /** Namespaces that run without loading the project config, for example inside a deployed container. */
+  runtimeNamespaces?: ViteHubCliCommandNamespace[]
   loadConfig?: (rootDir: string) => Promise<ViteHubCliLoadedConfig>
   loadNuxtViteConfig?: (rootDir: string) => Promise<{ plugins: readonly unknown[], root?: string } | undefined>
   spawn?: ViteHubCliSpawn
@@ -138,14 +140,18 @@ async function loadViteConfig(rootDir: string): Promise<ViteHubCliLoadedConfig> 
 // Built-in namespace that orchestrates package-contributed Provision Steps.
 function createProvisionNamespace(plugins: readonly unknown[]): ViteHubCliCommandNamespace {
   const collectSteps = () => collectViteHubProvisionSteps(plugins)
-  const run = (args: string[], context: ViteHubCliContext) => runProvision(args, context, { collectSteps })
   return {
     description: "Idempotently create missing provider resources.",
     features: [{
       description: "Create missing provider resources for the app's Definitions.",
       name: "run",
-      run,
-      usage: "vitehub provision run --provider <cloudflare|vercel> [--dry-run]",
+      run: (args, context) => runProvision(args, context, { collectSteps }),
+      usage: provisionUsage.run,
+    }, {
+      description: "Show recorded provider ids and pending plan actions.",
+      name: "status",
+      run: (args, context) => runProvisionStatus(args, context, { collectSteps }),
+      usage: provisionUsage.status,
     }],
     name: "provision",
   }
@@ -200,6 +206,10 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
   const cwd = options.cwd || process.cwd()
   const env = options.env || process.env
   const stderr = options.stderr || process.stderr
+  const spawn = options.spawn || defaultSpawn
+  const runtimeNamespace = options.runtimeNamespaces?.find(namespace => namespace.name === args[0])
+  if (runtimeNamespace) return await runNamespace(runtimeNamespace, args, { cwd, env, rootDir: cwd, spawn, stderr, stdout })
+
   const config = await (options.loadConfig || loadViteConfig)(cwd)
   const nuxtConfig = config.vitehubConfigResolved
     ? undefined
@@ -209,16 +219,10 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
   const namespaces = [
     ...await collectViteHubCliNamespaces(plugins),
     createProvisionNamespace(plugins),
+    ...options.runtimeNamespaces ?? [],
   ]
 
-  const context: ViteHubCliContext = {
-    cwd,
-    env,
-    rootDir,
-    spawn: options.spawn || defaultSpawn,
-    stderr,
-    stdout,
-  }
+  const context: ViteHubCliContext = { cwd, env, rootDir, spawn, stderr, stdout }
 
   if (!args.length || isRootHelp(args)) {
     writeRootHelp(namespaces, stdout)
@@ -232,7 +236,11 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
     writeRootHelp(namespaces, stderr)
     return 1
   }
+  return await runNamespace(namespace, args, context)
+}
 
+async function runNamespace(namespace: ViteHubCliCommandNamespace, args: string[], context: ViteHubCliContext): Promise<number> {
+  const { stderr, stdout } = context
   const featureName = args[1]
   if (!featureName || args[1] === "-h" || args[1] === "--help") {
     writeNamespaceHelp(namespace, stdout)

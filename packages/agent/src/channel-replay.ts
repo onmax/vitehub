@@ -71,15 +71,15 @@ function resolveChannelHistory<TRuntimeConfig extends AgentRuntimeConfig>(
   const channels = agentChannelOptions(agent)
   const definition = Object.hasOwn(channels, channel) ? channels[channel] : undefined
   if (!definition) {
-    throw agentDiagnostics.AGENT_R0931({ message: `[vitehub] Agent has no Channel "${channel}".` })
+    throw agentDiagnostics.AGENT_R0933({ message: `[vitehub] Agent has no Channel "${channel}".` })
   }
   const history = definition.history
   if (!history) {
-    throw agentDiagnostics.AGENT_R0931({ message: `[vitehub] Channel "${channel}" has no history. Add history to its defineChannel() options.` })
+    throw agentDiagnostics.AGENT_R0933({ message: `[vitehub] Channel "${channel}" has no history. Add history to its defineChannel() options.` })
   }
   const triggerName = history.trigger ?? Object.keys(definition.triggers || {})[0]
   if (!triggerName) {
-    throw agentDiagnostics.AGENT_R0931({ message: `[vitehub] Channel "${channel}" history has no trigger.` })
+    throw agentDiagnostics.AGENT_R0933({ message: `[vitehub] Channel "${channel}" history has no trigger.` })
   }
   return { history, triggerId: `${channel}.${triggerName}`, triggerName }
 }
@@ -111,20 +111,20 @@ export function channelReplayRunId(channel: string, key: string, options: { dryR
 
 function assertReplayOptions<TRuntimeConfig extends AgentRuntimeConfig>(options: ReplayChannelOptions<TRuntimeConfig>): void {
   if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1)) {
-    throw agentDiagnostics.AGENT_R0934({ message: "[vitehub] replayChannel() limit must be a positive integer." })
+    throw agentDiagnostics.AGENT_R0936({ message: "[vitehub] replayChannel() limit must be a positive integer." })
   }
   if (options.cursor !== undefined && (!hasRuntimeType(options.cursor, "string") || !options.cursor)) {
-    throw agentDiagnostics.AGENT_R0934({ message: "[vitehub] replayChannel() cursor must be a non-empty string." })
+    throw agentDiagnostics.AGENT_R0936({ message: "[vitehub] replayChannel() cursor must be a non-empty string." })
   }
   if (options.query !== undefined && !isRuntimeRecord(options.query)) {
-    throw agentDiagnostics.AGENT_R0934({ message: "[vitehub] replayChannel() query must be an object." })
+    throw agentDiagnostics.AGENT_R0936({ message: "[vitehub] replayChannel() query must be an object." })
   }
 }
 
 function itemKey(history: AgentChannelHistory, item: unknown, channel: string): string {
   const key = history.key(item)
   if (!hasRuntimeType(key, "string") || !key.trim() || key.length > 512) {
-    throw agentDiagnostics.AGENT_R0933({ message: `[vitehub] Channel "${channel}" history key() must return a non-empty string of at most 512 characters.` })
+    throw agentDiagnostics.AGENT_R0935({ message: `[vitehub] Channel "${channel}" history key() must return a non-empty string of at most 512 characters.` })
   }
   return key
 }
@@ -152,14 +152,14 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
   const agentName = agent.name || options.runtime?.agentIdentity?.name
   const invocations = agent.invocations
   if (!invocations && !options.force && !options.dryRun) {
-    throw agentDiagnostics.AGENT_R0932({ message: `[vitehub] Replaying Channel "${channel}" needs Agent Invocations to skip handled items. Configure invocations or the Console, or pass force.` })
+    throw agentDiagnostics.AGENT_R0934({ message: `[vitehub] Replaying Channel "${channel}" needs Agent Invocations to skip handled items. Configure invocations or the Console, or pass force.` })
   }
   let query: object
   try {
     query = await history.collection.parseQuery(options.query ?? {})
   }
   catch (error) {
-    throw agentDiagnostics.AGENT_R0935({ message: `[vitehub] Invalid Channel "${channel}" history query: ${agentErrorMessage(error)}` })
+    throw agentDiagnostics.AGENT_R0937({ message: `[vitehub] Invalid Channel "${channel}" history query: ${agentErrorMessage(error)}` })
   }
   let runtime: AgentRuntimeContext<TRuntimeConfig>
   let flushWaitUntil: (() => Promise<void>) | undefined
@@ -211,7 +211,7 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
       }
       catch (error) {
         if (cursor && isRuntimeRecord(error) && error.name === "CollectionCursorError") {
-          throw agentDiagnostics.AGENT_R0936({ message: `[vitehub] Invalid Channel "${channel}" history cursor.` })
+          throw agentDiagnostics.AGENT_R0938({ message: `[vitehub] Invalid Channel "${channel}" history cursor.` })
         }
         throw error
       }
@@ -243,11 +243,11 @@ export interface ChannelReplayRequestOptions<TRuntimeConfig extends AgentRuntime
 
 const replayRequestKeys = new Set(["channel", "cursor", "describe", "dryRun", "force", "limit", "query"])
 const replayErrorStatus: Record<string, number> = {
-  AGENT_R0931: 404,
-  AGENT_R0932: 409,
-  AGENT_R0934: 400,
-  AGENT_R0935: 400,
+  AGENT_R0933: 404,
+  AGENT_R0934: 409,
   AGENT_R0936: 400,
+  AGENT_R0937: 400,
+  AGENT_R0938: 400,
 }
 
 function replayJson(value: unknown, status = 200): Response {

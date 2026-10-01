@@ -17,7 +17,7 @@ afterEach(() => {
 
 it("reserves concurrent Workflow replay starts and hands the journal to the worker", async () => {
   const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
-  const runtime = { memo: vi.fn(), runtime: "unknown" as const }
+  const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
   let entered = 0
   let release!: () => void
   const ready = new Promise<void>((resolve) => { release = resolve })

@@ -9,6 +9,7 @@ import type { AuthRuntimeContext } from "@vite-hub/auth"
 import { handleAuthRequest, requireAuthAccessRoutes } from "@vite-hub/auth/server"
 import { describe, expect, it, vi } from "vitest"
 import { build } from "esbuild"
+import { resolveConfig } from "vite"
 
 import { consoleAuthPageResponse, consoleAuthSignInPage, createConsoleAuthDefinition, defineConsoleAuth, prepareConsoleAuth } from "../src/console/auth.ts"
 import { resolveConsoleAuthConfig, writeConsoleAuthHandlers } from "../src/console/auth-build.ts"
@@ -18,6 +19,40 @@ import { installConsoleProjectNameScope, installConsoleSectionScope, resolveCons
 import type { ConsoleInvocationScope } from "../src/console/internal.ts"
 
 describe("independent Console Auth", () => {
+  it.each([
+    ["", ""],
+    ["./", ""],
+    ["/portal/", "/portal"],
+    ["https://assets.example.com/", ""],
+    ["https://assets.example.com/portal/", "/portal"],
+  ])("protects session auth routes with base %j", async (base, mount) => {
+    const database = new DatabaseSync(":memory:")
+    try {
+      const input = defineConsoleAuth({
+        auth: defineAuth(() => ({ database, secret: "test-secret-at-least-32-bytes-long" })),
+        authorize: () => true,
+        signIn: { provider: "github" },
+      })
+      const definition = createConsoleAuthDefinition(input, base)
+      if (typeof definition.options !== "function") throw new TypeError("Expected Console Auth options.")
+      const options = definition.options({ env: {}, requestOrigin: "https://example.com" })
+      expect(options.basePath).toBe(`${mount}/api/_vitehub/console/auth`)
+      expect(options.access?.routes).toEqual([
+        { route: `${mount}/_vitehub/**`, authorize: input.authorize },
+        { route: `${mount}/api/_vitehub/console/**`, authorize: input.authorize },
+      ])
+      expect(options.access?.signIn?.callbackURL).toBe(`${mount}/_vitehub`)
+      for (const path of ["/_vitehub/rpc/__call", "/api/_vitehub/console/status"]) {
+        const request = new Request(`https://example.com${mount}${path}`, { method: "POST" })
+        await prepareConsoleAuth(input, definition, request)
+        expect((await requireAuthAccessRoutes(request, [1], definition, [1]))?.status).toBe(401)
+      }
+    }
+    finally {
+      database.close()
+    }
+  })
+
   it("reports independent auth only for the configured Console project", () => {
     const scope: ConsoleInvocationScope = {}
     installConsoleSectionScope("/console-auth", ["agents"], scope, true)
@@ -196,6 +231,15 @@ describe("independent Console Auth", () => {
       expect(consoleAuthPageResponse(apiRequest, apiDenied, "/portal/")).toBe(apiDenied)
       expect(apiDenied?.status).toBe(403)
 
+      // Every stateless Console call carries the session cookie and is authorized on its own.
+      const rpcCall = (headers: Record<string, string>) => new Request("https://example.com/portal/_vitehub/rpc/__call", {
+        body: JSON.stringify({ method: "vitehub:console:sections" }),
+        headers: { "content-type": "application/json", ...headers },
+        method: "POST",
+      })
+      expect((await requireAuthAccessRoutes(rpcCall({ cookie }), [0], definition, [0]))?.status).toBe(403)
+      expect((await requireAuthAccessRoutes(rpcCall({}), [0], definition, [0]))?.status).toBe(401)
+
       const signOut = await handleAuthRequest(definition, new Request("https://example.com/portal/api/_vitehub/console/auth/sign-out", {
         body: "{}",
         headers: { "content-type": "application/json", cookie, origin: "https://example.com" },
@@ -234,6 +278,29 @@ describe("independent Console Auth", () => {
     }
   })
 
+  it("generates session auth routes from the final Vite base", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-auth-final-base-"))
+    try {
+      const server = resolve(root, "console-auth.ts")
+      await writeFile(server, "export default {}")
+      await resolveConfig({
+        root,
+        configFile: false,
+        base: "/early/",
+        plugins: [
+          consoleVitePlugin({ console: { access: "auth", auth: { server } }, preset: "node" }),
+          { name: "change-console-base", config: () => ({ base: "/portal/" }) },
+        ],
+      }, "build", "production")
+      const middleware = await readFile(resolve(root, ".vitehub/nitro/console/auth-middleware.mjs"), "utf8")
+      expect(middleware).toContain('const mountBase = "/portal"')
+      expect(middleware).not.toContain("/early/")
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it("bundles a discovered Console client extension", async () => {
     const root = await mkdtemp(join(process.cwd(), ".vitehub-console-auth-client-"))
     try {
@@ -266,7 +333,7 @@ describe("independent Console Auth", () => {
       const client = resolve(root, "client.ts")
       const helper = resolve(root, "helper.ts")
       await writeFile(server, "export default {}")
-      await writeFile(helper, 'export const marker = "original"')
+      await writeFile(helper, 'export const marker = "vite_auth_helper_original"')
       await writeFile(client, 'import { marker } from "./helper"; export default { setup() { globalThis.consoleAuthMarker = marker } }')
       const plugin = consoleVitePlugin({ console: { access: "auth", auth: { server, client } }, preset: "node" })
       const listeners = new Map<string, (path: string) => Promise<void>>()
@@ -279,9 +346,37 @@ describe("independent Console Auth", () => {
       if (!configureServer) throw new TypeError("Expected Console development-server hook.")
       Reflect.apply("handler" in configureServer ? configureServer.handler : configureServer, {}, [{ config: { logger: { error: vi.fn() } }, watcher: { add, on: (event: string, listener: (path: string) => Promise<void>) => listeners.set(event, listener) } }])
       expect(add).toHaveBeenCalledWith(expect.arrayContaining([client, helper]))
-      await writeFile(helper, 'export const marker = "updated"')
-      await listeners.get("change")?.(helper)
-      expect(await readFile(resolve(root, ".vitehub/nitro/console/auth-client.mjs"), "utf8")).toContain("updated")
+      await writeFile(helper, 'export const marker = "vite_auth_helper_updated"')
+
+      let markRefreshBuilt: (() => void) | undefined
+      const refreshBuilt = new Promise<void>((resolve) => { markRefreshBuilt = resolve })
+      let releaseRefresh: (() => void) | undefined
+      const refreshPending = new Promise<void>((resolve) => { releaseRefresh = resolve })
+      const writeHandlers = writeConsoleAuthHandlers
+      const refresh = vi.spyOn(await import("../src/console/auth-build.ts"), "writeConsoleAuthHandlers").mockImplementationOnce(async (...args) => {
+        const handlers = await writeHandlers(...args)
+        markRefreshBuilt?.()
+        await refreshPending
+        return handlers
+      })
+      const first = listeners.get("change")?.(helper)
+      let second: Promise<void> | undefined
+      try {
+        await refreshBuilt
+        expect(await readFile(resolve(root, ".vitehub/nitro/console/auth-client.mjs"), "utf8")).toContain("vite_auth_helper_updated")
+        await writeFile(helper, 'export const marker = "vite_auth_helper_concurrent"')
+        second = listeners.get("add")?.(helper)
+        expect(refresh).toHaveBeenCalledTimes(1)
+        releaseRefresh?.()
+        await Promise.all([first, second])
+        expect(refresh).toHaveBeenCalledTimes(2)
+        expect(await readFile(resolve(root, ".vitehub/nitro/console/auth-client.mjs"), "utf8")).toContain("vite_auth_helper_concurrent")
+      }
+      finally {
+        releaseRefresh?.()
+        await Promise.allSettled([first, second])
+        refresh.mockRestore()
+      }
     }
     finally {
       await rm(root, { recursive: true, force: true })
@@ -326,9 +421,13 @@ describe("independent Console Auth", () => {
         expect((await guard.default({ url: new URL("https://example.com/_vitehub") }))?.status).toBe(401)
         const apiURL = "https://example.com/api/_vitehub/console/status"
         expect((await guard.default({ url: new URL(apiURL), req: new Request(apiURL, { headers: { accept: "text/html" } }) }))?.status).toBe(401)
+        const rpcURL = "https://example.com/_vitehub/rpc/__call"
+        const rpcRequest = new Request(rpcURL, { body: "{}", headers: { "content-type": "application/json" }, method: "POST" })
+        expect((await guard.default({ url: new URL(rpcURL), req: rpcRequest }))?.status).toBe(401)
         expect(calls).toEqual([
           ["/_vitehub", 0, false],
           ["/api/_vitehub/console/status", 1, false],
+          ["/_vitehub/rpc/__call", 0, false],
         ])
       }
       finally {

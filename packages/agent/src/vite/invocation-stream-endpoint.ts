@@ -169,12 +169,13 @@ function withDeliveryPreviewChannels(
     if (!isRecord(handlers) && !methods) return [channelId, channel]
     const previewHandlers = isRecord(handlers)
       ? Object.fromEntries(Object.keys(handlers).map(kind => [kind, (context: AgentChannelDeliveryEffectContext<AgentRuntimeConfig>) => {
-          preview({
+          const previewInput: Extract<AgentInvocationStreamEvent, { type: "delivery-preview" }> = {
             channelId: context.trigger?.channelId || context.run?.channelId || channelId,
             effect: context.effect,
-            ...(context.run ? { run: context.run } : {}),
             type: "delivery-preview",
-          })
+          }
+          if (context.run) previewInput.run = context.run
+          preview(previewInput)
         }]))
       : undefined
     // Read methods still run; write methods show the call they would make.
@@ -182,19 +183,23 @@ function withDeliveryPreviewChannels(
       ? Object.fromEntries(Object.entries(methods).map(([name, method]) => [name, isRecord(method) && method.read === true
           ? method
           : (context: AgentChannelMessageContext<AgentRuntimeConfig>, ...args: unknown[]) => {
-              preview({
+              const effect: AgentChannelDeliveryEffectContext<AgentRuntimeConfig>["effect"] = { kind: name }
+              if (args.length) effect.payload = args.length === 1 ? args[0] : args
+              const previewInput: Extract<AgentInvocationStreamEvent, { type: "delivery-preview" }> = {
                 channelId: context.trigger?.channelId || context.run?.channelId || channelId,
-                effect: { kind: name, ...(args.length ? { payload: args.length === 1 ? args[0] : args } : {}) },
-                ...(context.run ? { run: context.run } : {}),
+                effect,
                 type: "delivery-preview",
-              })
+              }
+              if (context.run) previewInput.run = context.run
+              preview(previewInput)
             }]))
       : undefined
-    return [channelId, inheritMessageChannelInstructions({
+    const previewChannel = {
       ...channel,
-      ...(previewHandlers ? { [channelDeliveryHandlers]: previewHandlers } : {}),
-      ...(previewMethods ? { message: { ...message, methods: previewMethods } } : {}),
-    }, channel)]
+      message: previewMethods ? { ...message, methods: previewMethods } : channel.message,
+    }
+    if (previewHandlers) previewChannel[channelDeliveryHandlers] = previewHandlers
+    return [channelId, inheritMessageChannelInstructions(previewChannel, channel)]
   }))
   const clone = Object.create(Object.getPrototypeOf(agent)) as AgentInput<ViteAgentRuntimeContext>
   Object.defineProperties(clone, Object.getOwnPropertyDescriptors(agent))
