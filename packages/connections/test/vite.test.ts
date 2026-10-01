@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { fork } from "node:child_process";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -143,6 +144,107 @@ describe("hubConnections", () => {
     expect(plugin.api.getDefinitions().map((definition) => definition.name)).toEqual(["slack"]);
   });
 
+  it.each(["different", "shared"])("keeps %s roots prepared by separate live processes for later cleanup", async (form) => {
+    const root = await createTempProject();
+    const names = form === "shared" ? ["api", "api"] : ["api-a", "api-b"];
+    const script = join(root, "prepare.mjs");
+    await writeFile(script, `
+      import { hubConnections } from ${JSON.stringify(new URL("../dist/vite.js", import.meta.url).href)};
+      process.on("message", async message => {
+        if (message === "exit") process.exit(0);
+        await hubConnections({ projectRoot: message }).api.prepareTypes({ projectRoot: ${JSON.stringify(root)} });
+        process.send("ready");
+      });
+      process.send("started");
+    `);
+    const children = [fork(script, [], { stdio: ["ignore", "ignore", "pipe", "ipc"] }), fork(script, [], { stdio: ["ignore", "ignore", "pipe", "ipc"] })];
+    const ready = children.map(child => new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", code => reject(new Error(`Preparation exited early: ${code}`)));
+      child.on("message", message => { if (message === "ready") resolve(); });
+    }));
+    try {
+      // Both processes remain alive until both independent preparations have completed.
+      children[0]!.send(names[0]);
+      children[1]!.send(names[1]);
+      await Promise.all(ready);
+      for (const name of names) {
+        await expect(readFile(join(root, name, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+      }
+      await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+      for (const name of names) {
+        await expect(readFile(join(root, name, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+      }
+      await new Promise<void>(resolve => {
+        children[1]!.once("exit", () => resolve());
+        children[1]!.send("exit");
+      });
+      // A finished writer cannot authorize removal while another owner of the same root is live.
+      await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+      await expect(readFile(join(root, names[0]!, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+      await new Promise<void>(resolve => {
+        children[0]!.once("exit", () => resolve());
+        children[0]!.send("exit");
+      });
+      await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+      for (const name of names) {
+        await expect(readFile(join(root, name, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    } finally {
+      for (const child of children) if (child.exitCode === null) child.kill();
+    }
+  });
+
+  it("recovers an abandoned manifest lock", async () => {
+    const root = await createTempProject();
+    const lockDirectory = join(root, ".vitehub/connections-types.json.lock");
+    await mkdir(lockDirectory, { recursive: true });
+    const abandoned = new Date(Date.now() - 30_000);
+    await utimes(lockDirectory, abandoned, abandoned);
+    await hubConnections({ projectRoot: "api" }).api.prepareTypes({ projectRoot: root });
+    await expect(readFile(join(root, "api/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+    await expect(lstat(lockDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves declaration symlinks even when target contents match the generated hash", async () => {
+    const root = await createTempProject();
+    await hubConnections({ projectRoot: "api" }).api.prepareTypes({ projectRoot: root });
+    const file = join(root, "api/.vitehub/types/connections.d.ts");
+    const target = join(root, "user.d.ts");
+    const content = await readFile(file, "utf8");
+    await writeFile(target, content);
+    await rm(file);
+    await symlink(target, file);
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+    expect((await lstat(file)).isSymbolicLink()).toBe(true);
+    await expect(readFile(target, "utf8")).resolves.toBe(content);
+  });
+
+  it("stores the absolute root when Windows relative paths cross volumes", async () => {
+    const root = await createTempProject();
+    const custom = join(root, "api");
+    vi.resetModules();
+    vi.doMock("node:path", async importOriginal => {
+      const actual = await importOriginal<typeof import("node:path")>();
+      return {
+        ...actual,
+        relative: (from: string, to: string) => from === root && to === custom ? actual.win32.relative("C:\\app", "D:\\api") : actual.relative(from, to),
+        isAbsolute: (path: string) => actual.isAbsolute(path) || actual.win32.isAbsolute(path),
+      };
+    });
+    try {
+      const fresh = await import("../src/vite.ts");
+      await fresh.hubConnections({ projectRoot: custom }).api.prepareTypes({ projectRoot: root });
+      const manifest = JSON.parse(await readFile(join(root, ".vitehub/connections-types.json"), "utf8")) as Array<{ root: string }>;
+      expect(manifest[0]!.root).toBe(custom);
+      await fresh.hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+      await expect(readFile(join(custom, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      vi.doUnmock("node:path");
+      vi.resetModules();
+    }
+  });
+
   it("cleans persisted custom-root declarations after a fresh module load", async () => {
     const root = await createTempProject();
     const customRoot = join(root, "packages/api");
@@ -201,6 +303,10 @@ describe("hubConnections", () => {
     await hubConnections({ projectRoot: "packages/new" }).api.prepareTypes({ projectRoot: root });
     await expect(readFile(join(root, "packages/old/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
     await expect(readFile(join(root, "packages/new/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+    for (const name of ["old", "new"]) {
+      await expect(readFile(join(root, `packages/${name}/.vitehub/types/connections.d.ts`))).rejects.toMatchObject({ code: "ENOENT" });
+    }
   });
 
   it("removes declarations from a previously configured custom root when disabled", async () => {
