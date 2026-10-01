@@ -1,13 +1,12 @@
 import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { viteHubEnvServerModulePath } from "@vite-hub/internal/build/vite"
 import { withViteStageServer } from "@vite-hub/internal/vite-stage"
 
 import type { ViteHubCliContext, ViteHubCliContributor } from "@vite-hub/internal/cli"
-import type { InlineConfig } from "vite"
 import type { ServerEnvInspection, ServerEnvInspectionEntry } from "./types.ts"
 import { envErrorDiagnostics } from "./error-diagnostics.ts"
 import { isBlockingServerEnvEntry } from "./server.ts"
@@ -79,62 +78,46 @@ function parseArgs(args: string[]): ParsedEnvCliArgs {
 }
 
 function isInspection(value: unknown): value is ServerEnvInspection {
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This validates the generated module boundary before use.
   return typeof value === "object" && value !== null && "entries" in value && Array.isArray(value.entries)
-}
-
-function hasNuxtConfig(rootDir: string): boolean {
-  return ["js", "mjs", "cjs", "ts", "mts", "cts"].some(extension => existsSync(join(rootDir, `nuxt.config.${extension}`)))
-}
-
-interface NuxtStageLoader {
-  loadNuxt: (options: {
-    cwd: string
-    dev: boolean
-    overrides: { vitehubCliDiscovery: true }
-    ready: true
-  }) => Promise<{
-    close?: () => Promise<void> | void
-    options: { rootDir?: string, vite?: { root?: string, [key: string]: unknown } }
-  }>
-}
-
-async function refreshNuxtStage(input: EnvCliInspectInput): Promise<void> {
-  if (!hasNuxtConfig(input.rootDir)) return
-  const require = createRequire(join(input.rootDir, "package.json"))
-  // SAFETY: nuxt/kit is resolved from the project's dependency graph and exports loadNuxt.
-  const module = await import(pathToFileURL(require.resolve("nuxt/kit")).href) as NuxtStageLoader
-  const nuxt = await module.loadNuxt({
-    cwd: input.rootDir,
-    dev: input.stage !== "production",
-    overrides: { vitehubCliDiscovery: true },
-    ready: true,
-  })
-  try {
-    const { resolveConfig } = await import("vite")
-    const nuxtRoot = nuxt.options.rootDir || input.rootDir
-    const viteRoot = resolve(nuxtRoot, nuxt.options.vite?.root || nuxtRoot)
-    // SAFETY: Nuxt's Vite options are user config plus the internal discovery marker accepted by Vite.
-    await resolveConfig({
-      ...nuxt.options.vite,
-      configFile: false,
-      root: viteRoot,
-      vitehubCliDiscovery: true,
-    } as InlineConfig & { vitehubCliDiscovery: true }, "serve", input.stage)
-  }
-  finally {
-    await nuxt.close?.()
-  }
 }
 
 async function inspectStage(input: EnvCliInspectInput, resolveProjectRoot: (viteRoot: string) => string): Promise<ServerEnvInspection> {
   const vite = await import("vite")
-  return await withViteStageServer(vite, input, async (server) => {
-    await refreshNuxtStage(input)
+  const projectRoot = resolveProjectRoot(input.rootDir)
+  const hasNuxtConfig = ["js", "mjs", "cjs", "ts", "mts", "cts"].some(extension => existsSync(join(projectRoot, `nuxt.config.${extension}`)))
+  const stageVite = {
+    loadEnv: vite.loadEnv,
+    async createServer(config: Parameters<typeof vite.createServer>[0] & { mode: string }) {
+      if (!hasNuxtConfig) return await vite.createServer(config)
+      const require = createRequire(join(projectRoot, "package.json"))
+      // SAFETY: nuxt/kit owns loadNuxt. Resolve the application-installed version.
+      const kit = await import(pathToFileURL(require.resolve("nuxt/kit")).href) as {
+        loadNuxt: (options: { cwd: string, dev: true, envName: string, overrides: { devtools: { enabled: false }, vite: { mode: string }, vitehubCliDiscovery: true }, ready: true }) => Promise<{ close: () => Promise<void>, options: { vite?: import("vite").InlineConfig } }>
+      }
+      Object.assign(process.env, vite.loadEnv(input.stage, projectRoot, ""))
+      for (const [key, value] of Object.entries(input.env)) if (value !== undefined) process.env[key] = value
+      const nuxt = await kit.loadNuxt({ cwd: projectRoot, dev: true, envName: input.stage, overrides: { devtools: { enabled: false }, vite: { mode: input.stage }, vitehubCliDiscovery: true }, ready: true })
+      try {
+        const server = await vite.createServer({ ...nuxt.options.vite, ...config, configFile: false })
+        const close = server.close.bind(server)
+        server.close = async () => {
+          try { await close() }
+          finally { await nuxt.close() }
+        }
+        return server
+      }
+      catch (error) {
+        await nuxt.close()
+        throw error
+      }
+    },
+  }
+  return await withViteStageServer(stageVite, input, async (server) => {
+    // The Env plugin writes this module while the stage server resolves its config.
+    // Nuxt reloads its stage-specific declarations before this server resolves config.
     const modulePath = viteHubEnvServerModulePath(resolveProjectRoot(server.config.root))
     const generated = await server.ssrLoadModule(pathToFileURL(modulePath).href)
     const inspect: unknown = generated.inspectServerEnv
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This validates the generated module boundary before calling it.
     if (typeof inspect !== "function") throw envErrorDiagnostics.ENV_R0024({ message: `[vitehub] The generated Server Env module does not export inspectServerEnv(): ${modulePath}` })
     const inspection: unknown = await inspect()
     if (!isInspection(inspection)) throw envErrorDiagnostics.ENV_R0025({ message: "[vitehub] inspectServerEnv() returned an invalid result." })

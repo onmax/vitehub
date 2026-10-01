@@ -183,6 +183,29 @@ function realFeature(name: "check" | "inspect"): ViteHubCliFeature {
   return found
 }
 
+describe("Env CLI stage regeneration for Nuxt", () => {
+  it("reloads Nuxt stage declarations instead of retaining discovery output", async () => {
+    const root = await createStageFixture()
+    await writeFile(join(root, "nuxt.config.mjs"), "export default {}\n")
+    const kitRoot = join(root, "node_modules", "nuxt")
+    await mkdir(kitRoot, { recursive: true })
+    await writeFile(join(kitRoot, "package.json"), JSON.stringify({ type: "module", exports: { "./kit": "./kit.mjs" } }))
+    await writeFile(join(kitRoot, "kit.mjs"), [
+      'import { hubEnv, env } from "@vite-hub/env/vite"',
+      'export async function loadNuxt(options) {',
+      '  if (!options.overrides.vitehubCliDiscovery || options.overrides.vite.mode !== options.envName) throw new Error("Incorrect Nuxt stage")',
+      '  return { close: async () => {}, options: { vite: { plugins: [hubEnv({ diagnostics: "off" })], env: { server: { [options.envName]: env({ source: env.source("ENV_CLI_API_TOKEN") }) } } } } }',
+      '}',
+    ].join("\n"))
+    for (const stage of ["development", "production"]) {
+      const { context, output } = captureContext(root, { ENV_CLI_API_TOKEN: secretValue })
+      expect(await realFeature("inspect").run(["--stage", stage, "--json"], context)).toBe(0)
+      expect(JSON.parse(output.stdout)).toMatchObject({ entries: [{ path: `env.server.${stage}` }], stage })
+      expect(output.stdout).not.toContain(secretValue)
+    }
+  }, 60_000)
+})
+
 describe("env CLI with Vite stage files", () => {
   it("loads stage files, lets process env win, and never prints values", async () => {
     const root = await createStageFixture()

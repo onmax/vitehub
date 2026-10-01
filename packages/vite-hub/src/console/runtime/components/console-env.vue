@@ -4,6 +4,7 @@ import type { ServerEnvDescriptionEntry } from "@vite-hub/env";
 import * as v from "valibot";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
+import { indexEnvStatuses } from "../client/env-status";
 import { requestConsole } from "../client/request";
 import { rememberConsoleSection } from "../sections";
 import ConsoleBrand from "./console-brand.vue";
@@ -51,7 +52,7 @@ const selected = ref<ServerEnvDescriptionEntry>();
 const loading = ref(true);
 const failed = ref(false);
 // Status is loaded on request because inspection can call providers.
-const statuses = ref<ReadonlyMap<string, EnvStatus>>();
+const statuses = ref<ReadonlyMap<ServerEnvDescriptionEntry, EnvStatus>>();
 const statusFailed = ref(false);
 let request: AbortController | undefined;
 const detailOpen = computed({
@@ -95,7 +96,7 @@ const statusLabels: Record<EnvStatus["status"], string> = {
   missing: "Missing",
 };
 function statusBadge(entry: ServerEnvDescriptionEntry) {
-  const status = statuses.value?.[entries.value.indexOf(entry)];
+  const status = statuses.value?.get(entry);
   if (!status) return undefined;
   return {
     color: status.blocking ? "error" : status.status === "available" ? "success" : "neutral",
@@ -123,7 +124,7 @@ async function refresh(includeStatus = Boolean(statuses.value)) {
     if (current.signal.aborted) return;
     entries.value = result.entries;
     statuses.value = result.status
-      ? result.status
+      ? indexEnvStatuses(result.entries, result.status)
       : undefined;
     if (!sourceItems.value.some((item) => item.value === source.value)) source.value = "all";
     selected.value = selected.value

@@ -1,3 +1,5 @@
+import { ref } from "vue"
+import { indexEnvStatuses } from "../src/console/runtime/client/env-status.ts"
 import { mkdtemp, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -25,6 +27,21 @@ describe("Console Env", () => {
     // Status inspection can call providers, so the plugin imports it only on request.
     expect(generated).toContain('async event => (await import("#vitehub/env/server")).inspectServerEnv(event)')
   })
+  it("retains distinct pathless statuses through reactive row filtering", () => {
+    const descriptions = ref([
+      { source: "env" as const, secret: true, required: true, hasDefault: false },
+      { path: "env.server.public", source: "literal" as const, secret: false, required: false, hasDefault: false },
+      { source: "provider" as const, secret: true, required: false, hasDefault: false },
+    ])
+    const statuses = ref(indexEnvStatuses(descriptions.value, [
+      { blocking: true, status: "missing" },
+      { blocking: false, path: "env.server.public", status: "available" },
+      { blocking: false, status: "error" },
+    ]))
+    const filtered = descriptions.value.filter(entry => !entry.path)
+    expect(filtered.map(entry => statuses.value.get(entry))).toEqual([{ blocking: true, status: "missing" }, { blocking: false, status: "error" }])
+  })
+
   it("uses registry keys distinct from KV", () => { expect(consoleEnvKey).not.toBe(consoleKVKey) })
   it("serves declaration metadata and rejects mutations", async () => {
     installConsoleSections("/env-test", ["env"])
