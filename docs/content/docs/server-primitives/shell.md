@@ -199,6 +199,8 @@ Configure command, filesystem, network, process, streaming, and timeout access b
 
 The Just Bash `commands` allowlist also applies to controlled `curl` requests. A network grant does not enable `curl` when the command is excluded. An empty command list disables it.
 
+The provider copies the command list at creation. Later changes to the supplied list do not change its permissions or network boundary.
+
 Use Sandbox when the app needs provider-managed isolation. Use Shell when the app needs controlled command semantics over a declared Shell Workspace.
 
 ## Next steps

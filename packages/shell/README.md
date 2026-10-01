@@ -76,6 +76,8 @@ Shell policy can bound calls, processes, output size, and timeouts. A declared b
 
 The Just Bash `commands` list also applies to controlled `curl` requests. A Source network grant permits access to its declared target, but `curl` must still be included when you configure a command list.
 
+The provider copies the command list at creation. Later changes to the supplied list do not change its permissions or network boundary.
+
 ## Use with Agents
 
 `workspaceShell()` in [`@vite-hub/agent`](../agent/README.md) exposes scoped shell work through an Agent Capability. It attaches Workspace Scope, Shell policy, metadata, and tools to the Agent Definition; do not expose an unrestricted raw runtime to a model.

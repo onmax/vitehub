@@ -161,6 +161,30 @@ describe("@vite-hub/shell just-bash runtime", () => {
     expect(executeSourceRequest).not.toHaveBeenCalled()
   })
 
+  it.each([true, false])("preserves the command policy after caller mutation when curl is permitted: %s", async (permitted) => {
+    const commands = permitted ? ["curl", "echo"] : ["cat"]
+    const executeSourceRequest = vi.fn(async () => ({ content: "ok\n" }))
+    const options = {
+      commands,
+      fs: createReadonlyWorkspaceFs(new MemoryWorkspace({})),
+      networkGrants: { executeSourceRequest },
+    }
+    const runtime = createShellRuntime({ provider: createJustBashProvider(options) })
+
+    commands.splice(0, commands.length, ...(permitted ? ["cat"] : ["curl", "echo"]))
+    options.commands = commands.slice()
+
+    expect(runtime.boundary.network).toBe(permitted)
+    await expect(runtime.exec("curl https://portal.example.com/action")).resolves.toMatchObject({
+      event: permitted ? "command_finished" : "policy_denied",
+      exitCode: permitted ? 0 : 126,
+    })
+    expect(executeSourceRequest).toHaveBeenCalledTimes(permitted ? 1 : 0)
+    const echo = await runtime.exec("echo hello")
+    if (permitted) expect(echo).toMatchObject({ exitCode: 0, stdout: "hello\n" })
+    else expect(echo.exitCode).not.toBe(0)
+  })
+
   it("unregisters stopped long-running processes from session state", async () => {
     const stops = new Map<string, ReturnType<typeof vi.fn>>()
     const provider = createBackgroundProvider(async (command: string): Promise<ShellProcess> => {
