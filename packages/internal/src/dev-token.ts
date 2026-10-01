@@ -25,20 +25,35 @@ async function viteHubDevTokenActiveFile(rootDir: string, namespace: string): Pr
 export async function createViteHubDevToken(rootDir: string, namespace: string): Promise<{ serverId: string, token: string }> {
   const serverId = globalThis.crypto.randomUUID()
   const token = [...globalThis.crypto.getRandomValues(new Uint8Array(32))].map(byte => byte.toString(16).padStart(2, "0")).join("")
-  const [{ mkdir, writeFile }, { dirname }] = await Promise.all([import("node:fs/promises"), import("node:path")])
+  const [{ mkdir, rename, writeFile }, { dirname, join }] = await Promise.all([import("node:fs/promises"), import("node:path")])
   const file = await viteHubDevTokenFile(rootDir, { namespace, serverId })
   await mkdir(dirname(file), { mode: 0o700, recursive: true })
   await writeFile(file, `${token}\n`, { flag: "wx", mode: 0o600 })
   const active = await viteHubDevTokenActiveFile(rootDir, namespace)
   await mkdir(dirname(active), { mode: 0o700, recursive: true })
-  await writeFile(active, `${serverId}\n`, { mode: 0o600 })
+  const temporary = join(dirname(active), `.active-${serverId}`)
+  await writeFile(temporary, `${serverId}\n${token}\n`, { mode: 0o600 })
+  await rename(temporary, active)
   return { serverId, token }
 }
 
 export async function readViteHubDevTokenServerId(rootDir: string, namespace: string): Promise<string | undefined> {
   try {
     const { readFile } = await import("node:fs/promises")
-    return (await readFile(await viteHubDevTokenActiveFile(rootDir, namespace), "utf8")).trim() || undefined
+    return (await readFile(await viteHubDevTokenActiveFile(rootDir, namespace), "utf8")).split("\n", 1)[0]?.trim() || undefined
+  }
+  catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return
+    throw error
+  }
+}
+
+/** Reads the active server credential from one atomically replaced snapshot. */
+export async function readViteHubDevTokenActive(rootDir: string, namespace: string): Promise<{ serverId: string, token: string } | undefined> {
+  try {
+    const { readFile } = await import("node:fs/promises")
+    const [serverId, token] = (await readFile(await viteHubDevTokenActiveFile(rootDir, namespace), "utf8")).split("\n")
+    return serverId?.trim() && token?.trim() ? { serverId: serverId.trim(), token: token.trim() } : undefined
   }
   catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return
@@ -58,15 +73,9 @@ export async function readViteHubDevToken(rootDir: string, scope: ViteHubDevToke
 }
 
 export async function removeViteHubDevToken(rootDir: string, scope: ViteHubDevTokenScope): Promise<void> {
-  const [{ readFile, rm, rmdir }, { dirname }] = await Promise.all([import("node:fs/promises"), import("node:path")])
+  const [{ rm, rmdir }, { dirname }] = await Promise.all([import("node:fs/promises"), import("node:path")])
   const file = await viteHubDevTokenFile(rootDir, scope)
   await rm(file, { force: true })
-  const active = await viteHubDevTokenActiveFile(rootDir, scope.namespace)
-  try {
-    if ((await readFile(active, "utf8")).trim() === scope.serverId) await rm(active, { force: true })
-  }
-  catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
-  }
+  // Leave the active snapshot in place. A superseded server must never remove a replacement's marker.
   await rmdir(dirname(file)).catch(() => {})
 }

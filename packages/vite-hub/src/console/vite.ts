@@ -217,7 +217,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   const refreshConsoleCatalog = serializeConsoleRefresh(async () => {
     if (!generatedPlugin || !projectRoot || !root) return
     const catalog = await discoverConsoleBuildCatalog({ databaseDiscoveryRoot, discoveryRoot: root, projectRoot, rateLimitDiscoveryRoot, rateLimitScanDirs, sandboxDiscoveryRoot: root, scheduleDiscoveryRoot, sections, serverDirs, workspaceDiscoveryRoot })
-    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, journal, consoleAuthHandlers?.auth ?? false, retention)
+    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, journal && "databaseUrl" in journal ? journal.databaseUrl : undefined, Boolean(consoleAuthHandlers?.auth))
     if (options.invocationRootState) updateConsoleInvocationRootState(options.invocationRootState, projectRoot, identity)
   })
 
@@ -354,9 +354,8 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
           invoke,
           observations,
           undefined,
-          journal,
-          consoleAuthHandlers?.auth ?? false,
-          retention,
+          journal && "databaseUrl" in journal ? journal.databaseUrl : undefined,
+          Boolean(consoleAuthHandlers?.auth),
         )
       }
       // SAFETY: Nitro extends Vite's user config with this documented top-level configuration object.

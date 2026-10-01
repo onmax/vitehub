@@ -412,9 +412,8 @@ async function installConsole(
       invoke,
       observations,
       () => !invocationRootState?.closed,
-      journal,
-      independentAuth,
-      retention,
+      journal && "databaseUrl" in journal ? journal.databaseUrl : undefined,
+      Boolean(independentAuth),
     )
     if (invocationRootState) {
       updateConsoleInvocationRootState(invocationRootState, projectRoot, identity)
@@ -1207,9 +1206,8 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         consoleInvokeEnabled && !resolvedConsoleFixture,
         options.console === true ? undefined : options.console.observations,
         () => !consoleInvocationRootState.closed,
-        replayedConsoleJournal,
-        registeredConsoleAuthMode(options.console !== true && options.console.access === "auth" ? options.console.auth : undefined, Boolean(nuxt.options.dev)),
-        options.console === true ? undefined : options.console.retention,
+        replayedConsoleJournal && "databaseUrl" in replayedConsoleJournal ? replayedConsoleJournal.databaseUrl : undefined,
+        Boolean(registeredConsoleAuthMode(options.console !== true && options.console.access === "auth" ? options.console.auth : undefined, Boolean(nuxt.options.dev))),
       )
     }
     Object.assign(config, mergeGeneratedSourceNitroConfig(config, generatedSourceHandlers))

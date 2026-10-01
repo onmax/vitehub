@@ -97,9 +97,9 @@ export function summarizeDefinitions(
 export const redactedInspectionValue = "[redacted]"
 
 const secretKeyPattern = /secret|token|passw(?:or)?d|credential|api[-_\s]?key|private[-_\s]?key|authorization|cookie|signature|dsn|connection[-_\s]?string/i
-const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s:?#]*:[^/\s?#]+@|bearer\s)/i
+const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s?#]*@|bearer\s)/i
 
-const embeddedUrlCredentialPattern = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:?#]*:[^/\s?#]+@/gi
+const embeddedUrlCredentialPattern = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s?#]*@/gi
 const embeddedCookiePattern = /\b([\w-]*cookie[\w-]*["']?\s*[:=]\s*)(?:"(?:\\[^\r\n]|[^"\\\r\n])*"(?:\s*;\s*[\w.-]+\s*=[^;\r\n]*)*|'(?:\\[^\r\n]|[^'\\\r\n])*'(?:\s*;\s*[\w.-]+\s*=[^;\r\n]*)*|[^\r\n]+?(?=\s*;\s*[^;=\r\n/]+\s*(?:\r?\n|$)|\r?\n|$))/gi
 const embeddedBearerPattern = /\bbearer\s+[^\s,;]+/gi
 const embeddedAuthorizationPattern = new RegExp(
@@ -136,7 +136,10 @@ export function redactInspectionValue(value: unknown, key?: string): unknown {
     if (entryKey && secretKeyPattern.test(entryKey)) return redactedInspectionValue
     if (--remaining < 0 || depth > 10) return "[truncated]"
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque inspection input before serializing it.
-    if (typeof entry === "string") return secretValuePattern.test(entry) ? redactedInspectionValue : entry.slice(0, 10_000)
+    if (typeof entry === "string") {
+      const text = entry.slice(0, 10_000)
+      return secretValuePattern.test(text) ? redactedInspectionValue : redactInspectionText(text)
+    }
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- JSON cannot serialize an opaque BigInt input.
     if (typeof entry === "bigint") return entry.toString()
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque numeric input before serializing it.
