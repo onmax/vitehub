@@ -105,6 +105,27 @@ env: {
 
 `useServerEnv().dryRun` is a `boolean`, `minConfidence` is a `number`, and `mode` is `"draft" | "send"`. Defaults use the parsed type. `env.enum()` cannot be secret because its allowed values are public metadata. An invalid value throws `ENV_RUNTIME_VALUE_INVALID` with the declaration path; the value is never included. `env.server` does not accept custom `schema` parsers because the generated runtime must serialize the parser.
 
+## Presets
+
+Presets return ordinary `env.server` declarations. Import them from `@vite-hub/env` or `@vite-hub/env/presets`.
+
+| Preset | Declares |
+| --- | --- |
+| `openWorkflowEnv()` | OpenWorkflow namespace, Postgres URL, schema, and worker concurrency. |
+| `typesafeEnv({ provider?, model? })` | TypeSafe Jev `provider`, Secret `apiKey`, and `model`. `"typesafe"` reads `TYPESAFE_API_KEY`; `"vercel"` reads the optional `AI_GATEWAY_API_KEY`. `TYPESAFE_DEFAULT_MODEL` overrides the model. |
+
+The preset allows a missing API key during Env resolution. The ask Driver requires `TYPESAFE_API_KEY` for the TypeSafe provider and reports `AGENT_R0936` when it is missing. The Vercel provider can use `VERCEL_OIDC_TOKEN` without an API key.
+
+`@vite-hub/agent` reads `typesafeEnv()` from the `typesafe` group for `driver.ask`:
+
+```ts
+env: {
+  server: {
+    typesafe: typesafeEnv(),
+  },
+},
+```
+
 ## External runtime values
 
 Use a read-only Env provider when application credentials live outside the host environment. Keep the provider's bootstrap credential in Kubernetes, Cloudflare, or the current host, then load the external values as one operation-scoped snapshot.

@@ -40,6 +40,13 @@ function documentedCommands(): string[] {
     .sort();
 }
 
+function documentedNamespaces(): string[] {
+  const source = readFileSync(cliReference, "utf8");
+  const sample = source.split("Available namespaces:\n", 2)[1]?.split("```", 1)[0];
+  if (sample === undefined) throw new TypeError("Missing sample CLI help output.");
+  return helpNames(`Available namespaces:\n${sample}`, "Available namespaces:").sort();
+}
+
 describe("CLI documentation contract", () => {
   it("indexes every command from the live package contributors", async () => {
     const agent = createAgentCliContributor({ rootDir: evalFixtureRoot });
@@ -81,6 +88,7 @@ describe("CLI documentation contract", () => {
       }
     }
 
+    expect(documentedNamespaces()).toEqual([...namespaces].sort());
     expect(documentedCommands()).toEqual(commands.sort());
   });
 });
