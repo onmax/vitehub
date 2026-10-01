@@ -980,6 +980,8 @@ async function planLabels(client: GmailClient, declared: Record<string, GmailLab
 export interface GmailSyncProviderOptions {
   client: (fetchImpl: typeof fetch) => GmailClient
   labels: Record<string, GmailLabelSettings>
+  /** Gmail mailbox identity, shared even when separate credentials access the account. */
+  resourceKey: string
   topic?: string
 }
 
@@ -989,6 +991,7 @@ export interface GmailSyncProviderOptions {
  */
 export function createGmailChannelSyncProvider(options: GmailSyncProviderOptions): AgentChannelSyncProvider {
   return {
+    resourceKey: options.resourceKey,
     async apply(_plan, fetchImpl) {
       const client = options.client(fetchImpl)
       // Plan again: labels may have changed since the reviewed plan.

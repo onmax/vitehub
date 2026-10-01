@@ -3440,9 +3440,12 @@ export function gmail<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeCo
     provider: "gmail",
     async resolve(context) {
       const settings = await gmailChannelSettings(context)
+      const client = options.client ?? gmailClientFromSettings(settings, options.fetch)
+      const mailbox = await gmailMailboxAddress(client)
       return createGmailChannelSyncProvider({
         client: fetchImpl => options.client ?? gmailClientFromSettings(settings, options.fetch ?? fetchImpl),
         labels,
+        resourceKey: `gmail:${mailbox.trim().toLowerCase()}`,
         ...(settings.pubsubTopic ? { topic: settings.pubsubTopic } : {}),
       })
     },

@@ -71,7 +71,7 @@ function apiMessage(id: string, subject: string, options: { html?: boolean, inli
 }
 
 /** Google OAuth, certificates, and Gmail REST in one injected `fetch`. */
-async function createGoogle(options: { inlineAttachment?: boolean } = {}) {
+async function createGoogle(options: { emailAddress?: string, inlineAttachment?: boolean, refreshToken?: string } = {}) {
   const keyPair = await crypto.subtle.generateKey(
     { hash: "SHA-256", modulusLength: 2048, name: "RSASSA-PKCS1-v1_5", publicExponent: new Uint8Array([1, 0, 1]) },
     true,
@@ -126,7 +126,7 @@ async function createGoogle(options: { inlineAttachment?: boolean } = {}) {
     }
     if (url.href === "https://oauth2.googleapis.com/token") {
       const form = new URLSearchParams(String(init?.body))
-      expect(form.get("refresh_token")).toBe("refresh-token")
+      expect(form.get("refresh_token")).toBe(options.refreshToken ?? "refresh-token")
       return Response.json({ access_token: "access-token", expires_in: 3599 })
     }
     expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-token")
@@ -146,7 +146,7 @@ async function createGoogle(options: { inlineAttachment?: boolean } = {}) {
       return Response.json(label)
     }
     if (method === "POST" && path === "watch") return Response.json({ expiration: String(watchExpiration), historyId: "300" })
-    if (method === "GET" && path === "profile") return Response.json({ emailAddress: "max@example.com", historyId: "300" })
+    if (method === "GET" && path === "profile") return Response.json({ emailAddress: options.emailAddress ?? "max@example.com", historyId: "300" })
     if (method === "GET" && path === "history") {
       const start = url.searchParams.get("startHistoryId") || ""
       if (expiredHistory.has(start)) return Response.json({ error: { code: 404, message: "History expired" } }, { status: 404 })
@@ -833,6 +833,42 @@ describe("gmail() Channel", () => {
 
     const agent = defineAgent({ channels: { gmail: gmail({ fetch: google.fetch }) }, driver: { run: () => "ok" } })
     await expect(replayChannel(agent, "gmail", { cursor: "stale", force: true })).rejects.toThrow(/Invalid Channel "gmail" history cursor/)
+  })
+
+  it.each([false, true])("rejects duplicate mailbox sync targets before writes, same mailbox: %s", async (sameMailbox) => {
+    stubGmailEnv()
+    const first = await createGoogle({ emailAddress: "Max@Example.com", refreshToken: "first-mailbox-token" })
+    const second = await createGoogle({ emailAddress: sameMailbox ? "max@example.com" : "other@example.com", refreshToken: "second-mailbox-token" })
+    const credentials = { clientId: "client", clientSecret: "secret" }
+    const channels = [
+      gmail({ client: gmailClientFromSettings({ ...credentials, refreshToken: "first-mailbox-token" }, first.fetch), labels: { First: {} } }),
+      gmail({ client: gmailClientFromSettings({ ...credentials, refreshToken: "second-mailbox-token" }, second.fetch), labels: { Second: {} } }),
+    ]
+    const targets = await Promise.all(channels.map(async (channel, index) => ({
+      agent: "labeller",
+      channel: `gmail-${index}`,
+      mode: "account" as const,
+      provider: "gmail",
+      // SAFETY: Gmail synchronization resolves only the configured client and Server Env.
+      sync: (await getAgentChannelSyncDefinition(channel)!.resolve({} as never, channel))!,
+    })))
+    const stdout = stream()
+    const stderr = stream()
+    const exitCode = await runAgentChannelSyncCli(["--stage", "production", "--apply"], {
+      cwd: "/repo", env: {}, rootDir: "/repo", stderr, stdout,
+    }, { loadTargets: async () => targets })
+    if (sameMailbox) {
+      expect(exitCode).toBe(1)
+      expect(stderr.output()).toContain("target the same gmail resource")
+      expect(first.writes()).toEqual([])
+      expect(second.writes()).toEqual([])
+    }
+    else {
+      expect(exitCode).toBe(0)
+      expect(stderr.output()).toBe("")
+      expect(first.writes()).toEqual(["POST labels", "POST watch"])
+      expect(second.writes()).toEqual(["POST labels", "POST watch"])
+    }
   })
 
   it("synchronizes managed labels and the watch through channels sync without a deployment URL", async () => {

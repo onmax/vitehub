@@ -185,6 +185,8 @@ pnpm vitehub channels sync --stage production --channel gmail --apply
 
 The first command prints the plan. The Gmail Channel does not need `--url`, because its resources belong to the Gmail account, not to the deployment. See [CLI channel synchronization](/docs/development/cli#synchronize-channel-webhooks).
 
+Gmail permits one active watch per mailbox. `channels sync` reads the mailbox profile and rejects multiple selected Gmail Channels for that mailbox before creating labels or renewing watches, even when the Channels use different credentials.
+
 Gmail stops the watch seven days after the last renewal. The push route renews it when the stored expiration is less than a day away, but a quiet mailbox sends no pushes. Renew it from a daily [Schedule](/docs/server-primitives/schedule) with `syncGmailChannel()`, which runs the same logic as `channels sync`:
 
 ```ts [server/schedules/gmail-watch.ts]
