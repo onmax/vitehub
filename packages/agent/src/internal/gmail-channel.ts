@@ -826,6 +826,7 @@ export async function syncGmailMailbox(sync: GmailMailboxSync): Promise<void> {
     lock = await state.acquireLock(lockKey, syncLockTtlMs)
     if (!lock) return
   }
+  const failures: unknown[] = []
   for (;;) {
     const heldLock = lock
     let ownershipLost = false
@@ -852,6 +853,9 @@ export async function syncGmailMailbox(sync: GmailMailboxSync): Promise<void> {
         await syncMailboxOnce(sync, cursorKey, renew, mutate)
       } while (await state.get(pendingKey) !== null)
     }
+    catch (error) {
+      failures.push(error)
+    }
     finally {
       clearInterval(timer)
       await renewalTask
@@ -861,6 +865,8 @@ export async function syncGmailMailbox(sync: GmailMailboxSync): Promise<void> {
     lock = await state.acquireLock(lockKey, syncLockTtlMs)
     if (!lock) break
   }
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1) throw new AggregateError(failures, "Gmail mailbox synchronization failed while draining pending notifications.")
   if (sync.topic) await renewGmailWatchWhenDue(sync.client, sync.state, sync.topic)
 }
 

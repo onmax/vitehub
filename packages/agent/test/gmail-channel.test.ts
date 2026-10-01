@@ -356,6 +356,66 @@ describe("gmail() Channel", () => {
     }
   })
 
+  it.each(["history", "dispatch"] as const)("drains overlapping notifications after a %s exception", async failureKind => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-gmail-pending-error-"))
+    const url = `file:${join(root, "state.db")}`
+    const first = createLibsqlAgentState({ url })
+    const second = createLibsqlAgentState({ url })
+    await first.connect()
+    await second.connect()
+    const google = await createGoogle()
+    google.history.set("100", { historyId: "105", ids: ["m1"] })
+    await first.set("mail:history-id", "100")
+    let release!: () => void
+    let started!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const entered = new Promise<void>(resolve => { started = resolve })
+    const failure = new Error(`Initial ${failureKind} failed`)
+    let failedOnce = false
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const requestUrl = new URL(input instanceof Request ? input.url : String(input))
+      if (failureKind === "history" && !failedOnce && requestUrl.pathname.endsWith("/history")) {
+        failedOnce = true
+        started()
+        await gate
+        throw failure
+      }
+      return await google.fetch(input, init)
+    }
+    const delivered: string[] = []
+    const dispatch = vi.fn(async (messages: readonly { id: string }[]) => {
+      if (failureKind === "dispatch" && !failedOnce) {
+        failedOnce = true
+        started()
+        await gate
+        throw failure
+      }
+      delivered.push(...messages.map(message => message.id))
+      return { failed: 0, items: [], nextCursor: null, processed: messages.length, skipped: 0 }
+    })
+    const options = { bodyLimit: 1000, client: gmailClientFromSettings({ clientId: "client", clientSecret: "secret", refreshToken: "refresh-token" }, fetch), dispatch }
+    const running = syncGmailMailbox({ ...options, notificationHistoryId: "105", state: { keyPrefix: "mail:", state: first } })
+    const settled = running.then(() => undefined, error => error)
+    try {
+      await entered
+      await syncGmailMailbox({ ...options, notificationHistoryId: "110", state: { keyPrefix: "mail:", state: second } })
+      expect(await second.get("mail:sync-pending")).not.toBeNull()
+      google.history.set("100", { historyId: "110", ids: ["m1", "m2"] })
+      release()
+      expect(await settled).toBe(failure)
+      expect(delivered).toContain("m2")
+      expect(await second.get("mail:history-id")).toBe("110")
+      expect(await second.get("mail:sync-pending")).toBeNull()
+    }
+    finally {
+      release()
+      await settled
+      await first.disconnect()
+      await second.disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it("retains overlapping notifications through a dispatch longer than the lease TTL", async () => {
     const google = await createGoogle()
     google.history.set("100", { historyId: "105", ids: ["m1"] })
