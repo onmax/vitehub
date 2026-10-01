@@ -5,9 +5,10 @@ import {
   resolveViteHubDevServerUrl,
 } from "@vite-hub/internal/cli"
 
+import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 import { redactInspectionText } from "@vite-hub/internal/inspect"
 
-import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute } from "./dev.ts"
+import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute, scheduleDevTokenNamespace, scheduleDevTokenServerHeader } from "./dev.ts"
 import { scheduleErrorDiagnostics } from "./error-diagnostics.ts"
 
 import type { ViteHubCliContext, ViteHubCliContributor, ViteHubCliStreams } from "@vite-hub/internal/cli"
@@ -368,6 +369,17 @@ async function runScheduleCommand(
         : "This Vite Development Server cannot reach the Schedule runtime.",
     })
   }
+  const serverId = server.discovery.scheduleDevTokenServerId
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate public discovery metadata before selecting a local private credential.
+  if (typeof serverId !== "string" || !serverId) return writeFailure(parsed, context, { message: "The Schedule Dev server did not provide a token server ID. Restart the Compatible Vite Development Server." })
+  let token: string | undefined
+  try {
+    token = await readViteHubDevToken(context.rootDir, { namespace: scheduleDevTokenNamespace, serverId })
+  }
+  catch (error) {
+    return writeFailure(parsed, context, { message: `Could not read the private Schedule Dev token: ${error instanceof Error ? error.message : String(error)}` })
+  }
+  if (!token) return writeFailure(parsed, context, { message: "No private Schedule Dev token found. Start the Compatible Vite Development Server first." })
   const body: ScheduleDevRequestBody = {
     ...(parsed.id !== undefined ? { id: parsed.id } : {}),
     ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
@@ -377,7 +389,7 @@ async function runScheduleCommand(
   try {
     response = await fetchViteHubDevEndpoint(fetchImpl, server.url, scheduleDevEndpoint, {
       body: JSON.stringify(body),
-      headers: { accept: "application/json", "content-type": "application/json" },
+      headers: { accept: "application/json", "content-type": "application/json", [viteHubDevTokenHeader]: token, [scheduleDevTokenServerHeader]: serverId },
       method: "POST",
       ...timeout,
     })

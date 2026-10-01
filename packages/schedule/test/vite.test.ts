@@ -648,7 +648,9 @@ describe("Vite schedule integration", () => {
       handlers: [{ handler: join(root, ".vitehub", "nitro", "schedule", "dev-handler.ts"), route: "/_vitehub/schedule/dev" }],
     })
     const source = await readFile(join(root, ".vitehub", "nitro", "schedule", "dev-handler.ts"), "utf8")
-    expect(source).toContain("import { handleScheduleDevRequest as handleViteHubDevRequest } from \"@vite-hub/schedule/runtime/console\"")
+    expect(source).toContain("import { handleScheduleDevRequest as handleViteHubDevRequest } from \"@vite-hub/schedule/runtime/dev\"")
+    expect(source).toContain(JSON.stringify({ rootDir: root }))
+    expect(source).not.toContain("token")
 
     const handler = join(root, ".vitehub", "nitro", "schedule", "dev-handler.ts")
     const unchangedTime = new Date("2026-01-01T00:00:00.000Z")

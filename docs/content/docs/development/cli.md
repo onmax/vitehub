@@ -196,6 +196,8 @@ Automatic runs: off. No wake driver is installed, so due times do not start runs
 
 Every command accepts `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>` (whole milliseconds from 1 to 2147483647). `runs` accepts `--limit <n>`. A failed run makes `schedule run` exit with status 1 and prints the stored run. Errors go to stderr, or into the JSON body with `--json`.
 
+Schedule operations require a private token scoped to the local project and server instance. The dev server stores it with user-only permissions outside the served project tree, and the CLI reads it locally. Discovery exposes only the server ID. Vite and Nitro both reject operations without the token, including requests to a server exposed with `--host`. Shutdown removes the credential.
+
 The output redacts credentials: values under secret-named keys in Schedule input, URLs with embedded credentials, bearer tokens, and secret assignments in error messages.
 
 The commands use a guarded dev endpoint that `hubSchedule()` registers only on the Development Server. The endpoint forwards each operation into the Nitro dev environment, which owns the Schedule stores and registry. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 and the CLI prints that the host is not supported. Deployed runtimes do not expose the endpoint.

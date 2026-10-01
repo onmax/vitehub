@@ -1,15 +1,21 @@
+import { createViteHubDevToken, removeViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
+
 import { registerViteHubNitroDevEndpoint } from "@vite-hub/internal/dev-endpoint"
 
-import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute, scheduleDevRuntimeRoute } from "./dev.ts"
+import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute, scheduleDevRuntimeRoute, scheduleDevTokenNamespace, scheduleDevTokenServerHeader } from "./dev.ts"
 
 import type { ViteHubNitroDevServer } from "@vite-hub/internal/dev-endpoint"
 
 /** Message that the Schedule dev endpoint returns when the host does not run Nitro in the Vite process. */
 export const scheduleDevRuntimeUnavailableMessage = "This Vite Development Server does not run Nitro in process, so it cannot reach the Schedule runtime. `vitehub schedule` commands need a Vite + Nitro host. Nuxt and plain Vite are not supported."
 
-export type ScheduleDevServer = ViteHubNitroDevServer
+export type ScheduleDevServer = ViteHubNitroDevServer & {
+  httpServer?: { once: (event: "close", listener: () => void) => unknown } | null
+}
 
 export interface ScheduleDevEndpointOptions {
+  /** Project root when it differs from the Vite root. */
+  rootDir?: string
   /** Nitro `baseURL`. Nitro routes use this prefix. */
   nitroBaseURL?: () => string | undefined
 }
@@ -19,16 +25,32 @@ export interface ScheduleDevEndpointOptions {
  *
  * `GET` reports the root and whether the Nitro runtime is reachable. `POST` forwards one Schedule operation into the
  * Nitro dev environment, because the Nitro runtime owns the Schedule stores and registry. Hosts without an in-process
- * Nitro environment get `501` with a clear message.
+ * Nitro environment get `501` with a clear message. The returned cleanup also supports middleware-mode servers.
  */
-export function registerScheduleDevEndpoint(server: ScheduleDevServer, options: ScheduleDevEndpointOptions = {}): void {
-  registerViteHubNitroDevEndpoint(server, {
-    header: scheduleDevHeader,
-    headerValue: scheduleDevHeaderValue,
-    label: "Schedule Dev",
-    nitroBaseURL: options.nitroBaseURL,
-    route: scheduleDevRoute,
-    runtimeRoute: scheduleDevRuntimeRoute,
-    unavailable: { code: "SCHEDULE_DEV_RUNTIME_UNAVAILABLE", message: scheduleDevRuntimeUnavailableMessage },
-  })
+export async function registerScheduleDevEndpoint(server: ScheduleDevServer, options: ScheduleDevEndpointOptions = {}): Promise<() => Promise<void>> {
+  const rootDir = options.rootDir ?? server.config.root
+  const { serverId, token } = await createViteHubDevToken(rootDir, scheduleDevTokenNamespace)
+  const close = () => removeViteHubDevToken(rootDir, { namespace: scheduleDevTokenNamespace, serverId })
+  server.httpServer?.once("close", () => { void close().catch(() => {}) })
+  try {
+    registerViteHubNitroDevEndpoint(server, {
+      authorize: async request => request.headers[viteHubDevTokenHeader] === token
+        && request.headers[scheduleDevTokenServerHeader] === serverId
+        ? undefined : new Response("Forbidden Schedule Dev token.", { status: 403 }),
+      discovery: { root: rootDir, scheduleDevTokenServerId: serverId },
+      forwardHeaders: [viteHubDevTokenHeader, scheduleDevTokenServerHeader],
+      header: scheduleDevHeader,
+      headerValue: scheduleDevHeaderValue,
+      label: "Schedule Dev",
+      nitroBaseURL: options.nitroBaseURL,
+      route: scheduleDevRoute,
+      runtimeRoute: scheduleDevRuntimeRoute,
+      unavailable: { code: "SCHEDULE_DEV_RUNTIME_UNAVAILABLE", message: scheduleDevRuntimeUnavailableMessage },
+    })
+  }
+  catch (error) {
+    await close()
+    throw error
+  }
+  return close
 }

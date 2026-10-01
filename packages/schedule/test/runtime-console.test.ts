@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { scheduleDevHeader, scheduleDevHeaderValue } from "../src/dev.ts"
+import { createViteHubDevToken, removeViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
+
+import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevTokenNamespace, scheduleDevTokenServerHeader } from "../src/dev.ts"
 import { defineScheduleTarget, schedules } from "../src/index.ts"
 import {
-  handleScheduleDevRequest,
   inspectRuntimeSchedules,
   listRuntimeScheduleRuns,
   readScheduleConsoleRecords,
@@ -11,8 +12,13 @@ import {
 import type { RuntimeScheduleSummary, ScheduleRunAttemptSummary, ScheduleRunSummary } from "../src/runtime/console.ts"
 import type { RuntimeScheduleRecord } from "../src/types.ts"
 import { createMemoryScheduleRunStore } from "../src/runtime/store.ts"
+import { handleScheduleDevRequest } from "../src/runtime/dev.ts"
 import { nextRuntimeScheduleRunAt } from "../src/runtime/due.ts"
 import { resetScheduleRuntime, setScheduleRunStore, setScheduleRuntimeRegistry, setScheduleWakeDriverActive } from "../src/runtime/state.ts"
+
+let credential: { serverId: string, token: string }
+
+beforeEach(async () => { credential = await createViteHubDevToken(process.cwd(), scheduleDevTokenNamespace) })
 
 const now = new Date("2026-05-23T08:15:00.000Z")
 
@@ -35,7 +41,7 @@ function devRequest(body: unknown, init: { headers?: Record<string, string>, met
   const method = init.method ?? "POST"
   return new Request("http://localhost/_vitehub/schedule/dev", {
     ...(method === "POST" ? { body: typeof body === "string" ? body : JSON.stringify(body) } : {}),
-    headers: { "content-type": "application/json", [scheduleDevHeader]: scheduleDevHeaderValue, ...init.headers },
+    headers: { "content-type": "application/json", [scheduleDevHeader]: scheduleDevHeaderValue, [viteHubDevTokenHeader]: credential.token, [scheduleDevTokenServerHeader]: credential.serverId, ...init.headers },
     method,
   })
 }
@@ -48,7 +54,8 @@ function installTargets(handler: (input: unknown) => void = () => {}): void {
   })
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await removeViteHubDevToken(process.cwd(), { namespace: scheduleDevTokenNamespace, serverId: credential.serverId })
   resetScheduleRuntime()
 })
 
@@ -231,6 +238,19 @@ describe("Schedule dev request handler", () => {
     expect((await handleScheduleDevRequest(devRequest("{"))).status).toBe(400)
     expect((await handleScheduleDevRequest(devRequest({ operation: "delete", id: "digest" }))).status).toBe(400)
     expect((await handleScheduleDevRequest(devRequest({ limit: 0, operation: "runs", id: "digest" }))).status).toBe(400)
+  })
+
+  it.each(["run", "enable", "disable"])("rejects public-header-only %s mutations before changing state", async operation => {
+    const handler = vi.fn()
+    installTargets(handler)
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
+    const request = new Request("http://192.0.2.1/_vitehub/schedule/dev", {
+      method: "POST", body: JSON.stringify({ id: "digest", operation }),
+      headers: { "content-type": "application/json", [scheduleDevHeader]: scheduleDevHeaderValue },
+    })
+    expect((await handleScheduleDevRequest(request)).status).toBe(403)
+    expect(handler).not.toHaveBeenCalled()
+    expect((await schedules.get("digest"))?.enabled).toBe(true)
   })
 
   it("runs, disables, and enables a Runtime Schedule", async () => {

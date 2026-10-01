@@ -4,6 +4,8 @@ export const scheduleDevRoute = "/__vitehub/schedule/dev"
 export const scheduleDevRuntimeRoute = "/_vitehub/schedule/dev"
 export const scheduleDevHeader = "x-vitehub-schedule-dev"
 export const scheduleDevHeaderValue = "1"
+export const scheduleDevTokenNamespace = "schedule"
+export const scheduleDevTokenServerHeader = "x-vitehub-schedule-dev-server"
 
 /** Schedule operations that the dev endpoint accepts. */
 export const scheduleDevOperations = ["list", "get", "runs", "attempts", "run", "enable", "disable"] as const

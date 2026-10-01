@@ -119,6 +119,7 @@ const generatedRuntimeOwnerExports = new Set([
   "@vite-hub/sandbox/runtime/provider-loader",
   "@vite-hub/sandbox/runtime/state",
   "@vite-hub/schedule/runtime/console",
+  "@vite-hub/schedule/runtime/dev",
   "@vite-hub/schedule/runtime/state",
   "@vite-hub/schedule/runtime/static",
   "@vite-hub/workflow/runtime/cloudflare-runner",

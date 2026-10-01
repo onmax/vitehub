@@ -5,17 +5,26 @@ import { join, resolve } from "node:path"
 import { EventEmitter } from "node:events"
 import { Readable } from "node:stream"
 
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+
+import { createViteHubDevToken, readViteHubDevToken, removeViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 
 import { createScheduleCliContributor, runScheduleCli } from "../src/cli.ts"
 import { summarizeScheduleRun } from "../src/runtime/console.ts"
-import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute, scheduleDevRuntimeRoute } from "../src/dev.ts"
+import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute, scheduleDevRuntimeRoute, scheduleDevTokenNamespace, scheduleDevTokenServerHeader } from "../src/dev.ts"
 import { registerScheduleDevEndpoint, scheduleDevRuntimeUnavailableMessage } from "../src/vite-dev.ts"
 
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { ScheduleDevServer } from "../src/vite-dev.ts"
 
 const rootDir = "/app"
+let credential: { serverId: string, token: string }
+const closeServers: EventEmitter[] = []
+beforeEach(async () => { credential = await createViteHubDevToken(rootDir, scheduleDevTokenNamespace) })
+afterEach(async () => {
+  for (const server of closeServers.splice(0)) server.emit("close")
+  await removeViteHubDevToken(rootDir, { namespace: scheduleDevTokenNamespace, serverId: credential.serverId })
+})
 
 function stream() {
   let value = ""
@@ -52,7 +61,7 @@ const digest = {
 function devServer(result: unknown, init: { discovery?: Record<string, unknown>, status?: number } = {}) {
   return vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST"
     ? Response.json(result, { status: init.status ?? 200 })
-    : Response.json(init.discovery ?? { root: rootDir, runtime: "nitro" }))
+    : Response.json(init.discovery ?? { root: rootDir, runtime: "nitro", scheduleDevTokenServerId: credential.serverId }))
 }
 
 describe("vitehub schedule", () => {
@@ -140,7 +149,7 @@ describe("vitehub schedule", () => {
     expect(String(discovery?.[0])).toBe(`http://127.0.0.1:4321${scheduleDevRoute}`)
     expect(operation?.[1]).toMatchObject({
       body: JSON.stringify({ operation: "list" }),
-      headers: { "content-type": "application/json", [scheduleDevHeader]: scheduleDevHeaderValue },
+      headers: { "content-type": "application/json", [scheduleDevHeader]: scheduleDevHeaderValue, [viteHubDevTokenHeader]: credential.token, [scheduleDevTokenServerHeader]: credential.serverId },
       method: "POST",
     })
 
@@ -231,7 +240,7 @@ describe("vitehub schedule", () => {
   it.each([false, true])("reports non-success response body failures with json %s", async (json) => {
     const output = context()
     const fetch: typeof globalThis.fetch = async (_input, init) => {
-      if (init?.method !== "POST") return Response.json({ root: rootDir, runtime: "nitro" })
+      if (init?.method !== "POST") return Response.json({ root: rootDir, runtime: "nitro", scheduleDevTokenServerId: credential.serverId })
       return new Response(new ReadableStream({ start(controller) { controller.error(new Error("response body interrupted")) } }), { status: 503 })
     }
     expect(await runScheduleCli(["get", "digest", ...(json ? ["--json"] : [])], output.context, { fetch })).toBe(1)
@@ -248,7 +257,7 @@ describe("vitehub schedule", () => {
   it("returns JSON when the timeout interrupts a non-success response body", async () => {
     const output = context()
     const fetch: typeof globalThis.fetch = async (_input, init) => {
-      if (init?.method !== "POST") return Response.json({ root: rootDir, runtime: "nitro" })
+      if (init?.method !== "POST") return Response.json({ root: rootDir, runtime: "nitro", scheduleDevTokenServerId: credential.serverId })
       return new Response(new ReadableStream({ start(controller) {
         init.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true })
       } }), { status: 503 })
@@ -264,7 +273,7 @@ describe("vitehub schedule", () => {
     const output = context()
     const message = "Authorization: Bearer failure-secret"
     const fetch: typeof globalThis.fetch = async (_input, init) => {
-      if (init?.method !== "POST") return Response.json({ root: rootDir, runtime: "nitro" })
+      if (init?.method !== "POST") return Response.json({ root: rootDir, runtime: "nitro", scheduleDevTokenServerId: credential.serverId })
       if (kind === "text") return new Response(message, { status: 503 })
       if (kind === "json") return Response.json({ error: { code: "SCHEDULE_NOT_FOUND", message } }, { status: 404 })
       return new Response(new ReadableStream({ start(controller) { controller.error(new Error(message)) } }), { status: 503 })
@@ -298,6 +307,19 @@ describe("vitehub schedule", () => {
     const fetch = devServer({ automaticRuns: false, schedules: [] })
     expect(await runScheduleCli(["list", "--timeout=2147483647"], output.context, { fetch })).toBe(0)
     expect(fetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it.each([false, true])("rejects a missing local private token with json %s before POST", async json => {
+    await removeViteHubDevToken(rootDir, { namespace: scheduleDevTokenNamespace, serverId: credential.serverId })
+    const output = context()
+    const fetch = devServer({})
+    expect(await runScheduleCli(["list", ...(json ? ["--json"] : [])], output.context, { fetch })).toBe(1)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    if (json) {
+      expect(JSON.parse(output.stdout.output()).error.message).toContain("No private Schedule Dev token")
+      expect(output.stderr.output()).toBe("")
+    }
+    else expect(output.stderr.output()).toContain("No private Schedule Dev token")
   })
 
   it("reports runtime errors on stderr, or as JSON with --json", async () => {
@@ -355,7 +377,10 @@ type Middleware = (req: IncomingMessage, res: ServerResponse, next: () => void) 
 
 function fakeServer(environments?: Record<string, unknown>) {
   const middlewares: Middleware[] = []
+  const httpServer = new EventEmitter()
+  closeServers.push(httpServer)
   const server: ScheduleDevServer = {
+    httpServer,
     config: { root: rootDir, server: { port: 5173 } },
     environments,
     middlewares: { use: handler => middlewares.push(handler) },
@@ -395,7 +420,7 @@ const guard = { [scheduleDevHeader]: scheduleDevHeaderValue }
 describe("Schedule dev endpoint", () => {
   it("rejects requests without the guard header or from another origin", async () => {
     const { middlewares, server } = fakeServer()
-    registerScheduleDevEndpoint(server)
+    await registerScheduleDevEndpoint(server)
 
     expect(await call(middlewares[0]!, { method: "GET" })).toMatchObject({ body: "Forbidden Schedule Dev request.", status: 403 })
     expect(await call(middlewares[0]!, { headers: { ...guard, origin: "https://attacker.test" }, method: "GET" })).toMatchObject({ status: 403 })
@@ -405,11 +430,13 @@ describe("Schedule dev endpoint", () => {
 
   it("reports hosts without an in-process Nitro environment", async () => {
     const { middlewares, server } = fakeServer()
-    registerScheduleDevEndpoint(server)
+    await registerScheduleDevEndpoint(server)
 
     const discovery = await call(middlewares[0]!, { headers: guard, method: "GET" })
-    expect(JSON.parse(discovery.body)).toEqual({ message: scheduleDevRuntimeUnavailableMessage, root: rootDir, runtime: "unavailable" })
-    const operation = await call(middlewares[0]!, { body: "{\"operation\":\"list\"}", headers: { ...guard, "content-type": "application/json" }, method: "POST" })
+    expect(JSON.parse(discovery.body)).toEqual({ message: scheduleDevRuntimeUnavailableMessage, root: rootDir, runtime: "unavailable", scheduleDevTokenServerId: expect.any(String) })
+    const metadata = JSON.parse((await call(middlewares[0]!, { headers: guard, method: "GET" })).body)
+    const privateGuard = { ...guard, [scheduleDevTokenServerHeader]: metadata.scheduleDevTokenServerId, [viteHubDevTokenHeader]: (await readViteHubDevToken(rootDir, { namespace: scheduleDevTokenNamespace, serverId: metadata.scheduleDevTokenServerId }))! }
+    const operation = await call(middlewares[0]!, { body: "{\"operation\":\"list\"}", headers: { ...privateGuard, "content-type": "application/json" }, method: "POST" })
     expect(operation.status).toBe(501)
     expect(JSON.parse(operation.body)).toMatchObject({ error: { code: "SCHEDULE_DEV_RUNTIME_UNAVAILABLE" } })
   })
@@ -417,10 +444,12 @@ describe("Schedule dev endpoint", () => {
   it("forwards operations into the Nitro environment under the Nitro base URL", async () => {
     const dispatchFetch = vi.fn(async (request: Request) => Response.json({ body: await request.text(), url: request.url }))
     const { middlewares, server } = fakeServer({ nitro: { dispatchFetch } })
-    registerScheduleDevEndpoint(server, { nitroBaseURL: () => "/app/" })
+    await registerScheduleDevEndpoint(server, { nitroBaseURL: () => "/app/" })
 
-    expect(JSON.parse((await call(middlewares[0]!, { headers: guard, method: "GET" })).body)).toEqual({ root: rootDir, runtime: "nitro" })
-    const operation = await call(middlewares[0]!, { body: "{\"operation\":\"list\"}", headers: { ...guard, "content-type": "application/json" }, method: "POST" })
+    expect(JSON.parse((await call(middlewares[0]!, { headers: guard, method: "GET" })).body)).toEqual({ root: rootDir, runtime: "nitro", scheduleDevTokenServerId: expect.any(String) })
+    const metadata = JSON.parse((await call(middlewares[0]!, { headers: guard, method: "GET" })).body)
+    const privateGuard = { ...guard, [scheduleDevTokenServerHeader]: metadata.scheduleDevTokenServerId, [viteHubDevTokenHeader]: (await readViteHubDevToken(rootDir, { namespace: scheduleDevTokenNamespace, serverId: metadata.scheduleDevTokenServerId }))! }
+    const operation = await call(middlewares[0]!, { body: "{\"operation\":\"list\"}", headers: { ...privateGuard, "content-type": "application/json" }, method: "POST" })
 
     expect(operation.status).toBe(200)
     expect(operation.headers["cache-control"]).toBe("no-store")

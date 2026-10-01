@@ -221,7 +221,7 @@ function mergeNitroScheduleConfig(value: unknown, options: { crons: string[], mo
 async function addNitroScheduleDevHandler(value: unknown, root: string, importBase?: string): Promise<NitroConfig> {
   const handler = resolve(root, generatedNitroDevHandler)
   await mkdir(dirname(handler), { recursive: true })
-  const contents = renderViteHubNitroDevHandler({ export: "handleScheduleDevRequest", module: `${importBase ?? schedulePackageName}/runtime/console` })
+  const contents = renderViteHubNitroDevHandler({ context: { rootDir: root }, export: "handleScheduleDevRequest", module: `${importBase ?? schedulePackageName}/runtime/dev` })
   if (!existsSync(handler) || await readFile(handler, "utf8") !== contents) await writeFile(handler, contents, "utf8")
   const kit = createNitroServerKit(cloneNitroConfig(value))
   kit.addHandler({ handler, route: scheduleDevRuntimeRoute })
@@ -549,6 +549,7 @@ export async function createScheduleNitroConfig(options: ScheduleNitroConfigOpti
 
 export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVitePlugin {
   const internalOptions = options as InternalScheduleVitePluginOptions
+  let closeDevEndpoint: (() => Promise<void>) | undefined
   let resolved: ResolvedConfig | undefined
   let emitStandaloneProviderOutput = true
   let projectRoot: string | undefined
@@ -623,8 +624,9 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
       if (!nitro) return null
       Reflect.set(config, "nitro", nitro)
     },
-    configureServer(server) {
-      registerScheduleDevEndpoint(server, {
+    async configureServer(server) {
+      closeDevEndpoint = await registerScheduleDevEndpoint(server, {
+        rootDir: projectRoot,
         nitroBaseURL: () => {
           // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
           const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
@@ -772,6 +774,8 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
       order: "post",
       sequential: true,
       async handler() {
+        await closeDevEndpoint?.()
+        closeDevEndpoint = undefined
         if (!resolved || shouldSkipViteProviderBuild(resolved.command, getViteMode())) return
         await finalizeProviderDeploymentOutputs(providerOutput)
       },
