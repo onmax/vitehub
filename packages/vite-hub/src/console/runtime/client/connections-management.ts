@@ -77,8 +77,9 @@ export async function requestConnectionsManagement<T extends v.BaseSchema<unknow
   schema: T,
   input: Record<string, unknown> = {},
 ): Promise<v.InferOutput<T>> {
-  if (action === "set-key") assertSecureKeyEndpoint(new URL(endpoint, pageUrl()))
-  const response = await fetch(endpoint, {
+  const target = action === "set-key" ? new URL(endpoint, pageUrl()) : endpoint
+  if (target instanceof URL) assertSecureKeyEndpoint(target)
+  const response = await fetch(target, {
     method: "POST",
     credentials: "same-origin",
     headers: { "content-type": "application/json" },

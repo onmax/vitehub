@@ -128,6 +128,20 @@ describe("API key Connections", () => {
     expect(failed).toMatchObject({ action: "connect", error: "CONNECTIONS_KEY_REJECTED", outcome: "failed" })
   })
 
+  it("rejects malformed verification results before replacing the existing key", async () => {
+    for (const invalid of [{ account: 123 }, null, undefined, true, "accepted", []]) {
+      // SAFETY: JavaScript providers can return values outside the declared verifier contract.
+      const verify = vi.fn(async (candidate: string) => candidate === secretKey ? { account: "original" } : invalid) as ApiKeyProviderOptions["verify"]
+      const upstream = api()
+      const { name, runtime } = setupRuntime({ definition: { provider: key({ verify }) }, fetch: upstream.fetch })
+      await runtime.setKey(name, secretKey, { actor: owner })
+      await expectCode(runtime.setKey(name, "replacement", { actor: owner }), "CONNECTIONS_INVALID")
+      await expect(runtime.inspect(name)).resolves.toMatchObject({ account: "original", status: "active" })
+      await runtime.fetch(name, "https://api.example/items", undefined, { actor: server })
+      expect(upstream.calls[0]?.authorization).toBe(`Bearer ${secretKey}`)
+    }
+  })
+
   it("rejects keys with whitespace or control characters", async () => {
     const { name, runtime } = setupRuntime({ definition: { provider: key() } })
     for (const key of ["", "two words", "line\nbreak", "tab\tkey", "x".repeat(8193)]) {

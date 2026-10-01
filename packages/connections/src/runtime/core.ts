@@ -1,3 +1,5 @@
+import * as v from "valibot"
+
 import { decideConnectionAccess } from "../access.ts"
 import { connectionError, isConnectionError } from "../errors.ts"
 import { matchesConnectionOrigin } from "../origins.ts"
@@ -21,6 +23,12 @@ import type {
   ConnectionTokenSet,
   ConnectionTrace,
 } from "../types.ts"
+
+const apiKeyVerificationSchema = v.pipe(
+  v.unknown(),
+  v.check(value => !Array.isArray(value)),
+  v.union([v.literal(false), v.object({ account: v.optional(v.string()) })]),
+)
 
 export const CONNECTIONS_BASE_PATH = "/_vitehub/connections"
 /** Refresh this long before the access token expires. */
@@ -544,7 +552,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const db = store(lifecycle.event)
       const started = Date.now()
       try {
-        const verified = provider.verify ? await provider.verify(key, providerContext(lifecycle.event)) : {}
+        const result = provider.verify ? await provider.verify(key, providerContext(lifecycle.event)) : {}
+        const verification = v.safeParse(apiKeyVerificationSchema, result)
+        if (!verification.success) throw connectionError("invalid", { connection: name })
+        const verified = verification.output
         if (verified === false) throw connectionError("key_rejected", { connection: name })
         const grant = await db.write({
           name,

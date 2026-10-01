@@ -7,11 +7,11 @@ import { apiKey } from "@vite-hub/connections"
 import { createConnectionsRuntime } from "@vite-hub/connections/server"
 import { drizzle } from "drizzle-orm/libsql"
 import * as v from "valibot"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { consoleConnectionsKey, consoleConnectionsRegistryKey, consoleConnectionsRootKey, consoleSectionsKey, consoleSectionsRegistryKey, consoleSectionsRootKey, installConsoleConnectionsScope, resolveConsoleConnections } from "../src/console/internal.ts"
 import { addConsoleDevframeHandler } from "../src/console/nitro.ts"
-import { assertSecureKeyEndpoint } from "../src/console/runtime/client/connections-management.ts"
+import { assertSecureKeyEndpoint, requestConnectionsManagement } from "../src/console/runtime/client/connections-management.ts"
 import { writeConsoleNitroPlugin } from "../src/console/plugin.ts"
 import { consoleConnectionsReturnTo, handleConsoleConnections, installConsoleConnections } from "../src/console/runtime/server/connections.ts"
 import connectionsRoute from "../src/console/runtime/server/connections-route.ts"
@@ -143,6 +143,23 @@ describe("Console Connections", () => {
       expect(() => assertSecureKeyEndpoint(new URL(url))).not.toThrow()
     }
     expect(() => assertSecureKeyEndpoint(new URL("http://app.example/_vitehub/connections/manage"))).toThrow("only over HTTPS or on localhost")
+  })
+
+  it("validates and fetches the same key endpoint when the document base differs", async () => {
+    vi.stubGlobal("location", { href: "http://localhost:5173/console/connections" })
+    vi.stubGlobal("document", { baseURI: "http://remote-host/" })
+    const request = vi.fn(async () => Response.json({ ok: true }))
+    vi.stubGlobal("fetch", request)
+    try {
+      await requestConnectionsManagement("/_vitehub/connections/manage", "set-key", v.object({ ok: v.boolean() }), { key: "example-key" })
+      expect(request).toHaveBeenCalledWith(new URL("http://localhost:5173/_vitehub/connections/manage"), expect.objectContaining({ redirect: "error" }))
+      vi.stubGlobal("location", { href: "http://remote-host/console/connections" })
+      await expect(requestConnectionsManagement("/_vitehub/connections/manage", "set-key", v.object({ ok: v.boolean() }))).rejects.toThrow("only over HTTPS or on localhost")
+      expect(request).toHaveBeenCalledTimes(1)
+    }
+    finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it("rejects cross-origin management requests", async () => {
