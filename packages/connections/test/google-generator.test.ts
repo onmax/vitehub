@@ -33,6 +33,7 @@ it("generates required document fields, nested fields, and method parameters fro
         },
       },
       methods: {
+        get: { httpMethod: "GET", id: "gmail.messages.get", path: "users/{userId}/messages/{id}" },
         send: {
           httpMethod: "POST",
           id: "gmail.messages.send",
@@ -59,6 +60,8 @@ it("generates required document fields, nested fields, and method parameters fro
     expect(output).toContain("userId: string")
     expect(output).toContain("trace?: string")
     expect(output).toContain("body: GmailRequest")
+    expect(output).toContain('"messages.get": {\n    method: "GET"')
+    expect(output).toContain('"messages.send": {\n    method: "POST"')
   }
   finally {
     await rm(root, { recursive: true, force: true })

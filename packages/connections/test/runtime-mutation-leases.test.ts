@@ -1,7 +1,8 @@
 import { expect, it } from "vitest"
 
+import { defineConnection } from "../src/definition.ts"
 import { createConnectionsRuntime } from "../src/runtime.ts"
-import { connect, createTestRuntime, mailConnection } from "./helpers.ts"
+import { connect, createTestRuntime, mailConnection, testProvider } from "./helpers.ts"
 
 function deferred() {
   let resolve!: () => void
@@ -140,4 +141,55 @@ it("retains the lease when callback exchange returns an unreadable issued grant"
   expect(await runtime.inspect("mail")).toMatchObject({ status: "reauth_required" })
   test.now.value += 60_001
   await expect(connect({ ...test, runtime })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+})
+
+
+it("rejects unsupported provider revocation without discarding the connected grant", async () => {
+  const test = createTestRuntime(async () => ({ default: defineConnection({ provider: { ...testProvider(), revocationEndpoint: undefined }, scopes: ["mail.modify"] }) }))
+  await connect(test)
+  const before = await test.store.secrets.read("connection/mail")
+  await expect(test.runtime.revoke({ name: "mail" })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
+  expect(await test.store.secrets.read("connection/mail")).toEqual(before)
+  expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected", account: { id: "account-1" } })
+  expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toEqual([])
+})
+
+it.each(["account", "secret read", "state read"] as const)("quarantines a replaced provider grant when callback %s fails", async stage => {
+  const provider = testProvider()
+  let failAccount = false
+  const definition = defineConnection({
+    provider: { ...provider, account: response => {
+      if (failAccount) throw new Error("Callback account unavailable")
+      return provider.account(response)
+    } },
+    scopes: ["mail.modify"],
+  })
+  const test = createTestRuntime(async () => ({ default: definition }))
+  await connect(test)
+  const original = await test.store.secrets.read("connection/mail")
+  const read = test.store.secrets.read
+  const get = test.store.state.get
+  const runtime = createConnectionsRuntime({ definitions: { mail: async () => ({ default: definition }) }, store: test.store, now: () => test.now.value, fetch: async (input, init) => {
+    const response = await test.provider.fetch(input, init)
+    if (String(input) === "https://auth.example.com/token") {
+      test.provider.valid.clear()
+      test.provider.valid.add("rotated-by-callback")
+      failAccount = stage === "account"
+      if (stage === "secret read") test.store.secrets.read = async () => { test.store.secrets.read = read; throw new Error("Callback secret read unavailable") }
+      if (stage === "state read") test.store.state.get = async () => { test.store.state.get = get; throw new Error("Callback state read unavailable") }
+    }
+    return response
+  } })
+  const callbackRuntime = runtime
+  try {
+    await expect(connect({ ...test, runtime: callbackRuntime }, { access_token: "rotated-by-callback", refresh_token: "rotated-refresh" })).rejects.toThrow("Callback")
+  }
+  finally { test.store.secrets.read = read; test.store.state.get = get; failAccount = false }
+  expect(await test.store.secrets.read("connection/mail")).toEqual(original)
+  expect(await callbackRuntime.inspect("mail")).toMatchObject({ status: "reauth_required", account: { id: "account-1" } })
+  const before = test.provider.calls.length
+  await expect(callbackRuntime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+  test.now.value += 60_001
+  await expect(connect({ ...test, runtime: callbackRuntime })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+  expect(test.provider.calls).toHaveLength(before)
 })

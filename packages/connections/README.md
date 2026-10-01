@@ -44,7 +44,7 @@ const gmail = useConnection("google", { actor: "schedule:gmail" }).gmail;
 const { labels = [] } = await gmail.users.labels.list({ userId: "me" });
 ```
 
-The client exposes only the methods selected in `api`. GET methods are reads and other methods are writes. Denied calls throw `ConnectionError` with code `CONNECTION_DENIED`. Writes that need approval throw `CONNECTION_APPROVAL_REQUIRED` and create an approval.
+The client exposes only the methods selected in `api`. GET methods are reads and other methods are writes. Denied calls throw `ConnectionError` with code `CONNECTION_DENIED`. Dry-run clients keep GET responses non-optional; only skipped writes add `undefined` to the result. Custom typed catalogs can include a `method` field in each method signature to preserve this distinction. Writes that need approval throw `CONNECTION_APPROVAL_REQUIRED` and create an approval.
 
 `useConnection().fetch()` calls provider catalog origins with the Connection token. `ConnectionFetchInit` accepts `method`, `headers`, `redirect`, `signal`, and a string `body` for approval replay. Encode form parameters with `URLSearchParams.toString()` and set the form content type.
 
@@ -67,9 +67,9 @@ The default store serializes authorization-code exchange and persistence, token 
 
 An expired unresolved lease blocks every token revision. A replacement token cannot prove that an earlier provider request has stopped. Confirm the provider outcome before repairing the lease in the application's store, then connect again. The default SQLite store exposes lease metadata in `vitehub_connection_refresh_leases`, with `name`, `owner`, `revision`, and `expires_at` columns. Inspect those columns without reading secrets. After confirming that the former operation can no longer affect the provider grant, remove only the matching `name` and `owner` row. Do not delete a lease solely because it expired. A request that settles normally releases its own lease.
 
-Custom stores must implement atomic `refreshLeases.claim()` and owner-fenced `refreshLeases.release()`. The name remains for compatibility, but the lease covers all token mutations. `claim()` returns `acquired`, `busy`, or `expired`; it must never replace an expired unresolved lease, even when the token revision changed. A lost refresh response or failed token write requires reconnecting rather than reusing the old grant. An unconfirmed callback exchange or revoke keeps its lease until the provider outcome is confirmed and the store is repaired.
+Custom stores must implement atomic `refreshLeases.claim()` and owner-fenced `refreshLeases.release()`. The name remains for compatibility, but the lease covers all token mutations. `claim()` returns `acquired`, `busy`, or `expired`; it must never replace an expired unresolved lease, even when the token revision changed. A lost refresh response or failed token write requires reconnecting rather than reusing the old grant. An unconfirmed callback exchange or revoke keeps its lease until the provider outcome is confirmed and the store is repaired. A successful callback exchange stays fenced through account extraction and token/state persistence. Failures during those steps quarantine the current token revision as `reauth_required`.
 
-A custom Connections store must supply the token revision as the second `bridge.use()` callback argument. Revocation uses that revision to replace the token with a revoked marker. The default Env Bridge supplies it.
+A custom Connections store must supply the token revision as the second `bridge.use()` callback argument. Revocation requires a provider `revocationEndpoint` and uses that revision to replace the token with a revoked marker. A provider without that endpoint rejects revocation and keeps the stored grant. The default Env Bridge supplies it.
 
 ## Vite integration
 

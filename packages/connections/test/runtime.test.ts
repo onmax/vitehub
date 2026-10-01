@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import { isConnectionError } from "../src/errors.ts"
 import { createConnectionsRuntime } from "../src/runtime.ts"
-import { ACCESS_TOKEN, CLIENT_SECRET, connect, createStore, createTestRuntime, mailConnection, REFRESH_TOKEN } from "./helpers.ts"
+import { ACCESS_TOKEN, CLIENT_SECRET, connect, createStore, createTestRuntime, mailConnection, REFRESH_TOKEN, testProvider } from "./helpers.ts"
 
 import type { ConnectionEffect } from "../src/types.ts"
 
@@ -498,7 +498,7 @@ describe("calls", () => {
     expect(test.provider.calls).toHaveLength(calls)
   })
 
-  it("quarantines a rotating grant when HTTP success omits its replacement token", async () => {
+  it.each(["tokenless", "malformed"] as const)("quarantines a rotating grant after a %s HTTP success", async responseKind => {
     const test = createTestRuntime()
     await connect(test, { expires_in: 1 })
     let rotations = 0
@@ -506,7 +506,7 @@ describe("calls", () => {
       if (String(input) === "https://auth.example.com/token") {
         rotations += 1
         test.provider.valid.clear()
-        return Response.json({ refresh_token: "unconfirmed-replacement" })
+        return responseKind === "tokenless" ? Response.json({ refresh_token: "unconfirmed-replacement" }) : new Response("truncated token response", { status: 200 })
       }
       return await test.provider.fetch(input, init)
     }
@@ -574,6 +574,27 @@ describe("calls", () => {
     await connect(test)
     await test.runtime.client("mail", {}).fetch("https://mail.example.com/mail/v1/users/me/labels", { method })
     expect(test.provider.calls.at(-1)?.method).toBe(expected)
+  })
+
+  it.each(["gEt", "hEaD"])("executes normalized %s reads with read-only access in dry run", async method => {
+    const test = createTestRuntime(mailConnection({ server: { read: true } }))
+    await connect(test)
+    const response = await test.runtime.client("mail", { dryRun: true }).fetch("https://mail.example.com/mail/v1/users/me/labels", { method })
+    expect(response.status).toBe(200)
+    expect(test.provider.calls.at(-1)?.method).toBe(method.toUpperCase())
+  })
+
+  it.each(["HEAD", "OPTIONS"])("skips catalog %s writes in dry run", async method => {
+    const definition = mailConnection({ server: { read: true, write: ["mail.messages.modify"] } })
+    const provider = testProvider()
+    const test = createTestRuntime(async () => ({ default: {
+      ...definition,
+      provider: { ...provider, apis: { mail: { ...provider.apis.mail, methods: { ...provider.apis.mail.methods, "messages.modify": [method, "mail/v1/users/{userId}/messages/{id}", false] } } } },
+    } }))
+    await connect(test)
+    const count = test.provider.calls.length
+    expect(await test.runtime.client("mail", { dryRun: true }).call("mail.messages.modify", { id: "m1", userId: "me" })).toBeUndefined()
+    expect(test.provider.calls).toHaveLength(count)
   })
 
   it("sends fetch only to catalog origins", async () => {

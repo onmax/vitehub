@@ -5,7 +5,7 @@ import { google } from "../src/google.ts"
 import { useConnection } from "../src/runtime/state.ts"
 
 import type { GmailClassificationLabelFieldValue, GmailClassificationLabelValue, GmailLabel } from "../src/google.ts"
-import type { ConnectionClient, ConnectionDefinition, ConnectionFetchInit } from "../src/types.ts"
+import type { ConnectionClient, ConnectionDefinition, ConnectionFetchInit, ConnectionMethod } from "../src/types.ts"
 
 const connection = defineConnection({
   access: {
@@ -75,9 +75,22 @@ describe("Connection types", () => {
     expectTypeOf<Awaited<ReturnType<typeof dryRun.gmail.users.messages.modify>>>().toEqualTypeOf<NormalResult | undefined>()
     expectTypeOf<Awaited<ReturnType<typeof conditional.gmail.users.messages.modify>>>().toEqualTypeOf<NormalResult | undefined>()
     expectTypeOf<Awaited<ReturnType<typeof normal.gmail.users.labels.list>>>().toEqualTypeOf<Awaited<ReturnType<typeof client.gmail.users.labels.list>>>()
+    type NormalRead = Awaited<ReturnType<typeof normal.gmail.users.labels.list>>
+    expectTypeOf<Awaited<ReturnType<typeof dryRun.gmail.users.labels.list>>>().toEqualTypeOf<NormalRead>()
+    expectTypeOf<Awaited<ReturnType<typeof conditional.gmail.users.labels.list>>>().toEqualTypeOf<NormalRead>()
     const result = await dryRun.gmail.users.messages.modify({ id: "m1", userId: "me" })
     // @ts-expect-error A skipped write has no provider response.
     expectTypeOf(result.id).toBeString()
+  })
+
+  it("matches catalog method effects for dry-run reads and bodyless writes", () => {
+    type Signature = { body: never, params: object, response: { id: string } }
+    type Read = ConnectionMethod<Signature & { method: "GET" }, true>
+    type Head = ConnectionMethod<Signature & { method: "HEAD" }, true>
+    type Options = ConnectionMethod<Signature & { method: "OPTIONS" }, true>
+    expectTypeOf<Awaited<ReturnType<Read>>>().toEqualTypeOf<{ id: string }>()
+    expectTypeOf<Awaited<ReturnType<Head>>>().toEqualTypeOf<{ id: string } | undefined>()
+    expectTypeOf<Awaited<ReturnType<Options>>>().toEqualTypeOf<{ id: string } | undefined>()
   })
 
   it("checks access patterns", () => {

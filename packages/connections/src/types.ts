@@ -5,6 +5,8 @@ export const CONNECTION_NAME_MAX_LENGTH = 501
 
 /** Type shape of one provider API method. Generated catalogs describe each method with it. */
 export interface ConnectionMethodSignature {
+  /** Catalog HTTP method. GET reads always execute during dry run. */
+  method?: string
   body: unknown
   params: object
   response: unknown
@@ -138,7 +140,7 @@ type MethodInput<TSignature> = TSignature extends { body: infer TBody, params: i
 
 type MethodResponse<TSignature> = TSignature extends { response: infer TResponse } ? TResponse : never
 type MethodDryRunResult<TSignature, TDryRun extends boolean> = TSignature extends { method: infer TMethod }
-  ? TMethod extends "GET" | "HEAD" | "OPTIONS" ? never : true extends TDryRun ? undefined : never
+  ? TMethod extends "GET" ? never : true extends TDryRun ? undefined : never
   : true extends TDryRun ? undefined : never
 
 /** A typed provider method. In dry run, a skipped write resolves to `undefined`. */
