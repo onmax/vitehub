@@ -5930,6 +5930,7 @@ async function finishAgentInvocation<
         input: context.input,
         invoker: context.invoker,
         invocation: {
+          ...(outcomeCancelled ? { cancelled: true } : {}),
           durationMs,
           ...(resultKind !== undefined ? { resultKind } : {}),
           ...(context.run ? { run: context.run } : {}),
