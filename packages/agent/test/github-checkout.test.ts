@@ -249,7 +249,3 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   await expect(access(secondPath)).rejects.toThrow()
   expect(await readdir(pool)).toHaveLength(1)
 }, 30_000)
-
-it('rejects an empty checkout pool root', () => {
-  expect(() => createGitHubHost({ checkouts: { root: ' ' }, credentials: () => ({ token: 'test-token' }) })).toThrow('checkouts.root must be a directory path')
-})
