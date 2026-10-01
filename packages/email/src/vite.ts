@@ -189,7 +189,7 @@ async function addNitroEmailDevHandler(value: unknown, root: string, importBase:
   const handler = resolve(root, generatedNitroDevHandler)
   await mkdir(dirname(handler), { recursive: true })
   await writeFile(handler, renderViteHubNitroDevHandler({
-    ...(outbox ? { arguments: [runtimeId] } : {}),
+    arguments: outbox ? [runtimeId] : [],
     export: outbox ? "handleEmailDevRequest" : "handleDisabledEmailDevRequest",
     module: `${importBase}/runtime/console`,
   }), "utf8")
