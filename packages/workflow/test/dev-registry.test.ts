@@ -144,6 +144,37 @@ describe("Workflow dev registry", () => {
     expect(existsSync(join(appRoot, workflowDevGeneratedDir))).toBe(false)
   })
 
+  it.each(["root", "projectRoot"])("uses a final %s change through the startup path Nitro captured", async (changedOption) => {
+    const projectRoot = await createApp()
+    const finalRoot = join(projectRoot, "final")
+    await mkdir(join(finalRoot, "server/workflows"), { recursive: true })
+    await writeFile(join(finalRoot, "package.json"), '{"type":"module"}')
+    await writeFile(join(finalRoot, "server/workflows/latest.ts"), workflowModule("latest"))
+    const plugin = hubWorkflow({ provider: "vercel" })
+    const config: Record<string, unknown> = { root: projectRoot }
+    const hook = plugin.config
+    if (!hook || typeof hook === "function") throw new TypeError("Expected config object hook")
+    await (hook.handler as unknown as ConfigHook)(config, { command: "serve", mode: "development" })
+    const startupPath = join(projectRoot, workflowDevGeneratedDir, "dev-plugin.mjs")
+    expect(config.nitro).toMatchObject({ plugins: [startupPath] })
+    const finalConfig = changedOption === "root" ? { root: finalRoot } : { root: projectRoot, __vitehubProjectRoot: finalRoot }
+    await (plugin.configResolved as (config: unknown) => Promise<void>)(finalConfig)
+    const nitroDir = join(projectRoot, "node_modules/nitro")
+    const stateDir = join(projectRoot, "node_modules/@vite-hub/workflow")
+    await mkdir(nitroDir, { recursive: true })
+    await mkdir(stateDir, { recursive: true })
+    await writeFile(join(nitroDir, "package.json"), JSON.stringify({ type: "module", exports: "./index.mjs" }))
+    await writeFile(join(nitroDir, "index.mjs"), "export const definePlugin = setup => setup\n")
+    await writeFile(join(stateDir, "package.json"), JSON.stringify({ type: "module", exports: { "./runtime/state": "./state.mjs" } }))
+    await writeFile(join(stateDir, "state.mjs"), "export let registry; export const setWorkflowRuntimeConfig = () => {}; export const setWorkflowRuntimeRegistry = value => { registry = value }\n")
+    const { default: startup } = await import(/* @vite-ignore */ pathToFileURL(startupPath).href)
+    await startup()
+    const state = await import(/* @vite-ignore */ pathToFileURL(join(stateDir, "state.mjs")).href)
+    expect(state.registry).toHaveProperty("latest")
+    expect(state.registry).not.toHaveProperty("welcome")
+    expect(await readFile(join(finalRoot, workflowDevGeneratedDir, "dev-registry.mjs"), "utf8")).toContain("latest")
+  })
+
   it("preserves explicit server directories with a nested Vite root", async () => {
     const projectRoot = await createApp()
     const appRoot = join(projectRoot, "app")
@@ -256,6 +287,9 @@ describe("Workflow dev registry", () => {
 
     const registryFile = join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs")
     const registryModule = { file: registryFile }
+    const helperFile = join(projectRoot, "server/lib/workflow-helpers.ts")
+    const workflowDependency = { file: join(projectRoot, "server/workflows/welcome.ts"), importers: new Set([registryModule]) }
+    const helperModule = { file: helperFile, importers: new Set([workflowDependency]) }
     const writeRegistry = devRegistry.writeWorkflowDevRegistryFiles
     vi.spyOn(devRegistry, "writeWorkflowDevRegistryFiles").mockImplementation(async options => {
       const result = await writeRegistry(options)
@@ -274,7 +308,7 @@ describe("Workflow dev registry", () => {
           moduleGraph: {
             getModulesByFile: (file: string) => {
               queriedFiles.push(file)
-              return file === registryFile ? new Set([registryModule]) : undefined
+              return file === registryFile ? new Set([registryModule]) : file === helperFile ? new Set([helperModule]) : undefined
             },
             invalidateModule: (module: unknown) => invalidated.push(module),
           },
@@ -306,10 +340,16 @@ describe("Workflow dev registry", () => {
     watcher.emit("change", join(projectRoot, "server/workflows/welcome.ts"))
     await waitFor(async () => invalidated.length > 2)
     expect(invalidated).toEqual([registryModule, registryModule, registryModule])
+    await mkdir(join(projectRoot, "server/lib"), { recursive: true })
+    await writeFile(helperFile, 'export const result = "changed helper"\n')
+    watcher.emit("change", helperFile)
+    await waitFor(async () => invalidated.length > 3)
+    expect(invalidated).toEqual([registryModule, registryModule, registryModule, registryModule])
     expect(reloads).toEqual([
       { type: "full-reload", triggeredBy: report },
       { type: "full-reload", triggeredBy: report },
       { type: "full-reload", triggeredBy: join(projectRoot, "server/workflows/welcome.ts") },
+      { type: "full-reload", triggeredBy: helperFile },
     ])
     expect(queriedFiles.every(file => !file.includes("\\"))).toBe(true)
     expect(errors).toEqual([])

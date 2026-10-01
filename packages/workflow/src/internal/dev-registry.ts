@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { resolve } from "node:path"
+import { dirname, relative, resolve } from "node:path"
 
 import { discoverWorkflowDefinitions } from "../discovery.ts"
 import { createWorkflowRegistryContents, workflowPackageName } from "./vite-build.ts"
@@ -55,6 +55,8 @@ export interface WorkflowDevRegistryFilesOptions {
   definitions: DiscoveredWorkflowDefinition[]
   importBase?: string
   projectRoot: string
+  /** Retain the startup path Nitro read before final Vite configuration. */
+  pluginPath?: string
   workflow: false | ResolvedWorkflowOptions
 }
 
@@ -79,9 +81,13 @@ export async function writeWorkflowDevRegistryFiles(options: WorkflowDevRegistry
     [registry, createWorkflowDevRegistryModule(registry, options.definitions, options.importBase)],
     [plugin, createWorkflowDevPluginModule(options.workflow, options.importBase)],
   ]
+  if (options.pluginPath && options.pluginPath !== plugin) {
+    const pluginImport = `./${relative(dirname(options.pluginPath), plugin).replace(/\\/g, "/")}`
+    files.push([options.pluginPath, `export { default } from ${JSON.stringify(pluginImport)}\n`])
+  }
   const changed: string[] = []
   for (const [file, contents] of files) {
     if (await writeIfChanged(file, contents)) changed.push(file)
   }
-  return { changed, plugin }
+  return { changed, plugin: options.pluginPath ?? plugin }
 }

@@ -171,6 +171,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
   // Provider servers install the discovered Workflow registry in production.
   // In `vite dev`, a generated Nitro plugin installs it and the resolved runtime configuration.
   let devRootDir: string | undefined
+  let devStartupPlugin: string | undefined
   let devWorkflow: ResolvedWorkflowOptions | undefined
 
   function resolveDevWorkflow(): ResolvedWorkflowOptions | undefined {
@@ -188,6 +189,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       definitions: workflow === false ? [] : discoverWorkflowDevDefinitions(rootDir, serverDirs),
       importBase: internalOptions.importBase,
       projectRoot: rootDir,
+      pluginPath: devStartupPlugin,
       workflow,
     })
   }
@@ -208,6 +210,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         devRootDir = resolveViteHubProjectRoot(resolve(config.root || process.cwd()), { projectRoot: typeof projectRoot === "string" ? projectRoot : undefined })
         // Reserve the startup plugin before Nitro reads config. Later hooks may enable Workflows.
         const { plugin } = await writeDevRegistry(devRootDir, devWorkflow ?? false)
+        devStartupPlugin = plugin
         const kit = createNitroServerKit(Reflect.get(config, "nitro"))
         kit.addPlugin(plugin, "start")
         Reflect.set(config, "nitro", kit.config)
@@ -221,9 +224,25 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       const refresh = async (path: string) => {
         const file = path.replace(/\\/g, "/")
         if (file.includes(`/${workflowDevGeneratedDir}/`)) return
-        if (!/\.(?:c|m)?[jt]s$/i.test(file) || !/(?:\/workflows\/|\.workflow\.)/i.test(file)) return
-        const { changed } = await writeDevRegistry(rootDir, workflowConfig)
         const environment = server.environments.nitro ?? server.environments.ssr
+        const registryPath = resolve(rootDir, workflowDevGeneratedDir, "dev-registry.mjs").replace(/\\/g, "/")
+        const modules = [...(environment?.moduleGraph.getModulesByFile(file) ?? [])]
+        const visited = new Set<typeof modules[number]>()
+        let registryDependency = false
+        while (modules.length) {
+          const module = modules.pop()
+          if (!module) continue
+          if (visited.has(module)) continue
+          visited.add(module)
+          if (module.file?.replace(/\\/g, "/") === registryPath) {
+            registryDependency = true
+            break
+          }
+          modules.push(...module.importers)
+        }
+        const definitionFile = /\.(?:c|m)?[jt]s$/i.test(file) && /(?:\/workflows\/|\.workflow\.)/i.test(file)
+        if (!definitionFile && !registryDependency) return
+        const { changed } = await writeDevRegistry(rootDir, workflowConfig)
         const filesToInvalidate = new Set([
           ...changed,
           resolve(rootDir, workflowDevGeneratedDir, "dev-registry.mjs"),
@@ -252,6 +271,9 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       providerOutput = useProviderOutputCatalog(config)
       workflow = config.workflow ?? workflow
       if (devRootDir) {
+        const projectRoot = Reflect.get(config, VITEHUB_PROJECT_ROOT)
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Later Vite hooks may change the authoritative project root.
+        devRootDir = resolveViteHubProjectRoot(config.root, { projectRoot: typeof projectRoot === "string" ? projectRoot : undefined })
         devWorkflow = resolveDevWorkflow()
         await writeDevRegistry(devRootDir, devWorkflow ?? false)
       }
