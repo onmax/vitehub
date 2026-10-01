@@ -281,9 +281,13 @@ function envByRoot(value: unknown): ConsoleEnvByRoot | undefined {
 }
 
 function schedulesByRoot(value: unknown): ConsoleSchedulesByRoot | undefined {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry values cross Vite SSR realms, so realm-local prototypes cannot establish this boundary.
   if (!value || (typeof value !== "object" && typeof value !== "function")) return
+  // SAFETY: The structural checks below validate every ConsoleSchedulesByRoot member before use.
   const registry = value as Partial<ConsoleSchedulesByRoot>
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Callable members are the realm-independent registry contract.
   if (typeof registry.get !== "function" || typeof registry.set !== "function" || !Number.isInteger(registry.size)) return
+  // SAFETY: The preceding checks validate every ConsoleSchedulesByRoot member.
   return registry as ConsoleSchedulesByRoot
 }
 
@@ -608,6 +612,7 @@ export function resolveConsoleSchedules(scope: ConsoleInvocationScope = defaultC
   const registered = schedulesByRoot(processRegistry(scope)?.[consoleSchedulesRegistryKey])
   if (root) return registered?.get(root) ?? scope[consoleSchedulesKey]
   if (registered && registered.size > 1) return scope[consoleSchedulesKey]
+  // SAFETY: The process registry stores the schedule inspection under this symbol.
   return (processRegistry(scope)?.[consoleSchedulesKey] as ScheduleDefinitionRegistry | undefined) ?? scope[consoleSchedulesKey]
 }
 
