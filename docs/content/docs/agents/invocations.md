@@ -165,6 +165,8 @@ export default defineAgent({
 })
 ```
 
+When a Channel started the Invocation, both hooks also receive `event.message`. Use its methods to act on the provider message, such as a reply or a label. Set `dryRun: true` in the Invocation input to record write calls in the trace instead of calling the provider. See [Act on the Channel message in hooks](/docs/agents/channels#act-on-the-channel-message-in-hooks).
+
 Error hooks receive the raw `event.error` for protected server diagnostics and a
 sanitized `event.publicError` for logs, HTTP responses, or Channel replies. See
 [Agent public errors](/docs/reference/errors-diagnostics#agent-public-errors) for

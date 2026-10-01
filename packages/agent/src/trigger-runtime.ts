@@ -29,6 +29,7 @@ import type {
   ResolvedAgentTriggerDefinition,
 } from "./types.ts"
 import { parseStandardSchema } from "@vite-hub/internal/http-request"
+import { channelMessageContextKey } from "./internal/channel-delivery-handlers.ts"
 import type { StreamEvent } from "./messages.ts"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { WorkspaceName } from "@vite-hub/workspace"
@@ -444,8 +445,11 @@ function withAgentTriggerContext<CALL_OPTIONS>(
   input: AgentRunInput<CALL_OPTIONS>,
   trigger: Pick<ResolvedAgentTriggerDefinition, "capabilityId" | "channelId" | "id" | "name" | "source">,
   delivery?: AgentTriggerRunInvokeResult<CALL_OPTIONS>["delivery"],
+  message?: unknown,
 ): AgentRunInput<CALL_OPTIONS> {
   const context = { ...input.context }
+  if (message === undefined) delete context[channelMessageContextKey]
+  else context[channelMessageContextKey] = message
   const effects = delivery?.effects ? Array.isArray(delivery.effects) ? delivery.effects : [delivery.effects] : undefined
   const finishEffects = delivery?.finishEffects ? Array.isArray(delivery.finishEffects) ? delivery.finishEffects : [delivery.finishEffects] : undefined
   if (effects?.length) context[channelDeliveryEffectsContextKey] = effects as AgentChannelDeliveryEffectIntent[]
@@ -539,7 +543,7 @@ export function resolveAgentTriggerInvocationResult<
     }
   }
   return {
-    input: withAgentTriggerContext(invocation.input, trigger, invocation.delivery),
+    input: withAgentTriggerContext(invocation.input, trigger, invocation.delivery, invocation.message),
     metadata: invocation.metadata,
     run: invocation.run,
     trigger: trigger as never,
