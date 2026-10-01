@@ -6,11 +6,11 @@ import { env } from "@vite-hub/env"
 import { createRuntimeEnvRegistry } from "@vite-hub/env/vite"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { build } from "esbuild"
+import { resolveInlineConsoleAuthGates, type InlineConsoleAuth } from "./auth-inline-config.ts"
 import { cloudflareAccessIssuer, consoleAuthMountBase, consoleAuthPath } from "./auth-path.ts"
 
 import type { EnvRuntimeRegistry } from "@vite-hub/env"
 import type { CloudflareAccessConsoleAuth } from "./auth-cloudflare-access.ts"
-import type { InlineConsoleAuth } from "./auth-inline.ts"
 import type { ConsoleAuthMode } from "./internal.ts"
 
 export interface ConsoleAuthFiles {
@@ -125,9 +125,7 @@ export function resolveConsoleAuthConfig(root: string, config: ConsoleAuthConfig
     if (discoverFile(root, "server")) {
       throw new TypeError("[vitehub] Inline Console Auth conflicts with vitehub/console/auth/server.")
     }
-    if (config.provider !== "github" || !config.allowedEmails?.length || !config.databasePath || config.databasePath === ":memory:") {
-      throw new TypeError("[vitehub] Inline Console Auth requires provider: 'github', allowedEmails, and a persistent databasePath.")
-    }
+    resolveInlineConsoleAuthGates(config)
     if (config.client && discoverFile(root, "client")) {
       throw new TypeError("[vitehub] Console Auth client is configured both by path and by vitehub/console/auth/client.")
     }
@@ -254,4 +252,42 @@ export async function writeConsoleAuthHandlers(root: string, config: ResolvedCon
     ].join("\n")),
   ])
   return { auth: true, client, clientSource: clientFile, clientSources, middleware, route, signIn }
+}
+
+/** Module id that the generated Connections management handler imports to identify the actor. */
+export const consoleConnectionsActorId = "#vitehub/console/connections-actor"
+
+/**
+ * Where the Connections actor comes from:
+ * `console-auth` reads the Console Auth session, `app-auth` reads the app Auth session, and `none` records `user:local`.
+ */
+export type ConsoleConnectionsActorSource = "app-auth" | "console-auth" | "none"
+
+/** Write the module that returns the signed-in Console user as `user:<id>` for Connections management actions. */
+export async function writeConsoleConnectionsActor(root: string, source: ConsoleConnectionsActorSource): Promise<string> {
+  const file = resolve(root, ".vitehub/nitro/console/connections-actor.mjs")
+  const session = {
+    "app-auth": [
+      'import { getAuthForRequest } from "#vitehub/auth/server"',
+      'import { consoleSessionActor } from "vite-hub/console/auth"',
+      "export default function viteHubConsoleConnectionsActor(event) {",
+      "  return consoleSessionActor(getAuthForRequest(event.req, undefined, event), event.req)",
+      "}",
+    ],
+    "console-auth": [
+      'import { createAuthForRequest } from "#vitehub/auth/server"',
+      'import { consoleSessionActor } from "vite-hub/console/auth"',
+      'import { definition } from "./auth-definition.mjs"',
+      "export default function viteHubConsoleConnectionsActor(event) {",
+      "  return consoleSessionActor(createAuthForRequest(definition, event.req, undefined, event), event.req)",
+      "}",
+    ],
+    "none": [
+      "export default function viteHubConsoleConnectionsActor() {",
+      "  return undefined",
+      "}",
+    ],
+  }[source]
+  await writeFileIfChanged(file, [...session, ""].join("\n"))
+  return file
 }

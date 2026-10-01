@@ -2,9 +2,11 @@ import { resolve } from "node:path"
 
 import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
+import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 
 import { discoverChannelDefinitions } from "./discovery.ts"
 
+import type { ViteHubDefinitionSummary, ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import type { DiscoveredChannelDefinition } from "./types.ts"
 import type { Plugin, ResolvedConfig } from "vite"
 
@@ -23,7 +25,17 @@ export interface ChannelsVitePluginAPI {
   refresh: () => DiscoveredChannelDefinition[]
 }
 
-export type ChannelsVitePlugin = Plugin & { api: ChannelsVitePluginAPI }
+export type ChannelsVitePlugin = Plugin & { api: ChannelsVitePluginAPI, vitehub: ViteHubInspectionPluginMetadata }
+
+export interface ChannelInspectionOptions {
+  projectRoot: string
+  serverDirs?: string[]
+}
+
+/** Lists Channel Definitions as serializable inspection summaries. */
+export function inspectChannelDefinitions(options: ChannelInspectionOptions): ViteHubDefinitionSummary[] {
+  return summarizeDefinitions(options.projectRoot, discoverChannelDefinitions({ rootDir: options.projectRoot, serverDirs: options.serverDirs }), "channel")
+}
 
 function renderRegistry(definitions: DiscoveredChannelDefinition[]): string {
   return [
@@ -118,6 +130,15 @@ export function hubChannels(options: ChannelsVitePluginOptions = {}): ChannelsVi
     api: {
       getDefinitions: () => definitions,
       refresh,
+    },
+    vitehub: {
+      inspect: () => ({
+        definitions: [{
+          kind: "channel",
+          label: "Channels",
+          list: () => inspectChannelDefinitions({ projectRoot, serverDirs }),
+        }],
+      }),
     },
     async config(config) {
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs

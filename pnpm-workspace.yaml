@@ -25,6 +25,7 @@ catalogs:
     "@ai-sdk/vue": 4.0.58
     "@modelcontextprotocol/sdk": ^1.30.0
     "@types/json-schema": ^7.0.15
+    advocaat: ^0.0.6
     agents: ^0.22.0
     ai: 7.0.58
     evalite: 1.0.0-beta.16
@@ -136,6 +137,7 @@ catalogs:
     "@iconify-json/ph": ^1.2.2
     "@iconify-json/simple-icons": ^1.2.94
     "@iconify-json/vscode-icons": ^1.2.76
+    "@iconify/vue": ^5.0.1
     "@vueuse/core": ^14.4.0
     motion-v: ^2.4.0
     vue: 3.5.40

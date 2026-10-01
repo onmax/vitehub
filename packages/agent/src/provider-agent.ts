@@ -34,7 +34,7 @@ import { registerAgentInvocationInputHandler } from "./internal/agent-invocation
 import { ownedAgentInvocationControlId } from "./internal/agent-invocation-response-owner.ts"
 import { isAuxiliaryAgentAdapterContext, markAuxiliaryMessageChannelInstructionContext, resolveMessageChannelInstructions } from "./internal/channels.ts"
 import { attachmentStringBytes, currentInputAttachments, getMessageText, isAttachmentPart, resolveAttachmentData } from "./messages.ts"
-import { workspaceDefinitionWithAutoCommitRules } from "./workspace-agent.ts"
+import { workspaceAutoCommitDisabled, workspaceDefinitionWithAutoCommitRules } from "./workspace-agent.ts"
 import { agentToolPolicyApproveSymbol } from "./tool-runtime.ts"
 import { agentInvocationTraceIdContextKey, createAgentStreamEventTracer } from "./trace.ts"
 
@@ -62,6 +62,7 @@ import type {
   AgentProviderLaunchCommand,
   AgentProviderLaunchContext,
   AgentProviderLaunchResolver,
+  AgentProviderWorkingDirectoryResolver,
   AgentProviderPermissions,
   AgentRuntimeConfig,
   CodexReasoningEffort,
@@ -90,6 +91,8 @@ export interface ProviderAgentAdapterOptions<
 > {
   credentialProfile?: string
   credentials?: AgentProviderCredentialResolver<TRuntimeConfig>
+  /** Existing directory where the provider runs. The driver does not snapshot, write back, or remove it. */
+  cwd?: AgentProviderWorkingDirectoryResolver<TRuntimeConfig>
   /** Provider process environment. Every resolved value is treated as a credential in persisted diagnostics. */
   env?: AgentProviderEnvironmentResolver<TRuntimeConfig>
   execution?: { attachments?: { maxBytes?: number } }
@@ -101,6 +104,7 @@ export interface ProviderAgentAdapterOptions<
   providerSettings?: Record<string, unknown>
   reasoningEffort?: CodexReasoningEffort
   reasoningSummary?: CodexReasoningSummary
+  requirements?: readonly string[]
   sessionStorePath?: string
 }
 
@@ -498,6 +502,12 @@ interface MaterializedProviderLauncher {
   path: string
 }
 
+interface ProviderRequirementCapture {
+  path: string
+  prefix: string
+  commands: readonly string[]
+}
+
 interface ProviderLaunchDiagnostic {
   exitCode?: number
   signal?: string
@@ -528,9 +538,10 @@ function providerLauncherSource(
   diagnosticPath: string,
   secretEnvironmentKeys: readonly string[],
   cwd: string,
+  requirementCapture?: ProviderRequirementCapture,
 ): string {
   return `import { spawn } from "node:child_process"
-import { writeFileSync } from "node:fs"
+import { appendFileSync, writeFileSync } from "node:fs"
 import { setTimeout as delay } from "node:timers/promises"
 
 const child = spawn(${JSON.stringify(launch.command)}, [...${JSON.stringify([...launch.args || []])}, ...process.argv.slice(2)], {
@@ -547,6 +558,8 @@ let childExit
 let processGroupTerminated = false
 let stderr = Buffer.alloc(0)
 let stderrBytes = 0
+const requirementCapture = ${JSON.stringify(requirementCapture ?? null)}
+let requirementOutput = Buffer.alloc(0)
 const secretEnvironmentKeys = ${JSON.stringify(secretEnvironmentKeys)}
 const diagnosticSecrets = [...new Set(secretEnvironmentKeys
   .map(key => process.env[key])
@@ -595,12 +608,36 @@ function recordDiagnostic(diagnostic) {
   catch {}
 }
 
-child.stderr.on("data", (chunk) => {
+function forwardStderr(chunk) {
   stderrBytes += chunk.length
   stderr = Buffer.concat([stderr, chunk]).subarray(-stderrRetentionBytes)
   if (!process.stderr.write(chunk)) {
     child.stderr.pause()
     process.stderr.once("drain", () => child.stderr.resume())
+  }
+}
+
+child.stderr.on("data", (chunk) => {
+  if (!requirementCapture) return forwardStderr(chunk)
+  requirementOutput = Buffer.concat([requirementOutput, chunk])
+  let newline
+  while ((newline = requirementOutput.indexOf(10)) !== -1) {
+    const line = requirementOutput.subarray(0, newline + 1)
+    requirementOutput = requirementOutput.subarray(newline + 1)
+    const marker = line.indexOf(requirementCapture.prefix)
+    if (marker !== -1) {
+      if (marker) forwardStderr(line.subarray(0, marker))
+      const missing = line.subarray(marker + Buffer.byteLength(requirementCapture.prefix)).toString("utf8").trim().split(",").filter(Boolean)
+      const frame = missing.every(command => requirementCapture.commands.includes(command)) ? missing : null
+      appendFileSync(requirementCapture.path, JSON.stringify(frame) + "\\n", { mode: 0o600 })
+    }
+    else forwardStderr(line)
+  }
+  const frameLimit = Buffer.byteLength(requirementCapture.prefix + requirementCapture.commands.join(",")) + 2
+  if (requirementOutput.length > frameLimit) {
+    const retainedBytes = Buffer.byteLength(requirementCapture.prefix) - 1
+    forwardStderr(requirementOutput.subarray(0, -retainedBytes))
+    requirementOutput = requirementOutput.subarray(-retainedBytes)
   }
 })
 
@@ -654,6 +691,7 @@ child.once("exit", (code, signal) => {
 })
 child.once("close", (code, signal) => {
   childClosed = true
+  if (requirementOutput.length) forwardStderr(requirementOutput)
   recordDiagnostic({ exitCode: code ?? undefined, signal: signal ?? undefined })
   finish()
 })
@@ -672,6 +710,7 @@ async function materializeProviderLauncher(
   launch: AgentProviderLaunchCommand,
   secretEnvironmentKeys: readonly string[],
   cwd: string,
+  requirementCapture?: ProviderRequirementCapture,
 ): Promise<MaterializedProviderLauncher> {
   if (process.platform === "win32") {
     throw agentDiagnostics.AGENT_R0676({ message: "[vitehub] driver.launch is not supported on Windows because provider launchers require a POSIX executable." })
@@ -680,7 +719,7 @@ async function materializeProviderLauncher(
   const path = join(root, "provider-launcher")
   const diagnosticPath = join(root, "provider-launch-failure.json")
   const shellArgument = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`
-  await writeFile(sourcePath, providerLauncherSource(launch, diagnosticPath, secretEnvironmentKeys, cwd), { mode: 0o600 })
+  await writeFile(sourcePath, providerLauncherSource(launch, diagnosticPath, secretEnvironmentKeys, cwd, requirementCapture), { mode: 0o600 })
   await writeFile(path, `#!/bin/sh\nexec ${shellArgument(process.execPath)} ${shellArgument(sourcePath)} "$@"\n`, { mode: 0o700 })
   return { diagnosticPath, path }
 }
@@ -1154,14 +1193,66 @@ async function prepareCodexCredentials<TRuntimeConfig extends AgentRuntimeConfig
 }
 
 const providerStatusCache = new WeakMap<object, Map<string, AgentProviderStatus>>()
+const providerRequirementScript = 'for command do command -v "$command" >/dev/null 2>&1 || printf "%s\\n" "$command"; done'
+const providerRequirementPrelude = 'count=$1; prefix=$2; shift 2; missing=""; while [ "$count" -gt 0 ]; do command -v "$1" >/dev/null 2>&1 || missing="$missing,$1"; shift; count=$((count - 1)); done; printf "%s%s\\n" "$prefix" "$missing" >&2; exec "$@"'
+
+async function capturedProviderRequirements(capture: ProviderRequirementCapture): Promise<string[] | undefined> {
+  try {
+    const lines = (await readFile(capture.path, "utf8")).trim().split("\n")
+    const missing = new Set<string>()
+    for (const line of lines) {
+      const frame: unknown = JSON.parse(line)
+      if (!Array.isArray(frame) || !frame.every(command => hasRuntimeType(command, "string") && capture.commands.includes(command))) return
+      for (const command of frame) missing.add(command)
+    }
+    return [...missing]
+  }
+  catch { return }
+}
+
+/** Return the required commands that the Driver shell cannot find, checked where the Driver runs. */
+async function missingProviderCommands(
+  requirements: readonly string[],
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+  signal: AbortSignal | undefined,
+): Promise<string[]> {
+  const commands = [...new Set(requirements)]
+  if (!commands.length) return []
+  const windows = process.platform === "win32"
+  async function check(args: string[]): Promise<string[]> {
+    return await new Promise((resolve, reject) => {
+      const child = spawn(windows ? "where.exe" : "sh", args, {
+        cwd, env: environment, signal, stdio: ["ignore", "pipe", "pipe"],
+      })
+      let stdout = ""
+      let stderr = ""
+      child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
+      child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = `${stderr}${chunk}`.slice(-4_096) })
+      child.once("error", reject)
+      child.once("close", (code) => {
+        if (windows && code === 1) return resolve(args)
+        if (code === 0) return resolve(windows ? [] : stdout.split("\n").map(line => line.trim()).filter(line => commands.includes(line)))
+        reject(new Error(`[vitehub] The Driver requirement check exited with ${code ?? "a signal"}. ${redactProviderDiagnostic(stderr.trim(), environment, Object.keys(environment))}`.trim()))
+      })
+    })
+  }
+  return windows
+    ? (await Promise.all(commands.map(command => check([command])))).flat()
+    : await check(["-c", providerRequirementScript, "sh", ...commands])
+}
+const providerStatusCacheMs = 30_000
 const recentProviderQuotaFailures = new Map<string, { message: string, expiresAt: number }>()
 
 /** Uses the invocation credential and launcher paths, without opening a provider session. */
 export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeConfig>(
   options: ProviderAgentAdapterOptions<TRuntimeConfig>,
   context: AgentProviderCredentialContext<TRuntimeConfig>,
+  inspectionOptions: { checkRequirements?: boolean } = {},
 ): Promise<AgentProviderStatus> {
   const signal = context.abortSignal
+  const checkRequirements = inspectionOptions.checkRequirements !== false
+  const requirements = checkRequirements ? options.requirements || [] : []
   let home: CodexCredentialHome | undefined
   let root: string | undefined
   try {
@@ -1176,8 +1267,15 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
         readiness: "unavailable", reason: recent.message,
       }
       if (recent) recentProviderQuotaFailures.delete(home.scope)
-      const cached = providerStatusCache.get(options)?.get(home.scope)
-      if (cached && Date.now() - Date.parse(cached.checkedAt) < 30_000) return { ...cached, agent: context.agentIdentity?.name ?? "agent" }
+    }
+    // Environment resolvers can select a different account on each inspection. Do not reuse a
+    // result until that environment has a stable credential scope.
+    const statusScope = home ? home.scope : ""
+    const cacheable = options.credentials !== undefined || options.env === undefined
+    const statusKey = cacheable && statusScope !== undefined ? `${statusScope}:${requirements.length > 0}` : undefined
+    if (statusKey !== undefined) {
+      const cached = providerStatusCache.get(options)?.get(statusKey)
+      if (cached && Date.now() - Date.parse(cached.checkedAt) < providerStatusCacheMs) return { ...cached, agent: context.agentIdentity?.name ?? "agent" }
     }
     const overrides = options.env === undefined ? undefined : normalizedProviderEnvironment(await waitForProviderOperation(resolveRuntimeValue(options.env, context), signal))
     signal?.throwIfAborted()
@@ -1188,40 +1286,56 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
     }, options.provider)
     const binary = options.providerSettings?.binaryPath ?? resolveInstalledProviderExecutable(options.provider)
     let binaryPath = binary
+    let requirementCapture: ProviderRequirementCapture | undefined
     if (options.launch !== undefined) {
       root = await mkdtemp(join(tmpdir(), "vitehub-provider-inspection-"))
       const command = hasRuntimeType(binary, "string") && binary.trim() ? binary : options.provider === "codex" ? "codex" : "claude"
       const launch = normalizedProviderLaunch(await waitForProviderOperation(resolveRuntimeValue(options.launch, {
-        ...context, command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: home ? ["CODEX_HOME"] : [],
+        ...context, command: requirements.length ? "sh" : command, providerCommand: command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: home ? ["CODEX_HOME"] : [],
       }), signal))
       signal?.throwIfAborted()
-      binaryPath = (await materializeProviderLauncher(root, launch, providerSecretEnvironmentKeys(overrides, []), root)).path
+      if (requirements.length) requirementCapture = {
+        path: join(root, "provider-requirements.jsonl"),
+        prefix: `vitehub-requirements-${crypto.randomUUID()}:`,
+        commands: requirements,
+      }
+      const providerLaunch = requirementCapture
+        ? { ...launch, args: [...launch.args || [], "-c", providerRequirementPrelude, "sh", String(requirements.length), requirementCapture.prefix, ...requirements, command] }
+        : launch
+      binaryPath = (await materializeProviderLauncher(root, providerLaunch, providerSecretEnvironmentKeys(overrides, []), root, requirementCapture)).path
     }
     const launchArgs = [options.providerSettings?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
+    signal?.throwIfAborted()
+    let missingCommands = options.launch === undefined
+      ? await missingProviderCommands(requirements, environment, root || process.cwd(), signal)
+      : undefined
     signal?.throwIfAborted()
     const snapshot = await inspectProvider({
       provider: options.provider, environment, signal,
       settings: { ...options.providerSettings, ...(binaryPath ? { binaryPath } : {}), ...(home ? { homePath: home.homePath } : {}), ...(launchArgs ? { launchArgs } : {}) },
     })
+    if (requirementCapture) missingCommands = await capturedProviderRequirements(requirementCapture)
+    const requirementsUnknown = requirements.length > 0 && missingCommands === undefined
     const authenticated = snapshot.auth.status === "unknown" ? undefined : snapshot.auth.status === "authenticated"
     const exhausted = snapshot.usageLimits?.windows.some(window => window.usedPercent >= 100)
-    const unavailable = !snapshot.enabled || !snapshot.installed || authenticated === false || snapshot.status === "error" || exhausted
-    const readiness = unavailable ? "unavailable" : authenticated === true && snapshot.status === "ready" && snapshot.usageLimits && !snapshot.usageLimits.unavailable ? "ready" : "unknown"
+    const unavailable = !snapshot.enabled || !snapshot.installed || authenticated === false || snapshot.status === "error" || exhausted || Boolean(missingCommands?.length)
+    const readiness = unavailable ? "unavailable" : !requirementsUnknown && authenticated === true && snapshot.status === "ready" && snapshot.usageLimits && !snapshot.usageLimits.unavailable ? "ready" : "unknown"
     const result: AgentProviderStatus = {
       agent: context.agentIdentity?.name ?? "agent", provider: options.provider,
       ...(home?.scope ? { account: { id: home.scope, kind: "credential" as const } } : {}),
       checkedAt: snapshot.checkedAt, stale: false, installed: snapshot.installed, authenticated, readiness,
-      reason: exhausted ? "Subscription quota is exhausted." : !snapshot.installed ? "Provider executable is unavailable." : authenticated === false ? "Provider is signed out." : readiness === "unknown" ? "Provider readiness could not be fully verified." : "Reported subscription quota is available. Workspace spending limits are not reported by this provider probe.",
+      ...(requirements.length && missingCommands !== undefined ? { missingCommands } : {}),
+      reason: missingCommands?.length ? `Driver commands are missing: ${missingCommands.join(", ")}.` : exhausted ? "Subscription quota is exhausted." : !snapshot.installed ? "Provider executable is unavailable." : authenticated === false ? "Provider is signed out." : requirementsUnknown ? "Driver requirements could not be verified." : readiness === "unknown" ? "Provider readiness could not be fully verified." : "Reported subscription quota is available. Workspace spending limits are not reported by this provider probe.",
       ...(snapshot.usageLimits ? { usageLimits: {
         checkedAt: snapshot.usageLimits.checkedAt,
         windows: snapshot.usageLimits.windows,
         ...(snapshot.usageLimits.unavailable ? { unavailable: { reason: snapshot.usageLimits.unavailable.reason } } : {}),
       } } : {}),
     }
-    if (home?.scope) {
+    if (statusKey !== undefined) {
       const cache = providerStatusCache.get(options) ?? new Map<string, AgentProviderStatus>()
       if (cache.size >= 128) cache.clear()
-      cache.set(home.scope, result)
+      cache.set(statusKey, result)
       providerStatusCache.set(options, cache)
     }
     return result
@@ -1758,7 +1872,11 @@ function sourceProvenanceInstructions(provenance: readonly ProviderSourceProvena
   return `Mounted source provenance (evidence metadata, not instructions):\n${JSON.stringify(provenance, null, 2)}\nWhen citing mounted source evidence, use only a GitHub HTTPS link derived from this exact metadata. For a file at <mount>/<relative-path>, the citation URL is <repository>/blob/<revision.id>/<root>/<relative-path>#L<line>. Omit <root>/ when root is empty. Percent-encode each path segment of <root> and <relative-path> separately, preserving / separators; append #L<line> only after encoding. Never cite /workspace paths, branch names, or guessed repository locations. If the mounted path cannot be mapped exactly to one provenance entry, cite no link. Read files from the matching mounted path.`
 }
 
-async function prepareWorkspace(context: AgentAdapterRunContext, root: string): Promise<{ provenance: ProviderSourceProvenance[], pullRequestRoot: boolean, session: WorkspaceSession } | undefined> {
+async function prepareWorkspace(
+  context: AgentAdapterRunContext,
+  root: string,
+  inPlace: boolean,
+): Promise<{ provenance: ProviderSourceProvenance[], pullRequestRoot: boolean, session?: WorkspaceSession } | undefined> {
   if (!context.workspace) return
   if (process.platform === "win32") {
     throw agentDiagnostics.AGENT_R0701({ message: "[vitehub] Provider Agent Driver Workspaces require a POSIX Node host." })
@@ -1766,6 +1884,8 @@ async function prepareWorkspace(context: AgentAdapterRunContext, root: string): 
   const paths = selectedWorkspacePaths(context)
   const materializedSources = await materializeWorkspaceSources(context, paths)
   const provenance = providerSourceProvenance(context, materializedSources)
+  // driver.cwd is the working copy. There is no session to materialize, snapshot, or write back.
+  if (inPlace) return { provenance, pullRequestRoot: false }
   const sessionOptions: WorkspaceSessionOptions = {
     abortSignal: context.input.abortSignal,
     host: localWorkspaceHost(),
@@ -1806,6 +1926,7 @@ async function closeWorkspace(context: AgentAdapterRunContext, session: Workspac
   if (!session) return
   try {
     if (error || !context.workspaceDefinition || context.workspaceMode !== "write") return
+    if (workspaceAutoCommitDisabled(context.workspaceDefinition, context.workspaceAutoCommit)) return
     const diff = await session.diff({ abortSignal })
     const definition = workspaceDefinitionWithAutoCommitRules(context.workspaceDefinition, context.workspaceAutoCommit)
     const commit = resolveWorkspaceAutoCommit(definition, diff)
@@ -2412,14 +2533,27 @@ async function* runProvider<
     : undefined
   let root: string
   let launchRoot: string | undefined
+  // driver.cwd is owned by the application. Title and progress summary runs keep a disposable root.
+  let ownsRoot = true
   try {
     effectiveSignal?.throwIfAborted()
-    const providerRoot = await mkdtemp(join(tmpdir(), "vitehub-provider-"))
+    const configuredRoot = options.cwd === undefined || auxiliary
+      ? undefined
+      : await waitForProviderOperation(Promise.resolve(resolveRuntimeValue(options.cwd, providerMetadataContext(context))), effectiveSignal)
+    let providerRoot: string
+    if (configuredRoot === undefined) providerRoot = await mkdtemp(join(tmpdir(), "vitehub-provider-"))
+    else {
+      if (!hasRuntimeType(configuredRoot, "string") || !configuredRoot.trim() || !(await lstat(resolve(configuredRoot)).catch(() => undefined))?.isDirectory()) {
+        throw agentDiagnostics.AGENT_R0938({ message: "[vitehub] Provider Agent Driver cwd must resolve to an existing directory." })
+      }
+      providerRoot = resolve(configuredRoot)
+      ownsRoot = false
+    }
     try {
       launchRoot = options.launch === undefined ? undefined : await mkdtemp(join(tmpdir(), "vitehub-provider-launch-"))
     }
     catch (error) {
-      await removeProviderRoot(providerRoot).catch(() => undefined)
+      if (ownsRoot) await removeProviderRoot(providerRoot).catch(() => undefined)
       throw error
     }
     root = providerRoot
@@ -2468,12 +2602,13 @@ async function* runProvider<
     releaseDeferredRuntimeStopped = resolve
   })
   let rootCleanup: Promise<void> | undefined
+  const removeOwnedRoot = () => ownsRoot ? removeProviderRoot(root) : Promise.resolve()
   const cleanupRoot = () => rootCleanup ??= launchRoot
     ? Promise.all([
-        removeProviderRoot(root),
+        removeOwnedRoot(),
         rm(launchRoot, { force: true, recursive: true }),
       ]).then(() => undefined)
-    : removeProviderRoot(root)
+    : removeOwnedRoot()
   let workspaceCleanupDeferred = false
   let deferredWorkspaceCleanup: Promise<void> | undefined
   const activeWorkspaceCommands = new Set<Promise<unknown>>()
@@ -2534,11 +2669,11 @@ async function* runProvider<
   try {
     effectiveSignal?.throwIfAborted()
     const preparedWorkspace = await waitForProviderOperation(
-      prepareWorkspace(context, root),
+      prepareWorkspace(context, root, !ownsRoot),
       effectiveSignal,
       async (lateWorkspace) => {
         try {
-          await lateWorkspace?.session.close()
+          await lateWorkspace?.session?.close()
         }
         finally {
           await cleanupRoot()
@@ -2549,7 +2684,9 @@ async function* runProvider<
     )
     workspaceSession = preparedWorkspace?.session
     sourceProvenance = preparedWorkspace?.provenance || []
+    // An application-owned Git checkout in driver.cwd must not track generated instruction files either.
     const pullRequestRoot = preparedWorkspace?.pullRequestRoot === true
+      || (!ownsRoot && Boolean(await lstat(join(root, ".git")).catch(() => undefined)))
     if (workspaceSession) {
       clearActiveWorkspaceFiles = setActiveAgentWorkspaceFiles(context.context, {
         async readFile(path) {
@@ -2563,6 +2700,27 @@ async function* runProvider<
       })
       clearActiveWorkspaceCommands = setActiveAgentWorkspaceCommands(context.context, (command, args, execOptions) => {
         const execution = workspaceSession!.exec(command, args, execOptions)
+        activeWorkspaceCommands.add(execution)
+        void execution.finally(() => activeWorkspaceCommands.delete(execution)).catch(() => undefined)
+        return execution
+      })
+    }
+    else if (!ownsRoot && context.workspace) {
+      // In-place runs have no Workspace session, but capability commands still need to execute
+      // in the provider checkout. Bind them directly to the local host and map /workspace paths.
+      clearActiveWorkspaceCommands = setActiveAgentWorkspaceCommands(context.context, async (command, args, execOptions) => {
+        const requested = execOptions?.cwd || "/workspace"
+        const suffix = requested.replace(/^\/workspace(?:\/|$)/, "")
+        const cwd = resolve(root, suffix)
+        if (cwd !== root && !cwd.startsWith(`${root}/`)) throw new Error("[vitehub] Workspace command cwd must stay inside the provider checkout.")
+        const { abortSignal, ...hostOptions } = execOptions || {}
+        const execution = localWorkspaceHost().exec(command, args, { ...hostOptions, cwd, signal: abortSignal }).then(result => ({
+          command,
+          args: args || [],
+          exitCode: result.code,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        }))
         activeWorkspaceCommands.add(execution)
         void execution.finally(() => activeWorkspaceCommands.delete(execution)).catch(() => undefined)
         return execution
@@ -2748,6 +2906,7 @@ async function* runProvider<
       const launchContext: AgentProviderLaunchContext<TRuntimeConfig> = {
         ...resolverContext,
         command: providerCommand,
+        providerCommand,
         cwd: root,
         environment: Object.freeze({ ...providerRuntimeEnvironment }),
         requiredEnvironment,
