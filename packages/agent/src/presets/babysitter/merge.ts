@@ -91,6 +91,11 @@ export function directMergeReadiness(snapshot: Snapshot, requiredChecks: GitHubR
   if (evidence.statuses.some((status) => status.state !== "success")) return no("a current-head status is not successful");
   if (!snapshot.threadsHydrated) return no("review threads not loaded");
   if (snapshot.threads.some((thread) => thread.isResolved !== true)) return no("unresolved review threads");
+  const hasUnthreadedFeedback = snapshot.reasons.some((reason) =>
+    reason.startsWith("issue_comment:") || reason.startsWith("pull_request_review:") || reason.startsWith("pull_request_review_comment:"),
+  ) && [...Object.values(snapshot.comments), ...Object.values(snapshot.reviews), ...Object.values(snapshot.reviewComments)]
+    .some((feedback) => !feedback.deleted);
+  if (hasUnthreadedFeedback) return no("unhandled non-thread feedback");
   return { ready: true, head };
 }
 

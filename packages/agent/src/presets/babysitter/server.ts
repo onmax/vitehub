@@ -200,7 +200,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
    * Merges a PR that inbox evidence, the merge policy, and GitHub's live state all report ready.
    * Returns false, and the PR gets a normal pass, on any doubt.
    */
-  async function mergeReadyPullRequest(claim: Claim, owner: Record<string, unknown>): Promise<boolean> {
+  async function mergeReadyPullRequest(claim: Claim, owner: Record<string, unknown>, signal: AbortSignal): Promise<boolean> {
     if (merge.mode !== "direct") return false;
     const { snapshot } = claim;
     const { repository, number } = snapshot;
@@ -209,23 +209,43 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const policy = await requiredChecks.read(repository, base);
     const evaluation = evaluateGitHubRequiredChecks(policy, snapshotCheckEvidence(snapshot));
     let decision = directMergeReadiness(snapshot, evaluation.state);
-    if (decision.ready && merge.ready) {
-      const ready = await merge.ready({ repository, number, head: decision.head, snapshot: structuredClone(snapshot), requiredChecks: evaluation.state });
-      if (ready !== true) decision = { ready: false, reason: ready };
-    }
     if (!decision.ready) {
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: decision.reason });
       return false;
     }
     try {
-      const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".");
+      // Refresh review threads and atomically revalidate the claim after all
+      // readiness checks. A webhook received during this read invalidates the
+      // claim, so newly arrived feedback cannot be merged accidentally.
+      const threads = await readThreads(repository, number, signal);
+      if (!(await pullRequestInbox.hydrate(claim, { threads, threadsHydrated: true, feedbackRefresh: false }))) return false;
+      const currentSnapshot = claim.snapshot;
+      const currentPolicy = await requiredChecks.read(repository, base);
+      const currentEvaluation = evaluateGitHubRequiredChecks(currentPolicy, snapshotCheckEvidence(currentSnapshot));
+      decision = directMergeReadiness(currentSnapshot, currentEvaluation.state);
+      if (!decision.ready) {
+        schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: decision.reason });
+        return false;
+      }
+      if (merge.ready) {
+        const ready = await merge.ready({ repository, number, head: decision.head, snapshot: structuredClone(currentSnapshot), requiredChecks: currentEvaluation.state });
+        if (ready !== true) {
+          schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: ready });
+          return false;
+        }
+      }
+      const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", signal);
       const current = liveMergeReadiness(live, decision.head);
       if (!current.ready) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: current.reason });
         return false;
       }
       // GitHub rejects the merge when the head no longer matches sha.
-      await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000 });
+      const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000, signal });
+      const response: unknown = JSON.parse(result.stdout);
+      if (!response || typeof response !== "object" || !("merged" in response) || response.merged !== true) {
+        throw new Error("GitHub did not merge the pull request.");
+      }
     } catch (error) {
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
       return false;
@@ -372,7 +392,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             });
             return;
           }
-          if (merge.mode === "direct" && (await mergeReadyPullRequest(inboxClaim, owner))) return;
+          if (merge.mode === "direct" && (await mergeReadyPullRequest(inboxClaim, owner, passSignal))) return;
           const pullRequest = snapshotPullRequest(inboxClaim.snapshot);
           const webhookSnapshot = inboxClaim.snapshot;
           await github.withPullRequestCheckout(
