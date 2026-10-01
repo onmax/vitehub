@@ -217,7 +217,7 @@ function formatMessage(message: EmailOutboxMessage): string {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return v.is(v.record(v.string(), v.unknown()), value)
+  return !Array.isArray(value) && v.is(v.record(v.string(), v.unknown()), value)
 }
 
 const deliverySchema = v.variant("status", [
