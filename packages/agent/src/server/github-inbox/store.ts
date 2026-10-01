@@ -619,6 +619,13 @@ export class PullRequestInbox {
         && (s.revision ?? 0) === (claim.snapshot.revision ?? 0))
     })
   }
+  async hasMergeIntent(claim: Claim): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
+      return Boolean(s && s.lease === claim.token && s.generation === claim.generation
+        && (s.revision ?? 0) === (claim.snapshot.revision ?? 0) && s.mergeIntent)
+    })
+  }
   /** Reserve a claim, run an external side effect, then persist its terminal result. */
   async merge(claim: Claim, action: () => Promise<boolean>, text: string): Promise<boolean> {
     const reserved = await this.transaction(async tx => {

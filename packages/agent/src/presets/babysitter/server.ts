@@ -243,6 +243,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: current.reason });
         return false;
       }
+      if (await pullRequestInbox.hasMergeIntent(claim)) {
+        await pullRequestInbox.release(claim);
+        return true;
+      }
       // GitHub rejects the merge when the head no longer matches sha.
       const merged = await pullRequestInbox.merge(claim, async () => {
         const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${head}`], { repository, timeout: 60_000, signal });
@@ -250,6 +254,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         return Boolean(response && typeof response === "object" && "merged" in response && response.merged === true);
       }, `Merged ${head} directly: required checks passed and review threads were resolved.`);
       if (!merged) {
+        if (await pullRequestInbox.hasMergeIntent(claim)) {
+          await pullRequestInbox.release(claim);
+          return true;
+        }
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "inbox claim changed or GitHub did not merge the pull request" });
         return false;
       }
