@@ -38,11 +38,11 @@ const MAX_AGENT_CONFIGURATION_ITEMS = 32 * 1024
 const MAX_AGENT_CONFIGURATION_COLLECTION_ITEMS = 8 * 1024
 export const AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE = "vitehub.observation.truncated"
 const AGENT_INVOCATION_INPUT_PROMPT_TRUNCATED_ATTRIBUTE = "vitehub.input.promptTruncated"
-const AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE = "vitehub.input.promptRedacted"
+const AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE = "vitehub.input.redacted"
 const AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE = "vitehub.observation.id"
 const APPENDED_OBSERVATION_ATTRIBUTE = "vitehub.observation.appended"
 const CANONICAL_TRACE_ATTRIBUTE_KEYS = new Set([
-  AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE,
+  AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE,
   AGENT_INVOCATION_INPUT_PROMPT_TRUNCATED_ATTRIBUTE,
   AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE,
   APPENDED_OBSERVATION_ATTRIBUTE,
@@ -842,7 +842,7 @@ function boundedObservation(
   }
   const payload = boundedObservationPayload(observation.payload, payloadBudget, builtIns)
   const canonicalAttributes: Record<string, unknown> = {}
-  if (observation.attributes?.[AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE] === true) canonicalAttributes[AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE] = true
+  if (observation.attributes?.[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] === true) canonicalAttributes[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] = true
   const previousPromptTruncation = observation.attributes?.[AGENT_INVOCATION_INPUT_PROMPT_TRUNCATED_ATTRIBUTE]
   if (hasRuntimeType(previousPromptTruncation, "boolean")) canonicalAttributes[AGENT_INVOCATION_INPUT_PROMPT_TRUNCATED_ATTRIBUTE] = previousPromptTruncation
   else if (hasRuntimeType(observation.attributes?.["input.prompt"], "string")) canonicalAttributes[AGENT_INVOCATION_INPUT_PROMPT_TRUNCATED_ATTRIBUTE] = false
@@ -951,7 +951,7 @@ export type AgentInvocationRerunUnavailableReason =
   | "input-has-data"
   /** The Invocation received call options, which the journal does not replay. */
   | "input-has-options"
-  /** The journal redactor changed the captured prompt. */
+  /** The journal redactor changed input or Invoker Profile metadata needed for replay. */
   | "input-redacted"
   /** The journal bounded the prompt, so it is incomplete. */
   | "input-truncated"
@@ -975,7 +975,7 @@ export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "o
   const start = record.observations.find(observation => observation.name === "agent.invocation.start")
   const attributes = start?.attributes
   if (!attributes) return { available: false, reason: "input-not-captured" }
-  if (attributes[AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE] === true) return { available: false, reason: "input-redacted" }
+  if (attributes[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] === true) return { available: false, reason: "input-redacted" }
   if (attributes[AGENT_INVOCATION_INPUT_PROMPT_TRUNCATED_ATTRIBUTE] === true
     || attributes[AGENT_INVOCATION_INPUT_PROMPT_TRUNCATED_ATTRIBUTE] === undefined && attributes[AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE] === true) return { available: false, reason: "input-truncated" }
   if (attributes["input.hasData"] === true) return { available: false, reason: "input-has-data" }
@@ -1801,14 +1801,15 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const redacted = options.redact(cloneObservation(observation))
       const identity = observationIdentity(observation)
       if (!redacted) return
-      const promptRedacted = observation.name === "agent.invocation.start"
-        && observation.attributes?.["input.prompt"] !== redacted.attributes?.["input.prompt"]
+      const inputRedacted = observation.name === "agent.invocation.start"
+        && ["input.prompt", "input.hasData", "input.hasOptions", "input.hasMessages", "agent.invoker.profile.id"]
+          .some(key => observation.attributes?.[key] !== redacted.attributes?.[key])
       return {
         ...redacted,
         attributes: {
           ...redacted.attributes,
           ...(identity !== undefined ? { [AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE]: identity } : {}),
-          ...(promptRedacted || observation.attributes?.[AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE] === true ? { [AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE]: true } : {}),
+          ...(inputRedacted || observation.attributes?.[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] === true ? { [AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE]: true } : {}),
         },
       }
     }

@@ -366,6 +366,8 @@ History must contain valid ViteHub Messages with `user` or `assistant` roles and
 
 ### Rerun and delete sessions
 
+Rerun is available after the session completes, fails, or is cancelled.
+
 When `invoke` is enabled for an Agent, its session header shows two actions:
 
 - **Rerun** starts a new invocation with the recorded prompt and the same Invoker Profile. The action is available only when the journal kept the complete prompt. It is unavailable if the recorded Invoker Profile is no longer configured, for sessions that started with prior `messages` or attachments, for metadata-only journals, and for prompts that the journal truncated. The tooltip gives the reason.

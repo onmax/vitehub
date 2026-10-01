@@ -86,6 +86,42 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
   })
 
+  it.each(["agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages"])("disables rerun when a redactor removes %s", async (key) => {
+    const record = await journaled({
+      context: { invokerProfileId: "reviewer" },
+      ...(key === "input.hasData" ? { data: { subject: "Release notes" } } : {}),
+      ...(key === "input.hasMessages" ? { messages: [createMessage({ role: "user", text: "Earlier turn" })] } : {}),
+      ...(key === "input.hasOptions" ? { options: { temperature: 0.2 } } : {}),
+      prompt: "Original prompt",
+    }, {
+      metadataContent: ["input.prompt"],
+      redact: observation => {
+        if (observation.name === "agent.invocation.start") delete observation.attributes?.[key]
+        return observation
+      },
+    })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
+  })
+
+  it("keeps rerun available when redaction changes unrelated metadata", async () => {
+    const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Original prompt" }, {
+      redact: observation => {
+        delete observation.attributes?.["agent.invoker.label"]
+        return observation
+      },
+    })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: true, invokerProfileId: "reviewer", prompt: "Original prompt" })
+  })
+
+  it("disables rerun when a redactor changes the selected profile", async () => {
+    const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Original prompt" }, {
+      redact: observation => observation.name === "agent.invocation.start"
+        ? { ...observation, attributes: { ...observation.attributes, "agent.invoker.profile.id": "different-profile" } }
+        : observation,
+    })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
+  })
+
   it("reports input that the journal does not keep for replay", async () => {
     const withData = await journaled({ data: { subject: "Release notes" }, prompt: "Summarize this." })
     expect(withData.observations.find(observation => observation.name === "agent.invocation.start")?.attributes?.["input.hasData"]).toBe(true)

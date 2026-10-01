@@ -303,7 +303,9 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
     }
     const usage = invocationUsage(record)
     // Synthetic Agents have no Invoker Profiles, so rerun uses the default invoker.
-    const rerun = agentInvocationRerunInput(record)
+    const rerun = ["cancelled", "completed", "failed"].includes(record.status)
+      ? agentInvocationRerunInput(record)
+      : { available: false, reason: "invocation-not-terminal" } as const
     const actions = {
       delete: { available: ["cancelled", "completed", "failed"].includes(record.status) },
       rerun: rerun.available ? { available: true, prompt: rerun.prompt } : rerun,
