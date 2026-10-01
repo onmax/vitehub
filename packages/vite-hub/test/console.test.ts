@@ -2248,18 +2248,18 @@ describe("Agent invocation console", () => {
         await expect(definition.invocations?.get(withoutProfile.id)).resolves.toMatchObject({ status: "completed" })
       })
       const defaultDetail = await getConsoleInvocationDetail(detailEvent(withoutProfile.id))
-      expect(defaultDetail.invocation.actions?.rerun).toEqual({ available: true, prompt: "Use the default invoker." })
+      expect(defaultDetail.invocation.actions?.rerun).toEqual({ available: false, reason: "input-has-invoker" })
 
       const whitespacePrompt = "  def run():\n    return 1\n  "
-      const whitespace = await start(whitespacePrompt, null)
+      const whitespace = await start(whitespacePrompt)
       await vi.waitFor(async () => {
         await expect(definition.invocations?.get(whitespace.id)).resolves.toMatchObject({ status: "completed" })
       })
       const whitespaceDetail = await getConsoleInvocationDetail(detailEvent(whitespace.id))
       const replayInput = whitespaceDetail.invocation.actions?.rerun
-      expect(replayInput).toEqual({ available: true, prompt: whitespacePrompt })
+      expect(replayInput).toEqual({ available: true, invokerProfileId: "support", prompt: whitespacePrompt })
       if (!replayInput?.available) throw new Error("Expected a replayable whitespace prompt.")
-      const whitespaceReplay = await start(replayInput.prompt, null)
+      const whitespaceReplay = await start(replayInput.prompt, replayInput.invokerProfileId)
       await vi.waitFor(async () => {
         await expect(definition.invocations?.get(whitespaceReplay.id)).resolves.toMatchObject({ status: "completed" })
       })

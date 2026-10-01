@@ -572,6 +572,7 @@
             "input.hasAbortSignal": false,
             "input.hasDryRun": false,
             "input.hasInvoker": false,
+            "input.hasResolvedInvoker": false,
             "input.hasData": false,
             "input.hasOptions": false,
             "input.hasMessages": false,

@@ -74,7 +74,7 @@ describe("durable Agent data handoff", () => {
     }
     // Workflow origin and resolved authority independently block replay. Isolate caller-signal provenance.
     const signalRecord = { observations: record.observations.map(observation => observation.name === "agent.invocation.start"
-      ? { ...observation, attributes: { ...observation.attributes, "input.hasRunMetadata": false, "input.hasInvoker": false, "input.hasContext": false } }
+      ? { ...observation, attributes: { ...observation.attributes, "input.hasRunMetadata": false, "input.hasInvoker": false, "input.hasResolvedInvoker": false, "input.hasContext": false } }
       : observation) }
     expect(agentInvocationRerunInput(signalRecord)).toEqual(source === "legacy"
       ? { available: false, reason: "replay-metadata-unavailable" }

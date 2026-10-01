@@ -4,7 +4,7 @@ import { emitTraceEvent } from "@vite-hub/runtime"
 import { redactCredentialText } from "./internal/credential-redaction.ts"
 
 import { agentErrorDetails } from "./agent-error.ts"
-import { agentInvokerLabel, hasResolvedAgentInvokerInput, hasUnreplayableAgentInputContext, resolveInputAgentInvoker } from "./invoker.ts"
+import { agentInvokerLabel, hasResolvedAgentInvokerInput, hasResolverDerivedAgentInvoker, hasUnreplayableAgentInputContext, resolveInputAgentInvoker } from "./invoker.ts"
 import { isAttachmentPart, type Message, type StreamEvent } from "./messages.ts"
 import type {
   AgentDriverContribution,
@@ -99,7 +99,8 @@ function invocationAttributes(
     "input.replay.version": 5,
     "input.hasInvoker": resolveInputAgentInvoker(context.input.context) !== undefined,
     // A resolver-derived invoker without a selected profile cannot be reconstructed by a rerun.
-    "input.hasResolvedInvoker": (hasResolvedAgentInvokerInput(context.input) || context.context.get("agent.invoker.resolved") === true) && context.context.get("agent.invoker.profile.id") === undefined,
+    "input.hasResolvedInvoker": (hasResolvedAgentInvokerInput(context.input) || hasResolverDerivedAgentInvoker(context.context))
+      && context.context.get("agent.invoker.profile.id") === undefined,
     "input.hasContext": hasUnreplayableAgentInputContext(context.input.context),
     "input.hasRunMetadata": Object.entries(context.runtime.run ?? {}).some(([key, value]) => key !== "runId" && value !== undefined),
     "input.hasDryRun": context.input.dryRun === true,

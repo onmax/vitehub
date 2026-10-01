@@ -302,6 +302,42 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput(record)).toEqual({ available: true, invokerProfileId: "reviewer", prompt: "Hi" })
   })
 
+  it.each([false, true])("preserves request-derived invoker replay authority with selected profile %s", async (selectedProfile) => {
+    const invocations = defineAgentInvocations({ metadataContent: ["input.prompt"], store: createMemoryAgentInvocationStore() })
+    const resolve = vi.fn(({ request }: { request?: Request }) => ({ id: request?.headers.get("x-actor") || "console-actor", kind: "user" }))
+    const agent = defineAgent({
+      driver: { run: () => "done" },
+      invocations,
+      invoker: { profiles: [{ id: "reviewer", kind: "user" }], resolve },
+      runtime: false,
+    })
+    const runId = `request-derived-${selectedProfile}`
+    await runAgent(agent, { ...runtime(runId), request: new Request("https://consumer.test/run", { headers: { "x-actor": "request-actor" } }) }, {
+      prompt: "Hi",
+      ...(selectedProfile ? { context: { invokerProfileId: "reviewer" } } : {}),
+    })
+    await vi.waitFor(async () => { expect(await invocations.getByRunId(runId)).toMatchObject({ status: "completed" }) })
+    const record = (await invocations.getByRunId(runId))!
+    expect(resolve).toHaveBeenCalledOnce()
+    expect(record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes)
+      .toMatchObject({ "agent.invoker.id": "request-actor", "input.hasInvoker": false, "input.hasResolvedInvoker": !selectedProfile })
+    const rerun = agentInvocationRerunInput(record)
+    expect(rerun).toEqual(selectedProfile
+      ? { available: true, invokerProfileId: "reviewer", prompt: "Hi" }
+      : { available: false, reason: "input-has-invoker" })
+    if (selectedProfile && rerun.available) {
+      const rerunId = `${runId}-rerun`
+      await runAgent(agent, { ...runtime(rerunId), request: new Request("https://console.test/rerun") }, {
+        prompt: rerun.prompt, context: { invokerProfileId: rerun.invokerProfileId },
+      })
+      await vi.waitFor(async () => { expect(await invocations.getByRunId(rerunId)).toMatchObject({ status: "completed" }) })
+      expect(resolve).toHaveBeenCalledTimes(2)
+      expect(resolve.mock.calls[1]?.[0]).toMatchObject({ selectedProfile: { id: "reviewer" } })
+      expect((await invocations.getByRunId(rerunId))?.observations.find(observation => observation.name === "agent.invocation.start")?.attributes)
+        .toMatchObject({ "agent.invoker.id": "console-actor", "agent.invoker.profile.id": "reviewer" })
+    }
+  })
+
   it("does not trust an injected profile observation context", async () => {
     const record = await journaled({ context: { "agent.invoker.profile.id": "reviewer" }, prompt: "Hi" })
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-context" })
@@ -337,7 +373,7 @@ describe("agentInvocationRerunInput", () => {
     }
   })
 
-  it.each(["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasDryRun"])("rejects replay metadata missing %s", (key) => {
+  it.each(["input.hasInvoker", "input.hasResolvedInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasDryRun"])("rejects replay metadata missing %s", (key) => {
     const observation = start({ "input.prompt": "Hi" })
     delete observation.attributes![key]
     expect(agentInvocationRerunInput({ observations: [observation] }))
@@ -364,7 +400,7 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
   })
 
-  it.each(["input.replay.version", "input.promptChanged", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"])("rejects replay when redaction changes %s", async (key) => {
+  it.each(["input.replay.version", "input.promptChanged", "input.hasInvoker", "input.hasResolvedInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.hasDryRun"])("rejects replay when redaction changes %s", async (key) => {
     for (const replacement of [undefined, key === "agent.invoker.profile.id" ? "other-profile" : key === "input.replay.version" ? 1 : key !== "input.hasPrompt"]) {
       const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Original prompt" }, {
         redact: observation => observation.name === "agent.invocation.start"

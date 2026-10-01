@@ -17,6 +17,11 @@ import { copyAgentInvocationCallerAbortSignal } from "./internal/invocation-inpu
 export const agentInvokerContextKey = "invoker"
 const agentActorContextKey = "actor"
 const resolvedAgentInvokerInputKey = Symbol.for("vitehub.resolvedAgentInvokerInput")
+const resolverDerivedAgentInvokers = new WeakSet<AgentInvocationContextStore>()
+
+export function hasResolverDerivedAgentInvoker(context: AgentInvocationContextStore): boolean {
+  return resolverDerivedAgentInvokers.has(context)
+}
 
 export function defineAgentInvoker<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -272,9 +277,9 @@ export async function resolveAgentInvoker<
   requireMatchingRequestedInvoker = false,
 ): Promise<AgentInvoker> {
   const normalizedOptions = normalizeAgentInvokerOptions(options)
+  resolverDerivedAgentInvokers.delete(invocationContext)
   const profiles = normalizedOptions?.profiles || []
   invocationContext.set("agent.invoker.profile.id", undefined, { overwrite: true })
-  invocationContext.set("agent.invoker.resolved", false, { overwrite: true })
   const requestedInvoker = resolveInputAgentInvoker(input.context)
   if (requestedInvoker && hasResolvedAgentInvokerInput(input)) {
     const profileId = selectedProfileId(input.context)
@@ -304,7 +309,7 @@ export async function resolveAgentInvoker<
   if (run) resolveContext.run = run
   if (selectedProfile) resolveContext.selectedProfile = selectedProfile
   const resolved = await normalizedOptions?.resolve?.(resolveContext)
-  invocationContext.set("agent.invoker.resolved", resolved !== undefined && resolved !== null, { overwrite: true })
+  if (resolved !== undefined && resolved !== null) resolverDerivedAgentInvokers.add(invocationContext)
   if (requireMatchingRequestedInvoker && normalizedOptions?.resolve) {
     if (!requestedInvoker || resolved === undefined || resolved === null) {
       throw agentDiagnostics.AGENT_R0644({ message: "[vitehub] Scheduled Agent turns require matching invoker reauthorization." })
