@@ -1469,6 +1469,7 @@ describe("agent CLI", () => {
       signal = init?.signal
       if (!signal) throw new Error("Discovery has no timeout signal")
       const discoverySignal = signal
+      discoverySignal.throwIfAborted()
       return await new Promise<Response>((_resolve, reject) => {
         discoverySignal.addEventListener("abort", () => reject(discoverySignal.reason), { once: true })
       })
