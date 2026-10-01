@@ -753,8 +753,16 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
           ...options.env?.runtimeImports,
         },
       })
-  // Channel Env must reach config.env.server before deployment output and hubEnv() read it.
-  if (options.agent && envPlugin) plugins.push(agentChannelEnvPlugin())
+  if (options.agent && envPlugin) {
+    // Read the root and declarations after ordinary config hooks. The pre plugin's
+    // post config hook declares Channel Env before this registry hook runs.
+    const configHook = envPlugin.config
+    if (configHook) envPlugin.config = {
+      order: "post",
+      handler: typeof configHook === "function" ? configHook : configHook.handler,
+    }
+    plugins.push(agentChannelEnvPlugin())
+  }
   plugins.push(...deploymentPlugins(plan, requestedServices, blobEnabled, manifestServices, options, envPlugin))
   const providerImportAliases: Record<string, string> = {}
   const configuredKV = options.kv && options.kv !== true ? options.kv : undefined

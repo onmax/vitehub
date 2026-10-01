@@ -180,6 +180,38 @@ describe("built-in deployment preset integration", () => {
     }
   })
 
+  it.each(["before", "after"] as const)("discovers Channel Env when a plugin %s vitehub changes the root", async (position) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-channel-env-root-"))
+    const agentRoot = join(root, "app")
+    try {
+      await mkdir(join(agentRoot, "server", "agents"), { recursive: true })
+      await writeFile(join(agentRoot, "server", "agents", "support.ts"), [
+        `import { defineAgent } from "vite-hub/agent"`,
+        `import { telegram } from "vite-hub/agent/channels"`,
+        `export default defineAgent({ channels: { telegram: telegram() } })`,
+      ].join("\n"))
+      const rootPlugin = {
+        name: "application-root",
+        config: () => ({ root: agentRoot }),
+      }
+      const hub = vitehub({ agent: true, preset: "cloudflare" })
+      const config = await resolveConfig({
+        root,
+        plugins: position === "before" ? [rootPlugin, hub] : [hub, rootPlugin],
+      }, "build")
+      expect(config.root).toBe(agentRoot)
+      expect((config as typeof config & {
+        nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
+      }).nitro?.cloudflare?.wrangler?.secrets?.required).toEqual(["TELEGRAM_BOT_TOKEN"])
+      const types = await readFile(join(agentRoot, ".vitehub", "types", "env.d.ts"), "utf8")
+      expect(types).toContain('"telegram": {')
+      expect(types).toContain('"botToken": import("vite-hub/env/secret").SecretEnv<string>')
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
   it("declares Server Env for built-in Channels used by Agents", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-channel-env-"))
     try {
