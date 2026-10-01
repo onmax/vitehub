@@ -34,9 +34,9 @@ import { deliveryArtifactAttachments } from "../delivery-artifacts.ts"
 import { createAgentInvocationContextStore } from "../invocation-context.ts"
 import { withAgentInvocationResponseOwner } from "../internal/agent-invocation-response-owner.ts"
 import { sameInlineInvoker } from "../internal/inline-invoker.ts"
-import { agentInvocationId, isAgentInvocations } from "../invocations.ts"
+import { agentInvocationId } from "../invocations.ts"
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
-import { isAgentInvocationAbortError, isAgentInvocationCancellationError } from "../internal/invocation-cancellation.ts"
+import { isAgentInvocationCancellationError } from "../internal/invocation-cancellation.ts"
 import { finalChannelOutputContextKey, hasOnlyPortableAgentWorkflowCapabilities, requireAgentWorkflowContextKey } from "../internal/final-channel-output.ts"
 import { agentChannelHistoryHeader } from "../internal/channel-history.ts"
 import { agentChannelSyncProviderHeader } from "../internal/channel-sync.ts"
@@ -1379,10 +1379,7 @@ async function queuedWebhookInvocationCancelled(
   if (!runId) return false
   const agentName = (isRuntimeRecord(agent) && hasRuntimeType(agent.name, "string") && agent.name) || routeAgentIdentity(handlerOptions)?.name
   const id = await agentInvocationId(runId, agentName)
-  if (isAgentInvocationCancellationError(error, id)) return true
-  if (!isRuntimeRecord(agent) || !isAgentInvocations(agent.invocations)) return false
-  const summary = await agent.invocations.getSummary(id).catch(() => undefined)
-  return Boolean(summary?.cancelRequestedAt && isAgentInvocationAbortError(error))
+  return isAgentInvocationCancellationError(error, id)
 }
 
 async function executeQueuedWebhookDelivery(

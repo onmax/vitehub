@@ -237,7 +237,7 @@ Use `configuration: 'content'` to retain resolved instructions and tool descript
 
 Invocation journals are metadata-only by default. Set `content: 'content'` only when the application must persist prompts, messages, reasoning, tool inputs and outputs, and result text. That opt-in stores sensitive model content in the configured durable store; apply the same access controls, retention policy, and encryption requirements as the source data.
 
-The journal records pending, running, completed, failed, and cancelled states plus bounded invocation metadata and trace observations. Failed records retain bounded `cause` and `AggregateError.errors` trees, common status and code fields, and public ViteHub error details. Use `invocations.list()` for cursor-based summaries, `invocations.get(id)` for a stored record ID, and `invocations.getByRunId(runId, agentName?)` when starting from the source run ID. Always pass the Agent Definition name for a named Definition; the name is part of its durable invocation identity. Journal failures never change the Agent Invocation result.
+The journal records pending, running, completed, failed, and cancelled states plus bounded invocation metadata and trace observations. Failed records retain bounded `cause` and `AggregateError.errors` trees, common status and code fields, and public ViteHub error details. Use `invocations.list()` for cursor-based summaries, `invocations.get(id)` for a stored record ID, and `invocations.getByRunId(runId, agentName?)` when starting from the source run ID. Always pass the Agent Definition name for a named Definition; the name is part of its durable invocation identity. Journal persistence failures do not change the Agent Invocation result. The initial cancellation check must finish before setup; if it times out, startup fails with `AGENT_R0973`.
 
 Use `triggeredBy` to filter persisted summaries by the person label recorded in `annotations.triggeredBy`. It matches the trimmed label exactly and composes with Agent, Capability, status, and text filters:
 
@@ -359,7 +359,9 @@ if (result.notEnforcedBy) console.warn(`Cancel requested, not enforced by ${resu
 | `not-found` | The journal has no Invocation with this id. |
 | `unavailable` | The store did not keep the request and no run in this process holds the Invocation. |
 
-Active runs read journal requests every 10 seconds, including after a lost lease stops claim renewal. A crashed owner or expired lease does not prove that a Driver stopped. An orphaned record remains pending or running until execution recovery observes its request; cancellation does not recover orphaned work or promise a completion deadline. Repeating the request does not change that state. Read the final journal status to confirm cancellation.
+Before setup, active runs check for a journal cancellation request. A check that exceeds one second fails startup with `AGENT_R0973`. After startup, active runs read journal requests every 10 seconds, including after a lost lease stops claim renewal. A crashed owner or expired lease does not prove that a Driver stopped. An orphaned record remains pending or running until execution recovery observes its request; cancellation does not recover orphaned work or promise a completion deadline. Repeating the request does not change that state. Read the final journal status to confirm cancellation.
+
+The Development Server command `vitehub agent invocations cancel <id>` checks all registered journals before cancellation. If distinct journals contain the same ID, it rejects the request with HTTP `409` without changing either record. Call the intended Agent's `invocations.cancel(id)` to select its journal. Registry entries that share one journal are checked once.
 
 If the durable request write fails, cancellation still aborts a local run and propagates the storage error. This does not create a durable request for other processes.
 

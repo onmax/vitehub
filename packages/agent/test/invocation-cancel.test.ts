@@ -513,6 +513,55 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.get(id))?.status).toBe("cancelled")
   })
 
+  it.each(["run", "stream"] as const)("fails %s startup when its initial cancellation read times out", async kind => {
+    vi.useFakeTimers()
+    const backing = createMemoryAgentInvocationStore()
+    const entered = deferred()
+    const releaseInitial = deferred()
+    const releaseSlowStore = deferred()
+    let firstRead = true
+    const store = {
+      ...backing,
+      async getSummary(id: string) {
+        const snapshot = await backing.getSummary(id)
+        if (firstRead) {
+          firstRead = false
+          entered.resolve()
+          await releaseInitial.promise
+        }
+        else await releaseSlowStore.promise
+        return snapshot
+      },
+      async update(...args: Parameters<typeof backing.update>) {
+        if (args[1].status === "running") await releaseSlowStore.promise
+        return await backing.update(...args)
+      },
+    }
+    const invocations = defineAgentInvocations({ store })
+    const remote = defineAgentInvocations({ store: { ...backing } })
+    const driver = vi.fn(() => "Must not start")
+    const prepare = vi.fn()
+    const runId = `initial-cancellation-timeout-${kind}`
+    const agent = defineAgent({ invocations, driver: { capacity: { concurrency: 1 }, run: driver }, capabilities: [defineCapability({ id: "setup", prepare })] })
+    const running = kind === "run" ? runAgent(agent, runtime(runId), {}) : streamAgent(agent, runtime(runId), {})
+    const settled = running.then(result => result, error => error)
+    try {
+      await entered.promise
+      const id = await agentInvocationId(runId)
+      expect(await remote.cancel(id)).toMatchObject({ delivery: "journal", outcome: "requested" })
+      releaseInitial.resolve()
+      await vi.advanceTimersByTimeAsync(8_500)
+      expect(driver).not.toHaveBeenCalled()
+      expect(prepare).not.toHaveBeenCalled()
+    }
+    finally {
+      releaseInitial.resolve()
+      releaseSlowStore.resolve()
+      await settled
+    }
+    expect(await settled).toMatchObject({ code: "AGENT_R0973", message: expect.stringContaining("cancellation check timed out") })
+  })
+
   it.each((["run", "stream"] as const).flatMap(kind => [false, true].map(capacity => ({ capacity, kind }))))("rechecks durable cancellation at registration before $kind setup, capacity=$capacity", async ({ capacity, kind }) => {
     const backing = createMemoryAgentInvocationStore()
     const entered = deferred()

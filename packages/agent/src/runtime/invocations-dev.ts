@@ -45,18 +45,23 @@ async function registeredInvocationJournals(): Promise<AgentInvocations[]> {
   return [...journals]
 }
 
+class InvocationJournalAmbiguityError extends Error {}
+
 async function cancelInJournals(journals: readonly AgentInvocations[], id: string): Promise<AgentInvocationCancelResult> {
-  let result: AgentInvocationCancelResult = { id, outcome: "not-found" }
+  const matches: AgentInvocations[] = []
   let failure: unknown
   for (const journal of journals) {
     try {
-      result = await journal.cancel(id)
-      if (result.outcome !== "not-found") return result
+      if (await journal.getSummary(id)) matches.push(journal)
     }
     catch (error) { failure ??= error }
   }
+  if (matches.length > 1) {
+    throw new InvocationJournalAmbiguityError("The ID matches multiple Agent invocation journals. Cancel through the intended Agent's invocations.cancel(id).")
+  }
+  if (matches[0]) return await matches[0].cancel(id)
   if (failure) throw failure
-  return result
+  return { id, outcome: "not-found" }
 }
 
 /**
@@ -76,6 +81,6 @@ export async function handleAgentInvocationsDevRequest(request: Request): Promis
     return Response.json(await cancelInJournals(journals, body.id))
   }
   catch (error) {
-    return failure(`Agent Invocation cancel failed: ${error instanceof Error ? error.message : String(error)}`, 500)
+    return failure(`Agent Invocation cancel failed: ${error instanceof Error ? error.message : String(error)}`, error instanceof InvocationJournalAmbiguityError ? 409 : 500)
   }
 }

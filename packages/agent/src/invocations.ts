@@ -1764,9 +1764,12 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         unregisterCancellation?.()
         unregisterCancellation = undefined
       }
-      const pollCancellationRequest = async () => {
+      const pollCancellationRequest = async (initial = false) => {
         if (!unregisterCancellation || finished || cancellation.signal.aborted) return
         const summary = await boundedStoreOperation(() => store.getSummary(recordId))
+        if (initial && summary === storeOperationTimedOut) {
+          throw agentDiagnostics.AGENT_R0973({ message: "[vitehub] Initial Agent Invocation cancellation check timed out." })
+        }
         if (summary && summary !== storeOperationTimedOut) readCancellationRequest(summary)
       }
       const stopHeartbeat = () => {
@@ -1816,7 +1819,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         return created
       }
       const renew = async (force = false): Promise<boolean> => {
-        if (!await ensureCreated()) return false
+        if (!await ensureCreated() || (finished && !runningRequested)) return false
         const claim = await boundedStoreOperation(() => store.claim(recordId, claimId, CLAIM_LEASE_MS, force ? { replaceExisting: true } : undefined))
         ownsRecord = claim === true
         if (ownsRecord) {
@@ -2207,7 +2210,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           // A lost lease stops writes, but the stale Driver still needs journal cancellation.
           cancellationPolling = setInterval(() => { void pollCancellationRequest().catch(() => undefined) }, CLAIM_RENEW_INTERVAL_MS)
           unrefTimer(cancellationPolling)
-          cancellationRegistration = pollCancellationRequest()
+          cancellationRegistration = pollCancellationRequest(true)
           await cancellationRegistration
         },
       }

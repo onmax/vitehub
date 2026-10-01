@@ -9139,7 +9139,7 @@ describe("server helpers", () => {
     }
   })
 
-  it.each(["foreign abort", "foreign canceled", "dom abort", "plain abort", "tagged abort", "hostile tag", "unrelated", "unrequested foreign abort"] as const)("settles queued webhook cancellation from its journal for %s", async failureKind => {
+  it.each(["foreign abort", "foreign canceled", "dom abort", "plain abort", "tagged abort", "hostile tag", "unrelated", "unrequested foreign abort", "remote abort", "remote canceled", "remote dom abort"] as const)("settles queued webhook cancellation from its journal for %s", async failureKind => {
     const { defineAgent } = await import("../src/index.ts")
     const { github } = await import("../src/channels.ts")
     const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
@@ -9149,13 +9149,16 @@ describe("server helpers", () => {
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
     const complete = vi.spyOn(state, "completeWebhookDelivery")
     const retry = vi.spyOn(state, "retryWebhookDelivery")
-    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const backing = createMemoryAgentInvocationStore()
+    const invocations = defineAgentInvocations({ store: backing })
+    const remote = defineAgentInvocations({ store: { ...backing } })
     const id = await agentInvocationId("journal-webhook-invocation", "review")
     const run = vi.fn(async () => {
-      if (failureKind !== "unrequested foreign abort") await invocations.cancel(id)
-      if (failureKind === "foreign abort" || failureKind === "unrequested foreign abort") throw runInNewContext("Object.assign(new Error('Provider aborted'), { name: 'AbortError' })")
-      if (failureKind === "foreign canceled") throw runInNewContext("Object.assign(new Error('Provider cancelled'), { name: 'CanceledError' })")
-      if (failureKind === "dom abort") throw new DOMException("Provider aborted", "AbortError")
+      if (failureKind.startsWith("remote")) await remote.cancel(id)
+      else if (failureKind !== "unrequested foreign abort") await invocations.cancel(id)
+      if (failureKind === "foreign abort" || failureKind === "unrequested foreign abort" || failureKind === "remote abort") throw runInNewContext("Object.assign(new Error('Provider aborted'), { name: 'AbortError' })")
+      if (failureKind === "foreign canceled" || failureKind === "remote canceled") throw runInNewContext("Object.assign(new Error('Provider cancelled'), { name: 'CanceledError' })")
+      if (failureKind === "dom abort" || failureKind === "remote dom abort") throw new DOMException("Provider aborted", "AbortError")
       if (failureKind === "plain abort") throw { name: "AbortError", message: "Plain abort-shaped record" }
       if (failureKind === "tagged abort") throw { name: "AbortError", [Symbol.toStringTag]: "Error" }
       if (failureKind === "hostile tag") {
@@ -9188,6 +9191,7 @@ describe("server helpers", () => {
       await vi.waitFor(() => expect(cancelled ? complete : retry).toHaveBeenCalledOnce(), { timeout: 1_000 })
       expect(run).toHaveBeenCalledOnce()
       expect(cancelled ? retry : complete).not.toHaveBeenCalled()
+      expect((await invocations.getSummary(id))?.status).toBe(cancelled ? "cancelled" : "failed")
     }
     finally {
       await state.disconnect()

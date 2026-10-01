@@ -22,7 +22,7 @@ import {
   startLiveAgentInvocation,
 } from "./agent-invocation.ts"
 import { agentInvocationInputSupport, sendAgentInvocationInput } from "./internal/agent-invocation-control.ts"
-import { agentInvocationCancellationDriver, isAgentInvocationAbortError } from "./internal/invocation-cancellation.ts"
+import { agentInvocationCancellationDriver, isAgentInvocationAbortError, markAgentInvocationCancellationFailure } from "./internal/invocation-cancellation.ts"
 import type { AgentInvocationCancellationDriver } from "./internal/invocation-cancellation.ts"
 import { withAgentInvocationResponseOwner } from "./internal/agent-invocation-response-owner.ts"
 import {
@@ -5634,8 +5634,25 @@ async function prepareProvisionalTitleDeliverySupport<
   return activeFinishDeliveryEffectProviders(context, provisionalFinishEvent(context, eventBase))
 }
 
+const invocationFailureCancellation = new WeakMap<object, WeakMap<AbortSignal, boolean>>()
+
 function invocationFailureWasCancelled(error: unknown, signal: AbortSignal | undefined): boolean {
-  if (!signal?.aborted) return false
+  if (!signal) return false
+  if (isRuntimeRecord(error)) {
+    const classifications = invocationFailureCancellation.get(error) ?? new WeakMap<AbortSignal, boolean>()
+    const classified = classifications.get(signal)
+    if (classified !== undefined) return classified
+    // Journal cleanup may observe a remote request after this failure. Keep its original classification.
+    const cancelled = classifyInvocationFailureCancellation(error, signal)
+    classifications.set(signal, cancelled)
+    invocationFailureCancellation.set(error, classifications)
+    return cancelled
+  }
+  return classifyInvocationFailureCancellation(error, signal)
+}
+
+function classifyInvocationFailureCancellation(error: unknown, signal: AbortSignal): boolean {
+  if (!signal.aborted) return false
   const seen = new Set<unknown>()
   const pending: unknown[] = [error]
   while (pending.length) {
@@ -5652,7 +5669,10 @@ function invocationFailureWasCancelled(error: unknown, signal: AbortSignal | und
       if (Array.isArray(errors)) pending.push(...errors)
     }
     catch {}
-    if (current === error && isAgentInvocationAbortError(current, ["AbortError"])) return true
+    if (current === error && isAgentInvocationAbortError(current)) {
+      markAgentInvocationCancellationFailure(current, signal.reason)
+      return true
+    }
   }
   return false
 }
@@ -7301,11 +7321,11 @@ async function executeAgentInvocation<
       ...input,
       abortSignal: input.abortSignal ? AbortSignal.any([input.abortSignal, invocationJournal.abortSignal]) : invocationJournal.abortSignal,
     }
-    await invocationJournal.watchCancellation(invocationCancellationDriver(definition))
   }
   let preparedInvocation: AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS> | undefined
   let release: (() => void) | undefined
   try {
+    await invocationJournal?.watchCancellation(invocationCancellationDriver(definition))
     input.abortSignal?.throwIfAborted()
     if (definition && inspectAgentCapacity(definition)) {
       preparedInvocation = await createAgentInvocationContextWithWorkflowFailureDelivery(

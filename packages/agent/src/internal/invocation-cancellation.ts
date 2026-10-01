@@ -29,6 +29,18 @@ const cancellationHandlesKey = Symbol.for("vitehub.agentInvocationCancellations"
 
 export const agentInvocationCancellationCode = "AGENT_R0970"
 const cancellationInvocationId = Symbol.for("vitehub.agentInvocationCancellationId")
+const observedCancellationFailures = new WeakMap<object, Set<string>>()
+
+/** Retains the owner-observed cancellation identity for genuine abort failures. */
+export function markAgentInvocationCancellationFailure(error: unknown, reason: unknown): void {
+  if (!isRuntimeRecord(error)) return
+  if (!(reason instanceof Diagnostic) || reason.code !== agentInvocationCancellationCode) return
+  const id: unknown = Reflect.get(reason, cancellationInvocationId)
+  if (!hasRuntimeType(id, "string")) return
+  const ids = observedCancellationFailures.get(error) ?? new Set<string>()
+  ids.add(id)
+  observedCancellationFailures.set(error, ids)
+}
 
 function handles(owner: AgentInvocationStore): Map<string, Set<AgentInvocationCancellationHandle>> {
   // SAFETY: The registry uses a module-owned global symbol; unknown values are checked before use.
@@ -114,6 +126,8 @@ export function isAgentInvocationCancellationError(error: unknown, id?: string):
     try {
       if (!isRuntimeRecord(current) || seen.has(current)) continue
       seen.add(current)
+      const observed = observedCancellationFailures.get(current)
+      if (observed && (id === undefined ? observed.size > 0 : observed.has(id))) return true
       if (current instanceof Diagnostic && current.code === agentInvocationCancellationCode
         && (id === undefined || Reflect.get(current, cancellationInvocationId) === id)) return true
       pending.push(current.cause)
