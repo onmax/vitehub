@@ -245,8 +245,13 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
           for (const module of nitro?.moduleGraph.getModulesByFile(changedFile) ?? []) nitro?.moduleGraph.invalidateModule(module)
         }
       }
+      let pendingRefresh = Promise.resolve()
       for (const event of ["add", "change", "unlink"] as const) {
-        server.watcher.on(event, path => void refresh(path).catch(error => server.config.logger.error(`[vitehub] Workflow dev registry update failed: ${error instanceof Error ? error.message : String(error)}`)))
+        server.watcher.on(event, path => {
+          pendingRefresh = pendingRefresh.then(() => refresh(path)).catch(error => {
+            server.config.logger.error(`[vitehub] Workflow dev registry update failed: ${error instanceof Error ? error.message : String(error)}`)
+          })
+        })
       }
     },
     configResolved(config) {

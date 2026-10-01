@@ -4,9 +4,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { createWorkflowDevPluginModule, workflowDevGeneratedDir } from "../src/internal/dev-registry.ts"
+import * as devRegistry from "../src/internal/dev-registry.ts"
 import { hubWorkflow } from "../src/vite.ts"
 
 import type { WorkflowModuleOptions } from "../src/types.ts"
@@ -14,6 +15,7 @@ import type { WorkflowModuleOptions } from "../src/types.ts"
 let root: string | undefined
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   if (root) await rm(root, { force: true, recursive: true })
   root = undefined
 })
@@ -53,6 +55,37 @@ async function waitFor(check: () => Promise<boolean>): Promise<void> {
 }
 
 describe("Workflow dev registry", () => {
+  it("serializes overlapping refreshes and writes the latest discovery last", async () => {
+    const projectRoot = await createApp()
+    const plugin = hubWorkflow({ provider: "vercel" })
+    const hook = plugin.config
+    if (!hook || typeof hook === "function") throw new TypeError("Expected config object hook")
+    await (hook.handler as unknown as ConfigHook)({ root: projectRoot }, { command: "serve", mode: "development" })
+    let release = () => {}
+    const barrier = new Promise<void>(resolve => { release = resolve })
+    const originalWrite = devRegistry.writeWorkflowDevRegistryFiles
+    const write = vi.spyOn(devRegistry, "writeWorkflowDevRegistryFiles")
+      .mockImplementationOnce(async options => { await barrier; return originalWrite(options) })
+    const watcher = new EventEmitter()
+    const server = { watcher, environments: {}, config: { logger: { error: vi.fn() } } }
+    if (typeof plugin.configureServer !== "function") throw new TypeError("Expected configureServer")
+    await plugin.configureServer.call({} as never, server as never)
+    const report = join(projectRoot, "server/workflows/report.ts")
+    await writeFile(report, workflowModule("report"))
+    watcher.emit("add", report)
+    await waitFor(async () => write.mock.calls.length === 1)
+    await rm(report)
+    watcher.emit("unlink", report)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(write).toHaveBeenCalledTimes(1)
+    release()
+    await waitFor(async () => write.mock.calls.length === 2)
+    const registry = join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs")
+    await waitFor(async () => !(await readFile(registry, "utf8")).includes('"report"'))
+    expect(server.config.logger.error).not.toHaveBeenCalled()
+  })
+
+
   it("generates a Nitro plugin that installs the development registry", () => {
     const code = createWorkflowDevPluginModule("vite-hub/_internal/workflow")
     expect(code).toContain(`import { setWorkflowRuntimeRegistry } from "vite-hub/_internal/workflow/runtime/state"`)
