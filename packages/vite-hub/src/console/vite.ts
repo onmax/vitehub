@@ -210,6 +210,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   let observations: AgentInvocationsOptions["observations"]
   let retention: AgentInvocationRetentionOptions | undefined
   let consoleAuthHandlers: ConsoleAuthHandlers | undefined
+  let consoleAuthMode: true | "cloudflare-access" | false = false
   let refreshConsoleAuthClient: (() => Promise<void>) | undefined
   let hostManagedCloudflareBuild = false
   let baseURL = "/"
@@ -217,7 +218,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   const refreshConsoleCatalog = serializeConsoleRefresh(async () => {
     if (!generatedPlugin || !projectRoot || !root) return
     const catalog = await discoverConsoleBuildCatalog({ databaseDiscoveryRoot, discoveryRoot: root, projectRoot, rateLimitDiscoveryRoot, rateLimitScanDirs, sandboxDiscoveryRoot: root, scheduleDiscoveryRoot, sections, serverDirs, workspaceDiscoveryRoot })
-    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, journal && "databaseUrl" in journal ? journal.databaseUrl : undefined, Boolean(consoleAuthHandlers?.auth))
+    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, journal, consoleAuthMode, retention)
     if (options.invocationRootState) updateConsoleInvocationRootState(options.invocationRootState, projectRoot, identity)
   })
 
@@ -310,6 +311,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       const configuredConsoleAuth = configured !== true && configured.access === "auth" ? configured.auth : undefined
       const resolvedConsoleAuth = configuredConsoleAuth ? resolveConsoleAuthConfig(root, configuredConsoleAuth, options.preset) : undefined
       const consoleAuthConfig = registeredConsoleAuthMode(configuredConsoleAuth, environment.command !== "build") ? resolvedConsoleAuth : undefined
+      consoleAuthMode = registeredConsoleAuthMode(configuredConsoleAuth, environment.command !== "build")
       baseURL = config.base ?? "/"
       consoleAuthHandlers = consoleAuthConfig ? await writeConsoleAuthHandlers(root, consoleAuthConfig, baseURL) : undefined
       refreshConsoleAuthClient = consoleAuthConfig
@@ -353,9 +355,10 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
           options.invocationRootState?.binding,
           invoke,
           observations,
-          undefined,
-          journal && "databaseUrl" in journal ? journal.databaseUrl : undefined,
-          Boolean(consoleAuthHandlers?.auth),
+          () => !options.invocationRootState?.closed,
+          journal,
+          consoleAuthMode,
+          retention,
         )
       }
       // SAFETY: Nitro extends Vite's user config with this documented top-level configuration object.
