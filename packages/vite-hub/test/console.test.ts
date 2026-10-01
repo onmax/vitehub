@@ -4128,7 +4128,12 @@ describe("Agent invocation console", () => {
 
       const requestless = consoleRuntime.resolve(runtime("console-requestless"))
       expect(requestless.invocations).toEqual({ driver: "libsql", db, schema })
-      expect(() => requestless.invocationUrl(invocation)).toThrow("Console invocation URLs require a request context")
+      expect(() => requestless.invocationUrl(invocation)).toThrow("Console invocation URLs require `vitehub({ publicUrl })` or a request context")
+      vi.stubGlobal("__VITEHUB_PUBLIC_URL__", { agents: { agent: "https://agents.example" } })
+      expect(requestless.invocationUrl(invocation)).toBe(
+        `https://agents.example/_vitehub/agents/agent/invocations/${encodeURIComponent(invocation.id)}`,
+      )
+      vi.unstubAllGlobals()
 
       const resolved = consoleRuntime.resolve({
         ...runtime("console-link"),
