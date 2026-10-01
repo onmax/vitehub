@@ -30,6 +30,7 @@ export interface GitHubInboxSummary {
   dirty: boolean; attempts: number; nextAt: number; lastResult?: string; progressBudget?: ProgressBudget
 }
 export type Claim = { token: string; generation: number; snapshot: Snapshot }
+export type DirectMergeAttempt = { token: string; generation: number; revision: number; head: string; startedAt: number }
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const stamp = (value: GitHubEvidence) => Date.parse(value.updated_at ?? value.updatedAt ?? value.submitted_at ?? value.completed_at ?? value.started_at ?? value.created_at ?? '') || 0
 /** Normalize REST and discovery records once, before they enter the inbox. */
@@ -253,6 +254,38 @@ export class PullRequestInbox {
     await this.transaction(async tx => { await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key]) })
   }
   async setMeta(key: string, value: unknown): Promise<void> { await this.transaction(tx => this.setMetaIn(tx, key, value)) }
+  private directMergeKey(repository: string, number: number): string { return `direct-merge:${repository}:${number}` }
+  /** Atomically records that a claim has started an irreversible merge request. */
+  async beginDirectMerge(claim: Claim, head: string): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
+      if (!s || s.lease !== claim.token || s.generation !== claim.generation ||
+        (s.revision ?? 0) !== (claim.snapshot.revision ?? 0) || s.leaseUntil <= this.clock()) return false
+      if (await this.metaIn(tx, this.directMergeKey(s.repository, s.number)) !== undefined) return false
+      await this.setMetaIn(tx, this.directMergeKey(s.repository, s.number), {
+        token: claim.token, generation: claim.generation, revision: claim.snapshot.revision ?? 0,
+        head, startedAt: this.clock(),
+      } satisfies DirectMergeAttempt)
+      return true
+    })
+  }
+  async directMergeAttempt(repository: string, number: number): Promise<DirectMergeAttempt | undefined> {
+    const value = await this.meta(this.directMergeKey(repository, number))
+    if (!value || Object.prototype.toString.call(value) !== '[object Object]') return undefined
+    const attempt = value as Record<string, unknown>
+    if (!isRuntimeString(attempt.token) || !Number.isFinite(attempt.generation) || !Number.isFinite(attempt.revision) ||
+      !isRuntimeString(attempt.head) || !Number.isFinite(attempt.startedAt)) return undefined
+    return attempt as DirectMergeAttempt
+  }
+  async clearDirectMerge(repository: string, number: number, token: string): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const key = this.directMergeKey(repository, number)
+      const attempt = await this.metaIn(tx, key)
+      if (!attempt || Object.prototype.toString.call(attempt) !== '[object Object]' || (attempt as Record<string, unknown>).token !== token) return false
+      await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])
+      return true
+    })
+  }
   /** Shared provider scope should identify the credential/account, without including its secret. */
   async providerBudget(provider: string): Promise<ProviderBudget | undefined> {
     const value = await this.meta(`provider-budget:${provider}`)
