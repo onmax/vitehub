@@ -86,7 +86,7 @@ function resolveChannelHistory<TRuntimeConfig extends AgentRuntimeConfig>(
     return { history, triggerId: `${channel}.${triggerNames[0]}`, triggerName: triggerNames[0]! }
   }
   if (!hasRuntimeType(triggerName, "string") || !triggerNames.includes(triggerName)) {
-    throw agentDiagnostics.AGENT_R0930()
+    throw agentDiagnostics.AGENT_R0930({ message: `[vitehub] Channel "${channel}" history trigger must name one of the Channel triggers: ${triggerNames.join(", ") || "none"}.` })
   }
   return { history, triggerId: `${channel}.${triggerName}`, triggerName }
 }

@@ -299,7 +299,7 @@ export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { st
         try { await telemetry.flush() }
         finally {
           for (const [name, callback, disposer] of installed) {
-            if (typeof disposer === "function") disposer()
+            if (hasRuntimeType(disposer, "function")) disposer()
             else host.hooks.removeHook(name, callback)
           }
           onClose?.()
@@ -307,6 +307,7 @@ export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { st
       }
     })()
     const register = (name: "request" | "evlog:drain" | "error" | "close", callback: unknown) => {
+      // SAFETY: Each call below pairs a hook name with its declared callback signature; the overloads cannot express their union here.
       const disposer = host.hooks.hook(name as never, callback as never)
       installed.push([name, callback, disposer])
     }
