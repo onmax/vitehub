@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { resolve } from "node:path"
 
 import { getViteMode } from "@vite-hub/internal/build/mode"
@@ -127,6 +128,7 @@ function resolveNitroHosting(nitro: unknown): string | undefined {
 
 export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimitVitePlugin {
   const importBase = (options as InternalRateLimitModuleOptions).importBase ?? packageName
+  const runtimeToken = randomUUID()
   let rateLimit: RateLimitModuleOptions = options
   let composedOutput: ProviderOutputCatalog | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
@@ -225,13 +227,14 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
         writeFileIfChanged(pluginFile, renderRuntimeInstaller(runtimeConfig, importBase, true)),
         writeFileIfChanged(runtimeFile, renderRuntimeInstaller(runtimeConfig, importBase, false)),
         ...(config.command === "serve" && devHandler
-          ? [writeFileIfChanged(devHandler, renderViteHubNitroDevHandler({ export: "handleRateLimitDevRequest", module: `${importBase}/runtime/console` }))]
+          ? [writeFileIfChanged(devHandler, renderViteHubNitroDevHandler({ arguments: [runtimeToken], export: "handleRateLimitDevRequest", module: `${importBase}/runtime/console` }))]
           : []),
       ])
       contributeProviderRuntime(composedOutput, { owner: "rate-limit", runtimeModules: { cloudflare: runtimeFile } })
     },
     configureServer(server) {
       registerRateLimitDevEndpoint(server, {
+        runtimeToken,
         nitroBaseURL: () => {
           // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
           const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL

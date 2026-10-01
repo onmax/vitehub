@@ -357,6 +357,8 @@ export function validateViteHubNitroDevRequest(request: Request, guard: ViteHubD
 }
 
 export interface ViteHubNitroDevHandlerSource {
+  /** Additional serialized string arguments passed after the request. */
+  arguments?: readonly string[]
   /** Named export of `module` that takes a Fetch `Request` and returns a `Response`. */
   export: string
   /** Module that the generated handler imports, for example `vite-hub/_internal/schedule/runtime/console`. */
@@ -375,7 +377,7 @@ export function renderViteHubNitroDevHandler(source: ViteHubNitroDevHandlerSourc
     "import { defineEventHandler } from 'h3'",
     `import { ${source.export} as handleViteHubDevRequest } from ${JSON.stringify(source.module)}`,
     "",
-    "export default defineEventHandler(event => handleViteHubDevRequest(event.req))",
+    `export default defineEventHandler(event => handleViteHubDevRequest(${["event.req", ...(source.arguments ?? []).map(value => JSON.stringify(value))].join(", ")}))`,
     "",
   ].join("\n")
 }

@@ -4,6 +4,8 @@ export const rateLimitDevRoute = "/__vitehub/rate-limit/dev"
 export const rateLimitDevRuntimeRoute = "/_vitehub/rate-limit/dev"
 export const rateLimitDevHeader = "x-vitehub-rate-limit-dev"
 export const rateLimitDevHeaderValue = "1"
+/** Private token that the Vite endpoint adds when forwarding into Nitro. */
+export const rateLimitDevRuntimeTokenHeader = "x-vitehub-rate-limit-runtime-token"
 
 /** Rate Limit operations that the dev endpoint accepts. */
 export const rateLimitDevOperations = ["peek", "reset"] as const

@@ -5,7 +5,7 @@ import { mockEvent } from "h3"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { createRateLimitCliContributor, runRateLimitCli } from "../src/cli.ts"
-import { rateLimitDevHeader, rateLimitDevHeaderValue, rateLimitDevRoute, rateLimitDevRuntimeRoute } from "../src/dev.ts"
+import { rateLimitDevHeader, rateLimitDevHeaderValue, rateLimitDevRoute, rateLimitDevRuntimeRoute, rateLimitDevRuntimeTokenHeader } from "../src/dev.ts"
 import { requireRateLimit } from "../src/index.ts"
 import { setRateLimitRuntimeConfig } from "../src/runtime.ts"
 import { handleRateLimitDevRequest } from "../src/runtime/console.ts"
@@ -15,6 +15,8 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import type { ViteHubNitroDevServer } from "@vite-hub/internal/dev-endpoint"
 
 const rootDir = "/app"
+const runtimeToken = "unit-runtime-token"
+const callRuntime = (request: Request) => handleRateLimitDevRequest(request, runtimeToken)
 const resetAt = Date.parse("2026-05-22T09:01:00.000Z")
 
 function stream() {
@@ -86,7 +88,7 @@ describe("Rate Limit review regressions", () => {
   it.each([true, "0.0.0.0", "::", "192.0.2.1"])("refuses non-loopback server host %s", (host) => {
     const { server, middlewares } = fakeServer()
     server.config.server.host = host
-    expect(() => registerRateLimitDevEndpoint(server)).toThrow("loopback-only")
+    expect(() => registerRateLimitDevEndpoint(server, { runtimeToken })).toThrow("loopback-only")
     expect(middlewares).toHaveLength(0)
   })
 })
@@ -262,7 +264,7 @@ const guard = { [rateLimitDevHeader]: rateLimitDevHeaderValue }
 describe("Rate Limit dev endpoint", () => {
   it("rejects a remote peer even with forged localhost headers", async () => {
     const { middlewares, server } = fakeServer()
-    registerRateLimitDevEndpoint(server)
+    registerRateLimitDevEndpoint(server, { runtimeToken })
     const response = await call(middlewares[0]!, { headers: guard, method: "GET", peer: "192.0.2.1" })
     expect(response.status).toBe(403)
     expect(response.body).toContain("loopback peer")
@@ -270,7 +272,7 @@ describe("Rate Limit dev endpoint", () => {
 
   it("rejects requests without the guard header or from another origin", async () => {
     const { middlewares, server } = fakeServer()
-    registerRateLimitDevEndpoint(server)
+    registerRateLimitDevEndpoint(server, { runtimeToken })
 
     expect(await call(middlewares[0]!, { method: "GET" })).toMatchObject({ body: "Forbidden Rate Limit Dev request.", status: 403 })
     expect(await call(middlewares[0]!, { headers: { ...guard, origin: "https://attacker.test" }, method: "GET" })).toMatchObject({ status: 403 })
@@ -280,7 +282,7 @@ describe("Rate Limit dev endpoint", () => {
 
   it("returns 501 on hosts without an in-process Nitro environment", async () => {
     const { middlewares, server } = fakeServer()
-    registerRateLimitDevEndpoint(server)
+    registerRateLimitDevEndpoint(server, { runtimeToken })
 
     const discovery = await call(middlewares[0]!, { headers: guard, method: "GET" })
     expect(JSON.parse(discovery.body)).toEqual({ message: rateLimitDevRuntimeUnavailableMessage, root: rootDir, runtime: "unavailable" })
@@ -292,7 +294,7 @@ describe("Rate Limit dev endpoint", () => {
   it("forwards operations into the Nitro environment under the Nitro base URL", async () => {
     const dispatchFetch = vi.fn(async (request: Request) => Response.json({ body: await request.text(), url: request.url }))
     const { middlewares, server } = fakeServer({ nitro: { dispatchFetch } })
-    registerRateLimitDevEndpoint(server, { nitroBaseURL: () => "/app/" })
+    registerRateLimitDevEndpoint(server, { runtimeToken, nitroBaseURL: () => "/app/" })
 
     expect(JSON.parse((await call(middlewares[0]!, { headers: guard, method: "GET" })).body)).toEqual({ root: rootDir, runtime: "nitro" })
     const body = "{\"key\":\"a\",\"name\":\"login\",\"operation\":\"peek\"}"
@@ -301,6 +303,7 @@ describe("Rate Limit dev endpoint", () => {
     expect(operation.status).toBe(200)
     expect(JSON.parse(operation.body)).toEqual({ body, url: `http://localhost/app${rateLimitDevRuntimeRoute}` })
     expect(dispatchFetch.mock.calls[0]?.[0].headers.get(rateLimitDevHeader)).toBe(rateLimitDevHeaderValue)
+    expect(dispatchFetch.mock.calls[0]?.[0].headers.get(rateLimitDevRuntimeTokenHeader)).toBe(runtimeToken)
   })
 })
 
@@ -308,7 +311,7 @@ function devRequest(body: unknown, init: { headers?: Record<string, string>, met
   const method = init.method ?? "POST"
   return new Request(`http://localhost${rateLimitDevRuntimeRoute}`, {
     ...(method === "POST" ? { body: typeof body === "string" ? body : JSON.stringify(body) } : {}),
-    headers: { "content-type": "application/json", [rateLimitDevHeader]: rateLimitDevHeaderValue, ...init.headers },
+    headers: { "content-type": "application/json", [rateLimitDevHeader]: rateLimitDevHeaderValue, [rateLimitDevRuntimeTokenHeader]: runtimeToken, ...init.headers },
     method,
   })
 }
@@ -319,13 +322,20 @@ describe("Rate Limit dev handler", () => {
     setRateLimitRuntimeConfig({ provider: "memory" })
   })
 
+  it.each([undefined, "forged-token"])("rejects direct runtime requests with token %j", async (token) => {
+    const request = devRequest({ key: "key", name: "login", operation: "reset" })
+    request.headers.delete(rateLimitDevRuntimeTokenHeader)
+    if (token) request.headers.set(rateLimitDevRuntimeTokenHeader, token)
+    expect((await callRuntime(request)).status).toBe(403)
+  })
+
   it("rejects unguarded, cross-origin, and invalid requests", async () => {
-    expect((await handleRateLimitDevRequest(devRequest({}, { headers: { [rateLimitDevHeader]: "" } }))).status).toBe(403)
-    expect((await handleRateLimitDevRequest(devRequest({}, { headers: { origin: "https://attacker.test" } }))).status).toBe(403)
-    expect((await handleRateLimitDevRequest(devRequest({}, { headers: { "content-type": "text/plain" } }))).status).toBe(415)
-    expect((await handleRateLimitDevRequest(devRequest(undefined, { method: "DELETE" }))).status).toBe(405)
+    expect((await callRuntime(devRequest({}, { headers: { [rateLimitDevHeader]: "" } }))).status).toBe(403)
+    expect((await callRuntime(devRequest({}, { headers: { origin: "https://attacker.test" } }))).status).toBe(403)
+    expect((await callRuntime(devRequest({}, { headers: { "content-type": "text/plain" } }))).status).toBe(415)
+    expect((await callRuntime(devRequest(undefined, { method: "DELETE" }))).status).toBe(405)
     for (const body of ["not json", { key: "a", name: "login", operation: "consume" }, { key: "", name: "login", operation: "peek" }, { key: "a", name: " ", operation: "reset" }]) {
-      const response = await handleRateLimitDevRequest(devRequest(body))
+      const response = await callRuntime(devRequest(body))
       expect(response.status).toBe(400)
       await expect(response.json()).resolves.toEqual({ error: { message: "The Rate Limit Dev request body is invalid." } })
     }
@@ -339,7 +349,7 @@ describe("Rate Limit dev handler", () => {
     Object.assign(event.req, { ip: "192.0.2.10" })
     await requireRateLimit(event, "cli-login", { limit: 5, window: "1m" })
 
-    const peek = await handleRateLimitDevRequest(devRequest({ key: "192.0.2.10", name: "cli-login", operation: "peek" }))
+    const peek = await callRuntime(devRequest({ key: "192.0.2.10", name: "cli-login", operation: "peek" }))
     expect(peek.headers.get("cache-control")).toBe("no-store")
     await expect(peek.json()).resolves.toEqual({
       counters: [{ limit: 5, remaining: 4, resetAt, used: 1, window: "1m", windowMs: 60_000 }],
@@ -349,17 +359,17 @@ describe("Rate Limit dev handler", () => {
       scope: "process",
       status: "known",
     })
-    const again = await handleRateLimitDevRequest(devRequest({ key: "192.0.2.10", name: "cli-login", operation: "peek" }))
+    const again = await callRuntime(devRequest({ key: "192.0.2.10", name: "cli-login", operation: "peek" }))
     await expect(again.json()).resolves.toMatchObject({ counters: [{ used: 1 }] })
 
-    const reset = await handleRateLimitDevRequest(devRequest({ key: "192.0.2.10", name: "cli-login", operation: "reset" }))
+    const reset = await callRuntime(devRequest({ key: "192.0.2.10", name: "cli-login", operation: "reset" }))
     await expect(reset.json()).resolves.toEqual({ key: "192.0.2.10", name: "cli-login", provider: "memory", scope: "process", status: "reset" })
-    const after = await handleRateLimitDevRequest(devRequest({ key: "192.0.2.10", name: "cli-login", operation: "peek" }))
+    const after = await callRuntime(devRequest({ key: "192.0.2.10", name: "cli-login", operation: "peek" }))
     await expect(after.json()).resolves.toMatchObject({ counters: [{ remaining: 5, used: 0 }] })
   })
 
   it("redacts credentials in the echoed key", async () => {
-    const response = await handleRateLimitDevRequest(devRequest({ key: "Bearer sk-live-secret", name: "api", operation: "peek" }))
+    const response = await callRuntime(devRequest({ key: "Bearer sk-live-secret", name: "api", operation: "peek" }))
     const body = await response.json()
     expect(body).toMatchObject({ key: "Bearer [redacted]", status: "unused" })
     expect(JSON.stringify(body)).not.toContain("sk-live-secret")
@@ -368,7 +378,7 @@ describe("Rate Limit dev handler", () => {
   it("reports that the Cloudflare provider cannot read or reset counters", async () => {
     setRateLimitRuntimeConfig({ provider: "cloudflare" })
     for (const operation of ["peek", "reset"]) {
-      const response = await handleRateLimitDevRequest(devRequest({ key: "192.0.2.1", name: "login", operation }))
+      const response = await callRuntime(devRequest({ key: "192.0.2.1", name: "login", operation }))
       await expect(response.json()).resolves.toEqual({ key: "192.0.2.1", name: "login", provider: "cloudflare", reason: cloudflareReason, status: "unsupported" })
     }
   })

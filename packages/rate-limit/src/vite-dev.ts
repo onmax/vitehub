@@ -1,6 +1,6 @@
 import { isViteHubDevRoute, registerViteHubNitroDevEndpoint } from "@vite-hub/internal/dev-endpoint"
 
-import { rateLimitDevHeader, rateLimitDevHeaderValue, rateLimitDevRoute, rateLimitDevRuntimeRoute } from "./dev.ts"
+import { rateLimitDevHeader, rateLimitDevHeaderValue, rateLimitDevRoute, rateLimitDevRuntimeRoute, rateLimitDevRuntimeTokenHeader } from "./dev.ts"
 
 import type { ViteHubNitroDevServer } from "@vite-hub/internal/dev-endpoint"
 
@@ -8,6 +8,8 @@ import type { ViteHubNitroDevServer } from "@vite-hub/internal/dev-endpoint"
 export const rateLimitDevRuntimeUnavailableMessage = "This Vite Development Server does not run Nitro in process, so it cannot reach the Rate Limit runtime. `vitehub rate-limit` commands need a Vite + Nitro host. Nuxt and plain Vite are not supported."
 
 export interface RateLimitDevEndpointOptions {
+  /** Private token shared with the generated Nitro handler. */
+  runtimeToken: string
   /** Nitro `baseURL`. Nitro routes use this prefix. */
   nitroBaseURL?: () => string | undefined
 }
@@ -19,7 +21,7 @@ export interface RateLimitDevEndpointOptions {
  * the Nitro dev environment, because the Nitro runtime owns the counters. Hosts without an in-process Nitro
  * environment get `501` with a clear message.
  */
-export function registerRateLimitDevEndpoint(server: ViteHubNitroDevServer, options: RateLimitDevEndpointOptions = {}): void {
+export function registerRateLimitDevEndpoint(server: ViteHubNitroDevServer, options: RateLimitDevEndpointOptions): void {
   const host = server.config.server.host
   if (host === true || (host && !["localhost", "127.0.0.1", "::1", "[::1]"].includes(host))) {
     throw new Error("[vitehub] Rate Limit dev commands require a loopback-only Vite server. Set server.host to localhost, 127.0.0.1, or ::1.")
@@ -38,6 +40,7 @@ export function registerRateLimitDevEndpoint(server: ViteHubNitroDevServer, opti
           res.end("Rate Limit Dev requests require a loopback peer.")
           return
         }
+        if (isViteHubDevRoute(req, rateLimitDevRoute)) req.headers[rateLimitDevRuntimeTokenHeader] = options.runtimeToken
         handler(req, res, next)
       }),
     },

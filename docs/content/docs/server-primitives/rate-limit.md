@@ -119,7 +119,7 @@ Each result has a `status`. Read it before you use the other fields.
 
 A custom driver for `createRateLimiter()` can implement optional `peek(input)` and `reset(input)` methods. `limiter.peek({ key })` and `limiter.reset({ key })` return `unsupported` when the driver does not implement them. In development, `vitehub rate-limit peek` and `vitehub rate-limit reset` run the same functions in the running server. Read [CLI](/docs/development/cli#read-and-reset-rate-limit-counters).
 
-Rate Limit CLI inspection requires a Vite + Nitro development server bound to `localhost`, `127.0.0.1`, or `::1`. The dev endpoint refuses network-wide server hosts and non-loopback peers. Use `--` before a key that starts with a dash, for example `pnpm vitehub rate-limit peek login --json -- -1`.
+Rate Limit CLI inspection requires a Vite + Nitro development server bound to `localhost`, `127.0.0.1`, or `::1`. The dev endpoint refuses network-wide server hosts and non-loopback peers. The Nitro handler also requires a private token issued for this Development Server. Use `--` before a key that starts with a dash, for example `pnpm vitehub rate-limit peek login --json -- -1`.
 
 ## Inspect generated guarantees
 

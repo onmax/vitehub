@@ -328,6 +328,7 @@ describe("hubRateLimit", () => {
     await (plugin.configResolved as (config: unknown) => Promise<void>)({ build: { outDir: "dist" }, command: "serve", plugins: [], resolve: { alias: [] }, root } as never)
     const source = await readFile(devHandler, "utf8")
     expect(source).toContain("import { handleRateLimitDevRequest as handleViteHubDevRequest } from \"vite-hub/_internal/rate-limit/runtime/console\"")
+    expect(source).toMatch(/handleViteHubDevRequest\(event\.req, "[0-9a-f-]{36}"\)/)
 
     const buildConfig: Record<string, unknown> = { root }
     const buildPlugin = hubRateLimit({ provider: "memory" })
