@@ -128,8 +128,8 @@ function notFound(pathname: string, store: string): BlobDevRequestError {
 }
 
 function unwrap<TResult>(result: BlobResult<TResult>): TResult {
-  const [error, value] = result
-  if (!error) return value as TResult
+  if (result[0] === null) return result[1]
+  const error = result[0]
   const cause = error.cause
   const causeMessage = cause instanceof Error ? ` ${cause.message}` : ""
   throw new BlobDevRequestError(`${error.message}${causeMessage}`, 502, error.code)
