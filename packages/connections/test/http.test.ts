@@ -14,6 +14,16 @@ function post(body: unknown, headers: Record<string, string> = {}): Request {
   });
 }
 
+function streamedPost(body: ReadableStream<Uint8Array>): Request {
+  const init: RequestInit & { duplex: "half" } = {
+    body,
+    headers: { "content-type": "application/json", origin },
+    method: "POST",
+    duplex: "half",
+  };
+  return new Request(`${origin}/_vitehub/connections`, init);
+}
+
 describe("createConnectionsHandler", () => {
   it.each([
     undefined,
@@ -66,6 +76,64 @@ describe("createConnectionsHandler", () => {
     expect(await response.json()).toMatchObject({
       connections: [{ name: "mail", provider: "example", status: "disconnected" }],
     });
+  });
+
+  it("stops and cancels oversized authenticated request streams", async () => {
+    const runtime = vi.fn(() => createTestRuntime().runtime);
+    const handler = createConnectionsHandler({ actor: () => "user:local", runtime });
+    let reads = 0;
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        reads += 1;
+        if (reads > 20) controller.close();
+        else controller.enqueue(new Uint8Array(8192).fill(120));
+      },
+      cancel,
+    }, { highWaterMark: 0 });
+    const response = await handler(streamedPost(body));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: "CONNECTION_INVALID" } });
+    expect(reads).toBe(9);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(runtime).not.toHaveBeenCalled();
+    expect(body.locked).toBe(false);
+  });
+
+  it.each([65536, 65537])("counts raw UTF-8 bytes for a %s-byte streamed body", async (size) => {
+    const test = createTestRuntime();
+    const handler = createConnectionsHandler({ actor: () => "user:local", runtime: () => test.runtime });
+    const encoder = new TextEncoder();
+    const paddingSize = size - encoder.encode(JSON.stringify({ action: "list", padding: "" })).byteLength;
+    const encoded = encoder.encode(JSON.stringify({ action: "list", padding: "é".repeat(Math.floor(paddingSize / 2)) + "a".repeat(paddingSize % 2) }));
+    expect(encoded.byteLength).toBe(size);
+    let offset = 0;
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset === encoded.byteLength) controller.close();
+        else {
+          controller.enqueue(encoded.slice(offset, offset + 4095));
+          offset = Math.min(offset + 4095, encoded.byteLength);
+        }
+      },
+      cancel,
+    }, { highWaterMark: 0 });
+    const response = await handler(streamedPost(body));
+    expect(response.status).toBe(size === 65536 ? 200 : 400);
+    expect(cancel).toHaveBeenCalledTimes(size === 65536 ? 0 : 1);
+  });
+
+  it("preserves streamed-body parse and read failures", async () => {
+    const handler = createConnectionsHandler({ actor: () => "user:local", runtime: () => createTestRuntime().runtime });
+    for (const [body, status] of [
+      [new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode("{broken")); controller.close(); } }), 400],
+      [new ReadableStream<Uint8Array>({ start(controller) { controller.error(new Error("Stream failed")); } }), 500],
+    ] as const) {
+      const response = await handler(streamedPost(body));
+      expect(response.status).toBe(status);
+      expect(body.locked).toBe(false);
+    }
   });
 
   it("rejects cross-origin, non-JSON, and invalid requests", async () => {
