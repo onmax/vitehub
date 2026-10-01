@@ -870,6 +870,64 @@ describe("Agent Invocation UI", () => {
     }
   });
 
+  it.each(["Done.", "  Done.\n"])("deduplicates an update delivery matching the final answer: %s", (content) => {
+    const timestamp = "2026-08-22T00:00:00.000Z";
+    const invocation = {
+      id: "matching-update",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      status: "completed" as const,
+      traceId: "trace",
+      observations: [
+        { attributes: { "message.content": "Run it.", "message.role": "user" }, name: "agent.message", sequence: 1, timestamp, type: "lifecycle" as const },
+        { attributes: { "channel.effect.kind": "update", "channel.effect.content": content }, name: "agent.channel.delivery", sequence: 2, timestamp, type: "run" as const },
+        { attributes: { "message.content": "Done.", "message.role": "assistant" }, name: "agent.message", sequence: 3, timestamp, type: "lifecycle" as const },
+      ],
+    } satisfies AgentInvocationView;
+
+    const wrapper = mount(AgentInvocation, { props: { invocation } });
+
+    expect(wrapper.findAll('.vh-invocation-message[data-role="assistant"]')).toHaveLength(1);
+    expect(wrapper.get('[data-kind="delivery"]').text()).toContain("Message updated");
+    expect(wrapper.text().match(/Done\./g)).toHaveLength(1);
+  });
+
+  it.each([
+    { hasFinalAnswer: false, hasFollowup: false },
+    { hasFinalAnswer: true, hasFollowup: false },
+    { hasFinalAnswer: true, hasFollowup: true },
+  ])("deduplicates repeated deliveries with $hasFinalAnswer final answer and $hasFollowup followup", async ({ hasFinalAnswer, hasFollowup }) => {
+    const timestamp = "2026-08-22T00:00:00.000Z";
+    const invocation = {
+      id: "repeated-deliveries",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      status: "completed" as const,
+      traceId: "trace",
+      observations: [
+        { attributes: { "message.content": "Run it.", "message.role": "user" }, name: "agent.message", sequence: 1, timestamp, type: "lifecycle" as const },
+        ...["reply", "update", "reply"].map((kind, index) => ({
+          attributes: { "channel.effect.kind": kind, "channel.effect.content": index === 1 ? "  Done.\n" : "Done." },
+          name: "agent.channel.delivery", sequence: index + 2, timestamp, type: "run" as const,
+        })),
+        ...(hasFinalAnswer ? [{ attributes: { "message.content": "Done.", "message.role": "assistant" }, name: "agent.message", sequence: 5, timestamp, type: "lifecycle" as const }] : []),
+        ...(hasFollowup ? [{ attributes: { "message.content": "More context.", "message.role": "assistant", "message.phase": "commentary" }, name: "agent.message", sequence: 6, timestamp, type: "lifecycle" as const }] : []),
+      ],
+    } satisfies AgentInvocationView;
+
+    const wrapper = mount(AgentInvocation, { props: { invocation } });
+    expect(wrapper.findAll('.vh-invocation-message[data-role="assistant"]')).toHaveLength(hasFollowup ? 2 : 1);
+    const work = wrapper.get(".vh-invocation-work__details");
+    if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
+    work.element.open = true;
+    await work.trigger("toggle");
+    expect(wrapper.findAll('[data-kind="delivery"]')).toHaveLength(3);
+    expect(wrapper.text().match(/Done\./g)).toHaveLength(1);
+
+    const inspector = mount(AgentInvocationInspector, { props: { invocation } });
+    expect(inspector.get(".vh-invocation-inspector__metrics").text()).toContain(hasFollowup ? "Messages3" : "Messages2");
+  });
+
   it("keeps active work visible and collapses it when the run completes", async () => {
     const timestamp = "2026-08-22T00:00:00.000Z";
     const invocation = {

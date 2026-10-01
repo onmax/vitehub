@@ -1497,7 +1497,17 @@ function isDeliveredAnswer(activity: InvocationActivity): boolean {
 function deliveredAnswerCount(activities: readonly InvocationActivity[]): number {
   const assistantBodies = new Set(activities.flatMap(activity =>
     activity.kind === "message" && activity.role === "assistant" && activity.body?.trim() ? [activity.body.trim()] : []));
-  return activities.filter(activity => isDeliveredAnswer(activity) && !assistantBodies.has(deliveryContent(activity)?.trim() ?? "")).length;
+  return uniqueDeliveredAnswers(activities, assistantBodies).length;
+}
+
+function uniqueDeliveredAnswers(activities: readonly InvocationActivity[], bodies: Set<string>): InvocationActivity[] {
+  return activities.filter(activity => {
+    if (!isDeliveredAnswer(activity)) return false;
+    const body = deliveryContent(activity)!.trim();
+    if (bodies.has(body)) return false;
+    bodies.add(body);
+    return true;
+  });
 }
 
 function deliveryReceipt(activity: InvocationActivity): InvocationActivity {
@@ -1540,19 +1550,21 @@ function renderInvocationActivities(
     && activity.status === "completed"
     && activity.attributes["channel.effect.supported"] !== false
     && !stringAttribute(activity.attributes, "channel.effect.skipped")
-    && stringAttribute(activity.attributes, "channel.effect.kind")?.toLocaleLowerCase() === "reply"
+    && answerDeliveryKinds.has(stringAttribute(activity.attributes, "channel.effect.kind")?.toLocaleLowerCase() ?? "")
     && finalBody !== undefined
-    && stringAttribute(activity.attributes, "channel.effect.content") === finalBody);
+    && deliveryContent(activity)?.trim() === finalBody);
   const finalDeliveryReceipt = finalDelivery ? deliveryReceipt(finalDelivery) : undefined;
-  const answers = new Set(tail.filter(activity => activity !== finalDelivery && isDeliveredAnswer(activity)));
+  const answers = new Set(uniqueDeliveredAnswers(tail, new Set(finalBody ? [finalBody] : [])));
   const hasLaterCommentary = lastAssistant >= 0 && orderedActivities.slice(lastAssistant + 1).some(activity =>
     activity.kind === "message" && activity.role === "assistant" && activity.attributes["message.phase"] === "commentary");
   if (hasLaterCommentary) {
     const beforeAnswer = orderedActivities.slice(firstUser + 1, lastAssistant);
     const work = coalesceAgentConfiguration([...workBeforePrompt, ...beforeAnswer.filter(activity => activity !== finalDelivery)])
-      .map(activity => answers.has(activity) ? deliveryReceipt(activity) : activity);
+      .map(activity => isDeliveredAnswer(activity) ? deliveryReceipt(activity) : activity);
     const answerAndFollowup = orderedActivities.slice(lastAssistant).flatMap(activity =>
-      activity === finalDelivery ? [finalDeliveryReceipt!] : answers.has(activity) ? [deliveryReceipt(activity), deliveryAnswer(activity)] : [activity]);
+      activity === finalDelivery ? [finalDeliveryReceipt!]
+        : answers.has(activity) ? [deliveryReceipt(activity), deliveryAnswer(activity)]
+          : isDeliveredAnswer(activity) ? [deliveryReceipt(activity)] : [activity]);
     return [
       renderPreviousMessages(history, invocation, expanded, toggleExpanded, inspect, messageRendering),
       renderInvocationActivity(prompt, expanded, toggleExpanded, inspect, messageRendering),
@@ -1568,7 +1580,7 @@ function renderInvocationActivities(
     if (firstUser + 1 + offset === lastAssistant) return false;
     if (activity === finalDelivery) return false;
     return true;
-  })]).map(activity => answers.has(activity) ? deliveryReceipt(activity) : activity);
+  })]).map(activity => isDeliveredAnswer(activity) ? deliveryReceipt(activity) : activity);
 
   return [
     renderPreviousMessages(history, invocation, expanded, toggleExpanded, inspect, messageRendering),
