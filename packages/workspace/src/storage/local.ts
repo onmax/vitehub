@@ -148,7 +148,7 @@ async function ensureLockDirectory(path: string) {
   await validateLockDirectory(path)
 }
 
-async function withLeaseHeartbeat<T>(file: import("node:fs/promises").FileHandle, operation: () => Promise<T>): Promise<T> {
+async function withLeaseHeartbeat<T>(file: import("node:fs/promises").FileHandle, operation: () => Promise<T>, onFailure?: (error: unknown) => void): Promise<T> {
   let renewal = Promise.resolve()
   let rejectHeartbeat!: (error: unknown) => void
   const heartbeatFailure = new Promise<never>((_, reject) => { rejectHeartbeat = reject })
@@ -158,7 +158,10 @@ async function withLeaseHeartbeat<T>(file: import("node:fs/promises").FileHandle
       const now = new Date()
       await file.utimes(now, now)
     })
-    renewal.catch(rejectHeartbeat)
+    renewal.catch(error => {
+      rejectHeartbeat(error)
+      onFailure?.(error)
+    })
   }, 30_000)
   timer.unref()
   const active = Promise.resolve().then(operation)
@@ -191,11 +194,11 @@ async function removeOwnedGate(lock: string) {
   }
 }
 
-async function withFilesystemLock<T>(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, operation: () => Promise<T>, timeoutMs = 10_000): Promise<T> {
+async function withFilesystemLock<T>(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, operation: () => Promise<T>, deadline?: () => number): Promise<T> {
+  const expiresAt = Date.now() + 10_000
   const owner = randomUUID()
   const ownerPath = `${lock}/owner`
   let lease: import("node:fs/promises").FileHandle | undefined
-  const deadline = Date.now() + timeoutMs
   while (true) {
     let created = false
     try {
@@ -221,7 +224,7 @@ async function withFilesystemLock<T>(lock: string, permissions: Pick<import("nod
       await validateLockDirectory(lock)
       // Marker age cannot distinguish a crashed owner from active I/O whose
       // heartbeat failed or was delayed. Only the owner may release its gate.
-      if (Date.now() >= deadline) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
+      if (Date.now() >= (deadline?.() ?? expiresAt)) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
       else await delay(25)
     }
   }
@@ -235,14 +238,14 @@ async function withFilesystemLock<T>(lock: string, permissions: Pick<import("nod
   }
 }
 
-async function withFilesystemReadLock<T>(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, operation: () => Promise<T>): Promise<T> {
+async function withFilesystemReadLock<T>(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, operation: () => Promise<T>, onFailure?: (error: unknown) => void): Promise<T> {
   const reader = `${lock}.readers/${randomUUID()}`
   // The admission batch already owns the gate during reader registration.
   await ensureLockDirectory(`${lock}.readers`)
   if (process.platform !== "win32") await applyMetadataPermissions(`${lock}.readers`, permissions.mode & 0o770, permissions.gid)
   const lease = await open(reader, "wx")
   try {
-    return await withLeaseHeartbeat(lease, operation)
+    return await withLeaseHeartbeat(lease, operation, onFailure)
   }
   finally {
     await rm(reader, { force: true })
@@ -252,7 +255,7 @@ async function withFilesystemReadLock<T>(lock: string, permissions: Pick<import(
       await rmdir(`${lock}.readers`).catch((error: NodeJS.ErrnoException) => {
         if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code ?? "")) throw error
       })
-    }, 0).catch(() => {})
+    }, () => Date.now()).catch(() => {})
   }
 }
 
@@ -280,6 +283,7 @@ async function withFilesystemWriteLock<T>(lock: string, permissions: Pick<import
 
 interface SharedReadLease {
   acquired: Promise<void>
+  failure?: { error: unknown }
   readers: number
   release: () => void
   settled: Promise<void>
@@ -303,10 +307,10 @@ async function openSharedReadLease(lock: string, permissions: Pick<import("node:
     settled = withFilesystemReadLock(lock, permissions, description, async () => {
       resolve()
       await released
-    })
+    }, error => { lease.failure = { error } })
     settled.catch(reject)
   })
-  const lease = { acquired, readers: 0, release, settled }
+  const lease: SharedReadLease = { acquired, readers: 0, release, settled }
   settled.catch(() => {
     if (sharedReadLeases.get(lock) === lease) sharedReadLeases.delete(lock)
   })
@@ -316,17 +320,18 @@ async function openSharedReadLease(lock: string, permissions: Pick<import("node:
 
 // Readers that arrive together share one gate acquisition. The gate protects
 // the count update as well as the filesystem registration from external writers.
-const readAdmissions = new Map<string, { count: number, admitted: Promise<SharedReadLease | undefined> }>()
+const readAdmissions = new Map<string, { count: number, deadline: number, admitted: Promise<SharedReadLease | undefined> }>()
 
 async function admitSharedReader(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, deadline: number): Promise<SharedReadLease | undefined> {
   let admission = readAdmissions.get(lock)
   if (!admission) {
-    admission = { count: 0, admitted: Promise.resolve(undefined) }
+    admission = { count: 0, deadline, admitted: Promise.resolve(undefined) }
     const batch = admission
     readAdmissions.set(lock, batch)
     let chargedLease: SharedReadLease | undefined
     batch.admitted = withFilesystemLock(`${lock}.gate`, permissions, description, async () => {
       readAdmissions.delete(lock)
+      if (Date.now() >= batch.deadline) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
       if (pendingWriters.has(lock)) return undefined
       let lease = sharedReadLeases.get(lock)
       if (!lease) {
@@ -336,7 +341,7 @@ async function admitSharedReader(lock: string, permissions: Pick<import("node:fs
       lease.readers += batch.count
       chargedLease = lease
       return lease
-    }, Math.max(0, deadline - Date.now())).catch(async (error: unknown) => {
+    }, () => batch.deadline).catch(async (error: unknown) => {
       if (chargedLease) {
         try { await releaseSharedReaders(lock, chargedLease, batch.count) }
         catch (cleanupError) { throw new AggregateError([error, cleanupError], "Workspace reader admission and cleanup failed", { cause: error }) }
@@ -346,6 +351,9 @@ async function admitSharedReader(lock: string, permissions: Pick<import("node:fs
       if (readAdmissions.get(lock) === batch) readAdmissions.delete(lock)
     })
   }
+  // A reader can join after spending part of its deadline behind another writer.
+  // Keep the batch bounded by its earliest reader rather than restarting a wait.
+  admission.deadline = Math.min(admission.deadline, deadline)
   admission.count++
   return await admission.admitted
 }
@@ -358,6 +366,9 @@ async function releaseSharedReaders(lock: string, lease: SharedReadLease, count 
     // The last reader reports a failed release, as an unshared reader does.
     await lease.settled
   }
+  // Every affected reader reports the shared heartbeat failure, after its
+  // protected operation finishes and its registration has been released.
+  if (lease.failure) throw lease.failure.error
 }
 
 async function withSharedFilesystemReadLock<T>(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, operation: () => Promise<T>): Promise<T> {
@@ -391,6 +402,8 @@ async function withSharedFilesystemReadLock<T>(lock: string, permissions: Pick<i
   }
   try {
     await lease.acquired
+    if (Date.now() >= deadline) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
+    if (lease.failure) throw lease.failure.error
     return await operation()
   }
   finally {
