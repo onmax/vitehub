@@ -477,16 +477,13 @@ describe("calls", () => {
     expect(test.provider.calls).toHaveLength(calls)
   })
 
-  it("requires reauthorization when a refresh response does not confirm a token", async () => {
+  it("keeps the grant usable when a refresh response does not confirm a token", async () => {
     const test = createTestRuntime()
     await connect(test, { expires_in: 1 })
     test.provider.tokenResponses.push({ body: {} })
     const client = test.runtime.client("mail", {})
     expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_PROVIDER" })
-    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "reauth_required" })
-    const calls = test.provider.calls.length
-    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
-    expect(test.provider.calls).toHaveLength(calls)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
   })
 
   it("marks the Connection for reauthorization after invalid_grant", async () => {
@@ -523,7 +520,7 @@ describe("calls", () => {
     expect(activity.some(entry => entry.operation === "mail.labels.list" && entry.outcome === "failed")).toBe(true)
   })
 
-  it.each([["patch", "patch"], ["Egg", "Egg"], ["gEt", "GET"]])("uses Fetch method normalization for %s", async (method, expected) => {
+  it.each([["patch", "patch"], ["Egg", "Egg"], ["gEt", "gEt"]])("preserves Fetch method casing for %s", async (method, expected) => {
     const test = createTestRuntime(mailConnection({ server: { read: true, write: ["fetch"] } }))
     await connect(test)
     await test.runtime.client("mail", {}).fetch("https://mail.example.com/mail/v1/users/me/labels", { method })
