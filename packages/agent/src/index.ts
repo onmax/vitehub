@@ -2833,7 +2833,6 @@ type AgentInvocationContext<
   CALL_OPTIONS,
 > = AgentRunContext<TRuntimeConfig, CALL_OPTIONS> & {
   activity?: ActiveAgentActivity
-  cancellationEnforced?: boolean
   channels?: AgentChannels<TRuntimeConfig>
   close: () => Promise<void>
   deliveryEffectIntents: AgentChannelDeliveryEffectIntent[]
@@ -4327,7 +4326,6 @@ type InvocationRunContext<
   CALL_OPTIONS,
 > = {
   activity?: ActiveAgentActivity
-  cancellationEnforced?: boolean
   channels?: AgentChannels<TRuntimeConfig>
   close: () => Promise<void>
   context: AgentInvocationContextStore
@@ -5635,9 +5633,8 @@ async function prepareProvisionalTitleDeliverySupport<
   return activeFinishDeliveryEffectProviders(context, provisionalFinishEvent(context, eventBase))
 }
 
-function invocationFailureWasCancelled(error: unknown, signal: AbortSignal | undefined, enforced: boolean): boolean {
+function invocationFailureWasCancelled(error: unknown, signal: AbortSignal | undefined): boolean {
   if (!signal?.aborted) return false
-  if (enforced) return true
   const seen = new Set<unknown>()
   const pending: unknown[] = [error]
   while (pending.length) {
@@ -5656,7 +5653,7 @@ function invocationFailureWasCancelled(error: unknown, signal: AbortSignal | und
     catch {}
     try {
       const tag = Object.prototype.toString.call(current)
-      if ((tag === "[object Error]" || tag === "[object DOMException]") && Reflect.get(current, "name") === "AbortError") return true
+      if (current === error && (tag === "[object Error]" || tag === "[object DOMException]") && Reflect.get(current, "name") === "AbortError") return true
     }
     catch {}
   }
@@ -5893,7 +5890,7 @@ async function finishAgentInvocation<
     if (!failed) {
       await runFinishActivity(teardownActivity, async () => await commitWorkspaceChanges(context))
     }
-    const status = outcomeCancelled || (failed && invocationFailureWasCancelled(error, context.input.abortSignal, context.cancellationEnforced !== false)) ? "cancelled" : failed ? "failed" : "completed"
+    const status = outcomeCancelled || (failed && invocationFailureWasCancelled(error, context.input.abortSignal)) ? "cancelled" : failed ? "failed" : "completed"
     if (status === "cancelled") {
       await traceAgentInvocationCancelled(toTraceContext(context))
     }
@@ -5921,7 +5918,7 @@ async function finishAgentInvocation<
     if (outcomeFailed) await traceFinishError(error, "outcome")
     if (closeError !== undefined) await traceFinishError(closeError, "teardown", teardownActivity)
     if (!throwingCloseError) await traceFinishError(finishError, "finish", finishFailureActivity)
-    const status = outcomeCancelled || (failed && invocationFailureWasCancelled(error, context.input.abortSignal, context.cancellationEnforced !== false)) ? "cancelled" : "failed"
+    const status = outcomeCancelled || (failed && invocationFailureWasCancelled(error, context.input.abortSignal)) ? "cancelled" : "failed"
     if (status === "cancelled") {
       await traceAgentInvocationCancelled(toTraceContext(context))
     }
@@ -6242,7 +6239,6 @@ async function executeAgentInvocationWithCapacityLease<
   const invocation = preparedInvocation
     ?? await createAgentInvocationContextWithWorkflowFailureDelivery(definition, context, input, options.kind, invocationJournal, options.tools)
   invocation.activity = activity
-  invocation.cancellationEnforced = !customRun
   const shouldHoldInvocationOutput = () => options.holdCapacity === true || shouldWrapInvocationOutput(invocation)
   const lifecycle = await openAgentInvocationLifecycle<AgentInvocationFinishOutcome>(
     async (outcome) => {

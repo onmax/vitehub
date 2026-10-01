@@ -99,6 +99,46 @@ describe("Agent Invocation cancel", () => {
     expect(await invocations.cancel(id)).toEqual({ id, outcome: "terminal", status: "cancelled" })
   })
 
+  it.each(["unrelated", "reason", "wrapped reason"] as const)("classifies %s cleanup errors after a model Driver returns", async (failure) => {
+    modelGenerate.mockResolvedValue({ text: "Done." })
+    const entered = deferred()
+    const release = deferred()
+    let signal: AbortSignal | undefined
+    let cleanupError: Error | undefined
+    const runId = `model-cleanup-cancel-${failure}`
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const run = runAgent(defineAgent({
+      driver: modelDriver,
+      invocations,
+      capabilities: [defineCapability({
+        id: "cleanup",
+        close: async () => {
+          entered.resolve()
+          await release.promise
+          cleanupError = failure === "unrelated"
+            ? new Error("Cleanup failed independently.")
+            : failure === "reason"
+              ? signal?.reason
+              : new Error("Cleanup was aborted.", { cause: signal?.reason })
+          throw cleanupError
+        },
+      })],
+      hooks: { "agent:input": context => { signal = context.input.abortSignal } },
+    }), runtime(runId), { prompt: "Summarize the release." })
+    const settled = run.then(() => undefined, error => error)
+    await entered.promise
+    expect(modelGenerate).toHaveBeenCalledOnce()
+    const { id } = await recordWithStatus(invocations, runId, "running")
+    expect(await invocations.cancel(id)).toMatchObject({ delivery: "local", outcome: "requested", status: "running" })
+    release.resolve()
+    expect(await settled).toBe(cleanupError)
+
+    const record = await invocations.get(id)
+    expect(record?.status).toBe(failure === "unrelated" ? "failed" : "cancelled")
+    expect(record?.error).toMatchObject({ message: cleanupError?.message })
+    expect(record?.observations.some(entry => entry.name === "agent.invocation.cancelled")).toBe(failure !== "unrelated")
+  })
+
   it("reports that a custom run Driver does not enforce cancel", async () => {
     const release = deferred<string>()
     const started = deferred()
@@ -127,7 +167,7 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.get(id))?.status).toBe("completed")
   })
 
-  it.each(["unrelated", "foreign-unrelated", "plain-abort-name", "hostile-tag", "reason", "wrapped-reason", "foreign-wrapped-reason", "abort-error", "foreign-abort-error", "aggregate-reason", "foreign-aggregate-reason", "cyclic-aggregate-reason", "aggregate-unrelated"] as const)("classifies a cancelled custom handler's %s rejection by its actual error", async (failureKind) => {
+  it.each(["unrelated", "foreign-unrelated", "plain-abort-name", "hostile-tag", "reason", "wrapped-reason", "foreign-wrapped-reason", "abort-error", "foreign-abort-error", "aggregate-reason", "foreign-aggregate-reason", "cyclic-aggregate-reason", "aggregate-unrelated", "aggregate-abort-error", "foreign-aggregate-abort-error", "wrapped-abort-error"] as const)("classifies a cancelled custom handler's %s rejection by its actual error", async (failureKind) => {
     const release = deferred()
     const started = deferred()
     const failure = new Error("Independent handler failure")
@@ -154,6 +194,9 @@ describe("Agent Invocation cancel", () => {
           throw aggregate
         }
         if (failureKind === "aggregate-unrelated") throw new AggregateError([failure, new Error("Cleanup failed")], "Independent failures")
+        if (failureKind === "aggregate-abort-error") throw new AggregateError([new DOMException("Independent I/O aborted", "AbortError"), failure], "Independent failures")
+        if (failureKind === "foreign-aggregate-abort-error") throw runInNewContext("new AggregateError([Object.assign(new Error('Independent I/O aborted'), { name: 'AbortError' })], 'Independent failures')")
+        if (failureKind === "wrapped-abort-error") throw new Error("Independent failure", { cause: new DOMException("Independent I/O aborted", "AbortError") })
         if (failureKind === "abort-error") throw new DOMException("Handler stopped", "AbortError")
         throw failure
       } },
@@ -167,7 +210,7 @@ describe("Agent Invocation cancel", () => {
     release.resolve()
     await rejected
     const record = await invocations.get(id)
-    const cancelled = !["unrelated", "foreign-unrelated", "plain-abort-name", "hostile-tag", "aggregate-unrelated"].includes(failureKind)
+    const cancelled = !["unrelated", "foreign-unrelated", "plain-abort-name", "hostile-tag", "aggregate-unrelated", "aggregate-abort-error", "foreign-aggregate-abort-error", "wrapped-abort-error"].includes(failureKind)
     expect(record?.status).toBe(cancelled ? "cancelled" : "failed")
     expect(record?.observations.some(entry => entry.name === "agent.invocation.cancelled")).toBe(cancelled)
     if (failureKind === "unrelated" || failureKind === "hostile-tag") expect(record?.error?.message).toBe(failure.message)
