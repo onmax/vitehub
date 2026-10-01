@@ -25,6 +25,7 @@ const stderrTailBytes = 64 * 1024
 const frameStdout = 1
 const frameStderr = 2
 const frameExit = 3
+const relayCleanupTimeoutMs = 1000
 
 export interface ProviderBoxSession {
   /** Home files and persisted state can contain credentials unknown to the relay. */
@@ -156,7 +157,10 @@ export async function startProviderBoxRelay(options: ProviderBoxRelayOptions): P
     launcher: launcherPath,
     close() {
       return closing ??= (async () => {
-        await Promise.all([...processes].map(child => child.kill().catch(() => undefined)))
+        // BoxProcess.kill() may wait for a provider that traps SIGTERM. Keep the
+        // relay bounded so the owning Box session can run its escalation path.
+        const killing = Promise.all([...processes].map(child => child.kill().catch(() => undefined)))
+        await Promise.race([killing, boundedRelayCleanup()])
         for (const socket of sockets) socket.destroy()
         await new Promise<void>(resolve => server.close(() => resolve()))
         await Promise.all([...handlers])
@@ -164,6 +168,14 @@ export async function startProviderBoxRelay(options: ProviderBoxRelayOptions): P
     },
   }
 }
+
+function boundedRelayCleanup() {
+  return new Promise<void>(resolve => {
+    const timer = setTimeout(resolve, relayCleanupTimeoutMs)
+    timer.unref?.()
+  })
+}
+
 
 async function handleRelayConnection(
   socket: Socket,
