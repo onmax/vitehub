@@ -4,24 +4,19 @@ import { landingPrimitives } from "./content";
 
 const grid = useTemplateRef<HTMLElement>("grid");
 const visible = ref(false);
-const replays = reactive<Record<string, number>>({});
 
+// Loops run only while the grid is on screen.
 useIntersectionObserver(
   grid,
   ([entry]) => {
-    if (entry?.isIntersecting) {
-      visible.value = true;
-    }
+    visible.value = entry?.isIntersecting ?? false;
   },
-  { threshold: 0.35 },
+  { threshold: 0.1 },
 );
 
-// Remounting a scene restarts its single pass without a timer.
-function replay(id: string) {
-  if (!visible.value) {
-    return;
-  }
-  replays[id] = (replays[id] ?? 0) + 1;
+// Spread start points across the loop so neighboring tiles do not move together.
+function offset(index: number) {
+  return (index * 0.37) % 1;
 }
 </script>
 
@@ -63,19 +58,12 @@ function replay(id: string) {
         <li v-for="(primitive, index) in landingPrimitives" :key="primitive.id" class="min-w-0 bg-default">
           <NuxtLink
             :to="primitive.to"
-            class="group flex h-full flex-col gap-3 p-4 transition-colors duration-200 hover:bg-muted/35 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
-            @pointerenter="replay(primitive.id)"
-            @focus="replay(primitive.id)"
+            class="primitive-tile group flex h-full flex-col gap-3 p-4 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
           >
             <div
               class="h-10 w-full text-muted transition-colors duration-200 group-hover:text-highlighted"
             >
-              <LandingPrimitiveMotion
-                :key="replays[primitive.id] ?? 0"
-                :name="primitive.id"
-                :play="visible"
-                :delay="replays[primitive.id] ? 0 : index * 70"
-              />
+              <LandingPrimitiveMotion :name="primitive.id" :play="visible" :offset="offset(index)" />
             </div>
             <div>
               <h3 class="text-sm font-medium text-highlighted">
@@ -93,9 +81,26 @@ function replay(id: string) {
 </template>
 
 <style scoped>
+/* Scenes with overlapping shapes fill them with the tile background. */
+.primitive-tile {
+  --tile-bg: var(--ui-bg);
+  background: var(--tile-bg);
+  transition: background-color 200ms ease;
+}
+
 @media (hover: hover) and (pointer: fine) {
+  .primitive-tile:hover {
+    --tile-bg: color-mix(in srgb, var(--ui-bg-muted) 35%, var(--ui-bg));
+  }
+
   .group:hover .landing-cta-arrow {
     transform: translateX(0.25rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primitive-tile {
+    transition: none;
   }
 }
 </style>

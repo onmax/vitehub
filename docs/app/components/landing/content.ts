@@ -85,7 +85,50 @@ export const agentStory = {
   ],
 } as const;
 
+// Ordered like the Server Primitives docs navigation. Realtime has only a reference page.
 export const landingPrimitives = [
+  {
+    id: "env",
+    name: "Env",
+    description: "Typed configuration",
+    to: "/docs/server-primitives/env",
+  },
+  {
+    id: "auth",
+    name: "Auth",
+    description: "Users and sessions",
+    to: "/docs/server-primitives/auth",
+  },
+  {
+    id: "connections",
+    name: "Connections",
+    description: "Connected account APIs",
+    to: "/docs/server-primitives/connections",
+  },
+  {
+    id: "rate-limit",
+    name: "Rate Limit",
+    description: "Request budgets",
+    to: "/docs/server-primitives/rate-limit",
+  },
+  {
+    id: "kv",
+    name: "KV",
+    description: "State and cache",
+    to: "/docs/server-primitives/kv",
+  },
+  {
+    id: "database",
+    name: "Database",
+    description: "Relational data",
+    to: "/docs/server-primitives/database",
+  },
+  {
+    id: "blob",
+    name: "Blob",
+    description: "Files and uploads",
+    to: "/docs/server-primitives/blob",
+  },
   {
     id: "workspace",
     name: "Workspace",
@@ -93,10 +136,16 @@ export const landingPrimitives = [
     to: "/docs/server-primitives/workspace",
   },
   {
-    id: "kv",
-    name: "KV",
-    description: "State and cache",
-    to: "/docs/server-primitives/kv",
+    id: "source",
+    name: "Source",
+    description: "Read-only content",
+    to: "/docs/server-primitives/source",
+  },
+  {
+    id: "content",
+    name: "Content",
+    description: "Parse and search",
+    to: "/docs/server-primitives/content",
   },
   {
     id: "queue",
@@ -123,39 +172,27 @@ export const landingPrimitives = [
     to: "/docs/server-primitives/sandbox",
   },
   {
-    id: "database",
-    name: "Database",
-    description: "Relational data",
-    to: "/docs/server-primitives/database",
-  },
-  {
-    id: "blob",
-    name: "Blob",
-    description: "Files and uploads",
-    to: "/docs/server-primitives/blob",
-  },
-  {
-    id: "auth",
-    name: "Auth",
-    description: "Users and sessions",
-    to: "/docs/server-primitives/auth",
-  },
-  {
-    id: "env",
-    name: "Env",
-    description: "Typed configuration",
-    to: "/docs/server-primitives/env",
-  },
-  {
-    id: "source",
-    name: "Source",
-    description: "Read-only content",
-    to: "/docs/server-primitives/source",
+    id: "browser",
+    name: "Browser",
+    description: "Browser operations",
+    to: "/docs/server-primitives/browser",
   },
   {
     id: "shell",
     name: "Shell",
     description: "Command execution",
     to: "/docs/server-primitives/shell",
+  },
+  {
+    id: "email",
+    name: "Email",
+    description: "Transactional email",
+    to: "/docs/server-primitives/email",
+  },
+  {
+    id: "realtime",
+    name: "Realtime",
+    description: "Collaborative documents",
+    to: "/docs/reference/realtime",
   },
 ] as const;

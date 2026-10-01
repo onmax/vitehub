@@ -85,21 +85,36 @@ describe("landing page", () => {
     expect(source).not.toMatch(/role="(?:tab|tablist|radio|radiogroup)"/);
   });
 
-  it("keeps the full set of animated primitives", () => {
+  it("keeps the full set of animated primitives", async () => {
+    const primitiveMotion = await readFile(
+      new URL("../app/components/landing/PrimitiveMotion.vue", import.meta.url),
+      "utf8",
+    );
+
     expect(landingPrimitives.map((primitive) => primitive.id)).toEqual([
-      "workspace",
+      "env",
+      "auth",
+      "connections",
+      "rate-limit",
       "kv",
+      "database",
+      "blob",
+      "workspace",
+      "source",
+      "content",
       "queue",
       "workflow",
       "schedule",
       "sandbox",
-      "database",
-      "blob",
-      "auth",
-      "env",
-      "source",
+      "browser",
       "shell",
+      "email",
+      "realtime",
     ]);
+    for (const primitive of landingPrimitives) {
+      expect(primitiveMotion).toContain(`name === '${primitive.id}'`);
+      expect(primitive.to).toMatch(/^\/docs\//);
+    }
   });
 
   it("keeps reduced-motion and hidden install controls static", async () => {
@@ -116,8 +131,7 @@ describe("landing page", () => {
     );
 
     expect(reducedMotion).toContain("animation: none;");
-    expect(primitiveMotion).not.toContain("infinite");
-    expect(primitiveMotion).toContain("animation-iteration-count: 1;");
+    expect(primitiveMotion).toContain(".primitive-motion:not(.is-playing) .a {\n  animation-play-state: paused;");
     expect(installCommand).toContain(
       `:class="activeTab === 'package' ? 'w-[16.5rem]' : 'w-0'"`,
     );
