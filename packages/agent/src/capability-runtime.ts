@@ -1133,7 +1133,13 @@ async function applyCapabilityWorkspaceContributions<
       if (!isRuntimeRecord(metadata) || metadata.capabilityId !== capabilityId || metadata.path !== path || !hasRuntimeType(metadata.digest, "string")) continue
       const current = await retainedWorkspace.fs.readFile(path, { encoding: "binary" })
       if (await capabilityContributionDigest(current) !== metadata.digest) continue
-      await retainedWorkspace.rm(path, { force: true })
+      try {
+        await retainedWorkspace.rm(path, { force: true, ifDigest: stat.digest })
+      }
+      catch (error) {
+        // A concurrent edit or invocation won the conditional removal.
+        if (Reflect.get(Object(error), "code") !== "WORKSPACE_CONFLICT") throw error
+      }
     }
   }
   return {

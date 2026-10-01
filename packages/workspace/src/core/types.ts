@@ -57,6 +57,8 @@ export interface MkdirOptions {
 export interface RmOptions {
   recursive?: boolean
   force?: boolean
+  /** Remove only when the current file digest matches. */
+  ifDigest?: string | null
 }
 
 export type WorkspaceWriteOperation = "writeFile" | "mkdir" | "rm"

@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises"
 
 import { check, fallback, literal, object, optional, pipe, record, safeParse, string, unknown } from "valibot"
 
-import { assertWorkspaceDigest, workspaceError } from "../core/errors.ts"
+import { assertWorkspaceDigest, workspaceConflictError, workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata } from "../core/file-metadata.ts"
 import { contentStreamChunks, contentToBytes, isExcludedWorkspacePath, matchesAny, normalizeWorkspacePath, resolveInside, sha256 } from "../core/path.ts"
 import { workspaceStoreTarget } from "./target.ts"
@@ -1243,6 +1243,12 @@ class LocalWorkspaceStore implements WorkspaceStore {
   async #rm(path: string, options: RmOptions = {}): Promise<void> {
     await this.#assertPathComponents(path, false)
     const normalized = normalizeWorkspacePath(path)
+    if (options.ifDigest !== undefined) {
+      const current = await this.#stat(normalized)
+      if (options.ifDigest === null ? current !== undefined : current?.digest !== options.ifDigest) {
+        throw workspaceConflictError(path, options.ifDigest, current?.digest)
+      }
+    }
     const metadata = await this.#prepareMetadataDirectories(normalized, false)
     const marker = this.#removalMarker(normalized)
     let createdMarker = false
