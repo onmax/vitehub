@@ -82,7 +82,7 @@ function writeUsage(command: ScheduleCommand, stream: ViteHubCliStreams["stdout"
     ...(command.limit ? ["  --limit <n>       Show at most n runs."] : []),
     "  --json            Print JSON.",
     "  --url <url>       Compatible Vite Development Server URL. Defaults to http://localhost:5173.",
-    "  --timeout <ms>    Request timeout.",
+    "  --timeout <ms>    Request timeout, from 1 to 2147483647 whole milliseconds.",
     "  -h, --help        Show this help.",
     "  --                End options before an ID that starts with a hyphen.",
     "",

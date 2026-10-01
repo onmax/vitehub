@@ -59,8 +59,18 @@ describe("dev target options", () => {
   it("uses the owner error factories", () => {
     expect(() => parseTarget(["--url"])).toThrow(expect.objectContaining({ code: "missing", message: "Missing value for --url." }))
     expect(() => parseTarget(["--server", "--timeout"])).toThrow(expect.objectContaining({ code: "missing", message: "Missing value for --server." }))
-    expect(() => parseTarget(["--timeout", "0"])).toThrow(expect.objectContaining({ code: "separate", message: "--timeout must be a positive number." }))
-    expect(() => parseTarget(["--timeout=abc"])).toThrow(expect.objectContaining({ code: "inline", message: "--timeout must be a positive number." }))
+    expect(() => parseTarget(["--timeout", "0"])).toThrow(expect.objectContaining({ code: "separate", message: "--timeout must be an integer from 1 to 2147483647 milliseconds." }))
+    expect(() => parseTarget(["--timeout=abc"])).toThrow(expect.objectContaining({ code: "inline", message: "--timeout must be an integer from 1 to 2147483647 milliseconds." }))
+  })
+
+  it.each(["2147483648", "4294967295", "4294967296", "1.5", "10ms", "Infinity"])("rejects unsupported timer duration %s with owner diagnostics", value => {
+    expect(() => parseTarget(["--timeout", value])).toThrow(expect.objectContaining({ code: "separate" }))
+    expect(() => parseTarget([`--timeout=${value}`])).toThrow(expect.objectContaining({ code: "inline" }))
+  })
+
+  it.each(["1", "2147483647"])("preserves supported timer duration %s", value => {
+    expect(parseTarget(["--timeout", value]).timeout).toBe(Number(value))
+    expect(parseTarget([`--timeout=${value}`]).timeout).toBe(Number(value))
   })
 
   it("resolves endpoint routes with and without a trailing slash", () => {

@@ -82,6 +82,12 @@ describe("vitehub schedule", () => {
       expect(JSON.parse(literal.stdout).error.message).toContain("No Compatible Vite Development Server")
       expect(literal.stderr).toBe("")
       expect(help.stdout).toContain("End options")
+      for (const timeoutArgs of [["--timeout", "4294967296"], ["--timeout=2147483648"]]) {
+        const overflow = spawnSync(process.execPath, [cli, "schedule", "list", "--json", ...timeoutArgs], { cwd: directory, encoding: "utf8", timeout: 30_000 })
+        expect(overflow.status).toBe(1)
+        expect(JSON.parse(overflow.stdout).error.message).toContain("2147483647")
+        expect(overflow.stderr).toBe("")
+      }
     }
     finally {
       await rm(directory, { force: true, recursive: true })
@@ -276,6 +282,22 @@ describe("vitehub schedule", () => {
       expect(output.stderr.output()).toBe(`${expected}\n`)
       expect(output.stdout.output()).toBe("")
     }
+  })
+
+  it.each(["2147483648", "4294967296"])("rejects timeout %s as JSON before discovery", async timeout => {
+    const output = context()
+    const fetch = vi.fn()
+    expect(await runScheduleCli(["list", "--json", "--timeout", timeout], output.context, { fetch })).toBe(1)
+    expect(JSON.parse(output.stdout.output()).error.message).toContain("2147483647")
+    expect(output.stderr.output()).toBe("")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it("accepts the maximum timer duration without altering it", async () => {
+    const output = context()
+    const fetch = devServer({ automaticRuns: false, schedules: [] })
+    expect(await runScheduleCli(["list", "--timeout=2147483647"], output.context, { fetch })).toBe(0)
+    expect(fetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
   })
 
   it("reports runtime errors on stderr, or as JSON with --json", async () => {
