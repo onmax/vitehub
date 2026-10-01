@@ -397,6 +397,7 @@ function isValueEnd(tokens: string[], after: number, terminators: ReadonlySet<st
   for (let i = after + 1; i < tokens.length; i++) {
     const token = tokens[i]!
     if (depth === 0 && token === "," && !terminators.has(token)) return false
+    if (depth === 0 && token === "?") return false
     if (["+", "*", "/", "%"].includes(token) || (["|", "&", "?"].includes(token) && tokens[i + 1] === token)) return false
     if (token === "<") { i = skipTypeArguments(tokens, i) - 1; continue }
     if (["(", "[", "{"].includes(token)) depth++
@@ -715,7 +716,11 @@ function moduleObjectDeclarations(tokens: string[], lineBreaks: ReadonlySet<numb
     if (depth === 0 && token === "const") constantDeclaration = true
     if (depth === 0 && constantDeclaration && ["const", ","].includes(token) && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 1] ?? "")) {
       let equals = i + 2
-      while (tokens[equals] && tokens[equals] !== "=" && tokens[equals] !== ";") equals++
+      while (tokens[equals] && !["=", ",", ";", "const", "let", "var", "declare", "export", "import"].includes(tokens[equals]!)) {
+        if (["{", "(", "["].includes(tokens[equals]!)) equals = closingDelimiter(tokens, equals) + 1
+        else if (typescript && tokens[equals] === "<") equals = skipTypeArguments(tokens, equals)
+        else equals++
+      }
       if (tokens[equals] === "=") {
         const start = skipOptionAssertions(tokens, equals + 1, typescript)
         const object = localObject(tokens, start, declarations, typescript)

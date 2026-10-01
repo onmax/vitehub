@@ -24,7 +24,7 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: [] }])
   })
 
-  it.each(["as AgentOptions && actual", "satisfies AgentOptions || actual", "as AgentOptions ?? actual"])("rejects runtime operations after unparenthesized settings assertions: %s", (expression) => {
+  it.each(["as AgentOptions && actual", "satisfies AgentOptions || actual", "as AgentOptions ?? actual", "as AgentOptions ? actual : selected", "satisfies AgentOptions ? actual : selected"])("rejects runtime operations after unparenthesized settings assertions: %s", (expression) => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
       const selected = { channels: { github: {} } }
@@ -571,8 +571,22 @@ describe("built-in Channel discovery", () => {
     'const unused = {}, channels = { telegram: {} }; defineAgent({ channels })',
     'const unused = call(1, 2), channels = { telegram: {} }, settings = { channels }; defineAgent(settings)',
     'const unused = [1, 2], channels = ({ telegram: {} }); defineAgent({ channels })',
+    'const channels: Record<string, { botToken?: string }> = { telegram: {} }; defineAgent({ channels })',
+    'const channels: { telegram: { botToken?: string } } = { telegram: {} }; defineAgent({ channels })',
+    'const channels:\nRecord<string, { botToken?: string }> = { telegram: {} }; defineAgent({ channels })',
   ])("resolves later const declarators: %s", (source) => {
     expect(uses(`import { defineAgent } from "vite-hub/agent"; ${source}`)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
+  it.each([
+    'const settings, actual = { channels: { telegram: {} } };',
+    'declare const settings: AgentOptions, actual = { channels: { telegram: {} } };',
+    'declare const settings: Record<string, unknown>, actual = { channels: { telegram: {} } };',
+    'declare const settings: { channels: unknown }; const actual = { channels: { telegram: {} } };',
+    'declare const settings: AgentOptions\nconst actual = { channels: { telegram: {} } };',
+  ])("does not borrow another declarator's initializer: %s", (declarations) => {
+    expect(uses(`import { defineAgent } from "vite-hub/agent"; ${declarations} defineAgent(settings)`)).toEqual([])
+    expect(uses(`import { defineAgent } from "vite-hub/agent"; ${declarations} defineAgent(actual)`)).toEqual([{ kind: "telegram", keys: [] }])
   })
 
   it("unwraps TypeScript angle assertions on Channel options", () => {
@@ -812,6 +826,7 @@ describe("built-in Channel discovery", () => {
     "(channels as AgentChannelInputs, other)",
     "(channels as AgentChannelInputs || other)",
     "(channels as AgentChannelInputs && other)",
+    "(channels as AgentChannelInputs ? other : channels)",
   ])("ignores asserted map expressions with a different runtime value: %s", (expression) => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
