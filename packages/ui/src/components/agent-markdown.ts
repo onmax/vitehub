@@ -40,9 +40,7 @@ export const AgentMarkdown = defineComponent({
     const defaults = useViteHubUI();
     return () => {
       const parserOptions = { ...props.options };
-      const optionPlugins = parserOptions.plugins ?? [];
       delete parserOptions.html;
-      delete parserOptions.plugins;
       const plugins = [
         frontmatter(),
         alert(),
@@ -50,7 +48,6 @@ export const AgentMarkdown = defineComponent({
         components(),
         attributes(),
         markdownMath,
-        ...optionPlugins,
         ...(props.plugins ?? []),
       ].filter(plugin => plugin.name !== "html");
       return h(Markdown, {

@@ -1,10 +1,7 @@
 /** A JSON value that TypeSafe Jev can read. */
 export type AskJson = string | number | boolean | null | AskJson[] | { [key: string]: AskJson }
-/**
- * A JSON scalar, object, array, or `null` for Jev state, instructions, and criteria.
- * Top-level numbers and booleans become JSON text at the SDK boundary. Nested values keep their JSON types.
- */
-export type AskEntry = AskJson
+/** Text, a JSON object or array, or `null`. Used for Jev state, instructions, and criteria. */
+export type AskEntry = string | AskJson[] | { [key: string]: AskJson } | null
 
 /** Option labels mapped to their descriptions. Jev accepts 2 to 255 options. */
 export type AskChoiceCriteria = { [label: string]: AskEntry }
