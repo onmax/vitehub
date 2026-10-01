@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process"
 import * as childProcess from "node:child_process"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
-import { access, readFile, readdir } from "node:fs/promises"
+import { access, readFile, readdir, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -96,10 +96,15 @@ describe("provider inspection", () => {
 
     // The launcher receives the check command, as it would for an SSH runner.
     const launch = vi.fn(({ command }: { command: string }) => ({ command, args: [] }))
-    const launched = await inspectAgentProvider({ provider: "codex", launch, requirements: ["sh"] }, context())
+    inspectProvider.mockImplementation(async options => {
+      execFileSync(options.settings.binaryPath, ["-e", ""], { stdio: "pipe" })
+      return ready()
+    })
+    const launched = await inspectAgentProvider({ provider: "codex", providerSettings: { binaryPath: process.execPath }, launch, requirements: ["sh"] }, context())
     expect(launch).toHaveBeenCalledWith(expect.objectContaining({ command: "sh" }))
     expect(launched).toMatchObject({ missingCommands: [], readiness: "ready" })
 
+    inspectProvider.mockResolvedValue(ready())
     const unchecked = await inspectAgentProvider({ provider: "codex" }, context())
     expect(unchecked).not.toHaveProperty("missingCommands")
   })
@@ -120,13 +125,82 @@ describe("provider inspection", () => {
     expect(status).toMatchObject({ missingCommands: [], readiness: "ready" })
   })
 
+  it("checks requirements inside the provider's single-use launcher execution", async () => {
+    let executions = 0
+    const launch = vi.fn(async ({ command, cwd }: { command: string, cwd: string }) => {
+      const counter = join(cwd, "launcher-executions")
+      const path = join(cwd, "single-use.mjs")
+      await writeFile(path, `import { readFileSync, writeFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+let count = 0
+try { count = Number(readFileSync(${JSON.stringify(counter)}, "utf8")) } catch {}
+writeFileSync(${JSON.stringify(counter)}, String(++count))
+if (count > 1) process.exit(42)
+const result = spawnSync(process.argv[2], process.argv.slice(3), { stdio: "inherit" })
+process.exit(result.status ?? 1)
+`)
+      return { command: process.execPath, args: [path, command] }
+    })
+    inspectProvider.mockImplementation(async options => {
+      expect(execFileSync(options.settings.binaryPath, ["-e", 'process.stdout.write("single-target")'], { encoding: "utf8" })).toBe("single-target")
+      executions = Number(await readFile(join(dirname(options.settings.binaryPath), "launcher-executions"), "utf8"))
+      return ready()
+    })
+
+    const status = await inspectAgentProvider({ provider: "codex", providerSettings: { binaryPath: process.execPath }, launch, requirements: ["sh", "vitehub-missing-single-use-command"] }, context())
+    expect(status).toMatchObject({ missingCommands: ["vitehub-missing-single-use-command"], readiness: "unavailable" })
+    expect(launch).toHaveBeenCalledOnce()
+    expect(executions).toBe(1)
+  })
+
+  it("captures requirements for each provider probe without exposing frames in stderr", async () => {
+    let root = ""
+    const launch = vi.fn(({ command, cwd }: { command: string, cwd: string }) => {
+      root = cwd
+      return { command, args: [] }
+    })
+    inspectProvider.mockImplementation(async options => {
+      const stderr = "provider warning\n" + "x".repeat(20_000)
+      for (let probe = 0; probe < 2; probe++) {
+        const result = childProcess.spawnSync(options.settings.binaryPath, ["-e", `process.stderr.write(${JSON.stringify(stderr)});process.stdout.write("provider output")`], { encoding: "utf8" })
+        expect(result.status).toBe(0)
+        expect(result.stdout).toBe("provider output")
+        expect(result.stderr).toBe(stderr)
+      }
+      const path = join(root, "provider-requirements.jsonl")
+      expect((await readFile(path, "utf8")).trim().split("\n").map(line => JSON.parse(line))).toEqual([
+        ["vitehub-missing-probe-command"], ["vitehub-missing-probe-command"],
+      ])
+      expect((await stat(path)).mode & 0o777).toBe(0o600)
+      return ready()
+    })
+
+    const status = await inspectAgentProvider({ provider: "codex", providerSettings: { binaryPath: process.execPath }, launch, requirements: ["sh", "vitehub-missing-probe-command"] }, context())
+    expect(status).toMatchObject({ missingCommands: ["vitehub-missing-probe-command"], readiness: "unavailable" })
+    expect(launch).toHaveBeenCalledOnce()
+    await expect(access(root)).rejects.toThrow()
+  })
+
+  it("keeps requirement readiness unknown when the launcher produces no frame", async () => {
+    inspectProvider.mockResolvedValue(ready())
+    const status = await inspectAgentProvider({ provider: "codex", launch: () => ({ command: "sh" }), requirements: ["sh"] }, context())
+    expect(status).toMatchObject({ readiness: "unknown", reason: "Driver requirements could not be verified." })
+    expect(status).not.toHaveProperty("missingCommands")
+  })
+
   it("redacts exact Driver environment values from requirement failures", async () => {
     const secret = "bare-private-driver-value"
     const launch = () => ({ command: process.execPath, args: ["-e", 'process.stderr.write(process.env.DRIVER_SECRET);process.exit(1)', "--"] })
-    const failure = await inspectAgentProvider({ provider: "codex", env: { DRIVER_SECRET: secret }, launch, requirements: ["sh"] }, context()).catch((error: unknown) => error)
-    expect(failure).toBeInstanceOf(Error)
-    expect(String(failure)).toContain("[REDACTED]")
-    expect(String(failure)).not.toContain(secret)
+    inspectProvider.mockImplementation(async options => {
+      expect(() => execFileSync(options.settings.binaryPath, [], { env: options.environment, stdio: "pipe" })).toThrow()
+      const diagnostic = await readFile(join(dirname(options.settings.binaryPath), "provider-launch-failure.json"), "utf8")
+      expect(diagnostic).toContain("[REDACTED]")
+      expect(diagnostic).not.toContain(secret)
+      return { ...ready(), status: "error" }
+    })
+    const status = await inspectAgentProvider({ provider: "codex", env: { DRIVER_SECRET: secret }, launch, requirements: ["sh"] }, context())
+    expect(status.readiness).toBe("unavailable")
+    expect(JSON.stringify(status)).not.toContain(secret)
   })
 
   it("returns missing Windows commands instead of rejecting status", async () => {
@@ -147,11 +221,15 @@ describe("provider inspection", () => {
   it("skips command probes for invocation preflight without caching them as checked", async () => {
     inspectProvider.mockResolvedValue(ready())
     const launch = vi.fn(({ command }: { command: string }) => ({ command, args: [] }))
-    const options = { provider: "codex" as const, credentials: '{"OPENAI_API_KEY":"preflight-test-account"}', launch, requirements: ["vitehub-missing-command"] }
+    const options = { provider: "codex" as const, providerSettings: { binaryPath: process.execPath }, credentials: '{"OPENAI_API_KEY":"preflight-test-account"}', launch, requirements: ["vitehub-missing-command"] }
     const preflight = await inspectAgentProvider(options, context(), { checkRequirements: false })
     expect(preflight).not.toHaveProperty("missingCommands")
-    expect(launch.mock.calls[0]?.[0].command).toBe("/fake/codex")
+    expect(launch.mock.calls[0]?.[0].command).toBe(process.execPath)
 
+    inspectProvider.mockImplementation(async options => {
+      execFileSync(options.settings.binaryPath, ["-e", ""], { stdio: "pipe" })
+      return ready()
+    })
     const inspection = await inspectAgentProvider(options, context())
     expect(inspection).toMatchObject({ missingCommands: ["vitehub-missing-command"], readiness: "unavailable" })
     expect(launch).toHaveBeenCalledTimes(2)

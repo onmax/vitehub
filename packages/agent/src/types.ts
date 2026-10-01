@@ -1390,7 +1390,7 @@ export interface AgentProviderDriverOptions<
   /**
    * Commands the Driver shell needs, such as `git`, `gh`, or `unzip`.
    * `status()` checks them where the Driver runs. With `driver.launch`, a resolver is required
-   * and inspection selects one shell launcher for command checks and provider health.
+   * and each inspection probe checks commands in its shell before starting the provider.
    */
   requirements?: readonly string[]
   /** SQLite file used to persist provider session cursors across process restarts. */
