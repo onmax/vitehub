@@ -195,6 +195,9 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
   const isoTime = isoDate && resetText.match(/T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?/i)
   // Date.parse can normalize invalid ISO clock fields too.
   if (isoTime && (Number(isoTime[1]) > 23 || Number(isoTime[2]) > 59 || Number(isoTime[3] ?? 0) > 59)) return
+  // `resetAt` is serialized with millisecond precision. Reject finer input so
+  // the public text and instant cannot describe different times.
+  if (isoTime?.[4] && isoTime[4].length > 3) return
   const offset = resetText.match(/[+-](\d{2}):?(\d{2})$/)
   if (offset && (Number(offset[1]) > 14 || Number(offset[2]) > 59 || Number(offset[1]) === 14 && Number(offset[2]) !== 0)) return
   const time = Date.parse(resetText
