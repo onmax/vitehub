@@ -2143,4 +2143,71 @@ describe("local workspace store process locks", () => {
     await expect(readFile(join(root, "docs/page.md"), "utf8")).resolves.toBe("second")
     await expect(readFile(join(root, "docs/sibling.md"), "utf8")).resolves.toBe("sibling")
   })
+
+  it("lets a queued writer run before readers that arrive after it", async () => {
+    const { store } = await createProcessStore()
+    await store.writeFile("docs/page.md", { path: "docs/page.md", content: "initial" })
+    const { writeFile: actualWriteFile } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")
+    let release!: () => void
+    let signalWriting!: () => void
+    const writingStarted = new Promise<void>((resolve) => { signalWriting = resolve })
+    const blocked = new Promise<void>((resolve) => { release = resolve })
+    vi.mocked(writeFile).mockImplementationOnce(async (...args) => {
+      signalWriting()
+      await blocked
+      return await actualWriteFile(...args)
+    })
+
+    const first = store.writeFile("docs/page.md", { path: "docs/page.md", content: "first" })
+    await writingStarted
+    const queuedWriter = store.writeFile("docs/page.md", { path: "docs/page.md", content: "queued" })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    const laterRead = store.readFile("docs/page.md")
+    release()
+    await Promise.all([first, queuedWriter])
+    expect(new TextDecoder().decode((await laterRead)?.content as Uint8Array)).toBe("queued")
+  })
+})
+
+describe("local workspace store Git ignore", () => {
+  async function createCheckout() {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-git-"))
+    tempDirs.push(root)
+    const { execFile } = await import("node:child_process")
+    await new Promise<void>((resolve, reject) => execFile("git", ["init", "-q", root], error => error ? reject(error) : resolve()))
+    await writeFile(join(root, ".gitignore"), "node_modules\ndist/\n")
+    await mkdir(join(root, "node_modules/pkg"), { recursive: true })
+    await writeFile(join(root, "node_modules/pkg/index.js"), "ignored")
+    await mkdir(join(root, "dist"), { recursive: true })
+    await writeFile(join(root, "dist/out.js"), "ignored")
+    await mkdir(join(root, "src"), { recursive: true })
+    await writeFile(join(root, "src/index.ts"), "tracked")
+    return root
+  }
+
+  it("hides .git and Git-ignored paths from listings, snapshots, and diffs", async () => {
+    const root = await createCheckout()
+    const store = createLocalWorkspaceStore(root, { ignore: "git", locks: "process" })
+    const paths = (await store.list("", { recursive: true })).map(entry => entry.path)
+    expect(paths).toContain("src/index.ts")
+    expect(paths).toContain(".gitignore")
+    expect(paths.some(path => path === ".git" || path.startsWith(".git/"))).toBe(false)
+    expect(paths.some(path => path.startsWith("node_modules") || path.startsWith("dist"))).toBe(false)
+
+    const snapshot = await store.snapshot({ name: "baseline" })
+    await writeFile(join(root, "dist/out.js"), "changed build output")
+    await store.writeFile("src/index.ts", { path: "src/index.ts", content: "changed" })
+    const diff = await store.diff({ from: snapshot })
+    expect(diff.entries.map(entry => entry.path)).toEqual(["src/index.ts"])
+  })
+
+  it("keeps ignored paths visible without the option and rejects unknown values", async () => {
+    const root = await createCheckout()
+    const paths = (await createLocalWorkspaceStore(root).list("", { recursive: true })).map(entry => entry.path)
+    expect(paths).toContain("node_modules/pkg/index.js")
+    // @ts-expect-error Runtime validation covers untyped configuration.
+    expect(() => createLocalWorkspaceStore(root, { ignore: "all" })).toThrow("ignore must be \"git\"")
+    const fromProvider = createWorkspaceStoreFromProvider({ name: "docs", store: { provider: "local", root, ignore: "git" } })
+    expect((await fromProvider.list("", { recursive: true })).map(entry => entry.path)).not.toContain("dist/out.js")
+  })
 })

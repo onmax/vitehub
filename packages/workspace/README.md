@@ -25,6 +25,8 @@ Lock markers are not reclaimed based on age because a slow operation or failed h
 
 Set `locks: "process"` on a local Store when one process owns its root, for example a disposable checkout that one worker uses. The Store then keeps the same per-path read and write locks in memory. It creates no `.vitehub/locks` directory, does not poll lock markers, and lists entries in parallel. Keep the default `locks: "filesystem"` when more than one process can access the root.
 
+Set `ignore: "git"` when the local Store root is a Git checkout. Listings, snapshots, and diffs skip `.git` and the paths that Git ignores, such as dependencies and build output.
+
 ```text
 server/
   workspaces/

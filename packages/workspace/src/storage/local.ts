@@ -547,7 +547,19 @@ async function withWorkspacePathLock<T>(root: string, path: string, operation: (
   return await lock(0)
 }
 
-type LocalWorkspaceStoreLockOptions = Pick<LocalWorkspaceStoreOptions, "locks">
+type LocalWorkspaceStoreLockOptions = Pick<LocalWorkspaceStoreOptions, "ignore" | "locks">
+
+/** Paths that Git ignores under a checkout root. Ignored directories are listed once, not descended. */
+async function gitIgnoredWorkspacePaths(root: string): Promise<string[]> {
+  const { execFile } = await import("node:child_process")
+  const output = await new Promise<string>((resolveOutput, reject) => execFile(
+    "git",
+    ["-C", root, "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+    { encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, maxBuffer: 64 * 1024 * 1024 },
+    (error, stdout) => error ? reject(error) : resolveOutput(stdout),
+  ))
+  return [".git", ...output.split("\0").filter(Boolean).map(path => path.replace(/\/$/, ""))]
+}
 
 interface ProcessPathLockState {
   pendingWriters: number
@@ -700,9 +712,11 @@ class LocalWorkspaceStore implements WorkspaceStore {
   #files = new Map<string, { version: string, value: Pick<WorkspaceFile, "mediaType" | "metadata"> }>()
   #fileMetadataRoot: string
   #metaPath: string
+  #ignoreGit: boolean
   #processLocks: boolean
 
   constructor(public root: string, options: LocalWorkspaceStoreLockOptions = {}) {
+    this.#ignoreGit = options.ignore === "git"
     this.#processLocks = options.locks === "process"
     this.#fileMetadataRoot = `${root}/.vitehub/file-metadata`
     this.#metaPath = `${root}.meta.json`
@@ -1049,7 +1063,9 @@ class LocalWorkspaceStore implements WorkspaceStore {
     const normalizedPrefix = normalizeWorkspacePath(prefix)
     const current = normalizedPrefix ? resolveInside(this.root, normalizedPrefix) : this.root
     const privatePaths = [this.#fileMetadataRoot, this.#metaPath]
-    const all = await walk(this.root, current, privatePaths, options.exclude, options.recursive === true)
+    // ignore: "git" hides .git and Git-ignored output such as dependencies from listings and snapshots.
+    const excluded = this.#ignoreGit ? [...options.exclude ?? [], ...await gitIgnoredWorkspacePaths(this.root)] : options.exclude
+    const all = await walk(this.root, current, privatePaths, excluded, options.recursive === true)
     const filtered = all
       .filter((entry) => {
         if (!normalizedPrefix) return options.recursive || !entry.path.includes("/")
@@ -1293,6 +1309,9 @@ export function createLocalWorkspaceStore(root: string, options: LocalWorkspaceS
   if (!root) throw workspaceError("[vitehub] Local workspace store requires a root directory.")
   if (options.locks !== undefined && options.locks !== "filesystem" && options.locks !== "process") {
     throw workspaceError("[vitehub] Local workspace store locks must be \"filesystem\" or \"process\".")
+  }
+  if (options.ignore !== undefined && options.ignore !== "git") {
+    throw workspaceError("[vitehub] Local workspace store ignore must be \"git\".")
   }
   return new LocalWorkspaceStore(root, options)
 }

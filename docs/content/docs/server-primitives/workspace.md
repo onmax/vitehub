@@ -127,7 +127,11 @@ Interrupted file removals require a separate retry. If reads report `Interrupted
 
 ### Local path locks
 
-Local Stores lock each path before they read or write it. The default, `locks: 'filesystem'`, keeps lock markers under `.vitehub/locks` inside the root, so separate processes that share the root stay coordinated. Set `locks: 'process'` when one process owns the root, for example a disposable checkout that one worker uses. The Store then keeps the same per-path read and write locks in memory. It creates no lock directory, does not poll lock markers, and lists entries in parallel. Process locks do not protect the root from another process.
+Local Stores lock each path before they read or write it. The default, `locks: 'filesystem'`, keeps lock markers under `.vitehub/locks` inside the root, so separate processes that share the root stay coordinated. Set `locks: 'process'` when one process owns the root, for example a disposable checkout that one worker uses. The Store then keeps the same per-path read and write locks in memory. It creates no lock directory, does not poll lock markers, and lists entries in parallel. A waiting writer runs before readers that arrive after it. Process locks do not protect the root from another process.
+
+### Git checkout roots
+
+Set `ignore: 'git'` when the Local Store root is a Git checkout. Listings, snapshots, and diffs then skip `.git` and every path that Git ignores, such as `node_modules` and build output. The Store asks Git for the ignored paths on each listing, so changes to `.gitignore` apply immediately. Git must be installed on the host.
 
 ### Cloudflare Artifacts
 
