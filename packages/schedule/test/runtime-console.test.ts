@@ -290,6 +290,19 @@ describe("Schedule dev request handler", () => {
     expect(JSON.stringify({ body, attempts })).not.toContain("error-name-secret")
   })
 
+  it("redacts stored response status text at the dev API boundary", async () => {
+    const store = createMemoryScheduleRunStore()
+    const id = "srun_runtime_digest_response"
+    await store.createRun({ id, scheduleId: "digest", target: "report", scheduledAt: now, createdAt: now, updatedAt: now,
+      status: "succeeded", attemptCount: 1, response: { body: { data: "", encoding: "base64", mediaType: "text/plain" }, headers: [], status: 200, statusText: "Authorization: Bearer status-secret" } })
+    setScheduleRunStore(store)
+    const response = await handleScheduleDevRequest(devRequest({ id, operation: "attempts" }))
+    expect(response.status).toBe(200)
+    const body = await readBody(response)
+    expect(body.run?.response).toMatchObject({ status: 200, statusText: "Authorization: [redacted]" })
+    expect(JSON.stringify(body)).not.toContain("status-secret")
+  })
+
   it("reports missing records and a missing registry", async () => {
     expect(await readBody(await handleScheduleDevRequest(devRequest({ id: "missing", operation: "get" })))).toMatchObject({
       error: { code: "SCHEDULE_NOT_FOUND" },

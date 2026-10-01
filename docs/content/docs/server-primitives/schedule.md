@@ -240,11 +240,13 @@ pnpm vitehub schedule runs weekday-report --limit 5 --json
 pnpm vitehub schedule run weekday-report
 ```
 
+Use `pnpm vitehub schedule get --json -- -daily` for an ID that starts with a hyphen. All options must precede `--`.
+
 The commands use the same Schedule stores and registry as the running server. The list shows the enabled state, the next due time in the Schedule time zone, and the last run. When no wake driver is installed, the output says that due times do not start runs in this runtime. Read [CLI](/docs/development/cli#inspect-and-control-runtime-schedules) for every command and option.
 
 The Console Schedules page shows the same Runtime Schedules and their run history, next to the discovered Schedule Definitions. It reads the stores on each request and is read-only. Set `console: { enabled: false }` on a Runtime Schedule to hide it in the Console.
 
-Both surfaces redact values under secret-named keys in Schedule input, and credentials in URLs, bearer tokens, and secret assignments in error messages.
+Both surfaces redact values under secret-named keys in Schedule input, and credentials in URLs, bearer tokens, and secret assignments in error names, error messages, and response status text.
 
 | Host | `vitehub schedule` | Console Schedules page |
 | --- | --- | --- |

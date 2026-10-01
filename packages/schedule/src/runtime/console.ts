@@ -116,7 +116,7 @@ export function summarizeScheduleRun(run: ScheduleRunRecord): ScheduleRunSummary
     ...(completedAt ? { completedAt } : {}),
     ...(error ? { error } : {}),
     id: run.id,
-    ...(run.response ? { response: { status: run.response.status, statusText: run.response.statusText } } : {}),
+    ...(run.response ? { response: { status: run.response.status, statusText: redactInspectionText(run.response.statusText) } } : {}),
     scheduleId: run.scheduleId,
     scheduledAt: isoDate(run.scheduledAt) ?? "",
     ...(startedAt ? { startedAt } : {}),

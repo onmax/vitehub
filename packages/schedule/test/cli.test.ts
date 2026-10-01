@@ -77,6 +77,11 @@ describe("vitehub schedule", () => {
       expect(failure.status).toBe(1)
       expect(JSON.parse(failure.stdout)).toMatchObject({ error: { message: expect.any(String) } })
       expect(failure.stderr).toBe("")
+      const literal = spawnSync(process.execPath, [cli, "schedule", "get", "--json", "--", "-daily"], { cwd: directory, env: { ...process.env, VITEHUB_DEV_SERVER_URL: "http://127.0.0.1:1" }, encoding: "utf8", timeout: 30_000 })
+      expect(literal.status).toBe(1)
+      expect(JSON.parse(literal.stdout).error.message).toContain("No Compatible Vite Development Server")
+      expect(literal.stderr).toBe("")
+      expect(help.stdout).toContain("End options")
     }
     finally {
       await rm(directory, { force: true, recursive: true })
@@ -196,6 +201,55 @@ describe("vitehub schedule", () => {
     expect(output.stdout.output()).not.toContain("error-name-secret")
     if (json) expect(JSON.parse(output.stdout.output()).run.error.name).toBe("Authorization: [redacted]")
     else expect(output.stdout.output()).toContain("Error: Authorization: [redacted]: Target failed")
+  })
+
+  it.each([false, true])("redacts response status text in CLI output with json %s", async (json) => {
+    const scheduledAt = new Date(digest.lastRun.scheduledAt)
+    const run = summarizeScheduleRun({ ...digest.lastRun, scheduledAt, createdAt: scheduledAt, updatedAt: scheduledAt,
+      response: { body: { data: "", encoding: "base64", mediaType: "text/plain" }, headers: [], status: 200, statusText: "Authorization: Bearer status-secret" }, status: "succeeded" })
+    const output = context()
+    expect(await runScheduleCli(["run", "digest", ...(json ? ["--json"] : [])], output.context, { fetch: devServer({ run }) })).toBe(0)
+    expect(output.stdout.output()).not.toContain("status-secret")
+    if (json) expect(JSON.parse(output.stdout.output()).run.response.statusText).toBe("Authorization: [redacted]")
+    else expect(output.stdout.output()).toContain("HTTP 200 Authorization: [redacted]")
+  })
+
+  it.each(["-daily", "--json", "--help"])("accepts literal Schedule ID %s after the option terminator", async (id) => {
+    const output = context()
+    const fetch = devServer({ automaticRuns: true, schedule: { ...digest, id } })
+    expect(await runScheduleCli(["get", "--json", "--", id], output.context, { fetch }), output.stdout.output() + output.stderr.output()).toBe(0)
+    expect(JSON.parse(output.stdout.output()).schedule.id).toBe(id)
+    expect(JSON.parse(fetch.mock.calls[1]![1]!.body as string)).toEqual({ id, operation: "get" })
+  })
+
+  it.each([false, true])("reports non-success response body failures with json %s", async (json) => {
+    const output = context()
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      if (init?.method !== "POST") return Response.json({ root: rootDir, runtime: "nitro" })
+      return new Response(new ReadableStream({ start(controller) { controller.error(new Error("response body interrupted")) } }), { status: 503 })
+    }
+    expect(await runScheduleCli(["get", "digest", ...(json ? ["--json"] : [])], output.context, { fetch })).toBe(1)
+    if (json) {
+      expect(JSON.parse(output.stdout.output()).error.message).toContain("response body interrupted")
+      expect(output.stderr.output()).toBe("")
+    }
+    else {
+      expect(output.stdout.output()).toBe("")
+      expect(output.stderr.output()).toContain("response body interrupted")
+    }
+  })
+
+  it("returns JSON when the timeout interrupts a non-success response body", async () => {
+    const output = context()
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      if (init?.method !== "POST") return Response.json({ root: rootDir, runtime: "nitro" })
+      return new Response(new ReadableStream({ start(controller) {
+        init.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true })
+      } }), { status: 503 })
+    }
+    expect(await runScheduleCli(["get", "digest", "--json", "--timeout", "10"], output.context, { fetch })).toBe(1)
+    expect(JSON.parse(output.stdout.output()).error.message).toContain("timeout")
+    expect(output.stderr.output()).toBe("")
   })
 
   it("reports runtime errors on stderr, or as JSON with --json", async () => {

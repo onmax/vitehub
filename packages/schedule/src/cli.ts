@@ -82,6 +82,7 @@ function writeUsage(command: ScheduleCommand, stream: ViteHubCliStreams["stdout"
     "  --url <url>       Compatible Vite Development Server URL. Defaults to http://localhost:5173.",
     "  --timeout <ms>    Request timeout.",
     "  -h, --help        Show this help.",
+    "  --                End options before an ID that starts with a hyphen.",
     "",
   ].join("\n"))
 }
@@ -96,8 +97,20 @@ function parseLimit(value: string | undefined): number {
 
 function parseArgs(command: ScheduleCommand, args: readonly string[], env: NodeJS.ProcessEnv): ParsedScheduleArgs {
   const parsed: ParsedScheduleArgs = { help: false, json: false, url: resolveViteHubDevServerUrl(env) }
+  let positionalOnly = false
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!
+    if (!positionalOnly && arg === "--") {
+      positionalOnly = true
+      continue
+    }
+    if (positionalOnly) {
+      if (command.id && parsed.id === undefined) {
+        parsed.id = arg
+        continue
+      }
+      throw scheduleErrorDiagnostics.SCHEDULE_R0036({ message: `Unexpected argument: ${arg}.` })
+    }
     if (arg === "-h" || arg === "--help") {
       parsed.help = true
       continue
@@ -321,7 +334,8 @@ async function runScheduleCommand(
     parsed = parseArgs(command, args, context.env)
   }
   catch (error) {
-    if (args.includes("--json")) return writeFailure({ json: true }, context, { message: error instanceof Error ? error.message : String(error) })
+    const optionEnd = args.indexOf("--")
+    if (args.slice(0, optionEnd === -1 ? args.length : optionEnd).includes("--json")) return writeFailure({ json: true }, context, { message: error instanceof Error ? error.message : String(error) })
     context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     writeUsage(command, context.stderr)
     return 1
@@ -364,11 +378,11 @@ async function runScheduleCommand(
       method: "POST",
       ...timeout,
     })
+    if (!response.ok) return writeFailure(parsed, context, await readFailure(response))
   }
   catch (error) {
     return writeFailure(parsed, context, { message: `Schedule Dev request failed: ${error instanceof Error ? error.message : String(error)}` })
   }
-  if (!response.ok) return writeFailure(parsed, context, await readFailure(response))
   const result: unknown = await response.json().catch(() => undefined)
   if (!isRecord(result)) return writeFailure(parsed, context, { message: "The Schedule Dev response is not valid JSON." })
   const formatted = formatResult(command.name, result)
