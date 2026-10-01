@@ -9,8 +9,9 @@ import { rateLimitDevHeader, rateLimitDevHeaderValue, rateLimitDevRoute } from "
 import { rateLimitErrorDiagnostics } from "./error-diagnostics.ts"
 
 import type { ViteHubCliContext, ViteHubCliContributor, ViteHubCliStreams } from "@vite-hub/internal/cli"
-import type { RateLimitPeekInspection, RateLimitResetInspection } from "./counters.ts"
+import type { RateLimitCounterSnapshot, RateLimitPeekInspection, RateLimitResetInspection } from "./counters.ts"
 import type { RateLimitDevOperation, RateLimitDevRequestBody } from "./dev.ts"
+import type { RateLimitWindow } from "./types.ts"
 
 export type RateLimitCliContext = Pick<ViteHubCliContext, "cwd" | "env" | "rootDir"> & ViteHubCliStreams
 
@@ -36,10 +37,6 @@ interface RateLimitDevDiscovery {
   message?: unknown
   root?: unknown
   runtime?: unknown
-}
-
-interface RateLimitDevFailure {
-  error?: { code?: unknown, message?: unknown }
 }
 
 const rateLimitDevEndpoint = {
@@ -74,6 +71,8 @@ function writeUsage(command: RateLimitCommand, stream: ViteHubCliStreams["stdout
     "The command calls the Rate Limit runtime of a running Vite + Nitro Development Server.",
     "`<id>` is the stable ID of `requireRateLimit()`. `<key>` is the limited key, for example a client IP or user ID.",
     "",
+    "Use -- before a key that starts with a dash.",
+    "",
     "Options:",
     "  --json            Print JSON.",
     "  --url <url>       Compatible Vite Development Server URL. Defaults to http://localhost:5173.",
@@ -85,22 +84,24 @@ function writeUsage(command: RateLimitCommand, stream: ViteHubCliStreams["stdout
 
 function parseArgs(args: readonly string[], env: NodeJS.ProcessEnv): ParsedRateLimitArgs {
   const parsed: ParsedRateLimitArgs = { help: false, json: false, url: resolveViteHubDevServerUrl(env) }
+  let positionalOnly = false
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!
-    if (arg === "-h" || arg === "--help") {
+    if (!positionalOnly && arg === "--") { positionalOnly = true; continue }
+    if (!positionalOnly && (arg === "-h" || arg === "--help")) {
       parsed.help = true
       continue
     }
-    if (arg === "--json") {
+    if (!positionalOnly && arg === "--json") {
       parsed.json = true
       continue
     }
-    const targetOption = readViteHubDevTargetOption(args, index, parsed, rateLimitDevTargetErrors)
+    const targetOption = positionalOnly ? undefined : readViteHubDevTargetOption(args, index, parsed, rateLimitDevTargetErrors)
     if (targetOption !== undefined) {
       index += targetOption
       continue
     }
-    if (arg.startsWith("-")) throw rateLimitErrorDiagnostics.RATE_LIMIT_R0040({ message: `Unknown option: ${arg}.` })
+    if (!positionalOnly && arg.startsWith("-")) throw rateLimitErrorDiagnostics.RATE_LIMIT_R0040({ message: `Unknown option: ${arg}.` })
     if (parsed.name === undefined) {
       parsed.name = arg
       continue
@@ -151,11 +152,46 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+function isWindow(value: unknown): value is RateLimitWindow {
+  return typeof value === "string" && /^\d+(?:\.\d+)?(?:ms|s|m|h|d)$/.test(value)
+}
+
+function parseCounter(value: unknown): RateLimitCounterSnapshot | undefined {
+  if (!isRecord(value) || typeof value.limit !== "number" || !Number.isFinite(value.limit)
+    || typeof value.remaining !== "number" || !Number.isFinite(value.remaining)
+    || typeof value.used !== "number" || !Number.isFinite(value.used)
+    || typeof value.windowMs !== "number" || !Number.isFinite(value.windowMs) || !isWindow(value.window)
+    || (value.resetAt !== undefined && (typeof value.resetAt !== "number" || !Number.isFinite(value.resetAt) || Math.abs(value.resetAt) > 8.64e15))) return undefined
+  return {
+    limit: value.limit, remaining: value.remaining, used: value.used, window: value.window, windowMs: value.windowMs,
+    ...(typeof value.resetAt === "number" ? { resetAt: value.resetAt } : {}),
+  }
+}
+
+function parseInspection(value: unknown): RateLimitPeekInspection | RateLimitResetInspection | undefined {
+  if (!isRecord(value) || typeof value.key !== "string" || typeof value.name !== "string"
+    || (value.provider !== "memory" && value.provider !== "cloudflare")) return undefined
+  const target: Pick<RateLimitPeekInspection, "key" | "name" | "provider"> = { key: value.key, name: value.name, provider: value.provider }
+  if (value.status === "unavailable" || value.status === "unsupported" || value.status === "unused") {
+    return typeof value.reason === "string" ? { ...target, reason: value.reason, status: value.status } : undefined
+  }
+  if (value.scope !== "global" && value.scope !== "location" && value.scope !== "process") return undefined
+  if (value.status === "reset") return { ...target, scope: value.scope, status: value.status }
+  if (value.status !== "known" || !Array.isArray(value.counters)) return undefined
+  const counters: RateLimitCounterSnapshot[] = []
+  for (const counter of value.counters) {
+    const parsed = parseCounter(counter)
+    if (!parsed) return undefined
+    counters.push(parsed)
+  }
+  return { ...target, counters, scope: value.scope, status: value.status }
+}
+
 async function readFailure(response: Response): Promise<{ code?: string, message: string }> {
   const text = await response.text()
   try {
-    const body: RateLimitDevFailure = JSON.parse(text)
-    if (typeof body.error?.message === "string") {
+    const body: unknown = JSON.parse(text)
+    if (isRecord(body) && isRecord(body.error) && typeof body.error.message === "string") {
       return { ...(typeof body.error.code === "string" ? { code: body.error.code } : {}), message: body.error.message }
     }
   }
@@ -195,14 +231,17 @@ async function runRateLimitCommand(
     return 0
   }
   const fetchImpl = options.fetch ?? globalThis.fetch
+  let discoveryError = ""
   const server = await discoverViteHubDevServer<RateLimitDevDiscovery>({
     endpoint: rateLimitDevEndpoint,
     fetch: fetchImpl,
     rootDir: context.rootDir,
     serverUrl: parsed.url,
-    stderr: context.stderr,
+    ...withTimeout(parsed.timeout),
+    stderr: parsed.json ? { write: (chunk) => { discoveryError += chunk; return true } } : context.stderr,
   })
   if (!server) {
+    if (parsed.json) return writeFailure(parsed, context, { message: `${discoveryError.trim()} ${rateLimitDevServerHint}` })
     context.stderr.write(`${rateLimitDevServerHint}\n`)
     return 1
   }
@@ -228,14 +267,14 @@ async function runRateLimitCommand(
     return writeFailure(parsed, context, { message: `Rate Limit Dev request failed: ${error instanceof Error ? error.message : String(error)}` })
   }
   if (!response.ok) return writeFailure(parsed, context, await readFailure(response))
-  const result: unknown = await response.json().catch(() => undefined)
-  if (!isRecord(result) || typeof result.status !== "string") {
-    return writeFailure(parsed, context, { message: "The Rate Limit Dev response is not valid JSON." })
+  const result = parseInspection(await response.json().catch(() => undefined))
+  if (!result || (command.name === "peek" && result.status === "reset")
+    || (command.name === "reset" && (result.status === "known" || result.status === "unused"))) {
+    return writeFailure(parsed, context, { message: "The Rate Limit Dev response is invalid." })
   }
-  // SAFETY: the Rate Limit dev handler of the same package version writes these shapes.
-  const output = command.name === "peek"
-    ? formatPeek(result as unknown as RateLimitPeekInspection)
-    : formatReset(result as unknown as RateLimitResetInspection)
+  const output = result.status === "known" || result.status === "unused"
+    ? formatPeek(result)
+    : result.status === "reset" ? formatReset(result) : command.name === "peek" ? formatPeek(result) : formatReset(result)
   context.stdout.write(parsed.json ? `${JSON.stringify(result, null, 2)}\n` : output)
   // A counter that the provider cannot read or reset is a command failure, so scripts can check the exit code.
   return result.status === "unsupported" || result.status === "unavailable" ? 1 : 0

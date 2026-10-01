@@ -1,4 +1,4 @@
-import { registerViteHubNitroDevEndpoint } from "@vite-hub/internal/dev-endpoint"
+import { isViteHubDevRoute, registerViteHubNitroDevEndpoint } from "@vite-hub/internal/dev-endpoint"
 
 import { rateLimitDevHeader, rateLimitDevHeaderValue, rateLimitDevRoute, rateLimitDevRuntimeRoute } from "./dev.ts"
 
@@ -20,7 +20,29 @@ export interface RateLimitDevEndpointOptions {
  * environment get `501` with a clear message.
  */
 export function registerRateLimitDevEndpoint(server: ViteHubNitroDevServer, options: RateLimitDevEndpointOptions = {}): void {
-  registerViteHubNitroDevEndpoint(server, {
+  const host = server.config.server.host
+  if (host === true || (typeof host === "string" && !["localhost", "127.0.0.1", "::1", "[::1]"].includes(host))) {
+    throw new Error("[vitehub] Rate Limit dev commands require a loopback-only Vite server. Set server.host to localhost, 127.0.0.1, or ::1.")
+  }
+  const guardedServer: ViteHubNitroDevServer = {
+    config: server.config,
+    get environments() { return server.environments },
+    get resolvedUrls() { return server.resolvedUrls },
+    middlewares: {
+      use: handler => server.middlewares.use((req, res, next) => {
+        const peer = req.socket?.remoteAddress
+        const loopback = peer === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(peer ?? "") || /^::ffff:127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(peer ?? "")
+        if (isViteHubDevRoute(req, rateLimitDevRoute) && !loopback) {
+          res.statusCode = 403
+          res.setHeader("cache-control", "no-store")
+          res.end("Rate Limit Dev requests require a loopback peer.")
+          return
+        }
+        handler(req, res, next)
+      }),
+    },
+  }
+  registerViteHubNitroDevEndpoint(guardedServer, {
     header: rateLimitDevHeader,
     headerValue: rateLimitDevHeaderValue,
     label: "Rate Limit Dev",

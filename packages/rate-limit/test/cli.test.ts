@@ -52,6 +52,45 @@ const known = {
 
 const cloudflareReason = "The Cloudflare Rate Limiting binding exposes only limit(), which consumes a token. It cannot read or reset a counter."
 
+describe("Rate Limit review regressions", () => {
+  it.each([[], ["--json"]])("reports malformed counters with flags %j", async (flags) => {
+    const output = context()
+    await expect(runRateLimitCli(["peek", "login", "key", ...flags], output.context, { fetch: devServer({ ...known, counters: [{}] }) })).resolves.toBe(1)
+    expect(output.stdout.output() + output.stderr.output()).toContain("response is invalid")
+  })
+
+  it.each(["-1", "--json"])("accepts dash-prefixed key %s after --", async (key) => {
+    const output = context()
+    const fetch = devServer({ ...known, key })
+    await expect(runRateLimitCli(["peek", "login", "--json", "--", key], output.context, { fetch })).resolves.toBe(0)
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({ key })
+  })
+
+  it("redacts URL credentials in JSON discovery errors", async () => {
+    const output = context()
+    await expect(runRateLimitCli(["peek", "login", "key", "--json", "--url", "http://user:secret@localhost:5173"], output.context, { fetch: vi.fn(async () => { throw new Error("offline") }) })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message")
+    expect(output.stdout.output()).not.toContain("secret")
+    expect(output.stderr.output()).toBe("")
+  })
+
+  it("applies timeout to discovery", async () => {
+    const output = context()
+    const fetch = vi.fn((_url: string | URL | Request, request?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      request?.signal?.addEventListener("abort", () => reject(request.signal?.reason), { once: true })
+    }))
+    await expect(runRateLimitCli(["peek", "login", "key", "--json", "--timeout", "10"], output.context, { fetch })).resolves.toBe(1)
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it.each([true, "0.0.0.0", "::", "192.0.2.1"])("refuses non-loopback server host %s", (host) => {
+    const { server, middlewares } = fakeServer()
+    server.config.server.host = host
+    expect(() => registerRateLimitDevEndpoint(server)).toThrow("loopback-only")
+    expect(middlewares).toHaveLength(0)
+  })
+})
+
 describe("vitehub rate-limit", () => {
   it("prints the counter of one key as a table and as JSON", async () => {
     const human = context()
@@ -189,17 +228,19 @@ function fakeServer(environments?: Record<string, unknown>) {
   return { middlewares, server }
 }
 
-async function call(middleware: Middleware, init: { body?: string, headers?: Record<string, string>, method: string }) {
+async function call(middleware: Middleware, init: { body?: string, headers?: Record<string, string>, method: string, peer?: string }) {
   const req = Object.assign(Readable.from(init.body ? [Buffer.from(init.body)] : []), {
     headers: { host: "localhost:5173", ...init.headers },
     method: init.method,
+    socket: { remoteAddress: init.peer ?? "127.0.0.1" },
     url: rateLimitDevRoute,
   }) as unknown as IncomingMessage
   const done = new EventEmitter()
   const chunks: Buffer[] = []
   const headers: Record<string, string> = {}
   const res = {
-    end() {
+    end(chunk?: string) {
+      if (chunk) chunks.push(Buffer.from(chunk))
       done.emit("end")
     },
     setHeader(name: string, value: string) {
@@ -219,6 +260,14 @@ async function call(middleware: Middleware, init: { body?: string, headers?: Rec
 const guard = { [rateLimitDevHeader]: rateLimitDevHeaderValue }
 
 describe("Rate Limit dev endpoint", () => {
+  it("rejects a remote peer even with forged localhost headers", async () => {
+    const { middlewares, server } = fakeServer()
+    registerRateLimitDevEndpoint(server)
+    const response = await call(middlewares[0]!, { headers: guard, method: "GET", peer: "192.0.2.1" })
+    expect(response.status).toBe(403)
+    expect(response.body).toContain("loopback peer")
+  })
+
   it("rejects requests without the guard header or from another origin", async () => {
     const { middlewares, server } = fakeServer()
     registerRateLimitDevEndpoint(server)

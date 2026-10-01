@@ -153,6 +153,7 @@ export interface ViteHubDevServerDiscoveryOptions {
   isCompatibleRoot?: (rootDir: string, serverRoot: string) => boolean
   rootDir: string
   serverUrl: string
+  signal?: AbortSignal | null
   stderr: ViteHubCliStreams["stderr"]
 }
 
@@ -235,6 +236,19 @@ export async function fetchViteHubDevEndpoint(
   })
 }
 
+function devServerDisplayUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    if (!url.username && !url.password) return value
+    if (url.username) url.username = "[redacted]"
+    if (url.password) url.password = "[redacted]"
+    return url.href
+  }
+  catch {
+    return value.replace(/\/\/[^/@\s]+@/g, "//[redacted]@")
+  }
+}
+
 /**
  * Finds a Compatible Vite Development Server through the discovery `GET` of a guarded dev endpoint.
  *
@@ -249,21 +263,22 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
     url = viteHubDevEndpointUrl(options.serverUrl, options.endpoint.route)
   }
   catch {
-    options.stderr.write(`Invalid Vite Development Server URL: ${options.serverUrl}\n`)
+    options.stderr.write(`Invalid Vite Development Server URL: ${devServerDisplayUrl(options.serverUrl)}\n`)
     return
   }
   let response: Response
   try {
     response = await fetchViteHubDevEndpoint(options.fetch, url, options.endpoint, {
       headers: { accept: "application/json" },
+      signal: options.signal,
     })
   }
   catch {
-    options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
+    options.stderr.write(`No Compatible Vite Development Server found at ${devServerDisplayUrl(options.serverUrl)}.\n`)
     return
   }
   if (!response.ok) {
-    options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
+    options.stderr.write(`No Compatible Vite Development Server found at ${devServerDisplayUrl(options.serverUrl)}.\n`)
     return
   }
   // SAFETY: the owner endpoint defines the discovery shape. Callers check each field before use.
