@@ -2243,6 +2243,19 @@ function providerToolActivity(
   return name && tools?.[name]?.activity ? tools[name].activity : { kind: "tool" as const }
 }
 
+function providerToolTitle(
+  event: Extract<ProviderRuntimeEvent, { type: "item.completed" | "item.started" }>,
+  tools: AgentToolSet | undefined,
+  title: string | undefined,
+  titles: Map<string, string>,
+) {
+  const name = providerToolName(event)
+  if (title && event.itemId) titles.set(event.itemId, title)
+  const resolved = title ?? (event.itemId ? titles.get(event.itemId) : undefined) ?? (name ? tools?.[name]?.title : undefined)
+  if (event.type === "item.completed" && event.itemId) titles.delete(event.itemId)
+  return resolved?.trim() ? resolved : undefined
+}
+
 function providerMessagePhase(event: Extract<ProviderRuntimeEvent, { type: "item.started" }>) {
   const data = record(event.payload.data)
   const item = record(data?.item)
@@ -2273,6 +2286,7 @@ function providerEvent(event: ProviderRuntimeEvent, tools: AgentToolSet | undefi
   model?: string
   provider: "claude-code" | "codex"
   resumed: boolean
+  toolTitles: Map<string, string>
 }): StreamEvent[] {
   switch (event.type) {
     case "content.delta":
@@ -2282,21 +2296,24 @@ function providerEvent(event: ProviderRuntimeEvent, tools: AgentToolSet | undefi
     case "item.started": {
       const details = providerToolDetails(event)
       return isProviderToolItem(event.itemId, event.payload.itemType)
-        ? [{ activity: providerToolActivity(event, tools), id: event.itemId, input: details.input, name: providerToolName(event) || event.payload.title || event.payload.itemType, title: details.title, type: "tool-call" }]
+        ? [{ activity: providerToolActivity(event, tools), id: event.itemId, input: details.input, name: providerToolName(event) || event.payload.title || event.payload.itemType, title: providerToolTitle(event, tools, details.title, options.toolTitles), type: "tool-call" }]
         : [providerDataEvent(event)]
     }
-    case "item.completed":
+    case "item.completed": {
+      const details = providerToolDetails(event)
       return isProviderToolItem(event.itemId, event.payload.itemType)
         ? [{
             activity: providerToolActivity(event, tools),
-            ...providerToolDetails(event),
+            ...details,
             id: event.itemId,
             name: providerToolName(event) || event.payload.title || event.payload.itemType,
+            title: providerToolTitle(event, tools, details.title, options.toolTitles),
             type: "tool-result",
           }]
         : event.payload.itemType === "error" && event.payload.detail
           ? [{ error: event.payload.detail, type: "error" }]
           : [providerDataEvent(event)]
+    }
     case "request.opened":
       return event.requestId ? [{ id: event.requestId, input: event.payload.args, name: event.payload.requestType, reason: event.payload.detail, type: "approval-request" }] : [providerDataEvent(event)]
     case "request.resolved":
@@ -2903,6 +2920,7 @@ async function* runProvider<
       rejectAbort?.(effectiveSignal?.reason ?? new DOMException("[vitehub] Provider Agent Driver invocation aborted.", "AbortError"))
     }
     const messagePhases = new Map<string, "commentary" | "final">()
+    const toolTitles = new Map<string, string>()
     const usageAccumulator: ProviderInvocationUsageAccumulator = {
       cachedInputTokens: 0,
       cachedInputTokensComplete: true,
@@ -2954,6 +2972,7 @@ async function* runProvider<
         model: options.model,
         provider: options.provider,
         resumed,
+        toolTitles,
       })
       if (current.value.type === "item.completed" && current.value.itemId) messagePhases.delete(current.value.itemId)
       const failure = normalized.find(event => event.type === "error" && !event.recoverable)

@@ -482,7 +482,7 @@ describe("ViteHub Nuxt integration", () => {
       expect.objectContaining({ name: "vitehub-console-workflows", path: "/_vitehub/workflows" }),
     ])
     expect(development.nuxt.options.nitro).toMatchObject({
-      handlers: [{ route: "/_vitehub/rpc/**" }, { route: "/_vitehub/env/manage" }, { route: "/api/_vitehub/console/client.js" }],
+      handlers: [{ route: "/_vitehub/rpc/**" }, { route: "/_vitehub/env/manage" }, { route: "/_vitehub/schedules/run" }, { route: "/api/_vitehub/console/client.js" }],
       plugins: ["/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs"],
     })
     expect(development.nuxt.options.routeRules).toMatchObject({
@@ -538,7 +538,7 @@ describe("ViteHub Nuxt integration", () => {
       expect.objectContaining({ name: "vitehub-console-workflows", path: "/_vitehub/workflows" }),
     ])
     expect(production.nuxt.options.nitro).toMatchObject({
-      handlers: [{ route: "/_vitehub/rpc/**" }, { route: "/_vitehub/env/manage" }, { route: "/api/_vitehub/console/client.js" }],
+      handlers: [{ route: "/_vitehub/rpc/**" }, { route: "/_vitehub/env/manage" }, { route: "/_vitehub/schedules/run" }, { route: "/api/_vitehub/console/client.js" }],
       plugins: ["/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs"],
     })
     expect(production.nuxt.options.routeRules).toMatchObject({
@@ -757,7 +757,7 @@ describe("ViteHub Nuxt integration", () => {
       expect.objectContaining({ name: "vitehub-console-kv", path: "/_vitehub/kv" }),
     ])
     expect(development.nuxt.options.nitro).toMatchObject({
-      handlers: [{ route: "/_vitehub/rpc/**" }, { route: "/_vitehub/env/manage" }, { route: "/api/_vitehub/console/client.js" }],
+      handlers: [{ route: "/_vitehub/rpc/**" }, { route: "/_vitehub/env/manage" }, { route: "/_vitehub/schedules/run" }, { route: "/api/_vitehub/console/client.js" }],
     })
     expect(development.nuxt.options.vite.plugins).not.toContainEqual(expect.objectContaining({ name: "vite-hub/console-invocation-root" }))
     const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
@@ -1454,7 +1454,7 @@ describe("ViteHub Nuxt integration", () => {
         expect.objectContaining({ name: "vitehub-console-databases", path: "/_vitehub/databases/:database?/:table?" }),
       ])
       expect(development.nuxt.options.nitro).toMatchObject({
-        handlers: [{ route: "/_vitehub/rpc/**" }, { route: "/_vitehub/env/manage" }, { route: "/api/_vitehub/console/client.js" }],
+        handlers: [{ route: "/_vitehub/rpc/**" }, { route: "/_vitehub/env/manage" }, { route: "/_vitehub/schedules/run" }, { route: "/api/_vitehub/console/client.js" }],
       })
       await development.runNitroConfigHook(nitroOptions(development.nuxt))
       const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
@@ -1500,6 +1500,7 @@ describe("ViteHub Nuxt integration", () => {
           { handler: "server/handler.ts", route: "/api/example" },
           { route: "/_vitehub/rpc/**" },
           { method: "post", route: "/_vitehub/env/manage" },
+          { method: "post", route: "/_vitehub/schedules/run" },
         ],
       })
       expect(development.nuxt.options.vite.plugins).not.toContainEqual(expect.objectContaining({ name: "vite-hub/console-invocation-root" }))
@@ -1571,6 +1572,7 @@ describe("ViteHub Nuxt integration", () => {
           { handler: "server/handler.ts", route: "/api/example" },
           { route: "/_vitehub/rpc/**" },
           { route: "/_vitehub/env/manage" },
+          { route: "/_vitehub/schedules/run" },
         ],
       })
       const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
@@ -1613,6 +1615,7 @@ describe("ViteHub Nuxt integration", () => {
           { handler: "server/handler.ts", route: "/api/example" },
           { route: "/_vitehub/rpc/**" },
           { route: "/_vitehub/env/manage" },
+          { route: "/_vitehub/schedules/run" },
         ],
       })
       expect(development.nuxt.options.vite.plugins).not.toContainEqual(expect.objectContaining({ name: "vite-hub/console-invocation-root" }))
