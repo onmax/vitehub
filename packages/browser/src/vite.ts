@@ -13,7 +13,7 @@ import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 import { isPlainObject } from "@vite-hub/internal/object"
 import {
-  createNoExternalMerger,
+  createNoExternalAddition,
   isServerEnvironment,
   resolveViteHubProjectRoot,
   shouldSkipViteProviderBuild,
@@ -59,7 +59,7 @@ const browserRegistryId = "#vitehub/browser/registry"
 const browserRuntimeId = "#vitehub/browser/runtime"
 const resolvedBrowserRegistryId = `\0${browserRegistryId}`
 const resolvedBrowserRuntimeId = `\0${browserRuntimeId}`
-const mergeNoExternal = createNoExternalMerger("@vite-hub/browser")
+const noExternalAddition = createNoExternalAddition("@vite-hub/browser")
 const browserWranglerConfigOwnership = {
   keys: ["browser"],
   arrays: {
@@ -232,7 +232,7 @@ export function hubBrowser(options?: BrowserModuleOptions | false): BrowserViteP
           providerOutput: [{
             description: "Generated Cloudflare Browser worker",
             owner: "browser",
-            path: resolve(createDefaultCloudflareOutputRoot(resolveViteHubProjectRoot(resolved?.root ?? projectRoot)), "wrangler.json"),
+            path: resolve(createDefaultCloudflareOutputRoot(resolved?.root ?? projectRoot), "wrangler.json"),
           }],
         }
       },
@@ -249,7 +249,7 @@ export function hubBrowser(options?: BrowserModuleOptions | false): BrowserViteP
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) return
       return {
-        resolve: { noExternal: mergeNoExternal(config.resolve?.noExternal) },
+        resolve: { noExternal: noExternalAddition(config.resolve?.noExternal) },
       }
     },
     async handleHotUpdate(context) {

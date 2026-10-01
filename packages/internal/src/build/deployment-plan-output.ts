@@ -39,7 +39,7 @@ export function describeDeploymentPlanOutput(plan: DeploymentPlan, rootDir: stri
     entries.push({ description: "Vercel Build Output config", owner: "vite-hub", path: resolve(outputRoot, "config.json") })
   }
   if (plan.preset === "netlify") {
-    entries.push({ description: "Netlify function and static config output", owner: "vite-hub", path: resolve(outputRoot, "v1") })
+    entries.push({ description: "Nitro Netlify server functions", owner: "vite-hub", path: resolve(rootDir, outputDir ?? resolve(outputRoot, "functions-internal")) })
   }
   return entries
 }

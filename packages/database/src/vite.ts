@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { contributeProviderDeploymentOutput, createDefaultCloudflareOutputRoot, createDefaultVercelOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
-import { createNoExternalMerger, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { readProvisionStateSync } from "@vite-hub/internal/provision-state"
 import { normalize } from "pathe"
 
@@ -49,7 +49,7 @@ interface DBCliContributingPlugin {
 
 export type DBVitePlugin = Plugin & DBCliContributingPlugin & { api: DBVitePluginAPI }
 
-const mergeNoExternal = createNoExternalMerger(dbPackageName)
+const mergeNoExternal = createNoExternalAddition(dbPackageName)
 
 function resolveDatabaseVirtualId(id: string) {
   if (id === DB_VIRTUAL_SCHEMA_ID || id === DB_INTERNAL_VIRTUAL_SCHEMA_ID) return RESOLVED_DB_VIRTUAL_SCHEMA_ID
@@ -153,7 +153,7 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
       inspect: () => {
         const config = resolvedOptions()
         if (config === false) return
-        const projectRoot = resolveViteHubProjectRoot(resolved?.root ?? process.cwd())
+        const outputRoot = resolved?.root ?? process.cwd()
         const provisionState = readProvisionStateSync(resolved?.root ?? process.cwd())
         return {
           definitions: [{
@@ -167,10 +167,10 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
           }],
           providerOutput: [
             ...(runtimeConfig && shouldCreateCloudflareOutput(runtimeConfig, provisionState)
-              ? [{ description: "Generated Cloudflare Database worker", owner: "database", path: resolve(createDefaultCloudflareOutputRoot(projectRoot), "index.js") }]
+              ? [{ description: "Generated Cloudflare Database worker", owner: "database", path: resolve(createDefaultCloudflareOutputRoot(outputRoot), "index.js") }]
               : []),
             ...(runtimeConfig && shouldCreateVercelOutput(runtimeConfig)
-              ? [{ description: "Generated Vercel Database function", owner: "database", path: resolve(createDefaultVercelOutputRoot(projectRoot), "functions", resolveNitroVercelFunctionName(resolved ?? {}, "database") ?? "__server.func", "index.mjs") }]
+              ? [{ description: "Generated Vercel Database function", owner: "database", path: resolve(createDefaultVercelOutputRoot(outputRoot), "functions", resolveNitroVercelFunctionName(resolved ?? {}, "database") ?? "__server.func", "index.mjs") }]
               : []),
           ],
         }

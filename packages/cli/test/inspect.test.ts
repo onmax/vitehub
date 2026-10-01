@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 
 import { afterEach, describe, expect, it } from "vitest"
 
@@ -76,6 +76,51 @@ async function run(rootDir: string, args: string[], plugins: readonly unknown[] 
 }
 
 describe("vitehub inspect", () => {
+  it("loads build-only Vite provider output with production configuration", async () => {
+    const rootDir = await createTempDir()
+    await writeFile(join(rootDir, "vite.config.ts"), `
+export default ({ command, mode }) => ({
+  plugins: command === "build" && mode === "production" ? [{
+    apply: "build",
+    name: "production-output",
+    vitehub: { inspect: { providerOutput: [{ owner: "test", path: ${JSON.stringify(join(rootDir, ".vitehub/production.json"))} }] } },
+  }] : [],
+})
+`)
+    const stdout = stream()
+    const exitCode = await runViteHubCli({ args: ["inspect", "provider-output", "--json"], cwd: rootDir, stdout })
+    expect(exitCode).toBe(0)
+    expect(JSON.parse(stdout.output()).providerOutput).toEqual(expect.arrayContaining([
+      expect.objectContaining({ owner: "test", path: ".vitehub/production.json" }),
+    ]))
+  })
+
+  it("loads production-only Nuxt provider output during inspection", async () => {
+    const rootDir = await createTempDir()
+    await mkdir(join(rootDir, "node_modules"))
+    await symlink(resolve(import.meta.dirname, "../node_modules/nuxt"), join(rootDir, "node_modules/nuxt"), "dir")
+    await writeFile(join(rootDir, "package.json"), "{}\n")
+    await writeFile(join(rootDir, "nuxt.config.ts"), `export default { modules: ["./production-module.ts"] }`)
+    await writeFile(join(rootDir, "production-module.ts"), `
+export default function (_options, nuxt) {
+  if (nuxt.options.vitehubCliDiscovery !== true) throw new Error("Missing CLI discovery marker")
+  if (nuxt.options.dev) return
+  nuxt.options.vite.plugins ||= []
+  nuxt.options.vite.plugins.push({
+    apply: "build",
+    name: "production-output",
+    vitehub: { inspect: { providerOutput: [{ owner: "test", path: ${JSON.stringify(join(rootDir, ".vitehub/nuxt-production.json"))} }] } },
+  })
+}
+`)
+    const stdout = stream()
+    const exitCode = await runViteHubCli({ args: ["inspect", "provider-output", "--json"], cwd: rootDir, stdout })
+    expect(exitCode).toBe(0)
+    expect(JSON.parse(stdout.output()).providerOutput).toEqual(expect.arrayContaining([
+      expect.objectContaining({ owner: "test", path: ".vitehub/nuxt-production.json" }),
+    ]))
+  })
+
   it("reserves inspect for the built-in namespace when a plugin contributes the same name", async () => {
     const rootDir = await createTempDir()
     const plugins = [...inspectPlugins(rootDir), {
@@ -189,6 +234,42 @@ describe("vitehub inspect", () => {
     expect(result.stdout).toContain("  .vitehub/provision.json  (cli)")
     expect(result.stdout).toContain("  dist/server/wrangler.json  (vite-hub)")
   })
+
+  it("preserves non-secret Provision State IDs under resource names that resemble credentials", async () => {
+    const rootDir = await createTempDir();
+    await mkdir(join(rootDir, ".vitehub"), { recursive: true });
+    await writeFile(
+      join(rootDir, ".vitehub/provision.json"),
+      JSON.stringify({
+        cloudflare: {
+          kv: {
+            tokens: "namespace-id",
+            passwords: "another-id",
+            vars: "vars-id",
+            unsafe: "Bearer secret",
+          },
+        },
+        vercel: { blob: { api_key: "store-id" } },
+        secret: "unrecognized-data",
+      }),
+    );
+    const result = await run(rootDir, ["inspect", "provider-output", "--json"]);
+    expect(result.exitCode).toBe(0);
+    const provision = JSON.parse(result.stdout).providerOutput.find(
+      (entry: { path: string }) => entry.path === ".vitehub/provision.json",
+    );
+    expect(provision.content).toEqual({
+      cloudflare: {
+        kv: {
+          tokens: "namespace-id",
+          passwords: "another-id",
+          vars: "vars-id",
+          unsafe: "[redacted]",
+        },
+      },
+      vercel: { blob: { api_key: "store-id" } },
+    });
+  });
 
   it("redacts secrets in Provider Output JSON content", async () => {
     const rootDir = await createTempDir()

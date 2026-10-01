@@ -270,6 +270,9 @@ const agentTypeDiagnosticCodes = new Set([
   "AGENT_R0494",
   "AGENT_R0495",
   "AGENT_R0496",
+  "AGENT_R0932",
+  "AGENT_R0937",
+  "AGENT_R0933",
   "AGENT_R0501",
   "AGENT_R0508",
   "AGENT_R0509",
@@ -449,8 +452,12 @@ const agentTypeDiagnosticCodes = new Set([
   "AGENT_R0888",
   "AGENT_R0926",
   "AGENT_R0927",
+  "AGENT_R0970",
+  "AGENT_R0930",
+  "AGENT_R0935",
   "AGENT_R0924",
   "AGENT_R0925",
+  "AGENT_R0929",
 ])
 
 const dynamicError = {
@@ -1420,8 +1427,18 @@ export const agentDiagnostics = defineDiagnostics({
     AGENT_R0888: dynamicError,
     AGENT_R0926: dynamicError,
     AGENT_R0927: dynamicError,
+    AGENT_R0934: dynamicError,
+    AGENT_R0935: dynamicError,
+    AGENT_R0936: dynamicError,
+    AGENT_R0937: dynamicError,
+    AGENT_R0933: dynamicError,
+    AGENT_R0970: dynamicError,
     AGENT_R0924: dynamicError,
     AGENT_R0925: dynamicError,
+    AGENT_R0932: dynamicError,
+    AGENT_R0929: dynamicError,
+    AGENT_R0930: dynamicError,
+    AGENT_R0931: dynamicError,
     AGENT_R0001: {
       why: ({ name, available }: { name: string, available: string[] }) => formatUnknownAgentMessage(name, available, { prefix: true }),
       fix: "Use a discovered Agent name. Check the Agent Definition and the ViteHub Agent plugin configuration.",
@@ -1465,6 +1482,10 @@ export const agentDiagnostics = defineDiagnostics({
     AGENT_B0001: {
       why: "[vitehub] Eve extensions must be compiled by the ViteHub Vite plugin.",
       fix: "Load the Agent Definition through a Vite host with the ViteHub Agent plugin installed.",
+    },
+    AGENT_B0020: {
+      why: ({ root }: { root: string }) => `[vitehub] Cannot identify the owning Agent build for ${JSON.stringify(root)} because its environment does not uniquely match a resolved configuration.`,
+      fix: "Use a separate Agent plugin instance per build or preserve the resolved build options in each environment config.",
     },
     AGENT_B0019: {
       why: ({ files }: { files: string[] }) => `[vitehub] Provider Agent Drivers ("codex" and "claude-code") cannot run in a Cloudflare Worker. Used in ${files.join(", ")}.`,

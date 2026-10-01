@@ -2,7 +2,7 @@ import { discoverAgentDefinitionEntries } from "@vite-hub/agent/vite"
 import { inspectDatabaseDefinitions } from "@vite-hub/database/vite"
 import { inspectQueueDefinitions } from "@vite-hub/queue/vite"
 import { inspectRateLimitDefinitions } from "@vite-hub/rate-limit/vite"
-import { inspectScheduleDefinitions } from "@vite-hub/schedule/vite"
+import { discoverScheduleDefinitions, inspectScheduleDefinitions } from "@vite-hub/schedule/vite"
 import { inspectSandboxDefinitions } from "@vite-hub/sandbox/vite"
 import { inspectWorkflowDefinitions } from "@vite-hub/workflow/vite"
 import { inspectWorkspaceDefinitions } from "@vite-hub/workspace/vite"
@@ -12,9 +12,13 @@ import type { ConsoleSectionId } from "./runtime/sections.ts"
 
 export type ConsoleAgentEntry = { handler: string; name: string }
 
+/** A Static Schedule Definition that sets `manual: true`. */
+export type ConsoleScheduleEntry = { handler: string; name: string }
+
 export interface ConsoleBuildCatalog {
   agents: readonly ConsoleAgentEntry[]
   definitions: ConsoleDefinitionCatalog
+  manualSchedules?: readonly ConsoleScheduleEntry[]
 }
 
 /**
@@ -87,5 +91,14 @@ export async function discoverConsoleBuildCatalog(options: {
       serverRootDir: options.scheduleDiscoveryRoot ?? projectRoot,
     })
   }
-  return { agents, definitions }
+  const manualSchedules = sections.includes("schedules")
+    ? discoverScheduleDefinitions({
+        rootDir: options.discoveryRoot,
+        serverDirs,
+        serverRootDir: options.scheduleDiscoveryRoot ?? projectRoot,
+      })
+        .filter(definition => definition.manual === true && definition.runtimeOnly !== true)
+        .map(definition => ({ handler: definition.handler, name: definition.name }))
+    : []
+  return { agents, definitions, manualSchedules }
 }

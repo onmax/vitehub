@@ -1,7 +1,7 @@
 import { resolve } from "node:path"
 import { Readable } from "node:stream"
 
-import { createNoExternalMerger, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, isServerEnvironment, generatedViteHubWatchIgnoredAddition, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { summarizeDefinitions } from "@vite-hub/internal/inspect"
@@ -33,7 +33,7 @@ const envServerModuleId = "#vitehub/env/server"
 const envVitePluginName = "@vite-hub/env/vite"
 const generatedAuthAccessMiddlewareHandler = ".vitehub/auth/access-middleware.ts"
 const generatedAuthRouteHandler = ".vitehub/auth/route.ts"
-const mergeNoExternal = createNoExternalMerger(authPackageName)
+const mergeNoExternal = createNoExternalAddition(authPackageName)
 
 type NitroConfig = Record<string, unknown>
 type NitroHandler = { handler: string; method?: string; middleware?: boolean; route: string }
@@ -62,15 +62,18 @@ export function createAuthNitroConfig(plugin: AuthVitePlugin, options: {
   serverDirs?: string[]
   viteAuth?: AuthModuleOptions
 }): Record<string, unknown> {
-  const viteConfigResult = plugin.config && typeof plugin.config === "function"
-    ? plugin.config.call({} as never, {
-        root: options.projectRoot,
-        nitro: options.nitro,
-        auth: options.viteAuth,
-        ...(options.serverDirs ? { [VITEHUB_SERVER_DIRS]: options.serverDirs } : {}),
-      } as UserConfig & { nitro: Record<string, unknown> }, { command: "build", isPreview: false, isSsrBuild: true, mode: "production" })
-    : undefined
-  return (viteConfigResult && typeof viteConfigResult === "object" && "nitro" in viteConfigResult ? viteConfigResult.nitro : options.nitro) as Record<string, unknown>
+  const viteConfig: UserConfig & { nitro: Record<string, unknown> } = {
+    root: options.projectRoot,
+    nitro: options.nitro,
+    auth: options.viteAuth,
+    ...(options.serverDirs ? { [VITEHUB_SERVER_DIRS]: options.serverDirs } : {}),
+  }
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vite config hooks can be functions or handler objects; this helper invokes the function form.
+  if (plugin.config && typeof plugin.config === "function") {
+    // SAFETY: This config hook does not use its hook context and replaces Nitro config on the supplied UserConfig.
+    plugin.config.call({} as never, viteConfig, { command: "build", isPreview: false, isSsrBuild: true, mode: "production" })
+  }
+  return viteConfig.nitro
 }
 
 interface InternalAuthModuleOptions {
@@ -337,20 +340,19 @@ export function hubAuth(options?: AuthModuleOptions, internalOptions: InternalAu
       const configRoot = config.root || process.cwd()
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       const authConfig = resolveAuthViteConfig((config as { auth?: AuthModuleOptions }).auth ?? options, configRoot, { serverDirs })
-      const nitro = mergeNitroAuthHandler((config as { nitro?: unknown }).nitro, authConfig)
       const hasNitroHandlers = Boolean(authConfig && (authConfig.route !== false || authConfig.access.routes.length > 0))
+      if (hasNitroHandlers) {
+        // Replace the Nitro config in place. A returned Nitro config would repeat its arrays when Vite merges it.
+        // SAFETY: Nitro extends Vite's config with this optional field; the merger validates its unknown input.
+        ;(config as { nitro?: unknown }).nitro = mergeNitroAuthHandler((config as { nitro?: unknown }).nitro, authConfig)
+      }
       return {
         ssr: {
           noExternal: mergeNoExternal(config.ssr?.noExternal),
         },
-        ...(hasNitroHandlers
-          ? {
-              nitro,
-            }
-          : {}),
         server: {
           watch: {
-            ignored: mergeGeneratedViteHubWatchIgnored(config.server?.watch?.ignored),
+            ignored: generatedViteHubWatchIgnoredAddition(config.server?.watch?.ignored),
           },
         },
       }

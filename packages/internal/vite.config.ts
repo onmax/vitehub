@@ -19,6 +19,7 @@ export default defineConfig({
       "src/provision.ts",
       "src/provision-state.ts",
       "src/source-scanner.ts",
+      "src/vite-stage.ts",
       "src/workspace-inventory.ts",
       "src/build/client-output.ts",
       "src/build/cloudflare.ts",
