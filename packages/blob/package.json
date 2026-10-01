@@ -118,7 +118,8 @@
     "esbuild": "catalog:esbuild-v27",
     "h3": "catalog:unjs",
     "nostics": "catalog:runtime",
-    "pathe": "catalog:unjs"
+    "pathe": "catalog:unjs",
+    "valibot": "catalog:runtime"
   },
   "devDependencies": {
     "@azure/identity": "catalog:storage",

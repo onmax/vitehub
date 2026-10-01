@@ -1,6 +1,8 @@
 import { readFile, stat, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
+import * as v from "valibot"
+
 import {
   discoverViteHubDevServer,
   fetchViteHubDevEndpoint,
@@ -266,37 +268,25 @@ type BlobCliResult =
   | { operation: "put", value: BlobDevPutResult }
   | { operation: "del", value: BlobDevDeleteResult }
 
-function isStrings(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === "string")
-}
-
-function isBlobObject(value: unknown): value is BlobDevObject {
-  return isRecord(value) && typeof value.pathname === "string" && typeof value.uploadedAt === "string"
-    && isRecord(value.customMetadata) && isRecord(value.httpMetadata)
-    && (value.size === undefined || (typeof value.size === "number" && Number.isFinite(value.size)))
-    && (value.contentType === undefined || typeof value.contentType === "string")
-    && (value.httpEtag === undefined || typeof value.httpEtag === "string")
-    && (value.urlAvailable === undefined || value.urlAvailable === true)
+const blobObjectSchema = v.object({
+  contentType: v.optional(v.string()), customMetadata: v.record(v.string(), v.unknown()), httpEtag: v.optional(v.string()),
+  httpMetadata: v.record(v.string(), v.unknown()), pathname: v.string(), size: v.optional(v.pipe(v.number(), v.finite())),
+  uploadedAt: v.string(), urlAvailable: v.optional(v.literal(true)),
+})
+const resultSchemas = {
+  list: v.object({ blobs: v.array(blobObjectSchema), cursor: v.optional(v.string()), hasMore: v.boolean(), limit: v.pipe(v.number(), v.finite()), prefix: v.string(), store: v.string(), stores: v.array(v.string()) }),
+  head: v.object({ object: blobObjectSchema, store: v.string() }),
+  put: v.object({ created: v.boolean(), object: blobObjectSchema, store: v.string() }),
+  del: v.object({ deleted: v.boolean(), pathname: v.string(), store: v.string() }),
 }
 
 function parseResult(operation: Exclude<BlobDevOperation, "get">, value: unknown): BlobCliResult | undefined {
-  if (!isRecord(value) || typeof value.store !== "string") return undefined
-  if (operation === "del") {
-    return typeof value.deleted === "boolean" && typeof value.pathname === "string"
-      ? { operation, value: { deleted: value.deleted, pathname: value.pathname, store: value.store } } : undefined
+  switch (operation) {
+    case "list": { const parsed = v.safeParse(resultSchemas.list, value); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "head": { const parsed = v.safeParse(resultSchemas.head, value); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "put": { const parsed = v.safeParse(resultSchemas.put, value); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "del": { const parsed = v.safeParse(resultSchemas.del, value); return parsed.success ? { operation, value: parsed.output } : undefined }
   }
-  if (operation === "list") {
-    if (!Array.isArray(value.blobs) || !value.blobs.every(isBlobObject) || typeof value.hasMore !== "boolean"
-      || typeof value.limit !== "number" || !Number.isFinite(value.limit) || typeof value.prefix !== "string"
-      || !isStrings(value.stores) || (value.cursor !== undefined && typeof value.cursor !== "string")) return undefined
-    return { operation, value: {
-      blobs: value.blobs, hasMore: value.hasMore, limit: value.limit, prefix: value.prefix, store: value.store, stores: value.stores,
-      ...(typeof value.cursor === "string" ? { cursor: value.cursor } : {}),
-    } }
-  }
-  if (!isBlobObject(value.object)) return undefined
-  if (operation === "head") return { operation, value: { object: value.object, store: value.store } }
-  return typeof value.created === "boolean" ? { operation, value: { created: value.created, object: value.object, store: value.store } } : undefined
 }
 
 function writeResult(result: BlobCliResult, context: BlobCliContext): void {
@@ -340,9 +330,8 @@ async function readFailure(response: Response): Promise<BlobCliFailure> {
   const text = await response.text()
   try {
     const body: unknown = JSON.parse(text)
-    if (isRecord(body) && isRecord(body.error) && typeof body.error.message === "string") {
-      return { ...(typeof body.error.code === "string" ? { code: body.error.code } : {}), message: body.error.message }
-    }
+    const parsed = v.safeParse(v.object({ error: v.object({ code: v.optional(v.string()), message: v.string() }) }), body)
+    if (parsed.success) return parsed.output.error
   }
   catch {
     // Guard rejections use plain text.

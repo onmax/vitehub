@@ -972,6 +972,9 @@ importers:
       uploadthing:
         specifier: catalog:storage
         version: 7.7.4(express@5.2.1)(fastify@5.10.0)(h3@2.0.1-rc.31(crossws@0.4.12(srvx@1.0.3))(ocache@0.3.0))(tailwindcss@4.3.3)
+      valibot:
+        specifier: catalog:runtime
+        version: 1.4.2(typescript@6.0.3)
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@0.3.1
         version: '@voidzero-dev/vite-plus-core@0.3.1(@types/node@24.13.3)(esbuild@0.27.7)(jiti@2.7.0)(publint@0.3.24)(terser@5.51.2)(tsx@4.21.0)(typescript@6.0.3)(unrun@0.2.36)(yaml@2.9.0)'

@@ -70,7 +70,7 @@ const binary = Uint8Array.from([0, 255, 1, 128, 10, 13, 0xef, 0xbb, 0xbf, 0xc3, 
 const object = { contentType: "image/png", customMetadata: {}, httpEtag: "\"abc\"", httpMetadata: {}, pathname: "images/a.png", size: 1234, uploadedAt: "2026-09-29T10:00:00.000Z" }
 
 describe("vitehub blob", () => {
-  it.each([[], ["--json"]])("reports malformed blob rows with flags %j", async (flags) => {
+  it.each([{ flags: [] }, { flags: ["--json"] }])("reports malformed blob rows with flags %j", async ({ flags }) => {
     const output = context()
     await expect(runBlobCli(["list", ...flags], output.context, { fetch: devServer({ blobs: [{}], hasMore: false, limit: 100, prefix: "", store: "default", stores: ["default"] }) })).resolves.toBe(1)
     expect(output.stdout.output() + output.stderr.output()).toContain("response is invalid")
