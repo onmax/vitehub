@@ -252,6 +252,32 @@ describe("vitehub schedule", () => {
     expect(output.stderr.output()).toBe("")
   })
 
+  it.each([
+    ["text", false], ["text", true], ["json", false], ["json", true], ["stream", false], ["stream", true],
+  ])("redacts %s response failure messages with json %s", async (kind, json) => {
+    const output = context()
+    const message = "Authorization: Bearer failure-secret"
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      if (init?.method !== "POST") return Response.json({ root: rootDir, runtime: "nitro" })
+      if (kind === "text") return new Response(message, { status: 503 })
+      if (kind === "json") return Response.json({ error: { code: "SCHEDULE_NOT_FOUND", message } }, { status: 404 })
+      return new Response(new ReadableStream({ start(controller) { controller.error(new Error(message)) } }), { status: 503 })
+    }
+    expect(await runScheduleCli(["get", "digest", ...(json ? ["--json"] : [])], output.context, { fetch })).toBe(1)
+    expect(output.stdout.output() + output.stderr.output()).not.toContain("failure-secret")
+    const expected = `${kind === "stream" ? "Schedule Dev request failed: " : ""}Authorization: [redacted]`
+    if (json) {
+      const error = JSON.parse(output.stdout.output()).error
+      expect(error.message).toBe(expected)
+      if (kind === "json") expect(error.code).toBe("SCHEDULE_NOT_FOUND")
+      expect(output.stderr.output()).toBe("")
+    }
+    else {
+      expect(output.stderr.output()).toBe(`${expected}\n`)
+      expect(output.stdout.output()).toBe("")
+    }
+  })
+
   it("reports runtime errors on stderr, or as JSON with --json", async () => {
     const failure = { error: { code: "SCHEDULE_NOT_FOUND", message: "Runtime Schedule was not found." } }
     const human = context()

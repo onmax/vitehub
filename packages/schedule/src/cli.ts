@@ -5,6 +5,8 @@ import {
   resolveViteHubDevServerUrl,
 } from "@vite-hub/internal/cli"
 
+import { redactInspectionText } from "@vite-hub/internal/inspect"
+
 import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute } from "./dev.ts"
 import { scheduleErrorDiagnostics } from "./error-diagnostics.ts"
 
@@ -314,8 +316,9 @@ async function readFailure(response: Response): Promise<{ code?: string, message
 }
 
 function writeFailure(parsed: Pick<ParsedScheduleArgs, "json">, context: ScheduleCliContext, failure: { code?: string, message: string }): number {
-  if (parsed.json) context.stdout.write(`${JSON.stringify({ error: failure }, null, 2)}\n`)
-  else context.stderr.write(`${failure.message}\n`)
+  const redacted = { ...failure, message: redactInspectionText(failure.message) }
+  if (parsed.json) context.stdout.write(`${JSON.stringify({ error: redacted }, null, 2)}\n`)
+  else context.stderr.write(`${redacted.message}\n`)
   return 1
 }
 
