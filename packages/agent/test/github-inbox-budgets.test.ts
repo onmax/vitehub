@@ -45,7 +45,8 @@ test('initial provider attempt plus three retries stop across restart and two st
   assert.equal(await inbox.reserveProviderAttempt('account'), undefined)
   assert.equal(await peer.reserveProviderAttempt('account'), undefined)
   assert.equal((await inbox.providerBudget('account'))?.failures.length, 4)
-  const pending = Array.from({ length: 4 }, () => inbox.reserveProviderAttempt('different-account'))
+  const pending = []
+  for (let index = 0; index < 4; index++) pending.push(await inbox.reserveProviderAttempt('different-account'))
   assert.ok(pending.every(Boolean))
   await inbox.close(); inbox = create(path)
   assert.equal(await inbox.reserveProviderAttempt('different-account'), undefined)
