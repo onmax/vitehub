@@ -54,7 +54,7 @@ export interface KVDevSetResult {
   /** Limit of the provider that the write is subject to, for example a TTL that the driver ignores. */
   notice?: string
   store: string
-  /** TTL in seconds that the command requested. */
+  /** Effective TTL in seconds passed to the driver. */
   ttl?: number
   type: string
 }
@@ -264,6 +264,7 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
     case "set": {
       const key = requireKey(body)
       if (body.value === undefined) throw new KVDevRequestError("The set operation requires a value.", 400)
+      if (selected.driver === "upstash" && body.ttl !== undefined && body.ttl < 1) throw new KVDevRequestError("Upstash TTL must be at least 1 second.", 400)
       const existed = unwrap(await selected.storage.has(key))
       const ttl = body.ttl === undefined ? undefined : selected.driver === "cloudflare-kv-binding" ? Math.max(60, Math.ceil(body.ttl)) : selected.driver === "upstash" ? Math.ceil(body.ttl) : body.ttl
       unwrap(await selected.storage.set(key, body.value, ttl === undefined ? undefined : { ttl }))
