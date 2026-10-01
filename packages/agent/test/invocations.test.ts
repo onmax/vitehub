@@ -2644,6 +2644,10 @@ describe("Agent Invocations", () => {
       expect(await memory.claim("expired-expected-claim", "second", 1, { expectedClaimIds: ["first"] })).toBe(true)
       await vi.advanceTimersByTimeAsync(2)
       expect(await memory.claim("expired-expected-claim", "stale", 30_000, { expectedClaimIds: ["first"] })).toBe(false)
+      expect(await memory.claim("expired-expected-claim", "stale-force", 30_000, {
+        expectedClaimIds: ["first"],
+        replaceExisting: true,
+      })).toBe(false)
     }
     finally { vi.useRealTimers() }
   })

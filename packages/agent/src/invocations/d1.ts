@@ -231,10 +231,10 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
       const db = await database()
       const expectedClaimIds = claimOptions?.expectedClaimIds === undefined ? null : JSON.stringify(claimOptions.expectedClaimIds)
       const result = await db.prepare(`UPDATE ${table} SET revision = revision + 1, claim_id = ?, claim_token = ?, claim_expires_at = ${clock} + ?
-        WHERE id = ? AND (claim_id IS NULL OR ? = 1
+        WHERE id = ? AND (claim_id IS NULL
           OR (? IS NOT NULL AND claim_id IN (SELECT value FROM json_each(?)))
-          OR (? IS NULL AND (claim_id = ? OR claim_expires_at <= ${clock} OR (? IS NOT NULL AND claim_token = ?))))`)
-        .bind(claimId, crypto.randomUUID(), leaseMs, id, claimOptions?.replaceExisting ? 1 : 0, expectedClaimIds, expectedClaimIds, expectedClaimIds, claimId, claimOptions?.replaceClaimToken ?? null, claimOptions?.replaceClaimToken ?? null).all()
+          OR (? IS NULL AND (? = 1 OR claim_id = ? OR claim_expires_at <= ${clock} OR (? IS NOT NULL AND claim_token = ?))))`)
+        .bind(claimId, crypto.randomUUID(), leaseMs, id, expectedClaimIds, expectedClaimIds, expectedClaimIds, claimOptions?.replaceExisting ? 1 : 0, claimId, claimOptions?.replaceClaimToken ?? null, claimOptions?.replaceClaimToken ?? null).all()
       return result.meta.changes > 0
     },
     async getClaimToken(id) {

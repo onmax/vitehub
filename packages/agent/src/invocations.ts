@@ -1442,13 +1442,15 @@ export function createMemoryAgentInvocationStore(): AgentInvocationStore {
       const claim = claims.get(id)
       const now = Date.now()
       if (supersededClaims.get(id)?.has(claimId)) return false
+      const expected = options?.expectedClaimIds
+      const expectedMismatch = expected !== undefined && claim !== undefined
+        && claim.claimId !== claimId && !expected.includes(claim.claimId)
+      if (expectedMismatch) return false
       const replace = options?.replaceExisting
         || (options?.replaceClaimToken !== undefined && claim?.token === options.replaceClaimToken)
-      const expected = options?.expectedClaimIds
       const claimConflict = claim !== undefined && claim.claimId !== claimId
-      const fencedConflict = expected !== undefined && claimConflict && !expected.includes(claim.claimId)
       const activeConflict = expected === undefined && claimConflict && claim.expiresAt > now
-      if (!records.has(id) || (!replace && (fencedConflict || activeConflict))) return false
+      if (!records.has(id) || (!replace && activeConflict)) return false
       if (claim && claim.claimId !== claimId) {
         let superseded = supersededClaims.get(id)
         if (!superseded) supersededClaims.set(id, superseded = new Set())
