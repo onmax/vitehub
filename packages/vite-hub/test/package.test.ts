@@ -726,6 +726,17 @@ describe("framework package contract", () => {
     expect(consoleCss).toContain("vitehub-console");
     expect(consoleCss).toContain("--ui-bg:#fdfdfd");
     expect(consoleCss).toContain("--ui-text:#27272a");
+    // The blocking stylesheet and entry script exclude KaTeX fonts and the full Lucide set.
+    expect(consoleCss).not.toContain("KaTeX_");
+    expect(consoleClient).not.toContain('"alarm-clock-check":{');
+    const consoleMathCssFiles = globSync("dist/console/runtime/public/console/assets/katex-*.css", { cwd: packageRoot });
+    expect(consoleMathCssFiles).toHaveLength(1);
+    const consoleMathCss = readFileSync(`${packageRoot}/${consoleMathCssFiles[0]}`, "utf8");
+    expect(consoleMathCss).toContain("data:font/woff2;base64,");
+    expect(consoleMathCss).not.toMatch(/data:font\/(?:woff|ttf);/);
+    expect(
+      globSync("dist/console/runtime/public/console/chunks/icons-*.js", { cwd: packageRoot }).map(file => readFileSync(`${packageRoot}/${file}`, "utf8")).join(""),
+    ).toContain('"alarm-clock-check":{');
     expect(
       globSync("dist/console/runtime/public/console/chunks/*.js", { cwd: packageRoot }).length,
     ).toBeGreaterThan(0);
@@ -779,7 +790,7 @@ describe("framework package contract", () => {
       if (!Array.isArray(handlers) || !Array.isArray(publicAssets)) {
         throw new TypeError("Expected the distributed Console Nitro configuration.");
       }
-      expect(handlers).toHaveLength(8);
+      expect(handlers).toHaveLength(9);
       expect(handlers.map((registration) => Reflect.get(Object(registration), "route"))).toEqual([
         "/api/_vitehub/console/status",
         "/api/_vitehub/console/usage",
@@ -788,6 +799,7 @@ describe("framework package contract", () => {
         "/api/_vitehub/console/client.js",
         "/_vitehub/rpc/**",
         "/_vitehub/env/manage",
+        "/_vitehub/channels/replay",
         "/_vitehub/schedules/run",
       ]);
       for (const registration of handlers) {

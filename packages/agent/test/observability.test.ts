@@ -188,7 +188,7 @@ it.each([
   vi.stubGlobal("__VITEHUB_APP_BASE_URL__", "/inspect/")
   const { telemetry, exporter } = setup()
   const hooks = new Map<string, Function>()
-  telemetry.plugin({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
+  telemetry.plugin({ hooks: { hook(name, callback) { hooks.set(name, callback) }, removeHook() {} } })
   const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
   const agent = defineAgent({ name, invocations, driver: { run: () => "answer" }, capabilities: [telemetry.capability] })
   await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil, agentIdentity: { name: `discovered-${name}` }, run: { runId: "links" } }, { prompt: "hello" })
@@ -227,7 +227,7 @@ it.each(["failures", "all", false] as const)("preserves application logs with HT
 it.each(["minimal", "standard", "full"] as const)("logs HTTP 4xx failures with request metadata at %s level", async (level) => {
   const { telemetry, exporter } = setup({}, { level, logs: false })
   const hooks = new Map<string, Function>()
-  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
+  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) }, removeHook() {} } })
   const req = Object.assign(new Request("https://example.test/missing?token=secret"), { context: { requestId: "req-1" } })
   hooks.get("error")!(Object.assign(new Error("Not found"), { statusCode: 404 }), { event: { req } })
   await telemetry.flush()
@@ -238,7 +238,7 @@ it.each(["minimal", "standard", "full"] as const)("logs HTTP 4xx failures with r
 it("keeps non-request 4xx failures as exceptions", async () => {
   const { telemetry, exporter } = setup()
   const hooks = new Map<string, Function>()
-  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
+  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) }, removeHook() {} } })
   hooks.get("error")!(Object.assign(new Error("Upstream rejected background task"), { statusCode: 403 }), {})
   await telemetry.flush()
   expect(exporter.exception).toHaveBeenCalledTimes(1)
@@ -248,7 +248,7 @@ it("keeps non-request 4xx failures as exceptions", async () => {
 it.each([500, 503])( "keeps HTTP %s failures as exceptions", async (statusCode) => {
   const { telemetry, exporter } = setup()
   const hooks = new Map<string, Function>()
-  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
+  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) }, removeHook() {} } })
   const req = Object.assign(new Request("https://example.test/fail"), { context: { requestId: "req-5xx" } })
   hooks.get("error")!(Object.assign(new Error("Server error"), { statusCode }), { event: { req } })
   await telemetry.flush()
@@ -258,7 +258,7 @@ it.each([500, 503])( "keeps HTTP %s failures as exceptions", async (statusCode) 
 it.each(["statusCode", "status"])("keeps errors with a throwing %s getter on the exception path", async (property) => {
   const { telemetry, exporter } = setup()
   const hooks = new Map<string, Function>()
-  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
+  agentEvlogPlugin(telemetry)({ hooks: { hook(name, callback) { hooks.set(name, callback) }, removeHook() {} } })
   const error = Object.defineProperty(new Error("Unknown failure"), property, {
     get() { throw new Error("Cannot inspect status") },
   })
@@ -278,7 +278,7 @@ it("installs one host instance for useObservability() and every Agent", async ()
   const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
   const plugin = installObservability({ service: "host", exporter, papercuts: { invocations: () => invocations } })
   const closeHooks: Function[] = []
-  plugin({ hooks: { hook(name, callback) { if (name === "close") closeHooks.push(callback) } } })
+  plugin({ hooks: { hook(name, callback) { if (name === "close") closeHooks.push(callback) }, removeHook() {} } })
   const observability = useObservability()
   expect(observability.status()).toMatchObject({ configured: true, papercuts: { running: true, pending: 0, delivered: 0, failed: 0 } })
 
@@ -302,6 +302,7 @@ it("clears host Observability when exporter shutdown flush rejects", async () =>
       hook(...registration: [name: "close", callback: () => Promise<void>] | [name: "request" | "evlog:drain" | "error", callback: unknown]) {
         if (registration[0] === "close") close.push(registration[1])
       },
+      removeHook() {},
     },
   })
   installObservability({ service: "failed-host", exporter: { capture: async () => {}, exception: async () => {}, logs: async () => {}, flush: async () => { throw new Error("flush failed") } } })(host(closeHooks))
@@ -316,13 +317,14 @@ it("rolls back host Observability when host attachment fails", async () => {
   const { installObservability } = await import("../src/observability/host.ts")
   const { useObservability } = await import("../src/observability.ts")
   const plugin = installObservability({ service: "failed-attachment" })
-  expect(() => plugin({ hooks: { hook() { throw new Error("hook failed") } } })).toThrow("hook failed")
+  expect(() => plugin({ hooks: { hook() { throw new Error("hook failed") }, removeHook() {} } })).toThrow("hook failed")
   expect(() => useObservability()).toThrow("Observability is not configured")
 
   const closeHooks: Array<() => Promise<void>> = []
   installObservability({ service: "retry" })({
     hooks: {
       hook(name, callback) { if (name === "close") closeHooks.push(callback as () => Promise<void>) },
+      removeHook() {},
     },
   })
   for (const close of closeHooks) await close()
@@ -344,7 +346,7 @@ it("cleans up telemetry when a later host attachment hook fails", async () => {
   expect(() => useObservability()).toThrow("Observability is not configured")
 })
 
-it("uses hook disposers when a host does not expose removeHook", async () => {
+it("uses hook disposers when a host exposes removeHook", async () => {
   const { installObservability } = await import("../src/observability/host.ts")
   const { useObservability } = await import("../src/observability.ts")
   const flush = vi.fn(async () => {})
@@ -357,6 +359,7 @@ it("uses hook disposers when a host does not expose removeHook", async () => {
       disposers.push(dispose)
       return dispose
     },
+    removeHook() {},
   } })).toThrow("close hook failed")
   await new Promise(resolve => setTimeout(resolve, 10))
   expect(flush).toHaveBeenCalledOnce()
@@ -371,7 +374,7 @@ it("preserves host ownership and replaces injected Capabilities after shutdown",
   const firstClose: Function[] = []
   const secondClose: Function[] = []
   const first = installObservability({ service: "first", exporter: { capture: vi.fn(async () => {}), exception: vi.fn(async () => {}), logs: vi.fn(async () => {}), flush: vi.fn(async () => {}) } })
-  first({ hooks: { hook(name, callback) { if (name === "close") firstClose.push(callback) } } })
+  first({ hooks: { hook(name, callback) { if (name === "close") firstClose.push(callback) }, removeHook() {} } })
   const firstInstance = useObservability()
   let firstClosed = false
   try {
@@ -384,7 +387,7 @@ it("preserves host ownership and replaces injected Capabilities after shutdown",
     firstClosed = true
     const capture = vi.fn(async () => {})
     const second = installObservability({ service: "second", exporter: { capture, exception: vi.fn(async () => {}), logs: vi.fn(async () => {}), flush: vi.fn(async () => {}) } })
-    second({ hooks: { hook(name, callback) { if (name === "close") secondClose.push(callback) } } })
+    second({ hooks: { hook(name, callback) { if (name === "close") secondClose.push(callback) }, removeHook() {} } })
     await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil, agentIdentity: { name: "bot" }, run: { runId: "replacement" } }, { prompt: "hello" })
     await Promise.allSettled(background.splice(0))
     expect(capture).toHaveBeenCalledWith("$ai_trace", expect.objectContaining({ service: "second", status: "completed" }), expect.anything())

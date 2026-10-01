@@ -51,7 +51,7 @@ export function resolveGeneratedConsolePlugin(
 type ConsoleNitroConfig = {
   handlers?: Array<{ handler: string, method?: string, route: string }>
   plugins?: string[]
-  publicAssets?: Array<{ baseURL?: string, dir: string, fallthrough?: boolean }>
+  publicAssets?: Array<{ baseURL?: string, dir: string, fallthrough?: boolean, maxAge?: number }>
   [key: string]: unknown
 }
 
@@ -402,6 +402,8 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         baseURL: "/_vitehub/assets",
         dir: consolePublicRoot,
         fallthrough: false,
+        // Every Console asset name contains a content hash.
+        maxAge: 60 * 60 * 24 * 365,
       })
 
       consoleConfig.nitro = { ...kit.config, publicAssets }

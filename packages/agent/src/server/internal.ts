@@ -17,6 +17,8 @@ export {
 } from "./routes.ts"
 export { defineScheduledAgentTarget } from "./scheduled-turn.ts"
 export { observabilityStatus } from "../internal/observability-host.ts"
+export { handleChannelReplayRequest } from "../channel-replay.ts"
+export type { ChannelReplayRequestOptions } from "../channel-replay.ts"
 export { createAgentWebhookRequest } from "../internal/webhook-request.ts"
 export { markDiscoveredAgentName, resetPublicUrlAgentNames } from "../internal/discovered-agent-name.ts"
 export { markDiscoveredWorkspaceAgentDefinitionRegistered } from "../workspace-agent.ts"

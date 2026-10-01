@@ -15,6 +15,7 @@ import { uiMessagesToAgentMessages } from "../chat-message-input.ts"
 import { discoverAgentDefinitions } from "../discovery.ts"
 import { isResolvedAgentTriggerHandledInvocation, resolveAgentInspectionMetadata, resolveAgentTriggerInvocation, resolveAgentTriggers, runAgentInline, streamAgent } from "../index.ts"
 import { inheritMessageChannelInstructions } from "../internal/channels.ts"
+import { handleChannelReplayRequest } from "../channel-replay.ts"
 import { channelDeliveryHandlers } from "../internal/channel-delivery-handlers.ts"
 import { markDiscoveredWorkspaceAgentDefinitionRegistered, workspaceAgentOwnsWorkspaceDefinition, workspaceModeFromOptions, workspaceNameFromOptions } from "../workspace-agent.ts"
 import {
@@ -61,6 +62,8 @@ interface AgentInvocationStreamBody {
   messages?: AgentChatMessageTriggerInput["messages"]
   meta?: Record<string, unknown>
   payload?: unknown
+  /** A `vitehub channels replay` request for the selected Agent. */
+  replay?: unknown
   run?: AgentRunMetadata
   text?: string
   timeout?: number
@@ -651,6 +654,10 @@ async function handleAgentInvocationStreamRequest(server: ViteDevServer, req: In
   const context = createViteAgentRuntimeContext(server, req, entry.identity, { capabilities, fallbackRoute: agentInvocationStreamRoute, run })
   const payload = payloadFromBody(body)
   const timeout = typeof body.timeout === "number" && Number.isFinite(body.timeout) ? body.timeout : 90_000
+
+  if (body.replay !== undefined) {
+    return await handleChannelReplayRequest(entry.agent, body.replay, { maxLimit: 100, runtime: context, ...(abortSignal ? { signal: abortSignal } : {}) })
+  }
 
   if (body.cli) {
     if (typeof body.cli.name !== "string" || !body.cli.name.trim()) {

@@ -239,6 +239,7 @@ Pass `--json` for the structured inspection contract.
 
 - A `webChat()` Channel exposes the Agent through the conventional `/api/_vitehub/agents/[agent]/chat` dispatcher. Use `webChat({ route: false })` when an Agent should not answer it, or `chat()` when an app-owned trigger needs Chat History and `chat.message` behavior without Channel-owned route exposure; see the [First Agent guide](https://vitehub.dev/docs/getting-started/first-agent).
 - `defineChannel(kind, { message })` declares the methods that `agent:finish` and `agent:error` hooks call through `event.message`, typed from the Agent's `channels`. Set `dryRun: true` in the Invocation input to record write methods in the trace instead of calling the provider; see [Act on the Channel message in hooks](https://vitehub.dev/docs/agents/channels#act-on-the-channel-message-in-hooks).
+- A Channel `history` Collection lets `replayChannel()` from `@vite-hub/agent/server` and `vitehub channels replay` send past messages through the Channel trigger. Replay skips items that already have an Invocation; see [Replay Channel history](https://vitehub.dev/docs/agents/channels#replay-channel-history).
 - Built-in GitHub `webhook` and `dev` Triggers supply `{ repository, pullRequest, run, trigger }` as Channel message data. Custom `message.data` schemas must accept this pull request context.
 - `workspaceShell()` runs scoped shell/file work through [`@vite-hub/shell`](../shell/README.md).
 - `webSearch()` searches and reads the web with [Brave](https://brave.com/search/api/), [Exa](https://docs.exa.ai/), [Jina](https://jina.ai/en-US/reader/), [SearXNG](https://docs.searxng.org/dev/search_api.html), [SerpApi](https://serpapi.com/search-api), [SerpBase](https://serpbase.dev/docs), or [Tavily](https://docs.tavily.com/).
@@ -313,7 +314,7 @@ Public HTTP errors keep the `ViteHubError` mapping. An unrecognized diagnostic
 maps to the generic `INTERNAL` response. Approval and cancellation behavior does
 not change.
 
-See [Errors and diagnostics](https://vitehub.dev/docs/reference/diagnostics)
+See [Errors and diagnostics](https://vitehub.dev/docs/reference/errors-diagnostics)
 for the code format and an application catalog example.
 
 ## Chat state
@@ -360,6 +361,12 @@ Vite discovers Agent files and generates runtime state for the active server hos
 Learn more at [vitehub.dev](https://vitehub.dev).
 
 ## Invocation summaries
+
+Channel history replay stores the trigger's `annotations`, `channelId`, `origin`, and `threadId` on the claimed Invocation before Driver execution or Workflow dispatch. A failed metadata write fails that item before execution. Custom stores must apply those fields and the `workflow` dispatch binding in `update()` under the supplied execution claim.
+
+Native Vercel replay retains the logical replay ID in the Invocation and stores the provider-assigned Workflow ID in `workflow`. Dispatch intent is persisted before submission. If acknowledgement is lost before a provider ID can be retained, replay reports the unknown outcome and blocks resubmission. The Workflow worker confirms its physical ID before Driver execution. Recovery and cancellation use the provider ID.
+
+A pending replay reservation for a discovery-default Workflow requires the discovered Agent identity to recover. Without that identity, replay skips the existing item, including legacy records without Workflow metadata, because a provider run may already have been accepted. Use the host runtime context for provider reconciliation. `runtime: false` permits inline retries for trigger preparation failures when no Workflow dispatch is recorded. Inline replay must persist the running state before execution. A later replay skips that Invocation if completion persistence fails. Fresh items can still execute inline without a discovered identity.
 
 `defineAgentInvocations()` returns `getSummary(id)` for metadata reads without observations. Every store must implement this method. Use `get(id)` for the full record or `get(id, { observationNames: ["agent.invocation.finish"] })` to read only observations with those exact names. An empty list returns no observations. The built-in SQL stores filter observation payloads inside the database. Custom stores can apply the same option to avoid loading unrelated payloads; the Invocations wrapper also filters their returned records. Both methods return `undefined` when the Invocation does not exist.
 

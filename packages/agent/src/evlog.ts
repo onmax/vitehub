@@ -277,7 +277,8 @@ export interface AgentEvlogHost {
     hook(name: "evlog:drain", callback: (context: DrainContext) => void): unknown
     hook(name: "error", callback: (error: unknown, context: { event?: { req: Request & { context?: { requestId?: string } } } }) => void): unknown
     hook(name: "close", callback: () => Promise<void>): unknown
-    removeHook?(name: "request" | "evlog:drain" | "error" | "close", callback: unknown): unknown
+    /** Remove a callback when the host hook API does not return a disposer. */
+    removeHook(name: "request" | "evlog:drain" | "error" | "close", callback: unknown): unknown
   }
 }
 

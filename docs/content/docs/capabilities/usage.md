@@ -118,6 +118,6 @@ Invoke the Agent with a model that reports token usage. Confirm that the Finish 
 
 ## Related
 
-- [Agent Invocations](/docs/concepts/agent-invocations)
+- [Agent Invocations](/docs/agents/invocations)
 - [Runtime events](/docs/reference/runtime-events)
 - [Custom capabilities](/docs/capabilities/custom-capabilities)
