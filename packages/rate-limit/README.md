@@ -100,20 +100,31 @@ Cloudflare enforcement is best-effort, location-scoped, and limited to `10s` and
 
 Use `createRateLimiter()` when the application selects the driver and handles the decision. A production driver must implement one atomic `consume()` operation for its backend. A generic KV `get()` followed by `set()` is not safe under concurrent requests.
 
-Drivers return `[null, result]` after consuming the counter. They return `[error, undefined]` only for an expected operational outage. The limiter then returns `reason: "unavailable"` and sets `allowed` from the failure policy, which defaults to deny. ViteHub-owned configuration errors, malformed provider results, and implementation defects throw Nostics diagnostics with `RATE_LIMIT_B####` or `RATE_LIMIT_R####` codes. Application driver errors keep their identity. See [Errors and diagnostics](https://vitehub.dev/docs/reference/errors-diagnostics).
+Drivers return `[null, result]` after consuming the counter. They return `[error, undefined]` only for an expected operational outage. The limiter then returns `reason: "unavailable"` and sets `allowed` from the failure policy, which defaults to deny. ViteHub-owned configuration errors, malformed provider results, and implementation defects throw Nostics diagnostics with `RATE_LIMIT_B####` or `RATE_LIMIT_R####` codes. Application driver errors keep their identity. See [Errors and diagnostics](https://vitehub.dev/docs/reference/diagnostics).
 
 The limiter exposes its resolved `policy` and the driver's declared `capabilities`, including enforcement, counter scope, rejected-attempt behavior, and supported windows. Inspect them when deciding whether a driver fits a deployment.
+
+## Read or reset a counter
+
+`limiter.peek({ key })` reads the counter of a key without consuming a token. `limiter.reset({ key })` deletes the counter. A driver supports them through optional `peek(input)` and `reset(input)` methods. Like `consume()`, `peek()` returns `[null, value]` or `[error, undefined]`. The `reset()` method returns a one-element tuple, `[null]` or `[error]`. When the driver omits a method, the result has `status: "unsupported"` and a `reason`.
+
+| Driver     | `peek()`                                                                  | `reset()`             |
+| ---------- | ------------------------------------------------------------------------- | --------------------- |
+| memory     | `used`, `remaining`, and `resetAt` in this process. `used: 0` when no counter exists. | Deletes the counter.  |
+| cloudflare | `unsupported`. The binding exposes only `limit()`, which consumes a token. | `unsupported`.        |
+
+For managed guards, `peekRateLimit(id, key)` and `resetRateLimit(id, key)` use the counters of `requireRateLimit()` in the current runtime. In development, `vitehub rate-limit peek <id> <key>` and `vitehub rate-limit reset <id> <key>` call them in the running Vite + Nitro server through a guarded dev-only endpoint. Nuxt and plain Vite return status 501.
 
 ## Public imports
 
 | Import                                    | Purpose                                                                   |
 | ----------------------------------------- | ------------------------------------------------------------------------- |
-| `@vite-hub/rate-limit`                    | `requireRateLimit()`, `createRateLimiter()`, and public contract types    |
+| `@vite-hub/rate-limit`                    | `requireRateLimit()`, `createRateLimiter()`, `peekRateLimit()`, `resetRateLimit()`, and public contract types |
 | `@vite-hub/rate-limit/drivers/memory`     | Process-local fixed-window driver                                         |
 | `@vite-hub/rate-limit/drivers/cloudflare` | Direct adapter for a request-scoped Cloudflare Rate Limiting binding      |
 | `@vite-hub/rate-limit/vite`               | Source discovery, runtime setup, manifest generation, and provider output |
 
-`@vite-hub/rate-limit/runtime` is reserved for framework integrations. Application code should use the guard or a direct Rate Limiter.
+`@vite-hub/rate-limit/runtime`, `@vite-hub/rate-limit/runtime/console`, and `@vite-hub/rate-limit/cli` are reserved for framework integrations. Application code should use the guard or a direct Rate Limiter.
 
 ## Go deeper
 
