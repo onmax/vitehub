@@ -348,7 +348,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("retargets a stacked PR to the default branch after its parent merged there", async () => {
-    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
+    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { sha: "c".repeat(40), ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
     const f = await fixture(false, false, { base: "feat/parent", parents });
     try {
       await f.reconcile();
@@ -359,7 +359,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("keeps a stacked PR on its base while the parent is unmerged or landed elsewhere", async () => {
-    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "feat/grandparent" } }];
+    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { sha: "c".repeat(40), ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "feat/grandparent" } }];
     const f = await fixture(false, false, { base: "feat/parent", parents });
     try {
       await f.reconcile();

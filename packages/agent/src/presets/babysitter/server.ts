@@ -263,12 +263,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   }
 
   /** Retries a provider rate limit three times, then blocks admission for an hour. */
-  async function runWithProviderRetry<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  async function runWithProviderRetry<T>(run: () => Promise<T>, signal: AbortSignal, canRetry: () => boolean = () => true): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try {
         return await run();
       } catch (error) {
-        if (isAbortError(error) || !isProviderRateLimit(error)) throw error;
+        if (isAbortError(error) || !isProviderRateLimit(error) || !canRetry()) throw error;
         if (attempt === 3) {
           await pullRequestInbox.setMeta("provider-quota-blocked-until", Date.now() + 60 * 60_000);
           throw error;
@@ -646,7 +646,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   messages: [createMessage({ role: "user", text: userMessage })],
                 },
                 { schedule: { ...schedule, runId }, output: "drained" },
-              ), abortSignal);
+              ), abortSignal, () => !pushSucceeded);
               const validated = babysitterPassResultSchema["~standard"].validate(result);
               if ("issues" in validated)
                 throw new Error("Babysitter returned an invalid pass result.");

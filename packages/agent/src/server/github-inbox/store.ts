@@ -309,6 +309,10 @@ export class PullRequestInbox {
     if (s.generation === s.handled) s.dirtyAt = this.clock()
     s.generation++; s.nextAt = 0; s.attempts = 0
     s.revision = (s.revision ?? 0) + 1
+    const head = s.pr?.head?.sha
+    if (head && s.progressBudget?.head === head && s.progressBudget.exhausted) {
+      s.progressBudget = { ...s.progressBudget, count: 0, exhausted: false, resetReason: reason }
+    }
     if (!s.lease) s.status = s.wait ? 'waiting' : 'ready'
     s.reasons = [...new Set([...s.reasons, reason])]
   }
@@ -483,7 +487,7 @@ export class PullRequestInbox {
           || event === 'status' && payload.state === 'pending'
         const wake = (changed || !s.pr) && !pendingCi
         if (wake) this.dirty(s, `${event}:${payload.action ?? check?.conclusion ?? payload.state ?? 'updated'}`)
-        else if (changed) s.revision = (s.revision ?? 0) + 1
+        else if (changed && !pendingCi) s.revision = (s.revision ?? 0) + 1
         const exhausted = s.progressBudget?.exhausted && s.progressBudget.head === s.pr?.head?.sha
         const eligible = this.eligible(repository, s.pr)
         if (s.pr && !eligible) {
