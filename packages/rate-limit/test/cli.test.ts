@@ -141,6 +141,39 @@ describe("Rate Limit review regressions", () => {
     }
   })
 
+  it.each([false, true])("redacts credentials in argument failures with JSON %s", async json => {
+    for (const argument of ["--token=sk_live_secret", "--api-key=hidden-key", "token=hidden-token", "Bearer hidden-bearer", "http://user:hidden-password@host"]) {
+      const output = context()
+      const fetch = vi.fn()
+      await expect(runRateLimitCli(["peek", "login", "key", argument, ...(json ? ["--json"] : [])], output.context, { fetch })).resolves.toBe(1)
+      const diagnostic = output.stdout.output() + output.stderr.output()
+      expect(diagnostic).not.toContain("sk_live_secret")
+      expect(diagnostic).not.toContain("hidden-")
+      expect(diagnostic).toContain("[redacted]")
+      if (json) { expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message"); expect(output.stderr.output()).toBe("") }
+      else expect(output.stdout.output()).toBe("")
+      expect(fetch).not.toHaveBeenCalled()
+    }
+  })
+
+  it("redacts credentials in unknown command names", async () => {
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runRateLimitCli(["token=hidden-command"], output.context, { fetch })).resolves.toBe(1)
+    expect(output.stderr.output()).toContain("token=[redacted]")
+    expect(output.stderr.output()).not.toContain("hidden-command")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])("redacts provider errors and preserves the error code with JSON %s", async json => {
+    const output = context()
+    const fetch = devServer({ error: { code: "PROVIDER_OFFLINE", message: "token=hidden-provider" } }, { status: 500 })
+    await expect(runRateLimitCli(["peek", "login", "key", ...(json ? ["--json"] : [])], output.context, { fetch })).resolves.toBe(1)
+    expect(output.stdout.output() + output.stderr.output()).not.toContain("hidden-provider")
+    if (json) expect(JSON.parse(output.stdout.output())).toEqual({ error: { code: "PROVIDER_OFFLINE", message: "token=[redacted]" } })
+    else expect(output.stderr.output()).toBe("token=[redacted]\n")
+  })
+
   it.each([false, true])("redacts whitespace credentials from environment URL with JSON %s", async json => {
     const output = context()
     Object.assign(output.context.env, { VITEHUB_DEV_SERVER_URL: "http://user:sec ret@host:bad" })
