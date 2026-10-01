@@ -16,6 +16,7 @@
     "./definition-catalog": "./dist/definition-catalog.js",
     "./definition-discovery": "./dist/definition-discovery.js",
     "./deployment": "./dist/deployment.js",
+    "./dev-endpoint": "./dist/dev-endpoint.js",
     "./hosting": "./dist/hosting.js",
     "./integrations/hex": "./dist/integrations/hex.js",
     "./object": "./dist/object.js",
