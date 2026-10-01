@@ -362,9 +362,8 @@ export class PullRequestInbox {
       await this.put(tx, s); return s
     })
   }
-  async ingest(id: string, event: string, value: unknown): Promise<GitHubInboxDeliveryResult> {
+  private async ingestIn(tx: PullRequestInboxExecutor, id: string, event: string, value: unknown): Promise<GitHubInboxDeliveryResult> {
     const payload = parseDelivery(value)
-    return await this.transaction(async tx => {
       const t = this.tables
       if ((await tx.execute(`SELECT id FROM ${t.deliveries} WHERE scope=? AND id=?`, [this.scope, id])).length) return { accepted: true, duplicate: true, queued: [], updated: [] }
       const repository = String(payload.repository?.full_name ?? '').toLowerCase()
@@ -499,6 +498,17 @@ export class PullRequestInbox {
         if (wake && !s.wait && s.status !== 'terminal' && !exhausted) queued.push(number)
       }
       return await finish(numbers.size ? undefined : 'no matching PR head')
+  }
+  async ingest(id: string, event: string, value: unknown): Promise<GitHubInboxDeliveryResult> {
+    return await this.transaction(tx => this.ingestIn(tx, id, event, value))
+  }
+  /** Apply multiple deliveries in one serialized storage transaction. */
+  async ingestMany(items: readonly { id: string; event: string; value: unknown }[]): Promise<GitHubInboxDeliveryResult[]> {
+    if (!items.length) return []
+    return await this.transaction(async tx => {
+      const results: GitHubInboxDeliveryResult[] = []
+      for (const item of items) results.push(await this.ingestIn(tx, item.id, item.event, item.value))
+      return results
     })
   }
   async claim(limit: number): Promise<Claim[]> {
@@ -686,7 +696,10 @@ export class PullRequestInbox {
           const snapshot = legacySnapshot(JSON.parse(stringValue(row.value)))
           if (!snapshot || !this.repositories.includes(snapshot.repository)) { skipped++; continue }
           const existing = await this.getIn(tx, snapshot.repository, snapshot.number)
-          if (existing && (existing.lease !== null || existing.generation >= snapshot.generation)) { skipped++; continue }
+          // A finalized destination is durable evidence. Legacy conversion clears
+          // leases and maps working/attention to ready, so generation alone cannot
+          // prevent resurrecting a terminal row from an older file.
+          if (existing && (existing.status === 'terminal' || existing.lease !== null || existing.generation >= snapshot.generation)) { skipped++; continue }
           await this.put(tx, snapshot); imported++
         }
         for (const row of meta) {
