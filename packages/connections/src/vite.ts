@@ -92,7 +92,7 @@ function isConnectionDefinitionFile(
   if (/\.connection\.(?:c|m)?[jt]s$/i.test(normalized)) return true;
   return (serverDirs ?? [resolve(projectRoot, "server")]).some((directory) => {
     const connectionDirectory = `${resolve(directory, "connections").replace(/\\/g, "/")}/`;
-    return normalized.startsWith(connectionDirectory) && /\.(?:c|m)?[jt]s$/i.test(normalized);
+    return normalized.startsWith(connectionDirectory) && /\.(?:[jt]sx?|[cm][jt]s)$/i.test(normalized);
   });
 }
 

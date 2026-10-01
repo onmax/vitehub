@@ -31,7 +31,7 @@ export interface GmailBatchModifyMessagesRequest {
 /** Field values for a classification label. */
 export interface GmailClassificationLabelFieldValue {
   /** Required. */
-  fieldId?: string
+  fieldId: string
   /** Selection choice ID for the selection option. */
   selection?: string
 }
@@ -39,7 +39,7 @@ export interface GmailClassificationLabelFieldValue {
 /** Classification Labels applied to the email message. */
 export interface GmailClassificationLabelValue {
   /** Required. */
-  labelId?: string
+  labelId: string
   /** Field values for the given classification label ID. */
   fields?: Array<GmailClassificationLabelFieldValue>
 }

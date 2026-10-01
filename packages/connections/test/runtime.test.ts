@@ -150,6 +150,52 @@ describe("connect", () => {
     await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
   })
 
+  it("blocks the provider call when revoke follows a refreshed token replacement", async () => {
+    const definition = mailConnection()
+    const test = createTestRuntime({ ...definition, provider: { ...definition.provider, revocationEndpoint: undefined } })
+    await connect(test, { expires_in: 1 })
+    let enter!: () => void
+    let resume!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const release = new Promise<void>(resolve => { resume = resolve })
+    const put = test.store.state.putForToken
+    test.store.state.putForToken = async (state, revision) => {
+      if (state.status === "connected") { enter(); await release }
+      return await put(state, revision)
+    }
+    test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600 } })
+    const call = test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    await entered
+    await test.runtime.revoke({ name: "mail" })
+    resume()
+    await expect(call).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(test.provider.calls.filter(call => call.url.startsWith("https://mail.example.com/"))).toHaveLength(0)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "revoked" })
+  })
+
+  it("revokes the issued grant when a concurrent callback loses token replacement", async () => {
+    const test = createTestRuntime()
+    const second = createConnectionsRuntime({ definitions: { mail: mailConnection() }, store: test.store, fetch: test.provider.fetch, now: () => test.now.value })
+    const replace = test.store.bridge.replace
+    let arrived = 0
+    let resume!: () => void
+    const release = new Promise<void>(resolve => { resume = resolve })
+    test.store.bridge.replace = async (...args) => {
+      if (++arrived === 2) resume()
+      await release
+      return await replace(...args)
+    }
+    const results = await Promise.allSettled([
+      connect(test, { access_token: "access-one", refresh_token: "refresh-one", id_token: "account-one" }),
+      connect({ ...test, runtime: second }, { access_token: "access-two", refresh_token: "refresh-two", id_token: "account-two" }),
+    ])
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1)
+    const losing = results.findIndex(result => result.status === "rejected")
+    expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke"))
+      .toEqual([expect.objectContaining({ body: `token=refresh-${losing === 0 ? "one" : "two"}` })])
+    expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: `account-${losing === 0 ? "two" : "one"}` }, status: "connected" })
+  })
+
   it("keeps one account per Connection", async () => {
     const test = createTestRuntime()
     await connect(test)
@@ -314,6 +360,21 @@ describe("calls", () => {
     expect((await client.fetch("https://mail.example.com/mail/v1/users/me/labels")).status).toBe(200)
     expect(await rejection(client.fetch("https://attacker.example.com/"))).toMatchObject({ code: "CONNECTION_INVALID" })
     expect(await rejection(client.fetch("https://mail.example.com/mail/v1/x", { body: "{}", method: "POST" }))).toMatchObject({ code: "CONNECTION_DENIED" })
+  })
+
+  it("applies the JSON content type only to typed method bodies", async () => {
+    const test = createTestRuntime(mailConnection({ server: { read: true, write: ["fetch", "mail.messages.modify"] } }))
+    await connect(test)
+    const client = test.runtime.client("mail", {})
+    await client.fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { body: "label=INBOX", method: "POST" })
+    const raw = test.provider.calls.at(-1)!
+    expect(raw.headers.has("content-type")).toBe(false)
+    expect(new Request(raw.url, { body: raw.body, headers: raw.headers, method: raw.method }).headers.get("content-type"))
+      .toBe("text/plain;charset=UTF-8")
+    await client.fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { body: "label=INBOX", headers: { "Content-Type": "application/x-www-form-urlencoded" }, method: "POST" })
+    expect(test.provider.calls.at(-1)!.headers.get("content-type")).toBe("application/x-www-form-urlencoded")
+    await client.call("mail.messages.modify", { id: "m1", requestBody: { addLabelIds: ["INBOX"] }, userId: "me" })
+    expect(test.provider.calls.at(-1)!.headers.get("content-type")).toBe("application/json")
   })
 
   it("preserves caller Accept headers and defaults absent values", async () => {

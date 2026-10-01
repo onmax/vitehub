@@ -126,11 +126,11 @@ describe("hubConnections", () => {
     ]);
   });
 
-  it("writes registry types and refreshes on hot update", async () => {
+  it.each(["ts", "tsx", "jsx"])("writes registry types and refreshes on %s hot update", async (extension) => {
     const root = await createTempProject();
     const plugin = hubConnections();
     await (plugin.configResolved as (config: { root: string }) => Promise<void>)({ root });
-    const added = await writeConnection(root, "server/connections/slack.ts");
+    const added = await writeConnection(root, `server/connections/slack.${extension}`);
     const invalidateModule = vi.fn();
     await (plugin.handleHotUpdate as (context: unknown) => Promise<void>)({
       file: added,

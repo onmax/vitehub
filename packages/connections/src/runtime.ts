@@ -50,6 +50,7 @@ interface ProviderRequest {
   body?: string
   highRisk: boolean
   input?: unknown
+  json?: boolean
   method: string
   url: string
   write: boolean
@@ -375,7 +376,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       if (!current) throw new ConnectionError("reauth_required", `Connection "${name}" is not connected.`, { details: { connection: name } })
       return parseToken(current.value, name)
     }
-    await setStatus(name, { refreshedAt: new Date(now()).toISOString(), scopes: next.scopes, status: "connected" }, revision)
+    if (!await setStatus(name, { refreshedAt: new Date(now()).toISOString(), scopes: next.scopes, status: "connected" }, revision)) return await readCurrentToken(name)
     return next
   }
 
@@ -414,7 +415,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
               ...init.headers,
               authorization: `${current.tokenType === "bearer" ? "Bearer" : current.tokenType} ${current.accessToken}`,
             }
-            if (providerRequest.body !== undefined && !Object.keys(headers).some(key => key.toLowerCase() === "content-type")) headers["content-type"] = "application/json"
+            if (providerRequest.json && providerRequest.body !== undefined && !Object.keys(headers).some(key => key.toLowerCase() === "content-type")) headers["content-type"] = "application/json"
             return request(providerRequest.url, {
               body: providerRequest.body,
               headers,
@@ -513,7 +514,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const info = connectionActions(context.definition).find(candidate => candidate.id === action)
     if (!found || !info) throw new ConnectionError("invalid", `Connection "${context.name}" does not expose ${action}.`, { details: { action, connection: context.name } })
     const built = buildMethodRequest(found.catalog, found.method, input)
-    const response = await governed(context, { ...built, action, highRisk: info.highRisk, input, write: info.write }, { input, kind: "method" }, { signal })
+    const response = await governed(context, { ...built, action, highRisk: info.highRisk, input, json: true, write: info.write }, { input, kind: "method" }, { signal })
     return response ? await readResponse(response) : undefined
   }
 
@@ -635,7 +636,14 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),
     ])
     token.accountId = account?.id
-    const replacement = await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
+    let replacement: { revision: string }
+    try {
+      replacement = await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
+    }
+    catch (error) {
+      await revokeProviderToken(loaded, response.refresh_token ?? response.access_token)
+      throw error
+    }
     const timestamp = new Date(now()).toISOString()
     await connections.state.putForToken({
       accountEmail: account?.email,

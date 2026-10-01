@@ -111,11 +111,16 @@ function type(schema: DiscoverySchema, indent: string): string {
   }
 }
 
+function isRequiredProperty(schema: DiscoverySchema): boolean {
+  // Gmail marks required body fields with "Required." when the Discovery flag is absent.
+  return schema.required ?? schema.description?.startsWith("Required.") ?? false
+}
+
 function objectType(properties: Record<string, DiscoverySchema>, indent: string, required: readonly string[] = []): string {
   const inner = `${indent}  `
   const lines = Object.entries(properties).flatMap(([name, schema]) => [
     ...summary(schema.description, inner),
-    `${inner}${/^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name)}${required.includes(name) ? "" : "?"}: ${schema.repeated ? `Array<${type(schema, inner)}>` : type(schema, inner)}`,
+    `${inner}${/^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name)}${required.includes(name) || isRequiredProperty(schema) ? "" : "?"}: ${schema.repeated ? `Array<${type(schema, inner)}>` : type(schema, inner)}`,
   ])
   return lines.length ? `{\n${lines.join("\n")}\n${indent}}` : "Record<string, never>"
 }

@@ -4,7 +4,7 @@ import { defineConnection } from "../src/definition.ts"
 import { google } from "../src/google.ts"
 import { useConnection } from "../src/runtime/state.ts"
 
-import type { GmailLabel } from "../src/google.ts"
+import type { GmailClassificationLabelFieldValue, GmailClassificationLabelValue, GmailLabel } from "../src/google.ts"
 import type { ConnectionClient, ConnectionDefinition } from "../src/types.ts"
 
 const connection = defineConnection({
@@ -27,6 +27,10 @@ declare global {
 }
 
 describe("Connection types", () => {
+  it("requires Gmail classification label identifiers in request bodies", () => {
+    expectTypeOf<GmailClassificationLabelFieldValue>().toEqualTypeOf<{ fieldId: string, selection?: string }>()
+    expectTypeOf<GmailClassificationLabelValue>().toEqualTypeOf<{ fields?: GmailClassificationLabelFieldValue[], labelId: string }>()
+  })
   it("exposes only selected methods", () => {
     expectTypeOf(client.gmail.users.labels.list).toBeFunction()
     expectTypeOf(client.gmail.users.messages.modify).toBeFunction()
