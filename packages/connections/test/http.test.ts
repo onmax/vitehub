@@ -138,7 +138,7 @@ describe("createConnectionsHandler", () => {
 
   it("dispatches and completes OAuth under an application base", async () => {
     const test = createTestRuntime()
-    const handler = createConnectionsHandler({ basePath: "/portal/_vitehub/connections", runtime: () => test.runtime })
+    const handler = createConnectionsHandler({ actor: () => "user:local", basePath: "/portal/_vitehub/connections", runtime: () => test.runtime })
     const response = await handler(new Request(`${origin}/portal/_vitehub/connections`, {
       body: JSON.stringify({ action: "list" }), headers: { "content-type": "application/json", origin }, method: "POST",
     }))
@@ -162,7 +162,7 @@ describe("createConnectionsHandler", () => {
     for (let index = 0; index < 101; index++) {
       await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:mail", createdAt: new Date().toISOString(), id: `approval-${index}`, input: {}, name: "mail", status: "pending" })
     }
-    const handler = createConnectionsHandler({ runtime: () => test.runtime })
+    const handler = createConnectionsHandler({ actor: () => "user:local", runtime: () => test.runtime })
     const response = await handler(post({ action: "approvals", name: "mail", status: "pending" }))
     // SAFETY: The local handler serializes the approval list from the real test store.
     const result = await response.json() as { approvals: Array<{ id: string }> }
@@ -171,7 +171,7 @@ describe("createConnectionsHandler", () => {
     const denied = await handler(post({ action: "deny", id: "approval-0" }))
     expect(denied.status).toBe(200)
     expect(await test.store.approvals.get("approval-0")).toMatchObject({ status: "denied" })
-    expect(await test.runtime.approvals({})).toHaveLength(100)
+    expect((await test.runtime.approvals({})).approvals).toHaveLength(100)
   })
 
   it("rejects cross-origin, non-JSON, and invalid requests", async () => {

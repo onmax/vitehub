@@ -275,8 +275,8 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
       },
       async list({ before, name, status }) {
         await initialize()
-        const rows = await db.all(sql`SELECT ${approvalColumns} FROM vitehub_connection_approvals WHERE 1 = 1 ${name ? sql`AND name = ${name}` : sql``} ${status ? sql`AND status = ${status}` : sql``} ${before ? sql`AND sequence < (SELECT sequence FROM vitehub_connection_approvals WHERE id = ${before})` : sql``} ORDER BY sequence DESC LIMIT 101`)
-        const approvals = rows.slice(0, 100).map(toApproval)
+        const rows = await db.all(sql`SELECT ${approvalColumns} FROM vitehub_connection_approvals WHERE 1 = 1 ${name ? sql`AND name = ${name}` : sql``} ${status ? sql`AND status = ${status}` : sql``} ${before ? sql`AND sequence < (SELECT sequence FROM vitehub_connection_approvals WHERE id = ${before})` : sql``} ORDER BY sequence DESC ${status === "pending" ? sql`` : sql`LIMIT 101`}`)
+        const approvals = (status === "pending" ? rows : rows.slice(0, 100)).map(toApproval)
         const nextCursor = rows.length > 100 ? approvals.at(-1)?.id : undefined
         return nextCursor ? { approvals, nextCursor } : { approvals }
       },

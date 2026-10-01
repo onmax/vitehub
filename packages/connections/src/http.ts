@@ -15,6 +15,7 @@ const STATE_COOKIE = "vitehub_connection_state";
 export interface ConnectionsHandlerOptions {
   /** Identify the person who manages Connections, from an authenticated session. Missing or invalid identities are denied. */
   actor?: (request: Request) => string | undefined | Promise<string | undefined>;
+  basePath?: string;
   runtime?: () => ConnectionsRuntime;
 }
 
@@ -150,6 +151,7 @@ export function createConnectionsHandler(
   options: ConnectionsHandlerOptions = {},
 ): (request: Request) => Promise<Response> {
   const runtime = () => (options.runtime ?? getConnectionsRuntime)();
+  const route = options.basePath?.replace(/\/+$/, "") || CONNECTIONS_ROUTE;
   return async (request) => {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "");
@@ -165,31 +167,31 @@ export function createConnectionsHandler(
           },
           403,
         );
-      if (request.method === "GET" && path.startsWith(`${CONNECTIONS_ROUTE}/connect/`)) {
+      if (request.method === "GET" && path.startsWith(`${route}/connect/`)) {
         const connection = v.safeParse(
           name,
-          decodeURIComponent(path.slice(`${CONNECTIONS_ROUTE}/connect/`.length)),
+          decodeURIComponent(path.slice(`${route}/connect/`.length)),
         );
         if (!connection.success)
           return page("Connection failed", "The Connection name is invalid.", 400);
         const authorization = await runtime().authorize({
           actor,
           name: connection.output,
-          redirectUri: `${url.origin}${CONNECTIONS_ROUTE}/callback`,
+          redirectUri: `${url.origin}${route}/callback`,
         });
         return new Response(null, {
           headers: {
             "cache-control": "no-store",
             location: authorization.url,
-            "set-cookie": `${STATE_COOKIE}=${authorization.state}; Path=${CONNECTIONS_ROUTE}; HttpOnly; SameSite=Lax; Max-Age=600${url.protocol === "https:" ? "; Secure" : ""}`,
+            "set-cookie": `${STATE_COOKIE}=${authorization.state}; Path=${route}; HttpOnly; SameSite=Lax; Max-Age=600${url.protocol === "https:" ? "; Secure" : ""}`,
           },
           status: 302,
         });
       }
-      if (request.method === "GET" && path === `${CONNECTIONS_ROUTE}/callback`) {
+      if (request.method === "GET" && path === `${route}/callback`) {
         const state = url.searchParams.get("state");
         const code = url.searchParams.get("code");
-        const clear = `${STATE_COOKIE}=; Path=${CONNECTIONS_ROUTE}; HttpOnly; SameSite=Lax; Max-Age=0`;
+        const clear = `${STATE_COOKIE}=; Path=${route}; HttpOnly; SameSite=Lax; Max-Age=0`;
         if (url.searchParams.get("error"))
           return page("Connection cancelled", "The provider did not grant access.", 400);
         if (!state || !code || cookie(request, STATE_COOKIE) !== state)
@@ -207,7 +209,7 @@ export function createConnectionsHandler(
         response.headers.append("set-cookie", clear);
         return response;
       }
-      if (path !== CONNECTIONS_ROUTE)
+      if (path !== route)
         return json({ error: { code: "CONNECTION_NOT_FOUND", message: "Not found." } }, 404);
       if (request.method !== "POST")
         return json({ error: { code: "CONNECTION_METHOD", message: "Use POST." } }, 405, {
@@ -255,7 +257,7 @@ export function createConnectionsHandler(
         case "activity":
           return json({ activity: await connections.activity(input) });
         case "approvals":
-          return json({ approvals: await connections.approvals(input) });
+          return json(await connections.approvals(input));
         case "approve":
           return json(await connections.approve({ actor, id: input.id }));
         case "deny":
