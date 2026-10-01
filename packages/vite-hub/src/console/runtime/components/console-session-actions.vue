@@ -28,7 +28,7 @@ const confirmOpen = ref(false);
 const rerunUnavailable: Record<string, string> = {
   "input-has-messages": "Rerun is unavailable: this session received messages or attachments",
   "input-not-captured": "Rerun is unavailable: the prompt was not recorded",
-  "input-truncated": "Rerun is unavailable: the recorded prompt is incomplete",
+  "input-truncated": "Rerun is unavailable: the recorded input is incomplete",
 };
 const rerunLabel = computed(() => {
   if (props.rerun.available) return "Rerun with the same prompt";
