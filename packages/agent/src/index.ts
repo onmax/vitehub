@@ -1076,10 +1076,10 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
       const stableId = context.run?.runId || ""
       const stored = await agent.invocations.getByRunId(stableId, agentInvocationName(agent, context))
       const dispatch = stored?.workflow
-      // Recorded dispatches remain durable work even if this caller cannot
-      // dispatch a Workflow, such as a discovery default without its identity.
+      // An existing discovery-default reservation needs its Agent identity
+      // even when legacy metadata cannot show whether dispatch was accepted.
       if (!canDispatchAgentWorkflow(binding, context)) {
-        if (dispatch) throw new AgentInvocationClaimConflict()
+        if (binding || dispatch) throw new AgentInvocationClaimConflict()
         return journal
       }
       const workflowName = resolveAgentWorkflowName(agent, binding, context)

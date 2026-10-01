@@ -218,7 +218,7 @@ describe("replayChannel()", () => {
     } finally { release(); await initial; vi.useRealTimers() }
   })
 
-  it.each([false, undefined] as const)("claims before an asynchronous trigger write and retries failed trigger preparation with runtime %s", async runtime => {
+  it.each([false, undefined] as const)("claims before an asynchronous trigger write and recovers pending items according to runtime %s", async runtime => {
     const invocations = memoryInvocations()
     let entered!: () => void
     let release!: () => void
@@ -246,7 +246,14 @@ describe("replayChannel()", () => {
       expect((await first).failed).toBe(1)
       expect(run).not.toHaveBeenCalled()
       fail = false
-      expect((await replayChannel(agent, "mailbox", { limit: 1 })).processed).toBe(1)
+      if (runtime === undefined) {
+        expect((await replayChannel(agent, "mailbox", { limit: 1 })).skipped).toBe(1)
+        expect(invoke).toHaveBeenCalledOnce()
+        expect(run).not.toHaveBeenCalled()
+        expect((await replayChannel(agent, "mailbox", { force: true, limit: 1 })).processed).toBe(1)
+      } else {
+        expect((await replayChannel(agent, "mailbox", { limit: 1 })).processed).toBe(1)
+      }
       expect(invoke).toHaveBeenCalledTimes(2)
       expect(run).toHaveBeenCalledOnce()
     } finally { release(); await first }
@@ -356,7 +363,7 @@ describe("defineChannel({ history })", () => {
     const rawChannel = {
       ...channel,
       history: { ...channel.history, trigger: undefined },
-      triggers: { ...channel.triggers, other: channel.triggers.received },
+      triggers: { ...channel.triggers, other: channel.triggers?.received },
     }
     const agent = defineAgent({ channels: { mailbox: rawChannel } as never, driver: { run: () => "ok" }, runtime: false })
     await expect(replayChannel(agent, "mailbox", { force: true })).rejects.toMatchObject({ code: "AGENT_R0933" })

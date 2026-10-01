@@ -196,6 +196,8 @@ Replay persists the trigger's run metadata on the claimed Invocation before exec
 
 Native Vercel replay retains the logical replay ID in the Invocation and stores the provider-assigned Workflow ID in `workflow`. Dispatch intent is persisted before submission. If acknowledgement is lost before a provider ID can be retained, replay reports the unknown outcome and blocks resubmission. The Workflow worker confirms its physical ID before Driver execution. Recovery and cancellation use the provider ID.
 
+A pending replay reservation for a discovery-default Workflow requires the discovered Agent identity to recover. Without that identity, replay skips the existing item, including legacy records without Workflow metadata, because a provider run may already have been accepted. Pass the host runtime context to recover it. `runtime: false` permits inline retries when no Workflow dispatch is recorded. Fresh items can still execute inline without a discovered identity.
+
 An inline Agent runs each item before it reads the next one and reports it as `completed`. An Agent with a [Workflow runtime](/docs/agents/invocations) starts one durable Workflow run per item and reports it as `started`. A trigger error, such as invalid item input, marks that item `failed`, and replay continues.
 
 Built-in Channels do not provide `history`. The Telegram Bot API cannot read past messages. Slack, Discord, Teams, and GitHub history are not built in; define a custom Channel with a history Collection when you need them.
