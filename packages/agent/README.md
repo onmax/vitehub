@@ -84,6 +84,8 @@ Set `defineAgent({ intercept })` to finish an Invocation before the Driver runs.
 
 Custom Capability tools infer their handler input from inline Standard Schema validators. Schema transforms and optional outputs keep their types. A mismatched handler is a type error. Raw JSON Schema needs an explicit handler input type. Use `defineCapability<Config>()({...})` when you set the runtime config type. See the [custom Capability guide](https://vitehub.dev/docs/capabilities/custom-capabilities).
 
+Tools can declare `title`, a short past-tense label such as `Searched meals`, and `icon`, an Iconify name such as `i-lucide-utensils`. Tool events use `title` when the driver gives none. `inspectAgentTools()` records them as `label` and `icon`, and metadata-only journals keep both. The model does not receive them. Built-in `db`, `kv`, and `blob` tools and Workspace `materialize_sources` declare both.
+
 ## Coding provider drivers
 
 Use `driver: "codex"` or `driver: "claude-code"` for the defaults, including approval-required provider actions. A tagged Driver config exposes shared model, environment, instruction, permission, output, and capacity options, plus Codex credential and reasoning options.
@@ -215,7 +217,7 @@ Pass `--json` for the structured inspection contract.
 - `openapi()` turns an allowed OpenAPI `operationId` subset into bounded HTTP tools, or into a generated Capability CLI when `cli` is set.
 - `transcribe()` uses the [AI SDK transcription API](https://ai-sdk.dev/v7/docs/reference/ai-sdk-core/transcribe); `openRouterTranscriptionModel()` provides OpenRouter transcription without consumer-owned HTTP handling.
 - `createTranscription()` composes remote asynchronous submission and completion through a provider-neutral driver; `elevenLabsScribe()` is the built-in Scribe v2 adapter.
-- `mcp()` connects tools from [Model Context Protocol](https://modelcontextprotocol.io/) servers through `@ai-sdk/mcp`. Transient transport failures skip the affected server and record `vitehub.mcp.warnings` in the Invocation input context. Authentication, configuration, cancellation, protocol, and integrity failures remain fatal. Executor failures remain fatal.
+- `mcp()` connects tools from [Model Context Protocol](https://modelcontextprotocol.io/) servers through `@ai-sdk/mcp`. Transient transport failures skip the affected server and record `vitehub.mcp.warnings` in the Invocation input context. Authentication, configuration, cancellation, protocol, and integrity failures remain fatal. Executor failures remain fatal. Outside an Invocation, `callMcpTool(server, name, args)` from `@vite-hub/agent/mcp` calls one tool on the same server entry and returns `[error, value]`.
 - `kv()`, `blob()`, `db()`, and `email()` expose [`@vite-hub/kv`](../kv/README.md), [`@vite-hub/blob`](../blob/README.md), [`@vite-hub/database`](../database/README.md), and [`@vite-hub/email`](../email/README.md).
 - `sandbox()` and `schedule()` expose [`@vite-hub/sandbox`](../sandbox/README.md) and [`@vite-hub/schedule`](../schedule/README.md).
 - `usage()` requests provider usage metadata, estimates missing cost from Models.dev, and exposes the normalized Agent Usage Record through its typed Finish Extension. Its `metadata.pricing` flag is false when `pricing: false` disables estimation.
@@ -299,6 +301,8 @@ export default defineConfig({
 
 `provider: "sqlite"` uses the built-in libSQL-compatible state backend, so `file:` URLs work for local or explicitly persistent Node deployments and hosted libSQL URLs work remotely. Cloudflare, Vercel, and Netlify production output rejects `file:` Agent state before it can write to an ephemeral filesystem.
 
+Queued webhook deliveries in this state survive a restart. A persistent Nitro server resumes them when it starts, without an inbound request. Before the queue resumes, the server fails each Agent's pending or running invocations that started before this process. An invocation that a persisted queued delivery runs again under the same run ID stays active and continues with that delivery. Agents with a durable Workflow runtime are skipped. Vercel and Netlify output resumes the queue on the first webhook request and does not recover invocations.
+
 You can also wire the adapter manually when `chat({ state })` should own the state provider:
 
 ```ts
@@ -327,6 +331,10 @@ Learn more at [vitehub.dev](https://vitehub.dev).
 ## GitHub pull request Workspaces
 
 GitHub pull request Channels use `pullRequest.workspace.mount` for a custom repository mount. Omitting `workspace` mounts at `portal`. Both `workspace: true` and `workspace: {}` use the Workspace root. Set `workspace: false` to disable the contribution.
+
+Provider Drivers get the mount as a real Git checkout of the exact head SHA, with `origin`, the fetched base branch, and a local head branch that tracks the pull request branch. A declared GitHub Source of the same repository and scope at the same mount is replaced for the Invocation; a different repository or scope fails with an error that names the Source. Checkout setup rejects a head branch without an explicit head repository, including pull requests from deleted forks.
+
+Set `defineAgent({ github })` to a GitHub identity such as `createGitHubHost()`. Provider Drivers receive its `access().env` (`GH_TOKEN`, `GITHUB_TOKEN`, a Git credential helper, and the commit identity) before `driver.env`, and the pull request checkout and `git()` use the same credentials. `github({ app: host })` uses the identity for Channel API calls and also sets `defineAgent({ github })` when it is omitted.
 
 For GitHub Channels, `activity: { publicUrl: 'https://agent.example.com' }` links pull request webhook activity to its ViteHub Console invocation. The URL must be the Agent's public Console origin. `activity: true` keeps application-supplied links. See the [GitHub Channel guide](../../docs/content/docs/agents/channels.md#publish-agent-activity-without-opening-a-chat).
 
@@ -364,6 +372,21 @@ The child gets a fresh runtime from the parent's configuration. `name` is not in
 Child configuration overrides parent defaults. Channels, Sources, Skills, and hooks merge by key, replacing each matching definition or callback as a whole. Static Capabilities merge by `id`: the child replaces a matching Capability and appends new ones. A Capability resolver replaces the inherited list or resolver. Other arrays replace the parent array. A child `driver.launch` replaces the entire inherited launch command or resolver, including `onExit`. If the child omits `launch`, it inherits the parent launch. Changing a Driver kind or store provider replaces that configuration.
 
 `extends` accepts one definition created by `defineAgent()` in the same package instance. It does not discover files in the parent's directory. Compose shared instruction strings in TypeScript, or import Markdown with `?raw` and assign the composed string to `driver.instructions`. References such as `@../bot/instructions.md` remain literal text. Share Skills through explicit Sources or a directory link.
+
+A definition that is not discovered, such as one created in a Schedule, uses the colocated Skills of the discovered Agent it extends. It reads them when it runs, so module import order does not matter. Use `agentWithSkills()` to add Skills to such a definition without an Agent folder:
+
+```ts [server/schedules/changelog.ts]
+import { agentWithSkills, defineAgent } from 'vite-hub/agent'
+import botDev from '../agents/bot-dev/agent'
+import changelogSkill from './changelog-skill.md?raw'
+
+const changelogAgent = agentWithSkills(
+  defineAgent({ extends: botDev, name: 'changelog' }),
+  { 'changelog-writing': changelogSkill },
+)
+```
+
+Each key is a Skill name, and each value is its `SKILL.md` content. The result keeps the inherited Skills. A Skill with the same name replaces the inherited one.
 
 ### Named presets
 
@@ -518,7 +541,7 @@ reviews. The operation never approves, merges directly, or deletes a branch.
 If automatic repository branch deletion could affect open child PRs, it blocks.
 API failures propagate without a direct-merge fallback.
 
-`host.channel({ activity: true })` shares a GitHub host's credentials and identity.
+`host.channel({ activity: true })` is `github({ activity: true, app: host })`. It shares the host's credentials and identity.
 A provider `env` resolver can call `host.environment()` inside
 `withPullRequestCheckout()`. The environment binds to that callback's checkout,
 including concurrent callbacks. Await the entire agent run before returning.
