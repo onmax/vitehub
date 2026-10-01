@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises"
 import { resolve } from "node:path"
 
 import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
@@ -183,5 +184,20 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
     load(id) {
       if (id === resolvedConnectionsRegistryId) return renderRegistry(definitions, database)
     },
+  }
+}
+
+/** Remove declarations when a host disables Connections. */
+export function hubConnectionsTypesCleanup(): Plugin<{ prepareTypes: (options: { projectRoot: string }) => Promise<void> }> {
+  const prepareTypes = async (options: { projectRoot: string }): Promise<void> => {
+    const root = resolveViteHubProjectRoot(options.projectRoot)
+    await rm(resolve(root, ".vitehub/types/connections.d.ts"), { force: true })
+  }
+  return {
+    name: "@vite-hub/connections/types-cleanup",
+    enforce: "pre",
+    api: { prepareTypes },
+    config: config => prepareTypes({ projectRoot: resolve(config.root || process.cwd()) }),
+    configResolved: config => prepareTypes({ projectRoot: config.root }),
   }
 }

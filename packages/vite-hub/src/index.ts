@@ -12,7 +12,7 @@ import { hubAuth, resolveAuthViteConfig } from "@vite-hub/auth/vite"
 import { hubBlob, resolveBlobViteConfig } from "@vite-hub/blob/vite"
 import { hubBrowser } from "@vite-hub/browser/vite"
 import { hubChannels } from "@vite-hub/channels/vite"
-import { hubConnections } from "@vite-hub/connections/vite"
+import { hubConnections, hubConnectionsTypesCleanup } from "@vite-hub/connections/vite"
 import { hubDb } from "@vite-hub/database/vite"
 import { hubEmail, hubEmailOptionalPeerResolver } from "@vite-hub/email/vite"
 import { hubEnv } from "@vite-hub/env/vite"
@@ -866,6 +866,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
       importBase: "vite-hub/connections",
     }))
   }
+  else plugins.push(hubConnectionsTypesCleanup())
   if (blobEnabled) {
     plugins.push(hubBlob(
       configuredBlob,

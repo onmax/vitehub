@@ -980,11 +980,11 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined,
   }) ?? []
   // SAFETY: The plugin name identifies the Connections preparation API.
-  const connectionsPlugin = replayPlugins.find(plugin => plugin.name === "@vite-hub/connections/vite") as Plugin & {
+  const connectionsPlugin = replayPlugins.find(plugin => plugin.name === "@vite-hub/connections/vite" || plugin.name === "@vite-hub/connections/types-cleanup") as Plugin & {
     api?: { prepareTypes?: (options: { projectRoot: string, serverDirs?: string[] }) => Promise<void> }
   } | undefined
   await connectionsPlugin?.api?.prepareTypes?.({
-    projectRoot,
+    projectRoot: viteRoot,
     serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined,
   })
   const typesPlugin = replayPlugins.find(plugin => plugin.name === "vite-hub/types") as Plugin & {

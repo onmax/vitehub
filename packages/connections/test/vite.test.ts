@@ -6,7 +6,7 @@ import { VITEHUB_NITRO_CONFIG_CONTEXT } from "@vite-hub/internal/build/vite"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { discoverConnectionDefinitions } from "../src/discovery.ts"
-import { CONNECTIONS_REGISTRY_ID, hubConnections } from "../src/vite.ts"
+import { CONNECTIONS_REGISTRY_ID, hubConnections, hubConnectionsTypesCleanup } from "../src/vite.ts"
 
 const tempDirs: string[] = []
 
@@ -43,6 +43,24 @@ describe("discoverConnectionDefinitions", () => {
 })
 
 describe("hubConnections", () => {
+  it("removes stale declarations when Connections is disabled", async () => {
+    const root = await createTempProject()
+    await writeConnection(root, "server/connections/google.ts")
+    await hubConnections().api.prepareTypes({ projectRoot: root })
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root })
+    await expect(readFile(join(root, ".vitehub/types/connections.d.ts"), "utf8")).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("resolves preparation roots like the runtime Vite configuration", async () => {
+    const root = await createTempProject()
+    const viteRoot = join(root, "app")
+    const connectionRoot = join(viteRoot, "packages/api")
+    const definition = await writeConnection(connectionRoot, "server/connections/google.ts")
+    const plugin = hubConnections({ projectRoot: "packages/api" })
+    await plugin.api.prepareTypes({ projectRoot: viteRoot })
+    expect(await readFile(join(connectionRoot, ".vitehub/types/connections.d.ts"), "utf8")).toContain(JSON.stringify(definition))
+  })
+
   it("prepares discovered Connection declarations without a Vite build", async () => {
     const root = await createTempProject();
     const definition = await writeConnection(root, "custom-server/connections/google.ts");

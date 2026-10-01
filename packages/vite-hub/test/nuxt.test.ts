@@ -2564,6 +2564,26 @@ describe("ViteHub Nuxt integration", () => {
     expect(steps).toEqual(["connections", "types"])
   })
 
+  it("prepares Connection types with the effective relative Vite root", async () => {
+    const prepareTypes = vi.fn(async () => {})
+    mocks.vitehub.mockReturnValue([{ name: "@vite-hub/connections/vite", api: { prepareTypes } }])
+    const { nuxt } = createNuxt()
+    Object.assign(nuxt.options.vite, { root: "app" })
+    await viteHubNuxtModule({ database: true, connections: { projectRoot: "packages/api" }, preset: "node" }, nuxt)
+    expect(prepareTypes).toHaveBeenCalledWith({ projectRoot: "/tmp/vitehub-nuxt/app", serverDirs: ["/tmp/vitehub-nuxt/custom-server"] })
+  })
+
+  it("cleans disabled Connection declarations before collecting generated types", async () => {
+    const steps: string[] = []
+    mocks.vitehub.mockReturnValue([
+      { name: "@vite-hub/connections/types-cleanup", api: { prepareTypes: async () => { steps.push("connections-cleanup") } } },
+      { name: "vite-hub/types", api: { prepareTypes: async () => { steps.push("types") } } },
+    ])
+    const { nuxt } = createNuxt()
+    await viteHubNuxtModule({ connections: false, preset: "node" }, nuxt)
+    expect(steps).toEqual(["connections-cleanup", "types"])
+  })
+
   it("registers generated Collection handlers without replacing unrelated handlers", async () => {
     const generated = {
       handler: "/tmp/vitehub-nuxt/.vitehub/source/routes/meals.mjs",
