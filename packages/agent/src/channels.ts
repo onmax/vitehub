@@ -89,6 +89,9 @@ import { agentDiagnostics } from "./agent-diagnostics.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 
 export const messageChannelTitleSupportContextKey = "channel.delivery.supportsTitle"
+
+// Main runtime compatibility: older Channel definitions do not carry GitHub identity metadata.
+export function githubChannelIdentity(_channels: Readonly<Record<string, object>> | undefined): undefined { return undefined }
 const customTitleEffectChannels = new WeakSet<object>()
 
 export {
