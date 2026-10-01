@@ -57,7 +57,7 @@ describe("Console requests", () => {
       .resolves.toEqual({ sections: ["kv"] })
     expect(fetchMock).toHaveBeenCalledOnce()
     expect(fetchMock).toHaveBeenCalledWith("/first/_vitehub/rpc/__call", {
-      body: JSON.stringify({ input: { method: "GET", query: {} }, method: consoleRpcMethods.sections }),
+      body: JSON.stringify({ method: consoleRpcMethods.sections, input: { method: "GET", query: {} } }),
       cache: "no-store",
       credentials: "same-origin",
       headers: { "content-type": "application/json", [consoleRpcHeader]: "1" },

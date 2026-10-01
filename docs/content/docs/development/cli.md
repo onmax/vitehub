@@ -24,20 +24,22 @@ pnpm vitehub --help
 Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
-Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Env contributes `env` when `hubEnv()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types` and `box`, and the CLI includes the built-in `provision` namespace. `box` does not load the project config, so it also runs in a deployed container without Vite.
+Expected help lists available namespaces. The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Env contributes `env` when `hubEnv()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, and the Console integration contributes `console` when `console` is enabled. The framework contributes `types` and `box`, and the CLI includes the built-in `provision` namespace. `box` does not load the project config, so it also runs in a deployed container without Vite. This output comes from an app that enables `agent`, `console`, `database`, `env`, `schedule`, and `workspace`:
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
+
 Available namespaces:
-  agent       Agent development workflows.
-  channels    External Channel registration workflows.
-  db          Database development workflows.
-  env         Server Env inspection workflows.
-  workspace   Workspace development workflows.
-  types       Generate ViteHub TypeScript declarations.
-  provision   Idempotently create missing provider resources.
-  box         Serve and check an SSH Box runner. Does not load the project config.
+  workspace    Workspace development workflows.
+  console      Console development workflows.
+  agent        Agent development workflows.
+  channels     External Channel registration workflows.
+  db           Database development workflows.
+  env          Server Env inspection workflows.
+  schedule     Run Static Schedule Definitions on demand.
+  types        Generate ViteHub TypeScript declarations.
+  provision    Idempotently create missing provider resources.
+  box          Serve and check an SSH Box runner. Does not load the project config.
 ```
 
 Package-contributed namespaces appear only when their package is enabled. For example, `schedule` appears when the app enables Schedule.

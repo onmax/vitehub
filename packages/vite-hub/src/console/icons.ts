@@ -89,7 +89,6 @@ export const consoleIcons: readonly string[] = [
   "ph:check-light",
   "ph:circle-notch-light",
   "ph:cloud-slash-light",
-  "ph:database-light",
   "ph:dot-outline-fill",
   "ph:folder-light",
   "ph:funnel-light",
