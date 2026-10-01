@@ -859,6 +859,19 @@ describe("KV Schedule Run Store", () => {
     expect(runs.every(run => run.scheduleId === "digest_with_underscore")).toBe(true)
   })
 
+  it("keeps all indexed matches when a filter has no limit", async () => {
+    const store = createKVScheduleRunStore({ kvStore: createTestKVStore() })
+    const scheduledAt = new Date("2026-05-23T09:00:00.000Z")
+    for (const scheduleId of ["actual", "other"]) {
+      for (const id of ["first", "second"]) {
+        await store.createRun({ id: `srun_runtime_${scheduleId}_${id}`, scheduleId, target: "report", scheduledAt,
+          createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+      }
+    }
+    expect((await store.listRuns({ scheduleId: "actual" })).map(run => run.id).sort()).toEqual(["srun_runtime_actual_first", "srun_runtime_actual_second"])
+    expect(await store.listRuns({ runtimeOnly: true })).toHaveLength(4)
+  })
+
   it.each(["memory", "kv"])("preserves opaque generated-shaped IDs in the %s store", async (kind) => {
     const kvStore = createTestKVStore()
     const store = kind === "memory" ? createMemoryScheduleRunStore() : createKVScheduleRunStore({ kvStore })

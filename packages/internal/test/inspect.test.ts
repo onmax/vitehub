@@ -89,6 +89,12 @@ describe("redactInspectionText", () => {
     expect(redactInspectionText(input)).toBe(expected)
   })
 
+  it.each(["cookie", "credential", "private_key", "signature", "dsn", "connection_string", "aws_secret_access_key", "access_token", "api key", "private key", "connection string"])("redacts the secret assignment family %s", (key) => {
+    expect(redactInspectionText(`request ${key}=session-secret; retry`)).toBe(`request ${key}=[redacted]; retry`)
+    expect(redactInspectionText(`request ${key}='secret with spaces'; retry`)).toBe(`request ${key}=[redacted]; retry`)
+    expect(redactInspectionText(`{"${key}":"session-secret"}`)).toBe(`{"${key}":[redacted]}`)
+  })
+
   it("redacts credentials inside free text", () => {
     expect(redactInspectionText("GET https://user:hunter2@example.test/db failed, Authorization: Bearer abc.def; api_key=sk_live token: t1 done"))
       .toBe("GET https://[redacted]@example.test/db failed, Authorization: [redacted]; api_key=[redacted] token: [redacted] done")

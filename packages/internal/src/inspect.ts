@@ -102,7 +102,10 @@ const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@|bearer
 const embeddedUrlCredentialPattern = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi
 const embeddedBearerPattern = /\bbearer\s+[^\s,;]+/gi
 const embeddedAuthorizationPattern = /\b(authorization\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[a-z]+\s+[^\s,;]+|[^\s,;]+)/gi
-const embeddedSecretAssignmentPattern = /\b((?:[\w-]*(?:secret|token|passw(?:or)?d|api[-_]?key|authorization))\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;&]+)/gi
+const embeddedSecretAssignmentPattern = new RegExp(
+  String.raw`\b([\w-]*(?:${secretKeyPattern.source})[\w-]*["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;&]+)`,
+  "gi",
+)
 
 /**
  * Removes credentials inside free text, for example an error message. URL credentials, bearer tokens, and
