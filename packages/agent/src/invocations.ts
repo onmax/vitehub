@@ -43,6 +43,11 @@ const PROMPT_TRUNCATED_ATTRIBUTE = "input.prompt.truncated"
 const INVOKER_PROFILE_TRUNCATED_ATTRIBUTE = "agent.invoker.profile.id.truncated"
 const APPENDED_OBSERVATION_ATTRIBUTE = "vitehub.observation.appended"
 const CANONICAL_TRACE_ATTRIBUTE_KEYS = new Set([
+  "input.replay.version",
+  "input.hasInvoker",
+  "input.hasData",
+  "input.hasOptions",
+  "input.hasMessages",
   AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE,
   AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE,
   APPENDED_OBSERVATION_ATTRIBUTE,
@@ -840,6 +845,13 @@ function boundedObservation(
   }
   const payload = boundedObservationPayload(observation.payload, payloadBudget, builtIns)
   const canonicalAttributes: Record<string, unknown> = {}
+  if (observation.name === "agent.invocation.start") {
+    if (observation.attributes?.["input.replay.version"] === 1) canonicalAttributes["input.replay.version"] = 1
+    for (const key of ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages"]) {
+      const value = observation.attributes?.[key]
+      if (hasRuntimeType(value, "boolean")) canonicalAttributes[key] = value
+    }
+  }
   if (observation.attributes?.[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] === true) canonicalAttributes[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] = true
   if (observation.name === "agent.invocation.start" && observation.attributes?.["input.prompt"] !== undefined) {
     canonicalAttributes[PROMPT_TRUNCATED_ATTRIBUTE] = observation.attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true

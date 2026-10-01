@@ -45,6 +45,19 @@ const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
 })
 
 describe("agentInvocationRerunInput", () => {
+  it("keeps replay provenance when observation bounds remove other metadata", async () => {
+    for (const direct of [false, true]) {
+      const record = await journaled({ ...(direct ? { context: { invoker: { id: "direct-owner", kind: "person" } } } : {}), prompt: "Hi" }, {
+        redact: observation => observation.name === "agent.invocation.start"
+          ? { ...observation, attributes: { ...Object.fromEntries(Array.from({ length: 70 }, (_, index) => [`custom_${index}`, index])), ...observation.attributes } }
+          : observation,
+      })
+      const attributes = record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes
+      expect(attributes).toMatchObject({ "input.replay.version": 1, "input.hasInvoker": direct, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false })
+      expect(agentInvocationRerunInput(record).available).toBe(false)
+    }
+  })
+
   it("returns the captured prompt and selected Invoker Profile", async () => {
     const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Summarize the release notes." })
     expect(agentInvocationRerunInput(record)).toEqual({ available: true, invokerProfileId: "reviewer", prompt: "Summarize the release notes." })
