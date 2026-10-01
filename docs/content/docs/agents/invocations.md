@@ -258,7 +258,7 @@ if (input?.available) {
 }
 ```
 
-The result has `available: false` and a `reason` when the record cannot reproduce its input: `input-not-captured` for a missing prompt, `input-has-messages` for prior Messages, or `input-truncated` for a bounded prompt. The journal keeps `input.prompt` only when `metadataContent` or `content: 'content'` includes it. When the start observation recorded an Invoker Profile, `invokerProfileId` holds its ID.
+The result has `available: false` and a `reason` when the record cannot reproduce its input: `input-not-captured` for a missing prompt, `input-has-messages` for prior Messages, or `input-truncated` for a bounded prompt or selected Invoker Profile ID. The journal keeps `input.prompt` only when `metadataContent` or `content: 'content'` includes it. When the start observation recorded an Invoker Profile, `invokerProfileId` holds its ID.
 
 Use `configuration: 'content'` to retain resolved instructions and tool descriptions/schemas independently of other trace content. The default is `configuration: 'metadata'`. Console journals enable configuration retention for inspection; existing records cannot recover contracts that were not saved. Recorded configuration still uses the journal's observation limits and marks truncated values.
 

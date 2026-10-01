@@ -37,11 +37,13 @@ const MAX_AGENT_CONFIGURATION_COLLECTION_ITEMS = 8 * 1024
 export const AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE = "vitehub.observation.truncated"
 const AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE = "vitehub.observation.id"
 const PROMPT_TRUNCATED_ATTRIBUTE = "input.prompt.truncated"
+const INVOKER_PROFILE_TRUNCATED_ATTRIBUTE = "agent.invoker.profileId.truncated"
 const APPENDED_OBSERVATION_ATTRIBUTE = "vitehub.observation.appended"
 const CANONICAL_TRACE_ATTRIBUTE_KEYS = new Set([
   AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE,
   APPENDED_OBSERVATION_ATTRIBUTE,
   PROMPT_TRUNCATED_ATTRIBUTE,
+  INVOKER_PROFILE_TRUNCATED_ATTRIBUTE,
   "vitehub.activity.owner",
   "vitehub.activity.phase",
   "vitehub.payload.summary",
@@ -826,6 +828,9 @@ function boundedObservation(
   if (observation.name === "agent.invocation.start" && observation.attributes?.["input.prompt"] !== undefined) {
     canonicalAttributes[PROMPT_TRUNCATED_ATTRIBUTE] = observation.attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
   }
+  if (observation.name === "agent.invocation.start" && observation.attributes?.["agent.invoker.profileId"] !== undefined) {
+    canonicalAttributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] = observation.attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] === true
+  }
   if (identity !== undefined) canonicalAttributes[AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE] = identity
   if (observation.attributes?.[APPENDED_OBSERVATION_ATTRIBUTE] === true) canonicalAttributes[APPENDED_OBSERVATION_ATTRIBUTE] = true
   if (observation.activity) {
@@ -880,6 +885,10 @@ function boundedObservation(
     attributes[PROMPT_TRUNCATED_ATTRIBUTE] = attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
       || attributes["input.prompt"] !== observation.attributes["input.prompt"]
   }
+  if (observation.name === "agent.invocation.start" && observation.attributes?.["agent.invoker.profileId"] !== undefined && attributes) {
+    attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] = attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] === true
+      || attributes["agent.invoker.profileId"] !== observation.attributes["agent.invoker.profileId"]
+  }
   return {
     ...observation,
     name: boundedString(observation.name)!,
@@ -927,7 +936,7 @@ export async function agentInvocationId(runId: string, agentName?: string): Prom
 export type AgentInvocationRerunUnavailableReason =
   /** The journal has no start observation with a text prompt. */
   | "input-not-captured"
-  /** The journal bounded the captured prompt. */
+  /** The journal bounded the captured prompt or selected Invoker Profile. */
   | "input-truncated"
   /** The Invocation received messages or attachments, which the journal does not keep for replay. */
   | "input-has-messages"
@@ -949,7 +958,7 @@ export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "o
   const start = record.observations.find(observation => observation.name === "agent.invocation.start")
   const attributes = start?.attributes
   if (!attributes) return { available: false, reason: "input-not-captured" }
-  if (attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
+  if (attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] === true || attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
     || (attributes[PROMPT_TRUNCATED_ATTRIBUTE] === undefined && attributes[AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE] === true)) return { available: false, reason: "input-truncated" }
   if (attributes["input.hasMessages"] === true || attributes["input.messages"] !== undefined) return { available: false, reason: "input-has-messages" }
   const prompt = attributes["input.prompt"]

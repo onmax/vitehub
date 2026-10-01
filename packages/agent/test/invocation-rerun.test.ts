@@ -17,12 +17,12 @@ function runtime(runId: string) {
   }
 }
 
-async function journaled(input: Parameters<typeof runAgent>[2], options: Partial<AgentInvocationsOptions> = {}, resolve?: () => { id: string, kind: "user", label: string }) {
+async function journaled(input: Parameters<typeof runAgent>[2], options: Partial<AgentInvocationsOptions> = {}, resolve?: () => { id: string, kind: "user", label: string }, profileId = "reviewer") {
   const invocations = defineAgentInvocations({ metadataContent: ["input.messages", "input.prompt"], ...options, store: createMemoryAgentInvocationStore() })
   const agent = defineAgent({
     driver: { run: async () => "done" },
     invocations,
-    invoker: { profiles: [{ id: "reviewer", kind: "user", label: "Reviewer" }], resolve },
+    invoker: { profiles: [{ id: profileId, kind: "user", label: "Reviewer" }], resolve },
     runtime: false,
   })
   const runId = `rerun-${Math.random().toString(36).slice(2)}`
@@ -50,6 +50,12 @@ describe("agentInvocationRerunInput", () => {
   it("keeps prompt replay available when unrelated metadata is bounded", async () => {
     const record = await journaled({ prompt: "Complete prompt." }, {}, () => ({ id: "resolved", kind: "user", label: "x".repeat(2_000) }))
     expect(agentInvocationRerunInput(record)).toEqual({ available: true, prompt: "Complete prompt." })
+  })
+
+  it("rejects replay when bounding changes the selected profile ID", async () => {
+    const profileId = "reviewer".repeat(200)
+    const record = await journaled({ context: { invokerProfileId: profileId }, prompt: "Hi" }, { observations: { maxStringLength: 1_000 } }, undefined, profileId)
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-truncated" })
   })
 
   it("preserves a selected profile when its resolver changes invoker identity", async () => {
