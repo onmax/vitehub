@@ -276,6 +276,8 @@ curl https://agent.example.com/api/_vitehub/console/status \
   -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET"
 ```
 
+`vitehub schedule run --url` forwards these headers when `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` are set in its environment. See [Run a Schedule on demand](/docs/development/cli#run-a-schedule-on-demand).
+
 A tool that can send only an `Authorization` header can use the same service token when the Access application reads service tokens from that header (`read_service_tokens_from_header: "Authorization"`). Send `Authorization: {"cf-access-client-id":"<id>","cf-access-client-secret":"<secret>"}`. A user token from `cloudflared access token -app=https://agent.example.com` also works as the `CF_Authorization` cookie.
 
 ### Reuse Primary Auth
@@ -339,7 +341,7 @@ console: { exposure: 'host-managed', invoke: true }
 console: { access: 'auth', invoke: true }
 ```
 
-For `host-managed`, your middleware must authenticate and authorize all `/_vitehub/**` and `/api/_vitehub/console/**` routes, including the RPC transport, before it allows a request through. The build cannot verify this policy. Setting `invoke: false` keeps inspection available and disables Agent Invocation creation. The development shorthand `console: true` enables invocation; fixture mode always disables it.
+For `host-managed`, your middleware must authenticate and authorize all `/_vitehub/**` and `/api/_vitehub/console/**` routes, including the RPC transport, before it allows a request through. The build cannot verify this policy. Setting `invoke: false` keeps inspection available and disables Agent Invocation creation and manual Schedule runs. The development shorthand `console: true` enables invocation; fixture mode always disables it.
 
 Console RPC requests must come from the same origin. The transport rejects opaque origins and browser requests marked `same-site` or `cross-site`. Browser Fetch Metadata permits same-origin requests through reverse proxies. When that metadata is absent, the transport compares the `Origin` header with the request URL. Hosts must reconstruct the public request origin for older browsers that send `Origin` without Fetch Metadata.
 
@@ -377,6 +379,12 @@ export default defineNuxtConfig({
 Do not use `robots.txt` as access control. A crawler can ignore it, and a disallowed URL may still be listed without its contents.
 
 Read [Auth](/docs/server-primitives/auth#authorize-access-routes) for sign-in redirects and the complete callback contract.
+
+### Run Schedules on demand
+
+The same `invoke` setting enables manual Schedule runs. The Schedules page shows a **Run now** button next to the **Read-only** badge for each Static Schedule Definition that sets `manual: true`. The run status, duration, run id, and error replace the page notice after the run finishes. The Console omits the error stack.
+
+[`vitehub schedule run --url`](/docs/development/cli#run-a-schedule-on-demand) uses `POST /_vitehub/schedules/run` with a JSON body `{ "name": "sync" }`. The route is under `/_vitehub/**`, so the Console access policy protects it. It accepts only `application/json` requests and rejects a cross-origin `Origin` header. With `invoke: false`, or for a definition without `manual: true`, the route returns `404`. The Console UI uses the `vitehub:console:schedule-run` RPC operation with the same rules.
 
 ## Know what the Console stores
 
