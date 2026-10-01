@@ -131,6 +131,19 @@ describe("Workflow dev registry", () => {
     expect(registry).toContain("server/workflows/welcome.ts")
   })
 
+  it("uses the authoritative project root when the custom Vite root has its own package", async () => {
+    const projectRoot = await createApp()
+    const appRoot = join(projectRoot, "custom-vite-root")
+    await mkdir(appRoot)
+    await writeFile(join(appRoot, "package.json"), '{"type":"module"}')
+    await mkdir(join(projectRoot, "src"))
+    await writeFile(join(projectRoot, "src/report.workflow.ts"), workflowModule("report"))
+    await configHook({ provider: "vercel" })({ root: appRoot, __vitehubProjectRoot: projectRoot }, { command: "serve", mode: "development" })
+    const registry = await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs"), "utf8")
+    expect(registry).toContain("src/report.workflow.ts")
+    expect(existsSync(join(appRoot, workflowDevGeneratedDir))).toBe(false)
+  })
+
   it("preserves explicit server directories with a nested Vite root", async () => {
     const projectRoot = await createApp()
     const appRoot = join(projectRoot, "app")
