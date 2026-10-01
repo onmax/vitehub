@@ -48,7 +48,7 @@ export default defineAgent({
 | `writeFile`, `appendFile`, `makeDir`, `copyPath`, `movePath`, `deletePath` | write | Structured file mutations in the writable Workspace. |
 | `workspace_exec` | write with `commands` | Runs one allowlisted executable. Accepts `command`, optional `args`, `cwd`, `env`, and `timeout`. |
 
-Model-backed and custom-run-backed Agents receive `shell`, `materialize_sources`, and the write tools. Provider-backed Agents receive only `workspace_exec`, because they already work in the materialized Workspace with their native tools.
+Model-backed and custom-run-backed Agents receive `shell`, `materialize_sources`, and the write tools. Provider-backed Agents receive `workspace_exec` only when `commands` is configured. Without `commands`, they receive no duplicate Workspace Shell tools because they already work in the materialized Workspace with their native tools.
 
 ## How the Workspace shell works
 
@@ -90,7 +90,7 @@ Workspace Sources, rules, and Actor Scope bound visible and committed paths. The
 
 1. Run `vitehub agent info --agent <name> --json` while the Vite development server runs.
 2. Confirm that `tools` contains a `workspaceShell` entry. Its `commands` list shows the inspection commands in read mode (`pwd`, `ls`, `find`, `rg`, `grep`, `cat`, `head`, `tail`, `wc`), and adds `mkdir`, `touch`, `cp`, `mv`, and `rm` in write mode.
-3. For a Provider Agent with `commands`, confirm that the `workspaceShell` entry lists one `workspace_exec (<command>)` item for each allowlisted executable.
+3. For a Provider Agent with `commands`, confirm that the `workspaceShell` entry lists one `workspace_exec (<command>)` item for each allowlisted executable. Without `commands`, expect no `workspaceShell` inspection entry.
 4. Set `commands` on a model-backed Agent and confirm that tool resolution fails with a diagnostic that points to `sandbox()`.
 
 ## Options

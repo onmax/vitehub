@@ -165,7 +165,7 @@ The built-in ElevenLabs Scribe driver requires an API key and an explicitly conf
 `transcribe()` adds no model-facing tool, so the Agent cannot call it and there is no approval step.
 The Capability sends audio from the input messages to the configured transcription provider.
 When an audio part has only a URL, the server downloads that URL. Accept audio URLs only from trusted sources.
-Audio data must stay within `maxBytes`. The limit applies to direct data, `fetchData()` results, and downloads.
+Audio data must stay within `maxBytes` for the built-in executor. A custom `execute` function receives the audio before ViteHub can resolve or measure it, so it must enforce its own limit for direct data, `fetchData()` results, and downloads.
 Artifact paths must stay inside the Workspace and cannot target the reserved `.git` or `.vitehub` paths.
 
 ## Driver support

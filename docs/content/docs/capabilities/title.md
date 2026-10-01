@@ -104,7 +104,7 @@ Use `template`, `variables`, or `execute` when the title must include product-sp
 ## Security and approval
 
 `title()` adds no model-facing tool and has no `policy` option.
-The end user controls the source text. ViteHub sends up to the last 8,000 characters of that text, with Chat entity markup removed, to the selected generator. The default prompt tells the model to treat the source as data, not instructions.
+The end user controls the source text. For model and Driver prompts, ViteHub sends up to the last 8,000 characters of that text, with Chat entity markup removed. A custom `execute` function receives the complete timed input, so it must enforce its own input limit. The default prompt tells the model to treat the source as data, not instructions.
 
 An inherited provider title run has the same permissions as the main provider Driver. Use `execute`, a separate `driver`, or an AI SDK `model` when the title run must have less authority.
 

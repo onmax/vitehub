@@ -44,7 +44,7 @@ diagnostics({
 
 When `resources` is set, the Capability starts a resource monitor when the invocation is prepared and stops it when the invocation closes.
 When the invocation finishes, the Capability reports `agent.invocation.terminal`.
-Reporter and inspector failures are contained. They produce a local `agent.diagnostics.report.failed` warning and do not replace a successful Agent result.
+Reporter and inspector failures are contained. When an inspector fails or times out, the Capability sends `agent.resource.inspect.failed` to the configured reporter. If reporter delivery itself fails, it emits a local `agent.diagnostics.report.failed` warning. Neither failure replaces a successful Agent result.
 
 ### Event contract
 
