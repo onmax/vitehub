@@ -47,6 +47,11 @@ export interface ConnectionStore {
     /** Read and delete one pending authorization. */
     take: (state: string) => Promise<ConnectionAuthorization | undefined>
   }
+  /** Serialize provider refresh requests across runtimes. Never retry an expired lease for the same revision. */
+  refreshLeases: {
+    claim: (input: { expiresAt: number, name: string, now: number, owner: string, revision: string }) => Promise<"acquired" | "busy" | "expired">
+    release: (name: string, owner: string) => Promise<void>
+  }
   bridge: EnvBridge
   secrets: EnvSecretStore
   access: EnvAccessStore
@@ -150,6 +155,7 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
       await db.run(
         sql`CREATE TABLE IF NOT EXISTS vitehub_connection_approvals (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, input TEXT NOT NULL, status TEXT NOT NULL, trace_id TEXT, invocation_id TEXT, created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT, error TEXT, execution_expires_at TEXT)`,
       )
+      await db.run(sql`CREATE TABLE IF NOT EXISTS vitehub_connection_refresh_leases (name TEXT PRIMARY KEY, owner TEXT NOT NULL, revision TEXT NOT NULL, expires_at INTEGER NOT NULL)`)
       const columns = await db.all(sql`PRAGMA table_info(vitehub_connection_approvals)`)
       if (
         !columns.some(
@@ -184,6 +190,20 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
   return {
     ...envStore,
     bridge,
+    refreshLeases: {
+      async claim(input) {
+        await initialize()
+        const rows = await db.all(sql`INSERT INTO vitehub_connection_refresh_leases (name, owner, revision, expires_at) VALUES (${input.name}, ${input.owner}, ${input.revision}, ${input.expiresAt}) ON CONFLICT (name) DO UPDATE SET owner = excluded.owner, revision = excluded.revision, expires_at = excluded.expires_at WHERE vitehub_connection_refresh_leases.expires_at <= ${input.now} AND vitehub_connection_refresh_leases.revision != excluded.revision RETURNING name`)
+        if (rows.length === 1) return "acquired"
+        const current = (await db.all(sql`SELECT revision, expires_at FROM vitehub_connection_refresh_leases WHERE name = ${input.name}`))[0]
+        const lease = v.safeParse(v.object({ expires_at: v.number(), revision: v.string() }), current)
+        return lease.success && lease.output.revision === input.revision && lease.output.expires_at <= input.now ? "expired" : "busy"
+      },
+      async release(name, owner) {
+        await initialize()
+        await db.run(sql`DELETE FROM vitehub_connection_refresh_leases WHERE name = ${name} AND owner = ${owner}`)
+      },
+    },
     state: {
       async get(name) {
         await initialize()

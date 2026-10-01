@@ -59,6 +59,10 @@ setConnectionsRuntime({
 
 Rejected or superseded OAuth callbacks do not revoke their issued token at the provider. A provider can revoke the whole application grant, which would also invalidate the winning token. The rejected token is not stored.
 
+The default store serializes token refresh through a durable lease shared by all runtimes. Waiting callers read the replacement token instead of sending the same rotating refresh grant again. A refresh request has a 30-second abort signal and a 60-second lease. An expired lease for the same token revision means the provider outcome is unknown and requires reconnecting. A newer token revision can replace an expired lease. A lost response or failed token write also requires reconnecting rather than reusing the old grant.
+
+Custom stores must implement atomic `refreshLeases.claim()` and owner-fenced `refreshLeases.release()`. `claim()` returns `acquired`, `busy`, or `expired`; it must not reissue an expired lease for the same token revision.
+
 A custom Connections store must supply the token revision as the second `bridge.use()` callback argument. Revocation uses that revision to replace the token with a revoked marker. The default Env Bridge supplies it.
 
 ## Vite integration

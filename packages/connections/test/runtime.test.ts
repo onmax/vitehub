@@ -103,7 +103,7 @@ describe("connect", () => {
     expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
   })
 
-  it("restores connected state when another refresh fails before the winning refresh", async () => {
+  it("waits for the winning refresh without sending another refresh grant", async () => {
     const test = createTestRuntime()
     await connect(test, { expires_in: 1 })
     let enter!: () => void
@@ -119,14 +119,22 @@ describe("connect", () => {
       }
       return await test.provider.fetch(input, init)
     } })
-    const loser = createConnectionsRuntime({ ...options, fetch: async (input, init) => String(init?.body).includes("grant_type=refresh_token")
-      ? Response.json({ error: "invalid_grant" }, { status: 400 })
-      : await test.provider.fetch(input, init) })
+    let duplicateRefreshes = 0
+    const loser = createConnectionsRuntime({ ...options, fetch: async (input, init) => {
+      if (String(init?.body).includes("grant_type=refresh_token")) {
+        duplicateRefreshes++
+        return Response.json({ error: "invalid_grant" }, { status: 400 })
+      }
+      return await test.provider.fetch(input, init)
+    } })
     const call = winner.client("mail", {}).call("mail.labels.list", { userId: "me" })
     await entered
-    await expect(loser.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    const waiting = loser.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    await new Promise(resolve => setTimeout(resolve, 50))
     resume()
+    await expect(waiting).resolves.toMatchObject({ labels: [{ id: "INBOX" }] })
     await call
+    expect(duplicateRefreshes).toBe(0)
     expect(await winner.inspect("mail")).toMatchObject({ status: "connected" })
   })
 

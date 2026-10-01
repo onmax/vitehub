@@ -17,6 +17,8 @@ import type {
 } from "./types.ts"
 
 const REFRESH_WINDOW_MS = 60_000
+const REFRESH_LEASE_MS = 60_000
+const REFRESH_WAIT_MS = 30_000
 const AUTHORIZATION_TTL_MS = 10 * 60_000
 const APPROVAL_EXECUTION_TTL_MS = 5 * 60_000
 
@@ -59,7 +61,7 @@ interface ProviderRequest {
 /** A stored approval input. Typed methods store their input; `fetch` stores the request. */
 type ApprovalInput =
   | { input: unknown, kind: "method" }
-  | { body?: string, headers?: Record<string, string>, kind: "fetch", method: string, url: string }
+  | { body?: string, headers?: Record<string, string>, kind: "fetch", method: string, redirect?: RequestInit["redirect"], url: string }
 
 /** An untyped client. `useConnection()` wraps it in the typed client tree. */
 export interface ConnectionRuntimeClient {
@@ -119,7 +121,7 @@ const tokenResponseSchema = v.object({
 })
 const approvalInputSchema = v.variant("kind", [
   v.object({ input: v.unknown(), kind: v.literal("method") }),
-  v.object({ body: v.optional(v.string()), headers: v.optional(v.record(v.string(), v.string())), kind: v.literal("fetch"), method: v.string(), url: v.string() }),
+  v.object({ body: v.optional(v.string()), headers: v.optional(v.record(v.string(), v.string())), kind: v.literal("fetch"), method: v.string(), redirect: v.optional(v.picklist(["error", "follow", "manual"])), url: v.string() }),
 ])
 
 function isDefinition(value: unknown): value is ConnectionDefinition {
@@ -269,17 +271,19 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     await (await getStore()).access.append(event)
   }
 
-  async function tokenRequest(definition: ConnectionDefinition, parameters: Record<string, string>): Promise<ConnectionTokenResponse> {
+  async function tokenRequest(definition: ConnectionDefinition, parameters: Record<string, string>, signal?: AbortSignal, onDispatch?: () => void): Promise<ConnectionTokenResponse> {
     const provider = definition.provider
     const clientId = await resolveValue(provider.clientId)
     const clientSecret = await resolveValue(provider.clientSecret)
     if (!clientId) throw new ConnectionError("invalid", `Provider "${provider.id}" has no client id.`)
     const form = new URLSearchParams({ ...parameters, client_id: clientId })
     if (clientSecret) form.set("client_secret", clientSecret)
+    onDispatch?.()
     const response = await request(provider.tokenEndpoint, {
       body: form,
       headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
       method: "POST",
+      signal,
     })
     const body: unknown = await response.json().catch(() => undefined)
     const parsedError = v.safeParse(v.object({ error: v.string() }), body)
@@ -342,23 +346,61 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   async function refreshToken(name: string, definition: ConnectionDefinition, stale: string, force: boolean): Promise<StoredToken> {
     const connections = await getStore()
     const key = tokenKey(name)
-    const stored = await connections.secrets.read(key)
-    if (!stored) throw new ConnectionError("reauth_required", `Connection "${name}" is not connected.`, { details: { connection: name } })
-    if (!stored.revision) throw new ConnectionError("invalid", "The Connection secret store must return token revisions.")
-    const latest = parseToken(stored.value, name)
-    if (latest.accessToken !== stale && !expiresSoon(latest)) return latest
-    if (!force && !expiresSoon(latest)) return latest
-    if (!latest.refreshToken) {
-      if (!await setStatus(name, { status: "reauth_required" }, stored.revision)) return await readCurrentToken(name)
-      throw new ConnectionError("reauth_required", `Connection "${name}" has no refresh token. Connect it again.`, { details: { connection: name } })
+    const owner = randomToken()
+    const deadline = Date.now() + REFRESH_WAIT_MS
+    while (true) {
+      await requireConnected(name)
+      const stored = await connections.secrets.read(key)
+      if (!stored) throw new ConnectionError("reauth_required", `Connection "${name}" is not connected.`, { details: { connection: name } })
+      if (!stored.revision) throw new ConnectionError("invalid", "The Connection secret store must return token revisions.")
+      const latest = parseToken(stored.value, name)
+      if (latest.accessToken !== stale && !expiresSoon(latest)) return latest
+      if (!force && !expiresSoon(latest)) return latest
+      if (!latest.refreshToken) {
+        if (!await setStatus(name, { status: "reauth_required" }, stored.revision)) return await readCurrentToken(name)
+        throw new ConnectionError("reauth_required", `Connection "${name}" has no refresh token. Connect it again.`, { details: { connection: name } })
+      }
+      if (!connections.refreshLeases) throw new ConnectionError("invalid", "The Connection store must provide atomic refresh leases.")
+      const lease = await connections.refreshLeases.claim({ expiresAt: now() + REFRESH_LEASE_MS, name, now: now(), owner, revision: stored.revision })
+      if (lease === "expired") {
+        if (!await setStatus(name, { status: "reauth_required" }, stored.revision)) continue
+        throw new ConnectionError("reauth_required", `Connection "${name}" has an unconfirmed refresh outcome. Connect it again.`, { details: { connection: name } })
+      }
+      if (lease === "busy") {
+        if (Date.now() >= deadline) throw new ConnectionError("provider", `Connection "${name}" is still refreshing. Try again.`, { details: { connection: name } })
+        await new Promise(resolve => setTimeout(resolve, 25))
+        continue
+      }
+      let dispatched = false
+      let releaseLease = true
+      try {
+        if ((await connections.secrets.read(key))?.revision !== stored.revision) continue
+        return await refreshLeasedToken(name, definition, latest, stored.revision, () => { dispatched = true })
+      }
+      catch (error) {
+        // Keep the lease if a rotated grant cannot be saved or quarantined durably.
+        if (dispatched) releaseLease = await setStatus(name, { status: "reauth_required" }, stored.revision).catch(() => false)
+        throw error
+      }
+      finally {
+        if (releaseLease) await connections.refreshLeases.release(name, owner).catch(() => undefined)
+      }
     }
+  }
+
+  async function refreshLeasedToken(name: string, definition: ConnectionDefinition, latest: StoredToken, tokenRevision: string, onDispatch: () => void): Promise<StoredToken> {
+    const connections = await getStore()
+    const key = tokenKey(name)
     let response: ConnectionTokenResponse
+    let dispatched = false
     try {
-      response = await tokenRequest(definition, { grant_type: "refresh_token", refresh_token: latest.refreshToken })
+      response = await tokenRequest(definition, { grant_type: "refresh_token", refresh_token: latest.refreshToken! }, AbortSignal.timeout(REFRESH_WAIT_MS), () => { dispatched = true; onDispatch() })
     }
     catch (error) {
+      if (!dispatched) throw error
+      // A failed request can have rotated the provider grant before its response was lost.
+      if (!await setStatus(name, { status: "reauth_required" }, tokenRevision)) return await readCurrentToken(name)
       if (isConnectionError(error) && error.reason === "reauth_required") {
-        if (!await setStatus(name, { status: "reauth_required" }, stored.revision)) return await readCurrentToken(name)
         throw new ConnectionError("reauth_required", `Connection "${name}" must be connected again. Run \`vitehub connections connect ${name}\`.`, { details: { connection: name } })
       }
       throw error
@@ -366,7 +408,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const next = toStoredToken(response, latest)
     let revision: string
     try {
-      const replacement = await connections.bridge.replace(envContext("connections"), { expectedRevision: stored.revision ?? null, key, value: JSON.stringify(next) })
+      const replacement = await connections.bridge.replace(envContext("connections"), { expectedRevision: tokenRevision ?? null, key, value: JSON.stringify(next) })
       revision = replacement.revision
     }
     catch (error) {
@@ -400,7 +442,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   }
 
   /** Send one provider request with the Connection token inside an audited Env Bridge use. */
-  async function send(context: CallContext, providerRequest: ProviderRequest, init: { headers?: Record<string, string>, signal?: AbortSignal } = {}): Promise<Response> {
+  async function send(context: CallContext, providerRequest: ProviderRequest, init: { headers?: Record<string, string>, redirect?: RequestInit["redirect"], signal?: AbortSignal } = {}): Promise<Response> {
     const connections = await getStore()
     await requireConnected(context.name)
     let failure: unknown
@@ -420,6 +462,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
               body: providerRequest.body,
               headers,
               method: providerRequest.method,
+              redirect: init.redirect,
               signal: init.signal,
             })
           }
@@ -452,7 +495,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   }
 
   /** Apply policy, dry run, and approval, then send. Returns `undefined` when dry run skips a write. */
-  async function governed(context: CallContext, providerRequest: ProviderRequest, approvalInput: ApprovalInput, init: { headers?: Record<string, string>, signal?: AbortSignal } = {}): Promise<Response | undefined> {
+  async function governed(context: CallContext, providerRequest: ProviderRequest, approvalInput: ApprovalInput, init: { headers?: Record<string, string>, redirect?: RequestInit["redirect"], signal?: AbortSignal } = {}): Promise<Response | undefined> {
     const decision = decide({
       action: providerRequest.action,
       actor: context.actor,
@@ -535,8 +578,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return await governed(
       context,
       { action: "fetch", body, highRisk: false, input: { method, url: url.toString() }, method, url: url.toString(), write },
-      { body, headers, kind: "fetch", method, url: url.toString() },
-      { headers, signal: init.signal ?? undefined },
+      { body, headers, kind: "fetch", method, redirect: init.redirect, url: url.toString() },
+      { headers, redirect: init.redirect, signal: init.signal ?? undefined },
     )
   }
 
@@ -597,6 +640,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const url = new URL(provider.authorizationEndpoint)
     const scopes = [...new Set([...(provider.identityScopes ?? []), ...loaded.scopes])]
     for (const [parameter, value] of Object.entries({
+      ...provider.authorizationParams,
       client_id: clientId,
       code_challenge: await codeChallenge(verifier),
       code_challenge_method: "S256",
@@ -604,7 +648,6 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       response_type: "code",
       scope: scopes.join(" "),
       state,
-      ...provider.authorizationParams,
     })) url.searchParams.set(parameter, value)
     return { state, url: url.toString() }
   }
@@ -745,6 +788,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
           body: stored.body,
           headers: stored.headers,
           method: stored.method,
+          redirect: stored.redirect,
           signal,
         })
         result = response ? { status: response.status } : undefined
