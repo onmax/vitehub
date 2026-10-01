@@ -603,8 +603,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
 
   async function callFetch(context: CallContext, input: string | URL, init: ConnectionFetchInit = {}): Promise<Response | undefined> {
     const url = new URL(input)
-    const method = (init.method ?? "GET").toUpperCase()
-    const write = method !== "GET" && method !== "HEAD"
+    const method = init.method ?? "GET"
+    const write = method.toUpperCase() !== "GET" && method.toUpperCase() !== "HEAD"
     const allowed = Object.values(providerApis(context.definition)).some(catalog => url.origin === new URL(catalog.rootUrl).origin)
     if (!allowed) throw new ConnectionError("invalid", `Connection "${context.name}" does not send its token to ${url.origin}.`, { details: { connection: context.name } })
     if (init.body !== undefined && init.body !== null && !v.is(v.string(), init.body)) {
