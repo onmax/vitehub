@@ -62,7 +62,7 @@ import type { Plugin, PluginOption, ResolvedConfig, UserConfig } from "vite"
 import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
 
 export type { ConsoleOptions } from "./console/vite.ts"
-export type { ObservabilityOptions } from "./observability-vite.ts"
+export type { ObservabilityEvlogOptions, ObservabilityOptions } from "./observability-vite.ts"
 
 type FrameworkDependencyName = Extract<keyof typeof frameworkPackageManifest.dependencies, `@vite-hub/${string}`>
 type DeploymentServicesManifest = Record<DeploymentService, object>

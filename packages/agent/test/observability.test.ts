@@ -19,6 +19,28 @@ function setup(overrides: Partial<AgentEvlogExporter> = {}, options = {}) {
 }
 afterEach(async () => { await Promise.allSettled(instances.splice(0).map(item => item.flush())); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
+it.each(["production", undefined])("adds resolved default identity to all telemetry with NODE_ENV %s", async (nodeEnv) => {
+  vi.stubEnv("NODE_ENV", nodeEnv)
+  try {
+    const { telemetry, exporter } = setup({}, { service: undefined, environment: undefined })
+    const identity = { service: "vitehub-agent", environment: nodeEnv || "development" }
+    telemetry.event("default.event")
+    await telemetry.capture("default.capture", {})
+    telemetry.exception(new Error("default failure"))
+    const agent = defineAgent({ driver: { run: () => "answer" }, capabilities: [telemetry.capability] })
+    await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil }, { prompt: "hello" })
+    await Promise.allSettled(background.splice(0))
+    await telemetry.flush()
+    expect(exporter.capture).toHaveBeenCalledWith("default.event", expect.objectContaining(identity), expect.anything())
+    expect(exporter.capture).toHaveBeenCalledWith("default.capture", expect.objectContaining(identity), expect.anything())
+    expect(exporter.capture).toHaveBeenCalledWith("$ai_trace", expect.objectContaining({ ...identity, status: "completed" }), expect.anything())
+    expect(exporter.exception).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining(identity), expect.anything())
+  }
+  finally {
+    vi.unstubAllEnvs()
+  }
+})
+
 it("keeps concurrent invocation identity and terminal events separate", async () => {
   const { telemetry, exporter } = setup()
   const agent = defineAgent({ driver: { run: () => "answer" }, capabilities: [telemetry.capability] })

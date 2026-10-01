@@ -99,7 +99,7 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
   const exporter = options.exporter
   const level = options.level ?? "standard"
   const exportedLogs = options.logs ?? "failures"
-  const metadata = { ...options.metadata, service: options.service, environment: options.environment }
+  const metadata = { ...options.metadata, service, environment }
   const pending = new Set<Promise<unknown>>()
   const counts = { accepted: 0, failed: 0, dropped: 0 }
   let closing = false

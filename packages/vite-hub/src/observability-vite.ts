@@ -5,10 +5,22 @@ import { getHostingProvider } from "@vite-hub/internal/hosting"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
 import type { EnvVariableDeclaration } from "@vite-hub/env"
-import type { NitroModuleOptions } from "evlog/nitro"
 import type { Plugin } from "vite"
 
 import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
+
+/** Common evlog Nitro options. Other module options are forwarded unchanged. */
+export interface ObservabilityEvlogOptions {
+  enabled?: boolean
+  pretty?: boolean
+  silent?: boolean
+  env?: Partial<Record<"service" | "environment" | "version" | "commitHash" | "region", string>>
+  include?: string[]
+  exclude?: string[]
+  routes?: Record<string, { service: string }>
+  minLevel?: "debug" | "info" | "warn" | "error"
+  [option: string]: unknown
+}
 
 export interface ObservabilityOptions {
   /** Service name on every event and log. */
@@ -23,7 +35,7 @@ export interface ObservabilityOptions {
     host?: string
   }
   /** Options for the evlog Nitro module, such as `sampling`, `redact`, and `pretty`. */
-  evlog?: NitroModuleOptions
+  evlog?: ObservabilityEvlogOptions
   /** Durable papercut reports, backed by the Console invocation journal. */
   papercuts?: true | { eventPrefix?: string, uuidNamespace?: string, intervalMs?: number }
   /** Queue bound for best-effort events and for the log buffer. Defaults to 1,000. */
@@ -117,7 +129,7 @@ export function observabilityVitePlugin(options: ObservabilityOptions, target: {
       kit.addPlugin(plugin)
       const modules = Array.isArray(kit.config.modules) ? kit.config.modules : []
       const evlogOptions = options.evlog ?? {}
-      const env: NonNullable<NitroModuleOptions["env"]> = { ...evlogOptions.env, service: options.service }
+      const env: NonNullable<ObservabilityEvlogOptions["env"]> = { ...evlogOptions.env, service: options.service }
       if (options.environment) env.environment = options.environment
       // One evlog module per Nitro app. Skip it when this hook already ran on the same config.
       if (!modules.some(module => module instanceof Object && "name" in module && module.name === "evlog")) {
