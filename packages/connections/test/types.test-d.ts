@@ -4,7 +4,7 @@ import { defineConnection } from "../src/definition.ts"
 import { google } from "../src/google.ts"
 import { useConnection } from "../src/runtime/state.ts"
 
-import type { GmailClassificationLabelFieldValue, GmailClassificationLabelValue, GmailLabel } from "../src/google.ts"
+import type { GmailClassificationLabelFieldValue, GmailClassificationLabelValue, GmailLabel, GmailMethods } from "../src/google.ts"
 import type { ConnectionClient, ConnectionDefinition, ConnectionFetchInit, ConnectionMethod } from "../src/types.ts"
 
 const connection = defineConnection({
@@ -27,6 +27,16 @@ declare global {
 }
 
 describe("Connection types", () => {
+  it("requires the Gmail history start ID", () => {
+    type Params = GmailMethods["users.history.list"]["params"]
+    expectTypeOf<Params["startHistoryId"]>().toEqualTypeOf<string>()
+    const valid: Params = { userId: "me", startHistoryId: "123" }
+    // @ts-expect-error Gmail requires the history start ID.
+    const missing: Params = { userId: "me" }
+    expectTypeOf(valid).toEqualTypeOf<Params>()
+    expectTypeOf(missing).toEqualTypeOf<Params>()
+  })
+
   it("declares only serializable fetch bodies", () => {
     expectTypeOf<Parameters<Client["fetch"]>[1]>().toEqualTypeOf<ConnectionFetchInit | undefined>()
     const text: ConnectionFetchInit = { body: "label=INBOX", method: "POST" }
