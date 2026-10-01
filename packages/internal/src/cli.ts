@@ -240,13 +240,16 @@ export async function fetchViteHubDevEndpoint(
 function devServerDisplayUrl(value: string): string {
   try {
     const url = new URL(value)
-    if (!url.username && !url.password) return value
+    if (!url.username && !url.password) {
+      return url.origin === "null" ? value.replace(/^[\s\S]+@/, "[redacted]@") : value
+    }
     if (url.username) url.username = "[redacted]"
     if (url.password) url.password = "[redacted]"
     return url.href
   }
   catch {
-    return value.replace(/\/\/[\s\S]+@/g, "//[redacted]@")
+    const redacted = value.replace(/\/\/[\s\S]+@/g, "//[redacted]@")
+    return redacted === value ? value.replace(/^[\s\S]+@/, "[redacted]@") : redacted
   }
 }
 

@@ -88,6 +88,26 @@ describe("Rate Limit review regressions", () => {
     expect(output.stderr.output()).toBe("")
   })
 
+  it.each([
+    { source: "flag", json: false },
+    { source: "flag", json: true },
+    { source: "environment", json: false },
+    { source: "environment", json: true },
+  ])("redacts opaque credential URLs from $source with JSON $json", async ({ source, json }) => {
+    for (const url of ["user:opaque-password@host", "mailto:user:opaque-password@host", "user:opaque/pass@host", "user:opaque password@host"]) {
+      const output = context()
+      if (source === "environment") Object.assign(output.context.env, { VITEHUB_DEV_SERVER_URL: url })
+      const fetch = vi.fn()
+      await expect(runRateLimitCli(["peek", "login", "key", ...(source === "flag" ? ["--url", url] : []), ...(json ? ["--json"] : [])], output.context, { fetch })).resolves.toBe(1)
+      const diagnostic = output.stdout.output() + output.stderr.output()
+      expect(diagnostic).toContain("[redacted]")
+      expect(diagnostic).not.toContain("opaque")
+      if (json) expect(output.stderr.output()).toBe("")
+      else expect(output.stdout.output()).toBe("")
+      expect(fetch).not.toHaveBeenCalled()
+    }
+  })
+
   it.each([false, true])("redacts whitespace credentials from environment URL with JSON %s", async json => {
     const output = context()
     Object.assign(output.context.env, { VITEHUB_DEV_SERVER_URL: "http://user:sec ret@host:bad" })
