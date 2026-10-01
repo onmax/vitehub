@@ -1,4 +1,4 @@
-import { consoleDatabaseUrl, withDataDir } from "./storage-config.ts"
+import { consoleD1Binding, consoleDatabaseUrl, withDataDir } from "./storage-config.ts"
 import { existsSync, readFileSync } from "node:fs"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -777,6 +777,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     plugins.push(consoleVitePlugin({
       blobStores: consoleBlobStores,
       console: options.console === true ? true : options.console,
+      resolveD1Binding: (root, serverDirs) => consoleD1Binding(plan.preset, options.database, { root, serverDirs }),
       databaseUrl: consoleDatabaseUrl(options),
       databaseDiscoveryRoot: options.database && options.database !== true ? options.database.projectRoot : undefined,
       kvStores: presetKV ? Object.keys(presetKV.stores || { default: presetKV.store }) : [],
@@ -947,6 +948,13 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     } as WorkspaceModuleOptions))
   }
   const sourcePlugin = hubSource({
+    auth: options.auth
+      ? ({ configuredAuth, projectRoot, serverDirs }) => configuredAuth !== false && Boolean(resolveAuthViteConfig(
+          options.auth === true ? undefined : options.auth,
+          projectRoot,
+          { serverDirs },
+        ))
+      : false,
     contentImportBase: "vite-hub/content",
     importBase: "vite-hub/source",
   })

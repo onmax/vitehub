@@ -40,8 +40,8 @@ export interface ConnectionsRuntimeOptions {
 export interface ConnectionCallOptions {
   actor: ConnectionActor
   /**
-   * Treats a `require-approval` decision as approved. Agent Capabilities set it after the tool approval flow
-   * approved this Operation. `deny` rules still apply.
+   * Trusted server integration input, like `actor`. Set only after approval for this exact call and Operation.
+   * Never forward an approval flag from tool input or an HTTP request. `deny` rules still apply.
    */
   approved?: boolean
   audit?: "all" | "changes"
@@ -385,10 +385,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return decideConnectionAccess((await definition(name)).access, actor, operation)
     },
     async disconnect(name, lifecycle) {
-      const value = await definition(name)
       const db = store(lifecycle.event)
       // One read gives the grant and its tokens. A connect that finishes later writes a newer revision, which stays.
       const snapshot = await db.snapshot(name)
+      const value = await definition(name)
       let revokeError: string | undefined
       // Only the provider that issued the grant may receive it for revocation.
       if (snapshot?.tokens && snapshot.grant.provider === value.provider.id && value.provider.revoke) {

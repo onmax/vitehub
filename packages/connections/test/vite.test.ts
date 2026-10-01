@@ -4,6 +4,7 @@ import { dirname, join } from "node:path"
 
 import { env } from "@vite-hub/env"
 import { VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { mergeConfig } from "vite"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { CONNECTIONS_RUNTIME_ID, CONNECTIONS_VITE_PLUGIN_NAME, hubConnections } from "../src/vite.ts"
@@ -94,18 +95,20 @@ describe("hubConnections", () => {
     const definition = await writeConnection(root, "server/connections/gmail.ts")
     const plugin = hubConnections()
     const config = plugin.config as unknown as (config: Record<PropertyKey, unknown>) => Promise<Record<string, unknown>>
-    const result = await config({
+    const input = {
       root,
+      ssr: { noExternal: ["existing-package", "@vite-hub/connections"] },
       nitro: { alias: { existing: "/existing.ts" }, externals: { inline: ["existing-package"], trace: false } },
       [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
-    })
+    }
+    const result = mergeConfig(input, await config(input))
     const nitro = result.nitro as { alias: Record<string, string>, externals: { inline: string[], trace: boolean } }
     const runtimeFile = nitro.alias[CONNECTIONS_RUNTIME_ID]!
 
     expect(runtimeFile).toBe(join(root, ".vitehub/nitro/connections/runtime.ts"))
     expect(nitro.alias.existing).toBe("/existing.ts")
     expect(nitro.externals).toEqual({ inline: ["existing-package", "vite-hub", "@vite-hub/connections"], trace: false })
-    expect(result.ssr).toEqual({ noExternal: expect.arrayContaining(["@vite-hub/connections"]) })
+    expect(result.ssr).toEqual({ noExternal: ["existing-package", "@vite-hub/connections"] })
     await expect(readFile(runtimeFile, "utf8")).resolves.toContain(JSON.stringify(definition))
 
     await resolvePlugin(plugin, root)
@@ -121,7 +124,8 @@ describe("hubConnections", () => {
     const root = await createTempProject()
     const plugin = hubConnections()
     const config = plugin.config as unknown as (config: Record<PropertyKey, unknown>) => Promise<Record<string, unknown>>
-    const result = await config({ root, nitro: { externals: { inline: true } }, [VITEHUB_NITRO_CONFIG_CONTEXT]: true })
+    const input = { root, nitro: { externals: { inline: true } }, [VITEHUB_NITRO_CONFIG_CONTEXT]: true }
+    const result = mergeConfig(input, await config(input))
 
     expect((result.nitro as { externals: { inline: boolean } }).externals.inline).toBe(true)
   })

@@ -9,7 +9,7 @@ import * as v from "valibot"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { consoleConnectionsKey, consoleConnectionsRegistryKey, consoleConnectionsRootKey, consoleSectionsKey, consoleSectionsRegistryKey, consoleSectionsRootKey, installConsoleConnectionsScope, resolveConsoleConnections } from "../src/console/internal.ts"
-import { addConsoleDevframeHandler } from "../src/console/nitro.ts"
+import { addConsoleRpcHandler } from "../src/console/nitro.ts"
 import { writeConsoleNitroPlugin } from "../src/console/plugin.ts"
 import { consoleConnectionsReturnTo, handleConsoleConnections, installConsoleConnections } from "../src/console/runtime/server/connections.ts"
 import connectionsRoute from "../src/console/runtime/server/connections-route.ts"
@@ -65,8 +65,10 @@ describe("Console Connections", () => {
       const generated = await readFile(plugin, "utf8")
       expect(generated).toContain('import { installConsoleConnections } from "vite-hub/console/connections"')
       expect(generated).toContain(`installConsoleConnections(${JSON.stringify(root)})`)
-      await writeConsoleNitroPlugin(plugin, root, ["connections"], [], { agents: [], definitions: {} }, [], [], undefined, undefined, false, undefined, undefined, undefined, false, true)
-      expect(await readFile(plugin, "utf8")).toContain(`installConsoleConnections(${JSON.stringify(root)}, { manage: true })`)
+      await writeConsoleNitroPlugin(plugin, root, ["connections"], [], { agents: [], definitions: {} }, [], [], undefined, undefined, false, undefined, undefined, { d1Binding: "JOURNAL" }, "cloudflare-access", true)
+      const managed = await readFile(plugin, "utf8")
+      expect(managed).toContain(`installConsoleConnections(${JSON.stringify(root)}, { manage: true })`)
+      expect(managed).toContain(`installConsoleSections(${JSON.stringify(root)}, ["connections"], "cloudflare-access")`)
       await writeConsoleNitroPlugin(plugin, root, ["env"], [], { agents: [], definitions: {} }, [], [])
       expect(await readFile(plugin, "utf8")).not.toContain("installConsoleConnections")
     }
@@ -150,20 +152,20 @@ describe("Console Connections", () => {
 
   it("registers only the Connections routes, so the Console page stays on /_vitehub/**", () => {
     const nitro: { handlers?: Array<{ handler: string, route: string }> } = { handlers: [] }
-    addConsoleDevframeHandler(nitro, "/runtime", { connections: true })
+    addConsoleRpcHandler(nitro, "/runtime", { connections: true })
     expect(nitro.handlers?.filter(handler => handler.route.startsWith("/_vitehub/connections"))).toEqual([
       { handler: "/runtime/server/connections-route.js", method: "post", route: "/_vitehub/connections/manage" },
       { handler: "/runtime/server/connections-route.js", method: "get", route: "/_vitehub/connections/:name/connect" },
       { handler: "/runtime/server/connections-route.js", method: "get", route: "/_vitehub/connections/:name/callback" },
     ])
     const without: { handlers?: Array<{ handler: string, route: string }> } = { handlers: [] }
-    addConsoleDevframeHandler(without, "/runtime")
+    addConsoleRpcHandler(without, "/runtime")
     expect(without.handlers?.some(handler => handler.route.startsWith("/_vitehub/connections"))).toBe(false)
   })
 
   it("rejects a route conflict", () => {
     const nitro = { handlers: [{ handler: "/app/connect.ts", route: "/_vitehub/connections/:name/connect" }] }
-    expect(() => addConsoleDevframeHandler(nitro, "/runtime", { connections: true })).toThrow("Connections handler")
+    expect(() => addConsoleRpcHandler(nitro, "/runtime", { connections: true })).toThrow("Connections handler")
   })
 
   it("registers the routes from the Console Vite plugin when the section is on", async () => {

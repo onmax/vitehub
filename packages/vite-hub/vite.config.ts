@@ -251,7 +251,7 @@ export default defineConfig({
       "src/console/runtime/server/database.get.ts",
       "src/console/runtime/server/definitions.get.ts",
       "src/console/runtime/server/invocation-capabilities.get.ts",
-      "src/console/runtime/server/devframe.ts",
+      "src/console/runtime/server/rpc.ts",
       "src/console/runtime/server/invocation.get.ts",
       "src/console/runtime/server/invocation-workspace.get.ts",
       "src/console/runtime/server/invocations.get.ts",
@@ -288,7 +288,7 @@ export default defineConfig({
         delete exports["./console/runtime/server/definitions"];
         delete exports["./console/runtime/server/definitions.get"];
         delete exports["./console/runtime/server/invocation-capabilities.get"];
-        delete exports["./console/runtime/server/devframe"];
+        delete exports["./console/runtime/server/rpc"];
         delete exports["./console/runtime/server/invocation.get"];
         delete exports["./console/runtime/server/invocation-workspace.get"];
         delete exports["./console/runtime/server/invocations.get"];
@@ -306,10 +306,12 @@ export default defineConfig({
         delete exports["./console/runtime/server/usage.get"];
         delete exports["./console/runtime/server/status.get"];
         delete exports["./console/auth-client"];
+        delete exports["./console/auth-cloudflare-access"];
         delete exports["./console/auth-inline"];
         return {
           ...exports,
           "./console/auth/client": "./dist/console/auth-client.js",
+          "./console/auth/cloudflare-access": "./dist/console/auth-cloudflare-access.js",
           "./console/auth/inline": "./dist/console/auth-inline.js",
           "./console/blob": "./dist/console/runtime/server/blob.js",
           "./console/connections": "./dist/console/runtime/server/connections.js",
