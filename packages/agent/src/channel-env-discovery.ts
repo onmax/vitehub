@@ -411,8 +411,24 @@ function isValueEnd(tokens: string[], after: number, terminators: ReadonlySet<st
       conditionalType = false
       conditionalTypeBranch = false
     }
-    if (["+", "*", "/", "%"].includes(token) || (["|", "&", "?"].includes(token) && tokens[i + 1] === token)) return false
-    if (token === "<") { i = skipTypeArguments(tokens, i) - 1; continue }
+    if (depth === 0) {
+      if (["+", "*", "/", "%", "^", "~", "in", "instanceof"].includes(token)
+        || (["|", "&", "?"].includes(token) && tokens[i + 1] === token)) return false
+      // Negative literal types can start a type operand; subtraction cannot.
+      if (token === "-" && (!/^(?:\d|\.\d)/.test(tokens[i + 1] ?? "")
+        || (!["as", "satisfies", "|", "&", "?", ":", "extends"].includes(tokens[i - 1]!)
+          && !(tokens[i - 1] === ">" && tokens[i - 2] === "=")))) return false
+      if (token === "=" && tokens[i + 1] !== ">") return false
+      if (token === ">" && tokens[i - 1] !== "=") return false
+      if (token === "!" && tokens[i + 1] === "=") return false
+    }
+    if (token === "<") {
+      if (["<", "="].includes(tokens[i + 1]!)) return false
+      const end = skipTypeArguments(tokens, i)
+      if (tokens[end - 1] !== ">") return false
+      i = end - 1
+      continue
+    }
     if (["(", "[", "{"].includes(token)) depth++
     else if ([")", "]", "}"].includes(token)) {
       if (depth === 0) return terminators.has(token)

@@ -47,6 +47,31 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: undefined }])
   })
 
+  it.each(["-", "+", "*", "/", "%", "**", "<", "<=", ">", ">=", "==", "===", "!=", "!==", "<<", ">>", ">>>", "^", "in", "instanceof", "&&", "||", "??"])("rejects runtime %s after Channel option assertions", (operator) => {
+    for (const assertion of ["as", "satisfies"]) {
+      for (const type of ["TelegramChannelOptions", "Options<Runtime>"]) {
+        expect(uses(`
+          import { telegram } from "vite-hub/agent/channels"
+          telegram({} ${assertion} ${type} ${operator} dynamicOptions)
+        `)).toEqual([{ kind: "telegram", keys: undefined }])
+      }
+    }
+  })
+
+  it.each(["TelegramChannelOptions", "Options<Runtime>"])("rejects subtraction of a numeric literal after assertion to %s", (type) => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram({} as ${type} - 1)
+    `)).toEqual([{ kind: "telegram", keys: undefined }])
+  })
+
+  it.each(["Options<Runtime>", "Options<() => Runtime>", "A | B", "A & B", "-1 | -2", "() => -1", "{ [K in keyof T]-?: T[K] }", "{ [K in keyof T]+?: T[K] }"])("preserves assertion type syntax: %s", (type) => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram({} as ${type})
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
   it("finds factory calls imported from the Channels module", () => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
