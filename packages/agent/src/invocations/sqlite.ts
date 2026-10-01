@@ -192,7 +192,10 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     writes = result.then(() => undefined, () => undefined)
     return result
   }
-  const pendingUpdates = new Map<string, PendingUpdate[]>()
+  // Keep invocation and claim identifiers separate. Concatenating them with a
+  // delimiter allows distinct pairs to collide when either identifier contains
+  // that delimiter.
+  const pendingUpdates = new Map<string, Map<string, PendingUpdate[]>>()
   /** Applies queued updates to one record in one transaction. A failed update does not stop later ones. */
   const applyUpdateBatch = async (id: string, claimId: string | undefined, inputs: AgentInvocationStoreUpdateInput[]): Promise<Array<AgentInvocationRecord | Error | undefined>> => {
     await initialize()
@@ -801,14 +804,20 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     async update(id, input, claimId) {
       // Updates for one invocation that wait behind another write share one
       // read, serialization, and commit. Each update still applies in order.
-      const key = `${id}\0${claimId ?? ""}`
-      let batch = pendingUpdates.get(key)
+      const claimKey = claimId ?? ""
+      let updatesByClaim = pendingUpdates.get(id)
+      if (!updatesByClaim) {
+        updatesByClaim = new Map()
+        pendingUpdates.set(id, updatesByClaim)
+      }
+      let batch = updatesByClaim.get(claimKey)
       if (!batch) {
         const items: PendingUpdate[] = []
         batch = items
-        pendingUpdates.set(key, items)
+        updatesByClaim.set(claimKey, items)
         void write(async () => {
-          if (pendingUpdates.get(key) === items) pendingUpdates.delete(key)
+          if (updatesByClaim?.get(claimKey) === items) updatesByClaim.delete(claimKey)
+          if (updatesByClaim?.size === 0 && pendingUpdates.get(id) === updatesByClaim) pendingUpdates.delete(id)
           try {
             const results = await applyUpdateBatch(id, claimId, items.map(item => item.input))
             items.forEach((item, index) => {

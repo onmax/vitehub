@@ -73,3 +73,18 @@ it("resolves updates for a missing invocation or a stale claim without writing",
     expect((await store.get("run"))?.status).toBe("running")
   })
 })
+
+it("keeps batches for invocation and claim pairs distinct", async () => {
+  await withStore(async (store) => {
+    await store.create({ id: "a", observations: [], status: "running", createdAt: timestamp, updatedAt: timestamp, traceId: "trace-a" })
+    await store.create({ id: "a\0b", observations: [], status: "running", createdAt: timestamp, updatedAt: timestamp, traceId: "trace-b" })
+    await store.claim("a", "b\0c", 60_000)
+    await store.claim("a\0b", "c", 60_000)
+    await Promise.all([
+      store.update("a", { status: "completed", timestamp }, "b\0c"),
+      store.update("a\0b", { status: "failed", timestamp }, "c"),
+    ])
+    expect((await store.get("a"))?.status).toBe("completed")
+    expect((await store.get("a\0b"))?.status).toBe("failed")
+  })
+})
