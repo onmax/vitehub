@@ -269,7 +269,7 @@ it("does not quarantine a newer token revision after confirmed revocation of the
   const original = await test.store.secrets.read("connection/mail")
   const state = await test.store.state.get("mail")
   if (!original?.revision || !state) throw new Error("Expected connected grant")
-  test.store.bridge.replace = async input => {
+  test.store.bridge.replace = async (_context, input) => {
     await test.store.secrets.replace({ expectedRevision: input.expectedRevision, key: input.key, value: JSON.stringify({ ...JSON.parse(original.value), accessToken: "new-access", grantId: "new-grant" }) })
     throw new Error("A newer grant won before the revoke marker was saved")
   }
