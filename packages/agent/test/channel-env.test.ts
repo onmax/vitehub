@@ -109,7 +109,7 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([{ kind: "telegram", keys: ["botToken"] }])
   })
 
-  it.each(["@memo()", "@cache.memo({ enabled: true })", "@memo", "@memo() @trace()"])("ignores decorated method declarations: %s", (decorator) => {
+  it.each(["@memo()", "@cache.memo({ enabled: true })", "@memo", "@memo() @trace()", "@memo<Options>()", "@memo<Map<string, () => void>>()"])("ignores decorated method declarations: %s", (decorator) => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"
       class Helper {
@@ -176,6 +176,7 @@ describe("built-in Channel discovery", () => {
     "void (configuredToken + suffix)",
     "(void configuredToken)",
     "void +configuredToken",
+    "void new Token()",
   ])("requires Env when botToken can be undefined: %s", (token) => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
@@ -202,6 +203,24 @@ describe("built-in Channel discovery", () => {
       telegram({ botToken: ${token} })
       defineAgent({ channels: { telegram: { botToken: ${token} } } })
     `)).toEqual([{ kind: "telegram", keys: ["botToken"] }, { kind: "telegram", keys: ["botToken"] }])
+  })
+
+  it("unwraps asserted bare Channel factories and treats optional accessors as omitted", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { telegram } from "vite-hub/agent/channels"
+      defineAgent({ channels: { support: <AgentChannelFactory>telegram } })
+      telegram({ get botToken(): string | undefined { return configuredToken } })
+    `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: [] }])
+  })
+
+  it("recognizes static computed Channel and option keys", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      defineAgent({ channels: { ["telegram"]: {} } })
+      defineAgent({ channels: { ['telegram']: { ["botToken"]: token } } })
+      defineAgent({ channels: { ['telegram']: { get ["botToken"]() { return undefined } } } })
+    `)).toEqual([{ kind: "telegram", keys: [] }, { kind: "telegram", keys: ["botToken"] }, { kind: "telegram", keys: [] }])
   })
 
   it("treats method and constructor parameters as shadowing imports", () => {

@@ -33,7 +33,8 @@ function closingDelimiter(tokens: string[], start: number): number {
 
 // Visit the top-level properties of the object literal that opens at `start`.
 function objectMethodParameters(tokens: string[], key: number): number | undefined {
-  const next = tokens[key + 1] === "<" ? skipTypeArguments(tokens, key + 1) : key + 1
+  const keyEnd = tokens[key] === "[" && isStringToken(tokens[key + 1]) && tokens[key + 2] === "]" ? key + 2 : key
+  const next = tokens[keyEnd + 1] === "<" ? skipTypeArguments(tokens, keyEnd + 1) : keyEnd + 1
   return tokens[next] === "(" ? next : undefined
 }
 
@@ -44,12 +45,17 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
   let expectKey = true
   let unknown = false
   for (let i = start + 1; i < tokens.length; i++) {
-    const token = tokens[i]!
+    let token = tokens[i]!
     if (depth === 0) {
       if (token === "}") return !unknown
       if (token === ",") { expectKey = true; continue }
       if (expectKey) {
-        if (token === "[") return false
+        const propertyStart = i
+        if (token === "[") {
+          if (!isStringToken(tokens[i + 1]) || tokens[i + 2] !== "]") return false
+          token = tokens[i + 1]!
+          i += 2
+        }
         if (token === "." && tokens[i + 1] === "." && tokens[i + 2] === ".") {
           unknown = true
           expectKey = false
@@ -62,7 +68,7 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
           // A shorthand property `{ telegram }` is its own value.
           const shorthand = !isStringToken(token) && [",", "}"].includes(tokens[i + 1]!)
           const parameters = objectMethodParameters(tokens, i)
-          visit(key, tokens[i + 1] === ":" ? i + 2 : shorthand ? i : undefined, parameters !== undefined && !["get", "set"].includes(tokens[i - 1]!))
+          visit(key, tokens[i + 1] === ":" ? i + 2 : shorthand ? i : undefined, parameters !== undefined && !["get", "set"].includes(tokens[propertyStart - 1]!))
           expectKey = false
           if (parameters !== undefined && tokens[i + 1] === "<") i = parameters - 1
         }
@@ -90,7 +96,9 @@ function staticOptionKeys(tokens: string[], start: number, empty: string, typesc
   if (tokens[start] !== "{") return undefined
   const keys = new Set<string>()
   return visitObjectProperties(tokens, start, (key, value, method) => {
-    const omitted = value !== undefined && (isUndefinedValue(tokens, value, new Set([",", "}"])) || (key === "botToken" && canResolveUndefined(tokens, value)))
+    const omitted = value === undefined
+      ? key === "botToken" && !method
+      : isUndefinedValue(tokens, value, new Set([",", "}"])) || (key === "botToken" && canResolveUndefined(tokens, value))
     if (!omitted && (key !== "adapter" || (method || (value !== undefined && isStaticAdapter(tokens, value))))) keys.add(key)
   }) ? keys : undefined
 }
@@ -175,6 +183,7 @@ function channelFactoryReference(
   known: ReadonlySet<string>,
   typescript: boolean,
 ): { call: boolean, kind: string, index: number, end: number } | undefined {
+  index = skipOptionAssertions(tokens, index, typescript)
   if (tokens[index] === "(") {
     const reference = channelFactoryReference(tokens, index + 1, bindings, namespaces, known, typescript)
     const close = closingDelimiter(tokens, index)
@@ -275,7 +284,7 @@ function isUndefinedValue(tokens: string[], start: number, terminators: Readonly
 // A unary operand includes its calls and member accesses, but excludes binary
 // operations outside it. `void value + suffix` therefore stays a defined value.
 function unaryOperandEnd(tokens: string[], start: number): number {
-  while (["void", "typeof", "delete", "await", "+", "-", "!", "~"].includes(tokens[start]!)) start++
+  while (["void", "typeof", "delete", "await", "new", "+", "-", "!", "~"].includes(tokens[start]!)) start++
   let after = ["(", "[", "{"].includes(tokens[start]!) ? closingDelimiter(tokens, start) + 1 : start + 1
   for (;;) {
     if (tokens[after] === "?" && tokens[after + 1] === ".") after += 2
@@ -739,6 +748,15 @@ function followsDecorator(tokens: string[], index: number): boolean {
       previous--
       if (tokens[previous] === ")") depth++
       else if (tokens[previous] === "(") depth--
+    }
+    previous--
+  }
+  if (tokens[previous] === ">") {
+    let depth = 1
+    while (previous > 0 && depth > 0) {
+      previous--
+      if (tokens[previous] === ">" && tokens[previous - 1] !== "=") depth++
+      else if (tokens[previous] === "<") depth--
     }
     previous--
   }
