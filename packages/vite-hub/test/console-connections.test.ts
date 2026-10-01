@@ -4,6 +4,7 @@ import { join } from "node:path"
 
 import { createClient } from "@libsql/client"
 import { createConnectionsRuntime } from "@vite-hub/connections/server"
+import { H3 } from "h3"
 import { drizzle } from "drizzle-orm/libsql"
 import * as v from "valibot"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -14,8 +15,9 @@ import { writeConsoleNitroPlugin } from "../src/console/plugin.ts"
 import { consoleConnectionsReturnTo, handleConsoleConnections, installConsoleConnections } from "../src/console/runtime/server/connections.ts"
 import connectionsRoute from "../src/console/runtime/server/connections-route.ts"
 import { installConsoleSections } from "../src/console/runtime/server/sections.ts"
-import { consoleVitePlugin } from "../src/console/vite.ts"
+import { assertConsoleProductionAccess, consoleVitePlugin } from "../src/console/vite.ts"
 
+import type { ResolvedAuthViteConfig } from "@vite-hub/auth"
 import type { ConnectionDefinition } from "@vite-hub/connections"
 import type { ConsoleInvocationScope } from "../src/console/internal.ts"
 
@@ -112,19 +114,26 @@ describe("Console Connections", () => {
     const exchange = vi.spyOn(definition.provider, "exchange")
     try {
       installConsoleConnections("/connections-test", { baseURL, manage: true, runtime: () => connections })
-      expect((await handleConsoleConnections(manage({ action: "list" }, "/portal"))).status).toBe(200)
-      expect((await handleConsoleConnections(manage({ action: "list" }))).status).toBe(404)
-      const start = await handleConsoleConnections(manage({ action: "start", name: "example" }, "/portal"))
+      const nitro: { handlers?: Array<{ handler: string, method?: "get" | "post", route: string }> } = { handlers: [] }
+      addConsoleRpcHandler(nitro, "/runtime", { baseURL, connections: true })
+      const app = new H3()
+      for (const handler of nitro.handlers ?? []) {
+        if (handler.handler.endsWith("/connections-route.js")) app.on(handler.method ?? "", handler.route, connectionsRoute)
+      }
+      const dispatch = (request: Request) => app.fetch(request)
+      expect((await dispatch(manage({ action: "list" }, "/portal"))).status).toBe(200)
+      expect((await dispatch(manage({ action: "list" }))).status).toBe(404)
+      const start = await dispatch(manage({ action: "start", name: "example" }, "/portal"))
       const { url } = v.parse(v.object({ url: v.string() }), await start.json())
       expect(url).toMatch(/^https:\/\/app\.test\/portal\/_vitehub\/connections\/example\/connect\?ticket=/)
-      const connect = await handleConsoleConnections(new Request(url))
+      const connect = await dispatch(new Request(url))
       expect(connect.status).toBe(302)
       const redirectUri = `${origin}/portal/_vitehub/connections/example/callback`
       expect(authorization).toHaveBeenCalledWith(expect.objectContaining({ redirectUri }), expect.anything())
       expect(connect.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections/example;")
       const state = new URL(connect.headers.get("location") ?? "").searchParams.get("state")
       const cookie = /vitehub_connection_state=([^;]*)/.exec(connect.headers.get("set-cookie") ?? "")?.[1]
-      const callback = await handleConsoleConnections(new Request(`${redirectUri}?code=abc&state=${state}`, { headers: { cookie: `vitehub_connection_state=${cookie}` } }))
+      const callback = await dispatch(new Request(`${redirectUri}?code=abc&state=${state}`, { headers: { cookie: `vitehub_connection_state=${cookie}` } }))
       expect(callback.status).toBe(302)
       expect(callback.headers.get("location")).toBe("/portal/_vitehub/connections?connection=example&result=connected")
       expect(exchange).toHaveBeenCalledWith(expect.objectContaining({ redirectUri }), expect.anything())
@@ -183,6 +192,22 @@ describe("Console Connections", () => {
     expect(resolveConsoleConnections({ process: processState })).toBeUndefined()
   })
 
+  it("requires production Auth rules to protect the mounted Console", () => {
+    const auth: ResolvedAuthViteConfig = {
+      access: { routes: [{ authorize: true, route: "/_vitehub/**" }, { authorize: true, method: "GET", route: "/api/_vitehub/console/**" }] },
+      basePath: "/api/auth",
+      database: { mode: "default" },
+      definition: { handler: "/server/auth.ts", name: "default", source: "server-auth" },
+      rootDir: "/connections-test",
+      route: "/api/auth",
+      secondaryStorage: false,
+    }
+    const options = { auth, baseURL: "/portal/", development: false }
+    expect(() => assertConsoleProductionAccess({ access: "auth" }, options)).toThrow("/portal/_vitehub/**")
+    auth.access.routes = auth.access.routes.map(route => ({ ...route, route: `/portal${route.route}` }))
+    expect(() => assertConsoleProductionAccess({ access: "auth" }, options)).not.toThrow()
+  })
+
   it("registers only the Connections routes, so the Console page stays on /_vitehub/**", () => {
     const nitro: { handlers?: Array<{ handler: string, route: string }> } = { handlers: [] }
     addConsoleRpcHandler(nitro, "/runtime", { connections: true })
@@ -209,11 +234,14 @@ describe("Console Connections", () => {
       const configHook = plugin.config
       if (!configHook) throw new TypeError("Expected a console config hook.")
       const configHandler = "handler" in configHook ? configHook.handler : configHook
-      const config: { base: string, nitro?: { handlers: Array<{ method?: string, route: string }>, plugins: string[] }, root: string } = { base: "/portal/", root }
+      const config: { base: string, nitro?: { handlers: Array<{ method?: string, route: string }>, plugins: string[], publicAssets: Array<{ baseURL: string }> }, root: string } = { base: "/portal/", root }
       await Reflect.apply(configHandler, {}, [config, { command: "build", mode: "production" }])
       const routes = config.nitro?.handlers.map(handler => handler.route) ?? []
-      expect(routes).toContain("/_vitehub/**")
-      expect(routes).toEqual(expect.arrayContaining(["/_vitehub/connections/manage", "/_vitehub/connections/:name/connect", "/_vitehub/connections/:name/callback"]))
+      expect(routes).toContain("/portal/_vitehub/**")
+      expect(routes).toContain("/portal/_vitehub/rpc/**")
+      expect(routes).toContain("/portal/api/_vitehub/console/client.js")
+      expect(routes).toEqual(expect.arrayContaining(["/portal/_vitehub/connections/manage", "/portal/_vitehub/connections/:name/connect", "/portal/_vitehub/connections/:name/callback"]))
+      expect(config.nitro?.publicAssets).toEqual(expect.arrayContaining([expect.objectContaining({ baseURL: "/portal/_vitehub/assets" })]))
       const generated = await readFile(config.nitro?.plugins[0] ?? "", "utf8")
       expect(generated).toContain(`installConsoleConnections(${JSON.stringify(root)}, {"baseURL":"/portal/"})`)
     }

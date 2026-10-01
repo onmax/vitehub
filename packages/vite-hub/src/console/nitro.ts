@@ -1,9 +1,11 @@
 import { join } from "node:path"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
+import { consoleAuthPath } from "./auth-path.ts"
 import { viteHubErrorDiagnostics } from "../error-diagnostics.ts"
 
-export function addConsoleRpcHandler(nitro: { handlers?: Array<{ handler: string; route: string }> }, consoleRuntimeRoot: string, options: { connections?: boolean } = {}): void {
-  const route = "/_vitehub/rpc/**"
+export function addConsoleRpcHandler(nitro: { handlers?: Array<{ handler: string; route: string }> }, consoleRuntimeRoot: string, options: { baseURL?: string; connections?: boolean } = {}): void {
+  const mount = (path: string) => consoleAuthPath(options.baseURL ?? "/", path)
+  const route = mount("/_vitehub/rpc/**")
   const handler = join(consoleRuntimeRoot, "server/rpc.js")
   const kit = createNitroServerKit(nitro)
   // SAFETY: Console registration supplies Nitro handlers with the declared string fields.
@@ -11,7 +13,7 @@ export function addConsoleRpcHandler(nitro: { handlers?: Array<{ handler: string
   const conflict = handlers.find(candidate => candidate.route === route && candidate.handler !== handler)
   if (conflict) throw viteHubErrorDiagnostics.VITE_HUB_R0040({ message: `Cannot mount the ViteHub Console handler at "${route}" because that route already uses "${conflict.handler}".` })
   kit.addHandler({ handler, route })
-  const managementRoute = "/_vitehub/env/manage"
+  const managementRoute = mount("/_vitehub/env/manage")
   const managementHandler = join(consoleRuntimeRoot, "server/env-manage.js")
   const managementConflict = handlers.find(candidate => candidate.route === managementRoute && candidate.handler !== managementHandler)
   if (managementConflict) throw viteHubErrorDiagnostics.VITE_HUB_R0040({ message: `Cannot mount the ViteHub Env handler at "${managementRoute}" because that route is already registered.` })
@@ -19,11 +21,12 @@ export function addConsoleRpcHandler(nitro: { handlers?: Array<{ handler: string
   if (options.connections) {
     // Register only the Connections routes, so /_vitehub/connections still serves the Console page.
     const connectionsHandler = join(consoleRuntimeRoot, "server/connections-route.js")
-    for (const [method, connectionsRoute] of [
+    for (const [method, path] of [
       ["post", "/_vitehub/connections/manage"],
       ["get", "/_vitehub/connections/:name/connect"],
       ["get", "/_vitehub/connections/:name/callback"],
     ] as const) {
+      const connectionsRoute = mount(path)
       const connectionsConflict = handlers.find(candidate => candidate.route === connectionsRoute && candidate.handler !== connectionsHandler)
       if (connectionsConflict) throw viteHubErrorDiagnostics.VITE_HUB_R0040({ message: `Cannot mount the ViteHub Connections handler at "${connectionsRoute}" because that route is already registered.` })
       kit.addHandler({ handler: connectionsHandler, method, route: connectionsRoute })
