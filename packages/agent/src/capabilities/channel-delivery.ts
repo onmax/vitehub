@@ -1,12 +1,14 @@
 import { ViteHubError } from "@vite-hub/runtime"
 
-import { defineCapability } from "../capability-runtime.ts"
+import { capabilityFinishDeliveryEffectSymbol, defineCapability } from "../capability-runtime.ts"
 import { defineInternalTool } from "./internal.ts"
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
 
 import type {
   AgentCapabilityDefinition,
   AgentCapabilityRuntimeContext,
+  AgentChannelDeliveryFinishEffectCallback,
+  AgentInvocationContextStore,
   AgentToolSchema,
   MaybePromise,
 } from "../types.ts"
@@ -60,16 +62,23 @@ export function channelDelivery<TOptions>(options: ChannelDeliveryOptions<TOptio
   const channelName = options.channel.name ? ` "${options.channel.name}"` : ""
   const description = options.description
     ?? `Send one message through Channel${channelName} to a recipient that the application selects.${maxCalls === 1 ? " Call this tool once." : ` You can call this tool at most ${maxCalls} times.`}`
-  return defineCapability({
+  const states = new WeakMap<AgentInvocationContextStore, { calls: number, sent: number }>()
+  const finishEffect: AgentChannelDeliveryFinishEffectCallback = ({ event, context }) => {
+    const state = states.get(context)
+    if (!Object.hasOwn(event, "error") && !event.invocation.cancelled && !state?.sent) {
+      throw new ViteHubError("CHANNEL_DELIVERY_REQUIRED", `[vitehub] The Agent finished without a successful ${name} call.`, { details: { attempts: state?.calls ?? 0, tool: name } })
+    }
+  }
+  return Object.assign(defineCapability({
     id: `channel-delivery.${name}`,
     metadata: { channel: options.channel.name, maxCalls, required: options.required === true, tool: name },
     resolve(context) {
       // Each invocation resolves its own counters.
-      let calls = 0
-      let sent = 0
+      const state = { calls: 0, sent: 0 }
+      states.set(context.context, state)
       const checkLimit = () => {
-        if (calls >= maxCalls) {
-          throw new ViteHubError("CHANNEL_DELIVERY_LIMIT", `[vitehub] ${name} was already called ${calls} ${calls === 1 ? "time" : "times"}. Do not call it again.`, { details: { maxCalls, tool: name } })
+        if (state.calls >= maxCalls) {
+          throw new ViteHubError("CHANNEL_DELIVERY_LIMIT", `[vitehub] ${name} was already called ${state.calls} ${state.calls === 1 ? "time" : "times"}. Do not call it again.`, { details: { maxCalls, tool: name } })
         }
       }
       context.tools.add({
@@ -85,23 +94,16 @@ export function channelDelivery<TOptions>(options: ChannelDeliveryOptions<TOptio
             if (!text.trim()) throw new TypeError(`[vitehub] ${name} requires formatted text to be non-empty.`)
             checkLimit()
             // Count the attempt before sending. A failed send can still have reached the recipient.
-            calls++
+            state.calls++
             const [error, receipt] = await options.channel.send(text, options.options)
             if (error) throw error
-            sent++
+            state.sent++
             return { deliveryId: receipt.deliveryId, sent: true }
           },
           inputSchema: channelDeliveryInputSchema,
           name,
         }),
       })
-      if (options.required) {
-        context.delivery.finishEffect(({ event }) => {
-          if (!Object.hasOwn(event, "error") && !event.invocation.cancelled && !sent) {
-            throw new ViteHubError("CHANNEL_DELIVERY_REQUIRED", `[vitehub] The Agent finished without a successful ${name} call.`, { details: { attempts: calls, tool: name } })
-          }
-        })
-      }
     },
-  })
+  }), options.required ? { [capabilityFinishDeliveryEffectSymbol]: finishEffect } : {})
 }

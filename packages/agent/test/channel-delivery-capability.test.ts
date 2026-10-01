@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 
-import { channelDelivery } from "../src/capabilities.ts"
+import { channelDelivery, inputCommands } from "../src/capabilities.ts"
 import { createAgentInspectionMetadata, defineAgent, defineCapability, resolveAgentInspectionMetadata, runAgent } from "../src/index.ts"
 
 import type { AgentToolSet } from "../src/index.ts"
@@ -57,6 +57,62 @@ describe("channelDelivery()", () => {
     expect(run).not.toHaveBeenCalled()
     expect(execute).not.toHaveBeenCalled()
     expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it.each(["before", "after"] as const)("enforces required delivery %s a handled input command", async (order) => {
+    const channel = createChannel()
+    const run = vi.fn()
+    const delivery = channelDelivery({ channel, options: { recipient: "user:1" }, required: true })
+    const commands = inputCommands({ commands: { debug: { call: ({ context }) => context.reply("Handled") } } })
+    const agent = defineAgent({
+      runtime: false,
+      driver: { run },
+      capabilities: order === "before" ? [delivery, commands] : [commands, delivery],
+    })
+
+    const [error, result] = await runAgent(agent, { prompt: "/debug" })
+    expect(error).toMatchObject({ code: "CHANNEL_DELIVERY_REQUIRED", details: { attempts: 0, tool: "send_message" } })
+    expect(result).toBeNull()
+    expect(run).not.toHaveBeenCalled()
+    expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it("allows a handled input command when delivery is optional", async () => {
+    const channel = createChannel()
+    const run = vi.fn()
+    const agent = defineAgent({
+      runtime: false,
+      driver: { run },
+      capabilities: [
+        inputCommands({ commands: { debug: { call: ({ context }) => context.reply("Handled") } } }),
+        channelDelivery({ channel, options: { recipient: "user:1" } }),
+      ],
+    })
+
+    const [error, result] = await runAgent(agent, { prompt: "/debug" })
+    expect(error).toBeNull()
+    expect(result).toBeInstanceOf(Response)
+    expect(result).toMatchObject({ status: 204 })
+    expect(run).not.toHaveBeenCalled()
+    expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["before", "toString"], ["after", "toString"],
+    ["before", "constructor"], ["after", "constructor"],
+  ] as const)("allows delivery %s an ordinary tool with the name %s", async (order, name) => {
+    const channel = createChannel()
+    const delivery = channelDelivery({ channel, name, options: { recipient: "user:1" }, required: true })
+    const other = defineCapability({ id: "other", resolve: context => context.tools.add({ ordinary: { name: "ordinary", execute: () => "done" } }) })
+    const agent = defineAgent({
+      extends: agentCalling(async tools => {
+        await tools[name]!.execute!({ message: "Hello" })
+      }),
+      capabilities: order === "before" ? [delivery, other] : [other, delivery],
+    })
+
+    await expect(runAgent(agent, { prompt: "Write" })).resolves.toEqual([null, "done"])
+    expect(channel.send).toHaveBeenCalledWith("Hello", { recipient: "user:1" })
   })
 
   it("sends through the Channel to the configured recipient once", async () => {

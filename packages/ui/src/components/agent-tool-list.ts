@@ -1,4 +1,4 @@
-import { defineComponent, h, type PropType } from "vue";
+import { defineComponent, getCurrentInstance, h, type PropType } from "vue";
 import { hasRuntimeType } from "../internal/runtime-type.ts";
 import type { AgentToolInspection } from "../types.ts";
 
@@ -40,6 +40,10 @@ export const AgentToolList = defineComponent({
     },
   },
   setup(props) {
+    const Icon = getCurrentInstance()?.appContext.components.UIcon;
+    const toolIcon = (tool: AgentToolInspection) => Icon && tool.icon
+      ? h("span", { "aria-hidden": "true", class: "vh-agent-tool-list__icon" }, [h(Icon, { name: tool.icon })])
+      : null;
     return () =>
       h(
         "div",
@@ -61,14 +65,17 @@ export const AgentToolList = defineComponent({
           );
           if (!hasDetails) {
             return h("div", { ...attributes, class: "vh-agent-tool-list__item" }, [
+              toolIcon(tool),
               h("code", tool.name),
+              tool.label ? h("small", tool.label) : null,
               usage,
             ]);
           }
           return h("details", { ...attributes, class: "vh-agent-tool-list__disclosure" }, [
             h("summary", [
+              toolIcon(tool),
               h("code", tool.name),
-              h("small", tool.description || "Tool contract"),
+              h("small", tool.label || tool.description || "Tool contract"),
               usage,
               h(
                 "svg",

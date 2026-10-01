@@ -43,3 +43,4 @@ export type {
 } from "./routes.ts"
 
 export { inheritAgentLayerOptions } from "../agent-layers.ts"
+export { decodeColocatedAgentSkills, withColocatedAgentSkills } from "../internal/colocated-agent-skills.ts"
