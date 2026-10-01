@@ -77,7 +77,7 @@ function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boole
  *
  * Accepts a missing header, IP literals, `localhost`, `*.localhost`, the configured
  * `server.host`, `server.hmr.host`, `server.origin`, and `server.allowedHosts`. An entry that starts with `.` also accepts
- * its subdomains. The environment variable `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` adds one host.
+ * its subdomains. Vite includes the comma-separated environment host list in resolved `server.allowedHosts`.
  * `allowedHosts: true` or `server.https` accepts all hosts, as in Vite.
  *
  * Dev endpoints run this check themselves, so they do not depend on the host
@@ -90,8 +90,6 @@ export function isViteHubDevHostAllowed(server: Pick<ViteHubDevEndpointServer, "
   const { allowedHosts = [], host: listenHost, hmr, origin, https } = server.config.server
   if (allowedHosts === true || https) return true
   const additionalHosts = [...allowedHosts]
-  const environmentHost = process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
-  if (environmentHost) additionalHosts.push(environmentHost)
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vite allows a string hostname or a boolean listen-host setting.
   if (typeof listenHost === "string") additionalHosts.push(listenHost)
   if (hmr && hmr !== true && hmr.host) additionalHosts.push(hmr.host)

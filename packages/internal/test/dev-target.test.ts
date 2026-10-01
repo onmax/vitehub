@@ -1,5 +1,6 @@
 import { createServer, request } from "node:http"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { resolveConfig } from "vite"
 
 import {
   defaultViteHubDevServerUrl,
@@ -253,13 +254,16 @@ describe("guarded dev endpoint", () => {
     expect(await requestWithHost(all.url, `attacker.example:${new URL(all.url).port}`)).toEqual([200, "handled"])
   })
 
-  it("accepts Vite's environment-provided allowed host", async () => {
-    vi.stubEnv("__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS", "hosted.test")
+  it("uses Vite's resolved environment host list without reading later environment changes", async () => {
+    vi.stubEnv("__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS", " foo.test, bar.test, , ")
     try {
-      const local = await listen({})
+      const config = await resolveConfig({ configFile: false, server: {} }, "serve", "development")
+      vi.stubEnv("__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS", "attacker.test")
+      const local = await listen({ server: config.server })
       const port = new URL(local.url).port
-      expect(await requestWithHost(local.url, `hosted.test:${port}`)).toEqual([200, "handled"])
-      expect(await requestWithHost(local.url, `other.test:${port}`)).toEqual([403, "Forbidden Test Dev host."])
+      expect(await requestWithHost(local.url, `foo.test:${port}`)).toEqual([200, "handled"])
+      expect(await requestWithHost(local.url, `bar.test:${port}`)).toEqual([200, "handled"])
+      expect(await requestWithHost(local.url, `attacker.test:${port}`)).toEqual([403, "Forbidden Test Dev host."])
     }
     finally {
       vi.unstubAllEnvs()
