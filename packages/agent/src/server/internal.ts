@@ -16,7 +16,6 @@ export {
 export { defineScheduledAgentTarget } from "./scheduled-turn.ts"
 export { handleChannelReplayRequest } from "../channel-replay.ts"
 export type { ChannelReplayRequestOptions } from "../channel-replay.ts"
-export { agentGeneratedRuntimeError } from "./generated-runtime-error.ts"
 export { createAgentWebhookRequest } from "../internal/webhook-request.ts"
 export { markDiscoveredWorkspaceAgentDefinitionRegistered } from "../workspace-agent.ts"
 export type { AgentWebhookRequestInput } from "../internal/webhook-request.ts"
