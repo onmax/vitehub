@@ -61,6 +61,7 @@ describe("Schedule private dev authority", () => {
     await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
     const publicGuard = { [scheduleDevHeader]: scheduleDevHeaderValue, "content-type": "application/json" }
     let serverId = ""
+    let token: string | undefined
     const other = await createViteHubDevToken(join(root, "other"), scheduleDevTokenNamespace)
     const stale = await createViteHubDevToken(viteRoot, scheduleDevTokenNamespace)
     let secondServerId = ""
@@ -68,7 +69,7 @@ describe("Schedule private dev authority", () => {
       const discoveryText = await (await fetch(`${url}${scheduleDevRoute}`, { headers: publicGuard })).text()
       const discovery = JSON.parse(discoveryText)
       serverId = discovery.scheduleDevTokenServerId
-      const token = await readViteHubDevToken(devContext.rootDir, { namespace: scheduleDevTokenNamespace, serverId })
+      token = await readViteHubDevToken(devContext.rootDir, { namespace: scheduleDevTokenNamespace, serverId })
       expect(token).toBeTruthy()
       expect(discoveryText).not.toContain(token!)
       const secondDiscovery = await (await fetch(`${second.url}${scheduleDevRoute}`, { headers: publicGuard })).json() as { scheduleDevTokenServerId: string }
@@ -138,6 +139,17 @@ describe("Schedule private dev authority", () => {
     finally {
       await new Promise<void>((resolve, reject) => httpServer.close(error => error ? reject(error) : resolve()))
       if (serverId) await vi.waitFor(async () => { expect(await readViteHubDevToken(devContext.rootDir, { namespace: scheduleDevTokenNamespace, serverId })).toBeUndefined() })
+      if (serverId && token) {
+        const effectsBeforeClosedRequests = invoked.mock.calls.length
+        for (const operation of ["run", "enable", "disable"]) {
+          expect((await handleScheduleDevRequest(new Request(`${url}${scheduleDevRuntimeRoute}`, {
+            method: "POST", headers: { ...publicGuard, [viteHubDevTokenHeader]: token, [scheduleDevTokenServerHeader]: serverId },
+            body: JSON.stringify({ id: "digest", operation }),
+          }), devContext)).status).toBe(403)
+        }
+        expect(invoked).toHaveBeenCalledTimes(effectsBeforeClosedRequests)
+        expect((await schedules.get("digest"))?.enabled).toBe(true)
+      }
       if (secondServerId) {
         expect(await readViteHubDevToken(viteRoot, { namespace: scheduleDevTokenNamespace, serverId: secondServerId })).toBeTruthy()
         expect(await runScheduleCli(["get", "digest", "--url", second.url, "--json"], {
