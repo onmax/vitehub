@@ -183,9 +183,9 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     }
   }
 
-  async function writeDevRegistry(rootDir: string, workflow: ResolvedWorkflowOptions) {
+  async function writeDevRegistry(rootDir: string, workflow: false | ResolvedWorkflowOptions) {
     return await writeWorkflowDevRegistryFiles({
-      definitions: discoverWorkflowDevDefinitions(rootDir, serverDirs),
+      definitions: workflow === false ? [] : discoverWorkflowDevDefinitions(rootDir, serverDirs),
       importBase: internalOptions.importBase,
       projectRoot: rootDir,
       workflow,
@@ -235,15 +235,24 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         }
         if (invalidated) environment?.hot.send({ type: "full-reload", triggeredBy: path })
       }
+      let pendingRefresh = Promise.resolve()
       for (const event of ["add", "change", "unlink"] as const) {
-        server.watcher.on(event, path => void refresh(path).catch(error => server.config.logger.error(`[vitehub] Workflow dev registry update failed: ${error instanceof Error ? error.message : String(error)}`)))
+        server.watcher.on(event, path => {
+          pendingRefresh = pendingRefresh.then(() => refresh(path)).catch(error => {
+            server.config.logger.error(`[vitehub] Workflow dev registry update failed: ${error instanceof Error ? error.message : String(error)}`)
+          })
+        })
       }
     },
-    configResolved(config) {
+    async configResolved(config) {
       resolved = config
       hasFinalNitroEnvironment = Boolean(config.environments?.nitro)
       providerOutput = useProviderOutputCatalog(config)
       workflow = config.workflow ?? workflow
+      if (devRootDir) {
+        devWorkflow = resolveDevWorkflow()
+        await writeDevRegistry(devRootDir, devWorkflow ?? false)
+      }
     },
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) {

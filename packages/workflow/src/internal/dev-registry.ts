@@ -30,7 +30,7 @@ export function createWorkflowDevRegistryModule(registryFile: string, definition
   return createWorkflowRegistryContents(registryFile, definitions.filter(isWorkflowDevDefinition), { workflow: importBase })
 }
 
-export function createWorkflowDevPluginModule(workflow: ResolvedWorkflowOptions, importBase = workflowPackageName): string {
+export function createWorkflowDevPluginModule(workflow: false | ResolvedWorkflowOptions, importBase = workflowPackageName): string {
   return [
     "import { definePlugin } from \"nitro\"",
     `import { setWorkflowRuntimeConfig, setWorkflowRuntimeRegistry } from ${JSON.stringify(`${importBase}/runtime/state`)}`,
@@ -55,7 +55,7 @@ export interface WorkflowDevRegistryFilesOptions {
   definitions: DiscoveredWorkflowDefinition[]
   importBase?: string
   projectRoot: string
-  workflow: ResolvedWorkflowOptions
+  workflow: false | ResolvedWorkflowOptions
 }
 
 export interface WorkflowDevRegistryFiles {
