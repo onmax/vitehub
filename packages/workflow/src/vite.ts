@@ -55,6 +55,7 @@ interface AgentWorkflowRegistryPlugin extends Plugin {
 }
 
 const noExternalAddition = createNoExternalAddition(workflowPackageName)
+const workflowBuildAssociation = Symbol("vitehubWorkflowBuildAssociation")
 
 interface ScheduledWorkflowBuildConfig {
   config: ResolvedConfig
@@ -123,9 +124,14 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     if (direct) return direct
     const candidates = scheduledBuildConfigsByRoot.get(config.root) ?? []
     const catalog = getProviderOutputCatalog(config)
+    // SAFETY: configResolved installs this private token on build options so Vite clones retain their owner.
+    const association = config.build && (config.build as typeof config.build & { [workflowBuildAssociation]?: object })[workflowBuildAssociation]
     const matches = catalog
       ? candidates.filter(candidate => candidate.providerOutput === catalog)
-      : config.build ? candidates.filter(candidate => candidate.config.build === config.build) : []
+      : candidates.filter(candidate => candidate.config.build === config.build || (association && (
+          // SAFETY: configResolved installs this private token on registered build options.
+          (candidate.config.build as typeof candidate.config.build & { [workflowBuildAssociation]?: object })[workflowBuildAssociation] === association
+        )))
     if (matches.length !== 1) throw workflowErrorDiagnostics.WORKFLOW_B0002({ root: config.root })
     const match = matches[0]!
     scheduleBuildConfigs.set(config, match)
@@ -318,6 +324,18 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       workflow = config.workflow ?? defaultWorkflow
       // SAFETY: The framework adds optional forwarded server directories to resolved Vite configuration.
       const buildConfig = config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[], __vitehubWorkflowServerDirs?: string[] }
+      // Vite clones environment configs by copying the build options. Keep a
+      // stable owner token on that object so clones retain their full
+      // Workflow and Provider Output association.
+      const buildWithAssociation = config.build as typeof config.build & { [workflowBuildAssociation]?: object }
+      if (!buildWithAssociation[workflowBuildAssociation]) {
+        Object.defineProperty(buildWithAssociation, workflowBuildAssociation, {
+          configurable: false,
+          enumerable: true,
+          value: {},
+          writable: false,
+        })
+      }
       const buildServerDirs = buildConfig[VITEHUB_SERVER_DIRS] ?? buildConfig.__vitehubWorkflowServerDirs
       serverDirs = buildServerDirs
       const scheduled = { config, providerOutput, workflow, serverDirs: buildServerDirs }
