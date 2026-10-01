@@ -212,7 +212,9 @@ describe("hubRateLimit", () => {
     config(userConfig, { command: "build" })
     await configResolved({ ...userConfig, build: { outDir: "dist" }, command: "build", plugins: [], resolve: { alias: [] } } as never)
 
-    const inspection = plugin.vitehub.inspect()
+    const inspect = plugin.vitehub.inspect
+    if (typeof inspect !== "function") throw new TypeError("Rate Limit inspection contributor must be a factory")
+    const inspection = await inspect()
     expect(inspection?.providerOutput).toEqual(expect.arrayContaining([
       expect.objectContaining({
         owner: "rate-limit",

@@ -9,6 +9,7 @@ import type { AgentRunInput } from "../types.ts"
 
 type Advocaat = typeof import("advocaat")
 type AdvocaatQuestion = Parameters<Advocaat["ask"]>[1][string]
+type AdvocaatEntry = Parameters<Advocaat["ask"]>[0]
 
 /** The Server Env group that `typesafeEnv()` declares. */
 export const typesafeEnvGroup = "typesafe"
@@ -108,15 +109,17 @@ function validateQuestionCriteria(name: string, question: AskQuestion): void {
 }
 
 function toAdvocaatQuestion(name: string, question: AskQuestion): AdvocaatQuestion {
+  // advocaat's declaration omits scalar JSON values even though its runtime accepts them.
+  // Keep the public Jev contract's number and boolean values intact at this boundary.
   switch (question.type) {
     case "chance":
-      return { criteria: question.criteria, instructions: question.instructions, type: "noul" }
+      return { criteria: question.criteria, instructions: question.instructions, type: "noul" } as unknown as AdvocaatQuestion
     case "choice":
     case "score":
     case "if":
     case "switch":
       validateQuestionCriteria(name, question)
-      return question
+      return question as unknown as AdvocaatQuestion
   }
   throw invalidQuestion(name)
 }
@@ -141,7 +144,7 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
   }))
   const advocaat = await loadAdvocaat()
   const options = await typesafeOptions(context)
-  const answers = await advocaat.ask(toEntry(state), wire, { ...options, signal: context.abortSignal })
+  const answers = await advocaat.ask(toEntry(state) as unknown as AdvocaatEntry, wire, { ...options, signal: context.abortSignal })
   // SAFETY: advocaat answers under the same keys, with the answer shapes that AskAnswers describes for each question type.
   return answers as AskAnswers<Q>
 }
