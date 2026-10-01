@@ -67,7 +67,7 @@ describe("Workflow preparation for Schedule", () => {
     }
   })
 
-  it("uses each environment config when a reused plugin starts builds", async () => {
+  it.each([true, false])("uses each environment config when a reused plugin starts builds with private metadata %j", async (retainMetadata) => {
     const plugin = hubWorkflow({ provider: "vercel" })
     const roots: string[] = []
     try {
@@ -101,7 +101,9 @@ describe("Workflow preparation for Schedule", () => {
       for (const config of configs) await (plugin.configResolved as (config: ResolvedConfig) => void)(config)
       for (const config of configs) {
         // Vite creates an environment config from the resolved app config.
-        const context = { environment: { config: { ...config } } }
+        const clone = retainMetadata ? { ...config } : Object.fromEntries(Object.entries(config))
+        if (!retainMetadata) Reflect.deleteProperty(clone, "__vitehubWorkflowServerDirs")
+        const context = { environment: { config: clone } }
         ;(plugin.buildStart as (this: typeof context) => void).call(context)
         await (plugin.buildEnd as (this: typeof context, error?: Error) => Promise<void>).call(context)
         const contributions = useProviderOutputCatalog(config).takeDeploymentContributions()

@@ -1738,7 +1738,7 @@ async function writeAgentRuntimeRegistry(
       resetPublicUrlAgentNames: false,
     })
     await writeFile(definitionCatalogPath, [...catalog.imports, "", ...catalog.setup, "", "export { agents }", ""].join("\n"), "utf8")
-    entries.push(`[${JSON.stringify(definition.name)}]: async () => (await import(${JSON.stringify(moduleImportSpecifier(registryPath, definitionCatalogPath))})).agents[${JSON.stringify(definition.name)}]`)
+    entries.push(`[${JSON.stringify(definition.name)}]: async () => { await initializePublicUrlAgentNames(); return (await import(${JSON.stringify(moduleImportSpecifier(registryPath, definitionCatalogPath))})).agents[${JSON.stringify(definition.name)}] }`)
   }
   // Keep the aggregate catalog for development refreshes and existing consumers.
   const aggregateCatalog = await generateAgentDeploymentCatalog(definitions, catalogPath, {
@@ -1748,6 +1748,11 @@ async function writeAgentRuntimeRegistry(
   })
   await writeFile(catalogPath, [...aggregateCatalog.imports, "", ...aggregateCatalog.setup, "", "export { agents }", ""].join("\n"), "utf8")
   await writeFile(registryPath, [
+    "let publicUrlAgentNamesReady",
+    "function initializePublicUrlAgentNames() {",
+    `  return publicUrlAgentNamesReady ??= import(${JSON.stringify(subpath(options.agentImportBase, "server/internal"))}).then(({ resetPublicUrlAgentNames }) => resetPublicUrlAgentNames())`,
+    "}",
+    "",
     `export default {${entries.length ? `\n  ${entries.join(",\n  ")}\n` : ""}}`,
     `export const metadata = {${generatedAgentIdentityEntries(definitions)}}`,
     "",
@@ -2735,7 +2740,9 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
     config: ResolvedConfig
     providerOutput: ProviderOutputCatalog | undefined
     serverDirs: string[] | undefined
+    runtimeCapabilities: GeneratedAgentRuntimeCapability[]
   }>()
+  const scheduledBuildConfigsByRoot = new Map<string, ResolvedConfig[]>()
   const fallbackEnvironment = {}
   const buildEnvironment = (context: { environment?: object } | undefined): object =>
     context?.environment ?? context ?? fallbackEnvironment
@@ -3215,7 +3222,10 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       )
       standaloneRuntimeCapabilities = await writeStandaloneAgentRuntimeCapabilities(config, runtimeCapabilities)
       await writeGeneratedAgentOutputs(config)
-      buildConfigs.set(config, { agent, config, providerOutput, serverDirs })
+      buildConfigs.set(config, { agent, config, providerOutput, serverDirs, runtimeCapabilities: standaloneRuntimeCapabilities })
+      const configs = scheduledBuildConfigsByRoot.get(config.root) ?? []
+      configs.push(config)
+      scheduledBuildConfigsByRoot.set(config.root, configs)
       if (agent === false || !discoverAgentEvalFiles([config.root, ...(serverDirs ?? [])]).length) {
         await removeAgentEvaliteConfig(config.root, generatedRoot)
         return
@@ -3241,10 +3251,23 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       const context = buildEnvironment(this)
       const environmentConfig = this?.environment?.config
       if (environmentConfig) {
-        const scheduled = buildConfigs.get(environmentConfig)
-        buildConfigs.set(context, scheduled ?? { agent, config: environmentConfig, providerOutput, serverDirs })
+        const candidates = scheduledBuildConfigsByRoot.get(environmentConfig.root) ?? []
+        const scheduledConfig = candidates.length === 1 ? candidates[0] : candidates.find(candidate =>
+          candidate.build.outDir === environmentConfig.build.outDir
+          && candidate.define?.__VITEHUB_PUBLIC_URL__ === environmentConfig.define?.__VITEHUB_PUBLIC_URL__
+          && candidate.define?.__VITEHUB_APP_BASE_URL__ === environmentConfig.define?.__VITEHUB_APP_BASE_URL__,
+        )
+        const scheduled = buildConfigs.get(environmentConfig) ?? (scheduledConfig && buildConfigs.get(scheduledConfig))
+        buildConfigs.set(context, {
+          agent: scheduled ? scheduled.agent : environmentConfig.agent ?? options,
+          config: environmentConfig,
+          providerOutput: scheduled?.providerOutput ?? useProviderOutputCatalog(environmentConfig),
+          // SAFETY: The framework owns this optional server-directory symbol on Vite configs.
+          serverDirs: scheduled?.serverDirs ?? (environmentConfig as typeof environmentConfig & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS],
+          runtimeCapabilities: scheduled?.runtimeCapabilities ?? [],
+        })
       } else if (resolved) {
-        buildConfigs.set(context, { agent, config: resolved, providerOutput, serverDirs })
+        buildConfigs.set(context, { agent, config: resolved, providerOutput, serverDirs, runtimeCapabilities: standaloneRuntimeCapabilities })
       }
       providerOutputGenerations.capture(this, buildConfigs.get(context)?.providerOutput ?? providerOutput)
     },
@@ -3255,8 +3278,8 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         return
       }
       const config = build?.config ?? resolved
-      const buildAgent = build?.agent ?? agent
-      const buildServerDirs = build?.serverDirs ?? serverDirs
+      const buildAgent = build ? build.agent : agent
+      const buildServerDirs = build ? build.serverDirs : serverDirs
       if (!config || config.command !== "build") return
       let artifactDir: string | undefined
       try {
@@ -3332,7 +3355,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
               agentImportBase: getAgentImportBase(buildAgent, frameworkOptions),
               libsqlState: resolveLibsqlAgentState(normalized, config),
               providerImportAliases: retainedProviderImportAliases,
-              runtimeCapabilities: standaloneRuntimeCapabilities,
+              runtimeCapabilities: build?.runtimeCapabilities ?? standaloneRuntimeCapabilities,
               schedule: hasScheduleVitePlugin(config),
               scheduleRuntimeImport: getScheduleRuntimeImport(buildAgent, frameworkOptions),
               sourceRootDir: retainedSources?.resolve(config.root),
@@ -3364,15 +3387,18 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       }
     },
     async renderError(error) {
-      await providerOutputGenerations.reset(this, providerOutput, error)
+      const build = buildConfigs.get(buildEnvironment(this))
+      await providerOutputGenerations.reset(this, build?.providerOutput ?? providerOutput, error)
     },
     closeBundle: {
       order: "post",
       sequential: true,
       async handler() {
         await closeDiscoveryWatcher?.()
-        if (!resolved || resolved.command !== "build") return
-        await finalizeProviderDeploymentOutputs(providerOutput)
+        const build = buildConfigs.get(buildEnvironment(this))
+        const config = build?.config ?? resolved
+        if (!config || config.command !== "build") return
+        await finalizeProviderDeploymentOutputs(build?.providerOutput ?? providerOutput)
       },
     },
   }
