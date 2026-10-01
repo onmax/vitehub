@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import * as v from "valibot"
 
 import { createTraceEventLog } from "@vite-hub/runtime"
-import { defineChannel, slack, telegram, webChat } from "../src/channels.ts"
+import { defineChannel, github, slack, telegram, webChat } from "../src/channels.ts"
 import { withAgentChannelDeliveryOwnershipVerifier } from "../src/internal/channel-delivery.ts"
 import { channelMessageContextKey } from "../src/internal/channel-delivery-handlers.ts"
 import { defineAgent, runAgent, runAgentTrigger } from "../src/index.ts"
@@ -60,6 +60,75 @@ function mailChannel(provider: { label: (id: string, add: string[]) => void, sub
 }
 
 describe("Channel message handle", () => {
+  it.each([
+    ["webhook", false], ["webhook", true],
+    ["dev", false], ["dev", true],
+    ["dev-context", false], ["dev-context", true],
+  ] as const)("supplies GitHub message data to hooks (%s, error: %s)", async (source, fail) => {
+    const label = vi.fn()
+    const messageData = v.object({
+      repository: v.object({ fullName: v.string() }),
+      pullRequest: v.object({ number: v.number() }),
+      trigger: v.object({ comment: v.object({ id: v.number() }) }),
+    })
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          pullRequest: { workspace: false, reply: false },
+          message: {
+            data: messageData,
+            methods: {
+              label: (context, value: string) => label(context.message, value),
+            },
+          },
+        }),
+      },
+      driver: { run: () => {
+        if (fail) throw new Error("driver failed")
+        return "ok"
+      } },
+      hooks: {
+        async "agent:finish"(event) {
+          if (!event.message) throw new Error("expected a GitHub message")
+          await event.message.label("finished")
+        },
+        async "agent:error"(event) {
+          if (!event.message) throw new Error("expected a GitHub message")
+          await event.message.label("failed")
+        },
+      },
+    })
+    const payload = {
+      action: "created",
+      comment: { body: "/review please", id: 99, user: { login: "mona", type: "User" } },
+      issue: {
+        number: 42,
+        pull_request: { url: "https://api.github.test/repos/acme/app/pulls/42" },
+      },
+      repository: { full_name: "acme/app" },
+    }
+    const input = source === "dev-context" ? {
+      pullRequest: {
+        repository: { fullName: "acme/app", name: "app", owner: "acme" },
+        pullRequest: {
+          apiUrl: "https://api.github.test/repos/acme/app/pulls/42",
+          number: 42,
+          source: { checkout: false, mount: "", ref: "refs/pull/42/head", repo: "acme/app" },
+        },
+        run: { messageId: "99", origin: "github-pull-request-comment", threadId: "pr-42" },
+        trigger: { action: "created", actor: { login: "mona" }, args: "please", command: "/review", comment: { id: 99 }, event: "issue_comment" },
+      },
+    } : { payload }
+    const invocation = runAgentTrigger(agent, runtimeContext(), `github.${source === "webhook" ? "webhook" : "dev"}`, input)
+    if (fail) await expect(invocation).rejects.toThrow("driver failed")
+    else await expect(invocation).resolves.toBe("ok")
+    expect(label).toHaveBeenCalledWith({
+      repository: { fullName: "acme/app" },
+      pullRequest: { number: 42 },
+      trigger: { comment: { id: 99 } },
+    }, fail ? "failed" : "finished")
+  })
+
   it.each([false, true])("supplies generated webChat message data to hooks (error: %s)", async (fail) => {
     const label = vi.fn()
     const seen: unknown[] = []

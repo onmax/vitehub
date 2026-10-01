@@ -2990,6 +2990,7 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
         const invocation: AgentTriggerInvokeResult = {
           ...(finishEffects ? { delivery: { finishEffects } } : {}),
           input: pullRequestCommandInput(command, pullRequestContext),
+          message: pullRequestContext,
           run,
         }
         if (reconciled && command.deliveryId) {
@@ -3032,6 +3033,7 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
                 ? githubPullRequestDevTaskPrompt(inputRecord, command, existingPullRequest)
                 : githubPullRequestDevPrompt(inputRecord, existingPullRequest),
             },
+            message: existingPullRequest,
             run: githubPullRequestRunMetadata(existingPullRequest, context.trigger.channelId),
           }
         }
@@ -3066,6 +3068,7 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
               body: maybeString(inputRecord.prompt) || command.body,
             }, pullRequest),
           },
+          message: pullRequest,
           run: githubPullRequestRunMetadata(pullRequest, context.trigger.channelId),
         }
       },

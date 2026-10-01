@@ -96,7 +96,9 @@ Built-in Channels add the methods that their provider adapter supports. `discord
 
 The built-in helpers also accept `message: { data, methods }`. Use this option on `discord()`, `github()`, `http()`, `slack()`, `teams()`, `telegram()`, or `webChat()` to add typed methods while keeping the provider configuration. A declared method replaces a built-in method with the same name.
 
-The generated `webChat()` route supplies the current inbound message as `{ id?, text, metadata? }`. This data comes from the request before `route.mapInput` changes the Driver messages or session selection filters the history. Use a `message.data` schema that accepts this shape. Application-owned Triggers supply their own `message` data.
+The generated `webChat()` route supplies the current inbound message as `{ id?, text, metadata? }`. This data comes from the request before `route.mapInput` changes the Driver messages or session selection filters the history. Use a `message.data` schema that accepts this shape.
+
+The built-in GitHub `webhook` and `dev` Triggers supply the pull request context as message data: `{ repository, pullRequest, run, trigger }`. The `trigger.comment` field identifies the triggering comment; lifecycle events can use a synthetic comment ID. Use a schema that accepts this context. Application-owned Triggers supply their own `message` data.
 
 ### Dry run
 
