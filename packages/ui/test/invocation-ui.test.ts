@@ -772,7 +772,7 @@ describe("Agent Invocation UI", () => {
     expect(wrapper.get(".vh-invocation-message__more").text()).toBe("Show less");
   });
 
-  it("groups terminal work while keeping external effects and the final answer visible", async () => {
+  it("groups terminal work and delivery receipts while keeping the final answer visible", async () => {
     const timestamp = "2026-08-22T00:00:00.000Z";
     const invocation = {
       cancelledAt: "2026-08-22T00:00:05.000Z",
@@ -814,7 +814,6 @@ describe("Agent Invocation UI", () => {
     expect(rows.map(row => row.classes().find(name => name.startsWith("vh-invocation-") && name !== "vh-invocation-activities"))).toEqual([
       "vh-invocation-message",
       "vh-invocation-work",
-      "vh-invocation-activity",
       "vh-invocation-message",
     ]);
     expect(wrapper.findAll(".vh-invocation-work")).toHaveLength(1);
@@ -825,14 +824,14 @@ describe("Agent Invocation UI", () => {
     await work.trigger("toggle");
     expect(wrapper.get(".vh-invocation-work__activities").text()).toContain("Shell");
     expect(wrapper.get(".vh-invocation-work__activities").text()).toContain("Verify");
-    expect(wrapper.get(".vh-invocation-work__activities").findAll('[data-kind="delivery"]')).toHaveLength(3);
+    expect(wrapper.get(".vh-invocation-work__activities").findAll('[data-kind="delivery"]')).toHaveLength(4);
     expect(wrapper.get(".vh-invocation-work__activities").text()).toContain("Unsent reply");
     expect(wrapper.get(".vh-invocation-work__activities").text()).toContain("Updated issue");
     const failedReply = wrapper.get('[data-kind="delivery"][data-status="failed"]');
     await failedReply.get("summary").trigger("click");
     expect(failedReply.text()).toContain("Telegram disconnected");
-    expect(rows[2]!.text()).toContain("Reply sent");
-    expect(rows[3]!.text()).toContain("Done.");
+    expect(wrapper.get(".vh-invocation-work__activities").text()).toContain("Reply sent");
+    expect(rows[2]!.text()).toContain("Done.");
     expect(wrapper.find('[data-kind="delivery"]').exists()).toBe(true);
   });
 
@@ -854,7 +853,12 @@ describe("Agent Invocation UI", () => {
     expect(wrapper.text()).toContain("Done.");
     if (deliveredContent === "Done.") {
       expect(wrapper.text().match(/Done\./g)).toHaveLength(1);
-      expect(wrapper.get('[data-kind="delivery"]').text()).toContain("Reply sent");
+      expect(wrapper.find('.vh-invocation-activities > [data-kind="delivery"]').exists()).toBe(false);
+      const work = wrapper.get(".vh-invocation-work__details");
+      if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
+      work.element.open = true;
+      await work.trigger("toggle");
+      expect(wrapper.get('.vh-invocation-work__activities [data-kind="delivery"]').text()).toContain("Reply sent");
     } else {
       // The delivered reply is the answer the user saw, so it stays visible outside the collapsed work.
       const answers = wrapper.findAll('.vh-invocation-message[data-role="assistant"]');
@@ -870,9 +874,14 @@ describe("Agent Invocation UI", () => {
     }
   });
 
-  it.each(["Done.", "  Done.\n"])("deduplicates an update delivery matching the final answer: %s", (content) => {
+  it.each([
+    { content: "Done.", deliverySequence: 2, hasFollowup: false },
+    { content: "  Done.\n", deliverySequence: 2, hasFollowup: false },
+    { content: "Done.", deliverySequence: 2, hasFollowup: true },
+    { content: "Done.", deliverySequence: 5, hasFollowup: true },
+  ])("keeps a matching update receipt in work at sequence $deliverySequence with followup $hasFollowup", async ({ content, deliverySequence, hasFollowup }) => {
     const timestamp = "2026-08-22T00:00:00.000Z";
-    const invocation = {
+    const invocation: AgentInvocationView = {
       id: "matching-update",
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -880,15 +889,24 @@ describe("Agent Invocation UI", () => {
       traceId: "trace",
       observations: [
         { attributes: { "message.content": "Run it.", "message.role": "user" }, name: "agent.message", sequence: 1, timestamp, type: "lifecycle" as const },
-        { attributes: { "channel.effect.kind": "update", "channel.effect.content": content }, name: "agent.channel.delivery", sequence: 2, timestamp, type: "run" as const },
+        { attributes: { "channel.effect.kind": "update", "channel.effect.content": content }, name: "agent.channel.delivery", sequence: deliverySequence, timestamp, type: "run" as const },
         { attributes: { "message.content": "Done.", "message.role": "assistant" }, name: "agent.message", sequence: 3, timestamp, type: "lifecycle" as const },
+        ...(hasFollowup ? [{ attributes: { "message.content": "More context.", "message.role": "assistant", "message.phase": "commentary" }, name: "agent.message", sequence: 4, timestamp, type: "lifecycle" as const }] : []),
       ],
-    } satisfies AgentInvocationView;
+    };
 
     const wrapper = mount(AgentInvocation, { props: { invocation } });
 
-    expect(wrapper.findAll('.vh-invocation-message[data-role="assistant"]')).toHaveLength(1);
-    expect(wrapper.get('[data-kind="delivery"]').text()).toContain("Message updated");
+    expect(wrapper.findAll('.vh-invocation-message[data-role="assistant"]')).toHaveLength(hasFollowup ? 2 : 1);
+    expect(wrapper.find('[data-kind="delivery"]').exists()).toBe(false);
+    const work = wrapper.get(".vh-invocation-work__details");
+    if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
+    work.element.open = true;
+    await work.trigger("toggle");
+    expect(wrapper.find('.vh-invocation-activities > [data-kind="delivery"]').exists()).toBe(false);
+    const receipt = wrapper.get('.vh-invocation-work__activities [data-kind="delivery"]');
+    expect(receipt.text()).toContain("Message updated");
+    expect(receipt.text()).not.toContain("Done.");
     expect(wrapper.text().match(/Done\./g)).toHaveLength(1);
   });
 
@@ -1105,14 +1123,12 @@ describe("Agent Invocation UI", () => {
 
     const wrapper = mount(AgentInvocation, { props: { invocation } });
     const rows = wrapper.findAll(".vh-invocation-activities > li");
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(4);
     expect(rows[0]!.get("summary").text()).toContain("49 previous messages");
     expect((rows[0]!.get("details").element as HTMLDetailsElement).open).toBe(false);
     expect(rows[1]!.text()).toContain("Where does the order multiple come from?");
     expect(rows[2]!.get("summary").text()).toContain("Worked for 8s");
-    expect(rows[3]!.text()).toContain("Reply sent");
-    expect(rows[3]!.get(".vh-channel-icon").attributes("aria-label")).toBe("Microsoft Teams");
-    expect(rows[4]!.text()).toContain("The order multiple comes from BC.");
+    expect(rows[3]!.text()).toContain("The order multiple comes from BC.");
     expect(wrapper.text().match(/The order multiple comes from BC\./g)).toHaveLength(1);
     expect(wrapper.text()).not.toContain("Order multiple source");
     const work = rows[2]!.get(".vh-invocation-work__details");
@@ -1120,7 +1136,10 @@ describe("Agent Invocation UI", () => {
     work.element.open = true;
     await work.trigger("toggle");
     expect(wrapper.findAll('[data-kind="delivery"]')).toHaveLength(2);
-    expect(rows[2]!.find('[data-kind="delivery"]').exists()).toBe(true);
+    const receipts = rows[2]!.findAll('[data-kind="delivery"]');
+    expect(receipts).toHaveLength(2);
+    expect(receipts[1]!.text()).toContain("Reply sent");
+    expect(receipts[1]!.get(".vh-channel-icon").attributes("aria-label")).toBe("Microsoft Teams");
   });
 
   it("does not announce message copy success when the clipboard rejects", async () => {
@@ -3223,7 +3242,7 @@ describe("Agent Invocation UI", () => {
     wrapper.unmount();
   });
 
-  it.each(["completed", "failed"] as const)("keeps delivery-first receipts visible before the final answer and later commentary in a %s session", async (status) => {
+  it.each(["completed", "failed"] as const)("keeps delivery-first receipts in work before the final answer and later commentary in a %s session", async (status) => {
     const timestamp = "2026-08-24T00:00:00.000Z";
     const invocation: AgentInvocationView = {
       createdAt: timestamp,
@@ -3240,11 +3259,12 @@ describe("Agent Invocation UI", () => {
       updatedAt: timestamp,
     };
     const wrapper = mount(AgentInvocation, { props: { invocation } });
-    expect(wrapper.find('.vh-invocation-activities > [data-kind="delivery"]').exists()).toBe(true);
+    expect(wrapper.find('.vh-invocation-activities > [data-kind="delivery"]').exists()).toBe(false);
     const work = wrapper.get(".vh-invocation-work__details");
     if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
     work.element.open = true;
     await work.trigger("toggle");
+    expect(wrapper.get('.vh-invocation-work__activities [data-kind="delivery"]').text()).toContain("Reply sent");
     expect(wrapper.get(".vh-invocation-work__activities").text()).not.toContain("Found it.");
     expect(wrapper.text().match(/Found it\./g)).toHaveLength(1);
     const messages = wrapper.findAll(".vh-invocation-activities > .vh-invocation-message");
