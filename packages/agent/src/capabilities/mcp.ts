@@ -1,4 +1,6 @@
+import * as v from "valibot"
 import { defineMcpToolCapability, mcpWarningsContextKey, sanitizeMcpMetadata, withMcpInitializationCompatibility } from "../internal/mcp-tool-capability.ts"
+import { isCallableMember } from "../internal/runtime-type.ts"
 
 import type {
   AgentCapabilityDefinition,
@@ -35,15 +37,18 @@ function defaultMcpUnavailableNotice(servers: string[]): string {
   return `> ⚠️ ${servers.join(", ")} tools were temporarily unavailable. I answered with the remaining context.`
 }
 
+const mcpAvailabilityWarningSchema = v.object({
+  server: v.string(),
+  phase: v.picklist(["resolve", "discovery"]),
+  statusCode: v.optional(v.pipe(v.number(), v.finite())),
+})
+
 /** Read the MCP servers that were unavailable during one Invocation, for example `getMcpWarnings(event.input)`. */
 export function getMcpWarnings(input: { context?: unknown } | undefined): McpAvailabilityWarning[] {
   const context = input?.context
   const warnings = isRecord(context) ? context[mcpWarningsContextKey] : undefined
   return Array.isArray(warnings)
-    ? warnings.filter((warning): warning is McpAvailabilityWarning => isRecord(warning)
-        && typeof warning.server === "string"
-        && (warning.phase === "resolve" || warning.phase === "discovery")
-        && (warning.statusCode === undefined || (typeof warning.statusCode === "number" && Number.isFinite(warning.statusCode))))
+    ? warnings.filter((warning): warning is McpAvailabilityWarning => v.is(mcpAvailabilityWarningSchema, warning))
     : []
 }
 
@@ -57,10 +62,10 @@ export function mcp<
   assertMcpIntegrityOptions(options)
   const unavailableNotice = options.unavailableNotice === true
     ? defaultMcpUnavailableNotice
-    : typeof options.unavailableNotice === "function" ? options.unavailableNotice : undefined
+    : isCallableMember(options.unavailableNotice) ? options.unavailableNotice : undefined
   return defineMcpToolCapability({
     degradeUnavailable: true,
-    ...(unavailableNotice ? { unavailableNotice } : {}),
+    unavailableNotice,
     id: "mcp",
     inspection: {
       label: "MCP",

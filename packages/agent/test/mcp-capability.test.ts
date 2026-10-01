@@ -544,6 +544,9 @@ describe("mcp capability", () => {
     const warnings = [
       { server: "healthy", phase: "resolve", statusCode: 503 },
       { server: "absent", phase: "discovery" },
+      { server: "invalid-phase", phase: "connect" },
+      { server: 123, phase: "resolve" },
+      null,
       ...["503", null, {}, NaN, Infinity].map(statusCode => ({ server: "invalid", phase: "resolve", statusCode })),
     ]
     expect(getMcpWarnings({ context: { "vitehub.mcp.warnings": warnings } })).toEqual(warnings.slice(0, 2))
