@@ -24,6 +24,12 @@ describe("oauth2", () => {
     expect(oauth2(options()).id).toBe("oauth2")
   })
 
+  it("rejects credential endpoints over non-loopback HTTP", () => {
+    expect(() => oauth2(options({ tokenUrl: "http://auth.example/token" }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: "provider.tokenUrl" } }))
+    expect(() => oauth2(options({ revokeUrl: "http://auth.example/revoke" }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: "provider.revokeUrl" } }))
+    expect(() => oauth2(options({ tokenUrl: "http://localhost:8787/token", revokeUrl: "http://127.0.0.1/revoke" }))).not.toThrow()
+  })
+
   it("rejects authorization parameters that ViteHub sets for each flow", () => {
     for (const key of ["client_id", "code_challenge", "code_challenge_method", "redirect_uri", "response_type", "scope", "state"]) {
       expect(() => oauth2(options({ authorizationParams: { [key]: "x" } }))).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID", details: { path: `provider.authorizationParams.${key}` } }))

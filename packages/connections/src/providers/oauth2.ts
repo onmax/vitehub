@@ -66,6 +66,23 @@ function secretValue(secret: ConnectionSecret | undefined): string | undefined {
   return typeof secret === "string" ? secret : secret.unseal()
 }
 
+function isLoopback(host: string): boolean {
+  return host === "localhost" || host.endsWith(".localhost") || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host)
+}
+
+function assertCredentialUrl(value: string, path: string): void {
+  let url: URL
+  try {
+    url = new URL(value)
+  }
+  catch {
+    throw connectionError("invalid", { path })
+  }
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url.hostname.toLowerCase()))) {
+    throw connectionError("invalid", { path })
+  }
+}
+
 async function readJson(response: Response): Promise<unknown> {
   return response.json().catch(() => undefined)
 }
@@ -75,6 +92,8 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionProvider {
   if (!options.authorizationUrl || !options.tokenUrl || !options.scopes.length) {
     throw connectionError("invalid", { path: "provider" })
   }
+  assertCredentialUrl(options.tokenUrl, "provider.tokenUrl")
+  if (options.revokeUrl) assertCredentialUrl(options.revokeUrl, "provider.revokeUrl")
   const origins = assertConnectionOrigins(options.origins)
   // User info receives the access token, so it must be one of the API origins.
   if (options.userInfoUrl && !matchesConnectionOrigin(origins, new URL(options.userInfoUrl))) {

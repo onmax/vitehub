@@ -2523,9 +2523,11 @@ async function* runProvider<
   })
   let rootCleanup: Promise<void> | undefined
   const closeProviderBox = async () => {
-    await providerBoxRelay?.close().catch(() => undefined)
     // Closing a Box can synchronize an authoritative cwd back, so a close failure fails the invocation.
-    await providerBox?.session.close()
+    await Promise.all([
+      providerBoxRelay?.close().catch(() => undefined),
+      providerBox?.session.close(),
+    ])
   }
   const removeRoots = () => launchRoot
     ? Promise.all([

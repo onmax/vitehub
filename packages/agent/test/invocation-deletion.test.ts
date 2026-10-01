@@ -219,6 +219,12 @@ describe("vitehub agent invocations delete and prune", () => {
     expect(missing.chunks.stderr).toContain(`No Agent Invocation journal exists at ${join(elsewhere, ".vitehub/data/console.sqlite")}`)
   })
 
+  it("treats a Windows drive path as a local database path", async () => {
+    const io = output()
+    await expect(runAgentInvocationsCli(["prune", "--database", "C:\\app\\.vitehub\\data\\console.sqlite"], { env: {}, ...io })).resolves.toBe(1)
+    expect(io.chunks.stderr).toContain("No Agent Invocation journal exists at")
+  })
+
   it("resolves the default journal from the ViteHub project root", async () => {
     const projectRoot = await temporaryDirectory()
     const appRoot = join(projectRoot, "app")
