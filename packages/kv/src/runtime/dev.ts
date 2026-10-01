@@ -120,7 +120,11 @@ function valueType(value: unknown): string {
 
 function ttlNotice(driver: KVDriver, ttl: number): string | undefined {
   if (driver === "fs-lite") return "The fs-lite driver ignores TTL. The value does not expire."
-  if (driver === "cloudflare-kv-binding" && ttl < 60) return "Cloudflare KV raises a TTL below 60 seconds to 60 seconds."
+  if (driver === "cloudflare-kv-binding") {
+    const effectiveTTL = Math.max(60, Math.ceil(ttl))
+    if (ttl < 60) return "Cloudflare KV raises a TTL below 60 seconds to 60 seconds."
+    if (effectiveTTL !== ttl) return `Cloudflare KV rounds the TTL up to ${effectiveTTL} seconds.`
+  }
 }
 
 function readString(body: Record<string, unknown>, name: string): string | undefined {
@@ -194,6 +198,19 @@ function encodeBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
+/** JSON inspection represents bigint values as decimal strings, including nested values. */
+function inspectValue(value: unknown): unknown {
+  try {
+    const text = JSON.stringify(value, (_key, entry: unknown) => v.is(v.bigint(), entry) ? entry.toString() : entry)
+    if (text === undefined) throw new Error("The value has no JSON representation.")
+    const result: unknown = JSON.parse(text)
+    return result
+  }
+  catch {
+    throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
+  }
+}
+
 async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[]): Promise<unknown> {
   const selected = selectStore(stores, body.store)
   switch (body.operation) {
@@ -219,7 +236,7 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
       const result: KVDevGetResult = { found, key, store: selected.name }
       if (!found) return result
       if (value instanceof Uint8Array) return { ...result, encoding: "base64", type: "bytes", value: encodeBase64(value) }
-      return { ...result, type: valueType(value), value }
+      return { ...result, type: valueType(value), value: inspectValue(value) }
     }
     case "has": {
       const key = requireKey(body)
@@ -238,7 +255,7 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
         key,
         ...(notice ? { notice } : {}),
         store: selected.name,
-        ...(body.ttl ? { ttl: body.ttl } : {}),
+        ...(ttl ? { ttl } : {}),
         type: valueType(body.value),
       }
       return result
