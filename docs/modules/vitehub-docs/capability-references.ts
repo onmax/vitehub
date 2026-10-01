@@ -36,6 +36,7 @@ export async function createCapabilityReferences(): Promise<CapabilityReferences
   const dbPrimitive = { exec() {}, query() {}, schema: {} };
   const kvPrimitive = { del() {}, get() {}, keys() {}, set() {} };
   const emailPrimitive = { send() {} };
+  const connectionsPrimitive = { use() {} };
   const sandboxPrimitive = { exec() {} };
   const emailOptions = {
     from: "support@example.com",
@@ -58,8 +59,16 @@ export async function createCapabilityReferences(): Promise<CapabilityReferences
         "email.default",
         await resolveReference(email(emailOptions), { capabilities: { email: emailPrimitive } }),
       ],
-      ["gmail.read", await resolveReference(gmail())],
-      ["gmail.draft", await resolveReference(gmail({ mode: "draft" }))],
+      [
+        "gmail.default",
+        await resolveReference(gmail({ connection: "google" }), { capabilities: { connections: connectionsPrimitive } }),
+      ],
+      [
+        "gmail.all",
+        await resolveReference(gmail({ connection: "google", tools: ["search", "read", "labels", "modify", "draft"] }), {
+          capabilities: { connections: connectionsPrimitive },
+        }),
+      ],
       ["kv.read", await resolveReference(kv(), { capabilities: { kv: kvPrimitive } })],
       [
         "kv.write",

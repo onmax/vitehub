@@ -41,8 +41,8 @@ export {
   gmail,
 } from "./gmail.ts"
 export type {
-  GmailCapabilityMode,
   GmailCapabilityOptions,
+  GmailCapabilityTool,
 } from "./gmail.ts"
 export {
   inputCommands,
