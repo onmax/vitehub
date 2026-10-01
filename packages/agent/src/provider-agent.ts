@@ -34,7 +34,7 @@ import { registerAgentInvocationInputHandler } from "./internal/agent-invocation
 import { ownedAgentInvocationControlId } from "./internal/agent-invocation-response-owner.ts"
 import { isAuxiliaryAgentAdapterContext, markAuxiliaryMessageChannelInstructionContext, resolveMessageChannelInstructions } from "./internal/channels.ts"
 import { attachmentStringBytes, currentInputAttachments, getMessageText, isAttachmentPart, resolveAttachmentData } from "./messages.ts"
-import { workspaceDefinitionWithAutoCommitRules } from "./workspace-agent.ts"
+import { workspaceAutoCommitDisabled, workspaceDefinitionWithAutoCommitRules } from "./workspace-agent.ts"
 import { agentToolPolicyApproveSymbol } from "./tool-runtime.ts"
 import { agentInvocationTraceIdContextKey, createAgentStreamEventTracer } from "./trace.ts"
 
@@ -1909,6 +1909,7 @@ async function closeWorkspace(context: AgentAdapterRunContext, session: Workspac
   if (!session) return
   try {
     if (error || !context.workspaceDefinition || context.workspaceMode !== "write") return
+    if (workspaceAutoCommitDisabled(context.workspaceDefinition, context.workspaceAutoCommit)) return
     const diff = await session.diff({ abortSignal })
     const definition = workspaceDefinitionWithAutoCommitRules(context.workspaceDefinition, context.workspaceAutoCommit)
     const commit = resolveWorkspaceAutoCommit(definition, diff)

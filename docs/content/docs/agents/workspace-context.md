@@ -122,7 +122,7 @@ export default defineAgent({
 
 A Node process host can use `createGitHubHost()` from `vite-hub/agent/server/github` to prepare an exact PR head with Git. Supply `repository`, `number`, `headSha`, `headRepository`, and `headRef` to `withPullRequestCheckout()`. The host fetches the source branch directly and rejects a changed head.
 
-When a provider materializes a separate directory, call the checkout callback's `prepareWorkspace(cwd)` in the provider launch hook. It restores independent Git history and removes saved authentication configuration. Set Workspace `commit: false` if the host will push the provider's commits instead of copying files back through Workspace writeback.
+When a provider materializes a separate directory, call the checkout callback's `prepareWorkspace(cwd)` in the provider launch hook. It restores independent Git history and removes saved authentication configuration. Set Workspace `commit: false` if the host will push the provider's commits instead of copying files back through Workspace writeback. When `commit: false` leaves no Workspace or Capability rule with `commit`, the invocation also skips the whole-tree Workspace diff after the run.
 
 After the provider finishes, the host can call `checkout.push(cwd)`. This refreshes source credentials, verifies ancestry, and rejects a source branch that changed after preparation. Do not give the provider the host's GitHub credentials when pushes require host approval. Checkout preparation applies only to GitHub PR workspaces and requires Git, not the GitHub CLI.
 

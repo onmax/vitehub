@@ -403,6 +403,18 @@ describe("defineAgent workspace option", () => {
     })
   })
 
+  it("skips auto-commit resolution only when commit: false leaves no commit rule", async () => {
+    const { workspaceAutoCommitDisabled } = await import("../src/workspace-agent.ts")
+
+    expect(workspaceAutoCommitDisabled({ name: "docs", rules: { "**": { write: true } } }, false)).toBe(true)
+    expect(workspaceAutoCommitDisabled({ name: "docs" }, undefined)).toBe(false)
+    expect(workspaceAutoCommitDisabled({ name: "docs" }, true)).toBe(false)
+    expect(workspaceAutoCommitDisabled({ name: "docs", commit: "chore: docs" }, false)).toBe(false)
+    expect(workspaceAutoCommitDisabled({ name: "docs", rules: { "screenshots/**": { commit: true, write: true } } }, false)).toBe(false)
+    expect(workspaceAutoCommitDisabled({ name: "docs", plugins: [{ id: "notes", rules: { "notes/**": { commit: "chore: notes" } } }] }, false)).toBe(false)
+    expect(workspaceAutoCommitDisabled({ name: "docs", plugins: [{ id: "notes", rules: { "notes/**": { commit: "chore: notes" } } }], rules: { "notes/**": { commit: false } } }, false)).toBe(true)
+  })
+
   it("rebases file skill sources under the configured skill path", async () => {
     const { skills } = await import("../src/capabilities.ts")
     const { workspaceDefinitionFromOptions } = await import("../src/workspace-agent.ts")
