@@ -290,11 +290,12 @@ interface BoundAgentInvocations extends AgentInvocations {
 export const exclusiveAgentInvocation: unique symbol = Symbol("vitehub.exclusiveAgentInvocation")
 export const inheritedAgentInvocationClaim: unique symbol = Symbol("vitehub.inheritedAgentInvocationClaim")
 export const pendingAgentInvocationAnnotation = "vitehub.invocation.executionPending"
+export const workflowDispatchAttemptedAnnotation = "vitehub.invocation.workflowDispatchAttempted"
 
 export function pendingAgentInvocationAnnotations(input: AgentRunMetadata["annotations"]): NonNullable<AgentRunMetadata["annotations"]> {
-  const annotations: NonNullable<AgentRunMetadata["annotations"]> = { [pendingAgentInvocationAnnotation]: true }
+  const annotations: NonNullable<AgentRunMetadata["annotations"]> = { [pendingAgentInvocationAnnotation]: true, [workflowDispatchAttemptedAnnotation]: false }
   for (const [key, value] of Object.entries(input || {})) {
-    if (key !== pendingAgentInvocationAnnotation) annotations[key] = value
+    if (key !== pendingAgentInvocationAnnotation && key !== workflowDispatchAttemptedAnnotation) annotations[key] = value
   }
   return annotations
 }
@@ -317,7 +318,8 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   /** Wait for an asynchronous create attempt to resolve its stored identity. */
   ready(): Promise<void>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
-  handoffClaim(): Promise<string | undefined>
+  getWorkflowDispatchAttempted(): Promise<boolean | undefined>
+  handoffClaim(options?: { workflowDispatch?: boolean }): Promise<string | undefined>
   prepareWorkflowDispatch(binding: AgentInvocationWorkflowBinding): Promise<boolean>
   confirmWorkflowDispatch(binding?: AgentInvocationWorkflowBinding): Promise<boolean>
   releaseClaim(): Promise<void>
@@ -2296,12 +2298,36 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       return {
         get createdNew() { return createdNew },
         get claimStatus() { return ownsRecord ? "owned" : claimUnavailable ? "unavailable" : "conflict" },
-        async handoffClaim() {
+        async getWorkflowDispatchAttempted() {
+          const record = await boundedStoreOperation(() => store.getSummary(recordId))
+          if (!record || record === storeOperationTimedOut) return undefined
+          const attempted = record.annotations?.[workflowDispatchAttemptedAnnotation]
+          return attempted === true || attempted === false ? attempted : undefined
+        },
+        async handoffClaim(options = {}) {
           stopHeartbeat()
           await heartbeatRenewal
+          const record = await boundedStoreOperation(() => store.get(recordId))
+          if (!record || record === storeOperationTimedOut || terminalStatus(record.status)) return undefined
           if (!await renew(false, true)) return undefined
           claimHandedOff = true
           stopHeartbeat()
+          if (options.workflowDispatch) {
+            let attempted = false
+            await write(async () => {
+              const current = await boundedStoreOperation(() => store.get(recordId))
+              if (!current || current === storeOperationTimedOut || terminalStatus(current.status)) return
+              const annotations = { [workflowDispatchAttemptedAnnotation]: true, ...current.annotations }
+              annotations[workflowDispatchAttemptedAnnotation] = true
+              const updated = await boundedStoreOperation(() => store.update(recordId, {
+                annotations,
+                timestamp: new Date().toISOString(),
+              }, claimId))
+              attempted = updated !== undefined && updated !== storeOperationTimedOut
+                && updated.annotations?.[workflowDispatchAttemptedAnnotation] === true
+            })
+            if (!attempted) return undefined
+          }
           const token = await boundedStoreOperation(() => store.getClaimToken(recordId))
           return token === storeOperationTimedOut ? undefined : token
         },
@@ -2462,9 +2488,12 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             // Clear the replay reservation before any Driver work starts. If a
             // later terminal update is lost, the pending record still carries
             // proof that execution began and cannot be retried as preparation.
+            const annotations = normalizeAnnotations(context.run?.annotations) || {}
+            const inheritedClaim = (context as AgentRuntimeContext & { [inheritedAgentInvocationClaim]?: string })[inheritedAgentInvocationClaim]
+            if (inheritedClaim) annotations[pendingAgentInvocationAnnotation] = false
             runningPersisted = await update({
               status: "running",
-              annotations: { ...normalizeAnnotations(context.run?.annotations), [pendingAgentInvocationAnnotation]: false },
+              annotations,
               timestamp: new Date().toISOString(),
             })
             return runningPersisted

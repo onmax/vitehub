@@ -1323,7 +1323,7 @@ async function runAgentAsWorkflow<
     if (!await replayJournal.prepareWorkflowDispatch({ name: workflowName, provider: (workflowConfig && workflowConfig.provider) || "unknown" })) {
       throw new Error("Could not persist the Workflow dispatch intent.")
     }
-    payload.invocationClaimToken = await replayJournal.handoffClaim()
+    payload.invocationClaimToken = await replayJournal.handoffClaim({ workflowDispatch: true })
     if (!payload.invocationClaimToken) throw new Error("Could not transfer the Invocation execution claim.")
   }
   try {
