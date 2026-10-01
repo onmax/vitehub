@@ -2712,7 +2712,8 @@ async function* runProvider<
         const suffix = requested.replace(/^\/workspace(?:\/|$)/, "")
         const cwd = resolve(root, suffix)
         if (cwd !== root && !cwd.startsWith(`${root}/`)) throw new Error("[vitehub] Workspace command cwd must stay inside the provider checkout.")
-        const execution = localWorkspaceHost().exec(command, args, { ...execOptions, cwd }).then(result => ({
+        const { abortSignal, ...hostOptions } = execOptions || {}
+        const execution = localWorkspaceHost().exec(command, args, { ...hostOptions, cwd, signal: abortSignal }).then(result => ({
           command,
           args: args || [],
           exitCode: result.code,
