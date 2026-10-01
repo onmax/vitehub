@@ -317,21 +317,21 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       method: "POST",
       signal,
     })
-    // The provider has responded. Parse and validation failures are definite
-    // provider responses, so callers can keep a usable refresh grant.
-    onResponse?.()
     const body: unknown = await response.json().catch(() => undefined)
     const parsedError = v.safeParse(v.object({ error: v.string() }), body)
     const error = parsedError.success ? parsedError.output.error : undefined
     if (!response.ok || error) {
+      onResponse?.()
       throw new ConnectionError(error === "invalid_grant" ? "reauth_required" : "provider", `Provider "${provider.id}" rejected the token request${error ? ` (${error})` : ""}.`, {
         details: { status: response.status },
       })
     }
     const token = v.safeParse(tokenResponseSchema, body)
     if (!token.success) {
+      // A malformed success may have rotated the grant without returning its replacement.
       throw new ConnectionError("provider", `Provider "${provider.id}" returned no access token.`)
     }
+    onResponse?.()
     return token.output
   }
 
@@ -549,6 +549,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
 
   /** Apply policy, dry run, and approval, then send. Returns `undefined` when dry run skips a write. */
   async function governed(context: CallContext, providerRequest: ProviderRequest, approvalInput: ApprovalInput, init: { headers?: Record<string, string>, redirect?: RequestInit["redirect"], signal?: AbortSignal } = {}): Promise<Response | undefined> {
+    envActor(context.actor)
     const decision = decide({
       action: providerRequest.action,
       actor: context.actor,
@@ -622,7 +623,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
 
   async function callFetch(context: CallContext, input: string | URL, init: ConnectionFetchInit = {}): Promise<Response | undefined> {
     const url = new URL(input)
-    const method = init.method ?? "GET"
+    const method = new Request(url, { method: init.method ?? "GET" }).method
     const write = method !== "GET" && method !== "HEAD"
     const allowed = Object.values(providerApis(context.definition)).some(catalog => url.origin === new URL(catalog.rootUrl).origin)
     if (!allowed) throw new ConnectionError("invalid", `Connection "${context.name}" does not send its token to ${url.origin}.`, { details: { connection: context.name } })

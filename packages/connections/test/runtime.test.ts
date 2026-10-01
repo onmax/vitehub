@@ -477,13 +477,38 @@ describe("calls", () => {
     expect(test.provider.calls).toHaveLength(calls)
   })
 
-  it("keeps the grant usable when a refresh response does not confirm a token", async () => {
+  it("requires reauthorization when a refresh response does not confirm a token", async () => {
     const test = createTestRuntime()
     await connect(test, { expires_in: 1 })
     test.provider.tokenResponses.push({ body: {} })
     const client = test.runtime.client("mail", {})
     expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_PROVIDER" })
-    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "reauth_required" })
+    const calls = test.provider.calls.length
+    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(test.provider.calls).toHaveLength(calls)
+  })
+
+  it("quarantines a rotating grant when HTTP success omits its replacement token", async () => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    let rotations = 0
+    const providerFetch: typeof fetch = async (input, init) => {
+      if (String(input) === "https://auth.example.com/token") {
+        rotations += 1
+        test.provider.valid.clear()
+        return Response.json({ refresh_token: "unconfirmed-replacement" })
+      }
+      return await test.provider.fetch(input, init)
+    }
+    const runtime = createConnectionsRuntime({ definitions: { mail: mailConnection() }, fetch: providerFetch, now: () => test.now.value, store: test.store })
+    const client = runtime.client("mail", {})
+    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_PROVIDER" })
+    expect(await runtime.inspect("mail")).toMatchObject({ status: "reauth_required" })
+    const count = test.provider.calls.length
+    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(test.provider.calls).toHaveLength(count)
+    expect(rotations).toBe(1)
   })
 
   it("marks the Connection for reauthorization after invalid_grant", async () => {
@@ -507,6 +532,21 @@ describe("calls", () => {
     expect(await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).toEqual({ labels: [{ id: "INBOX" }] })
   })
 
+  it.each(["agent:", "user:", "", "agent:bad\u0000id", "n".repeat(513)])("rejects malformed actors without corrupting denied activity (%s)", async (actor) => {
+    const test = createTestRuntime(mailConnection({ server: { read: true } }))
+    await connect(test)
+    const before = await test.runtime.activity({ name: "mail" })
+    const calls = test.provider.calls.length
+    const client = test.runtime.client("mail", { actor })
+    const error = await rejection(client.call("mail.labels.list", { userId: "me" }))
+    expect(await test.runtime.activity({ name: "mail" })).toEqual(before)
+    expect(error).toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(await rejection(client.fetch("https://mail.example.com/mail/v1/users/me/labels"))).toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(await test.runtime.approvals({})).toEqual([])
+    expect(test.provider.calls).toHaveLength(calls)
+    expect(await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).toMatchObject({ labels: [{ id: "INBOX" }] })
+  })
+
   it("keeps secrets out of errors and activity", async () => {
     const test = createTestRuntime()
     await connect(test)
@@ -520,7 +560,7 @@ describe("calls", () => {
     expect(activity.some(entry => entry.operation === "mail.labels.list" && entry.outcome === "failed")).toBe(true)
   })
 
-  it.each([["patch", "patch"], ["Egg", "Egg"], ["gEt", "gEt"]])("preserves Fetch method casing for %s", async (method, expected) => {
+  it.each([["patch", "patch"], ["Egg", "Egg"], ["gEt", "GET"]])("uses Fetch method normalization for %s", async (method, expected) => {
     const test = createTestRuntime(mailConnection({ server: { read: true, write: ["fetch"] } }))
     await connect(test)
     await test.runtime.client("mail", {}).fetch("https://mail.example.com/mail/v1/users/me/labels", { method })

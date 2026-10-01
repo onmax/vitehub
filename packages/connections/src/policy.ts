@@ -1,5 +1,7 @@
 import type { EnvActor } from "@vite-hub/env/bridge"
 
+import { ConnectionError } from "./errors.ts"
+
 import type { ConnectionAccessRule, ConnectionActionInfo, ConnectionApiCatalog, ConnectionDefinition } from "./types.ts"
 
 export type ConnectionDecision = "allow" | "approve" | "deny"
@@ -11,11 +13,17 @@ export function matchesPattern(id: string, pattern: string): boolean {
   return id === pattern
 }
 
-/** Map an actor string to an Env Bridge actor. */
+/** Validate an actor string and map it to an Env Bridge actor. */
 export function envActor(actor: string): EnvActor {
-  if (actor.startsWith("agent:")) return { id: actor.slice(6), kind: "agent" }
-  if (actor.startsWith("user:")) return { id: actor.slice(5), kind: "user" }
-  return { id: actor, kind: "service" }
+  const mapped: EnvActor = actor.startsWith("agent:")
+    ? { id: actor.slice(6), kind: "agent" }
+    : actor.startsWith("user:")
+      ? { id: actor.slice(5), kind: "user" }
+      : { id: actor, kind: "service" }
+  if (!mapped.id || mapped.id.length > 512 || /[\u0000-\u001f]/.test(mapped.id)) {
+    throw new ConnectionError("invalid", "Connection actor IDs must contain 1 to 512 characters and no control characters.")
+  }
+  return mapped
 }
 
 /** The provider API catalogs of a definition, by API name. */
