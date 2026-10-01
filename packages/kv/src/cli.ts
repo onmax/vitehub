@@ -223,12 +223,12 @@ async function readValue(parsed: ParsedKVArgs, cwd: string): Promise<unknown> {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return v.is(v.record(v.string(), v.unknown()), value)
 }
 
 function formatValue(result: KVDevGetResult): string | Uint8Array {
-  if (result.encoding === "base64" && typeof result.value === "string") return Uint8Array.from(atob(result.value), character => character.charCodeAt(0))
-  if (typeof result.value === "string") return `${result.value}\n`
+  if (result.encoding === "base64" && v.is(v.string(), result.value)) return Uint8Array.from(atob(result.value), character => character.charCodeAt(0))
+  if (v.is(v.string(), result.value)) return `${result.value}\n`
   return `${JSON.stringify(result.value, null, 2)}\n`
 }
 
@@ -368,7 +368,7 @@ async function runKVCommand(command: KVCommand, args: string[], context: KVCliCo
   if (server.discovery.runtime !== "nitro") {
     return writeFailure(parsed, context, {
       code: "KV_DEV_RUNTIME_UNAVAILABLE",
-      message: typeof server.discovery.message === "string"
+      message: v.is(v.string(), server.discovery.message)
         ? server.discovery.message
         : "This Vite Development Server cannot reach the KV runtime.",
     })
