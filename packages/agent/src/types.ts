@@ -1426,6 +1426,11 @@ export interface AgentProviderDriverOptions<
   TOutput = unknown,
 > {
   capacity?: AgentDriverCapacityOptions
+  /**
+   * Existing directory where the provider runs. The driver does not copy, snapshot, write back, or remove it.
+   * Workspace Sources still materialize, but no Workspace session starts. Title and progress summary runs ignore it.
+   */
+  cwd?: AgentProviderWorkingDirectoryResolver<TRuntimeConfig>
   /** Provider process environment. Every resolved value is treated as a credential in persisted diagnostics. */
   env?: AgentProviderEnvironmentResolver<TRuntimeConfig>
   execution?: {
@@ -1465,8 +1470,11 @@ export type AgentProviderEnvironment = Record<string, string | undefined>
 export type AgentProviderEnvironmentResolver<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
   MaybeResolvable<AgentProviderEnvironment, AgentProviderCredentialContext<TRuntimeConfig>>
 
+export type AgentProviderWorkingDirectoryResolver<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
+  MaybeResolvable<string, AgentProviderCredentialContext<TRuntimeConfig>>
+
 export interface AgentProviderExitContext {
-  /** Disposable provider working directory, still available during this callback. */
+  /** Provider working directory, still available during this callback. It is temporary unless `driver.cwd` is set. */
   cwd: string
   /** Independent teardown deadline. Stop all I/O when this signal aborts. */
   abortSignal: AbortSignal
@@ -1530,6 +1538,7 @@ export interface AgentModelDriver<
 > {
   capacity?: AgentDriverCapacityOptions
   credentials?: never
+  cwd?: never
   execution?: AgentModelExecutionOptions<TRuntimeConfig, CALL_OPTIONS>
   instructions?: AgentAdapterInstructions<TRuntimeConfig>
   kind?: never
@@ -1557,6 +1566,7 @@ export interface AgentRunDriver<
 > {
   capacity?: AgentDriverCapacityOptions
   credentials?: never
+  cwd?: never
   execution?: never
   instructions?: never
   kind?: never
@@ -2379,6 +2389,8 @@ export interface AgentInspectionModelExecutionMetadata {
 export interface AgentInspectionProviderMetadata {
   credentialProfile?: string
   credentials?: true
+  /** Present when driver.cwd runs the provider in an existing directory. The path is not exposed. */
+  cwd?: "dynamic" | "static"
   environment?: "dynamic" | "static"
   launch?: "dynamic" | "static"
   model?: string
