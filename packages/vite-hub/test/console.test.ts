@@ -2259,9 +2259,9 @@ describe("Agent invocation console", () => {
       const replayInput = whitespaceDetail.invocation.actions?.rerun
       expect(replayInput).toEqual({ available: true, prompt: whitespacePrompt })
       if (!replayInput?.available) throw new Error("Expected a replayable whitespace prompt.")
-      const replayed = await start(replayInput.prompt, null)
+      const whitespaceReplay = await start(replayInput.prompt, null)
       await vi.waitFor(async () => {
-        await expect(definition.invocations?.get(replayed.id)).resolves.toMatchObject({ status: "completed" })
+        await expect(definition.invocations?.get(whitespaceReplay.id)).resolves.toMatchObject({ status: "completed" })
       })
       expect(prompts.slice(-2)).toEqual([whitespacePrompt, whitespacePrompt])
 
