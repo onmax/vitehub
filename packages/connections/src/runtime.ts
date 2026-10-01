@@ -299,14 +299,14 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   function toStoredToken(
     response: ConnectionTokenResponse,
     previous?: StoredToken,
-    requestedScopes: readonly string[] = [],
+    requestedScopes?: readonly string[],
   ): StoredToken {
     return {
       accountId: previous?.accountId,
       accessToken: response.access_token,
       expiresAt: response.expires_in === undefined ? undefined : now() + response.expires_in * 1000,
       refreshToken: response.refresh_token ?? previous?.refreshToken,
-      scopes: splitScopes(response.scope) ?? previous?.scopes ?? [...requestedScopes],
+      scopes: splitScopes(response.scope) ?? (requestedScopes ? [...requestedScopes] : previous?.scopes ?? []),
       tokenType: response.token_type ?? "Bearer",
     }
   }
@@ -629,21 +629,14 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const state = await connections.state.get(name)
     const accountId = previous?.success ? previous.output.accountId ?? state?.accountId : state?.status === "revoked" ? undefined : state?.accountId
     if (accountId && (!account || accountId !== account.id)) {
-      await revokeProviderToken(loaded, response.refresh_token ?? response.access_token)
       throw new ConnectionError("invalid", account ? `Connection "${name}" belongs to another account. Revoke it before you connect a different account.` : `Provider "${loaded.provider.id}" did not identify the account. The existing Connection was not replaced.`, { details: { connection: name } })
     }
     const token = toStoredToken(response, previous?.success ? previous.output : undefined, [
       ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),
     ])
     token.accountId = account?.id
-    let replacement: { revision: string }
-    try {
-      replacement = await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
-    }
-    catch (error) {
-      await revokeProviderToken(loaded, response.refresh_token ?? response.access_token)
-      throw error
-    }
+    // A losing callback must not revoke a provider grant that can include the winning token.
+    const replacement = await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
     const timestamp = new Date(now()).toISOString()
     await connections.state.putForToken({
       accountEmail: account?.email,
@@ -678,17 +671,18 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const stored = await connections.secrets.inspect(key)
     let revision: string | null = null
     if (stored) {
-      await connections.bridge.use(envContext(actor), key, "revoke", async (secret) => {
+      revision = await connections.bridge.use(envContext(actor), key, "revoke", async (secret, metadata) => {
+        if (!metadata?.revision) throw new ConnectionError("invalid", "Connection revocation requires the Env Bridge to provide the leased token revision.")
         let token: StoredToken | undefined
         try {
           token = parseToken(secret.unseal(), input.name)
         }
         catch {}
         if (token) await revokeProviderToken(loaded, token.refreshToken ?? token.accessToken)
+        // Fence the marker with the revision of the token sent to the provider.
+        const replacement = await connections.bridge.replace(envContext(actor), { expectedRevision: metadata.revision, key, value: JSON.stringify({ revoked: true }) })
+        return replacement.revision
       })
-      // Env Bridge has no delete. A revoked marker replaces the token.
-      const replacement = await connections.bridge.replace(envContext(actor), { expectedRevision: stored.revision, key, value: JSON.stringify({ revoked: true }) })
-      revision = replacement.revision
     }
     await setStatus(input.name, { status: "revoked" }, revision)
     return await inspect(input.name)

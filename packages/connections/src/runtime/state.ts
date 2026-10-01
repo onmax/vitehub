@@ -57,7 +57,7 @@ function methodProxy(client: ConnectionRuntimeClient, path: string): unknown {
   return new Proxy(call, {
     get(_target, property) {
       const key = v.safeParse(v.string(), property)
-      if (!key.success || key.output === "then") return undefined
+      if (!key.success || key.output === "then" || key.output === "toJSON") return undefined
       return methodProxy(client, `${path}.${key.output}`)
     },
   })

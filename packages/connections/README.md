@@ -57,6 +57,10 @@ setConnectionsRuntime({
 });
 ```
 
+Rejected or superseded OAuth callbacks do not revoke their issued token at the provider. A provider can revoke the whole application grant, which would also invalidate the winning token. The rejected token is not stored.
+
+A custom Connections store must supply the token revision as the second `bridge.use()` callback argument. Revocation uses that revision to replace the token with a revoked marker. The default Env Bridge supplies it.
+
 ## Vite integration
 
 `hubConnections()` from `@vite-hub/connections/vite` discovers `server/connections/*.ts` and `*.connection.ts`, generates the registry and types, mounts the management API in development, and adds the `vitehub connections` CLI.
