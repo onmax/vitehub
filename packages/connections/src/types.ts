@@ -64,6 +64,8 @@ export interface ConnectionProviderContext {
   /** H3 event of the current request, when there is one. */
   event?: unknown
   fetch: typeof globalThis.fetch
+  /** Cancels provider work for the current Operation. The supplied fetch also uses this signal. */
+  signal?: AbortSignal
 }
 
 interface ConnectionProviderBase {

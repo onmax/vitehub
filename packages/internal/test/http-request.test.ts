@@ -29,6 +29,15 @@ describe("HTTP request", () => {
     expect(result.data).toEqual({ ok: true })
   })
 
+  it("does not retry a fetch rejection excluded by the caller", async () => {
+    const failure = new Error("policy rejected")
+    const send = vi.fn(async () => { throw failure })
+    const retryFetchError = vi.fn(() => false)
+    await expect(executeHttpRequest({ url: "https://api.example.com/items" }, { fetch: send, retryFetchError })).rejects.toBe(failure)
+    expect(send).toHaveBeenCalledOnce()
+    expect(retryFetchError).toHaveBeenCalledWith(failure)
+  })
+
   it("applies cookies to fetch while redacting them from summaries", async () => {
     const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), {
       headers: { "content-type": "application/json" },

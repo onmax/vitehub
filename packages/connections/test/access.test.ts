@@ -111,6 +111,20 @@ describe("Connection origins", () => {
     expect(matchesConnectionOrigin(["https://api.example.com:443"], new URL("https://api.example.com/x"))).toBe(true)
   })
 
+  it("normalizes leading zeros in default and nondefault ports", () => {
+    for (const [origin, request] of [
+      ["https://api.example.com:0443", "https://api.example.com/x"],
+      ["http://localhost:080", "http://localhost/x"],
+      ["https://*.example.com:0443", "https://api.example.com/x"],
+      ["https://api.example.com:08443", "https://api.example.com:8443/x"],
+    ]) {
+      const url = new URL(request!)
+      expect(matchesConnectionOrigin(assertConnectionOrigins([origin]), url)).toBe(true)
+      expect(matchesConnectionOrigin([origin!], url)).toBe(true)
+      expect(matchesConnectionOrigin([origin!], new URL(`${url.protocol}//${url.hostname}:9443/x`))).toBe(false)
+    }
+  })
+
   it("rejects missing or malformed origins, and plain http for remote hosts", () => {
     for (const origins of [undefined, [], ["api.example.com"], ["https://api.example.com/v1"], ["https://user@api.example.com"], ["ftp://api.example.com"], ["https://a.*.example.com"], ["http://api.example.com"], ["http://*.localhost"]]) {
       expect(() => assertConnectionOrigins(origins)).toThrow("Invalid Connection request.")

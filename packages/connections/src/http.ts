@@ -139,7 +139,7 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions): (r
       case "list": return json({ admin: access.admin, connections: await runtime.list(event) })
       case "inspect": return json({ admin: access.admin, connection: await runtime.inspect(input.name, event) })
       case "activity": return json({ events: await runtime.activity({ before: input.before, connection: input.name, event, limit: input.limit }) })
-      case "start": return json(await runtime.start(input.name, { actor: access.actor, event, origin: new URL(request.url).origin }))
+      case "start": return json(await runtime.start(input.name, { actor: access.actor, basePath: options.basePath, event, origin: new URL(request.url).origin }))
       case "refresh": return json({ connection: await runtime.refresh(input.name, { actor: access.actor, event }) })
       case "disconnect": return json({ connection: await runtime.disconnect(input.name, { actor: access.actor, event }) })
       // The response never echoes the key.

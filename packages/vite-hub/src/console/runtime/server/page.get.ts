@@ -1,3 +1,4 @@
+import { consoleMountBase } from "../console-route.ts";
 import { assertConsoleRequest } from "./request.ts";
 
 import type { ConsoleRequestEvent } from "./request.ts";
@@ -23,7 +24,10 @@ const page = `<!doctype html>
 
 export default function consolePageHandler(event: ConsoleRequestEvent): Response {
   assertConsoleRequest(event);
-  return new Response(page, {
+  const url = event.req?.url ?? event.node?.req?.url ?? "/_vitehub";
+  const mountBase = consoleMountBase(new URL(url, "http://localhost").pathname);
+  const mountedPage = page.replaceAll('="/_vitehub/', `="${mountBase}/_vitehub/`).replaceAll('="/api/_vitehub/', `="${mountBase}/api/_vitehub/`);
+  return new Response(mountedPage, {
     headers: {
       "cache-control": "no-store",
       "content-security-policy": "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",

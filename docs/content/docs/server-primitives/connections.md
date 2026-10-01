@@ -148,6 +148,7 @@ Options:
 | `actor` | Route from `event`, else `{ id: 'server', kind: 'service' }` | The actor for access rules and activity. |
 | `dryRun` | `false` | Write Operations return `{ skipped: 'dry-run', operation }` and do not call the provider. `fetch` returns `204` with the `x-vitehub-connection-skipped` header. |
 | `audit` | `'changes'` | `'changes'` records writes, denials, skipped calls, and failures. `'all'` also records reads. |
+| `signal` | None | Cancels token refresh, refresh-lease waits, and the Operation request, including its response body. |
 | `trace` | None | `traceId`, `invocationId`, `runId`, and `tool` to link activity to a trace. |
 
 ## Provider origins
@@ -206,6 +207,7 @@ Agent tools record every call, reads included. MCP protocol messages are recorde
 - Grants and API keys are sealed with AES-GCM and the encryption key. Each row stores the key id. With a different key, the status is `needs-reconnect`.
 - The connect flow uses PKCE (`S256`), a single-use ticket that expires after 10 minutes, and a `state` cookie. Tokens never go to the browser or the CLI.
 - Connect, callback, and management routes exist only when the Console is enabled. Console Auth protects them in production. With an explicit production access contract, the Console is read-only for Connections until you set `console: { manageConnections: true }`. See [Manage Connections](/docs/development/console#manage-connections).
+- The Console preserves the Vite `base` in management, connect, callback, and return URLs.
 - Concurrent refreshes use a database lease, so only one request refreshes a rotating refresh token.
 
 ## Configuration options

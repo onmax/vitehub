@@ -476,6 +476,37 @@ describe("Connections runtime lifecycle", () => {
     expect(await store.grant(name)).toBeUndefined()
   })
 
+  it("keeps a grant that a reconnect wrote while disconnect loaded the definition", async () => {
+    const db = createDatabase()
+    const fake = fakeProvider()
+    let notifyLoading = () => {}
+    let finishLoading = () => {}
+    const loading = new Promise<void>((resolve) => { notifyLoading = resolve })
+    const loaded = new Promise<void>((resolve) => { finishLoading = resolve })
+    const runtime = createConnectionsRuntime({
+      database: () => db,
+      encryptionKey: () => testKey(),
+      registry: {
+        api: async () => {
+          notifyLoading()
+          await loaded
+          return { default: { provider: fake.provider } }
+        },
+      },
+    })
+    const store = createConnectionsStore({ db, encryptionKey: testKey() })
+    await store.write({ name: "api", provider: "fake", tokens: tokenSet() })
+
+    const disconnect = runtime.disconnect("api", { actor: server })
+    await loading
+    await store.write({ name: "api", provider: "fake", tokens: tokenSet({ accessToken: "reconnected" }) })
+    finishLoading()
+
+    await expect(disconnect).resolves.toMatchObject({ status: "active" })
+    expect(fake.revoke).toHaveBeenCalledWith(expect.objectContaining({ accessToken }), expect.anything())
+    expect((await store.tokens("api"))?.tokens.accessToken).toBe("reconnected")
+  })
+
   it("keeps a grant that a reconnect wrote while disconnect revoked the old one", async () => {
     const { fake, name, runtime, store } = setupRuntime()
     await store.write({ name, provider: "fake", tokens: tokenSet() })

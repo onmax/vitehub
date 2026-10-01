@@ -61,10 +61,10 @@ function context(primitive: unknown) {
   }
 }
 
-async function tools(capability: AgentCapabilityDefinition, primitive: unknown): Promise<Record<string, AgentToolDefinition>> {
+async function tools(capability: AgentCapabilityDefinition, primitive: unknown, abortSignal?: AbortSignal): Promise<Record<string, AgentToolDefinition>> {
   if (typeof capability.tools !== "function") throw new Error("gmail capability must expose a tool resolver")
   // SAFETY: The Gmail tools read only the fields that the fake context sets.
-  return await capability.tools(context(primitive) as never) as Record<string, AgentToolDefinition>
+  return await capability.tools({ ...context(primitive), abortSignal } as never) as Record<string, AgentToolDefinition>
 }
 
 async function run(tool: AgentToolDefinition | undefined, input: unknown): Promise<unknown> {
@@ -101,6 +101,26 @@ const message = {
 }
 
 describe("gmail capability", () => {
+  it.each(["execution", "context"])("forwards the %s cancellation signal to every Gmail request", async (source) => {
+    const controller = new AbortController()
+    const { primitive, runtime } = connections({ responses: {
+      "gmail.messages.list": () => ({ messages: [{ id: "m1", threadId: "t1" }] }),
+      "gmail.messages.get": () => message,
+      "gmail.drafts.create": () => ({ id: "d1", message: { id: "m2", threadId: "t1" } }),
+    } })
+    const gmailTools = await tools(gmail({ operations: ["search", "read", "draft"] }), primitive, source === "context" ? controller.signal : undefined)
+    for (const [name, input] of [
+      ["gmail_search", {}],
+      ["gmail_read", { id: "m1" }],
+      ["gmail_draft", { body: "x", subject: "Hi", to: ["bob@example.com"] }],
+    ] as const) {
+      const tool = gmailTools[name]!
+      await tool.execute!(input as never, { abortSignal: source === "execution" ? controller.signal : undefined } as never)
+    }
+    expect(runtime.call).toHaveBeenCalledTimes(4)
+    for (const call of runtime.call.mock.calls) expect(call[3]).toMatchObject({ signal: controller.signal })
+  })
+
   it("defines tools, requirements, and inspection from the enabled operations", async () => {
     const { primitive } = connections()
     const read = gmail()
@@ -219,6 +239,23 @@ describe("gmail capability", () => {
     expect(await run(readTools.gmail_read, { id: "m1" })).toMatchObject({ text: "Grüße" })
     // An unknown charset falls back to UTF-8 instead of failing.
     expect(await run(readTools.gmail_read, { id: "unknown" })).toMatchObject({ text: expect.any(String) })
+  })
+
+  it("reads MIME charset parameters without matching text inside quoted values", async () => {
+    const encoded = (text: string) => btoa(text).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
+    const { primitive } = connections({ responses: { "gmail.messages.get": input => ({
+      ...message,
+      payload: {
+        mimeType: "text/plain",
+        body: { data: input.id === "quoted" ? encoded(String.fromCharCode(0xC3, 0xBC)) : encoded(String.fromCharCode(0xFC)) },
+        headers: [{ name: "Content-Type", value: input.id === "quoted"
+          ? 'text/plain; name="notes; charset=ISO-8859-1"; charset=UTF-8'
+          : 'text/plain; charset = "ISO-8859-1"' }],
+      },
+    }) } })
+    const readTools = await tools(gmail(), primitive)
+    expect(await run(readTools.gmail_read, { id: "quoted" })).toMatchObject({ text: "ü" })
+    expect(await run(readTools.gmail_read, { id: "spaces" })).toMatchObject({ text: "ü" })
   })
 
   it("rejects an unexpected Gmail response", async () => {

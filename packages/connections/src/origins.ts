@@ -28,7 +28,10 @@ export function assertConnectionOrigins(origins: unknown, path = "provider.origi
 
 /** `URL.port` is empty for a default port, so `:443` and `:80` are removed. */
 function normalizeOrigin(origin: string): string {
-  return origin.toLowerCase().replace(/^(https:\/\/[^/]+):443$|^(http:\/\/[^/]+):80$/, "$1$2")
+  return origin.toLowerCase().replace(/^(https?):\/\/([^/]+):(\d+)$/, (_match, protocol: string, host: string, port: string) => {
+    const normalizedPort = Number(port)
+    return `${protocol}://${host}${normalizedPort === (protocol === "https" ? 443 : 80) ? "" : `:${normalizedPort}`}`
+  })
 }
 
 /** Whether `url` is one of the origins. `*.` matches one or more subdomain labels, not the bare domain. */

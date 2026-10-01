@@ -34,6 +34,7 @@ interface AgentConnectionCallOptions {
   effect?: AgentConnectionEffect
   event?: unknown
   operation?: string
+  signal?: AbortSignal
   trace: AgentConnectionTrace
 }
 
@@ -86,7 +87,7 @@ export interface AgentConnection {
    * run can pass them to `call` or `fetch`. Other runs get an empty set.
    */
   approval: (input: unknown) => ReadonlySet<string>
-  call: <TInput>(tool: string, operation: AgentConnectionOperation<TInput>, input: TInput, approved?: ReadonlySet<string>) => Promise<unknown>
+  call: <TInput>(tool: string, operation: AgentConnectionOperation<TInput>, input: TInput, approved?: ReadonlySet<string>, signal?: AbortSignal) => Promise<unknown>
   /** Authenticated fetch. `audit: "changes"` records only writes, denials, and failures. Default: `"all"`. */
   fetch: (request: AgentConnectionFetchOptions, url: string | URL, init?: RequestInit) => Promise<Response>
   readonly name: string
@@ -136,11 +137,12 @@ export function useAgentConnection(context: AgentCapabilityContext, name: string
       awaiting.delete(input)
       return operations
     },
-    call: (tool, operation, input, approved) => runtime.call(name, operation, input, {
+    call: (tool, operation, input, approved, signal) => runtime.call(name, operation, input, {
       actor,
       ...(approved?.has(operation.id) ? { approved: true } : {}),
       audit: "all",
       event: context.event,
+      ...(signal ? { signal } : {}),
       trace: trace(tool),
     }),
     fetch: (request, url, init) => runtime.fetch(name, url, init, {

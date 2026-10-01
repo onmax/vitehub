@@ -1,4 +1,5 @@
 import { executeHttpRequest } from "@vite-hub/internal/http-request"
+import { getViteHubErrorShape } from "@vite-hub/runtime"
 import * as v from "valibot"
 import { defineCapability } from "../capability-runtime.ts"
 import { connectionNameSchema, useAgentConnection } from "./connection.ts"
@@ -502,7 +503,13 @@ async function executeOpenAPIOperation<
     url,
   }, {
     // The Connection adds credentials after the request hook, so hooks never see the token.
-    ...(connection ? { fetch: (target: string, init: RequestInit) => connection.fetch({ ...(approved ? { approved } : {}), effect: connectionOperation.effect, operation: connectionOperation.id, tool: operation.operationId }, target, init) } : {}),
+    ...(connection ? {
+      fetch: (target: string, init: RequestInit) => connection.fetch({ ...(approved ? { approved } : {}), effect: connectionOperation.effect, operation: connectionOperation.id, tool: operation.operationId }, target, init),
+      retryFetchError: (error: unknown) => {
+        const code = getViteHubErrorShape(error)?.code
+        return code !== "CONNECTIONS_DENIED" && code !== "CONNECTIONS_APPROVAL_REQUIRED"
+      },
+    } : {}),
     responseType: options.responseType || "json",
     signal: abortSignal ?? context.abortSignal,
   })

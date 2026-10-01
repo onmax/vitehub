@@ -11,6 +11,7 @@ export const viteHubErrorDiagnostics = /*#__PURE__*/ defineDiagnostics({
     VITE_HUB_R0120: dynamicError,
     VITE_HUB_R0121: dynamicError,
     VITE_HUB_R0122: dynamicError,
+    VITE_HUB_R0123: dynamicError,
     VITE_HUB_R0116: dynamicError,
     VITE_HUB_R0117: dynamicError,
     VITE_HUB_R0118: dynamicError,
