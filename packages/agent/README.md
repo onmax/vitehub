@@ -537,8 +537,12 @@ The plugin starts it and closes it with Nitro, and serves drain status at
 Use the runtime drain CLI before replacing the process.
 
 `@vite-hub/agent/server/github-inbox` provides a SQLite PR inbox for Node hosts.
-Construct `PullRequestInbox({ path, repositories, filter })`, seed discovered PRs,
-and ingest verified webhook deliveries with `ingest(deliveryId, event, payload)`.
+Construct `PullRequestInbox({ storage, repositories, filter })` with
+`agentState.extension("babysitter")` from `@vite-hub/agent/state/sqlite` to keep
+the inbox tables in the Agent State database, or with `path` for a private
+`node:sqlite` file. `scope` separates inboxes that share one storage. Every
+method is asynchronous. Seed discovered PRs and ingest verified webhook
+deliveries with `ingest(deliveryId, event, payload)`.
 `filter` uses `GitHubPullRequestFilter` from the GitHub Channel. PR properties apply
 to discovery and claims. Actor and action rules gate new webhook admissions only;
 existing PRs still receive lifecycle evidence that can cancel their active work.
@@ -552,6 +556,10 @@ The inbox binds the wait to the current head and excludes it from claims until
 `wake(observedSnapshot, evidenceKey)` sees changed evidence. See the
 [host reconciliation contract](../../docs/content/docs/reference/github-inbox-waits.md).
 `recoverLeases()` releases expired leases only, including after a process restart.
+Claims, recovery, head matching and `summary()` read indexed columns, so they do
+not parse every stored snapshot. `pruneDeliveries()` drops delivery payloads after
+7 days and delivery IDs after 30 days. `importLegacyFile(path)` copies an older
+`node:sqlite` inbox file once, clears its leases, and leaves the file unchanged.
 `createClaimStopCheck()` checks lease, PR state, and head changes, and accepts a
 repair push only when the provider Git HEAD proves the new head. Call `close()`
 when the host stops. `snapshotPrompt()` serializes the retained feedback with

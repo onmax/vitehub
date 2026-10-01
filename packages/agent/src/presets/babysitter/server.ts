@@ -22,7 +22,7 @@ import {
   reconcileOneSnapshot,
   readPullRequestThreads,
 } from "../../server/github-inbox.ts";
-import type { Claim } from "../../server/github-inbox.ts";
+import type { Claim, PullRequestInboxStorage } from "../../server/github-inbox.ts";
 import { babysitterPassResultSchema } from "../babysitter.ts";
 import type { BabysitterAgent, BabysitterPassResult } from "../babysitter.ts";
 import { getAgentLayerOptions } from "../../agent-layers.ts";
@@ -33,7 +33,10 @@ export interface BabysitterRuntimeOptions {
   /** Discovered Agent name for per-Agent public URLs. Defaults to the definition name. */
   agentName?: string;
   github: GitHubHost;
-  inboxPath: string;
+  /** Private `node:sqlite` inbox file. Set this or `inboxStorage`. */
+  inboxPath?: string;
+  /** Inbox tables in shared SQL storage, for example `agentState.extension("babysitter")`. */
+  inboxStorage?: PullRequestInboxStorage;
   repositories: string[];
   concurrency: number;
   /** Public Console origin. Defaults to `vitehub({ publicUrl })`. */
@@ -73,12 +76,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   // unverified names must never suppress activity feedback.
   const activityAuthors = verifiedHostIdentity ? [verifiedHostIdentity] : [];
   const pullRequestInbox = new PullRequestInbox({
-    path: options.inboxPath,
+    ...(options.inboxStorage ? { storage: options.inboxStorage } : { path: options.inboxPath }),
     repositories: options.repositories,
     filter: presetOptions.filter,
     activityAuthors,
   });
-  pullRequestInbox.recoverLeases();
   const schedulerEvent = (name: string, properties: Record<string, unknown> = {}) =>
     options.event?.(name, properties);
   const schedulerError = (name: string, error: unknown, properties: Record<string, unknown> = {}) =>
@@ -205,13 +207,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       if (eventScopedBootstrap) continue;
       const key = `bootstrap-rest-v1:${repository}`;
       // SAFETY: This versioned key is written below only with an ISO timestamp object; absent keys return undefined.
-      const previous = pullRequestInbox.meta(key) as { at: string } | undefined;
+      const previous = (await pullRequestInbox.meta(key)) as { at: string } | undefined;
       if (previous && Date.now() - Date.parse(previous.at) < 30 * 60_000) continue;
       // Failed bootstraps retry on the repair timer, not on every owner wake.
       const nextKey = `${key}:next`;
       // SAFETY: This bootstrap retry key is written below only with a numeric epoch timestamp; absent keys return undefined.
-      if (((pullRequestInbox.meta(nextKey) as number | undefined) ?? 0) > Date.now()) continue;
-      pullRequestInbox.setMeta(nextKey, Date.now() + 2 * 60_000);
+      if ((((await pullRequestInbox.meta(nextKey)) as number | undefined) ?? 0) > Date.now()) continue;
+      await pullRequestInbox.setMeta(nextKey, Date.now() + 2 * 60_000);
       try {
         const result = await github.command(
           [
@@ -228,8 +230,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           .split("\n")
           .filter(Boolean)
           .map((line) => JSON.parse(line));
-        for (const pr of prs) pullRequestInbox.seed(repository, normalizePullRequest(pr));
-        pullRequestInbox.setMeta(key, { at: new Date().toISOString() });
+        for (const pr of prs) await pullRequestInbox.seed(repository, normalizePullRequest(pr));
+        await pullRequestInbox.setMeta(key, { at: new Date().toISOString() });
       } catch (error) {
         schedulerError("babysitter.bootstrap.failed", error, { repository });
       }
@@ -240,12 +242,17 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       schedulerError("babysitter.snapshot.reconcile.failed", error);
     }
     // Recover leases that expired while the host was stopped before claiming work.
-    pullRequestInbox.recoverLeases();
+    await pullRequestInbox.recoverLeases();
+    // Delivery IDs deduplicate redeliveries; their payloads only help inspection.
+    if ((((await pullRequestInbox.meta("deliveries-prune-next")) as number | undefined) ?? 0) <= Date.now()) {
+      await pullRequestInbox.setMeta("deliveries-prune-next", Date.now() + 60 * 60_000);
+      await pullRequestInbox.pruneDeliveries();
+    }
     if (!isAccepting()) return;
     // The durable inbox is the sole eligibility checkpoint. A second work
     // tracker checkpoint used to swallow new webhook generations and leak
     // their leases for two hours.
-    const jobs = pullRequestInbox.claim(Math.max(0, ownerLimit - active.size));
+    const jobs = await pullRequestInbox.claim(Math.max(0, ownerLimit - active.size));
     if (!jobs.length) return; // tracking an already-resolved batch creates wake loops
     for (const claim of jobs) active.add(`${claim.snapshot.repository}#${claim.snapshot.number}`);
     schedulerEvent("babysitter.queue.selected", {
@@ -299,11 +306,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               activityAuthors,
             ))
           ) {
-            pullRequestInbox.release(inboxClaim);
+            await pullRequestInbox.release(inboxClaim);
             return;
           }
           if (!pullRequestInbox.eligible(repository, inboxClaim.snapshot.pr)) {
-            pullRequestInbox.finish(inboxClaim, {
+            await pullRequestInbox.finish(inboxClaim, {
               text: "PR closed or outside the configured filter.",
               terminal: true,
             });
@@ -340,9 +347,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               const abortSignal = AbortSignal.any([prepared.signal, passSignal]);
               // Check durable ownership at dispatch, including after admission I/O.
               // The cancellation watcher alone leaves a window for a reclaimed worker.
-              const assertLease = () => {
+              const assertLease = async () => {
                 abortSignal.throwIfAborted();
-                const current = pullRequestInbox.get(repository, number);
+                const current = await pullRequestInbox.get(repository, number);
                 if (current?.lease !== inboxClaim.token || current.leaseUntil <= Date.now()) {
                   throw new DOMException("Pull request lease lost.", "AbortError");
                 }
@@ -352,13 +359,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 }
               };
               const operationHost: Pick<GitHubHost, "command" | "ensureGraphQLBudget"> = {
-                command: (args, request) => {
-                  assertLease();
-                  return github.command(args, request);
+                command: async (args, request) => {
+                  await assertLease();
+                  return await github.command(args, request);
                 },
-                ensureGraphQLBudget: (...args) => {
-                  assertLease();
-                  return github.ensureGraphQLBudget(...args);
+                ensureGraphQLBudget: async (...args) => {
+                  await assertLease();
+                  return await github.ensureGraphQLBudget(...args);
                 },
               };
               const operations = createGitHubPullRequestOperations(operationHost, {
@@ -371,9 +378,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   pullRequestInbox.eligible(repository, normalizePullRequest(current)),
                 push: async () => {
                   if (!providerDirectory) throw new Error("The repair workspace is not prepared.");
-                  assertLease();
+                  await assertLease();
                   const renew = setInterval(() => {
-                    if (!pullRequestInbox.renew(inboxClaim, Date.now() + 2 * 60 * 60_000)) passController.abort();
+                    void pullRequestInbox.renew(inboxClaim, Date.now() + 2 * 60 * 60_000)
+                      .then((renewed) => { if (!renewed) passController.abort(); }, () => passController.abort());
                   }, 30_000);
                   try {
                     const result = await prepared.push(providerDirectory, {
@@ -491,23 +499,23 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             { signal: passSignal, timeout: 60 * 60 * 1000 },
           );
 
-          const current = pullRequestInbox.get(repository, number);
+          const current = await pullRequestInbox.get(repository, number);
           const terminal = current?.status === "terminal";
           // A successful push advances the PR asynchronously via its synchronize
           // webhook. Park this pass regardless of the worker disposition so the
           // same inbox generation cannot immediately schedule duplicate work.
           const parked = terminal || disposition === "park" || pushSucceeded;
           outcome = parked ? "completed" : "retry";
-          pullRequestInbox.finish(inboxClaim, { text: resultText, retry: !parked, terminal });
+          await pullRequestInbox.finish(inboxClaim, { text: resultText, retry: !parked, terminal });
         } catch (error) {
           if (isAbortError(error)) {
             outcome = "completed";
-            pullRequestInbox.finish(inboxClaim, {
+            await pullRequestInbox.finish(inboxClaim, {
               text: pushSucceeded
                 ? "Repair pushed; waiting for new webhook evidence."
                 : "Pass interrupted; current webhook state retained.",
               retry: !pushSucceeded,
-              terminal: pullRequestInbox.get(repository, number)?.status === "terminal",
+              terminal: (await pullRequestInbox.get(repository, number))?.status === "terminal",
             });
             schedulerEvent("babysitter.owner.cancelled", {
               reason: "pull-request-state-changed-or-aborted",
@@ -515,7 +523,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             });
           } else if (github.isRateLimitError(error)) {
             outcome = "deferred";
-            pullRequestInbox.finish(inboxClaim, {
+            await pullRequestInbox.finish(inboxClaim, {
               text: pushSucceeded
                 ? "Repair pushed; waiting for new webhook evidence."
                 : "GitHub rate limit; retrying after budget reset.",
@@ -525,9 +533,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           } else {
             outcome = "failed";
             if (/AGENT_R0767|head.*(?:mismatch|changed)|expected.*head/i.test(String(error))) {
-              pullRequestInbox.hydrate(inboxClaim, { refresh: true });
+              await pullRequestInbox.hydrate(inboxClaim, { refresh: true });
             }
-            pullRequestInbox.finish(inboxClaim, {
+            await pullRequestInbox.finish(inboxClaim, {
               text: error instanceof Error ? error.message : String(error),
               retry: !pushSucceeded,
             });

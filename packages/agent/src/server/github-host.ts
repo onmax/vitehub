@@ -61,7 +61,7 @@ export interface GitHubHostPullRequest {
 export interface GitHubHostCheckout extends GitHubHostAccess {
   path: string
   prepareWorkspace(target: string): Promise<void>
-  push(target?: string, options?: { signal?: AbortSignal, beforePush?: () => void }): Promise<string>
+  push(target?: string, options?: { signal?: AbortSignal, beforePush?: () => void | Promise<void> }): Promise<string>
   signal: AbortSignal
 }
 
@@ -692,7 +692,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       operation.signal.throwIfAborted()
       const prepareWorkspace = async (target: string) => await prepareGitHubPullRequestWorkspace(checkout, target, { signal: operation.signal })
       let pushHead = pullRequest.headSha
-      const push = async (target: string = checkout, options: { signal?: AbortSignal, beforePush?: () => void } = {}) => {
+      const push = async (target: string = checkout, options: { signal?: AbortSignal, beforePush?: () => void | Promise<void> } = {}) => {
         const signal = options.signal ? AbortSignal.any([operation.signal, options.signal]) : operation.signal
         signal.throwIfAborted()
         const expectedHead = pushHead
@@ -723,7 +723,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
           signal,
         })
         signal.throwIfAborted()
-        options.beforePush?.()
+        await options.beforePush?.()
         await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "push", "--no-verify", `--force-with-lease=refs/heads/${pullRequest.headRef}:${expectedHead}`, "--", pushUrl, `${head}:refs/heads/${pullRequest.headRef}`], {
           env: { ...process.env, ...refreshed.env },
           maxBuffer,
@@ -733,7 +733,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         // be reclaimed while Git is in flight; surface that loss so callers do
         // not report the stale operation as successful or continue with merge.
         signal.throwIfAborted()
-        options.beforePush?.()
+        await options.beforePush?.()
         pushHead = head
         return head
       }

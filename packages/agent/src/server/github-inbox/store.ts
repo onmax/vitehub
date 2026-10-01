@@ -1,10 +1,8 @@
 import { parseProviderBudget, parseProgressBudget, validateBudgets, requireEvidence, type InboxBudgets, type ProgressBudget, type ProgressOutcome, type ProviderBudget, type ProviderAttempt, type ProviderAttemptOutcome } from './budgets.ts'
 
 import { parseWait, type PullRequestWait } from './wait-state.ts'
-import { DatabaseSync } from 'node:sqlite'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { createNodeSqliteInboxStorage, type PullRequestInboxExecutor, type PullRequestInboxRow, type PullRequestInboxStorage } from './storage.ts'
 
 import type { GitHubPullRequestFilter, GitHubPullRequestFilterContext } from '../../channels.ts'
 import { matchesGitHubPullRequestFilter } from '../../internal/github-pull-request-filter.ts'
@@ -69,7 +67,12 @@ function parseSnapshot(value: unknown): Snapshot {
 }
 
 export interface PullRequestInboxOptions {
-  path: string
+  /** A private `node:sqlite` file. Use `storage` instead to keep the inbox in the Agent State database. */
+  path?: string
+  /** SQL storage, for example `agentState.extension("babysitter")`. */
+  storage?: PullRequestInboxStorage
+  /** Separates inboxes that share one storage, for example one per Agent. */
+  scope?: string
   repositories: readonly string[]
   filter?: GitHubPullRequestFilter
   clock?: () => number
@@ -85,84 +88,168 @@ export function pullRequestFilterContext(repository: string, pr: GitHubPullReque
     base: pr?.base?.ref, head: pr?.head?.ref, title: pr?.title }
 }
 
+const stringValue = (value: unknown): string => typeof value === 'string' ? value : String(value)
+
+/**
+ * Converts a snapshot from an older inbox file. Older hosts used an `attention` status and a
+ * `waitForChecks` record; both map to the current states. Invalid records are skipped.
+ */
+function legacySnapshot(raw: unknown): Snapshot | undefined {
+  if (raw === null || Object.prototype.toString.call(raw) !== '[object Object]') return undefined
+  // SAFETY: plain object checked above; parseSnapshot validates every owned field below.
+  const value = { ...(raw as Record<string, unknown>) }
+  const legacyWait = value.waitForChecks as { headSha?: unknown; contextKey?: unknown } | undefined
+  if (!value.wait && legacyWait && typeof legacyWait.headSha === 'string' && typeof legacyWait.contextKey === 'string' && legacyWait.headSha && legacyWait.contextKey) {
+    value.wait = { headSha: legacyWait.headSha, reason: 'checks', evidenceKey: legacyWait.contextKey }
+  }
+  if (value.status === 'attention' || value.status === 'working') value.status = value.wait ? 'waiting' : 'ready'
+  value.lease = null
+  value.leaseUntil = 0
+  if (typeof value.repository === 'string') value.repository = value.repository.toLowerCase()
+  try { return parseSnapshot(value) }
+  catch { return undefined }
+}
+
+function summaryOf(s: Snapshot): GitHubInboxSummary {
+  return { repository: s.repository, number: s.number, head: s.pr?.head?.sha,
+    generation: s.generation, handled: s.handled, status: s.status, reasons: s.reasons,
+    wait: s.wait, dirty: s.generation > s.handled, attempts: s.attempts, nextAt: s.nextAt, lastResult: s.lastResult, progressBudget: s.progressBudget }
+}
+
+/**
+ * Durable PR inbox. Every method reads and writes storage, so all of them are asynchronous.
+ * Snapshot JSON stays the source of truth. Claim, recovery, head matching, and summaries use
+ * indexed columns derived from it on every write, so they do not parse every snapshot.
+ */
 export class PullRequestInbox {
-  private db: DatabaseSync
+  private storage: PullRequestInboxStorage
+  private ownsStorage: boolean
+  private scope: string
+  private ready?: Promise<void>
+  private tables: { pullRequests: string; deliveries: string; meta: string; schemaVersion: string }
   private repositories: string[]
   private clock: () => number
   private filter?: GitHubPullRequestFilter
   private activityAuthors: Set<string>
   private budgets: InboxBudgets
-  constructor({ path, repositories, filter, clock = Date.now, budgets = {}, activityAuthors = [] }: PullRequestInboxOptions) {
+  constructor({ path, storage, scope = '', repositories, filter, clock = Date.now, budgets = {}, activityAuthors = [] }: PullRequestInboxOptions) {
     validateBudgets(budgets)
+    if ((path === undefined) === (storage === undefined)) throw new Error('PullRequestInbox requires exactly one of path or storage.')
     this.budgets = { ...budgets }
     this.repositories = repositories.map(repository => repository.toLowerCase())
     this.clock = clock
     this.filter = filter
     this.activityAuthors = new Set(activityAuthors.map(author => author.trim().toLowerCase()))
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
-    this.db = new DatabaseSync(path)
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS pr_snapshots (repository TEXT, number INTEGER, value TEXT NOT NULL, PRIMARY KEY(repository,number));
-      CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY, event TEXT, received INTEGER, payload TEXT, result TEXT);
-      CREATE TABLE IF NOT EXISTS inbox_meta (key TEXT PRIMARY KEY, value TEXT);`)
+    this.storage = storage ?? createNodeSqliteInboxStorage(path!)
+    this.ownsStorage = !storage
+    this.scope = scope
+    const prefix = this.storage.tablePrefix
+    this.tables = { pullRequests: `${prefix}pull_requests`, deliveries: `${prefix}deliveries`, meta: `${prefix}meta`, schemaVersion: `${prefix}schema_version` }
   }
-  close(): void { this.db.close() }
-  private transaction<T>(run: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE')
-    try { const result = run(); this.db.exec('COMMIT'); return result }
-    catch (error) { this.db.exec('ROLLBACK'); throw error }
-  }
-  get(repository: string, number: number): Snapshot | undefined {
-    const row = this.db.prepare('SELECT value FROM pr_snapshots WHERE repository=? AND number=?').get(repository, number)
-    if (!row) return undefined
-    // SAFETY: SQLite schema guarantees value is stored as TEXT.
-    const raw = row.value as string
-    // SAFETY: raw is read from the TEXT SQLite value and JSON.parse returns unknown for boundary validation.
-    return parseSnapshot(JSON.parse(raw))
-  }
-  all(): Snapshot[] {
-    return this.db.prepare('SELECT value FROM pr_snapshots').all().map(row => {
-      // SAFETY: SQLite schema guarantees value is stored as TEXT; parseSnapshot validates the decoded boundary.
-      return parseSnapshot(JSON.parse(row.value as string))
+  async close(): Promise<void> { if (this.ownsStorage) await this.storage.close?.() }
+  private async init(): Promise<void> {
+    this.ready ??= this.storage.transaction(async tx => {
+      const t = this.tables
+      await tx.execute(`CREATE TABLE IF NOT EXISTS ${t.schemaVersion} (version INTEGER PRIMARY KEY)`)
+      const [row] = await tx.execute(`SELECT COALESCE(MAX(version), 0) AS version FROM ${t.schemaVersion}`)
+      if (Number(row?.version ?? 0) >= 1) return
+      await tx.execute(`CREATE TABLE IF NOT EXISTS ${t.pullRequests} (scope TEXT NOT NULL, repository TEXT NOT NULL, number INTEGER NOT NULL,
+        value TEXT NOT NULL, summary TEXT NOT NULL, status TEXT NOT NULL, generation INTEGER NOT NULL, handled INTEGER NOT NULL,
+        dirty_at INTEGER NOT NULL, next_at INTEGER NOT NULL, lease TEXT, lease_until INTEGER NOT NULL, waiting INTEGER NOT NULL,
+        progress_blocked INTEGER NOT NULL, state TEXT, head_sha TEXT, head_ref TEXT, base_ref TEXT, PRIMARY KEY(scope, repository, number))`)
+      await tx.execute(`CREATE INDEX IF NOT EXISTS ${t.pullRequests}_head ON ${t.pullRequests}(scope, repository, state, head_sha)`)
+      await tx.execute(`CREATE INDEX IF NOT EXISTS ${t.pullRequests}_refs ON ${t.pullRequests}(scope, repository, state, head_ref, base_ref)`)
+      await tx.execute(`CREATE INDEX IF NOT EXISTS ${t.pullRequests}_queue ON ${t.pullRequests}(scope, status, dirty_at)`)
+      await tx.execute(`CREATE TABLE IF NOT EXISTS ${t.deliveries} (scope TEXT NOT NULL, id TEXT NOT NULL, event TEXT, received INTEGER NOT NULL,
+        payload TEXT, result TEXT, PRIMARY KEY(scope, id))`)
+      await tx.execute(`CREATE INDEX IF NOT EXISTS ${t.deliveries}_received ON ${t.deliveries}(scope, received)`)
+      await tx.execute(`CREATE TABLE IF NOT EXISTS ${t.meta} (scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY(scope, key))`)
+      await tx.execute(`INSERT INTO ${t.schemaVersion} (version) VALUES (1)`)
+    }).catch((error: unknown) => {
+      this.ready = undefined
+      throw error
     })
-      .filter(s => this.repositories.includes(s.repository))
+    await this.ready
   }
-  private put(s: Snapshot) {
-    this.db.prepare('INSERT OR REPLACE INTO pr_snapshots VALUES (?,?,?)').run(s.repository, s.number, JSON.stringify(s))
+  private async transaction<T>(run: (tx: PullRequestInboxExecutor) => Promise<T>): Promise<T> {
+    await this.init()
+    return await this.storage.transaction(run)
+  }
+  private async read(statement: string, args: unknown[] = []): Promise<PullRequestInboxRow[]> {
+    await this.init()
+    return await this.storage.execute(statement, args)
+  }
+  private repositoryFilter(): { sql: string; args: string[] } {
+    return { sql: `repository IN (${this.repositories.map(() => '?').join(',')})`, args: this.repositories }
+  }
+  private async getIn(tx: PullRequestInboxExecutor, repository: string, number: number): Promise<Snapshot | undefined> {
+    const [row] = await tx.execute(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND repository=? AND number=?`, [this.scope, repository, number])
+    // SAFETY: the value column stores snapshot JSON; parseSnapshot validates the decoded boundary.
+    return row ? parseSnapshot(JSON.parse(stringValue(row.value))) : undefined
+  }
+  async get(repository: string, number: number): Promise<Snapshot | undefined> {
+    await this.init()
+    return await this.getIn({ execute: (statement, args) => this.storage.execute(statement, args) }, repository, number)
+  }
+  async all(): Promise<Snapshot[]> {
+    if (!this.repositories.length) return []
+    const repositories = this.repositoryFilter()
+    const rows = await this.read(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql} ORDER BY repository, number`, [this.scope, ...repositories.args])
+    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value))))
+  }
+  private async put(tx: PullRequestInboxExecutor, s: Snapshot): Promise<void> {
+    const head = s.pr?.head?.sha
+    await tx.execute(`INSERT OR REPLACE INTO ${this.tables.pullRequests} (scope, repository, number, value, summary, status, generation, handled,
+      dirty_at, next_at, lease, lease_until, waiting, progress_blocked, state, head_sha, head_ref, base_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+      this.scope, s.repository, s.number, JSON.stringify(s), JSON.stringify(summaryOf(s)), s.status, s.generation, s.handled,
+      s.dirtyAt, s.nextAt, s.lease, s.leaseUntil, s.wait ? 1 : 0, s.progressBudget?.exhausted && s.progressBudget.head === head ? 1 : 0,
+      s.pr?.state === undefined ? null : String(s.pr.state).toLowerCase(), head ?? null, s.pr?.head?.ref ?? null, s.pr?.base?.ref ?? null,
+    ])
   }
   private empty(repository: string, number: number): Snapshot {
     return { repository, number, pr: null, generation: 0, handled: 0, dirtyAt: this.clock(), nextAt: 0,
       status: 'ready', lease: null, leaseUntil: 0, attempts: 0, hydrated: false, refresh: true, feedbackRefresh: true,
       comments: {}, reviews: {}, reviewComments: {}, checks: {}, statuses: {}, threads: [], reasons: [] }
   }
-  meta(key: string): unknown {
-    const row = this.db.prepare('SELECT value FROM inbox_meta WHERE key=?').get(key)
-    // SAFETY: SQLite schema guarantees value is stored as TEXT; metadata remains intentionally untyped JSON.
-    return row ? JSON.parse(row.value as string) : undefined
+  private async metaIn(tx: PullRequestInboxExecutor, key: string): Promise<unknown> {
+    const [row] = await tx.execute(`SELECT value FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])
+    // Metadata remains intentionally untyped JSON; callers validate their own keys.
+    return row ? JSON.parse(stringValue(row.value)) : undefined
   }
-  setMeta(key: string, value: unknown): void { this.db.prepare('INSERT OR REPLACE INTO inbox_meta VALUES (?,?)').run(key, JSON.stringify(value)) }
+  private async setMetaIn(tx: PullRequestInboxExecutor, key: string, value: unknown): Promise<void> {
+    await tx.execute(`INSERT OR REPLACE INTO ${this.tables.meta} (scope, key, value) VALUES (?,?,?)`, [this.scope, key, JSON.stringify(value)])
+  }
+  async meta(key: string): Promise<unknown> {
+    await this.init()
+    return await this.metaIn({ execute: (statement, args) => this.storage.execute(statement, args) }, key)
+  }
+  async setMeta(key: string, value: unknown): Promise<void> { await this.transaction(tx => this.setMetaIn(tx, key, value)) }
   /** Shared provider scope should identify the credential/account, without including its secret. */
-  providerBudget(provider: string): ProviderBudget | undefined {
-    const value = this.meta(`provider-budget:${provider}`)
+  async providerBudget(provider: string): Promise<ProviderBudget | undefined> {
+    const value = await this.meta(`provider-budget:${provider}`)
     return value === undefined ? undefined : parseProviderBudget(value)
   }
-  reserveProviderAttempt(provider: string): ProviderAttempt | undefined {
-    return this.transaction(() => {
+  private async providerBudgetIn(tx: PullRequestInboxExecutor, provider: string): Promise<ProviderBudget | undefined> {
+    const value = await this.metaIn(tx, `provider-budget:${provider}`)
+    return value === undefined ? undefined : parseProviderBudget(value)
+  }
+  async reserveProviderAttempt(provider: string): Promise<ProviderAttempt | undefined> {
+    return await this.transaction(async tx => {
       if (!provider.trim()) throw new Error('Provider scope is required')
       const maxRetries = this.budgets.providerRetries
       if (maxRetries === undefined) throw new Error('Configure budgets.providerRetries before reserving attempts')
-      const budget = this.providerBudget(provider) ?? { generation: randomUUID(), maxRetries, nextAttempt: 0, succeededThrough: 0, pending: [], failures: [] }
+      const budget = await this.providerBudgetIn(tx, provider) ?? { generation: randomUUID(), maxRetries, nextAttempt: 0, succeededThrough: 0, pending: [], failures: [] }
       // Pending attempts also consume capacity. A crashed dispatch fails closed.
       if (budget.pending.length + budget.failures.length >= budget.maxRetries + 1) return undefined
       const attempt = ++budget.nextAttempt
       budget.pending.push(attempt)
-      this.setMeta(`provider-budget:${provider}`, budget)
+      await this.setMetaIn(tx, `provider-budget:${provider}`, budget)
       return { provider, generation: budget.generation, attempt }
     })
   }
-  finishProviderAttempt(token: ProviderAttempt, outcome: ProviderAttemptOutcome): boolean {
-    return this.transaction(() => {
-      const budget = this.providerBudget(token.provider)
+  async finishProviderAttempt(token: ProviderAttempt, outcome: ProviderAttemptOutcome): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const budget = await this.providerBudgetIn(tx, token.provider)
       if (!budget || budget.generation !== token.generation || !budget.pending.includes(token.attempt)) return false
       budget.pending = budget.pending.filter(attempt => attempt !== token.attempt)
       if (outcome === 'retryable-failure' && token.attempt > budget.succeededThrough) budget.failures.push(token.attempt)
@@ -171,29 +258,29 @@ export class PullRequestInbox {
         budget.succeededThrough = Math.max(budget.succeededThrough, token.attempt)
         budget.failures = budget.failures.filter(attempt => attempt > budget.succeededThrough)
       }
-      this.setMeta(`provider-budget:${token.provider}`, budget)
+      await this.setMetaIn(tx, `provider-budget:${token.provider}`, budget)
       return true
     })
   }
-  resetProviderBudget(provider: string, reason: string): void {
+  async resetProviderBudget(provider: string, reason: string): Promise<void> {
     requireEvidence(reason)
-    this.transaction(() => {
+    await this.transaction(async tx => {
       const maxRetries = this.budgets.providerRetries
       if (maxRetries === undefined) throw new Error('Configure budgets.providerRetries before resetting attempts')
-      this.setMeta(`provider-budget:${provider}`, { generation: randomUUID(), maxRetries, nextAttempt: 0, succeededThrough: 0, pending: [], failures: [], resetReason: reason })
+      await this.setMetaIn(tx, `provider-budget:${provider}`, { generation: randomUUID(), maxRetries, nextAttempt: 0, succeededThrough: 0, pending: [], failures: [], resetReason: reason })
     })
   }
-  resetProgressBudget(repository: string, number: number, head: string, reason: string): boolean {
+  async resetProgressBudget(repository: string, number: number, head: string, reason: string): Promise<boolean> {
     requireEvidence(reason)
-    return this.transaction(() => {
-      const s = this.get(repository.toLowerCase(), number)
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, repository.toLowerCase(), number)
       if (!s || s.pr?.head?.sha !== head || s.status === 'terminal' || s.lease) return false
       const limit = this.budgets.noProgress
       if (limit === undefined) throw new Error('Configure budgets.noProgress before resetting progress')
       const previous = s.progressBudget?.head === head ? s.progressBudget : undefined
       s.progressBudget = { head, limit, count: 0, exhausted: false, evidence: previous?.evidence,
         creditedEvidence: previous?.creditedEvidence ?? [], resetReason: reason }
-      this.dirty(s, 'progress-budget:reset'); this.put(s)
+      this.dirty(s, 'progress-budget:reset'); await this.put(tx, s)
       return true
     })
   }
@@ -238,12 +325,12 @@ export class PullRequestInbox {
   eligible(repository: string, pr: GitHubPullRequestRecord | null): boolean {
     return Boolean(pr && pr.state === 'open' && matchesGitHubPullRequestFilter(pullRequestFilterContext(repository, pr), this.filter, 'pull-request'))
   }
-  seed(repository: string, value: unknown): Snapshot {
+  async seed(repository: string, value: unknown): Promise<Snapshot> {
     repository = repository.toLowerCase()
     if (!this.repositories.includes(repository)) throw new Error('Repository is not configured for this inbox.')
     const pr = normalizePullRequest(value)
-    return this.transaction(() => {
-      const s = this.get(repository, pr.number) ?? this.empty(repository, pr.number)
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, repository, pr.number) ?? this.empty(repository, pr.number)
       if (this.updatePr(s, pr)) this.dirty(s, 'bootstrap')
       if (!this.eligible(repository, s.pr)) { delete s.wait; s.status = 'terminal'; s.handled = s.generation }
       else if (s.status === 'terminal') {
@@ -251,23 +338,24 @@ export class PullRequestInbox {
         s.status = 'ready'
         if (s.generation <= s.handled) this.dirty(s, 'bootstrap-recovery')
       }
-      this.put(s); return s
+      await this.put(tx, s); return s
     })
   }
-  ingest(id: string, event: string, value: unknown): GitHubInboxDeliveryResult {
+  async ingest(id: string, event: string, value: unknown): Promise<GitHubInboxDeliveryResult> {
     const payload = parseDelivery(value)
-    return this.transaction(() => {
-      if (this.db.prepare('SELECT id FROM deliveries WHERE id=?').get(id)) return { accepted: true, duplicate: true, queued: [] as number[], updated: [] as number[] }
+    return await this.transaction(async tx => {
+      const t = this.tables
+      if ((await tx.execute(`SELECT id FROM ${t.deliveries} WHERE scope=? AND id=?`, [this.scope, id])).length) return { accepted: true, duplicate: true, queued: [] as number[], updated: [] as number[] }
       const repository = String(payload.repository?.full_name ?? '').toLowerCase()
       const queued: number[] = []
       const updated: number[] = []
-      const finish = (reason?: string): GitHubInboxDeliveryResult => {
+      const finish = async (reason?: string): Promise<GitHubInboxDeliveryResult> => {
         const result: GitHubInboxDeliveryResult = { accepted: true, queued, updated }
         if (reason) Object.assign(result, { ignored: true, reason })
-        this.db.prepare('INSERT INTO deliveries VALUES (?,?,?,?,?)').run(id, event, this.clock(), JSON.stringify(payload), JSON.stringify(result))
+        await tx.execute(`INSERT INTO ${t.deliveries} (scope, id, event, received, payload, result) VALUES (?,?,?,?,?,?)`, [this.scope, id, event, this.clock(), JSON.stringify(payload), JSON.stringify(result)])
         return result
       }
-      if (!this.repositories.includes(repository)) return finish('repository not configured')
+      if (!this.repositories.includes(repository)) return await finish('repository not configured')
       // Activity suppression applies to issue comments only. Actual reviews
       // and inline review comments are evidence regardless of reviewer name.
       const commentAuthor = String(payload.comment?.user?.login ?? payload.sender?.login ?? '').trim().toLowerCase()
@@ -277,14 +365,14 @@ export class PullRequestInbox {
       const activity = marked && this.activityAuthors.has(commentAuthor)
       // Only authenticated activity markers are transport records. A public
       // marker on an external comment must remain actionable feedback.
-      if (event === 'issue_comment' && !payload.issue?.pull_request) return finish('issue is not a PR')
+      if (event === 'issue_comment' && !payload.issue?.pull_request) return await finish('issue is not a PR')
       // Ordinary issue comments do not wake repair agents. Marker-prefixed
       // comments from untrusted authors remain actionable feedback.
-      if (event === 'issue_comment' && !activity && !isFeedback(payload.comment)) return finish('irrelevant comment')
+      if (event === 'issue_comment' && !activity && !isFeedback(payload.comment)) return await finish('irrelevant comment')
       const supported = ['pull_request','issue_comment','pull_request_review','pull_request_review_comment','pull_request_review_thread','check_run','check_suite','workflow_run','status','push']
-      if (!supported.includes(event)) return finish('irrelevant event')
-      if (event === 'pull_request' && !['opened','synchronize','reopened','closed','edited','ready_for_review','converted_to_draft','labeled','unlabeled','enqueued','dequeued'].includes(payload.action ?? '')) return finish('irrelevant PR action')
-      if (event === 'pull_request_review_thread' && (!['resolved', 'unresolved'].includes(payload.action ?? '') || !payload.thread?.node_id)) return finish('irrelevant review thread action')
+      if (!supported.includes(event)) return await finish('irrelevant event')
+      if (event === 'pull_request' && !['opened','synchronize','reopened','closed','edited','ready_for_review','converted_to_draft','labeled','unlabeled','enqueued','dequeued'].includes(payload.action ?? '')) return await finish('irrelevant PR action')
+      if (event === 'pull_request_review_thread' && (!['resolved', 'unresolved'].includes(payload.action ?? '') || !payload.thread?.node_id)) return await finish('irrelevant review thread action')
       const check = payload.check_run ?? payload.check_suite ?? payload.workflow_run
       // Push payloads expose the updated commit as `after`; use it for
       // head matching when a provider does not include a check object.
@@ -293,12 +381,13 @@ export class PullRequestInbox {
       const direct = payload.pull_request?.number ?? (payload.issue?.pull_request ? payload.issue.number : undefined)
       if (direct) numbers.add(direct)
       for (const pr of check?.pull_requests ?? []) if (pr.number) numbers.add(pr.number)
-      for (const s of this.all()) if (s.repository === repository && s.pr?.state === 'open') {
-        if (sha && s.pr.head?.sha === sha) numbers.add(s.number)
-        if (event === 'push' && (payload.ref === `refs/heads/${s.pr.base?.ref}` || payload.ref === `refs/heads/${s.pr.head?.ref}`)) numbers.add(s.number)
-      }
+      // Open PRs whose head matches the commit, or whose base or head branch received the push.
+      const pushedRef = event === 'push' && typeof payload.ref === 'string' && payload.ref.startsWith('refs/heads/') ? payload.ref.slice('refs/heads/'.length) : null
+      const matches = await tx.execute(`SELECT number FROM ${t.pullRequests} WHERE scope=? AND repository=? AND state='open'
+        AND ((? IS NOT NULL AND head_sha=?) OR (? IS NOT NULL AND (base_ref=? OR head_ref=?)))`, [this.scope, repository, sha ?? null, sha ?? null, pushedRef, pushedRef, pushedRef])
+      for (const row of matches) numbers.add(Number(row.number))
       for (const number of numbers) {
-        const existing = this.get(repository, number)
+        const existing = await this.getIn(tx, repository, number)
         const s = existing ?? this.empty(repository, number)
         // Event filters govern admission only. Lifecycle evidence must still
         // invalidate active work when the author, labels, head, or state changes.
@@ -384,32 +473,41 @@ export class PullRequestInbox {
           delete s.wait
           s.status = s.lease ? 'working' : 'ready'
         }
-        this.put(s)
+        await this.put(tx, s)
         if (changed || !s.pr) updated.push(number)
         if (wake && !s.wait && s.status !== 'terminal' && !exhausted) queued.push(number)
       }
-      return finish(numbers.size ? undefined : 'no matching PR head')
+      return await finish(numbers.size ? undefined : 'no matching PR head')
     })
   }
-  claim(limit: number): Claim[] {
-    return this.transaction(() => {
-      const now = this.clock(), all = this.all(), claims: Claim[] = []
-      for (const s of all.sort((a,b) => a.dirtyAt - b.dirtyAt || a.number - b.number)) {
+  async claim(limit: number): Promise<Claim[]> {
+    if (!this.repositories.length || limit < 1) return []
+    return await this.transaction(async tx => {
+      const now = this.clock(), claims: Claim[] = [], t = this.tables
+      const repositories = this.repositoryFilter()
+      // Columns select candidates; only these snapshots are parsed.
+      const candidates = await tx.execute(`SELECT repository, number, base_ref FROM ${t.pullRequests}
+        WHERE scope=? AND ${repositories.sql} AND waiting=0 AND status<>'terminal' AND generation>handled AND next_at<=?
+          AND (lease IS NULL OR lease_until<=?) AND progress_blocked=0
+        ORDER BY dirty_at, number`, [this.scope, ...repositories.args, now, now])
+      for (const candidate of candidates) {
         if (claims.length >= limit) break
-        if (s.wait || s.lease && s.leaseUntil > now || s.status === 'terminal' || s.generation <= s.handled || s.nextAt > now) continue
-        if (s.progressBudget?.exhausted && s.progressBudget.head === s.pr?.head?.sha) continue
-        if (s.pr && !this.eligible(s.repository, s.pr)) continue
+        const repository = stringValue(candidate.repository), number = Number(candidate.number)
         // Stack children remain local; a parent merge's base push wakes them.
-        if (s.pr?.base?.ref && all.some(parent => parent.repository === s.repository && parent.number !== s.number && String(parent.pr?.state).toLowerCase() === 'open' && parent.pr?.head?.ref === s.pr?.base?.ref)) continue
+        if (candidate.base_ref !== null && candidate.base_ref !== undefined && (await tx.execute(`SELECT 1 FROM ${t.pullRequests}
+          WHERE scope=? AND repository=? AND number<>? AND state='open' AND head_ref=? LIMIT 1`, [this.scope, repository, number, candidate.base_ref])).length) continue
+        const s = await this.getIn(tx, repository, number)
+        if (!s) continue
+        if (s.pr && !this.eligible(s.repository, s.pr)) continue
         s.lease = randomUUID(); s.leaseUntil = now + 2 * 60 * 60_000; s.status = 'working'
-        this.put(s); claims.push({ token: s.lease, generation: s.generation, snapshot: structuredClone(s) })
+        await this.put(tx, s); claims.push({ token: s.lease, generation: s.generation, snapshot: structuredClone(s) })
       }
       return claims
     })
   }
-  hydrate(claim: Claim, patch: SnapshotPatch): boolean {
-    return this.transaction(() => {
-      const s = this.get(claim.snapshot.repository, claim.snapshot.number)
+  async hydrate(claim: Claim, patch: SnapshotPatch): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token || s.generation !== claim.generation || (s.revision ?? 0) !== (claim.snapshot.revision ?? 0)) return false
       if (patch.pr) {
         const pr = normalizePullRequest(patch.pr)
@@ -418,12 +516,12 @@ export class PullRequestInbox {
       }
       Object.assign(s, patch)
       if (s.pr && !this.eligible(s.repository, s.pr)) s.status = 'terminal'
-      this.put(s); Object.assign(claim.snapshot, patch, { status: s.status }); return true
+      await this.put(tx, s); Object.assign(claim.snapshot, patch, { status: s.status }); return true
     })
   }
-  refreshThreads(observed: Snapshot, threads: GitHubReviewThread[]): boolean {
-    return this.transaction(() => {
-      const s = this.get(observed.repository, observed.number)
+  async refreshThreads(observed: Snapshot, threads: GitHubReviewThread[]): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, observed.repository, observed.number)
       if (!s || s.lease || s.generation !== observed.generation || (s.revision ?? 0) !== (observed.revision ?? 0)) return false
       const semantic = (items: GitHubReviewThread[]) => items.map(thread => ({
         id: thread.node_id ?? thread.id, isResolved: thread.isResolved, isOutdated: thread.isOutdated,
@@ -432,30 +530,30 @@ export class PullRequestInbox {
       const changed = digest(semantic(s.threads)) !== digest(semantic(threads))
       s.threads = threads; s.threadsHydrated = true; s.feedbackRefresh = false
       if (changed && s.status !== 'terminal') this.dirty(s, 'review-threads:reconciled')
-      this.put(s); return true
+      await this.put(tx, s); return true
     })
   }
-  release(claim: Claim): boolean {
-    return this.transaction(() => {
-      const s = this.get(claim.snapshot.repository, claim.snapshot.number)
+  async release(claim: Claim): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token) return false
       s.lease = null; s.leaseUntil = 0
       if (s.status !== 'terminal') s.status = 'ready'
-      this.put(s); return true
+      await this.put(tx, s); return true
     })
   }
-  renew(claim: Claim, leaseUntil: number): boolean {
-    return this.transaction(() => {
-      const s = this.get(claim.snapshot.repository, claim.snapshot.number)
+  async renew(claim: Claim, leaseUntil: number): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token || s.generation !== claim.generation || s.leaseUntil <= this.clock()) return false
       s.leaseUntil = leaseUntil
-      this.put(s)
+      await this.put(tx, s)
       return true
     })
   }
-  finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> }): boolean {
-    return this.transaction(() => {
-      const s = this.get(claim.snapshot.repository, claim.snapshot.number)
+  async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> }): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token) return false
       if (result.wait) {
         if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
@@ -463,7 +561,7 @@ export class PullRequestInbox {
           || s.generation !== claim.generation || (s.revision ?? 0) !== (claim.snapshot.revision ?? 0)) {
           s.lease = null; s.leaseUntil = 0
           if (s.status !== 'terminal') { s.status = 'ready'; s.nextAt = 0 }
-          this.put(s)
+          await this.put(tx, s)
           return false
         }
         s.wait = parseWait({ ...result.wait, headSha: s.pr.head.sha })
@@ -496,37 +594,102 @@ export class PullRequestInbox {
       if (s.status !== 'terminal' && s.progressBudget?.exhausted && s.progressBudget.head === head) {
         s.status = 'waiting'; s.nextAt = 0; s.reasons = ['no-progress-budget-exhausted']
       }
-      this.put(s); return true
+      await this.put(tx, s); return true
     })
   }
   /** Re-evaluate structured evidence outside an Agent invocation before calling this method. */
-  wake(observed: Snapshot, evidenceKey: string): boolean {
-    return this.transaction(() => {
-      const s = this.get(observed.repository, observed.number)
+  async wake(observed: Snapshot, evidenceKey: string): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, observed.repository, observed.number)
       if (!s?.wait || s.lease || s.status === 'terminal' || s.generation !== observed.generation
         || (s.revision ?? 0) !== (observed.revision ?? 0) || s.pr?.head?.sha !== observed.pr?.head?.sha) return false
       parseWait({ ...s.wait, evidenceKey })
       if (s.wait.evidenceKey === evidenceKey) return false
       delete s.wait
       this.dirty(s, 'wait:evidence-changed')
-      this.put(s)
+      await this.put(tx, s)
       return true
     })
   }
-  recoverLeases(): void {
+  async recoverLeases(): Promise<void> {
     // Only expired leases are recoverable, including when other processes share the database.
-    this.transaction(() => {
-      for (const s of this.all()) {
-        if (!s.lease || s.leaseUntil > this.clock()) continue
+    await this.transaction(async tx => {
+      const now = this.clock()
+      const rows = await tx.execute(`SELECT repository, number FROM ${this.tables.pullRequests} WHERE scope=? AND lease IS NOT NULL AND lease_until<=?`, [this.scope, now])
+      for (const row of rows) {
+        const s = await this.getIn(tx, stringValue(row.repository), Number(row.number))
+        if (!s?.lease || s.leaseUntil > now) continue
         s.lease = null; s.leaseUntil = 0
         if (s.status !== 'terminal') s.status = 'ready'
-        this.put(s)
+        await this.put(tx, s)
       }
     })
   }
-  summary(): GitHubInboxSummary[] {
-    return this.all().map(s => ({ repository: s.repository, number: s.number, head: s.pr?.head?.sha,
-      generation: s.generation, handled: s.handled, status: s.status, reasons: s.reasons,
-      wait: s.wait, dirty: s.generation > s.handled, attempts: s.attempts, nextAt: s.nextAt, lastResult: s.lastResult, progressBudget: s.progressBudget }))
+  async summary(): Promise<GitHubInboxSummary[]> {
+    if (!this.repositories.length) return []
+    const repositories = this.repositoryFilter()
+    const rows = await this.read(`SELECT summary FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql} ORDER BY repository, number`, [this.scope, ...repositories.args])
+    // SAFETY: summary JSON is written only by put() from a validated snapshot.
+    return rows.map(row => JSON.parse(stringValue(row.summary)) as GitHubInboxSummary)
+  }
+  /** The open, unleased PR that a reconciliation probe checked longest ago, with that probe time. */
+  async nextProbe(): Promise<{ repository: string; number: number; probedAt: number } | undefined> {
+    if (!this.repositories.length) return undefined
+    const repositories = this.repositoryFilter()
+    const [row] = await this.read(`SELECT p.repository AS repository, p.number AS number, COALESCE(CAST(m.value AS INTEGER), 0) AS probed_at
+      FROM ${this.tables.pullRequests} p LEFT JOIN ${this.tables.meta} m ON m.scope=p.scope AND m.key=('snapshot-probe:' || p.repository || ':' || p.number)
+      WHERE p.scope=? AND p.${repositories.sql} AND p.lease IS NULL AND p.status<>'terminal'
+      ORDER BY probed_at, p.repository, p.number LIMIT 1`, [this.scope, ...repositories.args])
+    return row ? { repository: stringValue(row.repository), number: Number(row.number), probedAt: Number(row.probed_at) } : undefined
+  }
+  /**
+   * Copies a pre-Agent-State inbox file once: snapshots, metadata except probe schedules, and
+   * delivery IDs from the last 30 days. Leases are cleared, so stop the old process first.
+   * The source file is opened read-only and left unchanged.
+   */
+  async importLegacyFile(path: string): Promise<{ imported: boolean; snapshots: number; skipped: number; deliveries: number }> {
+    const { existsSync } = await import('node:fs')
+    if (await this.meta('legacy-import:v1') !== undefined || !existsSync(path)) return { imported: false, snapshots: 0, skipped: 0, deliveries: 0 }
+    const { DatabaseSync } = await import('node:sqlite')
+    const source = new DatabaseSync(path, { readOnly: true })
+    try {
+      const tables = new Set(source.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => stringValue(row.name)))
+      const rows = (table: string, sql: string) => tables.has(table) ? source.prepare(sql).all() : []
+      const snapshots = rows('pr_snapshots', 'SELECT value FROM pr_snapshots')
+      const meta = rows('inbox_meta', 'SELECT key, value FROM inbox_meta')
+      const deliveries = rows('deliveries', `SELECT id, event, received FROM deliveries WHERE received >= ${this.clock() - 30 * 24 * 60 * 60_000}`)
+      return await this.transaction(async tx => {
+        if (await this.metaIn(tx, 'legacy-import:v1') !== undefined) return { imported: false, snapshots: 0, skipped: 0, deliveries: 0 }
+        let imported = 0, skipped = 0
+        for (const row of snapshots) {
+          const snapshot = legacySnapshot(JSON.parse(stringValue(row.value)))
+          if (!snapshot || !this.repositories.includes(snapshot.repository)) { skipped++; continue }
+          await this.put(tx, snapshot); imported++
+        }
+        for (const row of meta) {
+          const key = stringValue(row.key)
+          if (key.startsWith('snapshot-probe:') || key === 'snapshot-reconcile-next') continue
+          await tx.execute(`INSERT OR REPLACE INTO ${this.tables.meta} (scope, key, value) VALUES (?,?,?)`, [this.scope, key, stringValue(row.value)])
+        }
+        for (const row of deliveries) {
+          await tx.execute(`INSERT OR IGNORE INTO ${this.tables.deliveries} (scope, id, event, received, payload, result) VALUES (?,?,?,?,NULL,NULL)`,
+            [this.scope, stringValue(row.id), row.event === null ? null : stringValue(row.event), Number(row.received)])
+        }
+        const result = { imported: true, snapshots: imported, skipped, deliveries: deliveries.length }
+        await this.setMetaIn(tx, 'legacy-import:v1', { at: new Date(this.clock()).toISOString(), source: path, ...result })
+        return result
+      })
+    }
+    finally {
+      source.close()
+    }
+  }
+  /** Drops delivery payloads after `payloadMs` and delivery IDs after `idMs`. Recent IDs still deduplicate redeliveries. */
+  async pruneDeliveries({ payloadMs = 7 * 24 * 60 * 60_000, idMs = 30 * 24 * 60 * 60_000 }: { payloadMs?: number; idMs?: number } = {}): Promise<void> {
+    const now = this.clock()
+    await this.transaction(async tx => {
+      await tx.execute(`DELETE FROM ${this.tables.deliveries} WHERE scope=? AND received<?`, [this.scope, now - idMs])
+      await tx.execute(`UPDATE ${this.tables.deliveries} SET payload=NULL WHERE scope=? AND received<? AND payload IS NOT NULL`, [this.scope, now - payloadMs])
+    })
   }
 }
