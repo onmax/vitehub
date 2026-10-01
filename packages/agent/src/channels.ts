@@ -3343,7 +3343,7 @@ export function gmail<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeCo
   assertGmailOptions(options)
   const bodyLimit = options.bodyLimit ?? gmailDefaultBodyLimit
   const labels = options.labels || {}
-  let verifiedMailbox: { address: string, client?: GmailClient, clientId?: string, clientSecret?: string, refreshToken?: string } | undefined
+  let verifiedMailbox: { address: string, clientId?: string, clientSecret?: string, refreshToken?: string } | undefined
   const resolveClient = async (context?: AgentCallbackContext<TRuntimeConfig>): Promise<GmailClient> =>
     options.client ?? gmailClientFromSettings(await gmailChannelSettings(context), options.fetch)
   const modify = async (context: AgentCallbackContext<TRuntimeConfig>, id: string, input: GmailModifyInput) =>
@@ -3393,10 +3393,9 @@ export function gmail<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeCo
           catch (error) {
             return Response.json({ accepted: false, reason: error instanceof Error ? error.message : String(error) }, { status: 503 })
           }
-          const cachedMailbox = verifiedMailbox && (options.client
-            ? verifiedMailbox.client === options.client
-            : !verifiedMailbox.client && verifiedMailbox.clientId === settings.clientId
-              && verifiedMailbox.clientSecret === settings.clientSecret && verifiedMailbox.refreshToken === settings.refreshToken)
+          const cachedMailbox = !options.client && verifiedMailbox
+            && verifiedMailbox.clientId === settings.clientId && verifiedMailbox.clientSecret === settings.clientSecret
+            && verifiedMailbox.refreshToken === settings.refreshToken
             ? verifiedMailbox.address : undefined
           const notifiedMailbox = push.emailAddress.trim().toLowerCase()
           if (cachedMailbox && notifiedMailbox !== cachedMailbox.trim().toLowerCase()) {
@@ -3405,7 +3404,9 @@ export function gmail<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeCo
           // Acknowledge Pub/Sub first. The stored history cursor lets a later notification retry failed work.
           context.waitUntil((async () => {
             const mailbox = cachedMailbox ?? await gmailMailboxAddress(client)
-            verifiedMailbox = { address: mailbox, client: options.client, clientId: settings.clientId, clientSecret: settings.clientSecret, refreshToken: settings.refreshToken }
+            if (!options.client) {
+              verifiedMailbox = { address: mailbox, clientId: settings.clientId, clientSecret: settings.clientSecret, refreshToken: settings.refreshToken }
+            }
             if (notifiedMailbox !== mailbox.trim().toLowerCase()) throw new Error("Gmail notification belongs to another mailbox.")
             await syncGmailMailbox({
               bodyLimit,

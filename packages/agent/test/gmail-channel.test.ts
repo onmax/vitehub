@@ -565,7 +565,7 @@ describe("gmail() Channel", () => {
         expect(retry.status).toBe(204)
         // A failed/foreign lookup did not initialize a cursor: retry initializes
         // from its own notification instead of requesting Gmail history.
-        expect(vi.mocked(client).mock.calls.map(([request]) => request.path)).toEqual(result === "failure" ? ["profile", "profile", "watch"] : ["profile", "watch"])
+        expect(vi.mocked(client).mock.calls.map(([request]) => request.path)).toEqual(["profile", "profile", "watch"])
       }
     } finally { release(); await delivery; await Promise.all(tasks); errors.mockRestore() }
   })
@@ -596,6 +596,46 @@ describe("gmail() Channel", () => {
     expect((await push("other@example.com", 110)).status).toBe(204)
     expect(second.calls.filter(call => call.path === "profile")).toHaveLength(1)
     expect((await push("max@example.com", 115)).status).toBe(400)
+  })
+
+  it.each(["current", "stale"] as const)("rechecks a rotating broker client before processing a %s mailbox notification", async notification => {
+    stubGmailEnv()
+    const first = await createGoogle()
+    const second = await createGoogle({ emailAddress: "other@example.com", refreshToken: "rotated-token" })
+    const credentials = { clientId: "client-id", clientSecret: "client-secret", refreshToken: "refresh-token" }
+    let current = gmailClientFromSettings(credentials, first.fetch)
+    const client: GmailClient = request => current(request)
+    const driver = vi.fn(() => "ok")
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {})
+    const agentName = `rotate-broker-${notification}`
+    const agent = defineAgent({ channels: { gmail: gmail({ client, fetch: first.fetch }) }, driver: { run: driver }, name: agentName })
+    const handler = createChannelWebhookRouteHandler(agent)
+    const push = async (emailAddress: string, historyId: number) => {
+      const tasks: Promise<unknown>[] = []
+      const response = await handler(new Request(audience, {
+        body: JSON.stringify({ message: { data: base64Url(JSON.stringify({ emailAddress, historyId })), messageId: String(historyId) }, subscription }),
+        headers: { authorization: `Bearer ${await first.token()}`, "content-type": "application/json" }, method: "POST",
+      }), "gmail", { agentName, waitUntil: task => void tasks.push(task) })
+      await Promise.all(tasks)
+      return response
+    }
+    try {
+      expect((await push("max@example.com", 100)).status).toBe(204)
+      current = gmailClientFromSettings({ ...credentials, refreshToken: "rotated-token" }, second.fetch)
+      second.history.set("100", { historyId: "110", ids: ["m1"] })
+      expect((await push(notification === "current" ? "other@example.com" : "max@example.com", 110)).status).toBe(204)
+      expect(second.calls.filter(call => call.path === "profile")).toHaveLength(1)
+      expect(driver).toHaveBeenCalledTimes(notification === "current" ? 1 : 0)
+      if (notification === "stale") {
+        expect(second.calls.map(call => call.path)).toEqual(["profile"])
+        expect(errors).toHaveBeenCalledWith(expect.stringContaining("Gmail notification belongs to another mailbox."))
+        // The stale notification did not advance the cursor or dispatch the current mailbox's message.
+        expect((await push("other@example.com", 110)).status).toBe(204)
+        expect(second.calls.filter(call => call.path === "history").map(call => call.query.get("startHistoryId"))).toEqual(["100"])
+        expect(driver).toHaveBeenCalledOnce()
+      }
+    }
+    finally { errors.mockRestore() }
   })
 
   it("drains handled webhook background work when no host waitUntil is supplied", async () => {
