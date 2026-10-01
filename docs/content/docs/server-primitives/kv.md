@@ -201,4 +201,4 @@ Do not build coordination locks on top of basic `kv.get()` and `kv.set()`. The a
 - Use [Blob](/docs/server-primitives/blob) for object storage.
 - Expose scoped model access through [Official capabilities](/docs/capabilities/official-capabilities).
 
-KV inspection represents `bigint` values, including nested values, as decimal strings. Values that cannot be serialized return `KV_VALUE_UNSUPPORTED`. Cloudflare write results report the effective TTL after rounding.
+KV inspection accepts JSON values, binary values, and `bigint` values. It represents `bigint` values, including nested values, as decimal strings. Other native values, non-finite numbers, nested `undefined`, and cycles return `KV_VALUE_UNSUPPORTED` instead of losing data. Cloudflare write results report the effective TTL after rounding.
