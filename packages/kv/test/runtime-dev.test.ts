@@ -46,6 +46,20 @@ async function run(body: unknown): Promise<{ body: Record<string, unknown>, stat
 }
 
 describe("KV dev runtime handler", () => {
+  it.each(["get", "has", "set", "del"] as const)("passes empty keys through the %s runtime operation", async operation => {
+    const get = vi.spyOn(kv, "get").mockResolvedValue([null, "empty key"])
+    const has = vi.spyOn(kv, "has").mockResolvedValue([null, true])
+    const set = vi.spyOn(kv, "set").mockResolvedValue([null, undefined])
+    const del = vi.spyOn(kv, "del").mockResolvedValue([null, undefined])
+    try {
+      expect(await run({ key: "", operation, ...(operation === "set" ? { value: "empty key" } : {}) })).toMatchObject({ status: 200, body: { key: "" } })
+      const storageCall = { get, has, set, del }[operation]
+      expect(storageCall.mock.calls[0]?.[0]).toBe("")
+      expect((await run({ operation, ...(operation === "set" ? { value: "empty key" } : {}) })).status).toBe(400)
+    }
+    finally { get.mockRestore(); has.mockRestore(); set.mockRestore(); del.mockRestore() }
+  })
+
   it("rejects accessor-backed values without running their getters", async () => {
     const getter = vi.fn(() => { throw new Error("Getter must not run") })
     const value = Object.defineProperty({}, "secret", { enumerable: true, get: getter })
