@@ -174,6 +174,21 @@ describe("Rate Limit review regressions", () => {
     else expect(output.stderr.output()).toBe("token=[redacted]\n")
   })
 
+  it.each([false, true])("redacts mismatched discovery roots with JSON %s", async json => {
+    for (const root of ["/tmp/token=hidden-root", "/tmp/api_key=hidden-api", "Bearer hidden-bearer", "http://user:hidden-password@host"]) {
+      const output = context()
+      const fetch = devServer(known, { discovery: { root, runtime: "nitro" } })
+      await expect(runRateLimitCli(["peek", "login", "key", ...(json ? ["--json"] : [])], output.context, { fetch })).resolves.toBe(1)
+      const diagnostic = output.stdout.output() + output.stderr.output()
+      expect(diagnostic).toContain("root mismatch")
+      expect(diagnostic).toContain("[redacted]")
+      expect(diagnostic).not.toContain("hidden-")
+      if (json) { expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message"); expect(output.stderr.output()).toBe("") }
+      else expect(output.stdout.output()).toBe("")
+      expect(fetch).toHaveBeenCalledOnce()
+    }
+  })
+
   it.each([false, true])("redacts whitespace credentials from environment URL with JSON %s", async json => {
     const output = context()
     Object.assign(output.context.env, { VITEHUB_DEV_SERVER_URL: "http://user:sec ret@host:bad" })
