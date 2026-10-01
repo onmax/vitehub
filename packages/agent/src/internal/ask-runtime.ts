@@ -162,7 +162,7 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
   const advocaat = await loadAdvocaat()
   const options = await typesafeOptions(context)
   const answers = await advocaat.ask(toEntry(state), wire, { ...options, signal: context.abortSignal })
-  const result = Object.fromEntries(Object.entries(answers).map(([name, answer]) => {
+  const result = Object.fromEntries(Object.entries<unknown>(answers).map(([name, answer]) => {
     const question = questions[name]
     if (question?.type === "score" && isRuntimeRecord(answer) && answer.type === "score") {
       return [name, { ...answer, legend: Object.fromEntries(question.criteria.map((entry, index) => [index, entry])) }]

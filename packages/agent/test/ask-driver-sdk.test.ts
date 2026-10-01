@@ -11,7 +11,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 describe("Ask through the installed advocaat SDK", () => {
   it.each([0, 42, false, true, { toJSON: () => 0 }, { toJSON: () => false }])("normalizes scalar state %j only at the SDK boundary", async (state) => {
-    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ answers: { accepted: { type: "noul", noul: 0.75 } } }))
+    const fetch = vi.fn(async (_input: Parameters<typeof globalThis.fetch>[0], _init?: Parameters<typeof globalThis.fetch>[1]) => Response.json({ answers: { accepted: { type: "noul", noul: 0.75 } } }))
     vi.stubGlobal("fetch", fetch)
     await expect(askJev({}, state, { accepted: ask.if("Accept it?", { threshold: 0.5 }) })).resolves.toEqual({ accepted: true })
     expect(fetch).toHaveBeenCalledOnce()
@@ -26,7 +26,7 @@ describe("Ask through the installed advocaat SDK", () => {
       switch: { type: "choice", choice: "yes", confidence: 0.8, probabilities: { no: 0.1, yes: 0.9 } },
       score: { type: "score", score: 1, confidence: 0.8, probabilities: { 0: 0.1, 1: 0.9, 2: 0 }, legend: { 0: "0", 1: "false", 2: nested } },
     }
-    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ answers }))
+    const fetch = vi.fn(async (_input: Parameters<typeof globalThis.fetch>[0], _init?: Parameters<typeof globalThis.fetch>[1]) => Response.json({ answers }))
     vi.stubGlobal("fetch", fetch)
     const criteria = [0, false, nested] as const
     const result = await askJev({}, nested, {
