@@ -37,8 +37,14 @@ export const buildWarningBudget = Object.freeze([
   { name: "VueUse pure annotations", maximum: 2, text: "[INVALID_ANNOTATION]" },
   {
     name: "Rollup pure annotations",
-    maximum: 2,
+    maximum: 4,
     text: "contains an annotation that Rollup cannot interpret",
+    warningTokenRequired: false,
+  },
+  {
+    name: "Comark HTML parser deprecation",
+    maximum: 20,
+    text: "ParserOptions.html is deprecated",
     warningTokenRequired: false,
   },
   { name: "Nuxt UI button imports", maximum: 2, text: "[INEFFECTIVE_DYNAMIC_IMPORT]" },

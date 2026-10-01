@@ -7,8 +7,14 @@ import type { AskAnswers, AskEntry, AskQuestion, AskQuestions } from "../ask.ts"
 import type { Message } from "../messages.ts"
 import type { AgentRunInput } from "../types.ts"
 
-type Advocaat = typeof import("advocaat")
-type AdvocaatQuestion = Parameters<Advocaat["ask"]>[1][string]
+type AdvocaatQuestion = Record<string, unknown>
+interface Advocaat {
+  ask(
+    state: AskEntry,
+    questions: AdvocaatQuestion,
+    options: { apiKey?: string, model?: string, provider: string, signal?: AbortSignal },
+  ): Promise<Record<string, unknown>>
+}
 
 /** The Server Env group that `typesafeEnv()` declares. */
 export const typesafeEnvGroup = "typesafe"
