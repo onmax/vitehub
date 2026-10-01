@@ -253,18 +253,36 @@ describe("guarded dev endpoint", () => {
     expect(await requestWithHost(all.url, `attacker.example:${new URL(all.url).port}`)).toEqual([200, "handled"])
   })
 
+  it("accepts Vite's environment-provided allowed host", async () => {
+    vi.stubEnv("__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS", "hosted.test")
+    try {
+      const local = await listen({})
+      const port = new URL(local.url).port
+      expect(await requestWithHost(local.url, `hosted.test:${port}`)).toEqual([200, "handled"])
+      expect(await requestWithHost(local.url, `other.test:${port}`)).toEqual([403, "Forbidden Test Dev host."])
+    }
+    finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it("matches Vite host validation rules", () => {
     const allowed = (host: string | undefined, server: ViteHubDevEndpointServer["config"]["server"] = {}) =>
       // SAFETY: the host check reads only the host header from the request.
       isViteHubDevHostAllowed({ config: { server } }, { headers: host === undefined ? {} : { host } } as unknown as IncomingMessage)
     expect(allowed(undefined)).toBe(true)
     expect(allowed("localhost")).toBe(true)
+    expect(allowed("LOCALHOST:5173")).toBe(true)
+    expect(allowed("APP.TEST:5173", { allowedHosts: ["app.test"] })).toBe(true)
+    expect(allowed("app.test:5173", { allowedHosts: ["APP.TEST"] })).toBe(true)
     expect(allowed("app.localhost:5173")).toBe(true)
     expect(allowed("127.0.0.1:5173")).toBe(true)
     expect(allowed("192.168.1.20:5173")).toBe(true)
     expect(allowed("[::1]:5173")).toBe(true)
     expect(allowed("[not-ip]:5173")).toBe(false)
     expect(allowed("attacker.example:5173")).toBe(false)
+    expect(allowed("attacker-extension:5173")).toBe(false)
+    expect(allowed("file:5173")).toBe(false)
     expect(allowed("localhost.attacker.example")).toBe(false)
     expect(allowed("tunnel.test", { allowedHosts: [".tunnel.test"] })).toBe(true)
     expect(allowed("eviltunnel.test", { allowedHosts: [".tunnel.test"] })).toBe(false)
