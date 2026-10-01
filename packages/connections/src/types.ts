@@ -137,11 +137,14 @@ type MethodInput<TSignature> = TSignature extends { body: infer TBody, params: i
   : never
 
 type MethodResponse<TSignature> = TSignature extends { response: infer TResponse } ? TResponse : never
+type MethodDryRunResult<TSignature, TDryRun extends boolean> = TSignature extends { method: infer TMethod }
+  ? TMethod extends "GET" | "HEAD" | "OPTIONS" ? never : true extends TDryRun ? undefined : never
+  : true extends TDryRun ? undefined : never
 
 /** A typed provider method. In dry run, a skipped write resolves to `undefined`. */
 export type ConnectionMethod<TSignature, TDryRun extends boolean = false> = object extends MethodInput<TSignature>
-  ? (input?: MethodInput<TSignature>, options?: ConnectionCallOptions) => Promise<MethodResponse<TSignature> | (true extends TDryRun ? undefined : never)>
-  : (input: MethodInput<TSignature>, options?: ConnectionCallOptions) => Promise<MethodResponse<TSignature> | (true extends TDryRun ? undefined : never)>
+  ? (input?: MethodInput<TSignature>, options?: ConnectionCallOptions) => Promise<MethodResponse<TSignature> | MethodDryRunResult<TSignature, TDryRun>>
+  : (input: MethodInput<TSignature>, options?: ConnectionCallOptions) => Promise<MethodResponse<TSignature> | MethodDryRunResult<TSignature, TDryRun>>
 
 type Head<TId extends string> = TId extends `${infer THead}.${string}` ? THead : TId
 

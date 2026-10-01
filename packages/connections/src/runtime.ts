@@ -720,6 +720,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const loaded = await definition(name)
     const owner = await claimMutationLease(name)
     let releaseLease = true
+    let quarantine = false
     try {
       const response = await tokenRequest(loaded, {
         code: input.code,
@@ -727,15 +728,36 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         grant_type: "authorization_code",
         redirect_uri: authorization.redirectUri,
       }, AbortSignal.timeout(REFRESH_WAIT_MS), () => { releaseLease = false }, () => { releaseLease = true })
-      releaseLease = true
-      const account = loaded.provider.account(response)
+      // A successful exchange may already have replaced the provider grant. Keep
+      // the mutation fenced until the replacement token and state are durable.
+      releaseLease = false
+      quarantine = true
+      let account: ReturnType<typeof loaded.provider.account>
+      try {
+        account = loaded.provider.account(response)
+      }
+      catch (error) {
+        quarantine = true
+        throw error
+      }
       const key = tokenKey(name)
       // Bind the account check to the same token revision used by the conditional write.
-      const current = await connections.secrets.read(key)
-      const previous = current ? v.safeParse(storedTokenSchema, JSON.parse(current.value)) : undefined
-      const state = await connections.state.get(name)
+      let current: Awaited<ReturnType<typeof connections.secrets.read>>
+      let previous: ReturnType<typeof v.safeParse<typeof storedTokenSchema>> | undefined
+      let state: Awaited<ReturnType<typeof connections.state.get>>
+      try {
+        current = await connections.secrets.read(key)
+        previous = current ? v.safeParse(storedTokenSchema, JSON.parse(current.value)) : undefined
+        state = await connections.state.get(name)
+      }
+      catch (error) {
+        quarantine = true
+        throw error
+      }
       const accountId = previous?.success ? previous.output.accountId ?? state?.accountId : state?.status === "revoked" ? undefined : state?.accountId
       if (accountId && (!account || accountId !== account.id)) {
+        releaseLease = true
+        quarantine = false
         throw new ConnectionError("invalid", account ? `Connection "${name}" belongs to another account. Revoke it before you connect a different account.` : `Provider "${loaded.provider.id}" did not identify the account. The existing Connection was not replaced.`, { details: { connection: name } })
       }
       const token = toStoredToken(response, previous?.success ? previous.output : undefined, [
@@ -745,6 +767,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       token.grantId = randomToken()
       // Quarantine the Connection if its new grant cannot be saved durably.
       releaseLease = false
+      quarantine = true
       const replacement = await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
       const timestamp = new Date(now()).toISOString()
       const persisted = await connections.state.putForToken({
@@ -762,7 +785,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return await inspect(name)
     }
     catch (error) {
-      if (!releaseLease) {
+      if (!releaseLease && quarantine) {
         const current = await connections.secrets.inspect(tokenKey(name)).catch(() => undefined)
         await setStatus(name, { status: "reauth_required" }, current?.revision ?? null).catch(() => undefined)
       }
@@ -814,6 +837,11 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
             token = parseToken(secret.unseal(), input.name)
           }
           catch {}
+          if (token && !loaded.provider.revocationEndpoint) {
+            throw new ConnectionError("invalid", `Provider "${loaded.provider.id}" does not support token revocation.`, {
+              details: { connection: input.name },
+            })
+          }
           if (token && loaded.provider.revocationEndpoint) {
             // A lost response can leave a grant-wide revoke running at the provider.
             releaseLease = false

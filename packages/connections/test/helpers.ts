@@ -10,9 +10,9 @@ import type { ConnectionStore } from "../src/store.ts"
 import type { ConnectionAccessRule, ConnectionActionPattern, ConnectionDefinition, ConnectionProvider } from "../src/types.ts"
 
 export interface MailApi {
-  "labels.list": { body: never, params: { userId: string }, response: { labels: Array<{ id: string }> } }
-  "messages.modify": { body: { addLabelIds?: string[] }, params: { id: string, userId: string }, response: { id: string } }
-  "messages.send": { body: { raw: string }, params: { userId: string }, response: { id: string } }
+  "labels.list": { method: "GET", body: never, params: { userId: string }, response: { labels: Array<{ id: string }> } }
+  "messages.modify": { method: "POST", body: { addLabelIds?: string[] }, params: { id: string, userId: string }, response: { id: string } }
+  "messages.send": { method: "POST", body: { raw: string }, params: { userId: string }, response: { id: string } }
 }
 
 export const ACCESS_TOKEN = "access-token-secret-1"

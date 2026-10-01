@@ -150,6 +150,7 @@ const output = [
     return [
       ...summary(method.description, "  "),
       `  ${JSON.stringify(localId(method))}: {`,
+      `    method: ${JSON.stringify(method.httpMethod)}`,
       `    params: ${objectType(method.parameters ?? {}, "    ", required)}`,
       `    body: ${method.request ? `${prefix}${method.request.$ref}` : "never"}`,
       `    response: ${method.response ? `${prefix}${method.response.$ref}` : "void"}`,

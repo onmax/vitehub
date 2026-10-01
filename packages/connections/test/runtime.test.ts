@@ -211,6 +211,15 @@ describe("connect", () => {
     expect(await test.runtime.inspect("mail")).toMatchObject({ status: "revoked" })
   })
 
+  it("rejects revocation when the provider has no revocation endpoint", async () => {
+    const definition = mailConnection()
+    const test = createTestRuntime({ ...definition, provider: { ...definition.provider, revocationEndpoint: undefined } })
+    await connect(test)
+    await expect(test.runtime.revoke({ name: "mail" })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
+    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+  })
+
   it("serializes concurrent callbacks without revoking either provider grant", async () => {
     const test = createTestRuntime()
     const providerFetch = test.provider.fetch
