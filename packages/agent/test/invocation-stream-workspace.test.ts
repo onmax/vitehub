@@ -655,6 +655,6 @@ describe("Agent Invocation Stream Channel replay", () => {
 
     const live = await invokeMiddleware(handlers[0]!, { agent: "support", replay: { channel: "mailbox" } }, agentInvocationStreamRoute, headers)
     expect(live.statusCode).toBe(409)
-    expect(JSON.parse(live.body)).toMatchObject({ code: "AGENT_R0932" })
+    expect(JSON.parse(live.body)).toMatchObject({ code: "AGENT_R0934" })
   })
 })
