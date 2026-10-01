@@ -48,6 +48,28 @@ function sentBody(fetch: ReturnType<typeof devServer>): unknown {
 }
 
 describe("KV review regressions", () => {
+  it.each([
+    { operation: "get", result: { found: true, type: "string", value: "empty key" } },
+    { operation: "has", result: { exists: true } },
+    { operation: "set", result: { created: true, type: "string" } },
+    { operation: "del", result: { deleted: true } },
+  ])("passes an empty key to $operation", async ({ operation, result }) => {
+    const output = context()
+    const fetch = devServer({ ...result, key: "", store: "default" })
+    await expect(runKVCli([operation, "", ...(operation === "set" ? ["empty key"] : []), "--json"], output.context, { fetch })).resolves.toBe(0)
+    expect(sentBody(fetch)).toMatchObject({ key: "", operation })
+    expect(JSON.parse(output.stdout.output())).toMatchObject({ key: "" })
+    expect(output.stderr.output()).toBe("")
+  })
+
+  it.each(["get", "has", "set", "del"])("still rejects a missing key for %s", async operation => {
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runKVCli([operation, "--json"], output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output()).error.message).toContain("Missing key")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])("reports interrupted error bodies with JSON %s", async json => {
     const output = context()
     const response = new Response(new ReadableStream({ start(controller) { controller.error(new Error("body interrupted")) } }), { status: 500 })

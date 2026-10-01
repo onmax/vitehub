@@ -202,7 +202,7 @@ function parseArgs(command: KVCommand, args: readonly string[], env: NodeJS.Proc
   if (positionals.length > expected) throw kvErrorDiagnostics.KV_R0019({ message: `Unexpected argument: ${positionals[expected]}.` })
   if (command.key) parsed.key = positionals[0]
   if (command.value) parsed.value = positionals[1]
-  if (!parsed.help && command.key && !parsed.key) throw kvErrorDiagnostics.KV_R0019({ message: "Missing key." })
+  if (!parsed.help && command.key && parsed.key === undefined) throw kvErrorDiagnostics.KV_R0019({ message: "Missing key." })
   if (!parsed.help && command.value && parsed.value === undefined) throw kvErrorDiagnostics.KV_R0019({ message: "Missing value." })
   if (parsed.limit !== undefined && parsed.limit > kvDevMaximumListLimit) {
     throw kvErrorDiagnostics.KV_R0019({ message: `--limit must be at most ${kvDevMaximumListLimit}.` })

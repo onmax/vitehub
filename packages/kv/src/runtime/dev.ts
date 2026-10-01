@@ -188,7 +188,7 @@ function selectStore(stores: readonly KVDevStore[], name = "default"): { driver:
 }
 
 function requireKey(body: KVDevRequestBody): string {
-  if (!body.key) throw new KVDevRequestError(`The ${body.operation} operation requires a key.`, 400)
+  if (body.key === undefined) throw new KVDevRequestError(`The ${body.operation} operation requires a key.`, 400)
   if (body.key.length > maximumKeyLength) throw new KVDevRequestError("The key is too long.", 400)
   return body.key
 }
