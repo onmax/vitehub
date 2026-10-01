@@ -187,6 +187,14 @@ describe("hubConnections", () => {
     await expect(readFile(join(custom, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("preserves declarations when ownership metadata is malformed", async () => {
+    const root = await createTempProject();
+    await hubConnections({ projectRoot: "api" }).api.prepareTypes({ projectRoot: root });
+    await writeFile(join(root, ".vitehub/connections-types.json"), "{");
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+    await expect(readFile(join(root, "api/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+  });
+
   it("retires a previous custom output when changing the configured root", async () => {
     const root = await createTempProject();
     await hubConnections({ projectRoot: "packages/old" }).api.prepareTypes({ projectRoot: root });

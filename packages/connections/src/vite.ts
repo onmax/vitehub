@@ -25,6 +25,7 @@ export const CONNECTIONS_VITE_PLUGIN_NAME = "@vite-hub/connections/vite";
 
 const resolvedConnectionsRegistryId = `\0${CONNECTIONS_REGISTRY_ID}`;
 const noExternalAddition = createNoExternalAddition("@vite-hub/connections");
+// Keep prior output ownership with the project so cleanup works after a restart.
 const generatedTypesManifest = ".vitehub/connections-types.json";
 const generatedTypesPath = ".vitehub/types/connections.d.ts";
 const generatedTypesManifestSchema = v.object({
@@ -57,7 +58,14 @@ async function removeTrackedTypes(root: string, retainedRoot?: string): Promise<
   const manifest = resolve(root, generatedTypesManifest);
   const content = await readOptionalFile(manifest);
   if (content === undefined) return;
-  const parsed = v.safeParse(generatedTypesManifestSchema, JSON.parse(content));
+  let input: unknown;
+  try {
+    input = JSON.parse(content);
+  } catch (error) {
+    if (error instanceof SyntaxError) return;
+    throw error;
+  }
+  const parsed = v.safeParse(generatedTypesManifestSchema, input);
   if (!parsed.success) return;
   const trackedRoot = resolve(root, parsed.output.root);
   if (trackedRoot === retainedRoot) return;
