@@ -73,16 +73,16 @@ function renderRegistryTypes(definitions: DiscoveredConnectionDefinition[]): str
   ].join("\n")
 }
 
-function renderHandler(importBase: string, actor: string | undefined): string {
+function renderHandler(importBase: string, actor: string | undefined, basePath: string): string {
   const imports = `import { createConnectionsHandler } from ${JSON.stringify(`${importBase}/server`)}`
   if (!actor) {
-    return [imports, "", "const handle = createConnectionsHandler()", "", "export default (event: { req: Request }) => handle(event.req)", ""].join("\n")
+    return [imports, "", `const handle = createConnectionsHandler({ basePath: ${JSON.stringify(basePath)} })`, "", "export default (event: { req: Request }) => handle(event.req)", ""].join("\n")
   }
   return [
     imports,
     `import actor from ${JSON.stringify(actor)}`,
     "",
-    "export default (event: { req: Request }) => createConnectionsHandler({ actor: () => actor(event) })(event.req)",
+    `export default (event: { req: Request }) => createConnectionsHandler({ actor: () => actor(event), basePath: ${JSON.stringify(basePath)} })(event.req)`,
     "",
   ].join("\n")
 }
@@ -154,7 +154,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
       nitro.externals = { ...externals, inline }
 
       if (environment.command === "serve" || options.management) {
-        await writeFileIfChanged(handlerFile, renderHandler(importBase, options.actor))
+        await writeFileIfChanged(handlerFile, renderHandler(importBase, options.actor, `${(config.base ?? "/").replace(/\/+$/, "")}/_vitehub/connections`))
         const kit = createNitroServerKit(nitro)
         // Mount only the API routes. Other requests, such as `GET /_vitehub/connections`, reach the Console page.
         kit.addHandler({ handler: handlerFile, method: "post", route: "/_vitehub/connections" })

@@ -47,9 +47,10 @@ describe("hubConnections", () => {
     const root = await createTempProject()
     const definition = await writeConnection(root, "server/connections/google.ts")
     const plugin = hubConnections({ database: "vite-hub/database/drizzle" })
-    const result = await (plugin.config as unknown as ConfigHook)({ nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true }, { command: "serve", mode: "development" })
+    const result = await (plugin.config as unknown as ConfigHook)({ base: "/portal/", nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true }, { command: "serve", mode: "development" })
     const nitro = result.nitro as { alias: Record<string, string>, handlers: Array<{ handler: string, method?: string, route: string }> }
     const registry = await readFile(nitro.alias[CONNECTIONS_REGISTRY_ID]!, "utf8")
+    await expect(readFile(nitro.handlers[0]!.handler, "utf8")).resolves.toContain('basePath: "/portal/_vitehub/connections"')
     expect(registry).toContain(JSON.stringify(definition))
     expect(registry).toContain("export const database = () => import(\"vite-hub/database/drizzle\").then(module => module.db)")
     expect(nitro.handlers.map(handler => `${handler.method} ${handler.route}`)).toEqual([

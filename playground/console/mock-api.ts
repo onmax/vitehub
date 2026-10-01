@@ -100,7 +100,7 @@ const connections = new Map([
     name: "gmail",
     provider: "google",
     refreshedAt: "2026-09-29T07:58:00.000Z",
-    scopes: { declared: googleScopes, granted: googleScopes, missing: [] as string[] },
+    scopes: { declared: googleScopes, granted: googleScopes, missing: [] },
     status: "connected",
   }],
   ["calendar", {
@@ -111,7 +111,7 @@ const connections = new Map([
     provider: "google",
     scopes: {
       declared: ["https://www.googleapis.com/auth/calendar.events"],
-      granted: [] as string[],
+      granted: [],
       missing: ["https://www.googleapis.com/auth/calendar.events"],
     },
     status: "reauth_required",
@@ -120,7 +120,7 @@ const connections = new Map([
     actions: [{ highRisk: false, id: "gmail.users.threads.list", method: "GET", write: false }],
     name: "support-inbox",
     provider: "google",
-    scopes: { declared: ["https://www.googleapis.com/auth/gmail.readonly"], granted: [] as string[], missing: ["https://www.googleapis.com/auth/gmail.readonly"] },
+    scopes: { declared: ["https://www.googleapis.com/auth/gmail.readonly"], granted: [], missing: ["https://www.googleapis.com/auth/gmail.readonly"] },
     status: "disconnected",
   }],
 ])
@@ -137,6 +137,7 @@ const connectionApprovals = [
 
 // Synthetic Connections management API. It accepts the same JSON actions as `/_vitehub/connections`.
 async function handleConnections(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  // SAFETY: This synthetic API receives the fixed JSON action shapes from the Console fixture client.
   const input = await body(request) as { action?: string, id?: string, name?: string, status?: string }
   const approvalView = ({ input: _input, ...approval }: typeof connectionApprovals[number]) => approval
   const connection = input.name ? connections.get(input.name) : undefined

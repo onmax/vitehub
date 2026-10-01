@@ -400,7 +400,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       const connectionsActor = sections.includes("connections")
         ? await writeConsoleConnectionsActor(root, consoleAuthHandlers ? "console-auth" : appAuth ? "app-auth" : "none")
         : undefined
-      const alias = kit.config.alias && typeof kit.config.alias === "object" ? kit.config.alias : {}
+      const alias = kit.config.alias ?? {}
 
       consoleConfig.nitro = {
         ...kit.config,

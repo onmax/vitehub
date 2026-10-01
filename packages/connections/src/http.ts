@@ -12,6 +12,8 @@ const MAX_BODY_BYTES = 64 * 1024
 const STATE_COOKIE = "vitehub_connection_state"
 
 export interface ConnectionsHandlerOptions {
+  /** Full management API path, including the application base. */
+  basePath?: string
   /** Identify the person who manages Connections, for example from Console auth. Defaults to `user:local`. */
   actor?: (request: Request) => string | undefined | Promise<string | undefined>
   runtime?: () => ConnectionsRuntime
@@ -97,31 +99,32 @@ async function managementActor(options: ConnectionsHandlerOptions, request: Requ
  */
 export function createConnectionsHandler(options: ConnectionsHandlerOptions = {}): (request: Request) => Promise<Response> {
   const runtime = () => (options.runtime ?? getConnectionsRuntime)()
+  const basePath = (options.basePath ?? CONNECTIONS_ROUTE).replace(/\/+$/, "")
   return async (request) => {
     const url = new URL(request.url)
     const path = url.pathname.replace(/\/+$/, "")
     try {
-      if (request.method === "GET" && path.startsWith(`${CONNECTIONS_ROUTE}/connect/`)) {
-        const connection = v.safeParse(name, decodeURIComponent(path.slice(`${CONNECTIONS_ROUTE}/connect/`.length)))
+      if (request.method === "GET" && path.startsWith(`${basePath}/connect/`)) {
+        const connection = v.safeParse(name, decodeURIComponent(path.slice(`${basePath}/connect/`.length)))
         if (!connection.success) return page("Connection failed", "The Connection name is invalid.", 400)
         const authorization = await runtime().authorize({
           actor: await managementActor(options, request),
           name: connection.output,
-          redirectUri: `${url.origin}${CONNECTIONS_ROUTE}/callback`,
+          redirectUri: `${url.origin}${basePath}/callback`,
         })
         return new Response(null, {
           headers: {
             "cache-control": "no-store",
             location: authorization.url,
-            "set-cookie": `${STATE_COOKIE}=${authorization.state}; Path=${CONNECTIONS_ROUTE}; HttpOnly; SameSite=Lax; Max-Age=600${url.protocol === "https:" ? "; Secure" : ""}`,
+            "set-cookie": `${STATE_COOKIE}=${authorization.state}; Path=${basePath}; HttpOnly; SameSite=Lax; Max-Age=600${url.protocol === "https:" ? "; Secure" : ""}`,
           },
           status: 302,
         })
       }
-      if (request.method === "GET" && path === `${CONNECTIONS_ROUTE}/callback`) {
+      if (request.method === "GET" && path === `${basePath}/callback`) {
         const state = url.searchParams.get("state")
         const code = url.searchParams.get("code")
-        const clear = `${STATE_COOKIE}=; Path=${CONNECTIONS_ROUTE}; HttpOnly; SameSite=Lax; Max-Age=0`
+        const clear = `${STATE_COOKIE}=; Path=${basePath}; HttpOnly; SameSite=Lax; Max-Age=0`
         if (url.searchParams.get("error")) return page("Connection cancelled", "The provider did not grant access.", 400)
         if (!state || !code || cookie(request, STATE_COOKIE) !== state) return page("Connection failed", "The authorization response does not match this browser. Start the connection again.", 400)
         const result = await runtime().complete({ code, state })
@@ -129,7 +132,7 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions = {}
         response.headers.append("set-cookie", clear)
         return response
       }
-      if (path !== CONNECTIONS_ROUTE) return json({ error: { code: "CONNECTION_NOT_FOUND", message: "Not found." } }, 404)
+      if (path !== basePath) return json({ error: { code: "CONNECTION_NOT_FOUND", message: "Not found." } }, 404)
       if (request.method !== "POST") return json({ error: { code: "CONNECTION_METHOD", message: "Use POST." } }, 405, { allow: "POST" })
       if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json") || !sameOrigin(request, url)) {
         return json({ error: { code: "CONNECTION_FORBIDDEN", message: "Cross-origin or non-JSON requests are not allowed." } }, 403)
