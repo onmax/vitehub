@@ -1,3 +1,4 @@
+import type { AgentInvocationStore } from "../invocations.ts"
 import { Diagnostic } from "nostics"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
@@ -27,10 +28,11 @@ const cancellationHandlesKey = Symbol.for("vitehub.agentInvocationCancellations"
 
 export const agentInvocationCancellationCode = "AGENT_R0970"
 
-function handles(owner: object): Map<string, Set<AgentInvocationCancellationHandle>> {
+function handles(owner: AgentInvocationStore): Map<string, Set<AgentInvocationCancellationHandle>> {
   const root = globalThis as typeof globalThis & Record<symbol, unknown>
   const existing = root[cancellationHandlesKey]
-  const owners = existing instanceof WeakMap ? existing as WeakMap<object, Map<string, Set<AgentInvocationCancellationHandle>>> : new WeakMap<object, Map<string, Set<AgentInvocationCancellationHandle>>>()
+  // SAFETY: This module owns the global symbol and stores only this store-keyed registry there.
+  const owners = existing instanceof WeakMap ? existing as WeakMap<AgentInvocationStore, Map<string, Set<AgentInvocationCancellationHandle>>> : new WeakMap<AgentInvocationStore, Map<string, Set<AgentInvocationCancellationHandle>>>()
   root[cancellationHandlesKey] = owners
   let registry = owners.get(owner)
   if (!registry) {
@@ -44,7 +46,7 @@ function handles(owner: object): Map<string, Set<AgentInvocationCancellationHand
  * Registers the abort handle of a running journaled Invocation in this process.
  * The registry lives on `globalThis`, so separate module instances in one process share it.
  */
-export function registerAgentInvocationCancellation(owner: object, id: string, handle: AgentInvocationCancellationHandle): () => void {
+export function registerAgentInvocationCancellation(owner: AgentInvocationStore, id: string, handle: AgentInvocationCancellationHandle): () => void {
   const registry = handles(owner)
   const entries = registry.get(id) ?? new Set<AgentInvocationCancellationHandle>()
   entries.add(handle)
@@ -58,7 +60,7 @@ export function registerAgentInvocationCancellation(owner: object, id: string, h
 }
 
 /** Aborts every run in this process that holds the journaled Invocation. */
-export function abortLocalAgentInvocation(owner: object, id: string, reason: unknown): LocalAgentInvocationCancellation {
+export function abortLocalAgentInvocation(owner: AgentInvocationStore, id: string, reason: unknown): LocalAgentInvocationCancellation {
   const entries = [...handles(owner).get(id) ?? []]
   for (const entry of entries) entry.abort(reason)
   const notEnforcedBy = entries.map(entry => entry.driver?.()).find(driver => driver && !driver.enforced)?.name
