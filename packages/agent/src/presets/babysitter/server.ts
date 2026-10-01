@@ -21,8 +21,10 @@ import {
   hydrateSnapshot,
   reconcileOneSnapshot,
   readPullRequestThreads,
+  detectChangedPullRequests,
+  probeChangedSnapshots,
 } from "../../server/github-inbox.ts";
-import type { Claim, PullRequestInboxStorage, Snapshot } from "../../server/github-inbox.ts";
+import type { Claim, PullRequestInboxStorage, ReadGraphql, Snapshot } from "../../server/github-inbox.ts";
 import { babysitterPassResultSchema } from "../babysitter.ts";
 import type { BabysitterAgent, BabysitterPassResult } from "../babysitter.ts";
 import { getAgentLayerOptions } from "../../agent-layers.ts";
@@ -125,27 +127,28 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       .map((line) => JSON.parse(line));
   }
 
-  async function readThreads(repository: string, number: number, signal?: AbortSignal) {
-    return readPullRequestThreads(
-      async (query, variables) => {
-        const reservation = await github.ensureGraphQLBudget(repository, { cost: 1, signal });
-        reservation.submit();
-        const args = ["api", "graphql", "-f", `query=${query}`];
-        for (const [key, value] of Object.entries(variables)) {
-          if (value === null) continue;
+  /** A GraphQL reader that reserves `cost` points of the repository's shared budget per query. */
+  function readGraphql(repository: string, cost: number, signal?: AbortSignal): ReadGraphql {
+    return async (query, variables) => {
+      const reservation = await github.ensureGraphQLBudget(repository, { cost, signal });
+      reservation.submit();
+      const args = ["api", "graphql", "-f", `query=${query}`];
+      for (const [key, value] of Object.entries(variables)) {
+        if (value === null) continue;
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Server capability inputs are untyped until this runtime boundary validates them.
-          args.push(typeof value === "number" ? "-F" : "-f", `${key}=${value}`);
-        }
-        try {
-          const result = await github.command(args, { repository, timeout: 60_000, signal });
-          return JSON.parse(result.stdout);
-        } finally {
-          reservation.settle(1);
-        }
-      },
-      repository,
-      number,
-    );
+        args.push(typeof value === "number" ? "-F" : "-f", `${key}=${value}`);
+      }
+      try {
+        const result = await github.command(args, { repository, timeout: 60_000, signal });
+        return JSON.parse(result.stdout);
+      } finally {
+        reservation.settle(cost);
+      }
+    };
+  }
+
+  async function readThreads(repository: string, number: number, signal?: AbortSignal) {
+    return readPullRequestThreads(readGraphql(repository, 1, signal), repository, number);
   }
 
   function isAbortError(error: unknown): boolean {
@@ -374,6 +377,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       }
     }
     try {
+      // One open-PR query per repository and minute finds lost deliveries; only changed PRs are probed.
+      await detectChangedPullRequests(pullRequestInbox, repository => readGraphql(repository, 2), repositories);
+    } catch (error) {
+      schedulerError("babysitter.snapshot.detect.failed", error);
+    }
+    try {
+      await probeChangedSnapshots(pullRequestInbox, readRest, Date.now(), readThreads, activityAuthors);
+      // The slow sweep remains for changes the fingerprint cannot see, such as edited comments.
       await reconcileOneSnapshot(pullRequestInbox, readRest, Date.now(), readThreads, activityAuthors);
     } catch (error) {
       schedulerError("babysitter.snapshot.reconcile.failed", error);

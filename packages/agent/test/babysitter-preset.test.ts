@@ -40,6 +40,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
   const checkoutController = new AbortController();
   let abortOperation = false;
   let onAdmission: (() => void | Promise<void>) | undefined;
+  let openPullRequests = true;
   const pr = () => ({
     number: 12,
     state: "open",
@@ -95,6 +96,16 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
       if (abortOperation && !text.includes("reviewThreads")) {
         checkoutController.abort(new DOMException("Checkout cancelled", "AbortError"));
         request?.signal?.throwIfAborted();
+      }
+      if (text.includes("BabysitterOpenPullRequests")) {
+        const current = pr();
+        const node = {
+          number: current.number, title: current.title, isDraft: false, headRefOid: current.head.sha, headRefName: current.head.ref,
+          baseRefName: current.base.ref, baseRefOid: current.base.sha, mergeable: "MERGEABLE", updatedAt: "2026-10-01T00:00:00Z", url: current.html_url,
+          authorAssociation: "MEMBER", totalCommentsCount: 0, author: current.user, headRepository: { nameWithOwner: "acme/app" },
+          labels: { nodes: current.labels }, commits: { nodes: [] }, latestReviews: { nodes: [] }, reviewThreads: { nodes: [] },
+        };
+        return { stdout: JSON.stringify({ data: { repository: { pullRequests: { nodes: openPullRequests ? [node] : [], pageInfo } } } }), stderr: "" };
       }
       const data = text.includes("reviewThreads")
         ? { repository: { pullRequest: { reviewThreads: { nodes: [], pageInfo } } } }
@@ -302,6 +313,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     failCheckout: (error: Error) => { checkoutFailure = error },
     abortOnOperation: () => { abortOperation = true },
     onAdmission: (callback: () => void | Promise<void>) => { onAdmission = callback },
+    closeOnGitHub: () => { openPullRequests = false },
   };
 }
 

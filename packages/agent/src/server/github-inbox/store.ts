@@ -244,6 +244,14 @@ export class PullRequestInbox {
     const value = await this.meta(key)
     return isRuntimeNumber(value) ? value : undefined
   }
+  /** Metadata entries whose keys start with `prefix`. */
+  async metaEntries(prefix: string): Promise<Array<[string, unknown]>> {
+    const rows = await this.read(`SELECT key, value FROM ${this.tables.meta} WHERE scope=? AND substr(key, 1, ?)=? ORDER BY key`, [this.scope, prefix.length, prefix])
+    return rows.map(row => [stringValue(row.key), JSON.parse(stringValue(row.value))])
+  }
+  async deleteMeta(key: string): Promise<void> {
+    await this.transaction(async tx => { await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key]) })
+  }
   async setMeta(key: string, value: unknown): Promise<void> { await this.transaction(tx => this.setMetaIn(tx, key, value)) }
   /** Shared provider scope should identify the credential/account, without including its secret. */
   async providerBudget(provider: string): Promise<ProviderBudget | undefined> {

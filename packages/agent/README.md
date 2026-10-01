@@ -557,7 +557,12 @@ The inbox binds the wait to the current head and excludes it from claims until
 [host reconciliation contract](../../docs/content/docs/reference/github-inbox-waits.md).
 `recoverLeases()` releases expired leases only, including after a process restart.
 Claims, recovery, head matching and `summary()` read indexed columns, so they do
-not parse every stored snapshot. `pruneDeliveries()` drops delivery payloads after
+not parse every stored snapshot. `detectChangedPullRequests()` reads every open PR of a repository with one
+GraphQL query per 50 PRs, at most once a minute. It seeds PRs that no delivery
+reported and marks PRs whose state fingerprint changed, or that closed.
+`probeChangedSnapshots()` then reads only those PRs over REST and ingests them,
+so lost webhook deliveries are recovered without probing unchanged PRs. Row
+order and an unknown mergeability do not count as changes. `pruneDeliveries()` drops delivery payloads after
 7 days and delivery IDs after 30 days. `importLegacyFile(path)` copies an older
 `node:sqlite` inbox file once, clears its leases, and leaves the file unchanged.
 `createClaimStopCheck()` checks lease, PR state, and head changes, and accepts a

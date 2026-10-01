@@ -69,7 +69,7 @@ To replace the process, send SIGUSR2, wait until the drain route reports `draine
 
 ## How it works
 
-1. Signed webhooks update a durable pull request inbox in Agent State. A slow sweep also reads open pull requests to recover lost deliveries.
+1. Signed webhooks update a durable pull request inbox in Agent State. Once a minute, one GraphQL query per repository lists the open pull requests; a pull request whose state changed without a delivery gets a targeted read, so lost deliveries are recovered within about a minute.
 2. When a pull request needs work, the host clones its head and starts one repair pass with the Agent.
 3. After a repair push, the pass ends within 3 minutes and the pull request waits on the pushed head.
 4. Check results that the pass already knew, pending checks, and the push's own events keep it waiting. New feedback, a new failing check, a conflict, or an unresolved review thread wake it.
