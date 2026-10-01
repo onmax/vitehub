@@ -189,6 +189,7 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
       if (!options.force && invocations) reservation = await reserveAgentChannelItem(agent, itemRuntime)
       const invocation = await resolveAgentTriggerInvocation(agent, itemRuntime, triggerId, item)
       if (isResolvedAgentTriggerHandledInvocation(invocation)) { await reservation?.finish("completed"); return { id, key, reason: "handled", status: "skipped" } }
+      if (reservation && invocation.run) await reservation.setRunMetadata(invocation.run)
       const token = await reservation?.handoffClaim()
       if (reservation && !token) throw new Error("Could not transfer the Invocation execution claim.")
       const output = await runAgent(agent, { ...itemRuntime, ...(token ? { [inheritedAgentInvocationClaim]: token } : {}), run: { ...runtime.run, ...invocation.run, runId: id } }, {

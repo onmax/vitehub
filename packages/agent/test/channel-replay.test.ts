@@ -22,7 +22,7 @@ const emails: Email[] = [
   { folder: "inbox", id: "m5", subject: "Offer" },
 ]
 
-function mailbox(options: { maxLimit?: number } = {}) {
+function mailbox(options: { maxLimit?: number, triggerRun?: { channelId?: string, origin?: string, threadId?: string } } = {}) {
   const load = vi.fn(async ({ cursor, limit, query }: { cursor?: string, limit: number, query: { folder?: string } }) => {
     const matching = emails.filter(email => !query.folder || email.folder === query.folder)
     const offset = cursor ? matching.findIndex(email => email.id === cursor) + 1 : 0
@@ -53,6 +53,7 @@ function mailbox(options: { maxLimit?: number } = {}) {
         invoke: (_context, email) => ({
           input: { prompt: email.subject },
           message: { id: email.id },
+          ...(options.triggerRun ? { run: options.triggerRun } : {}),
         }),
       }),
     },
@@ -60,7 +61,7 @@ function mailbox(options: { maxLimit?: number } = {}) {
   return { channel, label, load }
 }
 
-function labeller(options: { invocations?: ReturnType<typeof defineAgentInvocations>, maxLimit?: number } = {}) {
+function labeller(options: { invocations?: ReturnType<typeof defineAgentInvocations>, maxLimit?: number, triggerRun?: { channelId?: string, origin?: string, threadId?: string } } = {}) {
   const { channel, label, load } = mailbox(options)
   const run = vi.fn(async ({ input }: { input: { prompt?: unknown } }) => `label:${String(input.prompt)}`)
   const agent = defineAgent({
@@ -149,6 +150,13 @@ describe("replayChannel()", () => {
       runtime: { memo: (_key, create) => create(), run: { annotations: { task: "backfill" }, channelId: "mailbox", origin: "dev", runId: "host-run", threadId: "dev-thread" }, runtime: "unknown", waitUntil: () => {} },
     })
     expect(await invocations.getByRunId(result.items[0]!.id)).toMatchObject({ annotations: { task: "backfill" }, channelId: "mailbox", origin: "dev", threadId: "dev-thread" })
+  })
+
+  it("persists trigger run metadata on the replay reservation", async () => {
+    const invocations = memoryInvocations()
+    const { agent } = labeller({ invocations, triggerRun: { channelId: "trigger-channel", origin: "provider", threadId: "trigger-thread" } })
+    const result = await replayChannel(agent, "mailbox", { limit: 1 })
+    expect(await invocations.getByRunId(result.items[0]!.id)).toMatchObject({ channelId: "trigger-channel", origin: "provider", threadId: "trigger-thread" })
   })
 
   it("reports inline objects with workflow-shaped fields as completed", async () => {

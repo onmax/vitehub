@@ -117,11 +117,14 @@ export interface AgentInvocationStoreUpdateInput {
   /** Append with a stable observation identity and a sequence assigned atomically by the store. */
   appendObservation?: Omit<TraceEventLogEntry, "sequence">
   annotations?: AgentInvocationRecord["annotations"]
+  channelId?: string
   capabilityIds?: readonly string[]
   error?: AgentInvocationRecord["error"]
   observation?: TraceEventLogEntry
   observationsTruncated?: boolean
   status?: AgentInvocationRecordStatus
+  origin?: string
+  threadId?: string
   timestamp: string
 }
 
@@ -287,6 +290,7 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   releaseClaim(): Promise<void>
   running(): Promise<void>
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
+  setRunMetadata(metadata: Pick<AgentRunMetadata, "channelId" | "origin" | "threadId">): Promise<void>
 }
 
 function cloneObservation(observation: TraceEventLogEntry): TraceEventLogEntry {
@@ -1267,6 +1271,9 @@ export function applyAgentInvocationStoreUpdate(
       : {}),
     ...(capabilityIds.length ? { capabilityIds } : {}),
     ...(input.error ? { error: input.error } : {}),
+    ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
+    ...(input.origin !== undefined ? { origin: input.origin } : {}),
+    ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
     ...(title ? { title } : {}),
     ...(titleUpdated ? { titleSequence: input.observation!.sequence } : {}),
     observations: retained.observations,
@@ -2269,6 +2276,15 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         async setAnnotations(annotations) {
           if (finished || finishing) return
           await update({ annotations: normalizeAnnotations(annotations), timestamp: new Date().toISOString() })
+        },
+        async setRunMetadata(metadata) {
+          if (finished || finishing) return
+          await update({
+            ...(metadata.channelId !== undefined ? { channelId: metadata.channelId } : {}),
+            ...(metadata.origin !== undefined ? { origin: metadata.origin } : {}),
+            ...(metadata.threadId !== undefined ? { threadId: metadata.threadId } : {}),
+            timestamp: new Date().toISOString(),
+          })
         },
       }
     },
