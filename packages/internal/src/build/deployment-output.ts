@@ -20,6 +20,7 @@ export {
   contributeCloudflareProviderOutput,
   contributeProviderRuntime,
   createProviderOutputCatalog,
+  getProviderOutputCatalog,
   getProviderRuntimeModule,
   getVercelRuntimePackages,
   hasProviderRuntimeModule,

@@ -11,6 +11,19 @@ export interface PublicUrlConfig {
 declare const __VITEHUB_PUBLIC_URL__: PublicUrlConfig | undefined
 declare const __VITEHUB_APP_BASE_URL__: string | undefined
 
+const publicUrlAgentNames = new Map<string, string | null>()
+
+/** Replace aliases when a generated Agent registry is installed. */
+export function resetPublicUrlAgentNames(): void {
+  publicUrlAgentNames.clear()
+}
+
+/** Associate an evaluated Agent name with the identity used by build-time URL configuration. */
+export function registerPublicUrlAgentName(name: string, discoveredName: string): void {
+  const previous = publicUrlAgentNames.get(name)
+  publicUrlAgentNames.set(name, previous === undefined || previous === discoveredName ? discoveredName : null)
+}
+
 function publicUrlConfig(): PublicUrlConfig {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The build injects this value only when `vitehub({ publicUrl })` is set.
   return typeof __VITEHUB_PUBLIC_URL__ === "undefined" ? {} : __VITEHUB_PUBLIC_URL__
@@ -34,7 +47,10 @@ export function resolvePublicUrl(options: { agentName?: string, request: Pick<Re
 export function resolvePublicUrl(options?: { agentName?: string, request?: Pick<Request, "url"> }): string | undefined
 export function resolvePublicUrl(options: { agentName?: string, request?: Pick<Request, "url"> } = {}): string | undefined {
   const config = publicUrlConfig()
-  const agentUrl = options.agentName ? config.agents?.[options.agentName] : undefined
+  const discoveredName = options.agentName ? publicUrlAgentNames.get(options.agentName) : undefined
+  const agentUrl = options.agentName
+    ? config.agents?.[options.agentName] ?? (discoveredName ? config.agents?.[discoveredName] : undefined)
+    : undefined
   if (agentUrl) return agentUrl
   if (config.url) return config.url
   if (!options.request) return

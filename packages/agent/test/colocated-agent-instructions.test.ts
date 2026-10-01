@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import { resolvePublicUrl } from "@vite-hub/runtime"
 import { MockLanguageModelV3 } from "ai/test"
 import { describe, expect, it, vi } from "vitest"
 
@@ -19,6 +20,20 @@ function settings(agent: unknown) {
 
 describe("colocated Agent instructions", () => {
   const model = {} as never
+
+  it("resolves a discovered origin for an explicit Agent name", () => {
+    const agent = defineAgent({ name: "explicit-public-url-agent", driver: { model }, runtime: false })
+    vi.stubGlobal("__VITEHUB_PUBLIC_URL__", { agents: { "file-public-url-agent": "https://agent.example.com" } })
+    try {
+      markDiscoveredAgentName(agent, "file-public-url-agent")
+      expect(resolvePublicUrl({ agentName: agent.name })).toBe("https://agent.example.com")
+      markDiscoveredAgentName(agent, "second-file-public-url-agent")
+      expect(resolvePublicUrl({ agentName: agent.name })).toBeUndefined()
+    }
+    finally {
+      vi.unstubAllGlobals()
+    }
+  })
 
   it("adds instructions to model Agents without a Workspace", () => {
     const agent = defineAgent({ driver: { model }, runtime: false })
