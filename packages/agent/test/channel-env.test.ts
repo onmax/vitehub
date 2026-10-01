@@ -33,6 +33,31 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([])
   })
 
+  it.each(["-", "+", "*", "/", "%", "**", "^", ">", ">=", "<", "<=", "<<", ">>", ">>>", "==", "!=", "===", "!==", "in", "instanceof", "&&", "||", "??"])("keeps runtime %s after a Channel options assertion unknown", operator => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram({} as TelegramChannelOptions ${operator} dynamicOptions)
+      telegram({ botToken: token } satisfies TelegramChannelOptions ${operator} dynamicOptions)
+    `)).toEqual(Array.from({ length: 2 }, () => ({ kind: "telegram", keys: undefined })))
+  })
+
+  it.each([
+    "-1 | TelegramChannelOptions",
+    "TelegramChannelOptions | -1",
+    "TelegramChannelOptions & { [K in keyof T]-?: T[K] }",
+    "{ +readonly [K in keyof T]+?: T[K] }",
+    "(input: TelegramChannelOptions) => TelegramChannelOptions",
+    "Options<(input: TelegramChannelOptions) => T>",
+    "T extends U ? -1 : TelegramChannelOptions",
+    "T extends -1 ? TelegramChannelOptions : T",
+    "() => -1",
+  ])("preserves assertion type operators in %s", type => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram({} as ${type})
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
   it("keeps conditional types in assertions", () => {
     expect(uses(`
       import { telegram } from "vite-hub/agent/channels"

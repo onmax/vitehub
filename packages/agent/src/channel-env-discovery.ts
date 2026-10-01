@@ -411,7 +411,16 @@ function isValueEnd(tokens: string[], after: number, terminators: ReadonlySet<st
       conditionalType = false
       conditionalTypeBranch = false
     }
-    if (["+", "*", "/", "%"].includes(token) || (["|", "&", "?"].includes(token) && tokens[i + 1] === token)) return false
+    if (depth === 0) {
+      if (["+", "*", "/", "%", "^", "!", "~", "in", "instanceof"].includes(token)
+        || (["|", "&", "?"].includes(token) && tokens[i + 1] === token)) return false
+      // Minus can introduce a numeric literal type, but cannot continue a type.
+      if (token === "-" && ((!["as", "satisfies", "|", "&", "?", ":", "extends", "keyof"].includes(tokens[i - 1]!) && !(tokens[i - 1] === ">" && tokens[i - 2] === "=")) || !/^(?:\d|\.\d)/.test(tokens[i + 1] ?? ""))) return false
+      // Function type arrows use these tokens; other equals/greater-than tokens
+      // continue the asserted value with a runtime comparison or shift.
+      if (token === "=" && tokens[i + 1] !== ">") return false
+      if (token === ">" && tokens[i - 1] !== "=") return false
+    }
     if (token === "<") { i = skipTypeArguments(tokens, i) - 1; continue }
     if (["(", "[", "{"].includes(token)) depth++
     else if ([")", "]", "}"].includes(token)) {
