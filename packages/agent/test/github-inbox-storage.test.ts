@@ -74,6 +74,18 @@ it('keeps summaries equal to the stored snapshots after every mutation', async (
   await inbox.close()
 })
 
+it('keeps valid deliveries when a later batched delivery is malformed', async () => {
+  const inbox = new PullRequestInbox({ path: ':memory:', repositories: [repository] })
+  await inbox.seed(repository, pr(7))
+  const results = await inbox.ingestMany([
+    { id: 'valid-batch-item', event: 'issue_comment', value: { repository: { full_name: repository }, action: 'created', issue: { number: 7, pull_request: {} }, comment: { id: 1, body: 'Keep this', user: { login: 'human' } } } },
+    { id: 'malformed-batch-item', event: 'issue_comment', value: null },
+  ])
+  expect(results).toHaveLength(1)
+  expect((await inbox.get(repository, 7))?.comments).toMatchObject({ '1': { body: 'Keep this' } })
+  await inbox.close()
+})
+
 it('claims from columns without parsing terminal snapshots and matches pushes by indexed refs', async () => {
   const path = join(await directory(), 'inbox.sqlite')
   const inbox = new PullRequestInbox({ path, repositories: [repository] })

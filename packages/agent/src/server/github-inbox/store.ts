@@ -507,7 +507,19 @@ export class PullRequestInbox {
     if (!items.length) return []
     return await this.transaction(async tx => {
       const results: GitHubInboxDeliveryResult[] = []
-      for (const item of items) results.push(await this.ingestIn(tx, item.id, item.event, item.value))
+      for (const [index, item] of items.entries()) {
+        // Keep the batch transaction, but isolate each delivery so one malformed
+        // REST record cannot roll back valid evidence that preceded it.
+        const savepoint = `inbox_ingest_${index}`
+        await tx.execute(`SAVEPOINT ${savepoint}`)
+        try {
+          results.push(await this.ingestIn(tx, item.id, item.event, item.value))
+          await tx.execute(`RELEASE SAVEPOINT ${savepoint}`)
+        } catch {
+          await tx.execute(`ROLLBACK TO SAVEPOINT ${savepoint}`)
+          await tx.execute(`RELEASE SAVEPOINT ${savepoint}`)
+        }
+      }
       return results
     })
   }
