@@ -25,6 +25,8 @@ export interface ViteHubDevEndpointServer {
       /** Host that the dev server listens on. A string host is also an allowed host. */
       host?: string | boolean
       /** When set, Vite does not check the `Host` header, because TLS binds the host name. */
+      hmr?: boolean | { host?: string }
+      origin?: string
       https?: unknown
       port?: number
     }
@@ -74,7 +76,7 @@ function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boole
  * Checks the `Host` header with the same rules as Vite's host validation.
  *
  * Accepts a missing header, IP literals, `localhost`, `*.localhost`, the configured
- * `server.host`, and `server.allowedHosts`. An entry that starts with `.` also accepts
+ * `server.host`, `server.hmr.host`, `server.origin`, and `server.allowedHosts`. An entry that starts with `.` also accepts
  * its subdomains. `allowedHosts: true` or `server.https` accepts all hosts, as in Vite.
  *
  * Dev endpoints run this check themselves, so they do not depend on the host
@@ -84,9 +86,20 @@ function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boole
 export function isViteHubDevHostAllowed(server: Pick<ViteHubDevEndpointServer, "config">, req: IncomingMessage): boolean {
   const host = firstHeader(req.headers.host)
   if (host === undefined) return true
-  const { allowedHosts = [], host: listenHost, https } = server.config.server
+  const { allowedHosts = [], host: listenHost, hmr, origin, https } = server.config.server
   if (allowedHosts === true || https) return true
-  return hostHeaderAllowed(host, typeof listenHost === "string" ? [...allowedHosts, listenHost] : allowedHosts)
+  const additionalHosts = [...allowedHosts]
+  if (typeof listenHost === "string") additionalHosts.push(listenHost)
+  if (hmr && typeof hmr === "object" && hmr.host) additionalHosts.push(hmr.host)
+  if (origin) {
+    try {
+      additionalHosts.push(new URL(origin).hostname)
+    }
+    catch {
+      // Invalid origins do not add a host allowance.
+    }
+  }
+  return hostHeaderAllowed(host, additionalHosts)
 }
 
 /**
