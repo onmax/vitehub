@@ -295,6 +295,25 @@ describe("connect", () => {
     expect((await test.runtime.activity({ name: "mail" })).some(event => event.action === "use" && event.operation === "revoke" && event.outcome === "succeeded" && event.revision)).toBe(true)
   })
 
+  it.each([429, 500])("retains the token and mutation fence when provider revocation returns %s", async (status) => {
+    const test = createTestRuntime()
+    await connect(test)
+    const token = await test.store.secrets.read("connection/mail")
+    if (!token?.revision) throw new Error("Expected a persisted token revision.")
+    test.runtime = createConnectionsRuntime({
+      definitions: { mail: mailConnection() },
+      store: test.store,
+      now: () => test.now.value,
+      fetch: async (input, init) => String(input) === "https://auth.example.com/revoke"
+        ? new Response(null, { status })
+        : test.provider.fetch(input, init),
+    })
+    await expect(test.runtime.revoke({ name: "mail" })).rejects.toMatchObject({ code: "CONNECTION_PROVIDER", details: { status } })
+    expect(await test.store.secrets.read("connection/mail")).toEqual(token)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
+    expect(await test.store.refreshLeases.claim({ name: "mail", owner: "another-runtime", revision: token.revision, now: test.now.value, expiresAt: test.now.value + 1000 })).toBe("busy")
+  })
+
   it("revokes the grant and blocks later calls", async () => {
     const test = createTestRuntime()
     await connect(test)

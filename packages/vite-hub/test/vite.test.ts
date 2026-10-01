@@ -673,8 +673,7 @@ describe("vitehub", () => {
     })
     expect(integrationMocks.hubChannels).toHaveBeenLastCalledWith(undefined)
     expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
-      databaseImport: "vite-hub/database/drizzle",
-      runtimeEnvImport: "vite-hub/env/server",
+      database: "vite-hub/database/drizzle",
     })
     expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
     expect(integrationMocks.hubKv).toHaveBeenLastCalledWith({ driver: "cloudflare-kv-binding" })

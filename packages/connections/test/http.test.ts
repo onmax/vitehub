@@ -38,18 +38,18 @@ describe("createConnectionsHandler", () => {
     expect(getRuntime).not.toHaveBeenCalled();
   });
 
-  it("manages discovered nested names through JSON and web authorization", async () => {
+  it.each(["team/mail", "n".repeat(129)])("manages discovered names through JSON and web authorization (%s)", async (name) => {
     const test = createTestRuntime();
     const runtime = createConnectionsRuntime({
-      definitions: { "team/mail": mailConnection() },
+      definitions: { [name]: mailConnection() },
       fetch: test.provider.fetch,
       store: test.store,
     });
     const handler = createConnectionsHandler({ actor: () => "user:owner", runtime: () => runtime });
-    const inspect = await handler(post({ action: "inspect", name: "team/mail" }));
+    const inspect = await handler(post({ action: "inspect", name }));
     expect(inspect.status).toBe(200);
-    expect(await inspect.json()).toMatchObject({ connection: { name: "team/mail" } });
-    const start = await handler(new Request(`${origin}/_vitehub/connections/connect/team%2Fmail`));
+    expect(await inspect.json()).toMatchObject({ connection: { name } });
+    const start = await handler(new Request(`${origin}/_vitehub/connections/connect/${encodeURIComponent(name)}`));
     expect(start.status).toBe(302);
     expect(new URL(start.headers.get("location")!).searchParams.get("state")).toBeTruthy();
     expect((await handler(post({ action: "inspect", name: "team//mail" }))).status).toBe(400);

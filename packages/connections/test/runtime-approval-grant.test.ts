@@ -9,6 +9,19 @@ async function pending(test: ReturnType<typeof createTestRuntime>): Promise<stri
 }
 
 describe("approval grant binding", () => {
+  it("rejects an old approval before refreshing a replacement grant", async () => {
+    const test = createTestRuntime(mailConnection({ "agent:writer": { read: true, write: ["mail.messages.modify"] } }))
+    await connect(test)
+    const id = await pending(test)
+    await connect(test, { access_token: "reauthorized-token", expires_in: 1 })
+    test.provider.valid.add("reauthorized-token")
+    const before = test.provider.calls.length
+    await expect(test.runtime.approve({ id })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(test.provider.calls).toHaveLength(before)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
+    expect(await test.store.approvals.get(id)).toMatchObject({ status: "failed" })
+  })
+
   it.each(["account-1", "account-2"])("rejects a previous approval after reconnect to %s", async (account) => {
     const test = createTestRuntime(mailConnection({ "agent:writer": { read: true, write: ["mail.messages.modify"] } }))
     await connect(test)

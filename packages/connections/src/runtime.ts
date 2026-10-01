@@ -474,6 +474,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return await connections.bridge.use(envContext(context.actor, context.options), tokenKey(context.name), providerRequest.action, async (secret) => {
         try {
           let token = parseToken(secret.unseal(), context.name)
+          if (context.approved && (!context.approvedGrantId || token.grantId !== context.approvedGrantId)) {
+            throw new ConnectionError("invalid", "Approval belongs to a previous Connection grant.")
+          }
           if (expiresSoon(token)) token = await refresh(context.name, context.definition, token.accessToken, false)
           const call = (current: StoredToken) => {
             if (context.approved && (!context.approvedGrantId || current.grantId !== context.approvedGrantId)) {
@@ -771,6 +774,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const actor = input.actor ?? "user:local"
     const owner = await claimMutationLease(input.name)
     let releaseLease = true
+    let providerFailure: ConnectionError | undefined
     try {
       const stored = await connections.secrets.inspect(key)
       let revision: string | null = null
@@ -792,6 +796,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
               signal: AbortSignal.timeout(REFRESH_WAIT_MS),
             })
             await response.arrayBuffer()
+            if (!response.ok) {
+              providerFailure = new ConnectionError("provider", `Provider rejected revoke with ${response.status}.`, {
+                details: { connection: input.name, status: response.status },
+              })
+              throw providerFailure
+            }
             releaseLease = true
           }
           // Keep the mutation lease until the revoked marker and metadata are durable.
@@ -803,6 +813,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       if (!await setStatus(input.name, { status: "revoked" }, revision)) throw new ConnectionError("invalid", "The Connection token changed during revocation.")
       releaseLease = true
       return await inspect(input.name)
+    }
+    catch (error) {
+      throw providerFailure ?? error
     }
     finally {
       if (releaseLease) await connections.refreshLeases.release(input.name, owner).catch(() => undefined)
