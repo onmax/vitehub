@@ -261,7 +261,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         return Boolean(response && hasRuntimeType(response, "object") && "merged" in response && response.merged === true);
       }, `Merged ${head} directly: required checks passed and review threads were resolved.`);
       if (!merged) {
-        if (await pullRequestInbox.hasMergeIntent(claim)) {
+        if (await pullRequestInbox.hasPersistedMergeIntent(repository, number)) {
           await pullRequestInbox.release(claim);
           return true;
         }

@@ -629,6 +629,13 @@ export class PullRequestInbox {
       return Boolean(s && s.lease === claim.token && s.mergeIntent)
     })
   }
+  /** Whether an unresolved host-side merge is persisted for this pull request. */
+  async hasPersistedMergeIntent(repository: string, number: number): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, repository, number)
+      return Boolean(s?.mergeIntent)
+    })
+  }
   /** Reserve a claim, run an external side effect, then persist its terminal result. */
   async merge(claim: Claim, action: () => Promise<boolean>, text: string): Promise<boolean> {
     const reserved = await this.transaction(async tx => {
