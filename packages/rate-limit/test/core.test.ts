@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm"
 import { describe, expect, it, vi } from "vitest"
 
 import { createRateLimiter } from "../src/index.ts"
@@ -17,6 +18,14 @@ describe("Rate Limit core", () => {
     Object.assign(driver, { reset: () => outcome })
     const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })
     await expect(limiter.reset({ key: "user" })).rejects.toThrow("must return [null] or [Error]")
+  })
+
+  it("accepts driver reset errors from another JavaScript realm", async () => {
+    const cause: unknown = runInNewContext("new Error('cross-realm offline')")
+    const driver = memoryRateLimitDriver()
+    Object.assign(driver, { reset: () => [cause] })
+    const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })
+    await expect(limiter.reset({ key: "user" })).resolves.toEqual({ cause, status: "unavailable" })
   })
 
   it("accepts reset success and driver errors", async () => {
