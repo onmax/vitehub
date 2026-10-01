@@ -7,6 +7,7 @@ export default defineConfig({
       "src/agent-workflow.ts",
       "src/arrays.ts",
       "src/cli.ts",
+      "src/console.ts",
       "src/definition-catalog.ts",
       "src/definition-discovery.ts",
       "src/deployment.ts",

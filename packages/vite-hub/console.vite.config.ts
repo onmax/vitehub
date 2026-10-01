@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { defineConfig } from "vite";
 
 import { consoleAppConfig } from "./src/console/app.config";
+import { consoleContributedSectionIcons } from "./src/console/contributions";
 
 const clientRoot = resolve(import.meta.dirname, "src/console/runtime/client");
 
@@ -27,7 +28,7 @@ export default defineConfig({
         icon: {
           clientBundle: {
             // Agent tools can declare any Lucide icon, and the Console CSP blocks the Iconify API.
-            icons: Object.keys(lucide.icons).map(name => `i-lucide-${name}`),
+            icons: [...new Set([...Object.keys(lucide.icons).map(name => `i-lucide-${name}`), ...consoleContributedSectionIcons])],
             sizeLimitKb: 1024,
             scan: {
               globInclude: ["src/console/**/*.{js,ts,vue}"],

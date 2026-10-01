@@ -28,7 +28,7 @@ import type { DiscoveredScheduleDefinition } from "./types.ts"
 import { scheduleErrorDiagnostics } from "./error-diagnostics.ts"
 
 export { discoverScheduleDefinitions } from "./discovery.ts"
-export { inspectScheduleDefinitions, type ScheduleInspectionOptions } from "./inspect.ts"
+export { inspectScheduleDefinitions, type ScheduleInspectionOptions, scheduleConsoleSection } from "./inspect.ts"
 
 export async function readScheduleDefinitionCrons(
   definitions: DiscoveredScheduleDefinition[],

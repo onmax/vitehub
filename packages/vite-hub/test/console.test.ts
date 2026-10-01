@@ -788,7 +788,7 @@ describe("Agent invocation console", () => {
       expect(generated).toContain(`from "vite-hub/console/definitions"`)
       expect(generated).not.toContain(`from "vite-hub/console/server"`)
       expect(generated).toContain(`installConsoleSections(${JSON.stringify(root)}, ["workspaces"])`)
-      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"workspaces":[{"fields":[{"label":"Kind","value":"Workspace Definition"},{"label":"Source root","value":"server/workspaces/docs/workspace"}],"file":"server/workspaces/docs/config.ts","name":"docs","source":"server-workspaces-directory-config"}]})`)
+      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"workspaces":{"definitions":[{"fields":[{"label":"Kind","value":"Workspace Definition"},{"label":"Source root","value":"server/workspaces/docs/workspace"}],"file":"server/workspaces/docs/config.ts","name":"docs","source":"server-workspaces-directory-config"}],"kind":"definition-catalog"}}, `)
       expect(generated).not.toContain("The Console must not initialize")
       expect(generated).not.toContain("installConsoleInvocations")
     }
@@ -839,7 +839,7 @@ describe("Agent invocation console", () => {
       expect(generated).toContain(`from "vite-hub/database/drizzle"`)
       expect(generated).not.toContain(`from "vite-hub/console/server"`)
       expect(generated).toContain(`installConsoleSections(${JSON.stringify(root)}, ["databases"])`)
-      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"databases":[{"fields":[{"label":"Mode","value":"Default"},{"label":"Tables","value":"notes, users"}],"file":"server/databases/config.ts","name":"default","source":"server-database-default"}]})`)
+      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"databases":{"definitions":[{"fields":[{"label":"Mode","value":"Default"},{"label":"Tables","value":"notes, users"}],"file":"server/databases/config.ts","name":"default","source":"server-database-default"}],"kind":"definition-catalog"}}, `)
       expect(generated).toContain(`installConsoleDatabase(${JSON.stringify(root)}, vitehubConsoleDatabases, ["default"])`)
       expect(generated).not.toContain("The Console must not evaluate")
       expect(generated).not.toContain("installConsoleInvocations")
@@ -885,7 +885,7 @@ describe("Agent invocation console", () => {
       ])
       const generated = await readFile(config.nitro!.plugins[0]!, "utf8")
       expect(generated).toContain(`installConsoleSections(${JSON.stringify(root)}, ["queues"])`)
-      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"queues":[{"fields":[],"file":"server/queues/email.ts","name":"email","source":"server-queues"}]})`)
+      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"queues":{"definitions":[{"fields":[],"file":"server/queues/email.ts","name":"email","source":"server-queues"}],"kind":"definition-catalog"}}, `)
       expect(generated).not.toContain("The Console must not evaluate")
       expect(generated).not.toContain("installConsoleInvocations")
     }
@@ -938,7 +938,7 @@ describe("Agent invocation console", () => {
       expect(generated).toContain(`from "vite-hub/console/definitions"`)
       expect(generated).not.toContain(`from "vite-hub/console/server"`)
       expect(generated).toContain(`installConsoleSections(${JSON.stringify(root)}, ["rate-limits"])`)
-      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"rate-limits":[{"fields":[{"label":"Limit","value":"25"},{"label":"Window","value":"10s"},{"label":"Enforcement","value":"Strict"},{"label":"Provider failure","value":"Allow"},{"label":"Source location","value":"2:1"}],"file":"server/api/upload.post.ts","name":"uploads","source":"require-rate-limit"}]})`)
+      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"rate-limits":{"definitions":[{"fields":[{"label":"Limit","value":"25"},{"label":"Window","value":"10s"},{"label":"Enforcement","value":"Strict"},{"label":"Provider failure","value":"Allow"},{"label":"Source location","value":"2:1"}],"file":"server/api/upload.post.ts","name":"uploads","source":"require-rate-limit"}],"kind":"definition-catalog"}}, `)
       expect(generated).not.toContain("The Console must not evaluate")
       expect(generated).not.toContain("installConsoleInvocations")
     }
@@ -971,7 +971,7 @@ describe("Agent invocation console", () => {
       await callPluginHook(plugin.config, {}, [config, { command: "build", mode: "production" }])
 
       const generated = await readFile(config.nitro!.plugins[0]!, "utf8")
-      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"rate-limits":[]})`)
+      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"rate-limits":{"definitions":[],"kind":"definition-catalog"}}, `)
       expect(generated).not.toContain('"name":"uploads"')
     }
     finally {
@@ -1027,7 +1027,7 @@ describe("Agent invocation console", () => {
       expect(generated).toContain(`from "vite-hub/console/definitions"`)
       expect(generated).not.toContain(`from "vite-hub/console/server"`)
       expect(generated).toContain(`installConsoleSections(${JSON.stringify(root)}, ["schedules"])`)
-      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"schedules":[{"fields":[{"label":"Kind","value":"Runtime target"},{"label":"Runtime schedules","value":"Allowed"}],"file":"server/schedules/adhoc.ts","name":"adhoc","source":"server-schedules"},{"fields":[{"label":"Kind","value":"Static schedule"},{"label":"Cron","value":"0 0 1 * 1"},{"label":"Time zone","value":"UTC"},{"label":"Runtime schedules","value":"Allowed"}],"file":"server/schedules/daily.ts","name":"daily","source":"server-schedules"},{"fields":[{"label":"Kind","value":"Static schedule"}],"file":"server/schedules/dynamic.ts","name":"dynamic","source":"server-schedules"}]})`)
+      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"schedules":{"definitions":[{"fields":[{"label":"Kind","value":"Runtime target"},{"label":"Runtime schedules","value":"Allowed"}],"file":"server/schedules/adhoc.ts","name":"adhoc","source":"server-schedules"},{"fields":[{"label":"Kind","value":"Static schedule"},{"label":"Cron","value":"0 0 1 * 1"},{"label":"Time zone","value":"UTC"},{"label":"Runtime schedules","value":"Allowed"}],"file":"server/schedules/daily.ts","name":"daily","source":"server-schedules"},{"fields":[{"label":"Kind","value":"Static schedule"}],"file":"server/schedules/dynamic.ts","name":"dynamic","source":"server-schedules"}],"kind":"definition-catalog"}}, `)
       expect(generated).toContain(`"file":"server/schedules/dynamic.ts","name":"dynamic","source":"server-schedules"`)
       expect(generated).not.toContain(`"Cron","value":"0 10 * * *"`)
       expect(generated).not.toContain("The Console must not evaluate")
@@ -1068,12 +1068,12 @@ describe("Agent invocation console", () => {
       await callPluginHook(plugin.configResolved, {}, [withViteLogger({ root })])
 
       const generated = await readFile(resolve(root, ".vitehub/nitro/console/plugin.mjs"), "utf8")
-      expect(generated).toContain('"databases":[{"fields":[{"label":"Mode","value":"Default"},{"label":"Tables","value":"None discovered"}],"file":"packages/database/server/databases/config.ts"')
-      expect(generated).toContain('"rate-limits":[{"fields":[{"label":"Limit","value":"100"},{"label":"Window","value":"1m"}')
+      expect(generated).toContain('"databases":{"definitions":[{"fields":[{"label":"Mode","value":"Default"},{"label":"Tables","value":"None discovered"}],"file":"packages/database/server/databases/config.ts"')
+      expect(generated).toContain('"rate-limits":{"definitions":[{"fields":[{"label":"Limit","value":"100"},{"label":"Window","value":"1m"}')
       expect(generated).toContain('"file":"packages/rate-limit/policies/api.ts","name":"api","source":"require-rate-limit"')
-      expect(generated).toContain('"workspaces":[{"fields":[{"label":"Kind","value":"Workspace Definition"}')
+      expect(generated).toContain('"workspaces":{"definitions":[{"fields":[{"label":"Kind","value":"Workspace Definition"}')
       expect(generated).toContain('"file":"packages/workspace/server/workspaces/docs/config.ts","name":"docs"')
-      expect(generated).toContain('"schedules":[{"fields":[{"label":"Kind","value":"Runtime target"}')
+      expect(generated).toContain('"schedules":{"definitions":[{"fields":[{"label":"Kind","value":"Runtime target"}')
       expect(generated).toContain('"file":"packages/schedule/server/schedules/adhoc.ts","name":"adhoc"')
     }
     finally {
@@ -1274,7 +1274,7 @@ describe("Agent invocation console", () => {
       expect(generated).toContain(`from "vite-hub/console/sections"`)
       expect(generated).toContain(`from "vite-hub/console/definitions"`)
       expect(generated).not.toContain(`from "vite-hub/console/server"`)
-      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"sandboxes":[{"fields":[{"label":"Kind","value":"Definition"}],"file":"src/preview.sandbox.ts","name":"preview","source":"vite-suffix"}]})`)
+      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"sandboxes":{"definitions":[{"fields":[{"label":"Kind","value":"Definition"}],"file":"src/preview.sandbox.ts","name":"preview","source":"vite-suffix"}],"kind":"definition-catalog"}}, `)
       expect(generated).not.toContain("must not run")
     }
     finally {
