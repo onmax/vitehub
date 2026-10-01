@@ -19,6 +19,10 @@ function render(value: string) {
   }));
 }
 
+function renderDirect(value: string) {
+  return mount(AgentMarkdown, { props: { value } });
+}
+
 describe("AgentMarkdown KaTeX loading", () => {
   it("loads KaTeX with the first formula", async () => {
     const plain = render("No formulas here.");
@@ -31,5 +35,11 @@ describe("AgentMarkdown KaTeX loading", () => {
     expect(katex.loads).toBe(1);
     plain.unmount();
     math.unmount();
+  });
+
+  it("renders math without a parent Suspense boundary", async () => {
+    const wrapper = renderDirect("Inline $x^2$.");
+    await vi.waitFor(() => expect(wrapper.find(".katex").exists()).toBe(true));
+    wrapper.unmount();
   });
 });
