@@ -283,6 +283,54 @@ describe("gmail() Channel", () => {
     }
   })
 
+  it("retains overlapping notifications through a dispatch longer than the lease TTL", async () => {
+    const google = await createGoogle()
+    google.history.set("100", { historyId: "105", ids: ["m1"] })
+    google.history.set("105", { historyId: "110", ids: ["m2"] })
+    const values = new Map<string, { value: unknown, expires?: number }>([["mail:history-id", { value: "100" }]])
+    let lock: Lock | undefined
+    const adapter: unknown = {
+      acquireLock: async (key: string, ttl: number) => {
+        if (lock && lock.expiresAt > Date.now()) return null
+        lock = { expiresAt: Date.now() + ttl, threadId: key, token: crypto.randomUUID() }
+        return lock
+      },
+      delete: async (key: string) => { values.delete(key) },
+      extendLock: async (held: Lock, ttl: number) => {
+        if (lock?.token !== held.token || lock.expiresAt <= Date.now()) return false
+        lock.expiresAt = Date.now() + ttl
+        return true
+      },
+      get: async (key: string) => {
+        const stored = values.get(key)
+        if (stored?.expires !== undefined && stored.expires <= Date.now()) { values.delete(key); return null }
+        return stored?.value ?? null
+      },
+      releaseLock: async (held: Lock) => { if (lock?.token === held.token) lock = undefined },
+      set: async (key: string, value: unknown, ttl?: number) => { values.set(key, { value, ...(ttl === undefined ? {} : { expires: Date.now() + ttl }) }) },
+    }
+    // SAFETY: The fixture implements synchronization State methods and expiry.
+    const state = adapter as StateAdapter
+    let release!: () => void
+    let started!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const running = new Promise<void>(resolve => { started = resolve })
+    const dispatch = vi.fn(async () => { started(); await gate; return { failed: 0, items: [], nextCursor: null, processed: 1, skipped: 0 } })
+    const options = { bodyLimit: 1000, client: gmailClientFromSettings({ clientId: "client", clientSecret: "secret", refreshToken: "refresh-token" }, google.fetch), dispatch, state: { keyPrefix: "mail:", state } }
+    vi.useFakeTimers()
+    const sync = syncGmailMailbox({ ...options, notificationHistoryId: "105" })
+    try {
+      await Promise.race([running, sync])
+      await syncGmailMailbox({ ...options, notificationHistoryId: "110" })
+      await vi.advanceTimersByTimeAsync(11 * 60_000)
+      release()
+      await sync
+      expect(dispatch).toHaveBeenCalledTimes(2)
+      expect(values.get("mail:history-id")?.value).toBe("110")
+      expect(values.has("mail:sync-pending")).toBe(false)
+    } finally { release(); await sync.catch(() => undefined); vi.useRealTimers() }
+  })
+
   it("drains handled webhook background work when no host waitUntil is supplied", async () => {
     stubGmailEnv()
     const google = await createGoogle()

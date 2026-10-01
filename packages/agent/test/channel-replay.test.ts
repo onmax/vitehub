@@ -3,6 +3,7 @@ import * as v from "valibot"
 
 import { defineCollection } from "../../source/src/index.ts"
 import { defineChannel, defineChannelTrigger } from "../src/channels.ts"
+import { dispatchChannelItems } from "../src/channel-replay.ts"
 import { defineAgent } from "../src/index.ts"
 import { channelMessageRunId, createMemoryAgentInvocationStore, defineAgentInvocations, describeChannelHistory, replayChannel } from "../src/server.ts"
 
@@ -97,6 +98,37 @@ describe("replayChannel()", () => {
     expect(second).toMatchObject({ processed: 0, skipped: 4 })
     expect(second.items.every(item => item.reason === "existing")).toBe(true)
     expect(label).not.toHaveBeenCalled()
+  })
+
+  it("atomically excludes a webhook dispatch racing history replay", async () => {
+    const invocations = memoryInvocations()
+    let entered = 0
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const channel = defineChannel("mailbox", {
+      history: { collection: defineCollection(async () => [emails[0]!], { cursor: email => email.id, cursorSchema: v.string() }), key: email => email.id },
+      triggers: { received: defineChannelTrigger({
+        input: v.object({ folder: v.string(), id: v.string(), subject: v.string() }),
+        invoke: async () => {
+          if (++entered === 2) release()
+          await gate
+          return { input: { prompt: "hello" } }
+        },
+      }) },
+    })
+    const run = vi.fn(() => "done")
+    const finish = vi.fn()
+    const agent = defineAgent({ channels: { mailbox: channel }, driver: { run }, hooks: { "agent:finish": finish }, invocations, runtime: false })
+    const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+    const results = await Promise.all([
+      replayChannel(agent, "mailbox", { runtime }),
+      dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" }),
+    ])
+    expect(run).toHaveBeenCalledOnce()
+    expect(finish).toHaveBeenCalledOnce()
+    expect(results.reduce((sum, result) => sum + result.processed, 0)).toBe(1)
+    expect(results.reduce((sum, result) => sum + result.skipped, 0)).toBe(1)
+    expect(results.reduce((sum, result) => sum + result.failed, 0)).toBe(0)
   })
 
   it("replays existing items again with force", async () => {

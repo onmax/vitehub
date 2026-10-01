@@ -802,7 +802,7 @@ export async function syncGmailMailbox(sync: GmailMailboxSync): Promise<void> {
   const pendingKey = `${keyPrefix}sync-pending`
   let lock = await state.acquireLock(lockKey, syncLockTtlMs)
   if (!lock) {
-    await state.set(pendingKey, true, syncLockTtlMs)
+    await state.set(pendingKey, true)
     // The holder may have released the lock before it saw the pending mark.
     lock = await state.acquireLock(lockKey, syncLockTtlMs)
     if (!lock) return

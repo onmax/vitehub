@@ -3,6 +3,7 @@ import { createRuntimeContext } from "@vite-hub/runtime"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { agentErrorMessage } from "./agent-error.ts"
 import { isResolvedAgentTriggerHandledInvocation, resolveAgentTriggerInvocation, runAgent } from "./index.ts"
+import { AgentInvocationClaimConflict, exclusiveAgentInvocation } from "./invocations.ts"
 import { channelMessageRunId } from "./internal/channel-run-id.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { agentToolJsonSchema } from "./tool-schema.ts"
@@ -167,7 +168,7 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
   // A forced run needs a new ID because the stable one already has an Invocation.
   const id = run.force ? `${stableId}:${crypto.randomUUID()}` : stableId
   try {
-    const itemRuntime: AgentRuntimeContext<TRuntimeConfig> = { ...run.runtime, memo: createMemo(), run: { ...run.runtime.run, runId: id } }
+    const itemRuntime = { ...run.runtime, ...(!run.force && run.invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), run: { ...run.runtime.run, runId: id } }
     const invocation = await resolveAgentTriggerInvocation(run.agent, itemRuntime, run.triggerId, item)
     if (isResolvedAgentTriggerHandledInvocation(invocation)) return { id, key, reason: "handled", status: "skipped" }
     const output = await runAgent(run.agent, { ...itemRuntime, run: { ...invocation.run, runId: id } }, {
@@ -177,6 +178,7 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
     return { id, key, status: isWorkflowRun(output) ? "started" : "completed" }
   }
   catch (error) {
+    if (error instanceof AgentInvocationClaimConflict) return { id, key, reason: "existing", status: "skipped" }
     return { error: agentErrorMessage(error), id, key, status: "failed" }
   }
 }
