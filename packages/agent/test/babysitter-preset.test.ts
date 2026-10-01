@@ -13,7 +13,7 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({
   resolveInstalledProviderExecutable: () => "/bin/true",
 }));
 
-import { agentWithColocatedInstructions, defineAgent } from "../src/index.ts";
+import { agentWithColocatedInstructions, defineAgent, getAgentFromRegistry } from "../src/index.ts";
 import { babysitter } from "../src/presets/babysitter.ts";
 import { createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
 import * as githubRuns from "../src/server/github-pull-requests.ts";
@@ -26,7 +26,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false) {
+async function fixture(autoMerge = false, discovered = false) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -178,14 +178,15 @@ async function fixture(autoMerge = false) {
   };
   const errors = vi.fn();
   const agent = agentWithColocatedInstructions(defineAgent({
-    name: "babysitter",
+    ...(discovered ? {} : { name: "babysitter" }),
     preset: "babysitter",
     presets: { babysitter },
     options: { filter: { labels: { allow: ["repair"] } }, autoMerge },
     driver: { env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
   }), "Preserve the documented API contract.");
   const runtime = createBabysitterRuntime({
-    agent,
+    agent: discovered ? await getAgentFromRegistry("babysitter", { babysitter: async () => ({ default: agent }) }) : agent,
+    ...(discovered ? { agentName: "babysitter" } : {}),
     github,
     inboxPath: join(root, "inbox.sqlite"),
     repositories: ["acme/app"],
@@ -294,12 +295,13 @@ async function fixture(autoMerge = false) {
 
 describe("Babysitter preset runtime", () => {
   it.each([
-    { url: "https://agents.example.test" },
-    { agents: { babysitter: "https://agents.example.test" } },
-  ])("links the session to the worker Agent invocation with config %j", async (config) => {
+    { config: { url: "https://agents.example.test" }, discovered: false },
+    { config: { agents: { babysitter: "https://agents.example.test" } }, discovered: false },
+    { config: { agents: { babysitter: "https://agents.example.test" } }, discovered: true },
+  ])("links the session to the worker Agent invocation with %j", async ({ config, discovered }) => {
     vi.stubGlobal("__VITEHUB_PUBLIC_URL__", config);
     const createRun = vi.spyOn(githubRuns, "createGitHubPullRequestRun");
-    const f = await fixture();
+    const f = await fixture(false, discovered);
     try {
       await f.reconcile();
       expect(createRun).toHaveBeenCalledOnce();

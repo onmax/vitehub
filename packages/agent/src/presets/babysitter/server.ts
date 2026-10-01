@@ -30,6 +30,8 @@ import { repairCapability, repairEnvironment } from "./repair.ts";
 
 export interface BabysitterRuntimeOptions {
   agent: AgentInput;
+  /** Discovered Agent name for per-Agent public URLs. Defaults to the definition name. */
+  agentName?: string;
   github: GitHubHost;
   inboxPath: string;
   repositories: string[];
@@ -459,7 +461,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               const githubRun = await createGitHubPullRequestRun(repository, pullRequest, {
                 agentName: workerName,
                 runId,
-                publicUrl: publicUrl ?? resolvePublicUrl({ agentName: baseAgent.name }),
+                publicUrl: publicUrl ?? resolvePublicUrl({ agentName: options.agentName ?? baseAgent.name }),
               });
               // The GitHub run helper uses a stable PR thread id. Scope the
               // provider session to this pass so a new checkout never
