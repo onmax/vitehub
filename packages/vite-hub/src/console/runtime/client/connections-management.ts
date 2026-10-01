@@ -72,8 +72,8 @@ export async function requestConnectionsManagement<T extends v.BaseSchema<unknow
 /** Load pending decisions separately so recent history cannot hide older pending calls. */
 export async function loadConnectionApprovals(endpoint: string, name: string, before?: string): Promise<{ history: ConsoleConnectionApproval[], pending: ConsoleConnectionApproval[], nextCursor?: string }> {
   const [history, waiting] = await Promise.all([
-    requestConnectionsManagement(endpoint, "approvals", connectionApprovalsSchema, { name }),
-    requestConnectionsManagement(endpoint, "approvals", connectionApprovalsSchema, { name, status: "pending", ...(before ? { before } : {}) }),
+    requestConnectionsManagement(endpoint, "approval-summaries", connectionApprovalsSchema, { name }),
+    requestConnectionsManagement(endpoint, "approval-summaries", connectionApprovalsSchema, { name, status: "pending", ...(before ? { before } : {}) }),
   ])
   return { history: history.approvals, pending: waiting.approvals, ...(waiting.nextCursor ? { nextCursor: waiting.nextCursor } : {}) }
 }

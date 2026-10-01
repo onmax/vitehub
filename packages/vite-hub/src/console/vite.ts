@@ -21,7 +21,7 @@ import { serializeConsoleRefresh } from "./refresh.ts"
 import { createConsoleCliNamespace } from "./cli.ts"
 import { consoleFixtureEnvironmentVariable, consoleFixtureRevision, readConsoleFixture } from "./fixture.ts"
 import { bindConsoleInvocationsIdentity, createConsoleInvocationsIdentity, releaseConsoleInvocationsBinding } from "./internal.ts"
-import { addConsoleDevframeHandler } from "./nitro.ts"
+import { addConsoleRpcHandler } from "./nitro.ts"
 import { viteHubErrorDiagnostics } from "../error-diagnostics.ts"
 
 const frameworkAgentSpecifier = "vite-hub/agent"
@@ -383,7 +383,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         kit.addHandler({ handler: consoleAuthHandlers.route, route: "/api/_vitehub/console/auth/**" })
         kit.addHandler({ handler: consoleAuthHandlers.middleware, middleware: true, route: "/**" })
       }
-      addConsoleDevframeHandler(kit.config, consoleRuntimeRoot)
+      addConsoleRpcHandler(kit.config, consoleRuntimeRoot)
       if (Array.isArray(kit.config.plugins)) {
         const plugins = kit.config.plugins.filter(candidate => !generatedConsolePluginRegistration(candidate))
         kit.config.plugins.splice(0, kit.config.plugins.length, ...plugins)
@@ -454,7 +454,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         if (viteConfig.workspace) sections = [...sections, "workspaces"]
       }
       const nitro = viteConfig.nitro ??= {}
-      addConsoleDevframeHandler(nitro, consoleRuntimeRoot)
+      addConsoleRpcHandler(nitro, consoleRuntimeRoot)
       generatedPlugin ||= resolveGeneratedConsolePlugin(config.root, fixture, options.invocationRootState)
       // SAFETY: VITEHUB_SERVER_DIRS is ViteHub-owned config state populated with string paths.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
