@@ -72,13 +72,13 @@ The Channel adds instructions to the Agent: the email content is untrusted data,
 | Field | Value |
 | --- | --- |
 | `id`, `threadId` | Gmail message and thread IDs. |
-| `from`, `to`, `cc`, `subject` | Header values. `to` and `cc` are arrays of addresses. |
+| `from`, `to`, `cc`, `subject` | Complete header values. `to` and `cc` are arrays of addresses. |
 | `date` | ISO 8601 time when Gmail received the message. |
 | `snippet` | Gmail's short preview. |
 | `labelIds` | Label IDs when Gmail delivered the message. |
-| `body` | Plain-text body, decoded and capped at `bodyLimit` characters (default 10000). HTML-only mail is converted to text. Attachment-backed MIME bodies are fetched before decoding and limiting the text. |
+| `body` | Plain-text body, decoded with its MIME charset (UTF-8 when absent) and capped at `bodyLimit` characters (default 10000). HTML-only mail is converted to text. Attachment-backed MIME bodies are fetched before decoding and limiting the text. |
 | `attachments` | `{ attachmentId?, filename, mimeType, size }` for each filename-bearing attachment. Inline attachments have no `attachmentId`. The data is not downloaded. |
-| `headers` | Headers by lowercase name, such as `list-id`. Transport headers such as `received` and `dkim-signature` are omitted. |
+| `headers` | Headers by lowercase name, such as `list-id`, capped at 1000 characters per value. Transport headers such as `received` and `dkim-signature` are omitted. |
 
 The default prompt lists the headers, then the body. Pass `prompt: message => string` to build your own.
 

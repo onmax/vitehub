@@ -474,6 +474,41 @@ describe("gmail() Channel", () => {
     }
   })
 
+  it("skips known non-Inbox history bodies while checking entries without labels", async () => {
+    const state = createLibsqlAgentState({ url: ":memory:" })
+    await state.connect()
+    try {
+      await state.set("mail:history-id", "100")
+      const messages = [apiMessage("inbox", "Inbox"), apiMessage("unknown", "Unknown"), apiMessage("archived", "Archived")]
+      messages[2]!.labelIds = []
+      const delivered: string[] = []
+      const client = vi.fn<GmailClient>(async request => {
+        if (request.path === "history") return { historyId: "200", history: [{ messagesAdded: [
+          { message: { id: "sent", labelIds: ["SENT"] } },
+          { message: { id: "empty", labelIds: [] } },
+          { message: { id: "inbox", labelIds: ["INBOX"] } },
+          { message: { id: "unknown" } }, { message: { id: "archived" } },
+        ] }] }
+        const message = messages.find(candidate => request.path === `messages/${candidate.id}`)
+        if (message) return message
+        throw new Error(`Unexpected request: ${request.path}`)
+      })
+      await syncGmailMailbox({ bodyLimit: 1000, client, notificationHistoryId: "200", state: { keyPrefix: "mail:", state },
+        dispatch: async batch => {
+          delivered.push(...batch.map(message => message.id))
+          return { failed: 0, items: [], nextCursor: null, processed: batch.length, skipped: 0 }
+        },
+      })
+      expect(delivered).toEqual(["inbox", "unknown"])
+      expect(client.mock.calls.filter(([request]) => request.path.startsWith("messages/")).map(([request]) => request.path)).toEqual([
+        "messages/inbox", "messages/unknown", "messages/archived",
+      ])
+      expect(await state.get("mail:history-id")).toBe("200")
+    } finally {
+      await state.disconnect()
+    }
+  })
+
   it.each((["history", "recovery"] as const).flatMap(mode =>
     (["archive", "trash"] as const).map(action => ({ mode, action })),
   ))("keeps $mode pagination stable when dispatch handlers $action messages", async ({ mode, action }) => {
@@ -1152,6 +1187,20 @@ describe("gmail() Channel", () => {
     if (expired) expect(google.calls.filter(call => call.path === "messages").map(call => call.query.get("pageToken"))).toEqual([null, "page-2"])
   })
 
+  it.each(["text/plain", "text/html"].flatMap(mimeType => [false, true].map(attachmentBacked => ({ mimeType, attachmentBacked }))))("decodes $mimeType MIME charset with attachment-backed body $attachmentBacked", async ({ mimeType, attachmentBacked }) => {
+    const content = mimeType === "text/html" ? "<p>Café résumé</p>" : "Café résumé"
+    const encoded = base64Url(Buffer.from(content, "latin1"))
+    const client = vi.fn<GmailClient>(async request => {
+      if (request.path.endsWith("/attachments/body")) return { data: encoded }
+      return { id: "m1", threadId: "thread-1", payload: { mimeType, headers: [
+        { name: "cOnTeNt-TyPe", value: `${mimeType}; charset=${attachmentBacked ? "iso-8859-1" : '"ISO-8859-1"'}` },
+      ], body: attachmentBacked ? { attachmentId: "body" } : { data: encoded } } }
+    })
+    const message = await getGmailMessage(client, "m1", 9)
+    expect(message?.body).toBe("Café résu")
+    expect(gmailMessagePrompt(message!)).toContain("Café résu")
+  })
+
   it.each(["text/plain", "text/html"])("loads an attachment-backed %s body before applying its limit", async mimeType => {
     const encoded = base64Url(mimeType === "text/html" ? "<p>Full émail body</p>" : "Full émail body")
     const message = { id: "m/1", threadId: "thread-1", snippet: "Short preview", payload: { mimeType: "multipart/mixed", parts: [
@@ -1542,9 +1591,11 @@ describe("gmail() Channel", () => {
     expect(gmailMessagePrompt(message!)).toContain(`Cc: ${header}`)
   })
 
-  it("keeps complete folded recipient lists while bounding display headers", async () => {
+  it("keeps complete semantic headers while bounding display headers", async () => {
     const to = Array.from({ length: 40 }, (_, index) => `"Recipient, ${index}" <recipient${index}@example.com>`)
     const cc = Array.from({ length: 40 }, (_, index) => `Copy (Team, ${index}) <copy${index}@example.com>`)
+    const subject = `${"s".repeat(550)}\r\n ${"s".repeat(550)} continuation`
+    const from = `"${"Sender".repeat(110)}\r\n ${"Sender".repeat(110)}" <sender@example.com>`
     const toHeader = to.join(",\r\n ")
     const ccHeader = cc.join(",\r\n\t")
     expect(toHeader.length).toBeGreaterThan(1_000)
@@ -1553,14 +1604,17 @@ describe("gmail() Channel", () => {
       { name: "To", value: toHeader }, { name: "Cc", value: ccHeader },
       { name: "to", value: "ignored-duplicate@example.com" },
       { name: "cc", value: "ignored-copy@example.com" },
-      { name: "Subject", value: "s".repeat(1_100) }, { name: "Received", value: "omitted transport" },
+      { name: "From", value: from }, { name: "Subject", value: subject }, { name: "Received", value: "omitted transport" },
     ] } })
     const message = await getGmailMessage(client, "m1", 100)
     expect(message?.to).toEqual(to)
     expect(message?.cc).toEqual(cc)
     expect(message?.headers.to).toBe(toHeader.slice(0, 1_000))
     expect(message?.headers.cc).toBe(ccHeader.slice(0, 1_000))
-    expect(message?.subject).toHaveLength(1_000)
+    expect(message?.subject).toBe(subject)
+    expect(message?.from).toBe(from)
+    expect(message?.headers.subject).toBe(subject.slice(0, 1_000))
+    expect(message?.headers.from).toBe(from.slice(0, 1_000))
     expect(message?.headers).not.toHaveProperty("received")
     const seen: unknown[] = []
     const agent = defineAgent({
@@ -1571,6 +1625,8 @@ describe("gmail() Channel", () => {
       } },
     })
     const prompt = await runAgentTrigger(agent, runtimeContext(), "gmail.received", message)
+    expect(prompt).toContain(`Subject: ${subject}`)
+    expect(prompt).toContain(`From: ${from}`)
     expect(prompt).toContain(`To: ${to.join(", ")}`)
     expect(prompt).toContain(`Cc: ${cc.join(", ")}`)
     expect(seen).toEqual([to, cc])

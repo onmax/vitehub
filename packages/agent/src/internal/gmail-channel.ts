@@ -114,7 +114,7 @@ const apiMessageSchema = v.object({
 
 const historyListSchema = v.object({
   history: v.optional(v.array(v.object({
-    messagesAdded: v.optional(v.array(v.object({ message: v.object({ id: v.string() }) }))),
+    messagesAdded: v.optional(v.array(v.object({ message: v.object({ id: v.string(), labelIds: v.optional(v.array(v.string())) }) }))),
   }))),
   historyId: v.string(),
   nextPageToken: v.optional(v.string()),
@@ -328,11 +328,14 @@ async function gmailRequest<TSchema extends v.GenericSchema>(client: GmailClient
 
 // Message mapping
 
-function decodeBase64Url(data: string): string {
+function decodeBase64UrlBytes(data: string): Uint8Array {
   const base64 = data.replaceAll("-", "+").replaceAll("_", "/")
   const binary = atob(base64.padEnd(base64.length + (4 - base64.length % 4) % 4, "="))
-  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
-  return new TextDecoder().decode(bytes)
+  return Uint8Array.from(binary, character => character.charCodeAt(0))
+}
+
+function decodeBase64Url(data: string): string {
+  return new TextDecoder().decode(decodeBase64UrlBytes(data))
 }
 
 function flattenParts(part: GmailApiPart | undefined, excludeAttachments = false, parts: GmailApiPart[] = []): GmailApiPart[] {
@@ -361,7 +364,9 @@ function messageBodyPart(parts: GmailApiPart[]): GmailApiPart | undefined {
 function bodyText(parts: GmailApiPart[], limit: number): string {
   const part = messageBodyPart(parts)
   const data = part?.body?.data
-  const decoded = data ? decodeBase64Url(data) : ""
+  const contentType = part?.headers?.find(header => header.name.toLowerCase() === "content-type")?.value
+  const charset = contentType?.match(/;\s*charset\s*=\s*(?:"([^"\r\n]+)"|([^;\s]+))/i)
+  const decoded = data ? new TextDecoder(charset?.[1] || charset?.[2] || "utf-8").decode(decodeBase64UrlBytes(data)) : ""
   return (part?.mimeType === "text/html" ? htmlToText(decoded) : decoded)
     .replace(/\r\n?/g, "\n")
     .replace(/[ \t\f\v]+/g, " ")
@@ -464,12 +469,12 @@ async function toGmailMessage(client: GmailClient, message: v.InferOutput<typeof
     body: bodyText(bodyParts, bodyLimit),
     cc: splitAddresses(rawHeaders.cc),
     date: messageDate(message.internalDate, headers.date),
-    from: headers.from ?? "",
+    from: rawHeaders.from ?? "",
     headers,
     id: message.id,
     labelIds: message.labelIds || [],
     snippet: message.snippet ?? "",
-    subject: headers.subject ?? "",
+    subject: rawHeaders.subject ?? "",
     threadId: message.threadId,
     to: splitAddresses(rawHeaders.to),
   }
@@ -873,7 +878,7 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
           })
           continue
         }
-        ids = (page.history || []).flatMap(entry => (entry.messagesAdded || []).map(({ message }) => message.id))
+        ids = (page.history || []).flatMap(entry => (entry.messagesAdded || []).flatMap(({ message }) => message.labelIds && !message.labelIds.includes("INBOX") ? [] : [message.id]))
         nextPageToken = page.nextPageToken
         historyId = page.historyId
       } else {
