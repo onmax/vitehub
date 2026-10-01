@@ -190,10 +190,12 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
       if (!Number.isSafeInteger(leaseMs) || leaseMs < 1) throw agentDiagnostics.AGENT_R0916({ message: "[vitehub] D1 Agent Invocation leaseMs must be a positive safe integer." })
       if (encoder.encode(claimId).byteLength > 512) throw agentDiagnostics.AGENT_R0917({ message: "[vitehub] D1 Agent Invocation claimId must be at most 512 UTF-8 bytes." })
       const db = await database()
+      const expectedClaimIds = claimOptions?.expectedClaimIds === undefined ? null : JSON.stringify(claimOptions.expectedClaimIds)
       const result = await db.prepare(`UPDATE ${table} SET revision = revision + 1, claim_id = ?, claim_token = ?, claim_expires_at = ${clock} + ?
-        WHERE id = ? AND (claim_id IS NULL OR claim_id = ? OR claim_expires_at <= ${clock}
-          OR ? = 1 OR (? IS NOT NULL AND claim_token = ?))`)
-        .bind(claimId, crypto.randomUUID(), leaseMs, id, claimId, claimOptions?.replaceExisting ? 1 : 0, claimOptions?.replaceClaimToken ?? null, claimOptions?.replaceClaimToken ?? null).all()
+        WHERE id = ? AND (claim_id IS NULL OR ? = 1
+          OR (? IS NOT NULL AND claim_id IN (SELECT value FROM json_each(?)))
+          OR (? IS NULL AND (claim_id = ? OR claim_expires_at <= ${clock} OR (? IS NOT NULL AND claim_token = ?))))`)
+        .bind(claimId, crypto.randomUUID(), leaseMs, id, claimOptions?.replaceExisting ? 1 : 0, expectedClaimIds, expectedClaimIds, expectedClaimIds, claimId, claimOptions?.replaceClaimToken ?? null, claimOptions?.replaceClaimToken ?? null).all()
       return result.meta.changes > 0
     },
     async getClaimToken(id) {

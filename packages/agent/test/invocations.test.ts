@@ -2308,6 +2308,120 @@ describe("Agent Invocations", () => {
     }
   })
 
+  it.each((["memory", "sqlite"] as const).flatMap(backend =>
+    (["response", "commit"] as const).map(settlement => ({ backend, settlement })),
+  ))("keeps a newer Workflow handoff claim after a timed-out heartbeat $settlement on $backend", async ({ backend, settlement }) => {
+    const client = backend === "sqlite" ? createClient({ url: ":memory:" }) : undefined
+    vi.useFakeTimers()
+    try {
+      const memory = client ? createLibsqlAgentInvocationStore({ client }) : createMemoryAgentInvocationStore()
+      let releaseResponse!: () => void
+      const claim = vi.fn(async (...args: Parameters<typeof memory.claim>) => {
+        const delayed = claim.mock.calls.length === 3
+        if (delayed && settlement === "commit") await new Promise<void>(resolve => { releaseResponse = resolve })
+        const owned = await memory.claim(...args)
+        if (delayed && settlement === "response") await new Promise<void>(resolve => { releaseResponse = resolve })
+        return owned
+      })
+      const invocations = defineAgentInvocations({ store: { ...memory, claim } })
+      const journal = await bindAgentInvocations(invocations, runtime("late-heartbeat-handoff"))
+      if (!journal) throw new Error("Expected the invocation journal.")
+      await journal.running()
+      await vi.advanceTimersByTimeAsync(11_000)
+      expect(journal.claimStatus).toBe("unavailable")
+      const token = await journal.handoffClaim()
+      expect(token).toEqual(expect.any(String))
+      const record = (await invocations.getByRunId("late-heartbeat-handoff"))!
+      releaseResponse()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(await memory.getClaimToken(record.id)).toBe(token)
+      const duplicate = await bindAgentInvocations(invocations, runtime("late-heartbeat-handoff"))
+      expect(duplicate?.claimStatus).toBe("conflict")
+      const worker = await bindAgentInvocations(invocations, runtime("late-heartbeat-handoff"), { replaceClaimToken: token })
+      expect(worker?.claimStatus).toBe("owned")
+      await worker?.finish("completed")
+    }
+    finally { vi.useRealTimers(); client?.close() }
+  })
+
+  it.each([false, true])("cleans up an initial timed-out claim with a foreign owner %s", async foreign => {
+    vi.useFakeTimers()
+    try {
+      const memory = createMemoryAgentInvocationStore()
+      let releaseResponse!: () => void
+      let started!: () => void
+      const entered = new Promise<void>(resolve => { started = resolve })
+      const claim = vi.fn(async (...args: Parameters<typeof memory.claim>) => {
+        const owned = await memory.claim(...args)
+        if (claim.mock.calls.length === 1) {
+          started()
+          await new Promise<void>(resolve => { releaseResponse = resolve })
+        }
+        return owned
+      })
+      const invocations = defineAgentInvocations({ store: { ...memory, claim } })
+      const binding = bindAgentInvocations(invocations, runtime("initial-claim-timeout"))
+      await entered
+      await vi.advanceTimersByTimeAsync(1000)
+      const journal = await binding
+      expect(journal?.claimStatus).toBe("unavailable")
+      const record = (await invocations.getByRunId("initial-claim-timeout"))!
+      if (foreign) {
+        expect(await memory.claim(record.id, "foreign", 30_000, { replaceExisting: true })).toBe(true)
+        expect(await journal?.handoffClaim()).toBeUndefined()
+        expect(journal?.claimStatus).toBe("conflict")
+      }
+      const foreignToken = foreign ? await memory.getClaimToken(record.id) : undefined
+      releaseResponse()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(await memory.getClaimToken(record.id)).toBe(foreignToken)
+      if (!foreign) {
+        const recovered = await bindAgentInvocations(invocations, runtime("initial-claim-timeout"))
+        expect(recovered?.claimStatus).toBe("owned")
+        await recovered?.releaseClaim()
+      }
+    }
+    finally { vi.useRealTimers() }
+  })
+
+  it("bounds unresolved claim generations and recovers without stale cleanup", async () => {
+    vi.useFakeTimers()
+    try {
+      const memory = createMemoryAgentInvocationStore()
+      const responses: Array<() => void> = []
+      let started!: () => void
+      const entered = new Promise<void>(resolve => { started = resolve })
+      const claim = vi.fn(async (...args: Parameters<typeof memory.claim>) => {
+        const owned = await memory.claim(...args)
+        if (claim.mock.calls.length <= 2) {
+          started()
+          await new Promise<void>(resolve => { responses.push(resolve) })
+        }
+        return owned
+      })
+      const invocations = defineAgentInvocations({ store: { ...memory, claim } })
+      const binding = bindAgentInvocations(invocations, runtime("bounded-claim-generations"))
+      await entered
+      await vi.advanceTimersByTimeAsync(1000)
+      const journal = (await binding)!
+      const firstHandoff = journal.handoffClaim()
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(await firstHandoff).toBeUndefined()
+      expect(await journal.handoffClaim()).toBeUndefined()
+      expect(claim).toHaveBeenCalledTimes(2)
+      responses[0]!()
+      await vi.advanceTimersByTimeAsync(0)
+      const token = await journal.handoffClaim()
+      expect(token).toEqual(expect.any(String))
+      responses[1]!()
+      await vi.advanceTimersByTimeAsync(0)
+      const record = (await invocations.getByRunId("bounded-claim-generations"))!
+      expect(await memory.getClaimToken(record.id)).toBe(token)
+      await journal.releaseClaim()
+    }
+    finally { vi.useRealTimers() }
+  })
+
   it("releases a heartbeat claim completed after terminalization", async () => {
     vi.useFakeTimers()
     try {
@@ -2325,7 +2439,9 @@ describe("Agent Invocations", () => {
       await journal.running()
 
       await vi.advanceTimersByTimeAsync(10_000)
-      await journal.finish("completed")
+      const finishing = journal.finish("completed")
+      await vi.advanceTimersByTimeAsync(1_000)
+      await finishing
       releaseClaim?.()
       await vi.advanceTimersByTimeAsync(0)
 

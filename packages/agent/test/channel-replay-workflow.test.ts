@@ -10,6 +10,7 @@ import { runAgentWorkflowDefinition } from "../src/runtime/workflow.ts"
 import { channelMessageRunId, replayChannel } from "../src/channel-replay.ts"
 
 afterEach(() => {
+  vi.useRealTimers()
   setAgentWorkflowRuntimeLoaders({
     state: () => import("@vite-hub/workflow/runtime/state"),
     workflow: () => import("@vite-hub/workflow"),
@@ -125,6 +126,38 @@ it("adopts a dispatch claim in the real worker before Driver execution", async (
     release()
     await execution
   } finally { release(); await execution.catch(() => undefined) }
+})
+
+it("keeps the real Workflow worker claim after delayed heartbeat cleanup", async () => {
+  vi.useFakeTimers()
+  const memory = createMemoryAgentInvocationStore()
+  let releaseResponse!: () => void
+  const claim = vi.fn(async (...args: Parameters<typeof memory.claim>) => {
+    const owned = await memory.claim(...args)
+    if (claim.mock.calls.length === 2) await new Promise<void>(resolve => { releaseResponse = resolve })
+    return owned
+  })
+  const invocations = defineAgentInvocations({ store: { ...memory, claim } })
+  const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+  const driver = vi.fn(() => "done")
+  const agent = defineAgent({ driver: { run: driver }, invocations, name: "late-heartbeat-worker", runtime: false })
+  const binding = { ...runtime, run: { runId: "late-heartbeat-worker-run", annotations: { [pendingAgentInvocationAnnotation]: true } } }
+  const reservation = await bindAgentInvocations(invocations, binding, { agentName: "late-heartbeat-worker", recoverPending: true })
+  await vi.advanceTimersByTimeAsync(11_000)
+  const token = await reservation?.handoffClaim()
+  expect(token).toEqual(expect.any(String))
+  releaseResponse()
+  await reservation?.context.traceLog?.append({ name: "queued-after-handoff", type: "run" })
+  await vi.advanceTimersByTimeAsync(0)
+  const record = (await invocations.getByRunId("late-heartbeat-worker-run", "late-heartbeat-worker"))!
+  expect(await memory.getClaimToken(record.id)).toBe(token)
+  const duplicate = await bindAgentInvocations(invocations, binding, { agentName: "late-heartbeat-worker", recoverPending: true })
+  expect(duplicate?.claimStatus).toBe("conflict")
+  const context = { id: "late-heartbeat-worker-run", name: "late-heartbeat-worker", payload: { invocationClaimToken: token, input: { prompt: "hello" } }, provider: "openworkflow" as const }
+  await expect(runAgentWorkflowDefinition(agent, context, runAgentInline)).resolves.toBe("done")
+  expect(driver).toHaveBeenCalledOnce()
+  expect(await reservation?.handoffClaim()).toBeUndefined()
+  await reservation?.releaseClaim()
 })
 
 it("reconciles an accepted provider run when dispatch confirmation times out", async () => {
