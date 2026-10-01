@@ -1051,7 +1051,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
   // A reassigned global freeze helper cannot be trusted for static inspection.
-  // Record direct, computed, Reflect.set, and property descriptor writes before recognizing any
+  // Record direct, computed, Object.assign, Reflect.set, and property descriptor writes before recognizing any
   // Object.freeze call as value-preserving.
   for (let index = 0; index < tokens.length; index++) {
     const objectEnd = intrinsicObjectEnd(index)
@@ -1060,6 +1060,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const member = memberAccess(receiverEnd - 1)
     if (objectEnd !== undefined && member?.name === "freeze" && assignmentOperator(member.end)) mutatedBindings.add("Object")
     const call = member === undefined ? undefined : memberCallEnd(member.end - 1, index)
+    if (objectEnd !== undefined && member?.name === "assign" && call !== undefined && tokens[call] === "(") {
+      const target = resolveReference(call + 1, new Set(), true)
+      const targetEnd = intrinsicObjectEnd(target)
+      if (targetEnd !== undefined && tokens[targetEnd] === ",") mutatedBindings.add("Object")
+    }
     if ((member?.name === "defineProperty" || (objectEnd !== undefined && member?.name === "defineProperties") || (objectEnd === undefined && member?.name === "set")) && call !== undefined && tokens[call] === "(") {
       const target = resolveReference(call + 1, new Set(), true)
       const targetEnd = intrinsicObjectEnd(target)
@@ -1258,6 +1263,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function intrinsicObjectEnd(index: number): number | undefined {
+    if (tokens[index] === "(") {
+      const inner = intrinsicObjectEnd(index + 1)
+      if (inner !== undefined && tokens[inner] === ")") return inner + 1
+      return
+    }
     if (globalObjectReference(index)) return index + 1
     if (!globalBindingReference(index, "globalThis")) return
     const member = memberAccess(index)

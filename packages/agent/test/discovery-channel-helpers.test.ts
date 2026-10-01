@@ -1079,6 +1079,11 @@ it.each([
   'globalThis["Object"]["defineProperty"](globalThis["Object"], "freeze", { value: value => ({ pullRequest: true }) });',
   'Object.defineProperty(globalThis.Object, "freeze", { value: value => ({ pullRequest: true }) });',
   'globalThis.Object.defineProperty(Object, "freeze", { value: value => ({ pullRequest: true }) });',
+  'Object.assign(Object, { freeze: value => ({ pullRequest: true }) });',
+  'Object["assign"](globalThis.Object, { freeze: value => ({ pullRequest: true }) });',
+  '(Object.assign)(Object, { freeze: value => ({ pullRequest: true }) });',
+  '(Object).assign(Object, replacement);',
+  'globalThis["Object"]["assign"](globalThis["Object"], replacement);',
   'Reflect.set(Object, "freeze", () => ({ pullRequest: true }));',
   'Reflect["set"](Object, "freeze", () => ({ pullRequest: true }));',
   '(Reflect).set(Object, "freeze", () => ({ pullRequest: true }));',
@@ -1113,6 +1118,11 @@ it.each([
   'function configure(Object) { Reflect.defineProperty(Object, "freeze", {}); }',
   'function configure(Object) { Object.defineProperties(Object, { freeze: {} }); }',
   'function configure(globalThis) { globalThis.Object.defineProperties(Object, { freeze: {} }); }',
+  'function configure(Object) { Object.assign(Object, { freeze: value => value }); }',
+  'function configure(Object) { globalThis.Object.assign(Object, { freeze: value => value }); }',
+  'function configure(globalThis) { globalThis.Object.assign(Object, { freeze: value => value }); }',
+  'Object.assign({}, { freeze: value => value });',
+  'Object.assign(Object.prototype, { freeze: value => value });',
 ])("preserves intrinsic freeze after writes through shadowed globals: %s", async setup => {
   expect((await discover(`${imports} ${setup} export default defineAgent({ channels: { custom: github(Object.freeze({ pullRequest: false })) } })`))?.workspace).toBeUndefined()
 })
