@@ -35,6 +35,7 @@
     ".": "./dist/index.js",
     "./agent": "./dist/agent.js",
     "./google": "./dist/google.js",
+    "./http": "./dist/http.js",
     "./server": "./dist/server.js",
     "./vite": "./dist/vite.js",
     "./package.json": "./package.json"
