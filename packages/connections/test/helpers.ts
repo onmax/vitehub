@@ -98,7 +98,7 @@ export interface TestRuntime {
   store: ConnectionStore
 }
 
-export function createTestRuntime(definition: ConnectionDefinition = mailConnection(), store: ConnectionStore = createStore()): TestRuntime {
+export function createTestRuntime(definition: ConnectionDefinition | (() => Promise<unknown>) = mailConnection(), store: ConnectionStore = createStore()): TestRuntime {
   const provider = fakeProvider()
   const now = { value: Date.parse("2026-09-29T10:00:00.000Z") }
   const runtime = createConnectionsRuntime({ definitions: { mail: definition }, fetch: provider.fetch, now: () => now.value, store })

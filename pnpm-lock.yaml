@@ -2232,6 +2232,9 @@ importers:
       '@vite-hub/cli':
         specifier: workspace:*
         version: link:../cli
+      '@vite-hub/connections':
+        specifier: workspace:*
+        version: link:../connections
       '@vite-hub/content':
         specifier: workspace:*
         version: link:../content

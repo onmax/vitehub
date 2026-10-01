@@ -38,10 +38,10 @@ describe("discoverConnectionDefinitions", () => {
     ])
   })
 
-  it("rejects a Connection name longer than the management routes accept", async () => {
+  it("preserves discovered names longer than the old management limit", async () => {
     const root = await createTempProject()
     await touch(root, `server/connections/${"n".repeat(129)}.ts`)
-    expect(() => discoverConnectionDefinitions({ rootDir: root })).toThrow("Invalid Connection request.")
+    expect(discoverConnectionDefinitions({ rootDir: root })[0]?.name).toBe("n".repeat(129))
   })
 
   it("returns no definitions without a connections directory", async () => {
