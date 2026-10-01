@@ -80,7 +80,7 @@ async function withOwnersLock<T>(root: string, action: () => Promise<T>): Promis
 
 async function readTypesManifest<T>(root: string, manifest: string, schema: v.GenericSchema<unknown, T>): Promise<T[] | undefined> {
   const content = await readOptionalFile(resolve(root, manifest));
-  if (content === undefined) return [];
+  if (content === undefined) return;
   let input: unknown;
   try {
     input = JSON.parse(content);
@@ -98,7 +98,7 @@ async function readManifest(root: string) {
 
 async function readOwners(root: string) {
   const recovery = await readTypesManifest(root, generatedTypesOwnersRecoveryManifest, generatedTypesOwnerSchema);
-  if (recovery?.length) return recovery;
+  if (recovery !== undefined) return recovery;
   return await readTypesManifest(root, generatedTypesOwnersManifest, generatedTypesOwnerSchema);
 }
 

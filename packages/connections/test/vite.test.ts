@@ -433,6 +433,20 @@ describe("hubConnections", () => {
     await expect(readFile(join(sharedTarget, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("treats an empty recovery manifest as authoritative", async () => {
+    const root = await createTempProject();
+    await hubConnections().api.prepareTypes({ projectRoot: root });
+    const recovery = join(root, ".vitehub/connections-types-owners-recovery.json");
+    const owners = join(root, ".vitehub/connections-types-owners.json");
+    await writeFile(recovery, "[]");
+
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+
+    await expect(readFile(join(root, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+    await expect(readFile(recovery, "utf8")).resolves.toBe("[]");
+    await expect(readFile(owners, "utf8")).resolves.toMatch(/session/);
+  });
+
   it.each(["malformed", "missing"])("recovers %s shared metadata and retires output after the final owner", async (state) => {
     const firstRoot = await createTempProject();
     const secondRoot = await createTempProject();
