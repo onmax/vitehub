@@ -144,6 +144,113 @@ describe("hubConnections", () => {
     expect(plugin.api.getDefinitions().map((definition) => definition.name)).toEqual(["slack"]);
   });
 
+  it.each([
+    ["absolute", 0], ["absolute", 1], ["relative", 0], ["relative", 1],
+  ] as const)("preserves a shared %s target when default root %s disables first", async (form, disabled) => {
+    const root = await createTempProject();
+    const defaults = [join(root, "apps/a"), join(root, "apps/b")];
+    await Promise.all(defaults.map(async origin => {
+      await mkdir(origin, { recursive: true });
+      await writeFile(join(origin, "package.json"), "{}\n");
+    }));
+    const target = join(root, "shared");
+    await writeConnection(target, "server/connections/google.ts");
+    const projectRoot = form === "absolute" ? target : "../../shared";
+    await Promise.all(defaults.map(origin => hubConnections({ projectRoot }).api.prepareTypes({ projectRoot: origin })));
+    const file = join(target, ".vitehub/types/connections.d.ts");
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: defaults[disabled]! });
+    await expect(readFile(file, "utf8")).resolves.toContain('"google": typeof import(');
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: defaults[1 - disabled]! });
+    await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves a shared target when one default moves and cleans the latest generated hash", async () => {
+    const first = await createTempProject();
+    const second = await createTempProject();
+    const target = await createTempProject();
+    const moved = await createTempProject();
+    await writeConnection(target, "one/connections/google.ts");
+    await writeConnection(target, "two/connections/slack.ts");
+    await hubConnections({ projectRoot: target }).api.prepareTypes({ projectRoot: first, serverDirs: [join(target, "one")] });
+    await hubConnections({ projectRoot: target }).api.prepareTypes({ projectRoot: second, serverDirs: [join(target, "two")] });
+    const file = join(target, ".vitehub/types/connections.d.ts");
+    await expect(readFile(file, "utf8")).resolves.toContain('"slack": typeof import(');
+    await hubConnections({ projectRoot: moved }).api.prepareTypes({ projectRoot: second });
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: second });
+    await expect(readFile(file, "utf8")).resolves.toContain('"slack": typeof import(');
+    await expect(readFile(join(moved, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: first });
+    await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each([0, 1])("coordinates a shared target across distinct default roots in real processes, disabling %s first", async disabled => {
+    const defaults = [await createTempProject(), await createTempProject()];
+    const target = await createTempProject();
+    await writeConnection(target, "server/connections/google.ts");
+    const script = join(target, "prepare-shared.mjs");
+    await writeFile(script, `
+      import { hubConnections, hubConnectionsTypesCleanup } from ${JSON.stringify(new URL("../dist/vite.js", import.meta.url).href)};
+      process.on("message", async message => {
+        if (message === "exit") process.exit(0);
+        if (message === "prepare") await hubConnections({ projectRoot: ${JSON.stringify(target)} }).api.prepareTypes({ projectRoot: process.argv[2] });
+        else if (message === "disable") await hubConnectionsTypesCleanup().api.prepareTypes({ projectRoot: process.argv[2] });
+        else return;
+        process.send(message);
+      });
+    `);
+    const children = defaults.map(origin => fork(script, [origin], { stdio: ["ignore", "ignore", "pipe", "ipc"] }));
+    const request = (child: ReturnType<typeof fork>, message: string) => new Promise<void>((resolve, reject) => {
+      const cleanup = () => { child.off("message", receive); child.off("error", failure); child.off("exit", exited); };
+      const failure = (error: Error) => { cleanup(); reject(error); };
+      const exited = (code: number | null) => failure(new Error(`Shared root writer exited early: ${code}`));
+      const receive = (response: unknown) => { if (response === message) { cleanup(); resolve(); } };
+      child.on("message", receive); child.once("error", failure); child.once("exit", exited);
+      child.send(message, error => { if (error) failure(error); });
+    });
+    try {
+      await Promise.all(children.map(child => request(child, "prepare")));
+      const file = join(target, ".vitehub/types/connections.d.ts");
+      await request(children[disabled]!, "disable");
+      await expect(readFile(file, "utf8")).resolves.toContain('"google": typeof import(');
+      await request(children[1 - disabled]!, "disable");
+      await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await Promise.all(children.map(child => child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise<void>(resolve => {
+        child.once("exit", () => resolve());
+        child.kill();
+      })));
+    }
+  });
+
+  it("preserves another app's default-root declaration during custom generation and repeated cleanup", async () => {
+    const first = await createTempProject();
+    const second = await createTempProject();
+    await hubConnections({ projectRoot: second }).api.prepareTypes({ projectRoot: first });
+    await hubConnections({ projectRoot: first }).api.prepareTypes({ projectRoot: second });
+    const firstFile = join(first, ".vitehub/types/connections.d.ts");
+    const secondFile = join(second, ".vitehub/types/connections.d.ts");
+    await expect(readFile(firstFile)).resolves.toBeTruthy();
+    await expect(readFile(secondFile)).resolves.toBeTruthy();
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: first });
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: first });
+    await expect(readFile(firstFile)).resolves.toBeTruthy();
+    await expect(readFile(secondFile)).rejects.toMatchObject({ code: "ENOENT" });
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: second });
+    await expect(readFile(firstFile)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(["missing", "malformed"])("preserves tracked declarations when shared ownership metadata is %s", async form => {
+    const root = await createTempProject();
+    const target = await createTempProject();
+    await hubConnections({ projectRoot: target }).api.prepareTypes({ projectRoot: root });
+    const owners = join(target, ".vitehub/connections-types-owners.json");
+    if (form === "missing") await rm(owners);
+    else await writeFile(owners, "{");
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: root });
+    await expect(readFile(join(target, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+    await expect(readFile(join(root, ".vitehub/connections-types.json"))).resolves.toBeTruthy();
+  });
+
   it.each(["different", "shared"])("keeps %s roots prepared by separate live processes for later cleanup", async (form) => {
     const root = await createTempProject();
     const names = form === "shared" ? ["api", "api"] : ["api-a", "api-b"];

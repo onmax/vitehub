@@ -29,6 +29,7 @@ const noExternalAddition = createNoExternalAddition("@vite-hub/connections");
 // Keep prior output ownership with the project so cleanup works after a restart.
 const generatedTypesManifest = ".vitehub/connections-types.json";
 const generatedTypesPath = ".vitehub/types/connections.d.ts";
+const generatedTypesOwnersManifest = ".vitehub/connections-types-owners.json";
 const generatedTypesManifestEntrySchema = v.object({
   root: v.string(),
   hash: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
@@ -37,7 +38,15 @@ const generatedTypesManifestEntrySchema = v.object({
     session: v.string(),
   })),
 });
-const generatedTypesManifestSchema = v.array(generatedTypesManifestEntrySchema);
+const generatedTypesOwnerSchema = v.object({
+  origin: v.string(),
+  hash: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
+  owner: v.object({
+    pid: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    session: v.string(),
+  }),
+});
+type GeneratedTypesOwner = v.InferOutput<typeof generatedTypesOwnerSchema>;
 
 async function removeLegacyDefaultTypes(root: string): Promise<void> {
   const file = resolve(root, generatedTypesPath);
@@ -64,8 +73,12 @@ async function withManifestLock<T>(root: string, action: () => Promise<T>): Prom
   return await withConnectionsTypesLock(resolve(root, `${generatedTypesManifest}.lock`), action);
 }
 
-async function readManifest(root: string) {
-  const content = await readOptionalFile(resolve(root, generatedTypesManifest));
+async function withOwnersLock<T>(root: string, action: () => Promise<T>): Promise<T> {
+  return await withConnectionsTypesLock(resolve(root, `${generatedTypesOwnersManifest}.lock`), action);
+}
+
+async function readTypesManifest<T>(root: string, manifest: string, schema: v.GenericSchema<unknown, T>): Promise<T[] | undefined> {
+  const content = await readOptionalFile(resolve(root, manifest));
   if (content === undefined) return [];
   let input: unknown;
   try {
@@ -74,14 +87,22 @@ async function readManifest(root: string) {
     if (error instanceof SyntaxError) return;
     throw error;
   }
-  const parsed = v.safeParse(generatedTypesManifestSchema, Array.isArray(input) ? input : [input]);
+  const parsed = v.safeParse(v.array(schema), Array.isArray(input) ? input : [input]);
   return parsed.success ? parsed.output : undefined;
+}
+
+async function readManifest(root: string) {
+  return await readTypesManifest(root, generatedTypesManifest, generatedTypesManifestEntrySchema);
+}
+
+async function readOwners(root: string) {
+  return await readTypesManifest(root, generatedTypesOwnersManifest, generatedTypesOwnerSchema);
 }
 
 type GeneratedTypesEntry = v.InferOutput<typeof generatedTypesManifestEntrySchema>;
 
-async function writeManifest(root: string, entries: GeneratedTypesEntry[]): Promise<void> {
-  const manifest = resolve(root, generatedTypesManifest);
+async function writeTypesManifest<T>(root: string, path: string, entries: T[]): Promise<void> {
+  const manifest = resolve(root, path);
   const temporary = `${manifest}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporary, JSON.stringify(entries));
@@ -91,7 +112,14 @@ async function writeManifest(root: string, entries: GeneratedTypesEntry[]): Prom
   }
 }
 
-function isOtherProcessActive(entry: GeneratedTypesEntry): boolean {
+async function removeUntrackedDefaultTypes(root: string): Promise<void> {
+  await withOwnersLock(root, async () => {
+    const owners = await readOwners(root);
+    if (owners?.length === 0) await removeLegacyDefaultTypes(root);
+  });
+}
+
+function isOtherProcessActive(entry: Pick<GeneratedTypesEntry, "owner">): boolean {
   if (!entry.owner || entry.owner.pid === process.pid) return false;
   try {
     process.kill(entry.owner.pid, 0);
@@ -105,32 +133,57 @@ function isOtherProcessActive(entry: GeneratedTypesEntry): boolean {
 async function removeTrackedTypes(root: string): Promise<void> {
   const entries = await readManifest(root);
   if (!entries) return;
-  const activeRoots = new Set(entries.filter(isOtherProcessActive).map(entry => resolve(root, entry.root)));
   const retained: GeneratedTypesEntry[] = [];
-  for (const entry of entries) {
-    const trackedRoot = resolve(root, entry.root);
-    if (activeRoots.has(trackedRoot)) {
-      retained.push(entry);
-      continue;
-    }
-    const file = resolve(trackedRoot, generatedTypesPath);
-    const previous = await readOptionalFile(file);
-    if (previous !== undefined && typeHash(previous) === entry.hash && (await lstat(file)).isFile()) {
-      await rm(file, { force: true });
-    }
+  const targets = new Set(entries.map(entry => resolve(root, entry.root)));
+  for (const target of targets) {
+    await withOwnersLock(target, async () => {
+      const owners = await readOwners(target);
+      const file = resolve(target, generatedTypesPath);
+      const previous = await readOptionalFile(file);
+      if (!owners || (owners.length === 0 && previous !== undefined)) {
+        // Without shared ownership evidence, a tracked file may belong to another app.
+        retained.push(...entries.filter(entry => resolve(root, entry.root) === target));
+        return;
+      }
+      const remaining = owners.filter(entry => resolve(target, entry.origin) !== root || isOtherProcessActive(entry));
+      const removed = owners.filter(entry => !remaining.includes(entry));
+      if (remaining.length) {
+        await writeTypesManifest(target, generatedTypesOwnersManifest, remaining);
+        const currentOwners = remaining.filter(entry => resolve(target, entry.origin) === root);
+        retained.push(...entries.filter(entry => resolve(root, entry.root) === target
+          && currentOwners.some(owner => owner.owner.session === entry.owner?.session)));
+      } else {
+        if (previous !== undefined && removed.some(entry => typeHash(previous) === entry.hash) && (await lstat(file)).isFile()) {
+          await rm(file, { force: true });
+        }
+        await rm(resolve(target, generatedTypesOwnersManifest), { force: true });
+      }
+    });
   }
-  if (retained.length) await writeManifest(root, retained);
+  if (retained.length) await writeTypesManifest(root, generatedTypesManifest, retained);
   else await rm(resolve(root, generatedTypesManifest), { force: true });
+}
+
+function storedTypesRoot(root: string, target: string): string {
+  // Same-volume roots remain portable; cross-volume Windows roots must stay absolute.
+  const relativeRoot = relative(root, target);
+  return isAbsolute(relativeRoot) ? target : relativeRoot;
 }
 
 async function recordGeneratedTypes(root: string, projectRoot: string, hash: string, session: string): Promise<void> {
   const entries = await readManifest(root) ?? [];
-  // Same-volume roots remain portable; cross-volume Windows roots must stay absolute.
-  const relativeRoot = relative(root, projectRoot);
-  const storedRoot = isAbsolute(relativeRoot) ? projectRoot : relativeRoot;
-  await writeManifest(root, [
+  await writeTypesManifest(root, generatedTypesManifest, [
     ...entries.filter(entry => !(resolve(root, entry.root) === projectRoot && entry.owner?.session === session)),
-    { root: storedRoot, hash, owner: { pid: process.pid, session } },
+    { root: storedTypesRoot(root, projectRoot), hash, owner: { pid: process.pid, session } },
+  ]);
+}
+
+async function recordGeneratedOwners(projectRoot: string, origin: string, hash: string, session: string, entries: GeneratedTypesOwner[]): Promise<void> {
+  await writeTypesManifest(projectRoot, generatedTypesOwnersManifest, [
+    // Every owner shares the declaration currently on disk, including a later writer's content.
+    ...entries.filter(entry => !(resolve(projectRoot, entry.origin) === origin && entry.owner.session === session))
+      .map(entry => ({ ...entry, hash })),
+    { origin: storedTypesRoot(projectRoot, origin), hash, owner: { pid: process.pid, session } },
   ]);
 }
 
@@ -228,12 +281,18 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
 
   async function refreshGeneratedFiles(): Promise<void> {
     await withManifestLock(defaultProjectRoot, async () => {
-      if (projectRoot !== defaultProjectRoot) await removeLegacyDefaultTypes(defaultProjectRoot);
-      await Promise.all([
-        writeFileIfChanged(resolve(projectRoot, generatedTypesPath), renderRegistryTypes(definitions)),
-        ...(nitroRegistryFile ? [writeFileIfChanged(nitroRegistryFile, renderRegistry(definitions, database))] : []),
-      ]);
-      await recordGeneratedTypes(defaultProjectRoot, projectRoot, typeHash(renderRegistryTypes(definitions)), generationSession);
+      if (projectRoot !== defaultProjectRoot) await removeUntrackedDefaultTypes(defaultProjectRoot);
+      await withOwnersLock(projectRoot, async () => {
+        const owners = await readOwners(projectRoot);
+        if (!owners) throw new Error(`Invalid Connection type ownership metadata at ${projectRoot}.`);
+        const types = renderRegistryTypes(definitions);
+        await Promise.all([
+          writeFileIfChanged(resolve(projectRoot, generatedTypesPath), types),
+          ...(nitroRegistryFile ? [writeFileIfChanged(nitroRegistryFile, renderRegistry(definitions, database))] : []),
+        ]);
+        await recordGeneratedOwners(projectRoot, defaultProjectRoot, typeHash(types), generationSession, owners);
+        await recordGeneratedTypes(defaultProjectRoot, projectRoot, typeHash(types), generationSession);
+      });
     });
   }
 
@@ -372,7 +431,7 @@ export function hubConnectionsTypesCleanup(): Plugin<{ prepareTypes: (options: {
     await withManifestLock(root, async () => {
       const tracked = await readOptionalFile(resolve(root, generatedTypesManifest));
       await removeTrackedTypes(root);
-      if (tracked === undefined) await removeLegacyDefaultTypes(root);
+      if (tracked === undefined) await removeUntrackedDefaultTypes(root);
     });
   }
   return {
