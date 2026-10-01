@@ -7,12 +7,12 @@ import type { AskAnswers, AskEntry, AskQuestion, AskQuestions } from "../ask.ts"
 import type { Message } from "../messages.ts"
 import type { AgentRunInput } from "../types.ts"
 
-type AdvocaatQuestion = Record<string, unknown>
+type AdvocaatQuestion = unknown
 interface Advocaat {
   ask(
     state: AskEntry,
-    questions: AdvocaatQuestion,
-    options: { apiKey?: string, model?: string, provider: string, signal?: AbortSignal },
+    questions: Record<string, AdvocaatQuestion>,
+    options: { apiKey?: string, model?: string, provider: "typesafe" | "vercel", signal?: AbortSignal },
   ): Promise<Record<string, unknown>>
 }
 
@@ -31,7 +31,7 @@ type AskStateInput = Pick<AgentRunInput, "data" | "prompt">
 
 async function loadAdvocaat(): Promise<Advocaat> {
   try {
-    return await import("advocaat")
+    return await import("advocaat") as unknown as Advocaat
   }
   catch (error) {
     throw agentDiagnostics.AGENT_R0934({
