@@ -2,7 +2,7 @@ import { expect, it } from "vitest"
 
 import { defineConnection } from "../src/definition.ts"
 import { createConnectionsRuntime } from "../src/runtime.ts"
-import { connect, createTestRuntime, mailConnection, testProvider } from "./helpers.ts"
+import { ACCESS_TOKEN, connect, createTestRuntime, mailConnection, testProvider } from "./helpers.ts"
 
 function deferred() {
   let resolve!: () => void
@@ -191,5 +191,34 @@ it.each(["account", "secret read", "state read"] as const)("quarantines a replac
   await expect(callbackRuntime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
   test.now.value += 60_001
   await expect(connect({ ...test, runtime: callbackRuntime })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+  expect(test.provider.calls).toHaveLength(before)
+})
+
+
+it.each(["different", "unidentified"] as const)("quarantines a rotated provider grant when its replacement account is %s", async account => {
+  const test = createTestRuntime()
+  await connect(test)
+  const original = await test.store.secrets.read("connection/mail")
+  const runtime = createConnectionsRuntime({ definitions: { mail: mailConnection() }, store: test.store, now: () => test.now.value, fetch: async (input, init) => {
+    const response = await test.provider.fetch(input, init)
+    if (String(input) === "https://auth.example.com/token") {
+      test.provider.valid.clear()
+      test.provider.valid.add("rejected-replacement-access")
+    }
+    return response
+  } })
+  await expect(connect({ ...test, runtime }, {
+    access_token: "rejected-replacement-access",
+    id_token: account === "different" ? "account-2" : undefined,
+    refresh_token: "rejected-replacement-refresh",
+  })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
+  expect(test.provider.valid.has(ACCESS_TOKEN)).toBe(false)
+  expect(await test.store.secrets.read("connection/mail")).toEqual(original)
+  expect(await runtime.inspect("mail")).toMatchObject({ status: "reauth_required", account: { id: "account-1" } })
+  expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toEqual([])
+  const before = test.provider.calls.length
+  await expect(runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+  test.now.value += 60_001
+  await expect(connect({ ...test, runtime })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
   expect(test.provider.calls).toHaveLength(before)
 })

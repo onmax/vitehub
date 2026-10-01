@@ -756,9 +756,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       }
       const accountId = previous?.success ? previous.output.accountId ?? state?.accountId : state?.status === "revoked" ? undefined : state?.accountId
       if (accountId && (!account || accountId !== account.id)) {
-        releaseLease = true
-        quarantine = false
-        throw new ConnectionError("invalid", account ? `Connection "${name}" belongs to another account. Revoke it before you connect a different account.` : `Provider "${loaded.provider.id}" did not identify the account. The existing Connection was not replaced.`, { details: { connection: name } })
+        throw new ConnectionError("invalid", account ? `Connection "${name}" belongs to another account. Confirm the provider outcome and repair the mutation lease before revoking or connecting again.` : `Provider "${loaded.provider.id}" did not identify the account. The existing Connection was quarantined.`, { details: { connection: name } })
       }
       const token = toStoredToken(response, previous?.success ? previous.output : undefined, [
         ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),

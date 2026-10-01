@@ -91,9 +91,9 @@ describe("connect", () => {
     await connect(test)
     await expect(connect(test, { id_token: undefined, access_token: "unknown-access", refresh_token: "unknown-refresh" })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
     expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toHaveLength(0)
-    expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" }, status: "connected" })
-    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
-    expect(test.provider.calls.at(-1)?.headers.get("authorization")).toBe(`Bearer ${ACCESS_TOKEN}`)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" }, status: "reauth_required" })
+    expect(JSON.parse((await test.store.secrets.read("connection/mail"))!.value)).toMatchObject({ accessToken: ACCESS_TOKEN, accountId: "account-1" })
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
   })
 
   it("reports reduced scopes returned during a token refresh", async () => {
@@ -293,9 +293,9 @@ describe("connect", () => {
     await first
     await expect(other).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
     expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toHaveLength(revoked ? 1 : 0)
-    expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" }, status: "connected" })
-    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
-    expect(test.provider.calls.at(-1)!.headers.get("authorization")).toBe(`Bearer ${ACCESS_TOKEN}`)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" }, status: "reauth_required" })
+    expect(JSON.parse((await test.store.secrets.read("connection/mail"))!.value)).toMatchObject({ accessToken: ACCESS_TOKEN, accountId: "account-1" })
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
   })
 
   it("does not revoke through a bridge that omits the leased revision", async () => {

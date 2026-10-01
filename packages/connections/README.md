@@ -61,7 +61,7 @@ setConnectionsRuntime({
 });
 ```
 
-Rejected or superseded OAuth callbacks do not revoke their issued token at the provider. A provider can revoke the whole application grant, which would also invalidate the winning token. The rejected token is not stored.
+Rejected or superseded OAuth callbacks do not revoke their issued token at the provider. A provider can revoke the whole application grant, which would also invalidate the winning token. The rejected token is not stored. A successful exchange that cannot be accepted locally quarantines the current Connection and retains its mutation lease, including a different or unidentified replacement account. Confirm the provider outcome and repair that lease before revoking or connecting again.
 
 The default store serializes authorization-code exchange and persistence, token refresh, and provider revocation through one durable per-Connection mutation lease shared by all runtimes. Callback exchange waits until grant-wide revocation has finished. Waiting refresh callers read the replacement token instead of sending the same rotating grant again. Provider requests have a 30-second abort signal and a 60-second lease.
 
