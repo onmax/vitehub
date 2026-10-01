@@ -6,7 +6,7 @@ import { createClient } from "@libsql/client"
 import { createConnectionsRuntime } from "@vite-hub/connections/server"
 import { drizzle } from "drizzle-orm/libsql"
 import * as v from "valibot"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { consoleConnectionsKey, consoleConnectionsRegistryKey, consoleConnectionsRootKey, consoleSectionsKey, consoleSectionsRegistryKey, consoleSectionsRootKey, installConsoleConnectionsScope, resolveConsoleConnections } from "../src/console/internal.ts"
 import { addConsoleRpcHandler } from "../src/console/nitro.ts"
@@ -52,8 +52,8 @@ function runtime() {
   })
 }
 
-function manage(body: unknown): Request {
-  return new Request(`${origin}/_vitehub/connections/manage`, { body: JSON.stringify(body), headers: { origin }, method: "POST" })
+function manage(body: unknown, baseURL = ""): Request {
+  return new Request(`${origin}${baseURL}/_vitehub/connections/manage`, { body: JSON.stringify(body), headers: { origin }, method: "POST" })
 }
 
 describe("Console Connections", () => {
@@ -67,7 +67,7 @@ describe("Console Connections", () => {
       expect(generated).toContain(`installConsoleConnections(${JSON.stringify(root)})`)
       await writeConsoleNitroPlugin(plugin, root, ["connections"], [], { agents: [], definitions: {} }, [], [], undefined, undefined, false, undefined, undefined, { d1Binding: "JOURNAL" }, "cloudflare-access", true)
       const managed = await readFile(plugin, "utf8")
-      expect(managed).toContain(`installConsoleConnections(${JSON.stringify(root)}, { manage: true })`)
+      expect(managed).toContain(`installConsoleConnections(${JSON.stringify(root)}, {"manage":true})`)
       expect(managed).toContain(`installConsoleSections(${JSON.stringify(root)}, ["connections"], "cloudflare-access")`)
       await writeConsoleNitroPlugin(plugin, root, ["env"], [], { agents: [], definitions: {} }, [], [])
       expect(await readFile(plugin, "utf8")).not.toContain("installConsoleConnections")
@@ -103,6 +103,39 @@ describe("Console Connections", () => {
     const body = await activity.text()
     expect(JSON.parse(body)).toMatchObject({ events: [{ action: "connect", actor: { id: "console", kind: "user" }, outcome: "succeeded" }] })
     expect(body).not.toContain("synthetic-access")
+  })
+
+  it.each(["/portal/", "https://cdn.example/portal/"])("preserves the Console mount through OAuth with base %s", async (baseURL) => {
+    installConsoleSections("/connections-test", ["connections"])
+    const connections = runtime()
+    const authorization = vi.spyOn(definition.provider, "authorizationUrl")
+    const exchange = vi.spyOn(definition.provider, "exchange")
+    try {
+      installConsoleConnections("/connections-test", { baseURL, manage: true, runtime: () => connections })
+      expect((await handleConsoleConnections(manage({ action: "list" }, "/portal"))).status).toBe(200)
+      expect((await handleConsoleConnections(manage({ action: "list" }))).status).toBe(404)
+      const start = await handleConsoleConnections(manage({ action: "start", name: "example" }, "/portal"))
+      const { url } = v.parse(v.object({ url: v.string() }), await start.json())
+      expect(url).toMatch(/^https:\/\/app\.test\/portal\/_vitehub\/connections\/example\/connect\?ticket=/)
+      const connect = await handleConsoleConnections(new Request(url))
+      expect(connect.status).toBe(302)
+      const redirectUri = `${origin}/portal/_vitehub/connections/example/callback`
+      expect(authorization).toHaveBeenCalledWith(expect.objectContaining({ redirectUri }), expect.anything())
+      expect(connect.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections/example;")
+      const state = new URL(connect.headers.get("location") ?? "").searchParams.get("state")
+      const cookie = /vitehub_connection_state=([^;]*)/.exec(connect.headers.get("set-cookie") ?? "")?.[1]
+      const callback = await handleConsoleConnections(new Request(`${redirectUri}?code=abc&state=${state}`, { headers: { cookie: `vitehub_connection_state=${cookie}` } }))
+      expect(callback.status).toBe(302)
+      expect(callback.headers.get("location")).toBe("/portal/_vitehub/connections?connection=example&result=connected")
+      expect(exchange).toHaveBeenCalledWith(expect.objectContaining({ redirectUri }), expect.anything())
+      expect(callback.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections/example;")
+      expect((await connections.inspect("example")).status).toBe("active")
+      expect(consoleConnectionsReturnTo("example", "failed", baseURL)).toBe("/portal/_vitehub/connections?connection=example&result=failed")
+    }
+    finally {
+      authorization.mockRestore()
+      exchange.mockRestore()
+    }
   })
 
   it("lets Console users read but not change Connections without manage", async () => {
@@ -176,13 +209,13 @@ describe("Console Connections", () => {
       const configHook = plugin.config
       if (!configHook) throw new TypeError("Expected a console config hook.")
       const configHandler = "handler" in configHook ? configHook.handler : configHook
-      const config: { nitro?: { handlers: Array<{ method?: string, route: string }>, plugins: string[] }, root: string } = { root }
+      const config: { base: string, nitro?: { handlers: Array<{ method?: string, route: string }>, plugins: string[] }, root: string } = { base: "/portal/", root }
       await Reflect.apply(configHandler, {}, [config, { command: "build", mode: "production" }])
       const routes = config.nitro?.handlers.map(handler => handler.route) ?? []
       expect(routes).toContain("/_vitehub/**")
       expect(routes).toEqual(expect.arrayContaining(["/_vitehub/connections/manage", "/_vitehub/connections/:name/connect", "/_vitehub/connections/:name/callback"]))
       const generated = await readFile(config.nitro?.plugins[0] ?? "", "utf8")
-      expect(generated).toContain(`installConsoleConnections(${JSON.stringify(root)})`)
+      expect(generated).toContain(`installConsoleConnections(${JSON.stringify(root)}, {"baseURL":"/portal/"})`)
     }
     finally {
       await rm(root, { force: true, recursive: true })
