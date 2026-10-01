@@ -2083,6 +2083,16 @@ describe("Agent invocation console", () => {
         },
       })
 
+      for (const profiles of [[], [{ id: "renamed-support", kind: "person" as const }]]) {
+        installConsoleAgentDefinitions([
+          { definition: { default: { ...definition, invoker: { profiles } } }, fallbackName: "help" },
+        ], { invoke: true, projectRoot: root })
+        await expect(invocationHandler(detailEvent(completed.id))).resolves.toMatchObject({
+          invocation: { actions: { rerun: { available: false, reason: "invoker-profile-unavailable" } } },
+        })
+      }
+      install(true)
+
       blocked = true
       const running = await start("Keep running.")
       await vi.waitFor(async () => {

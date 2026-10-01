@@ -1,7 +1,7 @@
 import { agentInvocationRerunInput } from "@vite-hub/agent"
 import * as v from "valibot"
 
-import { getConsoleAgentDefinition } from "./agents.ts"
+import { consoleAgentInvokerProfiles, getConsoleAgentDefinition } from "./agents.ts"
 import { getConsoleInvocations } from "./invocations.ts"
 import { assertConsoleRequest, consoleRequestJSON, consoleRequestURL } from "./request.ts"
 import { invocationUsage } from "./usage.ts"
@@ -13,7 +13,7 @@ import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
 
 type ConsoleInvocationRerun =
   | { available: true, invokerProfileId?: string, prompt: string }
-  | { available: false, reason: AgentInvocationRerunUnavailableReason }
+  | { available: false, reason: AgentInvocationRerunUnavailableReason | "invoker-profile-unavailable" }
 
 /** Record actions that Console invoke access allows. */
 interface ConsoleInvocationActions {
@@ -61,6 +61,12 @@ function invocationActions(invocation: AgentInvocationRecord): ConsoleInvocation
   const agent = invocation.agentName ? getConsoleAgentDefinition(invocation.agentName) : undefined
   if (!agent) return
   const input = agentInvocationRerunInput(invocation)
+  if (input.available && input.invokerProfileId && !consoleAgentInvokerProfiles(agent).some(profile => profile.id === input.invokerProfileId)) {
+    return {
+      delete: { available: terminalStatuses.has(invocation.status) },
+      rerun: { available: false, reason: "invoker-profile-unavailable" },
+    }
+  }
   return {
     delete: { available: terminalStatuses.has(invocation.status) },
     rerun: input.available
