@@ -743,12 +743,12 @@ function log(event: string, details: Record<string, unknown>): void {
 
 export async function listGmailMessageIds(
   client: GmailClient,
-  options: { labelIds?: readonly string[], limit: number, pageToken?: string, query?: string },
+  options: { includeSpamTrash?: boolean, labelIds?: readonly string[], limit: number, pageToken?: string, query?: string },
 ): Promise<{ ids: string[], nextPageToken?: string }> {
   const page = await gmailRequest(client, messageListSchema, {
     method: "GET",
     path: "messages",
-    query: { labelIds: options.labelIds, maxResults: options.limit, pageToken: options.pageToken, q: options.query },
+    query: { includeSpamTrash: options.includeSpamTrash ? "true" : undefined, labelIds: options.labelIds, maxResults: options.limit, pageToken: options.pageToken, q: options.query },
   })
   return { ids: (page.messages || []).map(message => message.id), ...(page.nextPageToken ? { nextPageToken: page.nextPageToken } : {}) }
 }
@@ -779,11 +779,12 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
     return
   }
   let failed = false
-  const dispatchMessageIds = async (ids: readonly string[]): Promise<void> => {
+  const dispatchMessageIds = async (ids: readonly string[], inboxOnly = false): Promise<void> => {
     for (let start = 0; start < ids.length; start += messageFetchConcurrency) {
       await renew()
       const messages = await getGmailMessages(client, ids.slice(start, start + messageFetchConcurrency), sync.bodyLimit)
       for (const message of messages) {
+        if (inboxOnly && !message.labelIds.includes("INBOX")) continue
         await renew()
         const result = await sync.dispatch([message])
         log("messages.dispatched", { failed: result.failed, processed: result.processed, skipped: result.skipped })
@@ -826,12 +827,14 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
     // Gmail keeps about a week of history. Recover recent Inbox mail, then continue from now.
     const profile = await gmailRequest(client, profileSchema, { method: "GET", path: "profile" })
     historyId = profile.historyId
+    // Handler label changes must not remove messages from the paginated search.
+    const query = `after:${Math.floor((Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000)}`
     let recovered = 0
     let pageToken: string | undefined
     do {
       await renew()
-      const recent = await listGmailMessageIds(client, { limit: 100, query: "in:inbox newer_than:2d", ...(pageToken ? { pageToken } : {}) })
-      await dispatchMessageIds(recent.ids)
+      const recent = await listGmailMessageIds(client, { includeSpamTrash: true, limit: 100, query, ...(pageToken ? { pageToken } : {}) })
+      await dispatchMessageIds(recent.ids, true)
       recovered += recent.ids.length
       pageToken = recent.nextPageToken
     } while (pageToken)

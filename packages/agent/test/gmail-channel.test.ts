@@ -356,6 +356,53 @@ describe("gmail() Channel", () => {
     }
   })
 
+  it.each(["archive", "trash"] as const)("keeps recovery pagination stable when dispatch handlers %s messages", async action => {
+    const state = createLibsqlAgentState({ url: ":memory:" })
+    await state.connect()
+    try {
+      await state.set("mail:history-id", "100")
+      const mailbox = [apiMessage("m1", "First"), apiMessage("m2", "Second"), apiMessage("m3", "Third"), apiMessage("sent", "Sent")]
+      mailbox[3]!.labelIds = ["SENT"]
+      const delivered: string[] = []
+      const listings: Array<{ query: string, includeSpamTrash?: string | number | readonly string[] }> = []
+      const client: GmailClient = async request => {
+        if (request.path === "history") throw Object.assign(new Error("History expired"), { status: 404 })
+        if (request.path === "profile") return { emailAddress: "max@example.com", historyId: "300" }
+        if (request.path === "messages") {
+          const query = String(request.query?.q || "")
+          listings.push({ query, includeSpamTrash: request.query?.includeSpamTrash })
+          const eligible = mailbox.filter(message => (!query.includes("in:inbox") || message.labelIds.includes("INBOX"))
+            && (request.query?.includeSpamTrash === "true" || !message.labelIds.includes("TRASH")))
+          const offset = Number(request.query?.pageToken || 0)
+          if (offset === 1) expect(delivered).toEqual(["m1"])
+          return { messages: eligible.slice(offset, offset + 1).map(message => ({ id: message.id })),
+            ...(offset + 1 < eligible.length ? { nextPageToken: String(offset + 1) } : {}) }
+        }
+        const message = mailbox.find(message => request.path === `messages/${message.id}`)
+        if (message) return message
+        throw new Error(`Unexpected request: ${request.path}`)
+      }
+      await syncGmailMailbox({
+        bodyLimit: 1000, client, notificationHistoryId: "300", state: { keyPrefix: "mail:", state },
+        dispatch: async messages => {
+          for (const message of messages) {
+            delivered.push(message.id)
+            mailbox.find(candidate => candidate.id === message.id)!.labelIds = action === "trash" ? ["TRASH"] : []
+          }
+          return { failed: 0, items: [], nextCursor: null, processed: messages.length, skipped: 0 }
+        },
+      })
+      expect(delivered).toEqual(["m1", "m2", "m3"])
+      expect(await state.get("mail:history-id")).toBe("300")
+      expect(listings).toHaveLength(4)
+      expect(listings[0]?.query).toMatch(/^after:\d+$/)
+      expect(listings.every(listing => listing.query === listings[0]?.query && listing.includeSpamTrash === "true")).toBe(true)
+    }
+    finally {
+      await state.disconnect()
+    }
+  })
+
   it.each(["history", "recovery"] as const)("dispatches earlier batches before later %s body fetches fail", async mode => {
     const google = await createGoogle()
     const state = createLibsqlAgentState({ url: ":memory:" })
