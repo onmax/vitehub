@@ -1,6 +1,6 @@
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { getMessageText } from "../messages.ts"
-import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
+import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 import { importServerEnvModule } from "./server-env.ts"
 
 import type { AskAnswers, AskEntry, AskQuestion, AskQuestions } from "../ask.ts"
@@ -113,17 +113,15 @@ function toAdvocaatQuestion(name: string, question: AskQuestion): AdvocaatQuesti
   // Keep the public Jev contract's number and boolean values intact at this boundary.
   switch (question.type) {
     case "chance":
-      const chanceQuestion: unknown = { criteria: question.criteria, instructions: question.instructions, type: "noul" }
-      // SAFETY: advocaat 0.0.6 calls this question type "noul" while the public ask API calls it "chance".
-      return chanceQuestion as AdvocaatQuestion
+      // SAFETY: The installed SDK accepts scalar JSON entries; its declarations omit numbers and booleans.
+      return asUnknownBoundary({ criteria: question.criteria, instructions: question.instructions, type: "noul" }) as AdvocaatQuestion
     case "choice":
     case "score":
     case "if":
     case "switch":
       validateQuestionCriteria(name, question)
-      const compatibleQuestion: unknown = question
-      // SAFETY: ask question criteria are validated above and advocaat accepts these shared JSON shapes.
-      return compatibleQuestion as AdvocaatQuestion
+      // SAFETY: Runtime SDK dispatch preserves these scalar criteria and instructions.
+      return asUnknownBoundary(question) as AdvocaatQuestion
   }
   throw invalidQuestion(name)
 }
@@ -148,9 +146,8 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
   }))
   const advocaat = await loadAdvocaat()
   const options = await typesafeOptions(context)
-  // SAFETY: toEntry removes unsupported undefined/functions and preserves JSON scalars; advocaat's declaration omits scalar entries.
-  const entry: AdvocaatEntry = toEntry(state) as AdvocaatEntry
-  const answers = await advocaat.ask(entry, wire, { ...options, signal: context.abortSignal })
+  // SAFETY: The SDK serializes scalar JSON state unchanged, as the installed-SDK regression verifies.
+  const answers = await advocaat.ask(asUnknownBoundary(toEntry(state)) as AdvocaatEntry, wire, { ...options, signal: context.abortSignal })
   // SAFETY: advocaat answers under the same keys, with the answer shapes that AskAnswers describes for each question type.
   return answers as AskAnswers<Q>
 }

@@ -5,8 +5,8 @@ import {
   composeNitroCloudflareProviderOutput,
   contributeCloudflareProviderOutput,
   contributeProviderDeploymentOutput,
-  createDefaultCloudflareOutputRoot,
   contributeProviderRuntime,
+  createDefaultCloudflareOutputRoot,
   createProviderDeploymentOutputGenerationState,
   finalizeProviderDeploymentOutputs,
   shouldSkipViteProviderBuild,
@@ -159,7 +159,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
           owner: "rate-limit",
           path: resolve(rootDir, ".vitehub/rate-limit/manifest.json"),
         }]
-        if (provider === "cloudflare" && declarations.length > 0 && !cloudflareOwnedByNitro) {
+        if (provider === "cloudflare" && !cloudflareOwnedByNitro && declarations.length > 0 && resolveRateLimitNamespace(rateLimit.namespace)) {
           providerOutput.push({
             description: "Generated Cloudflare Rate Limit worker config",
             owner: "rate-limit",
