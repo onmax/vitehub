@@ -1278,6 +1278,32 @@ it("keeps read-only opaque call results from invalidating Channel options", asyn
   expect((await discover(source))?.workspace).toBeUndefined()
 })
 
+it.each([
+  'tag`x`.pullRequest = true',
+  'tag`x`["pullRequest"] = true',
+  '(tag)`x`.pullRequest++',
+  'const alias = tag`x`; alias.pullRequest = true',
+  'const alias = tag`x`; const next = alias; next.pullRequest = true',
+  'const { nested: alias } = wrapper.tag`x`; alias.pullRequest = true',
+  'wrapper["tag"]`x`.nested.pullRequest = true',
+])("rejects mutations through tagged-template results: %s", async mutation => {
+  const setup = `${imports} const options = { pullRequest: false }; const tag = () => options; const wrapper = { tag: () => ({ nested: options }) }; ${mutation};`
+  await expect(discover(`${setup} export default defineAgent({ channels: { custom: github(options) } })`)).rejects.toThrow(/opaque Channel/)
+  await expect(discover('import portal from "../../portal.ts"; export default defineAgent({ channels: { custom: portal } })', {
+    "portal.ts": `${setup} export default github(options)`,
+  })).rejects.toThrow(/opaque Channel/)
+})
+
+it("keeps read-only tagged-template results from invalidating Channel options", async () => {
+  const source = `${imports} const options = { pullRequest: false }; const tag = () => options; const alias = tag\`x\`; const enabled = alias.pullRequest; export default defineAgent({ channels: { custom: github(options) } })`
+  expect((await discover(source))?.workspace).toBeUndefined()
+})
+
+it("rejects writes through tagged-template results inside configure callbacks", async () => {
+  const source = `${imports} export default defineAgent({ options: {}, configure: () => { const options = { pullRequest: false }; const tag = () => options; tag\`x\`.pullRequest = true; return defineAgent({ channels: { custom: github(options) } }) } })`
+  await expect(discover(source)).rejects.toThrow(/opaque Channel/)
+})
+
 it("rejects writes through captured call results inside configure callbacks", async () => {
   const source = `${imports} export default defineAgent({ options: {}, configure: () => { const options = { pullRequest: false }; const getOptions = () => options; getOptions().pullRequest = true; return defineAgent({ channels: { custom: github(options) } }) } })`
   await expect(discover(source)).rejects.toThrow(/opaque Channel/)

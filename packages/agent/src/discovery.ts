@@ -1058,14 +1058,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   const parameterLists = new Set([...functionScopes].map(scope => openingDelimiters.get(scope - 1)))
   const factories = ["defineAgent", "defineChannel", "defineCapability", "channelHelper"] as const
   for (let index = 0; index < tokens.length; index++) {
-    if (tokens[index] === "(" && [")", "]"].includes(tokens[index - 1])) opaqueCalls.add(index)
+    if ((tokens[index] === "(" || tokens[index]?.startsWith("`"))
+      && ([")", "]"].includes(tokens[index - 1]) || tokens[index - 1]?.startsWith("`"))) opaqueCalls.add(index)
     if (!isIdentifier(tokens[index]) || tokens[index - 1] === "function") continue
     const call = memberCallEnd(index)
-    if (tokens[call] !== "(" || ["if", "for", "while", "switch", "catch", "with", "default", "return", "throw", "yield", "await", "new", "typeof", "void", "delete", "function"].includes(tokens[index])) continue
+    const tagged = tokens[call]?.startsWith("`")
+    if ((tokens[call] !== "(" && !tagged) || ["if", "for", "while", "switch", "catch", "with", "default", "return", "throw", "yield", "await", "new", "typeof", "void", "delete", "function"].includes(tokens[index])) continue
     opaqueCalls.add(call)
-    if (tokens[index] === "eval" && tokens[index - 1] !== ".") directEvalCalls.add(call)
+    if (!tagged && tokens[index] === "eval" && tokens[index - 1] !== ".") directEvalCalls.add(call)
     if (call > index + 1 && visibleDeclaration(index) !== undefined) mutatedBindings.add(tokens[index])
-    if (globalObjectReference(index) && tokens[index + 1] === "." && tokens[index + 2] === "freeze") trustedCalls.add(call)
+    if (!tagged && globalObjectReference(index) && tokens[index + 1] === "." && tokens[index + 2] === "freeze") trustedCalls.add(call)
     if (tokens[index - 1] !== "." && factories.some(name => factoryCall(index, name) === call)) trustedCalls.add(call)
   }
   const opaqueResultBindings = new Set<string>()
@@ -1140,7 +1142,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // true`). Invalidate local bindings so Channel ownership is not inferred
     // from a stale initializer.
     let close = call + 1
-    let callNesting = 1
+    // A tagged template is one literal token, with its result immediately after it.
+    const tagged = tokens[call]?.startsWith("`")
+    let callNesting = tagged ? 0 : 1
     for (; close < tokens.length && callNesting > 0; close++) {
       if (["(", "[", "{"].includes(tokens[close]!)) callNesting++
       else if ([")", "]", "}"].includes(tokens[close]!)) callNesting--
@@ -1152,7 +1156,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         invalidateCapturedBindings()
       }
     }
-    let nesting = 1
+    let nesting = tagged ? 0 : 1
     for (let argument = call + 1; argument < tokens.length && nesting > 0; argument++) {
       if (["(", "[", "{"].includes(tokens[argument])) nesting++
       else if ([")", "]", "}"].includes(tokens[argument])) nesting--
