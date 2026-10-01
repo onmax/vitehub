@@ -112,6 +112,36 @@ function memoryInvocations() {
 }
 
 describe("replayChannel()", () => {
+  it("replays protected Channels without authenticating the host HTTP request", async () => {
+    const { agent, run } = labeller({ invocations: memoryInvocations() })
+    const channel = agent.channels?.mailbox
+    if (!channel) throw new Error("Expected mailbox Channel.")
+    channel.webhooks = [{ secretHeader: "x-provider-secret", secretToken: "secret" }]
+    const result = await replayChannel(agent, "mailbox", {
+      limit: 1,
+      runtime: { memo: (_key, create) => create(), request: new Request("https://console.test/_vitehub/channels/replay", { method: "POST" }), runtime: "unknown", waitUntil: () => {} },
+    })
+    expect(result).toMatchObject({ failed: 0, processed: 1 })
+    expect(run).toHaveBeenCalledOnce()
+  })
+
+  it("preserves inherited run metadata while overriding its run ID", async () => {
+    const invocations = memoryInvocations()
+    const { agent } = labeller({ invocations })
+    const result = await replayChannel(agent, "mailbox", {
+      limit: 1,
+      runtime: { memo: (_key, create) => create(), run: { annotations: { task: "backfill" }, channelId: "mailbox", origin: "dev", runId: "host-run", threadId: "dev-thread" }, runtime: "unknown", waitUntil: () => {} },
+    })
+    expect(await invocations.getByRunId(result.items[0]!.id)).toMatchObject({ annotations: { task: "backfill" }, channelId: "mailbox", origin: "dev", threadId: "dev-thread" })
+  })
+
+  it("reports inline objects with workflow-shaped fields as completed", async () => {
+    const { channel } = mailbox()
+    const agent = defineAgent({ channels: { mailbox: channel }, invocations: memoryInvocations(), run: () => ({ id: "item", provider: "custom", status: "success" }), runtime: false })
+    const result = await replayChannel(agent, "mailbox", { limit: 1 })
+    expect(result.items[0]).toMatchObject({ status: "completed" })
+  })
+
   it("pages history through the Channel trigger and skips items it replayed before", async () => {
     const invocations = memoryInvocations()
     const { agent, label, load } = labeller({ invocations })

@@ -7,6 +7,7 @@ import { isResolvedAgentTriggerHandledInvocation, resolveAgentTriggerInvocation,
 import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { agentToolJsonSchema } from "./tool-schema.ts"
 import { agentChannelOptions } from "./trigger-runtime.ts"
+import { isWorkflowRun } from "./http-response.ts"
 
 import type { AgentChannelHistory, AgentChannelHistoryQuery, AgentInput, AgentRuntimeConfig, AgentRuntimeContext } from "./types.ts"
 
@@ -137,11 +138,6 @@ function createMemo(): AgentRuntimeContext["memo"] {
   }
 }
 
-/** A Workflow runtime returns its run handle instead of the Agent output. */
-function isWorkflowRun(value: unknown): boolean {
-  return isRuntimeRecord(value) && hasRuntimeType(value.id, "string") && hasRuntimeType(value.provider, "string") && hasRuntimeType(value.status, "string")
-}
-
 /**
  * Sends past Channel messages from the Channel's `history` Collection through its trigger.
  * Each item starts one Invocation. Items that already have an Invocation are skipped unless `force` is set.
@@ -187,10 +183,10 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
     // A forced replay needs a new ID because the stable one already has an Invocation.
     const id = options.force ? `${stableId}:${crypto.randomUUID()}` : stableId
     try {
-      const itemRuntime = { ...runtime, ...(!options.force && invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), run: { ...runtime.run, runId: id } }
+      const itemRuntime = { ...runtime, ...(!options.force && invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), request: undefined, run: { ...runtime.run, runId: id } }
       const invocation = await resolveAgentTriggerInvocation(agent, itemRuntime, triggerId, item)
       if (isResolvedAgentTriggerHandledInvocation(invocation)) return { id, key, reason: "handled", status: "skipped" }
-      const output = await runAgent(agent, { ...itemRuntime, run: { ...invocation.run, runId: id } }, {
+      const output = await runAgent(agent, { ...itemRuntime, run: { ...runtime.run, ...invocation.run, runId: id } }, {
         ...invocation.input,
         ...(options.dryRun ? { dryRun: true } : {}),
       })
