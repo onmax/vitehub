@@ -1447,7 +1447,7 @@ export function createMemoryAgentInvocationStore(): AgentInvocationStore {
         && claim.claimId !== claimId && !expected.includes(claim.claimId)
       if (expectedMismatch) return false
       const replace = options?.replaceExisting
-        || (options?.replaceClaimToken !== undefined && claim?.token === options.replaceClaimToken)
+        || (expected === undefined && options?.replaceClaimToken !== undefined && claim?.token === options.replaceClaimToken)
       const claimConflict = claim !== undefined && claim.claimId !== claimId
       const activeConflict = expected === undefined && claimConflict && claim.expiresAt > now
       if (!records.has(id) || (!replace && activeConflict)) return false

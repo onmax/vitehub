@@ -2652,6 +2652,27 @@ describe("Agent Invocations", () => {
     finally { vi.useRealTimers() }
   })
 
+  it("keeps expected claim fencing when a stale token is also supplied", async () => {
+    const memory = createMemoryAgentInvocationStore()
+    await memory.create({
+      createdAt: "2026-02-02T02:02:02.000Z",
+      id: "expected-token-fence",
+      observations: [],
+      status: "pending",
+      traceId: "expected-token-fence-trace",
+      updatedAt: "2026-02-02T02:02:02.000Z",
+    })
+
+    expect(await memory.claim("expected-token-fence", "first", 30_000)).toBe(true)
+    const firstToken = await memory.getClaimToken("expected-token-fence")
+    expect(firstToken).toEqual(expect.any(String))
+    expect(await memory.claim("expected-token-fence", "second", 30_000, { expectedClaimIds: ["first"] })).toBe(true)
+    expect(await memory.claim("expected-token-fence", "stale", 30_000, {
+      expectedClaimIds: ["first"],
+      replaceClaimToken: firstToken,
+    })).toBe(false)
+  })
+
   it("rejects a superseded memory claim after the newer claim expires", async () => {
     vi.useFakeTimers()
     try {
