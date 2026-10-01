@@ -84,7 +84,7 @@ import {
 import type { GmailClient, GmailLabelSettings, GmailMessage, GmailModifyInput, GmailSettings } from "./internal/gmail-channel.ts"
 import type { AgentChannelChatRouteBody, AgentChannelChatRouteHandlerOptions } from "./server.ts"
 import type { TelegramAdapterConfig } from "@chat-adapter/telegram"
-import { createExecutionContext, createRuntimeContext, encodeRouteSegment, resolveRuntimeValue } from "@vite-hub/runtime"
+import { consoleInvocationUrl, createExecutionContext, createRuntimeContext, encodeRouteSegment, resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime"
 import type { Adapter, FileUpload } from "chat"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { channelEnv, channelEnvValue } from "./channel-env.ts"
@@ -102,6 +102,7 @@ function isAgentGitHub(value: unknown): value is AgentGitHub {
 export function githubChannelIdentity(channels: Readonly<Record<string, object>> | undefined): AgentGitHub | undefined {
   const identities = new Set<AgentGitHub>()
   for (const channel of Object.values(channels || {})) {
+    // SAFETY: github() stores its identity under this private symbol.
     const identity = (channel as { [githubChannelIdentityKey]?: AgentGitHub })[githubChannelIdentityKey]
     if (identity) identities.add(identity)
   }
@@ -2918,17 +2919,17 @@ async function githubPullRequestMatchesFilter<TRuntimeConfig extends AgentRuntim
 async function githubActivitySessionLink<TRuntimeConfig extends AgentRuntimeConfig>(
   context: AgentChannelTriggerContext<TRuntimeConfig>,
   runId: string,
-  options: GitHubChannelActivityOptions<TRuntimeConfig>,
-): Promise<{ label: string, url: string }> {
+  options: GitHubChannelActivityOptions<TRuntimeConfig> = {},
+): Promise<{ label: string, url: string } | undefined> {
   const agentName = context.agentName || context.agentIdentity?.name
+  if (!options.publicUrl && !agentName) return
   if (!agentName) throw new Error("GitHub activity session links require an Agent identity.")
   const { agentInvocationId } = await import("./invocations.ts")
   const id = await agentInvocationId(runId, agentName)
-  const publicUrl = await resolveRuntimeValue(options.publicUrl, context)
-  return {
-    label: "Current session",
-    url: new URL(`/_vitehub/agents/${encodeRouteSegment(agentName)}/invocations/${encodeURIComponent(id)}`, publicUrl).href,
-  }
+  // The public URL callback uses the discovered name, while an explicit name identifies the invocation.
+  const publicUrl = options.publicUrl ? await resolveRuntimeValue(options.publicUrl, context) : resolvePublicUrl({ agentName: context.agentIdentity?.name || agentName })
+  if (!publicUrl) return
+  return { label: "Current session", url: consoleInvocationUrl(publicUrl, agentName, id) }
 }
 
 function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
@@ -2992,7 +2993,7 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
         const run = githubPullRequestRunMetadata(pullRequestContext, context.trigger.channelId)
         if (activity) {
           run.activity = {
-            links: activityOptions ? [await githubActivitySessionLink(context, run.runId, activityOptions)] : [],
+            links: [await githubActivitySessionLink(context, run.runId, activityOptions)].filter(link => link !== undefined),
             target: {
               issue: command.issueNumber,
               repository: command.repository,
