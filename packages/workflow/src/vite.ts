@@ -329,7 +329,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       // Workflow and Provider Output association.
       // SAFETY: This plugin owns the private association token on resolved build options.
       const buildWithAssociation = config.build as typeof config.build & { [workflowBuildAssociation]?: object }
-      if (!buildWithAssociation[workflowBuildAssociation]) {
+      if (buildWithAssociation && !buildWithAssociation[workflowBuildAssociation]) {
         Object.defineProperty(buildWithAssociation, workflowBuildAssociation, {
           configurable: false,
           enumerable: true,
