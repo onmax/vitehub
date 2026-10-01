@@ -208,6 +208,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions & InternalC
           kit.addHandler({ handler: handlerFile, route: "/_vitehub/connections/**" })
           Object.assign(nextNitro, kit.config)
         }
+        // SAFETY: hasNitroConfigContext guarantees this config object exposes the mutable Nitro field.
         ;(config as { nitro?: Record<string, unknown> }).nitro = nextNitro
       }
       return nextConfig
