@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
+import * as v from "valibot"
+
 import {
   discoverViteHubDevServer,
   fetchViteHubDevEndpoint,
@@ -236,33 +238,23 @@ type KVCommandResult =
   | { operation: "set", value: KVDevSetResult }
   | { operation: "del", value: KVDevDeleteResult }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === "string")
+const targetFields = { key: v.string(), store: v.string() }
+const positiveNumber = v.pipe(v.number(), v.finite(), v.gtValue(0))
+const resultSchemas = {
+  list: v.object({ cursor: v.optional(v.string()), keys: v.array(v.string()), limit: v.pipe(positiveNumber, v.integer()), prefix: v.string(), store: v.string(), stores: v.array(v.string()) }),
+  get: v.pipe(v.object({ ...targetFields, encoding: v.optional(v.literal("base64")), found: v.boolean(), type: v.optional(v.string()), value: v.optional(v.unknown()) }), v.check(result => result.encoding !== "base64" || v.is(v.pipe(v.string(), v.regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)), result.value))),
+  has: v.object({ ...targetFields, exists: v.boolean() }),
+  set: v.object({ ...targetFields, created: v.boolean(), notice: v.optional(v.string()), ttl: v.optional(positiveNumber), type: v.string() }),
+  del: v.object({ ...targetFields, deleted: v.boolean() }),
 }
 
-function parseResult(operation: KVDevOperation, result: Record<string, unknown>): KVCommandResult | undefined {
-  if (typeof result.store !== "string") return
-  const store = result.store
-  if (operation === "list") {
-    if (!isStringArray(result.keys) || !isStringArray(result.stores) || typeof result.prefix !== "string" || typeof result.limit !== "number" || !Number.isInteger(result.limit) || result.limit < 1 || (result.cursor !== undefined && typeof result.cursor !== "string")) return
-    return { operation, value: { keys: result.keys, stores: result.stores, prefix: result.prefix, limit: result.limit, store, ...(typeof result.cursor === "string" ? { cursor: result.cursor } : {}) } }
-  }
-  if (typeof result.key !== "string") return
-  const key = result.key
+function parseResult(operation: KVDevOperation, result: unknown): KVCommandResult | undefined {
   switch (operation) {
-    case "get":
-      if (result.encoding === "base64" && (typeof result.value !== "string" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(result.value))) return
-      if (typeof result.found !== "boolean" || (result.type !== undefined && typeof result.type !== "string") || (result.encoding !== undefined && result.encoding !== "base64")) return
-      return { operation, value: { found: result.found, key, store, value: result.value, ...(typeof result.type === "string" ? { type: result.type } : {}), ...(result.encoding === "base64" ? { encoding: "base64" } : {}) } }
-    case "has":
-      if (typeof result.exists !== "boolean") return
-      return { operation, value: { exists: result.exists, key, store } }
-    case "set":
-      if (typeof result.created !== "boolean" || typeof result.type !== "string" || (result.ttl !== undefined && (typeof result.ttl !== "number" || !Number.isFinite(result.ttl) || result.ttl <= 0)) || (result.notice !== undefined && typeof result.notice !== "string")) return
-      return { operation, value: { created: result.created, key, store, type: result.type, ...(typeof result.ttl === "number" ? { ttl: result.ttl } : {}), ...(typeof result.notice === "string" ? { notice: result.notice } : {}) } }
-    case "del":
-      if (typeof result.deleted !== "boolean") return
-      return { operation, value: { deleted: result.deleted, key, store } }
+    case "list": { const parsed = v.safeParse(resultSchemas.list, result); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "get": { const parsed = v.safeParse(resultSchemas.get, result); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "has": { const parsed = v.safeParse(resultSchemas.has, result); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "set": { const parsed = v.safeParse(resultSchemas.set, result); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "del": { const parsed = v.safeParse(resultSchemas.del, result); return parsed.success ? { operation, value: parsed.output } : undefined }
   }
 }
 
@@ -321,9 +313,8 @@ async function readFailure(response: Response): Promise<KVCliFailure> {
   const text = await response.text()
   try {
     const body: unknown = JSON.parse(text)
-    if (isRecord(body) && isRecord(body.error) && typeof body.error.message === "string") {
-      return { ...(typeof body.error.code === "string" ? { code: body.error.code } : {}), message: body.error.message }
-    }
+    const parsed = v.safeParse(v.object({ error: v.object({ code: v.optional(v.string()), message: v.string() }) }), body)
+    if (parsed.success) return parsed.output.error
   }
   catch {
     // Guard rejections use plain text.

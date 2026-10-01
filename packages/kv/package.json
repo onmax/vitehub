@@ -47,7 +47,8 @@
     "defu": "catalog:unjs",
     "destr": "^2.0.5",
     "nostics": "catalog:runtime",
-    "unstorage": "catalog:storage"
+    "unstorage": "catalog:storage",
+    "valibot": "catalog:runtime"
   },
   "devDependencies": {
     "@vite-hub/internal": "workspace:*",
