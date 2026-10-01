@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { redactInspectionText, redactInspectionValue } from "@vite-hub/internal/inspect"
 import { getViteHubErrorShape } from "@vite-hub/runtime"
 
@@ -131,14 +132,14 @@ function addressList(value: EmailAddressList | undefined): string[] | undefined 
 }
 
 function attachmentSize(content: EmailAttachment["content"]): number {
-  return typeof content === "string" ? new TextEncoder().encode(content).byteLength : content.byteLength
+  return v.is(v.string(), content) ? new TextEncoder().encode(content).byteLength : content.byteLength
 }
 
 function redactHeaders(headers: Record<string, string> | undefined): Record<string, string> {
   if (!headers) return {}
   return Object.fromEntries(Object.entries(headers).map(([name, value]) => {
     const redacted = redactInspectionValue(value, name)
-    return [name, typeof redacted === "string" ? redactInspectionText(redacted) : String(redacted)]
+    return [name, v.is(v.string(), redacted) ? redactInspectionText(redacted) : String(redacted)]
   }))
 }
 
@@ -152,6 +153,7 @@ function isoDate(value: Date | string): string {
 }
 
 function optional<TKey extends string, TValue>(key: TKey, value: TValue | undefined): Partial<Record<TKey, TValue>> {
+  // SAFETY: The computed property is exactly key and contains the provided TValue.
   return value === undefined ? {} : { [key]: value } as Record<TKey, TValue>
 }
 
@@ -197,7 +199,8 @@ export function summarizeEmailOutboxMessage(
 
 function failedDelivery(error: unknown): EmailOutboxDelivery {
   const shape = getViteHubErrorShape(error)
-  const code = shape?.code ?? (error && typeof error === "object" && typeof Reflect.get(error, "code") === "string" ? String(Reflect.get(error, "code")) : undefined)
+  const coded = v.safeParse(v.object({ code: v.optional(v.string()) }), error)
+  const code = shape?.code ?? (coded.success ? coded.output.code : undefined)
   const message = error instanceof Error ? error.message : String(error)
   return { error: { ...optional("code", code), message: redactInspectionText(message) }, status: "failed" }
 }
@@ -242,7 +245,7 @@ export async function createEmailDevOutboxDriver(options: EmailDevOutboxDriverOp
 
   let driver: EmailDriver
   try {
-    driver = await (typeof options.driver === "function" ? options.driver() : options.driver)
+    driver = await (v.is(v.function(), options.driver) ? options.driver() : options.driver)
   }
   catch (error) {
     // Keep the message visible when the provider options cannot be resolved, then report the original failure.

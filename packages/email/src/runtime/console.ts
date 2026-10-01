@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 
 import { emailDevHeader, emailDevHeaderValue, isEmailDevOperation } from "../dev.ts"
@@ -146,12 +147,8 @@ function failure(message: string, status: number, code?: string): Response {
 
 async function readBody(request: Request): Promise<EmailDevRequestBody | undefined> {
   const body: unknown = await request.json().catch(() => undefined)
-  if (!body || typeof body !== "object" || Array.isArray(body)) return
-  const operation: unknown = Reflect.get(body, "operation")
-  const id: unknown = Reflect.get(body, "id")
-  if (!isEmailDevOperation(operation)) return
-  if (id !== undefined && (typeof id !== "string" || !id)) return
-  return { ...(id !== undefined ? { id } : {}), operation }
+  const parsed = v.safeParse(v.object({ operation: v.picklist(["list", "get", "clear"]), id: v.optional(v.pipe(v.string(), v.minLength(1))) }), body)
+  return parsed.success ? parsed.output : undefined
 }
 
 function runOperation(body: EmailDevRequestBody, runtimeId?: string): Response {

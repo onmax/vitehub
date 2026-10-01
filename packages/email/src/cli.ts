@@ -217,7 +217,7 @@ function formatMessage(message: EmailOutboxMessage): string {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return v.is(v.record(v.string(), v.unknown()), value)
 }
 
 const deliverySchema = v.variant("status", [
@@ -258,10 +258,8 @@ async function readFailure(response: Response): Promise<{ code?: string, message
   const text = await response.text()
   try {
     const body: unknown = JSON.parse(text)
-    const error = isRecord(body) && isRecord(body.error) ? body.error : undefined
-    if (typeof error?.message === "string") {
-      return { ...(typeof error.code === "string" ? { code: error.code } : {}), message: error.message }
-    }
+    const parsed = v.safeParse(v.object({ error: v.object({ code: v.optional(v.string()), message: v.string() }) }), body)
+    if (parsed.success) return parsed.output.error
   }
   catch {
     // Guard rejections use plain text.
@@ -329,7 +327,7 @@ async function runOutboxCommand(command: OutboxCommand, args: string[], context:
   if (server.discovery.runtime !== "nitro") {
     return writeFailure(parsed.json, context, {
       code: "EMAIL_DEV_RUNTIME_UNAVAILABLE",
-      message: typeof server.discovery.message === "string"
+      message: v.is(v.string(), server.discovery.message)
         ? server.discovery.message
         : "This Vite Development Server cannot reach the Email outbox.",
     })

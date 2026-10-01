@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { randomUUID } from "node:crypto"
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
@@ -170,10 +171,10 @@ function resolveOutboxOptions(value: unknown): ResolvedEmailOutboxOptions | unde
   }
   const deliver = value?.deliver ?? true
   const limit = value?.limit ?? 50
-  if (typeof deliver !== "boolean") {
+  if (!v.is(v.boolean(), deliver)) {
     throw emailErrorDiagnostics.EMAIL_B0008({ message: "[vitehub] email.outbox.deliver must be a boolean." })
   }
-  if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 1000) {
+  if (!v.is(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(1000)), limit)) {
     throw emailErrorDiagnostics.EMAIL_B0008({ message: "[vitehub] email.outbox.limit must be an integer from 1 to 1000." })
   }
   return { deliver, limit }
@@ -521,7 +522,7 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
         nitroBaseURL: () => {
           // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
           const baseURL = (resolvedConfig as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
-          return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
+          return v.is(v.string(), baseURL) ? baseURL : process.env.NITRO_APP_BASE_URL
         },
       })
       server.watcher.add(templatesRoots)

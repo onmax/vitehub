@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { readdir } from "node:fs/promises"
 import { relative, resolve } from "node:path"
 
@@ -9,7 +10,7 @@ async function listEmailTemplates(root: string, directory = root): Promise<strin
     entries = await readdir(directory, { withFileTypes: true })
   }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    if (v.is(v.object({ code: v.literal("ENOENT") }), error)) return []
     throw error
   }
 
