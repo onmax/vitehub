@@ -862,7 +862,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
   if (options.connections) {
     if (!options.database) throw viteHubErrorDiagnostics.VITE_HUB_R0122({ message: "[vitehub] connections requires database. Set database: true." })
     if (options.connections !== true && options.connections.management && !options.console) {
-      throw viteHubErrorDiagnostics.VITE_HUB_R0123({ message: '[vitehub] connections.management requires Console production access. Set console: { access: "auth" } or console: { exposure: "host-managed" }.' })
+      throw viteHubErrorDiagnostics.VITE_HUB_R0124({ message: '[vitehub] connections.management requires Console production access. Set console: { access: "auth" } or console: { exposure: "host-managed" }.' })
     }
     plugins.push(hubConnections({
       ...(options.connections === true ? {} : options.connections),
