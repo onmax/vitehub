@@ -2627,6 +2627,27 @@ describe("Agent Invocations", () => {
     finally { vi.useRealTimers() }
   })
 
+  it("keeps expected claim fencing after the current memory claim expires", async () => {
+    vi.useFakeTimers()
+    try {
+      const memory = createMemoryAgentInvocationStore()
+      await memory.create({
+        createdAt: "2026-02-02T02:02:02.000Z",
+        id: "expired-expected-claim",
+        observations: [],
+        status: "pending",
+        traceId: "expired-expected-claim-trace",
+        updatedAt: "2026-02-02T02:02:02.000Z",
+      })
+
+      expect(await memory.claim("expired-expected-claim", "first", 1)).toBe(true)
+      expect(await memory.claim("expired-expected-claim", "second", 1, { expectedClaimIds: ["first"] })).toBe(true)
+      await vi.advanceTimersByTimeAsync(2)
+      expect(await memory.claim("expired-expected-claim", "stale", 30_000, { expectedClaimIds: ["first"] })).toBe(false)
+    }
+    finally { vi.useRealTimers() }
+  })
+
   it("bounds unresolved claim generations and recovers without stale cleanup", async () => {
     vi.useFakeTimers()
     try {

@@ -1443,8 +1443,10 @@ export function createMemoryAgentInvocationStore(): AgentInvocationStore {
       const replace = options?.replaceExisting
         || (options?.replaceClaimToken !== undefined && claim?.token === options.replaceClaimToken)
       const expected = options?.expectedClaimIds
-      const expectedMatch = expected !== undefined && (claim === undefined || expected.includes(claim.claimId))
-      if (!records.has(id) || (!replace && !expectedMatch && claim && claim.claimId !== claimId && claim.expiresAt > now)) return false
+      const claimConflict = claim !== undefined && claim.claimId !== claimId
+      const fencedConflict = expected !== undefined && claimConflict && !expected.includes(claim.claimId)
+      const activeConflict = expected === undefined && claimConflict && claim.expiresAt > now
+      if (!records.has(id) || (!replace && (fencedConflict || activeConflict))) return false
       claims.set(id, { claimId, expiresAt: now + leaseMs, token: globalThis.crypto.randomUUID() })
       return true
     },
