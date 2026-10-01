@@ -21,7 +21,7 @@ export interface RateLimitDevEndpointOptions {
  */
 export function registerRateLimitDevEndpoint(server: ViteHubNitroDevServer, options: RateLimitDevEndpointOptions = {}): void {
   const host = server.config.server.host
-  if (host === true || (typeof host === "string" && !["localhost", "127.0.0.1", "::1", "[::1]"].includes(host))) {
+  if (host === true || (host && !["localhost", "127.0.0.1", "::1", "[::1]"].includes(host))) {
     throw new Error("[vitehub] Rate Limit dev commands require a loopback-only Vite server. Set server.host to localhost, 127.0.0.1, or ::1.")
   }
   const guardedServer: ViteHubNitroDevServer = {

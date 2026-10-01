@@ -41,7 +41,8 @@
   },
   "dependencies": {
     "h3": "catalog:unjs",
-    "nostics": "catalog:runtime"
+    "nostics": "catalog:runtime",
+    "valibot": "catalog:runtime"
   },
   "devDependencies": {
     "@types/node": "catalog:tooling",
