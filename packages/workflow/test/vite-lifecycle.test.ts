@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import type { ResolvedConfig } from "vite"
+
 const lifecycle = vi.hoisted(() => ({
   capture: vi.fn((_context: unknown, _catalog: unknown) => undefined),
   contribute: vi.fn(),
@@ -157,6 +159,27 @@ describe("Workflow Provider Output lifecycle", () => {
     }
     expect(lifecycle.useCatalog).toHaveBeenCalledTimes(2)
     expect(lifecycle.capture.mock.calls.map(call => call[1])).toEqual(catalogs)
+  })
+
+  it("fails closed for same-root clones without a stable build association", async () => {
+    const plugin = hubWorkflow()
+    const configs = ["first", "second"].map(name => ({
+      build: { outDir: "dist" },
+      command: "build",
+      define: { __VITEHUB_PUBLIC_URL__: JSON.stringify("https://shared.example.com") },
+      plugins: [],
+      resolve: { alias: [] },
+      root: "/project",
+      workflow: { provider: "vercel", name },
+    }))
+    for (const config of configs) functionHook(plugin.configResolved, "configResolved")(config)
+
+    const clone = {
+      ...configs[0],
+      build: { ...configs[0]!.build },
+      workflow: undefined,
+    }
+    await expect(plugin.vitehub?.workflow?.prepareScheduleRuntime?.(undefined, clone as unknown as ResolvedConfig)).resolves.toBeUndefined()
   })
 
   it("keeps Provider Output work in the Nuxt 4 SSR environment", async () => {
