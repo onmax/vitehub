@@ -195,12 +195,7 @@ export default defineConfig({
       { from: "src/console/runtime/components/console-env-activity.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/components/console-env-access.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/pages/kv.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/queues.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/rate-limits.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/schedules.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/sandboxes.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/workflows.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/workspaces.vue", to: "dist/console/runtime/pages" },
+      { from: "src/console/runtime/pages/section.vue", to: "dist/console/runtime/pages" },
       { from: "../ui/styles.css", to: "dist/ui" },
       { from: "templates/cloudflare-types.d.ts", to: "dist" },
     ],
@@ -250,6 +245,7 @@ export default defineConfig({
       "src/console/runtime/sections.ts",
       "src/console/runtime/server/agents.get.ts",
       "src/console/runtime/server/blob.get.ts",
+      "src/console/runtime/server/channel-replay.ts",
       "src/console/runtime/server/client.get.ts",
       "src/console/runtime/server/database.get.ts",
       "src/console/runtime/server/definitions.get.ts",
@@ -287,6 +283,7 @@ export default defineConfig({
         delete exports["./console/runtime/server/agents.get"];
         delete exports["./console/runtime/server/blob"];
         delete exports["./console/runtime/server/blob.get"];
+        delete exports["./console/runtime/server/channel-replay"];
         delete exports["./console/runtime/server/client.get"];
         delete exports["./console/runtime/server/database"];
         delete exports["./console/runtime/server/database.get"];

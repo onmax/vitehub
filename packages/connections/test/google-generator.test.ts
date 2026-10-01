@@ -41,6 +41,7 @@ it("generates required document fields, nested fields, and method parameters fro
           parameters: {
             userId: { location: "path", required: true, type: "string" },
             trace: { location: "query", type: "string" },
+            startHistoryId: { location: "query", description: "Required. The history start ID.", type: "string" },
           },
           request: { $ref: "Request" },
         },
@@ -59,6 +60,7 @@ it("generates required document fields, nested fields, and method parameters fro
     expect(output).toContain("optional?: boolean")
     expect(output).toContain("userId: string")
     expect(output).toContain("trace?: string")
+    expect(output).toContain("startHistoryId: string")
     expect(output).toContain("body: GmailRequest")
     expect(output).toContain('"messages.get": {\n    method: "GET"')
     expect(output).toContain('"messages.send": {\n    method: "POST"')

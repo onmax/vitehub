@@ -1462,6 +1462,11 @@ export interface AgentProviderDriverOptions<
   TOutput = unknown,
 > {
   capacity?: AgentDriverCapacityOptions
+  /**
+   * Existing directory where the provider runs. The driver does not copy, snapshot, write back, or remove it.
+   * Workspace Sources still materialize, but no Workspace session starts. Title and progress summary runs ignore it.
+   */
+  cwd?: AgentProviderWorkingDirectoryResolver<TRuntimeConfig>
   /** Provider process environment. Every resolved value is treated as a credential in persisted diagnostics. */
   env?: AgentProviderEnvironmentResolver<TRuntimeConfig>
   execution?: {
@@ -1507,8 +1512,11 @@ export type AgentProviderEnvironment = Record<string, string | undefined>
 export type AgentProviderEnvironmentResolver<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
   MaybeResolvable<AgentProviderEnvironment, AgentProviderCredentialContext<TRuntimeConfig>>
 
+export type AgentProviderWorkingDirectoryResolver<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
+  MaybeResolvable<string, AgentProviderCredentialContext<TRuntimeConfig>>
+
 export interface AgentProviderExitContext {
-  /** Disposable provider working directory, still available during this callback. */
+  /** Provider working directory, still available during this callback. It is temporary unless `driver.cwd` is set. */
   cwd: string
   /** Independent teardown deadline. Stop all I/O when this signal aborts. */
   abortSignal: AbortSignal
@@ -1576,6 +1584,7 @@ export interface AgentModelDriver<
   ask?: never
   capacity?: AgentDriverCapacityOptions
   credentials?: never
+  cwd?: never
   execution?: AgentModelExecutionOptions<TRuntimeConfig, CALL_OPTIONS>
   instructions?: AgentAdapterInstructions<TRuntimeConfig>
   kind?: never
@@ -1604,6 +1613,7 @@ export interface AgentRunDriver<
   ask?: never
   capacity?: AgentDriverCapacityOptions
   credentials?: never
+  cwd?: never
   execution?: never
   instructions?: never
   kind?: never
@@ -2332,12 +2342,37 @@ export type AgentChannelMessageOf<TChannels> =
     ? undefined
     : { [TName in keyof TChannels & string]: AgentChannelMessageFromInput<TName, NonNullable<TChannels[TName]>> }[keyof TChannels & string] | undefined
 
+/** Request query for a Channel history Collection: one string or repeated strings per key. */
+export type AgentChannelHistoryQuery = Record<string, string | readonly string[] | undefined>
+
+/**
+ * The part of a `@vite-hub/source` Collection that Channel replay uses.
+ * A Collection from `defineCollection()` satisfies it.
+ */
+export interface AgentChannelHistoryCollection<TItem = unknown> {
+  page(options: { cursor?: string, limit?: number, query: object, signal?: AbortSignal }): Promise<{ items: TItem[], nextCursor: string | null }>
+  parseQuery(input: AgentChannelHistoryQuery): Promise<object>
+  readonly querySchema?: StandardSchemaV1
+}
+
+/** Past Channel messages that `replayChannel()` sends through a Channel trigger. */
+export interface AgentChannelHistory<TItem = unknown> {
+  /** Collection of past messages. Each item is the input of `trigger`. */
+  collection: AgentChannelHistoryCollection<TItem>
+  /** Returns a stable key for an item, such as the provider message ID. Replay derives the Invocation ID from it. */
+  key(item: TItem): string
+  /** Channel trigger that receives each item. Optional when the Channel has exactly one trigger. */
+  trigger?: string
+}
+
 export interface AgentChannelDefinition<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   /** Internal delivery handlers for built-in Channels. */
   [channelDeliveryHandlers]?: AgentChannelDeliveryEffects<TRuntimeConfig>
   activity?: AgentChannelActivityDefinition<TRuntimeConfig>
   adapter?: AgentChatPlatformResolver<TRuntimeConfig>
   capabilities?: readonly AgentCapabilityDefinition<TRuntimeConfig>[]
+  /** Past messages that `replayChannel()` and `vitehub channels replay` send through a trigger. */
+  history?: AgentChannelHistory
   identity?: IdentityResolver
   kind: string
   listener?: { kind: "telegram-polling" }
@@ -2507,6 +2542,8 @@ export interface AgentInspectionModelExecutionMetadata {
 export interface AgentInspectionProviderMetadata {
   credentialProfile?: string
   credentials?: true
+  /** Present when driver.cwd runs the provider in an existing directory. The path is not exposed. */
+  cwd?: "dynamic" | "static"
   environment?: "dynamic" | "static"
   launch?: "dynamic" | "static"
   model?: string

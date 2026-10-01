@@ -125,16 +125,18 @@ export async function reconcileOneSnapshot(inbox: PullRequestInbox, read: ReadGi
   // New resolution evidence wakes a waiting PR without repeated full queries
   // in every agent pass.
   if (snapshot.threads) await inbox.refreshThreads(s, snapshot.threads)
+  const deliveries: { id: string; event: string; value: GitHubDelivery }[] = []
   const ingest = async (event: string, payload: GitHubDelivery) => {
     const full = { repository: { full_name: s.repository }, ...payload }
     const id = `reconcile:${createHash('sha256').update(JSON.stringify([event, full])).digest('hex')}`
-    await inbox.ingest(id, event, full)
+    deliveries.push({ id, event, value: full })
   }
   await ingest('pull_request', { action: snapshot.pr.state === 'closed' ? 'closed' : 'synchronize', pull_request: snapshot.pr })
-  if (snapshot.pr.state !== 'open') return
+  if (snapshot.pr.state !== 'open') { await inbox.ingestMany(deliveries); return }
   for (const comment of Object.values(snapshot.comments ?? {})) await ingest('issue_comment', { action: 'edited', issue: { number: s.number, pull_request: {} }, comment })
   for (const review of Object.values(snapshot.reviews ?? {})) await ingest('pull_request_review', { action: 'submitted', pull_request: snapshot.pr, review })
   for (const comment of Object.values(snapshot.reviewComments ?? {})) await ingest('pull_request_review_comment', { action: 'edited', pull_request: snapshot.pr, comment })
   for (const check_run of Object.values(snapshot.checks ?? {})) await ingest('check_run', { action: check_run.status, check_run })
-  for (const status of Object.values(snapshot.statuses ?? {}) ) await ingest('status', { ...status, sha: snapshot.pr.head?.sha })
+  for (const status of Object.values(snapshot.statuses ?? {})) await ingest('status', { ...status, sha: snapshot.pr.head?.sha })
+  await inbox.ingestMany(deliveries)
 }

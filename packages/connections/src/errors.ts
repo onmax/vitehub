@@ -1,6 +1,6 @@
 import { isViteHubError, ViteHubError } from "@vite-hub/runtime"
 
-export type ConnectionErrorReason = "approval_required" | "denied" | "invalid" | "provider" | "reauth_required"
+export type ConnectionErrorReason = "approval_required" | "denied" | "execution_unknown" | "invalid" | "provider" | "reauth_required"
 export type ConnectionErrorCode = `CONNECTION_${Uppercase<ConnectionErrorReason>}`
 
 export interface ConnectionErrorDetails {
@@ -14,6 +14,7 @@ export interface ConnectionErrorDetails {
 const errorCodes = {
   approval_required: "CONNECTION_APPROVAL_REQUIRED",
   denied: "CONNECTION_DENIED",
+  execution_unknown: "CONNECTION_EXECUTION_UNKNOWN",
   invalid: "CONNECTION_INVALID",
   provider: "CONNECTION_PROVIDER",
   reauth_required: "CONNECTION_REAUTH_REQUIRED",
