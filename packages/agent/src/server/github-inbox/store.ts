@@ -4,6 +4,7 @@ import { parseWait, type PullRequestWait } from './wait-state.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import * as v from 'valibot'
 import { isRuntimeNumber, isRuntimeString } from '../../internal/runtime-value.ts'
+import { isRuntimeRecord } from '../../internal/runtime-type.ts'
 import { createNodeSqliteInboxStorage, type PullRequestInboxExecutor, type PullRequestInboxRow, type PullRequestInboxStorage } from './storage.ts'
 
 import type { GitHubPullRequestFilter, GitHubPullRequestFilterContext } from '../../channels.ts'
@@ -283,7 +284,7 @@ export class PullRequestInbox {
     return await this.transaction(async tx => {
       const key = this.directMergeKey(repository, number)
       const attempt = await this.metaIn(tx, key)
-      if (!attempt || Object.prototype.toString.call(attempt) !== '[object Object]' || (attempt as Record<string, unknown>).token !== token) return false
+      if (!isRuntimeRecord(attempt) || Array.isArray(attempt) || attempt.token !== token) return false
       await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])
       return true
     })
