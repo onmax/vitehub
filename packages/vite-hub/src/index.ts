@@ -759,7 +759,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     const configHook = envPlugin.config
     if (configHook) envPlugin.config = {
       order: "post",
-      handler: typeof configHook === "function" ? configHook : configHook.handler,
+      handler: "handler" in configHook ? configHook.handler : configHook,
     }
     plugins.push(agentChannelEnvPlugin())
   }

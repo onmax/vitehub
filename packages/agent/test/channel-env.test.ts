@@ -534,6 +534,15 @@ describe("built-in Channel discovery", () => {
     ])
   })
 
+  it.each(["as TelegramChannelOptions", "satisfies TelegramChannelOptions", "as Options<Runtime>"])("rejects runtime expressions after grouped asserted Channel options with %s", (assertion) => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram(({} ${assertion}) || dynamicOptions)
+      telegram(({} ${assertion}) && dynamicOptions)
+      telegram(({} ${assertion}) ?? dynamicOptions)
+    `)).toEqual(Array.from({ length: 3 }, () => ({ kind: "telegram", keys: undefined })))
+  })
+
   it("unwraps TypeScript angle assertions on Channel options", () => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
