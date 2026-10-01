@@ -55,6 +55,7 @@ interface AgentWorkflowRegistryPlugin extends Plugin {
 }
 
 const noExternalAddition = createNoExternalAddition(workflowPackageName)
+const workflowBuildAssociation = Symbol("vitehubWorkflowBuildAssociation")
 
 interface ScheduledWorkflowBuildConfig {
   config: ResolvedConfig
@@ -121,18 +122,13 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     const direct = scheduleBuildConfigs.get(config)
     if (direct) return direct
     const candidates = scheduledBuildConfigsByRoot.get(config.root) ?? []
-    // Vite's environment configs retain the resolved build options even when
-    // private fields are omitted. Prefer this association over equal URL values.
-    const sharedBuild = config.build && candidates.find(candidate => candidate.config.build === config.build)
-    if (sharedBuild) {
-      scheduleBuildConfigs.set(config, sharedBuild)
-      return sharedBuild
-    }
-    if (candidates.length === 1) return candidates[0]
-    // Do not infer ownership from reduced build settings. A same-root clone can
-    // share its output directory and URL defines while differing in Workflow
-    // options, aliases, server directories, or Provider Output catalog.
-    return undefined
+    const association = (config.build as typeof config.build & { [workflowBuildAssociation]?: object })[workflowBuildAssociation]
+    const sharedBuild = association && candidates.find(candidate => (
+      (candidate.config.build as typeof candidate.config.build & { [workflowBuildAssociation]?: object })[workflowBuildAssociation] === association
+    ))
+    if (!sharedBuild) return undefined
+    scheduleBuildConfigs.set(config, sharedBuild)
+    return sharedBuild
   }
 
   function providerRuntimeImportAliases(provider: "cloudflare" | "vercel", generation?: ProviderDeploymentOutputGeneration, catalog = providerOutput): Record<string, string> {
@@ -321,6 +317,18 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       workflow = config.workflow ?? defaultWorkflow
       // SAFETY: The framework adds optional forwarded server directories to resolved Vite configuration.
       const buildConfig = config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[], __vitehubWorkflowServerDirs?: string[] }
+      // Vite clones environment configs by copying the build options. Keep a
+      // stable owner token on that object so clones retain their full
+      // Workflow and Provider Output association.
+      const buildWithAssociation = config.build as typeof config.build & { [workflowBuildAssociation]?: object }
+      if (!buildWithAssociation[workflowBuildAssociation]) {
+        Object.defineProperty(buildWithAssociation, workflowBuildAssociation, {
+          configurable: false,
+          enumerable: true,
+          value: {},
+          writable: false,
+        })
+      }
       const buildServerDirs = buildConfig[VITEHUB_SERVER_DIRS] ?? buildConfig.__vitehubWorkflowServerDirs
       serverDirs = buildServerDirs
       const scheduled = { config, providerOutput, workflow, serverDirs: buildServerDirs }

@@ -139,7 +139,7 @@ describe("Workflow Provider Output lifecycle", () => {
     for (const config of configs) functionHook(plugin.configResolved, "configResolved")(config)
     const catalogs = lifecycle.useCatalog.mock.results.map(result => result.value)
     const contexts = configs.map(config => {
-      const clone = { ...config }
+      const clone = { ...config, build: { ...config.build } }
       Reflect.deleteProperty(clone, "__vitehubServerDirs")
       return { environment: { config: clone } }
     })
@@ -176,7 +176,7 @@ describe("Workflow Provider Output lifecycle", () => {
 
     const clone = {
       ...configs[0],
-      build: { ...configs[0]!.build },
+      build: { outDir: configs[0]!.build.outDir },
       workflow: undefined,
     }
     await expect(plugin.vitehub?.workflow?.prepareScheduleRuntime?.(undefined, clone as unknown as ResolvedConfig)).resolves.toBeUndefined()
