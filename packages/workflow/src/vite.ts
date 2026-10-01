@@ -106,6 +106,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
   }>()
   let serverDirs: string[] | undefined
   const stagedArtifactDirs = new WeakMap<object, string>()
+  const rejectedBuilds = new WeakSet<object>()
   const fallbackEnvironment = {}
   const buildEnvironment = (context: { environment?: object } | undefined): object =>
     context?.environment ?? context ?? fallbackEnvironment
@@ -123,15 +124,19 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     const candidates = scheduledBuildConfigsByRoot.get(config.root) ?? []
     // Vite's environment configs retain the resolved build options even when
     // private fields are omitted. Prefer this association over equal URL values.
-    const sharedBuild = config.build && candidates.find(candidate => candidate.config.build === config.build)
-    if (sharedBuild) {
-      scheduleBuildConfigs.set(config, sharedBuild)
-      return sharedBuild
+    const sharedBuilds = config.build ? candidates.filter(candidate => candidate.config.build === config.build) : []
+    if (sharedBuilds.length === 1) {
+      scheduleBuildConfigs.set(config, sharedBuilds[0]!)
+      return sharedBuilds[0]
     }
     if (candidates.length === 1) return candidates[0]
     const publicDefine = JSON.stringify({ publicUrl: config.define?.__VITEHUB_PUBLIC_URL__, base: config.define?.__VITEHUB_APP_BASE_URL__ })
-    return candidates.find(candidate => candidate.config.build.outDir === config.build.outDir
+    const matches = candidates.filter(candidate => candidate.config.build.outDir === config.build.outDir
       && JSON.stringify({ publicUrl: candidate.config.define?.__VITEHUB_PUBLIC_URL__, base: candidate.config.define?.__VITEHUB_APP_BASE_URL__ }) === publicDefine)
+    if (candidates.length && matches.length !== 1) throw workflowErrorDiagnostics.WORKFLOW_B0002({ root: config.root })
+    const match = matches[0]
+    if (match) scheduleBuildConfigs.set(config, match)
+    return match
   }
 
   function providerRuntimeImportAliases(provider: "cloudflare" | "vercel", generation?: ProviderDeploymentOutputGeneration, catalog = providerOutput): Record<string, string> {
@@ -365,6 +370,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     buildStart() {
       if (shouldSkipProviderOutputEnvironment(this)) return
       const context = buildEnvironment(this)
+      rejectedBuilds.delete(context)
       // Vite's builder can resolve several environments before starting any of
       // them. Read the environment config here so a reused plugin does not use
       // the last configResolved call for every build.
@@ -372,7 +378,14 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       if (environmentConfig) {
         // SAFETY: This private fallback field is copied from the plugin's config hook by Vite.
         const config = environmentConfig as typeof environmentConfig & { [VITEHUB_SERVER_DIRS]?: string[], __vitehubWorkflowServerDirs?: string[] }
-        const scheduled = scheduledBuildConfig(config) ?? {
+        let scheduled = scheduleBuildConfigs.get(config)
+        try {
+          scheduled ??= scheduledBuildConfig(config)
+        } catch (error) {
+          rejectedBuilds.add(context)
+          throw error
+        }
+        scheduled ??= {
           config,
           providerOutput: useProviderOutputCatalog(config),
           serverDirs: config[VITEHUB_SERVER_DIRS] ?? config.__vitehubWorkflowServerDirs,
@@ -391,7 +404,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       providerOutputGenerations.capture(this, buildConfigs.get(context)?.providerOutput ?? providerOutput)
     },
     async buildEnd(error) {
-      if (shouldSkipProviderOutputEnvironment(this)) return
+      if (rejectedBuilds.has(buildEnvironment(this)) || shouldSkipProviderOutputEnvironment(this)) return
       const build = buildConfigs.get(buildEnvironment(this))
       if (error) {
         await providerOutputGenerations.reset(this, build?.providerOutput ?? providerOutput, error)
@@ -488,7 +501,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       }
     },
     async renderError(error) {
-      if (shouldSkipProviderOutputEnvironment(this)) return
+      if (rejectedBuilds.has(buildEnvironment(this)) || shouldSkipProviderOutputEnvironment(this)) return
       const environment = providerOutputGenerations.get(this) ?? buildEnvironment(this)
       const build = buildConfigs.get(buildEnvironment(this))
       await providerOutputGenerations.reset(this, build?.providerOutput ?? providerOutput, error)
@@ -502,7 +515,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       order: "post",
       sequential: true,
       async handler() {
-        if (shouldSkipProviderOutputEnvironment(this)) return
+        if (rejectedBuilds.has(buildEnvironment(this)) || shouldSkipProviderOutputEnvironment(this)) return
         const build = buildConfigs.get(buildEnvironment(this))
         const config = build?.config ?? resolved
         if (!config || shouldSkipViteProviderBuild(config.command, getViteMode())) return

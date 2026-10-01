@@ -77,3 +77,24 @@ it.each([
     await contributions[0]?.discard?.()
   }
 })
+
+
+it("rejects an ambiguous Agent environment clone before contributing output", async () => {
+  const plugin = hubAgent()
+  const root = await mkdtemp(join(tmpdir(), "vitehub-agent-ambiguous-build-"))
+  roots.push(root)
+  const configs = ["first", "second"].map(name => ({
+    root, command: "build", plugins: [], build: { outDir: "dist" },
+    resolve: { alias: [{ find: "build-alias", replacement: join(root, name) }] },
+    define: { __VITEHUB_PUBLIC_URL__: JSON.stringify("https://shared.example.com") },
+  } as unknown as ResolvedConfig))
+  for (const config of configs) await (plugin.configResolved as (config: ResolvedConfig) => Promise<void>)(config)
+  for (const config of configs) useProviderOutputCatalog(config).replaceDeploymentContribution({ owner: "agent", rootDir: root, write: async () => undefined })
+  const clone = { ...Object.fromEntries(Object.entries(configs[1]!)), build: { ...configs[1]!.build } }
+  const context = { environment: { config: clone } }
+  expect(() => (plugin.buildStart as (this: typeof context) => void).call(context)).toThrow("Cannot identify the owning Agent build")
+  await (plugin.buildEnd as (this: typeof context, error?: Error) => Promise<void>).call(context, new Error("Ambiguous build"))
+  await (plugin.renderError as (this: typeof context, error: Error) => Promise<void>).call(context, new Error("Ambiguous render"))
+  await (plugin.closeBundle as { handler(this: typeof context): Promise<void> }).handler.call(context)
+  for (const config of configs) expect(useProviderOutputCatalog(config).takeDeploymentContributions()).toHaveLength(1)
+})
