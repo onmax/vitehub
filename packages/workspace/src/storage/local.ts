@@ -669,6 +669,10 @@ async function walk(
     if (privatePaths.some(path => !relative(path, absolute))) continue
     const path = normalizeWorkspacePath(relative(root, absolute))
     if (path.split("/")[0]?.toLowerCase() === ".vitehub") continue
+    // Git metadata is private at every depth, including nested repositories.
+    // `git ls-files --ignored` only reports ignored paths, so nested `.git`
+    // directories need an explicit traversal guard.
+    if (path.split("/").some(component => component.toLowerCase() === ".git")) continue
     if (isExcludedWorkspacePath(path, excluded)) continue
     const info = await stat(absolute).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined

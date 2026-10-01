@@ -2182,6 +2182,9 @@ describe("local workspace store Git ignore", () => {
     await writeFile(join(root, "dist/out.js"), "ignored")
     await mkdir(join(root, "src"), { recursive: true })
     await writeFile(join(root, "src/index.ts"), "tracked")
+    await mkdir(join(root, "vendor/repo/.git"), { recursive: true })
+    await writeFile(join(root, "vendor/repo/.git/config"), "private")
+    await writeFile(join(root, "vendor/repo/.gitignore"), "nested")
     return root
   }
 
@@ -2192,6 +2195,7 @@ describe("local workspace store Git ignore", () => {
     expect(paths).toContain("src/index.ts")
     expect(paths).toContain(".gitignore")
     expect(paths.some(path => path === ".git" || path.startsWith(".git/"))).toBe(false)
+    expect(paths.some(path => path.split("/").some(component => component.toLowerCase() === ".git"))).toBe(false)
     expect(paths.some(path => path.startsWith("node_modules") || path.startsWith("dist"))).toBe(false)
 
     const snapshot = await store.snapshot({ name: "baseline" })
