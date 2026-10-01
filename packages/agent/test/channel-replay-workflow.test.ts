@@ -66,6 +66,25 @@ it("reserves concurrent Workflow replays before activity and hands the journal t
   await expect(invocations.getByRunId(channelReplayRunId("mailbox", "m1"), "replay-workflow")).resolves.toMatchObject({ status: "completed" })
 })
 
+it("recovers discovery-default replay inline when Workflow is disabled", async () => {
+  const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+  const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {}, agentIdentity: { name: "inline-recovery" } }
+  const driver = vi.fn(() => "done")
+  const channel = defineChannel("mailbox", {
+    history: { collection: defineCollection(async () => [{ id: "m1" }], { cursor: item => item.id, cursorSchema: v.string() }), key: item => item.id },
+    triggers: { received: defineChannelTrigger({ input: v.object({ id: v.string() }), invoke: () => ({ input: { prompt: "hello" } }) }) },
+  })
+  const createWorkflow = vi.fn(() => { throw new Error("Workflow is disabled") })
+  setAgentWorkflowRuntimeLoaders({
+    state: async () => ({ ...await import("@vite-hub/workflow/runtime/state"), getWorkflowRuntimeConfig: () => false }),
+    workflow: async () => ({ ...await import("@vite-hub/workflow"), createWorkflow }) as never,
+  })
+  const agent = defineAgent({ channels: { mailbox: channel }, driver: { run: driver }, invocations, name: "inline-recovery" })
+  await expect(replayChannel(agent, "mailbox", { runtime })).resolves.toMatchObject({ processed: 1, failed: 0 })
+  expect(driver).toHaveBeenCalledOnce()
+  expect(createWorkflow).not.toHaveBeenCalled()
+})
+
 it("does not pass replay IDs to native Vercel Workflows", async () => {
   const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
   const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }

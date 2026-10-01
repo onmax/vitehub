@@ -1083,12 +1083,12 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
         return journal
       }
       const workflowName = resolveAgentWorkflowName(agent, binding, context)
-      const handle = await getAgentWorkflowHandle<TRuntimeConfig, unknown, unknown>(agent, workflowName, Boolean(context.agentIdentity))
       const recoveryConfig = (await loadAgentWorkflowRuntimeStateModule()).getWorkflowRuntimeConfig()
       // Discovery-default agents fall back to inline execution when Workflow
       // is disabled. There is no provider run to inspect in this case, so keep
       // the claimed reservation for the inline retry path.
       if (recoveryConfig === false && "discoveryDefault" in binding) return journal
+      const handle = await getAgentWorkflowHandle<TRuntimeConfig, unknown, unknown>(agent, workflowName, Boolean(context.agentIdentity))
       // Legacy reservations lack dispatch intent and may already have been accepted.
       if (!dispatch && recoveryConfig && recoveryConfig.provider === "vercel") throw new AgentInvocationClaimConflict()
       if (dispatch && (dispatch.provider !== (recoveryConfig && recoveryConfig.provider) || dispatch.name !== workflowName)) {
