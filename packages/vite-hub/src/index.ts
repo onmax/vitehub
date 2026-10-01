@@ -646,9 +646,10 @@ function deploymentPlugins(
         }
       },
       configResolved(config) {
-        deploymentRoot = config.root
         // SAFETY: Vite preserves the user-defined Nitro field on the resolved config, while ResolvedConfig omits framework extensions from its type.
-        deploymentOutputDir = (config as ResolvedConfig & { nitro?: { output?: { dir?: string } } }).nitro?.output?.dir
+        const inspectionNitro = (config as ResolvedConfig & { nitro?: { rootDir?: string, output?: { dir?: string } } }).nitro
+        deploymentRoot = resolve(inspectionNitro?.rootDir ?? config.root)
+        deploymentOutputDir = inspectionNitro?.output?.dir
         const serverResolve = resolveServerOptions(config)
         resolvedBuildConfig = {
           alias: (serverResolve.alias ?? []).map(alias => ({

@@ -235,6 +235,42 @@ export default function (_options, nuxt) {
     expect(result.stdout).toContain("  dist/server/wrangler.json  (vite-hub)")
   })
 
+  it("preserves non-secret Provision State IDs under resource names that resemble credentials", async () => {
+    const rootDir = await createTempDir();
+    await mkdir(join(rootDir, ".vitehub"), { recursive: true });
+    await writeFile(
+      join(rootDir, ".vitehub/provision.json"),
+      JSON.stringify({
+        cloudflare: {
+          kv: {
+            tokens: "namespace-id",
+            passwords: "another-id",
+            vars: "vars-id",
+            unsafe: "Bearer secret",
+          },
+        },
+        vercel: { blob: { api_key: "store-id" } },
+        secret: "unrecognized-data",
+      }),
+    );
+    const result = await run(rootDir, ["inspect", "provider-output", "--json"]);
+    expect(result.exitCode).toBe(0);
+    const provision = JSON.parse(result.stdout).providerOutput.find(
+      (entry: { path: string }) => entry.path === ".vitehub/provision.json",
+    );
+    expect(provision.content).toEqual({
+      cloudflare: {
+        kv: {
+          tokens: "namespace-id",
+          passwords: "another-id",
+          vars: "vars-id",
+          unsafe: "[redacted]",
+        },
+      },
+      vercel: { blob: { api_key: "store-id" } },
+    });
+  });
+
   it("redacts secrets in Provider Output JSON content", async () => {
     const rootDir = await createTempDir()
     await mkdir(join(rootDir, "dist/server"), { recursive: true })
