@@ -30,8 +30,8 @@ const connectionsTypeRootsFile = (projectRoot: string): string =>
 async function readGeneratedConnectionsTypeRoots(projectRoot: string): Promise<string[]> {
   try {
     const contents = await readFile(connectionsTypeRootsFile(projectRoot), "utf8");
-    const roots: unknown = JSON.parse(contents);
-    return Array.isArray(roots) && roots.every(root => typeof root === "string") ? roots : [];
+    const roots = v.safeParse(v.array(v.string()), JSON.parse(contents));
+    return roots.success ? roots.output : [];
   } catch {
     return [];
   }
