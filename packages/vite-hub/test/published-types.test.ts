@@ -77,7 +77,9 @@ it("keeps installed framework declarations independent of optional evlog", async
       const invalidRedact: ObservabilityEvlogOptions = { redact: 123 }
       // @ts-expect-error Sampling rates must be numbers.
       const invalidSampling: ObservabilityEvlogOptions = { sampling: { rates: { info: "all" } } }
-      void [invalidDev, invalidRedact, invalidSampling]
+      // @ts-expect-error Unknown Nitro options must not be forwarded without validation.
+      const invalidUnknown: ObservabilityEvlogOptions = { unsupported: true }
+      void [invalidDev, invalidRedact, invalidSampling, invalidUnknown]
 
     `)
     await writeFile(resolve(consumerRoot, "package.json"), JSON.stringify({ private: true, type: "module" }))
