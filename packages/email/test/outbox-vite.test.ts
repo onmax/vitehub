@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -8,11 +8,11 @@ import { afterEach, describe, expect, it } from "vitest"
 
 import { createEmail } from "../src/client.ts"
 import { emailDevHeader, emailDevHeaderValue } from "../src/dev.ts"
-import { handleEmailDevRequest, readEmailOutboxConsoleRecords } from "../src/runtime/console.ts"
+import { clearEmailOutbox, getEmailOutboxMessage, listEmailOutbox, handleEmailDevRequest, readEmailOutboxConsoleRecords } from "../src/runtime/console.ts"
 import { getEmailOutbox } from "../src/runtime/outbox.ts"
 import { hubEmail } from "../src/vite.ts"
 
-import type { EmailDefinition } from "../src/types.ts"
+import type { EmailClient, EmailDefinition } from "../src/types.ts"
 
 type ConfigHook = (config: Record<string, unknown>, env?: { command: "build" | "serve", mode: string }) => Promise<unknown>
 type ConfigResolvedHook = (config: { root: string }) => Promise<void>
@@ -45,6 +45,34 @@ async function configure(plugin: ReturnType<typeof hubEmail>, root: string, comm
 const devHandler = (root: string) => join(root, ".vitehub", "nitro", "email", "dev-handler.ts")
 
 describe("Email development outbox output", () => {
+  it("exposes the configured runtime identity through the public server export", async () => {
+    const root = await createTempProject()
+    const { definition } = await configure(hubEmail({ driver: "resend", outbox: { deliver: false } }), root, "serve")
+    await symlink(resolve("node_modules"), join(root, "node_modules"), "dir")
+    const file = join(root, "public-email-server.mjs")
+    await build({
+      bundle: true,
+      entryPoints: [resolve("src/server.ts")],
+      format: "esm",
+      outfile: file,
+      packages: "external",
+      platform: "node",
+      plugins: [{
+        name: "generated-email-definition",
+        setup(pluginBuild) {
+          pluginBuild.onResolve({ filter: /^#vitehub\/email\/definition$/ }, () => ({ path: definition }))
+        },
+      }],
+    })
+    const server: { email: EmailClient, emailOutboxRuntimeId: string } = await import(pathToFileURL(file).href)
+    await server.email.send({ from: "hello@example.com", subject: "Public reader", to: "ada@example.com" })
+    const messages = listEmailOutbox(server.emailOutboxRuntimeId).messages
+    expect(messages).toHaveLength(1)
+    expect(getEmailOutboxMessage(messages[0]!.id, server.emailOutboxRuntimeId)?.subject).toBe("Public reader")
+    expect(clearEmailOutbox(server.emailOutboxRuntimeId)).toBe(1)
+    expect(listEmailOutbox(server.emailOutboxRuntimeId).messages).toEqual([])
+  })
+
   it("re-exports the runtime identity through the Vite virtual definition", async () => {
     const root = await createTempProject()
     const plugin = hubEmail({ driver: "resend", outbox: { deliver: false } })

@@ -366,6 +366,8 @@ export async function runEmailOutboxCli(args: string[], context: EmailCliContext
   }
   const command = outboxCommands.find(entry => entry.name === name)
   if (!command) {
+    const terminator = args.indexOf("--")
+    if (args.slice(0, terminator < 0 ? args.length : terminator).includes("--json")) return writeFailure(true, context, { message: `Unknown outbox command: ${name}` })
     context.stderr.write(`Unknown outbox command: ${name}\n`)
     writeOutboxCommands(context.stderr)
     return 1

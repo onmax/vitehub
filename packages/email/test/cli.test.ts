@@ -68,7 +68,7 @@ const listResult = {
 }
 
 describe("Email discovery failure output", () => {
-  it.each([["show", "--json"], ["list", "--json", "--html"]])("returns JSON for outbox argument errors: %j", async (...args) => {
+  it.each([["show", "--json"], ["list", "--json", "--html"], ["send", "--json"], ["--json"]])("returns JSON for outbox argument errors: %j", async (...args) => {
     const output = context()
     const fetch = vi.fn()
     await expect(runEmailOutboxCli(args, output.context, { fetch })).resolves.toBe(1)

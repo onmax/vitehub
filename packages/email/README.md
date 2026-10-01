@@ -157,6 +157,19 @@ pnpm vitehub email outbox clear
 pnpm vitehub email preview welcome --data '{"user":{"name":"Maxi"}}'
 ```
 
+Application code can select its generated outbox identity through the public server export:
+
+```ts
+import { emailOutboxRuntimeId } from "@vite-hub/email/server"
+import { listEmailOutbox, getEmailOutboxMessage, clearEmailOutbox } from "@vite-hub/email/runtime/console"
+
+const captured = listEmailOutbox(emailOutboxRuntimeId)
+const message = getEmailOutboxMessage("outbox-1", emailOutboxRuntimeId)
+clearEmailOutbox(emailOutboxRuntimeId)
+```
+
+Pass this identity to each reader to inspect this application's configured Email client. Calls without an identity use the standalone default store. Production and disabled outboxes expose `"disabled"` and contain no captured messages.
+
 `emailConsoleSection` adds an **Email** section to the ViteHub Console. It passes the generated definition's `outboxRuntimeId` to `readEmailOutboxConsoleRecords(runtimeId)` from `@vite-hub/email/runtime/console` on each request and shows the HTML body as escaped source text. It never renders captured HTML.
 
 ## Use another provider
