@@ -12,7 +12,27 @@ Connections need the ViteHub [Database](/docs/server-primitives/database). Token
 
 ## Enable Connections
 
-Install the owner package with `pnpm add @vite-hub/connections`. Add its Vite plugin alongside the ViteHub Database plugin.
+Enable `database` and `connections` in the ViteHub configuration. ViteHub discovers the Connection Definitions and uses its Database to store grants and activity.
+
+```ts [vite.config.ts]
+import { defineConfig } from 'vite'
+import { vitehub } from 'vite-hub'
+
+export default defineConfig({
+  plugins: [vitehub({ preset: 'node', database: true, connections: true })],
+})
+```
+
+In Nuxt, use the same options under `vitehub`.
+
+```ts [nuxt.config.ts]
+export default defineNuxtConfig({
+  modules: ['vite-hub/nuxt'],
+  vitehub: { preset: 'node', database: true, connections: true },
+})
+```
+
+For a standalone owner-package integration, install `@vite-hub/connections` and add `hubConnections()` alongside the Database plugin. Set `database` to the module that exports `db`.
 
 ```ts [vite.config.ts]
 import { defineConfig } from 'vite'
@@ -21,7 +41,7 @@ import { hubConnections } from '@vite-hub/connections/vite'
 
 export default defineConfig({
   plugins: [
-    vitehub({ database: true }),
+    vitehub({ preset: 'node', database: true }),
     hubConnections({ database: 'vite-hub/database/drizzle' }),
   ],
 })
@@ -116,7 +136,7 @@ Connection names must not exceed 501 characters, including path separators. Disc
 
 The actor comes from `useConnection(name, { actor })`. It defaults to `server`. Use a stable name for each caller, for example `schedule:gmail` or `agent:labeller`.
 
-GET methods are reads. Other methods are writes. Providers mark some writes as high risk, for example `gmail.users.messages.send`. A rule must name a high-risk write exactly. A subtree pattern does not match it.
+GET, HEAD, and OPTIONS methods are reads. Other methods are writes. Providers mark some writes as high risk, for example `gmail.users.messages.send`. A rule must name a high-risk write exactly. A subtree pattern does not match it.
 
 Without `access`:
 
@@ -149,7 +169,7 @@ vitehub connections approvals approve approval_3kq2...
 vitehub connections approvals deny approval_3kq2...
 ```
 
-Approving runs the call once, as the actor that requested it. The access rules still apply. The approval then has status `executed` or `failed`. Execution has a five-minute abort deadline. An active execution renews its database lease every 100 seconds until the provider call settles. Recovery waits for that lease to expire, so concurrent inspection does not fail an active call. If a process stops during execution, the next approval inspection or approval attempt marks expired executions as `failed` with `CONNECTION_EXECUTION_UNKNOWN`. The provider may have completed the write. Check the provider before requesting another approval; the runtime never replays an interrupted execution.
+Approving runs the call once, as the actor that requested it. The access rules still apply. The approval then has status `executed` or `failed`. Execution has a five-minute abort deadline. An active execution renews its database lease every 100 seconds until the provider call settles. Recovery waits for that lease to expire, so concurrent inspection does not fail an active call. A lost response, a provider server error, or a local failure after dispatch reports `CONNECTION_EXECUTION_UNKNOWN`. If a process stops during execution, the next approval inspection or approval attempt marks expired executions as `failed` with `CONNECTION_EXECUTION_UNKNOWN`. The provider may have completed the write. Check the provider before requesting another approval; the runtime never replays an interrupted execution.
 
 ## Preview writes
 
@@ -183,6 +203,7 @@ The Connection refreshes the access token when it expires within 60 seconds, and
 | `CONNECTION_REAUTH_REQUIRED` | The Connection is not connected, was revoked, or the provider rejected the refresh token. Connect it again. |
 | `CONNECTION_DENIED` | The access rules deny the call. |
 | `CONNECTION_APPROVAL_REQUIRED` | The call waits for approval. |
+| `CONNECTION_EXECUTION_UNKNOWN` | The provider may have completed the approved write. Check the provider before requesting another approval. The management HTTP handler returns 409. |
 | `CONNECTION_PROVIDER` | The provider returned an error. `error.status` is the HTTP status. |
 | `CONNECTION_INVALID` | The request or configuration is invalid. |
 

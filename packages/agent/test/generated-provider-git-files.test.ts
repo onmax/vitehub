@@ -56,3 +56,25 @@ it("keeps generated instructions and Skills out of real Git commits and restores
   expect((await git("ls-files", "-s")).split("\n").filter(line => !line.endsWith("result.txt")).join("\n")).toBe(originalIndex)
   expect(await git("rev-list", "--count", "HEAD")).toBe("2\n")
 })
+
+it("restores the original Git exclude when a provider removes or replaces it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "vitehub-generated-git-"))
+  roots.push(root)
+  const git = async (...args: string[]) => (await execute("git", ["-C", root, ...args], {
+    env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+  })).stdout
+  await git("init", "-q")
+  const excludePath = join(root, ".git/info/exclude")
+  const originalExclude = await readFile(excludePath, "utf8")
+  const generated = join(root, "AGENTS.md")
+
+  const restoreAfterDelete = await protectGeneratedProviderGitFiles(root, [generated])
+  await rm(excludePath)
+  await restoreAfterDelete()
+  expect(await readFile(excludePath, "utf8")).toBe(originalExclude)
+
+  const restoreAfterReplace = await protectGeneratedProviderGitFiles(root, [generated])
+  await writeFile(excludePath, "provider replacement\n")
+  await restoreAfterReplace()
+  expect(await readFile(excludePath, "utf8")).toBe(originalExclude)
+})

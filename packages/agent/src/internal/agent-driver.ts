@@ -19,6 +19,7 @@ import type {
   AgentProviderLaunchCommand,
   AgentProviderLaunchResolver,
   AgentProviderPermissions,
+  AgentProviderWorkingDirectoryResolver,
   AgentRunHandler,
   AgentRuntimeConfig,
   AgentSettings,
@@ -42,6 +43,7 @@ export type NormalizedAgentDriver<
   | {
     credentialProfile?: string
     credentials?: AgentProviderCredentialResolver<TRuntimeConfig>
+    cwd?: AgentProviderWorkingDirectoryResolver<TRuntimeConfig>
     env?: AgentProviderEnvironmentResolver<TRuntimeConfig>
     execution?: { attachments?: AgentAttachmentExecutionOptions }
     instructions?: AgentAdapterInstructions<TRuntimeConfig>
@@ -145,7 +147,7 @@ function normalizeAgentDriverCapacity(value: unknown): AgentDriverCapacityOption
 }
 
 const modelDriverKeys = new Set(["capacity", "execution", "instructions", "maxRetries", "model", "output"])
-const providerDriverKeys = new Set(["capacity", "credentialProfile", "credentials", "env", "execution", "instructions", "kind", "launch", "model", "output", "permissions", "providerSettings", "reasoningEffort", "reasoningSummary", "requirements", "sessionStorePath"])
+const providerDriverKeys = new Set(["capacity", "credentialProfile", "credentials", "cwd", "env", "execution", "instructions", "kind", "launch", "model", "output", "permissions", "providerSettings", "reasoningEffort", "reasoningSummary", "requirements", "sessionStorePath"])
 const runDriverKeys = new Set(["capacity", "output", "run"])
 const askDriverKeys = new Set(["ask", "capacity"])
 
@@ -294,6 +296,9 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
     && value.env.T3CODE_CODEX_LAUNCH_ARGS !== undefined) {
     throw agentDiagnostics.AGENT_R0489({ message: "[vitehub] Codex reasoning options cannot be combined with driver.env.T3CODE_CODEX_LAUNCH_ARGS." })
   }
+  if (value.cwd !== undefined && !isRuntimeFunction(value.cwd) && !isResolver(value.cwd) && (!isRuntimeString(value.cwd) || !value.cwd.trim())) {
+    throw agentDiagnostics.AGENT_R0938({ message: "[vitehub] defineAgent({ driver.cwd }) must be a non-empty directory path or resolver." })
+  }
   const execution = normalizeProviderExecution(value.execution)
   return {
     capacity: normalizeAgentDriverCapacity(value.capacity),
@@ -301,6 +306,8 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
     credentialProfile: value.credentialProfile as string | undefined,
     // SAFETY: The credential input shape is validated above.
     credentials: value.credentials as AgentProviderCredentialResolver | undefined,
+    // SAFETY: cwd is either absent, a non-empty string, or a function or resolver validated above. Its resolved value is validated at invocation time.
+    cwd: value.cwd as AgentProviderWorkingDirectoryResolver | undefined,
     env: normalizeProviderEnvironment(value.env),
     execution,
     // SAFETY: normalizeProviderDriver receives the typed AgentSettings driver after validating its provider-owned fields.
