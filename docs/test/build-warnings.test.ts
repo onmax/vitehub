@@ -97,6 +97,17 @@ describe("docs build warning budget", () => {
     expect(() => assertBuildWarningBudget(warnings)).not.toThrow();
   });
 
+  it("accepts wrapped Rollup annotation warnings", () => {
+    expect(() =>
+      assertBuildWarningBudget(
+        [
+          'WARN node_modules/.cache/nuxt/.nuxt/dist/server/_nuxt/dist.js (2457:0): A comment',
+          '"contains an annotation that Rollup cannot interpret"',
+        ].join("\n"),
+      ),
+    ).not.toThrow();
+  });
+
   it("rejects non-timeout loading failures for known icons", () => {
     expect(() =>
       assertBuildWarningBudget(

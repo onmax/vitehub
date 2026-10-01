@@ -1440,6 +1440,11 @@ export const agentDiagnostics = defineDiagnostics({
     AGENT_R0929: dynamicError,
     AGENT_R0930: dynamicError,
     AGENT_R0931: dynamicError,
+    AGENT_R0933: dynamicError,
+    AGENT_R0934: dynamicError,
+    AGENT_R0935: dynamicError,
+    AGENT_R0936: dynamicError,
+    AGENT_R0937: dynamicError,
     AGENT_R0938: dynamicError,
     AGENT_R0001: {
       why: ({ name, available }: { name: string, available: string[] }) => formatUnknownAgentMessage(name, available, { prefix: true }),

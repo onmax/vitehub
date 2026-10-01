@@ -42,6 +42,12 @@ export const buildWarningBudget = Object.freeze([
     warningTokenRequired: false,
   },
   {
+    name: "Rollup annotation warning headers",
+    maximum: 4,
+    text: "A comment",
+    warningTokenRequired: false,
+  },
+  {
     name: "Comark HTML parser deprecation",
     maximum: 20,
     text: "ParserOptions.html is deprecated",
