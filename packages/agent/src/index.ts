@@ -1194,6 +1194,23 @@ async function runAgentAsWorkflow<
       return false
     }
   }
+  // Replay reserves the logical Invocation before dispatch. Release the execution
+  // claim for the Workflow worker; the persisted record prevents another replay start.
+  // SAFETY: Replay sets this private boolean marker on its runtime; other runtimes may omit it.
+  const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
+  if (exclusive) {
+    const dispatchJournal = hasAgentDefinition(agent)
+      ? await bindAgentInvocations(agent.invocations, context, {
+          agentName: agent.name || context.agentIdentity?.name,
+          requireNew: true,
+        })
+      : undefined
+    if (dispatchJournal?.claimStatus !== "owned") {
+      if (dispatchJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
+      throw new Error("Could not acquire the Invocation execution claim.")
+    }
+    await dispatchJournal.releaseClaim()
+  }
   let run: AgentWorkflowRun<AgentWorkflowOutput<TOutput>>
   try {
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
@@ -7449,7 +7466,7 @@ async function executeAgentInvocation<
           ? { run: { ...context.run, runId: (context as AgentRuntimeContext & { [agentInvocationRunId]: string })[agentInvocationRunId] } }
           : {}),
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      }, { agentName: (definition as AgentDefinition).name || context.agentIdentity?.name })
+      }, { agentName: (definition as AgentDefinition).name || context.agentIdentity?.name, requireNew: exclusive })
       : undefined
     if (exclusive && invocationJournal?.claimStatus !== "owned") {
       if (invocationJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()

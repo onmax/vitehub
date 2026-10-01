@@ -201,7 +201,7 @@ export interface AgentInvocations {
 interface BoundAgentInvocations extends AgentInvocations {
   [bindAgentInvocationsSymbol]<TRuntimeConfig extends AgentRuntimeConfig>(
     context: AgentRuntimeContext<TRuntimeConfig>,
-    options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean },
+    options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean },
   ): Promise<AgentInvocationJournal<TRuntimeConfig>>
 }
 
@@ -220,6 +220,7 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   readonly claimStatus?: "owned" | "conflict" | "unavailable"
   context: AgentRuntimeContext<TRuntimeConfig>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
+  releaseClaim(): Promise<void>
   running(): Promise<void>
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
 }
@@ -1673,7 +1674,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
     [agentInvocationsBrand]: true,
     async [bindAgentInvocationsSymbol]<TRuntimeConfig extends AgentRuntimeConfig>(
       context: AgentRuntimeContext<TRuntimeConfig>,
-      bindOptions: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean } = {},
+      bindOptions: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean } = {},
     ): Promise<AgentInvocationJournal<TRuntimeConfig>> {
       const runId = context.run?.runId || createInvocationId()
       const agentName = bindOptions.agentName || context.agentIdentity?.name
@@ -1693,6 +1694,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       let truncationPersisted = false
       let observationSequence = 0
       let created = false
+      let createdNew = false
       let creationTimedOut = false
       let creationTask: Promise<AgentInvocationStoreCreateResult | undefined> | undefined
       let runningPersisted = false
@@ -1733,6 +1735,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               invocationCapabilityIds(result.record).forEach(capabilityId => observedCapabilityIds.add(capabilityId))
               finished = terminalStatus(result.record.status)
               boundToTerminalRecord = finished
+              createdNew = result.created
               created = true
             }
             else if (creationTask === task) {
@@ -1755,6 +1758,10 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       }
       const renew = async (force = false): Promise<boolean> => {
         if (!await ensureCreated()) return false
+        if (bindOptions.requireNew && !createdNew) {
+          claimUnavailable = false
+          return false
+        }
         const claim = await boundedStoreOperation(() => store.claim(recordId, claimId, CLAIM_LEASE_MS, force ? { replaceExisting: true } : undefined))
         claimUnavailable = claim !== true && claim !== false
         ownsRecord = claim === true
@@ -1960,6 +1967,11 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       }
       return {
         get claimStatus() { return ownsRecord ? "owned" : claimUnavailable ? "unavailable" : "conflict" },
+        async releaseClaim() {
+          stopHeartbeat()
+          if (ownsRecord) await write(() => boundedStoreOperation(() => store.release(recordId, claimId)))
+          ownsRecord = false
+        },
         configuration: options.configuration,
         context: {
           ...context,
@@ -2216,7 +2228,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
 export async function bindAgentInvocations<TRuntimeConfig extends AgentRuntimeConfig>(
   invocations: AgentInvocations | undefined,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean },
+  options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean },
 ): Promise<AgentInvocationJournal<TRuntimeConfig> | undefined> {
   if (!invocations) return
   // SAFETY: Invocation event normalization establishes the asserted invocation contract.
