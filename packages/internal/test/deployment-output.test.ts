@@ -59,6 +59,29 @@ afterEach(async () => {
 })
 
 describe("provider deployment outputs", () => {
+  it.each([false, true])("recovers retained Netlify output before a transaction with failure %s", async (fail) => {
+    const rootDir = await createTempProject()
+    const { createDefaultNetlifyOutputRoot, withProviderDeploymentOutputLock } = await import("../src/build/deployment-output.ts")
+    const outputRoot = createDefaultNetlifyOutputRoot(rootDir)
+    const previousRoot = `${outputRoot}.previous`
+    const functionPath = "functions/vitehub-schedule-cleanup.mjs"
+    const sourcePath = "schedule/sources/cleanup.schedule.ts"
+    await mkdir(join(previousRoot, "functions"), { recursive: true })
+    await mkdir(join(previousRoot, "schedule/sources"), { recursive: true })
+    await writeFile(join(previousRoot, functionPath), "previous function")
+    await writeFile(join(previousRoot, sourcePath), "previous source")
+    const generation = withProviderDeploymentOutputLock(rootDir, async () => {
+      expect(await readFile(join(outputRoot, functionPath), "utf8")).toBe("previous function")
+      expect(await readFile(join(outputRoot, sourcePath), "utf8")).toBe("previous source")
+      if (fail) throw new Error("generation failed")
+    })
+    if (fail) await expect(generation).rejects.toThrow("generation failed")
+    else await generation
+    expect(await readFile(join(outputRoot, functionPath), "utf8")).toBe("previous function")
+    expect(await readFile(join(outputRoot, sourcePath), "utf8")).toBe("previous source")
+    expect(existsSync(previousRoot)).toBe(false)
+  })
+
   it("bundles retained sources against their captured project root", async () => {
     const rootDir = await createTempProject()
     const sourceRootDir = join(rootDir, ".vitehub", "agent-generations", "one", "sources", "0")

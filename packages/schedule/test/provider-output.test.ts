@@ -178,6 +178,23 @@ describe("schedule provider output", () => {
       removal.mockRestore()
       cleanup.mockRestore()
     }
+    if (failure === "persistent rollback restore") {
+      const originalBundle = esbuild.bundleEsmEntry
+      const bundle = vi.spyOn(esbuild, "bundleEsmEntry").mockImplementation(async (entry, output, bundleOptions) => {
+        if (output.endsWith("deno-cron.mjs.vitehub-tmp")) throw new Error("Deno retry failed")
+        return await originalBundle(entry, output, bundleOptions)
+      })
+      try {
+        await expect(generateProviderOutputs(options)).rejects.toThrow("Deno retry failed")
+        expect(await readFile(functionFile, "utf8")).toBe(previousFunction)
+        expect(await readFile(sourceFile, "utf8")).toBe(previousSource)
+        expect(await readFile(otherFunctionFile, "utf8")).toBe("export default () => 'other'")
+        expect(existsSync(`${outputRoot}.previous`)).toBe(false)
+      }
+      finally {
+        bundle.mockRestore()
+      }
+    }
     await generateProviderOutputs(options)
     expect(await readFile(sourceFile, "utf8")).toBe(source("replacement"))
     expect(await readFile(otherFunctionFile, "utf8")).toBe("export default () => 'other'")

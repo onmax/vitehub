@@ -337,6 +337,13 @@ export function createDefaultNetlifyOutputRoot(rootDir: string): string {
   return resolve(rootDir, ".netlify", "v1")
 }
 
+/** Restore a retained complete publication before generation or transaction snapshots. Call under the output lock. */
+export function recoverNetlifyDeploymentOutput(rootDir: string): void {
+  const outputRoot = createDefaultNetlifyOutputRoot(rootDir)
+  const previousOutputRoot = `${outputRoot}.previous`
+  if (!existsSync(outputRoot) && existsSync(previousOutputRoot)) renameSync(previousOutputRoot, outputRoot)
+}
+
 function assertNetlifyFunctionName(functionName: string): void {
   if (!functionName || functionName.includes("\\") || functionName.split("/").some(part => !part || part === "." || part === "..")) {
     throw internalErrorDiagnostics.INTERNAL_B0037({ message: `Invalid Netlify function name: ${functionName}` })
@@ -892,6 +899,7 @@ async function withProviderDeploymentOutputRootTransaction<T>(
   operation: (transaction: ProviderDeploymentOutputRootTransaction) => Promise<T>,
   options: { snapshotInitialRoots?: boolean } = {},
 ): Promise<T> {
+  recoverNetlifyDeploymentOutput(rootDir)
   const roots = [
     createDefaultCloudflareOutputRoot(rootDir),
     createDefaultNetlifyOutputRoot(rootDir),

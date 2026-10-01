@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url"
 import { isDeepStrictEqual } from "node:util"
 
 import { cloudflareRuntimeExternal, defaultCloudflareCompatibilityDate } from "@vite-hub/internal/build/cloudflare"
-import { createDefaultCloudflareOutputRoot, createDefaultNetlifyOutputRoot, createDefaultVercelOutputRoot, withProviderDeploymentOutputLock } from "@vite-hub/internal/build/deployment-output"
+import { createDefaultCloudflareOutputRoot, createDefaultNetlifyOutputRoot, createDefaultVercelOutputRoot, recoverNetlifyDeploymentOutput, withProviderDeploymentOutputLock } from "@vite-hub/internal/build/deployment-output"
 import { bundleEsmEntry } from "@vite-hub/internal/build/esbuild"
 import { createImportPath, ensureGeneratedDir } from "@vite-hub/internal/build/paths"
 import { publishProviderSourcesToDeploymentOutputs, rebasePublishedProviderSourceLinks, removeProviderOutputArtifactDir, rewriteRetainedProviderSourcePaths } from "@vite-hub/internal/build/provider-output-sources"
@@ -613,10 +613,6 @@ async function writeNetlifyScheduleFunctions(options: {
   const stagedFunctionRoot = resolve(stagedOutputRoot, "functions")
   const stagedSourcesDir = resolve(stagedOutputRoot, "schedule", "sources")
   let preserveRecovery = false
-  // Recover a complete previous publication before preparing another generation.
-  if (!existsSync(options.outputRoot) && existsSync(backupOutputRoot)) {
-    renameSync(backupOutputRoot, options.outputRoot)
-  }
   try {
     await rm(stagedOutputRoot, { force: true, recursive: true })
     await cp(options.outputRoot, stagedOutputRoot, { force: true, recursive: true, verbatimSymlinks: true }).catch((error: NodeJS.ErrnoException) => {
@@ -852,6 +848,8 @@ async function cleanCloudflareScheduleOutput(rootDir: string, stateFile: string,
 }
 
 export async function generateProviderOutputsWithinLock(options: GenerateProviderOutputsOptions): Promise<GeneratedScheduleArtifacts> {
+  // Restore the complete Netlify publication before any generation work can fail or abort.
+  recoverNetlifyDeploymentOutput(options.rootDir)
   options.signal?.throwIfAborted()
   const generatedDir = resolve(options.rootDir, ".vitehub", productName)
   const previousGeneratedDir = `${generatedDir}.${randomUUID()}.previous`
