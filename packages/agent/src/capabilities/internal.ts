@@ -33,10 +33,11 @@ export function defineInternalTool<TInput = unknown, TOutput = unknown>(
 }
 
 export function jsonObjectSchema(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
-  return {
+  const schema: JsonSchema = {
     additionalProperties: false,
     properties,
-    ...(required.length ? { required } : {}),
     type: "object",
   }
+  if (required.length) schema.required = required
+  return schema
 }
