@@ -94,11 +94,15 @@ jobs:
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/setup-deno
 
-      # examples:verify builds every package first.
-      - run: vp run examples:verify
+      # Run contracts first: examples:verify leaves generated example output
+      # that the repository contract tests would scan.
       - name: Fast contracts
         if: ${{ github.event_name == 'pull_request' }}
-        run: vp test --config vitest.config.ts --exclude test/docs-host-fixtures.test.ts
+        run: |
+          vp run build
+          vp test --config vitest.config.ts --exclude test/docs-host-fixtures.test.ts
+
+      - run: vp run examples:verify
 
   contract-tests:
     name: contract tests
