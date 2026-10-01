@@ -14,7 +14,7 @@ vi.mock("../src/internal/ai-sdk-runtime.ts", () => ({
   }),
 }))
 
-import { agentInvocationId, defineAgent, runAgent, startAgentInvocation } from "../src/index.ts"
+import { agentInvocationId, defineAgent, defineCapability, runAgent, streamAgent, startAgentInvocation } from "../src/index.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
 import { bindAgentInvocations } from "../src/invocations.ts"
 import { abortLocalAgentInvocation } from "../src/internal/invocation-cancellation.ts"
@@ -256,6 +256,33 @@ describe("Agent Invocation cancel", () => {
     const driver = vi.fn(() => "Done.")
     await expect(runAgent(defineAgent({ driver: { run: driver }, invocations }), runtime("queued-cancel"), { prompt: "Late worker" })).rejects.toThrow()
     expect(driver).not.toHaveBeenCalled()
+    expect((await invocations.get(id))?.status).toBe("cancelled")
+  })
+
+  it.each(["run", "stream"] as const)("stops %s dispatch when cancellation arrives during input preparation", async (kind) => {
+    const entered = deferred()
+    const release = deferred()
+    const close = vi.fn()
+    const driver = vi.fn(() => "Must not run")
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const runId = `input-preparation-cancel-${kind}`
+    const agent = defineAgent({
+      invocations,
+      driver: { run: driver },
+      capabilities: [defineCapability({ id: "cleanup", close })],
+      hooks: {
+        "agent:input": async () => { entered.resolve(); await release.promise },
+      },
+    })
+    const running = kind === "run" ? runAgent(agent, runtime(runId), {}) : streamAgent(agent, runtime(runId), {})
+    const settled = running.then(() => undefined, error => error)
+    await entered.promise
+    const id = await agentInvocationId(runId)
+    expect(await invocations.cancel(id)).toMatchObject({ delivery: "local", outcome: "requested" })
+    release.resolve()
+    expect(await settled).toBeInstanceOf(Error)
+    expect(driver).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
     expect((await invocations.get(id))?.status).toBe("cancelled")
   })
 

@@ -1674,12 +1674,12 @@ describe("agent Vite plugin", () => {
     ]) } })
   })
 
-  it.each(["webhook alias", "readiness"] as const)("reserves the dev invocation route against %s collisions", async (kind) => {
+  it.each(["webhook alias", "readiness", "inspection"] as const)("reserves the dev invocation route against %s collisions", async (kind) => {
     const { hubAgent } = await import("../src/vite.ts")
     const route = "/_vitehub/agent/invocations/dev"
     const plugin = hubAgent(kind === "webhook alias"
       ? { routes: { aliases: { [route]: { agent: "support", webhook: "github" } } } }
-      : { preparation: { route, workspace: "docs" } })
+      : kind === "inspection" ? { routes: { inspection: route } } : { preparation: { route, workspace: "docs" } })
     const configHook = plugin.config
     if (!isRuntimeFunction(configHook)) throw new Error("Expected an Agent config hook")
     // SAFETY: This fixture supplies the private Nitro config context read by the hook.
@@ -8333,11 +8333,14 @@ describe("server helpers", () => {
     const { github } = await import("../src/channels.ts")
     const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
     let releaseRun!: () => void
+    let markRunStarted!: () => void
+    const runStarted = new Promise<void>(resolve => { markRunStarted = resolve })
     let completed = false
     const runFinished = new Promise<void>((resolve) => {
       releaseRun = resolve
     })
     const run = vi.fn(async () => {
+      markRunStarted()
       await runFinished
       completed = true
       return "accepted"
@@ -8373,6 +8376,7 @@ describe("server helpers", () => {
       "github",
       { waitUntil: (task) => waitUntilTasks.push(task) },
     )
+    await runStarted
     const response = await Promise.race([responsePromise, new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 25))])
 
     if (response === "blocked") {

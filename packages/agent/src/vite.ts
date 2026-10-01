@@ -3061,6 +3061,10 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       const devNitroHandlers = resolved && !denoOutput && nitroContext && environment?.command === "serve"
         ? [{ handler: join(generatedRoot, generatedAgentInvocationsDevHandler), route: agentInvocationsDevRuntimeRoute }]
         : []
+      const inspectionRoute = resolved && resolved.routes.inspection
+      if (inspectionRoute && devNitroHandlers.some(handler => agentRoutesOverlap(inspectionRoute, handler.route))) {
+        throw agentDiagnostics.AGENT_B0006({ message: `[vitehub] Agent inspection route conflicts with the generated route ${JSON.stringify(agentInvocationsDevRuntimeRoute)}.` })
+      }
       const nitro = installCloudflareState
         ? mergeCloudflareAgentStateNitroConfig(
             (config as { nitro?: unknown }).nitro,

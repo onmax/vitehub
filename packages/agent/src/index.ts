@@ -6266,6 +6266,7 @@ async function executeAgentInvocationWithCapacityLease<
   try {
     const adapterContext = toAgentAdapterRunContext(invocation)
     if (options.kind === "run" && !options.renderOutput) adapterContext.nativeStructuredOutput = false
+    invocation.input.abortSignal?.throwIfAborted()
     if (customRun) {
       result = await agent.run(invocation)
     }

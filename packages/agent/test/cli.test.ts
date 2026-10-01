@@ -1501,6 +1501,14 @@ describe("agent CLI", () => {
     }
   })
 
+  it("does not post a cancel after malformed discovery", async () => {
+    const stderr = stream()
+    const fetchCancel = vi.fn(async () => Response.json({ root: process.cwd(), runtime: "nitro", message: { invalid: true } }))
+    const exitCode = await runAgentInvocationsCli(["cancel", "invocation-1"], { env: {}, rootDir: process.cwd(), stderr, stdout: stream() }, { fetch: fetchCancel })
+    expect(exitCode).toBe(1)
+    expect(fetchCancel).toHaveBeenCalledTimes(1)
+  })
+
   it("does not send a cancel when the Development Server has no Nitro runtime", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-invocation-cancel-"))
     try {

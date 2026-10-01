@@ -43,6 +43,14 @@ interface AgentInvocationsDevDiscovery {
   runtime?: unknown
 }
 
+function parseCancelDiscovery(value: unknown): AgentInvocationsDevDiscovery {
+  if (!isRuntimeRecord(value) || !hasRuntimeType(value.root, "string") || !hasRuntimeType(value.runtime, "string")
+    || (value.message !== undefined && !hasRuntimeType(value.message, "string"))) {
+    throw agentDiagnostics.AGENT_R0971({ message: "Invocation cancellation discovery returned an invalid response." })
+  }
+  return { root: value.root, runtime: value.runtime, ...(value.message === undefined ? {} : { message: value.message }) }
+}
+
 const devTargetErrors = {
   invalidInlineTimeout: (message: string) => agentDiagnostics.AGENT_R0503({ message }),
   invalidTimeout: (message: string) => agentDiagnostics.AGENT_R0503({ message }),
@@ -196,16 +204,19 @@ function parseCancelResult(value: unknown): AgentInvocationCancelResult {
 
 async function requestCancel(parsed: ParsedArgs, id: string, context: AgentInvocationsCliContext, fetchImpl: typeof fetch, timeout: number): Promise<AgentInvocationCancelResult | undefined> {
   const rootDir = context.rootDir ?? process.cwd()
-  const server = await discoverViteHubDevServer<AgentInvocationsDevDiscovery>({
+  const discoveryOptions = {
+    parseDiscovery: parseCancelDiscovery,
     endpoint: cancelEndpoint,
-    fetch: (input, init) => fetchImpl(input, { ...init, signal: AbortSignal.timeout(timeout) }),
+    fetch: (input: string | URL | Request, init?: RequestInit) => fetchImpl(input, { ...init, signal: AbortSignal.timeout(timeout) }),
     isCompatibleRoot: isCompatibleAgentDevServerRoot,
     rootDir,
     serverUrl: parsed.url,
     stderr: context.stderr,
-  })
+  }
+  const server = await discoverViteHubDevServer<AgentInvocationsDevDiscovery>(discoveryOptions)
   if (!server) return
-  const { discovery, url } = server
+  const { url } = server
+  const discovery = parseCancelDiscovery(server.discovery)
   // Nuxt and plain Vite do not run Nitro in the Vite process, so the cancel cannot reach the application runtime.
   if (discovery.runtime !== "nitro") {
     context.stderr.write(`${hasRuntimeType(discovery.message, "string") ? discovery.message : agentInvocationsDevRuntimeUnavailableMessage}\n`)
