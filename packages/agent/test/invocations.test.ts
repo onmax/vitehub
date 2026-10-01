@@ -974,7 +974,7 @@ describe("Agent Invocations", () => {
     expect(list).toHaveBeenCalledTimes(2)
   })
 
-  it("does not let a stalled store block Agent execution", async () => {
+  it("rejects startup when a stalled store prevents cancellation verification", async () => {
     const memory = createMemoryAgentInvocationStore()
     const invocations = defineAgentInvocations({
       store: {
@@ -986,8 +986,8 @@ describe("Agent Invocations", () => {
 
     const invocation = runAgent(defineAgent({ driver: { run }, invocations, runtime: false }), runtime("stalled-store"), {})
 
-    await expect(invocation).resolves.toBe("done")
-    expect(run).toHaveBeenCalledOnce()
+    await expect(invocation).rejects.toMatchObject({ code: "AGENT_R0973" })
+    expect(run).not.toHaveBeenCalled()
     await expect(invocations.getByRunId("stalled-store")).resolves.toBeUndefined()
   }, 10_000)
 
@@ -3241,7 +3241,7 @@ describe("Agent Invocations", () => {
     }
   })
 
-  it("terminalizes records created after the store timeout", async () => {
+  it("terminalizes failed startup records created after the store timeout", async () => {
     const memory = createMemoryAgentInvocationStore()
     let releaseCreate!: () => void
     const createGate = new Promise<void>((resolve) => { releaseCreate = resolve })
@@ -3257,11 +3257,11 @@ describe("Agent Invocations", () => {
     const run = vi.fn(() => "done")
     const invocation = runAgent(defineAgent({ driver: { run }, invocations, runtime: false }), runtime("late-create"), {})
 
-    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce(), { timeout: 2_000 })
+    await expect(invocation).rejects.toMatchObject({ code: "AGENT_R0973" })
+    expect(run).not.toHaveBeenCalled()
     releaseCreate()
-    await expect(invocation).resolves.toBe("done")
     await vi.waitFor(async () => {
-      await expect(invocations.getByRunId("late-create")).resolves.toMatchObject({ status: "completed" })
+      await expect(invocations.getByRunId("late-create")).resolves.toMatchObject({ status: "failed" })
     }, { timeout: 2_500 })
   }, 5_000)
 
@@ -4250,7 +4250,7 @@ describe("Agent Invocations", () => {
     expect(record?.observations.at(-1)).toMatchObject({ name: "agent.invocation.finish" })
     expect(record?.observations[1]?.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/)
     expect(record?.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
-    expect(updates).toBeLessThanOrEqual(307)
+    expect(updates).toBeLessThanOrEqual(308)
   })
 
   it("retains fatal stream evidence and the lifecycle terminal beyond the durable cap", async () => {
@@ -4334,7 +4334,7 @@ describe("Agent Invocations", () => {
     expect(await invocations.getByRunId("run-1")).toMatchObject({ status: "failed" })
   })
 
-  it("never lets journal storage failures change invocation behavior", async () => {
+  it("fails startup when journal storage cannot verify cancellation", async () => {
     const failure = new Error("journal unavailable")
     const store: AgentInvocationStore = {
       claim: () => true,
@@ -4352,7 +4352,19 @@ describe("Agent Invocations", () => {
       runtime: false,
     })
 
-    await expect(runAgent(agent, runtime("run-1"), {})).resolves.toBe("done")
+    await expect(runAgent(agent, runtime("run-1"), {})).rejects.toMatchObject({ code: "AGENT_R0973" })
+  })
+
+  it("keeps trace persistence failures from changing an Invocation result", async () => {
+    const backing = createMemoryAgentInvocationStore()
+    const store: AgentInvocationStore = { ...backing, update(id, input, claimId) {
+      if (input.observation) throw new Error("Trace persistence unavailable")
+      return backing.update(id, input, claimId)
+    } }
+    const invocations = defineAgentInvocations({ store })
+    const agent = defineAgent({ driver: { run: () => "done" }, invocations, runtime: false })
+    await expect(runAgent(agent, runtime("trace-write-failure"), {})).resolves.toBe("done")
+    expect(await invocations.getByRunId("trace-write-failure")).toMatchObject({ status: "completed" })
   })
 
   it("retries the running transition after storage recovers", async () => {
@@ -4379,7 +4391,7 @@ describe("Agent Invocations", () => {
       waitUntil: promise => waitUntilTasks.push(promise),
     }, {})
 
-    await vi.waitFor(() => expect(waitUntilTasks).toHaveLength(1))
+    await vi.waitFor(() => expect(waitUntilTasks).toHaveLength(2))
     await Promise.all(waitUntilTasks)
     await expect(invocations.getByRunId("recover-running")).resolves.toMatchObject({
       startedAt: expect.any(String),

@@ -592,6 +592,7 @@ describe("Agent Invocation cancel", () => {
   })
 
   it("reports recorded cancellation with unverified Driver state when warning writes keep failing", async () => {
+    vi.useFakeTimers()
     const backing = createMemoryAgentInvocationStore()
     const markerEntered = deferred()
     const releaseDriver = deferred<string>()
@@ -612,7 +613,9 @@ describe("Agent Invocation cancel", () => {
     const settled = running.then(result => result, error => error)
     try {
       await markerEntered.promise
-      await expect(remote.cancel(id)).rejects.toMatchObject({ code: "AGENT_R0974", message: expect.stringContaining("Cancellation was recorded") })
+      const cancellation = expect(remote.cancel(id)).rejects.toMatchObject({ code: "AGENT_R0974", message: expect.stringContaining("Cancellation was recorded") })
+      await vi.advanceTimersByTimeAsync(5_000)
+      await cancellation
       expect((await backing.getSummary(id))?.cancelRequestedAt).toEqual(expect.any(String))
       expect((await backing.getSummary(id))?.status).toBe("running")
       expect(ended).toBe(false)
@@ -664,6 +667,135 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.getSummary(id))?.cancelNotEnforcedBy).toBeUndefined()
   })
 
+  it.each(["run", "stream"] as const)("rejects %s startup when cancellation lands after renewal and the initial read rejects", async kind => {
+    const backing = createMemoryAgentInvocationStore()
+    const entered = deferred()
+    const releaseRenewal = deferred()
+    let reads = 0
+    const store = { ...backing, async getSummary(id: string) {
+      const snapshot = await backing.getSummary(id)
+      if (++reads === 1) { entered.resolve(); await releaseRenewal.promise }
+      else if (reads === 2) throw new Error("Initial cancellation lookup unavailable")
+      return snapshot
+    } }
+    const invocations = defineAgentInvocations({ store })
+    const remote = defineAgentInvocations({ store: { ...backing } })
+    const driver = vi.fn(() => "Must not start")
+    const prepare = vi.fn()
+    const runId = `initial-cancellation-rejection-${kind}`
+    const agent = defineAgent({ invocations, driver: { capacity: { concurrency: 1 }, run: driver }, capabilities: [defineCapability({ id: "setup", prepare })] })
+    const started = kind === "run" ? runAgent(agent, runtime(runId), {}) : streamAgent(agent, runtime(runId), {})
+    const settled = started.then(result => result, error => error)
+    try {
+      await entered.promise
+      const id = await agentInvocationId(runId)
+      const cancellation = remote.cancel(id).then(result => result, error => error)
+      await vi.waitFor(async () => expect((await backing.getSummary(id))?.cancelRequestedAt).toEqual(expect.any(String)))
+      releaseRenewal.resolve()
+      expect(await settled).toMatchObject({ code: "AGENT_R0973" })
+      expect(prepare).not.toHaveBeenCalled()
+      expect(driver).not.toHaveBeenCalled()
+      await cancellation
+    } finally { releaseRenewal.resolve(); await settled }
+  })
+
+  it.each(["rejected", "missing", "timeout"] as const)("reports uncertainty for remote custom cancellation after pre-dispatch running writes are %s", async failure => {
+    vi.useFakeTimers()
+    const backing = createMemoryAgentInvocationStore()
+    const releaseDriver = deferred<string>()
+    const driverEntered = deferred()
+    const writesEntered = deferred()
+    const releaseWrites = deferred()
+    const store = { ...backing, async update(...args: Parameters<typeof backing.update>) {
+      if (args[1].status === "running") {
+        writesEntered.resolve()
+        if (failure === "timeout") await releaseWrites.promise
+        if (failure !== "missing") throw new Error("Running state unavailable")
+        return undefined
+      }
+      return await backing.update(...args)
+    } }
+    const invocations = defineAgentInvocations({ store })
+    const remote = defineAgentInvocations({ store: { ...backing } })
+    const runId = `remote-pending-warning-${failure}`
+    const driver = vi.fn(async () => { driverEntered.resolve(); return await releaseDriver.promise })
+    const started = runAgent(defineAgent({ invocations, driver: { run: driver } }), runtime(runId), {})
+    const settled = started.then(result => result, error => error)
+    try {
+      await writesEntered.promise
+      if (failure === "timeout") await vi.advanceTimersByTimeAsync(1_000)
+      await driverEntered.promise
+      const id = await agentInvocationId(runId)
+      const cancelResult = remote.cancel(id).then(result => result, error => error)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(await cancelResult).toMatchObject({ code: "AGENT_R0974" })
+      expect(await backing.getSummary(id)).toMatchObject({ cancelRequestedAt: expect.any(String), cancelWarningPending: true, status: "pending" })
+    } finally {
+      releaseWrites.resolve()
+      releaseDriver.resolve("Done")
+      await settled
+    }
+  })
+
+  it.each(["completed", "failed"] as const)("retains custom dispatch evidence in a %s record after warning writes fail", async status => {
+    const backing = createMemoryAgentInvocationStore()
+    const store = { ...backing, async update(...args: Parameters<typeof backing.update>) {
+      if (args[1].status === "running" && args[1].cancelNotEnforcedBy === "run") return undefined
+      return await backing.update(...args)
+    } }
+    const invocations = defineAgentInvocations({ store })
+    const runId = `terminal-custom-warning-${status}`
+    const failure = new Error("Driver failed")
+    const driver = vi.fn(() => { if (status === "failed") throw failure; return "Done" })
+    const started = runAgent(defineAgent({ invocations, driver: { run: driver } }), runtime(runId), {})
+    if (status === "failed") await expect(started).rejects.toBe(failure)
+    else await expect(started).resolves.toBe("Done")
+    expect(driver).toHaveBeenCalledOnce()
+    const record = await backing.getSummary(await agentInvocationId(runId))
+    expect(record).toMatchObject({ cancelNotEnforcedBy: "run", status })
+    expect(record?.cancelWarningPending).toBeUndefined()
+    const remote = defineAgentInvocations({ store: { ...backing } })
+    expect(await remote.cancel(await agentInvocationId(runId))).toMatchObject({ notEnforcedBy: "run", outcome: "terminal", status })
+    expect(await backing.getSummary(await agentInvocationId(runId))).toEqual(record)
+  })
+
+  it("keeps periodic cancellation lookups best effort after startup", async () => {
+    vi.useFakeTimers()
+    const backing = createMemoryAgentInvocationStore()
+    let unavailable = false
+    const store = { ...backing, getSummary: (id: string) => {
+      if (unavailable) throw new Error("Periodic lookup unavailable")
+      return backing.getSummary(id)
+    } }
+    const invocations = defineAgentInvocations({ store })
+    const runId = "periodic-cancellation-read-failure"
+    const journal = await bindAgentInvocations(invocations, runtime(runId))
+    await journal?.watchCancellation({ enforced: true, name: "model" })
+    unavailable = true
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(journal?.abortSignal.aborted).toBe(false)
+    unavailable = false
+    await backing.update(await agentInvocationId(runId), { cancelRequestedAt: new Date().toISOString(), timestamp: new Date().toISOString() })
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(journal?.abortSignal.aborted).toBe(true)
+    await journal?.finish("cancelled")
+  })
+
+  it("refuses custom Driver dispatch when a reused pending record cannot persist its warning state", async () => {
+    const backing = createMemoryAgentInvocationStore()
+    const runId = "reused-pending-warning-failure"
+    const id = await agentInvocationId(runId)
+    const timestamp = new Date().toISOString()
+    await backing.create({ createdAt: timestamp, id, observations: [], status: "pending", traceId: runId, updatedAt: timestamp })
+    const store = { ...backing, update: (...args: Parameters<typeof backing.update>) => args[1].status === "running" ? undefined : backing.update(...args) }
+    const driver = vi.fn(() => "Must not start")
+    const invocations = defineAgentInvocations({ store })
+    await expect(runAgent(defineAgent({ invocations, driver: { run: driver } }), runtime(runId), {})).rejects.toMatchObject({ code: "AGENT_R0973" })
+    expect(driver).not.toHaveBeenCalled()
+    expect(await backing.getSummary(id)).toMatchObject({ status: "failed" })
+    expect((await backing.getSummary(id))?.cancelNotEnforcedBy).toBeUndefined()
+  })
+
   it.each(["run", "stream"] as const)("fails %s startup when its initial cancellation read times out", async kind => {
     vi.useFakeTimers()
     const backing = createMemoryAgentInvocationStore()
@@ -699,11 +831,13 @@ describe("Agent Invocation cancel", () => {
     try {
       await entered.promise
       const id = await agentInvocationId(runId)
-      expect(await remote.cancel(id)).toMatchObject({ delivery: "journal", outcome: "requested" })
+      const cancellation = remote.cancel(id).then(result => result, error => error)
+      await vi.waitFor(async () => expect((await backing.getSummary(id))?.cancelRequestedAt).toEqual(expect.any(String)))
       releaseInitial.resolve()
       await vi.advanceTimersByTimeAsync(8_500)
       expect(driver).not.toHaveBeenCalled()
       expect(prepare).not.toHaveBeenCalled()
+      await cancellation
     }
     finally {
       releaseInitial.resolve()
@@ -746,8 +880,10 @@ describe("Agent Invocation cancel", () => {
     const settled = running.then(() => undefined, error => error)
     await entered.promise
     const id = await agentInvocationId(runId)
-    expect(await remote.cancel(id)).toMatchObject({ delivery: "journal", outcome: "requested", status: "pending" })
+    const cancellation = remote.cancel(id)
+    await vi.waitFor(async () => expect((await backing.getSummary(id))?.cancelRequestedAt).toBeDefined())
     release.resolve()
+    await cancellation
     expect(await settled).toBeInstanceOf(Error)
     expect(driver).not.toHaveBeenCalled()
     expect(prepare).not.toHaveBeenCalled()
@@ -777,8 +913,10 @@ describe("Agent Invocation cancel", () => {
     const rejection = expect(running).rejects.toThrow()
     await entered.promise
     const id = await agentInvocationId("startup-cancel")
-    expect(await invocations.cancel(id)).toMatchObject({ outcome: "requested" })
+    const cancellation = invocations.cancel(id)
+    await vi.waitFor(async () => expect((await backing.getSummary(id))?.cancelRequestedAt).toBeDefined())
     release.resolve()
+    await cancellation
     await rejection
     expect(driver).not.toHaveBeenCalled()
   })
@@ -891,7 +1029,7 @@ describe("Agent Invocation cancel", () => {
       release.resolve("Late custom result")
       await expect(run).resolves.toBe("Late custom result")
       expect(await backing.get(id)).toEqual(terminalRecord)
-      expect(await invocations.cancel(id)).toEqual({ id, outcome: "terminal", status })
+      expect(await invocations.cancel(id)).toEqual({ id, ...(terminalRecord?.cancelNotEnforcedBy ? { notEnforcedBy: terminalRecord.cancelNotEnforcedBy } : {}), outcome: "terminal", status })
     }
     finally {
       rejectClaims = false
@@ -985,7 +1123,7 @@ describe("Agent Invocation cancel", () => {
     driverRelease.resolve("Done.")
     await run
     requestRelease.resolve()
-    expect(await cancel).toEqual({ id, outcome: "terminal", status: "completed" })
+    expect(await cancel).toEqual({ id, notEnforcedBy: "run", outcome: "terminal", status: "completed" })
   })
 
   it("reports missing Invocations", async () => {

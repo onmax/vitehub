@@ -1760,6 +1760,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       let cancellationDriver = bindOptions.cancellationDriver
       let driverDispatched = false
       let cancelNotEnforcedBy: string | undefined
+      let cancellationWarningPrepared = false
       let unregisterCancellation: (() => void) | undefined
       let cancellationPolling: ReturnType<typeof setInterval> | undefined
       let cancellationRegistration: Promise<void> | undefined
@@ -1781,8 +1782,10 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const pollCancellationRequest = async (initial = false) => {
         if (!unregisterCancellation || finished || cancellation.signal.aborted) return
         const summary = await boundedStoreOperation(() => store.getSummary(recordId))
-        if (initial && summary === storeOperationTimedOut) {
-          throw agentDiagnostics.AGENT_R0973({ message: "[vitehub] Initial Agent Invocation cancellation check timed out." })
+        if (initial && (!summary || summary === storeOperationTimedOut)) {
+          throw agentDiagnostics.AGENT_R0973({ message: summary === storeOperationTimedOut
+            ? "[vitehub] Initial Agent Invocation cancellation check timed out."
+            : "[vitehub] Initial Agent Invocation cancellation check failed." })
         }
         if (summary && summary !== storeOperationTimedOut) readCancellationRequest(summary)
       }
@@ -1812,6 +1815,8 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               finished = terminalStatus(result.record.status)
               boundToTerminalRecord = finished
               created = true
+              cancellationWarningPrepared = result.record.cancelWarningPending === true
+                || result.record.cancelNotEnforcedBy === cancellationDriver?.name
               readCancellationRequest(result.record)
             }
             else if (creationTask === task) {
@@ -1886,6 +1891,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           traceId,
           updatedAt: now,
       }
+      if (bindOptions.cancellationDriver?.enforced === false) createInput.cancelWarningPending = true
       await ensureCreated()
       if (!bindOptions.deferClaim) await renew()
       const baseTraceLog = context.traceLog || createTraceEventLog()
@@ -2112,6 +2118,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             ...(observedCapabilityIds.size ? { capabilityIds: [...observedCapabilityIds] } : {}),
             ...(failure ? { error: failure } : {}),
             ...(terminalOutcome ? { observation: terminalOutcome } : {}),
+            cancelNotEnforcedBy: cancelNotEnforcedBy ?? null,
             cancelWarningPending: false,
             status,
             timestamp: new Date().toISOString(),
@@ -2124,6 +2131,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               updated = await update({
                 ...(observedCapabilityIds.size ? { capabilityIds: [...observedCapabilityIds] } : {}),
                 ...(failure ? { error: failure } : {}),
+                cancelNotEnforcedBy: cancelNotEnforcedBy ?? null,
                 cancelWarningPending: false,
                 status,
                 timestamp: finishInput.timestamp,
@@ -2199,9 +2207,14 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               status: "running",
               timestamp: new Date().toISOString(),
             })
+            if (runningPersisted && cancellationDriver?.enforced === false) cancellationWarningPrepared = true
             return runningPersisted
           }
-          if (await markRunning() || runningRetry) return
+          if (await markRunning()) return
+          if (cancellationDriver?.enforced === false && !cancellationWarningPrepared) {
+            throw agentDiagnostics.AGENT_R0973({ message: "[vitehub] Initial custom Driver cancellation state could not be persisted." })
+          }
+          if (runningRetry) return
           runningRetry = (async () => {
             const deadline = Date.now() + TERMINAL_RETRY_TIMEOUT_MS
             while (!finished && Date.now() < deadline) {
@@ -2276,6 +2289,16 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
     },
     async cancel(id) {
       assertInvocationId(id)
+      const terminalResult = (record: AgentInvocationSummary, local?: ReturnType<typeof abortLocalAgentInvocation>): AgentInvocationCancelResult => {
+        const notEnforcedBy = local?.notEnforcedBy || record.cancelNotEnforcedBy
+        return {
+          ...(local?.aborted ? { delivery: "local" as const } : {}),
+          id,
+          ...(notEnforcedBy ? { notEnforcedBy } : {}),
+          outcome: "terminal",
+          status: record.status,
+        }
+      }
       let summary: AgentInvocationSummary | undefined
       try {
         summary = await store.getSummary(id)
@@ -2286,14 +2309,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       }
       if (!summary) return { id, outcome: "not-found" }
       if (terminalStatus(summary.status)) {
-        const local = abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
-        return {
-          ...(local.aborted ? { delivery: "local" as const } : {}),
-          id,
-          ...(local.notEnforcedBy ? { notEnforcedBy: local.notEnforcedBy } : {}),
-          outcome: "terminal",
-          status: summary.status,
-        }
+        return terminalResult(summary, abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id)))
       }
       const timestamp = new Date().toISOString()
       // Persist the request first, so a run in another process and a later bind of this record read it.
@@ -2308,13 +2324,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       }
       let current = await store.getSummary(id) ?? flagged
       if (!current) return { id, outcome: "not-found" }
-      if (terminalStatus(current.status)) return {
-        ...(local.aborted ? { delivery: "local" as const } : {}),
-        id,
-        ...(local.notEnforcedBy ? { notEnforcedBy: local.notEnforcedBy } : {}),
-        outcome: "terminal",
-        status: current.status,
-      }
+      if (terminalStatus(current.status)) return terminalResult(current, local)
       if (local.aborted) {
         return {
           delivery: "local",
@@ -2337,7 +2347,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         const summary = await boundedStoreOperation(() => store.getSummary(id), Math.min(STORE_OPERATION_TIMEOUT_MS, Math.max(0, verificationDeadline - Date.now())))
         if (summary && summary !== storeOperationTimedOut) current = summary
       }
-      if (terminalStatus(current.status)) return { id, outcome: "terminal", status: current.status }
+      if (terminalStatus(current.status)) return terminalResult(current)
       if (!current.cancelRequestedAt) return { id, outcome: "unavailable", status: current.status }
       return {
         delivery: "journal",
