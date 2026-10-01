@@ -28,6 +28,67 @@ async function runProviderOutputHooks(plugin: ReturnType<typeof hubQueue>) {
 }
 
 describe("hubQueue", () => {
+  it("keeps public URL defines and output roots separate when a plugin is reused across builds", async () => {
+    const plugin = hubQueue({ provider: "cloudflare" })
+    const projects = []
+    const buildStart = plugin.buildStart
+    if (typeof buildStart !== "function") throw new TypeError("Expected buildStart hook")
+    try {
+      for (const name of ["first", "second"]) {
+        const root = await mkdtemp(join(tmpdir(), "vitehub-queue-shared-build-"))
+        const config = {
+          root,
+          command: "build",
+          build: { outDir: "dist/client" },
+          plugins: [],
+          resolve: { alias: [] },
+          define: {
+            __VITEHUB_PUBLIC_URL__: JSON.stringify({ url: `https://${name}.example` }),
+            __VITEHUB_APP_BASE_URL__: JSON.stringify(`/${name}/`),
+          },
+        }
+        const context = { environment: { config } }
+        projects.push({ root, name, context })
+        await mkdir(join(root, "dist/client"), { recursive: true })
+        await symlink(
+          join(import.meta.dirname, "../../../node_modules"),
+          join(root, "node_modules"),
+          "dir",
+        )
+        await writeFile(
+          join(root, "cleanup.queue.ts"),
+          "export default { handler: () => console.log(__VITEHUB_PUBLIC_URL__, __VITEHUB_APP_BASE_URL__) }\n",
+        )
+        await (plugin.configResolved as (config: unknown) => Promise<void>)(config)
+        await buildStart.call(context as never, {} as never)
+      }
+      // Both configurations resolve before either build reaches provider generation.
+      await Promise.all(
+        projects.map(({ context }) =>
+          (plugin.buildEnd as (this: never) => Promise<void>).call(context as never),
+        ),
+      )
+      await Promise.all(
+        projects.map(({ context }) =>
+          (plugin.closeBundle as { handler: (this: never) => Promise<void> }).handler.call(
+            context as never,
+          ),
+        ),
+      )
+      for (const { root, name } of projects) {
+        const artifact = await readFile(
+          join(createDefaultCloudflareOutputRoot(root), "index.js"),
+          "utf8",
+        )
+        expect(artifact).toContain(`https://${name}.example`)
+        expect(artifact).toContain(`/${name}/`)
+        expect(artifact).not.toContain(`https://${name === "first" ? "second" : "first"}.example`)
+      }
+    } finally {
+      await Promise.all(projects.map(({ root }) => rm(root, { recursive: true, force: true })))
+    }
+  })
+
   it("serializes shared Provider Output finalization", () => {
     expect(hubQueue().closeBundle).toMatchObject({ order: "post", sequential: true })
   })

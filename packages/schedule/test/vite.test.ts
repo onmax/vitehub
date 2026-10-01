@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -39,6 +39,67 @@ async function resolvePluginConfig(plugin: ReturnType<typeof hubSchedule>, root:
 }
 
 describe("Vite schedule integration", () => {
+  it("keeps public URL defines and output roots separate when a plugin is reused across builds", async () => {
+    const plugin = hubSchedule()
+    const projects = []
+    const buildStart = plugin.buildStart
+    if (typeof buildStart !== "function") throw new TypeError("Expected buildStart hook")
+    try {
+      for (const name of ["first", "second"]) {
+        const root = await mkdtemp(join(tmpdir(), "vitehub-schedule-shared-build-"))
+        const config = {
+          root,
+          command: "build",
+          build: { outDir: "dist/client" },
+          plugins: [],
+          resolve: { alias: [] },
+          define: {
+            __VITEHUB_PUBLIC_URL__: JSON.stringify({ url: `https://${name}.example` }),
+            __VITEHUB_APP_BASE_URL__: JSON.stringify(`/${name}/`),
+          },
+        }
+        const context = { environment: { config } }
+        projects.push({ root, name, context })
+        await mkdir(join(root, "dist/client"), { recursive: true })
+        await symlink(
+          join(import.meta.dirname, "../../../node_modules"),
+          join(root, "node_modules"),
+          "dir",
+        )
+        await writeFile(
+          join(root, "cleanup.schedule.ts"),
+          "import { defineSchedule } from '@vite-hub/schedule'; export default defineSchedule({ cron: '0 0 * * *', handler: () => console.log(__VITEHUB_PUBLIC_URL__, __VITEHUB_APP_BASE_URL__) })\n",
+        )
+        await (plugin.configResolved as (config: unknown) => Promise<void>)(config)
+        await buildStart.call(context as never, {} as never)
+      }
+      // Both configurations resolve before either build reaches provider generation.
+      await Promise.all(
+        projects.map(({ context }) =>
+          (plugin.buildEnd as (this: never) => Promise<void>).call(context as never),
+        ),
+      )
+      await Promise.all(
+        projects.map(({ context }) =>
+          (plugin.closeBundle as { handler: (this: never) => Promise<void> }).handler.call(
+            context as never,
+          ),
+        ),
+      )
+      for (const { root, name } of projects) {
+        const artifact = await readFile(
+          join(createDefaultCloudflareOutputRoot(root), "index.js"),
+          "utf8",
+        )
+        expect(artifact).toContain(`https://${name}.example`)
+        expect(artifact).toContain(`/${name}/`)
+        expect(artifact).not.toContain(`https://${name === "first" ? "second" : "first"}.example`)
+      }
+    } finally {
+      await Promise.all(projects.map(({ root }) => rm(root, { recursive: true, force: true })))
+    }
+  })
+
   it("serializes shared Provider Output finalization", () => {
     expect(hubSchedule().closeBundle).toMatchObject({ order: "post", sequential: true })
   })
