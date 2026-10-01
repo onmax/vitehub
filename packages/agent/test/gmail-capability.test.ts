@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 
-import { validateAgentCapabilityComposition } from "../src/capability-runtime.ts"
+import { validateAgentCapabilityComposition, workspaceRetirementPathsSymbol } from "../src/capability-runtime.ts"
 import { gmail } from "../src/capabilities.ts"
 import { createAgentInspectionMetadata, defineAgent } from "../src/index.ts"
 import { agentInvocationTraceIdContextKey } from "../src/trace.ts"
@@ -101,6 +101,13 @@ const message = {
 }
 
 describe("gmail capability", () => {
+  it("declares both historical persisted Skill paths for safe migration", () => {
+    const capability = gmail()
+    expect((capability as Record<PropertyKey, unknown>)[workspaceRetirementPathsSymbol]).toEqual([
+      ".agents/skills/gmail/SKILL.md",
+      "skills/gmail/SKILL.md",
+    ])
+  })
   it.each(["execution", "context"])("forwards the %s cancellation signal to every Gmail request", async (source) => {
     const controller = new AbortController()
     const { primitive, runtime } = connections({ responses: {

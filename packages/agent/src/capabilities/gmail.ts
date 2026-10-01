@@ -1,6 +1,6 @@
 import * as v from "valibot"
 
-import { defineCapability } from "../capability-runtime.ts"
+import { defineCapability, workspaceRetirementPathsSymbol } from "../capability-runtime.ts"
 import { connectionNameSchema, useAgentConnection } from "./connection.ts"
 import { defineInternalTool } from "./internal.ts"
 
@@ -455,11 +455,15 @@ export function gmail(options: GmailCapabilityOptions = {}): AgentCapabilityDefi
   }
   const { connection, operations } = parsed.output
   const enabled = new Set(operations)
-  return defineCapability({
+  return Object.assign(defineCapability({
     id: "gmail",
     metadata: { connection, operations: [...enabled] },
     mode: enabled.has("draft") ? "write" : "read",
     requires: [{ primitive: "connections" }],
     tools: context => gmailTools(context, connection, enabled),
+  }), {
+    // These paths were persisted by the pre-Connections Gmail capability.
+    // Retire only files still carrying the old capability ownership metadata.
+    [workspaceRetirementPathsSymbol]: [".agents/skills/gmail/SKILL.md", "skills/gmail/SKILL.md"],
   })
 }
