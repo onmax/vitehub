@@ -9,7 +9,7 @@ import type { AgentRunInput } from "../types.ts"
 
 type Advocaat = typeof import("advocaat")
 type AdvocaatQuestion = Parameters<Advocaat["ask"]>[1][string]
-type AdvocaatEntry = Parameters<Advocaat["ask"]>[0]
+type RuntimeAsk = (state: AskEntry, questions: Record<string, AdvocaatQuestion>, options?: Parameters<Advocaat["ask"]>[2]) => ReturnType<Advocaat["ask"]>
 
 /** The Server Env group that `typesafeEnv()` declares. */
 export const typesafeEnvGroup = "typesafe"
@@ -146,8 +146,9 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
   }))
   const advocaat = await loadAdvocaat()
   const options = await typesafeOptions(context)
-  // SAFETY: The SDK serializes scalar JSON state unchanged, as the installed-SDK regression verifies.
-  const answers = await advocaat.ask(asUnknownBoundary(toEntry(state)) as AdvocaatEntry, wire, { ...options, signal: context.abortSignal })
-  // SAFETY: advocaat answers under the same keys, with the answer shapes that AskAnswers describes for each question type.
+  // SAFETY: the installed SDK sends JSON scalar roots unchanged at runtime;
+  // its declaration omits number and boolean roots from the shared Entry type.
+  const ask = asUnknownBoundary(advocaat.ask) as RuntimeAsk
+  const answers = await ask(toEntry(state), wire, { ...options, signal: context.abortSignal })
   return answers as AskAnswers<Q>
 }
