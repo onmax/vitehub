@@ -11,7 +11,7 @@ import { resolve } from "pathe"
 import { createInspectNamespace } from "./inspect.ts"
 import { provisionUsage, runProvision, runProvisionStatus } from "./provision.ts"
 
-import type { InlineConfig } from "vite"
+import type { ConfigEnv, InlineConfig } from "vite"
 import type { ViteHubCliCommandNamespace, ViteHubCliContext } from "@vite-hub/internal/cli"
 import { cliErrorDiagnostics } from "./error-diagnostics.ts"
 
@@ -57,10 +57,8 @@ export interface RunViteHubCliOptions {
   args?: string[]
   cwd?: string
   env?: NodeJS.ProcessEnv
-  /** Namespaces that run without loading the project config, for example inside a deployed container. */
-  runtimeNamespaces?: ViteHubCliCommandNamespace[]
-  loadConfig?: (rootDir: string) => Promise<ViteHubCliLoadedConfig>
-  loadNuxtViteConfig?: (rootDir: string) => Promise<{ plugins: readonly unknown[], root?: string } | undefined>
+  loadConfig?: (rootDir: string, command: ConfigEnv["command"]) => Promise<ViteHubCliLoadedConfig>
+  loadNuxtViteConfig?: (rootDir: string, command: ConfigEnv["command"]) => Promise<{ plugins: readonly unknown[], root?: string } | undefined>
   spawn?: ViteHubCliSpawn
   stderr?: ViteHubCliStreams["stderr"]
   stdout?: ViteHubCliStreams["stdout"]
@@ -71,7 +69,7 @@ export interface RunViteHubCliEntrypointOptions extends Omit<RunViteHubCliOption
   stdout?: ViteHubCliEntrypointStream
 }
 
-async function loadNuxtViteConfig(rootDir: string): Promise<{ plugins: readonly unknown[], root?: string } | undefined> {
+async function loadNuxtViteConfig(rootDir: string, command: ConfigEnv["command"]): Promise<{ plugins: readonly unknown[], root?: string } | undefined> {
   const hasNuxtConfig = ["nuxt.config.ts", "nuxt.config.mts", "nuxt.config.cts", "nuxt.config.js", "nuxt.config.mjs", "nuxt.config.cjs"]
     .some(file => existsSync(resolve(rootDir, file)))
   if (!hasNuxtConfig) return
@@ -86,7 +84,7 @@ async function loadNuxtViteConfig(rootDir: string): Promise<{ plugins: readonly 
   // SAFETY: vitehubCliDiscovery is an internal marker consumed by ViteHub's Nuxt module during config loading.
   const nuxt = await loadNuxt({
     cwd: rootDir,
-    dev: true,
+    dev: command === "serve",
     overrides: { vitehubCliDiscovery: true },
     ready: true,
   } as Parameters<typeof loadNuxt>[0])
@@ -101,7 +99,7 @@ async function loadNuxtViteConfig(rootDir: string): Promise<{ plugins: readonly 
         : nuxt.options.rootDir || rootDir,
       vitehubCliDiscovery: true,
     }
-    const config = await resolveConfig(inlineConfig, "build", "production")
+    const config = await resolveConfig(inlineConfig, command, command === "build" ? "production" : "development")
     return {
       plugins: config.plugins,
       root: config.root,
@@ -129,13 +127,13 @@ function defaultSpawn(command: string, args: string[], options: ViteHubCliSpawnO
   })
 }
 
-async function loadViteConfig(rootDir: string): Promise<ViteHubCliLoadedConfig> {
+async function loadViteConfig(rootDir: string, command: ConfigEnv["command"]): Promise<ViteHubCliLoadedConfig> {
   const { resolveConfig } = await import("vite")
   const inlineConfig: InlineConfig & { vitehubCliDiscovery: true } = {
     root: rootDir,
     vitehubCliDiscovery: true,
   }
-  return await resolveConfig(inlineConfig, "build", "production")
+  return await resolveConfig(inlineConfig, command, command === "build" ? "production" : "development")
 }
 
 // Built-in namespace that orchestrates package-contributed Provision Steps.
@@ -214,24 +212,27 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
   const cwd = options.cwd || process.cwd()
   const env = options.env || process.env
   const stderr = options.stderr || process.stderr
-  const spawn = options.spawn || defaultSpawn
-  const runtimeNamespace = options.runtimeNamespaces?.find(namespace => namespace.name === args[0])
-  if (runtimeNamespace) return await runNamespace(runtimeNamespace, args, { cwd, env, rootDir: cwd, spawn, stderr, stdout })
-
-  const config = await (options.loadConfig || loadViteConfig)(cwd)
+  const command = args[0] === "inspect" && args[1] === "provider-output" ? "build" : "serve"
+  const config = await (options.loadConfig || loadViteConfig)(cwd, command)
   const nuxtConfig = config.vitehubConfigResolved
     ? undefined
-    : await (options.loadNuxtViteConfig || loadNuxtViteConfig)(cwd)
+    : await (options.loadNuxtViteConfig || loadNuxtViteConfig)(cwd, command)
   const plugins = nuxtConfig?.plugins ?? config.plugins
   const rootDir = resolve(nuxtConfig?.root || config.root || cwd)
   const namespaces = [
     ...(await collectViteHubCliNamespaces(plugins)).filter(namespace => namespace.name !== "inspect"),
     createInspectNamespace(plugins),
     createProvisionNamespace(plugins),
-    ...options.runtimeNamespaces ?? [],
   ]
 
-  const context: ViteHubCliContext = { cwd, env, rootDir, spawn, stderr, stdout }
+  const context: ViteHubCliContext = {
+    cwd,
+    env,
+    rootDir,
+    spawn: options.spawn || defaultSpawn,
+    stderr,
+    stdout,
+  }
 
   if (!args.length || isRootHelp(args)) {
     writeRootHelp(namespaces, stdout)
@@ -245,11 +246,7 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
     writeRootHelp(namespaces, stderr)
     return 1
   }
-  return await runNamespace(namespace, args, context)
-}
 
-async function runNamespace(namespace: ViteHubCliCommandNamespace, args: string[], context: ViteHubCliContext): Promise<number> {
-  const { stderr, stdout } = context
   const featureName = args[1]
   if (!featureName || args[1] === "-h" || args[1] === "--help") {
     writeNamespaceHelp(namespace, stdout)

@@ -76,7 +76,7 @@ describe("hubQueue", () => {
     await symlink(join(import.meta.dirname, "../../../node_modules"), join(root, "node_modules"), "dir")
     await writeFile(join(root, "welcome.queue.ts"), "export default { handler: async () => undefined }\n")
     const plugin = hubQueue({ provider })
-    await (plugin.configResolved as (config: unknown) => Promise<void>)({ root, command: "build", build: { outDir: "dist" }, nitro: { preset }, plugins: [], resolve: { alias: [] } })
+    await (plugin.configResolved as (config: unknown) => Promise<void>)({ root, command: "build", build: { outDir: "dist" }, nitro: { preset, output: { dir: "custom-output" } }, plugins: [], resolve: { alias: [] } })
     await runProviderOutputHooks(plugin)
     const entries = await collectViteHubProviderOutputEntries([plugin])
     expect(entries).toHaveLength(1)
