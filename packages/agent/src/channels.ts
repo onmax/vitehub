@@ -139,10 +139,13 @@ export interface AgentChannelOptions<
   TAuth = unknown,
   TData = unknown,
   TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
+  THistoryItem = unknown,
 > {
   adapter?: AgentChannelDefinition<TRuntimeConfig>["adapter"]
   capabilities?: AgentChannelDefinition<TRuntimeConfig>["capabilities"]
   identity?: AgentChannelDefinition<TRuntimeConfig>["identity"]
+  /** Past messages that replayChannel() sends through a trigger. */
+  history?: AgentChannelHistory<THistoryItem>
   message?: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods>
   messages?: false | AgentMessageChannelSettings<TRuntimeConfig>
   route?: boolean | AgentChannelChatRouteHandlerOptions<TBody, TAuth>
@@ -168,7 +171,8 @@ export interface AgentWebChatChannelOptions<
   TAuth = unknown,
   TData = unknown,
   TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
-> extends AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods> {}
+  THistoryItem = unknown,
+> extends AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods, THistoryItem> {}
 
 type GitHubAppValue<T, TRuntimeConfig extends AgentRuntimeConfig> =
   MaybeResolvable<T, AgentCallbackContext<TRuntimeConfig> | AgentChannelDeliveryEffectContext<TRuntimeConfig>>
@@ -504,8 +508,9 @@ export interface GitHubChannelOptions<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
+  THistoryItem = unknown,
 >
-  extends AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods> {
+  extends AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem> {
   activity?: boolean | GitHubChannelActivityOptions<TRuntimeConfig>
   /**
    * GitHub App settings, or an Agent GitHub identity such as `createGitHubHost()`.
@@ -531,8 +536,9 @@ export interface DiscordChannelOptions<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
+  THistoryItem = unknown,
 >
-  extends Omit<AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods>, "adapter"> {
+  extends Omit<AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem>, "adapter"> {
   adapter?: true | DiscordAdapterOptions | AgentChannelOptions<TRuntimeConfig>["adapter"]
 }
 
@@ -544,8 +550,9 @@ export interface TelegramChannelOptions<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
+  THistoryItem = unknown,
 >
-  extends Omit<AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods>, "adapter"> {
+  extends Omit<AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem>, "adapter"> {
   adapter?: AgentChannelOptions<TRuntimeConfig>["adapter"]
   allowedUserIds?: TelegramChannelValue<TelegramAdapterConfig["allowedUserIds"], TRuntimeConfig>
   apiBaseUrl?: TelegramChannelValue<TelegramAdapterConfig["apiBaseUrl"], TRuntimeConfig>
@@ -3187,22 +3194,25 @@ export function discord<
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
+  THistoryItem = unknown,
 >(
-  options: DiscordChannelOptions<TRuntimeConfig, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+  options: DiscordChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
 ): AgentChannelDefinitionOf<TRuntimeConfig, "discord", TData, TMethods>
 export function discord<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options?: DiscordChannelOptions<TRuntimeConfig, TData, TMethods>,
+  options?: DiscordChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem>,
 ): AgentChannelDefinitionOf<TRuntimeConfig, "discord", TData, TMethods>
 export function discord<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options: DiscordChannelOptions<TRuntimeConfig, TData, TMethods> = {},
+  options: DiscordChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> = {},
 ): AgentChannelDefinitionOf<TRuntimeConfig, "discord", TData, TMethods> {
   return defineChannel("discord", {
     ...options,
@@ -3241,8 +3251,9 @@ export function github<
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
+  THistoryItem = unknown,
 >(
-  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> } & {
+  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> } & {
     pullRequest: true | (GitHubPullRequestCommentEventOptions<TRuntimeConfig> & { workspace?: true | { mount?: string } })
   },
 ): AgentChannelDefinitionOf<TRuntimeConfig, "github", TData, TMethods> & {
@@ -3255,15 +3266,17 @@ export function github<
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
+  THistoryItem = unknown,
 >(
-  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
 ): AgentChannelDefinitionOf<TRuntimeConfig, "github", TData, TMethods>
 export function github<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods> & {
+  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> & {
     pullRequest: true | (GitHubPullRequestCommentEventOptions<TRuntimeConfig> & { workspace?: true | { mount?: string } })
   },
 ): AgentChannelDefinitionOf<TRuntimeConfig, "github", TData, TMethods> & {
@@ -3276,15 +3289,17 @@ export function github<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options?: GitHubChannelOptions<TRuntimeConfig, TData, TMethods>,
+  options?: GitHubChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem>,
 ): AgentChannelDefinitionOf<TRuntimeConfig, "github", TData, TMethods>
 export function github<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods> = {},
+  options: GitHubChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> = {},
 ): AgentChannelDefinitionOf<TRuntimeConfig, "github", TData, TMethods> {
   const { activity, app: appInput, pullRequest, ...channelOptions } = options
   const identity = isAgentGitHub(appInput) ? appInput : undefined
@@ -3330,8 +3345,9 @@ export function http<
   TData = unknown,
   TBody extends AgentChannelChatRouteBody = AgentChannelChatRouteBody,
   TAuth = unknown,
+  THistoryItem = unknown,
 >(
-  options: AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+  options: AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
 ): AgentChannelDefinitionOf<TRuntimeConfig, "http", TData, TMethods>
 export function http<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -3339,8 +3355,9 @@ export function http<
   TAuth = unknown,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options?: AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods>,
+  options?: AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods, THistoryItem>,
 ): AgentChannelDefinitionOf<TRuntimeConfig, "http", TData, TMethods>
 export function http<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -3348,8 +3365,9 @@ export function http<
   TAuth = unknown,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options: AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods> = {},
+  options: AgentChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods, THistoryItem> = {},
 ): AgentChannelDefinitionOf<TRuntimeConfig, "http", TData, TMethods> {
   if ("path" in options) {
     throw agentDiagnostics.AGENT_R0372({ message: "[vitehub] http({ path }) is not wired yet. Webhook routes are configured with webhooks.path." })
@@ -3361,22 +3379,25 @@ export function slack<
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
+  THistoryItem = unknown,
 >(
-  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
 ): AgentChannelDefinitionOf<TRuntimeConfig, "slack", TData, TMethods>
 export function slack<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options?: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods>,
+  options?: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem>,
 ): AgentChannelDefinitionOf<TRuntimeConfig, "slack", TData, TMethods>
 export function slack<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods> = {},
+  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem> = {},
 ): AgentChannelDefinitionOf<TRuntimeConfig, "slack", TData, TMethods> {
   return defineChannel("slack", options)
 }
@@ -3385,22 +3406,25 @@ export function teams<
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
+  THistoryItem = unknown,
 >(
-  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
 ): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods>
 export function teams<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options?: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods>,
+  options?: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem>,
 ): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods>
 export function teams<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods> = {},
+  options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem> = {},
 ): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods> {
   return defineMessageChannelInstructions(defineChannel("teams", options), "Write formulas for Microsoft Teams as readable plain text, using words, Unicode symbols, or inline code. Teams does not render LaTeX math delimiters or Mermaid diagrams. Explain variables in short bullets; use a numbered flow instead of diagram syntax.")
 }
@@ -3409,22 +3433,25 @@ export function telegram<
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
+  THistoryItem = unknown,
 >(
-  options: TelegramChannelOptions<TRuntimeConfig, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+  options: TelegramChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
 ): AgentChannelDefinitionOf<TRuntimeConfig, "telegram", TData, TMethods>
 export function telegram<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options?: TelegramChannelOptions<TRuntimeConfig, TData, TMethods>,
+  options?: TelegramChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem>,
 ): AgentChannelDefinitionOf<TRuntimeConfig, "telegram", TData, TMethods>
 export function telegram<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options: TelegramChannelOptions<TRuntimeConfig, TData, TMethods> = {},
+  options: TelegramChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> = {},
 ): AgentChannelDefinitionOf<TRuntimeConfig, "telegram", TData, TMethods> {
   if (options.webhooks !== undefined && options.webhookSecret !== undefined) {
     throw agentDiagnostics.AGENT_R0373({ message: "[vitehub] telegram() accepts webhookSecret or webhooks, not both." })
@@ -3505,8 +3532,9 @@ export function webChat<
   TData = unknown,
   TBody extends AgentChannelChatRouteBody = AgentChannelChatRouteBody,
   TAuth = unknown,
+  THistoryItem = unknown,
 >(
-  options: AgentWebChatChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
+  options: AgentWebChatChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> },
 ): AgentChannelDefinitionOf<TRuntimeConfig, "web-chat", TData, TMethods>
 export function webChat<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -3514,8 +3542,9 @@ export function webChat<
   TAuth = unknown,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options?: AgentWebChatChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods>,
+  options?: AgentWebChatChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods, THistoryItem>,
 ): AgentChannelDefinitionOf<TRuntimeConfig, "web-chat", TData, TMethods>
 export function webChat<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -3523,8 +3552,9 @@ export function webChat<
   TAuth = unknown,
   TData = unknown,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
+  THistoryItem = unknown,
 >(
-  options: AgentWebChatChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods> = {},
+  options: AgentWebChatChannelOptions<TRuntimeConfig, TBody, TAuth, TData, TMethods, THistoryItem> = {},
 ): AgentChannelDefinitionOf<TRuntimeConfig, "web-chat", TData, TMethods> {
   return defineChannel("web-chat", {
     ...options,
