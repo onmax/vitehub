@@ -94,9 +94,9 @@ function runtimeDefault(options: RuntimePropOptions): string | undefined {
   if (options.required) return "Required";
   let value = options.default;
   if (typeof value === "function" && options.type !== Function) value = Reflect.apply(value, undefined, []);
-  if (value === undefined) return options.type === Boolean ? "`false`" : undefined;
-  if (typeof value === "string") return `\`'${value}'\``;
-  return `\`${JSON.stringify(value)}\``;
+  if (value === undefined) return options.type === Boolean ? "false" : undefined;
+  if (typeof value === "string") return `'${value}'`;
+  return JSON.stringify(value);
 }
 
 const documented = documentedComponents();
@@ -126,7 +126,7 @@ describe("UI API reference", () => {
             ? rawOptions
             : { type: rawOptions };
         const row = documentedProps.find((candidate) => candidate.name === prop);
-        const defaultCell = row?.cells[2] ?? "";
+        const defaultCell = (row?.cells[2] ?? "").replace(/^`|`$/g, "");
         expect(defaultCell, `${entry.page} ${name}.${prop} default`).toBe(runtimeDefault(options) ?? "");
       }
 
