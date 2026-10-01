@@ -178,7 +178,7 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
       tablePrefix,
       execute: async (statement, args = []) => {
         await this.connect()
-        return await retrySqliteBusy(async () => await execute(this.driver, statement, args))
+        return await this.serialize(async () => await retrySqliteBusy(async () => await execute(this.driver, statement, args)))
       },
       transaction: async (run) => {
         await this.connect()

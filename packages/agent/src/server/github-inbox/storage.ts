@@ -22,6 +22,7 @@ function isBusy(error: unknown): boolean {
 /** A private `node:sqlite` file for hosts without Agent State. `:memory:` is accepted for tests. */
 export function createNodeSqliteInboxStorage(path: string): PullRequestInboxStorage {
   let database: import('node:sqlite').DatabaseSync | undefined
+  let closed = false
   let tail: Promise<void> = Promise.resolve()
   const open = async () => {
     if (database) return database
@@ -53,8 +54,13 @@ export function createNodeSqliteInboxStorage(path: string): PullRequestInboxStor
   return {
     tablePrefix: 'vitehub_babysitter_',
     // One connection: a read must not observe another caller's open transaction.
-    execute: async (sql, args) => await serialize(async () => await runStatement(sql, args)),
-    transaction: async run => await serialize(async () => {
+    execute: async (sql, args) => {
+      if (closed) throw new Error('Inbox storage is closed.')
+      return await serialize(async () => await runStatement(sql, args))
+    },
+    transaction: async run => {
+      if (closed) throw new Error('Inbox storage is closed.')
+      return await serialize(async () => {
       const db = await open()
       for (let delay = 1, waited = 0; ; delay = Math.min(delay * 2, 50)) {
         try {
@@ -76,8 +82,10 @@ export function createNodeSqliteInboxStorage(path: string): PullRequestInboxStor
         db.exec('ROLLBACK')
         throw error
       }
-    }),
+      })
+    },
     async close() {
+      closed = true
       await tail
       database?.close()
       database = undefined
