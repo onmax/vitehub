@@ -4,12 +4,12 @@ import { existsSync, readFileSync, realpathSync } from "node:fs"
 import process from "node:process"
 import { fileURLToPath } from "node:url"
 
-import { collectViteHubCliNamespaces, collectViteHubProvisionSteps } from "@vite-hub/internal/cli"
+import { collectViteHubCliNamespaces } from "@vite-hub/internal/cli"
 import { formatRuntimeDiagnosticError } from "@vite-hub/runtime"
 import { resolve } from "pathe"
 
 import { createInspectNamespace } from "./inspect.ts"
-import { runProvision } from "./provision.ts"
+import { createProvisionNamespace } from "./provision.ts"
 
 import type { InlineConfig } from "vite"
 import type { ViteHubCliCommandNamespace, ViteHubCliContext } from "@vite-hub/internal/cli"
@@ -134,22 +134,6 @@ async function loadViteConfig(rootDir: string): Promise<ViteHubCliLoadedConfig> 
     vitehubCliDiscovery: true,
   }
   return await resolveConfig(inlineConfig, "serve", "development")
-}
-
-// Built-in namespace that orchestrates package-contributed Provision Steps.
-function createProvisionNamespace(plugins: readonly unknown[]): ViteHubCliCommandNamespace {
-  const collectSteps = () => collectViteHubProvisionSteps(plugins)
-  const run = (args: string[], context: ViteHubCliContext) => runProvision(args, context, { collectSteps })
-  return {
-    description: "Idempotently create missing provider resources.",
-    features: [{
-      description: "Create missing provider resources for the app's Definitions.",
-      name: "run",
-      run,
-      usage: "vitehub provision run --provider <cloudflare|vercel> [--dry-run]",
-    }],
-    name: "provision",
-  }
 }
 
 /** Keeps at least two spaces between a help name and its description. */
