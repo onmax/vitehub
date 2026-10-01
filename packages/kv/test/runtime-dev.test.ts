@@ -46,6 +46,17 @@ async function run(body: unknown): Promise<{ body: Record<string, unknown>, stat
 }
 
 describe("KV dev runtime handler", () => {
+  it("rejects accessor-backed values without running their getters", async () => {
+    const getter = vi.fn(() => { throw new Error("Getter must not run") })
+    const value = Object.defineProperty({}, "secret", { enumerable: true, get: getter })
+    const get = vi.spyOn(kv, "get").mockResolvedValue([null, value])
+    try {
+      expect(await run({ key: "native", operation: "get" })).toMatchObject({ status: 422, body: { error: { code: "KV_VALUE_UNSUPPORTED" } } })
+      expect(getter).not.toHaveBeenCalled()
+    }
+    finally { get.mockRestore() }
+  })
+
   it.each([undefined, new Map([["role", "admin"]]), Number.NaN, Number.POSITIVE_INFINITY, { nested: undefined }, [undefined], new Date("2026-01-01"), Object.assign(["entry"], { extra: "lost" }), Object.assign(["entry"], { [Symbol("extra")]: "lost" }), Object.defineProperty({}, "hidden", { value: "lost" })])("rejects native values that JSON would change: %j", async value => {
     const get = vi.spyOn(kv, "get").mockResolvedValue([null, value])
     try {
@@ -128,6 +139,16 @@ describe("KV dev runtime handler", () => {
     expect((await run({ key: "fractional", operation: "set", ttl: 1.5, value: "x" })).status).toBe(200)
     expect((await run({ key: "empty-store", operation: "set", store: "", value: "x" })).status).toBe(400)
     expect((await run({ key: "empty-store", operation: "has" })).body).toMatchObject({ exists: false })
+  })
+
+  it("rounds fractional Upstash TTL before storage and reports the effective seconds", async () => {
+    const set = vi.spyOn(kv, "set").mockResolvedValue([null, undefined])
+    try {
+      const response = await handleKVDevRequest(devRequest({ key: "rounded", operation: "set", ttl: 1.5, value: "x" }), [{ driver: "upstash", name: "default" }])
+      expect(set).toHaveBeenCalledWith("rounded", "x", { ttl: 2 })
+      expect(await response.json()).toMatchObject({ ttl: 2, notice: expect.stringContaining("2 seconds") })
+    }
+    finally { set.mockRestore() }
   })
 
   it("clamps Cloudflare TTL before calling storage", async () => {
