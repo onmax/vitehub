@@ -486,6 +486,10 @@ KV inspection calls the configured store's paginated `list`, `get`, and `has` op
 
 Blob inspection calls only the configured store's `list` operation. It returns at most 100 objects initially and 250 per request, follows provider cursors only when you choose **Load more**, and supports a pathname prefix. It does not call `get`, `head`, `serve`, `sign`, `put`, or `del`. Object contents and provider URLs never enter the Console response. Listing can still incur provider requests and cost.
 
+## Read a session
+
+Open an Agent Invocation to read it as a conversation. Each message shows its role, and tool work collapses into one group. A reply that a Channel delivered appears as the assistant's answer after that group, also when the run recorded no assistant message. Select the link button in the session header to copy the session URL. The **Invocation** tab counts messages, steps, and tool calls, and shows the total time. [Invocation UI](/docs/ui/invocation) describes the same view for application pages.
+
 ## Inspect the Agent context
 
 Open an Agent Invocation and expand **Captured setup** to inspect the context resolved for that run. The Console shows the final instruction blocks and the model-visible tools, including each tool's label, icon, description, input JSON Schema, and output JSON Schema when one is available. Tools declare the label and icon with [`title` and `icon`](/docs/capabilities/custom-capabilities#minimum-shape). This is the post-composition contract after the Agent Definition, Capabilities, and runtime tool resolution have been applied, so it also covers dynamic tools whose contract cannot be generated into static documentation.
@@ -533,6 +537,6 @@ Images must be PNG, JPEG, WebP, or GIF, with at most ten images and 10 MiB combi
 
 ## Inspect capabilities
 
-Open the right panel's tab chooser and select **Capabilities**. Select a Capability to inspect its recorded data and tools. Tool rows and calls use each tool's declared label and icon. MCP groups tools by server and preserves original tool names and schemas. Title shows its generation settings, progress, and result. Other Capabilities have a default tools and configuration view.
+Open the right panel's tab chooser and select **Capabilities**. Select a Capability to inspect its recorded data and tools. Select a tool's call count to jump to its first call in the session. Tool rows and calls use each tool's declared label and icon. MCP groups tools by server and preserves original tool names and schemas. Title shows its generation settings, progress, and result. Other Capabilities have a default tools and configuration view.
 
 The panel reads the selected Invocation's snapshots. It does not run MCP discovery or title generation. Missing or truncated capture is marked. Developers can [contribute a read-only view](/docs/capabilities/custom-capabilities#contribute-an-inspection-view) with the shared JSON Render component catalog.

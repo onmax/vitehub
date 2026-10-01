@@ -555,7 +555,6 @@ describe("Agent invocation console", () => {
 
       expect(config.nitro?.handlers.map(handler => handler.route)).toEqual([
         "/api/_vitehub/console/status",
-        "/api/_vitehub/console/usage",
         "/_vitehub",
         "/_vitehub/**",
         "/api/_vitehub/console/client.js",
@@ -828,7 +827,6 @@ describe("Agent invocation console", () => {
 
       expect(config.nitro?.handlers.map(handler => handler.route)).toEqual([
         "/api/_vitehub/console/status",
-        "/api/_vitehub/console/usage",
         "/_vitehub",
         "/_vitehub/**",
         "/api/_vitehub/console/client.js",
@@ -881,7 +879,6 @@ describe("Agent invocation console", () => {
 
       expect(config.nitro?.handlers.map(handler => handler.route)).toEqual([
         "/api/_vitehub/console/status",
-        "/api/_vitehub/console/usage",
         "/_vitehub",
         "/_vitehub/**",
         "/api/_vitehub/console/client.js",
@@ -933,7 +930,6 @@ describe("Agent invocation console", () => {
 
       expect(config.nitro?.handlers.map(handler => handler.route)).toEqual([
         "/api/_vitehub/console/status",
-        "/api/_vitehub/console/usage",
         "/_vitehub",
         "/_vitehub/**",
         "/api/_vitehub/console/client.js",
@@ -1024,7 +1020,6 @@ describe("Agent invocation console", () => {
 
       expect(config.nitro?.handlers.map(handler => handler.route)).toEqual([
         "/api/_vitehub/console/status",
-        "/api/_vitehub/console/usage",
         "/_vitehub",
         "/_vitehub/**",
         "/api/_vitehub/console/client.js",
