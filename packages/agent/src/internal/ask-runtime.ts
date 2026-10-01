@@ -144,7 +144,6 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
   const advocaat = await loadAdvocaat()
   const options = await typesafeOptions(context)
   const answers = await advocaat.ask(toEntry(state), wire, { ...options, signal: context.abortSignal })
-  // SAFETY: advocaat answers under the same keys, with the answer shapes that AskAnswers describes for each question type.
   const result = Object.fromEntries(Object.entries(answers).map(([name, answer]) => {
     if (hasRuntimeType(answer, "string") || hasRuntimeType(answer, "boolean")) return [name, answer]
     const question = questions[name]
@@ -153,5 +152,6 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
       ? { ...answer, legend: Object.fromEntries(question.criteria.map((level, index) => [String(index), level])) }
       : answer]
   }))
+  // SAFETY: SDK answers preserve question keys and answer shapes; score legends restore the original public criteria.
   return result as AskAnswers<Q>
 }
