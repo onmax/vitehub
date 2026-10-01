@@ -1748,6 +1748,8 @@ async function writeAgentRuntimeRegistry(
   })
   await writeFile(catalogPath, [...aggregateCatalog.imports, "", ...aggregateCatalog.setup, "", "export { agents }", ""].join("\n"), "utf8")
   await writeFile(registryPath, [
+    `import { resetPublicUrlAgentNames } from ${JSON.stringify(subpath(options.agentImportBase, "server/internal"))}`,
+    "resetPublicUrlAgentNames()",
     `export default {${entries.length ? `\n  ${entries.join(",\n  ")}\n` : ""}}`,
     `export const metadata = {${generatedAgentIdentityEntries(definitions)}}`,
     "",
@@ -3208,6 +3210,8 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       installsCloudflareState ||= shouldInstallCloudflareAgentState(normalizeAgentOptions(agent), config)
       // SAFETY: ViteHub's config hook adds this private server-directory symbol before config resolution.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
+      const build = { agent, config, providerOutput, serverDirs }
+      buildConfigs.set(config, build)
       const generatedRoot = resolveViteHubGeneratedRoot(config)
       runtimeCapabilities = await resolveGeneratedAgentRuntimeCapabilities(
         config,
@@ -3215,7 +3219,6 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       )
       standaloneRuntimeCapabilities = await writeStandaloneAgentRuntimeCapabilities(config, runtimeCapabilities)
       await writeGeneratedAgentOutputs(config)
-      buildConfigs.set(config, { agent, config, providerOutput, serverDirs })
       if (agent === false || !discoverAgentEvalFiles([config.root, ...(serverDirs ?? [])]).length) {
         await removeAgentEvaliteConfig(config.root, generatedRoot)
         return
@@ -3242,7 +3245,12 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       const environmentConfig = this?.environment?.config
       if (environmentConfig) {
         const scheduled = buildConfigs.get(environmentConfig)
-        buildConfigs.set(context, scheduled ?? { agent, config: environmentConfig, providerOutput, serverDirs })
+        buildConfigs.set(context, scheduled ?? {
+          agent: environmentConfig.agent ?? agent,
+          config: environmentConfig,
+          providerOutput: useProviderOutputCatalog(environmentConfig),
+          serverDirs,
+        })
       } else if (resolved) {
         buildConfigs.set(context, { agent, config: resolved, providerOutput, serverDirs })
       }
@@ -3255,8 +3263,8 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         return
       }
       const config = build?.config ?? resolved
-      const buildAgent = build?.agent ?? agent
-      const buildServerDirs = build?.serverDirs ?? serverDirs
+      const buildAgent = build ? build.agent : agent
+      const buildServerDirs = build ? build.serverDirs : serverDirs
       if (!config || config.command !== "build") return
       let artifactDir: string | undefined
       try {
@@ -3364,15 +3372,19 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       }
     },
     async renderError(error) {
-      await providerOutputGenerations.reset(this, providerOutput, error)
+      const build = buildConfigs.get(buildEnvironment(this))
+      await providerOutputGenerations.reset(this, build?.providerOutput ?? providerOutput, error)
     },
     closeBundle: {
       order: "post",
       sequential: true,
       async handler() {
         await closeDiscoveryWatcher?.()
-        if (!resolved || resolved.command !== "build") return
-        await finalizeProviderDeploymentOutputs(providerOutput)
+        const build = buildConfigs.get(buildEnvironment(this))
+        const config = build?.config ?? this?.environment?.config ?? resolved
+        const catalog = build?.providerOutput ?? (this?.environment ? useProviderOutputCatalog(this.environment.config) : providerOutput)
+        if (!config || config.command !== "build") return
+        await finalizeProviderDeploymentOutputs(catalog)
       },
     },
   }
