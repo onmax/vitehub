@@ -18,7 +18,7 @@ import { createProviderRuntime, createSqliteProviderRuntimeSessionStore, inspect
 
 import { hasTrustedWorkspaceAccessScope } from "./access-runtime.ts"
 import { setActiveAgentWorkspaceCommands, setActiveAgentWorkspaceFiles, setAgentWorkspaceDiff } from "./agent-workspace-runtime.ts"
-import { streamAgentOutputToEvents } from "./agent-output.ts"
+import { appendLatestFinalText, streamAgentOutputToEvents } from "./agent-output.ts"
 import { composeInstructionDocument } from "./instruction-composition.ts"
 import { agentInvocationCallbackContextValues } from "./invocation-context.ts"
 import { colocatedAgentSkillsContextKey } from "./internal/colocated-agent-skills.ts"
@@ -2226,12 +2226,32 @@ function providerToolActivity(
   return name && tools?.[name]?.activity ? tools[name].activity : { kind: "tool" as const }
 }
 
+function providerToolTitle(
+  event: Extract<ProviderRuntimeEvent, { type: "item.completed" | "item.started" }>,
+  tools: AgentToolSet | undefined,
+  title: string | undefined,
+  titles: Map<string, string>,
+) {
+  const name = providerToolName(event)
+  if (title && event.itemId) titles.set(event.itemId, title)
+  const resolved = title ?? (event.itemId ? titles.get(event.itemId) : undefined) ?? (name ? tools?.[name]?.title : undefined)
+  if (event.type === "item.completed" && event.itemId) titles.delete(event.itemId)
+  return resolved?.trim() ? resolved : undefined
+}
+
 function providerMessagePhase(event: Extract<ProviderRuntimeEvent, { type: "item.started" }>) {
   const data = record(event.payload.data)
   const item = record(data?.item)
   const phase = item?.phase ?? data?.phase
   if (phase === "commentary") return "commentary"
   if (phase === "final" || phase === "final_answer") return "final"
+}
+
+// The runtime reports a spawned sub-agent's messages under the parent turn. The raw
+// notification keeps the sub-agent turn, so that text is activity, not the final answer.
+function isSubAgentText(event: Extract<ProviderRuntimeEvent, { type: "content.delta" }>): boolean {
+  const rawTurnId = record(record(event.raw)?.payload)?.turnId
+  return hasRuntimeType(rawTurnId, "string") && event.turnId !== undefined && rawTurnId !== event.turnId
 }
 
 function providerTextDeltaId(event: Extract<ProviderRuntimeEvent, { type: "content.delta" }>): string {
@@ -2249,30 +2269,34 @@ function providerEvent(event: ProviderRuntimeEvent, tools: AgentToolSet | undefi
   model?: string
   provider: "claude-code" | "codex"
   resumed: boolean
+  toolTitles: Map<string, string>
 }): StreamEvent[] {
   switch (event.type) {
     case "content.delta":
-      if (event.payload.streamKind === "assistant_text") return [{ id: providerTextDeltaId(event), messageId: event.itemId ?? event.turnId ?? "provider", phase: event.itemId ? messagePhases.get(event.itemId) ?? "final" : "final", text: event.payload.delta, type: "text-delta" }]
+      if (event.payload.streamKind === "assistant_text") return [{ id: providerTextDeltaId(event), messageId: event.itemId ?? event.turnId ?? "provider", phase: isSubAgentText(event) ? "commentary" : event.itemId ? messagePhases.get(event.itemId) ?? "final" : "final", text: event.payload.delta, type: "text-delta" }]
       if (event.payload.streamKind === "command_output") return [providerDataEvent(event)]
       return [{ id: providerTextDeltaId(event), phase: "commentary", text: event.payload.delta, type: "text-delta" }]
     case "item.started": {
       const details = providerToolDetails(event)
       return isProviderToolItem(event.itemId, event.payload.itemType)
-        ? [{ activity: providerToolActivity(event, tools), id: event.itemId, input: details.input, name: providerToolName(event) || event.payload.title || event.payload.itemType, title: details.title, type: "tool-call" }]
+        ? [{ activity: providerToolActivity(event, tools), id: event.itemId, input: details.input, name: providerToolName(event) || event.payload.title || event.payload.itemType, title: providerToolTitle(event, tools, details.title, options.toolTitles), type: "tool-call" }]
         : [providerDataEvent(event)]
     }
-    case "item.completed":
+    case "item.completed": {
+      const details = providerToolDetails(event)
       return isProviderToolItem(event.itemId, event.payload.itemType)
         ? [{
             activity: providerToolActivity(event, tools),
-            ...providerToolDetails(event),
+            ...details,
             id: event.itemId,
             name: providerToolName(event) || event.payload.title || event.payload.itemType,
+            title: providerToolTitle(event, tools, details.title, options.toolTitles),
             type: "tool-result",
           }]
         : event.payload.itemType === "error" && event.payload.detail
           ? [{ error: event.payload.detail, type: "error" }]
           : [providerDataEvent(event)]
+    }
     case "request.opened":
       return event.requestId ? [{ id: event.requestId, input: event.payload.args, name: event.payload.requestType, reason: event.payload.detail, type: "approval-request" }] : [providerDataEvent(event)]
     case "request.resolved":
@@ -2862,6 +2886,7 @@ async function* runProvider<
       rejectAbort?.(effectiveSignal?.reason ?? new DOMException("[vitehub] Provider Agent Driver invocation aborted.", "AbortError"))
     }
     const messagePhases = new Map<string, "commentary" | "final">()
+    const toolTitles = new Map<string, string>()
     const usageAccumulator: ProviderInvocationUsageAccumulator = {
       cachedInputTokens: 0,
       cachedInputTokensComplete: true,
@@ -2913,6 +2938,7 @@ async function* runProvider<
         model: options.model,
         provider: options.provider,
         resumed,
+        toolTitles,
       })
       if (current.value.type === "item.completed" && current.value.itemId) messagePhases.delete(current.value.itemId)
       const failure = normalized.find(event => event.type === "error" && !event.recoverable)
@@ -3222,6 +3248,7 @@ async function generateProvider<CALL_OPTIONS, TRuntimeConfig extends AgentRuntim
   context: AgentAdapterRunContext<CALL_OPTIONS, TRuntimeConfig>,
 ): Promise<AgentAdapterResult> {
   let text = ""
+  let textIdentity: string | undefined
   let finishReason: unknown
   let usageRecord: AgentAdapterResult["usageRecord"]
   const tracer = context.runtime.traceLog
@@ -3237,7 +3264,12 @@ async function generateProvider<CALL_OPTIONS, TRuntimeConfig extends AgentRuntim
   try {
     for await (const event of iterable) {
       await tracer?.write(event)
-      if (event.type === "text-delta" && event.phase !== "commentary") text += event.text
+      // A turn can end with several final assistant messages. The result is the latest one.
+      if (event.type === "text-delta" && event.phase !== "commentary") {
+        const next = appendLatestFinalText(text, textIdentity, event)
+        text = next.text
+        textIdentity = next.identity
+      }
       else if (event.type === "usage") usageRecord = event.usageRecord
       else if (event.type === "finish") finishReason = event.reason
       else if (event.type === "error" && !event.recoverable) throw agentDiagnostics.AGENT_R0726({ message: event.error })

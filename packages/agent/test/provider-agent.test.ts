@@ -2526,6 +2526,43 @@ cli_auth_credentials_store = "keyring"
     expect(finalText.text).toBe("First. Second.")
   })
 
+  it("returns only the latest final message from generate", async () => {
+    const threadId = "thread-final-messages"
+    runtime(threadId, [
+      event("content.delta", threadId, { contentIndex: 0, delta: "{\"disposition\":", streamKind: "assistant_text" }, { itemId: "draft", turnId: "turn-1" }),
+      event("content.delta", threadId, { contentIndex: 1, delta: "\"park\"}", streamKind: "assistant_text" }, { itemId: "draft", turnId: "turn-1" }),
+      event("content.delta", threadId, { contentIndex: 0, delta: "{\"disposition\":", streamKind: "assistant_text" }, { itemId: "answer", turnId: "turn-1" }),
+      event("content.delta", threadId, { contentIndex: 1, delta: "\"merge\"}", streamKind: "assistant_text" }, { itemId: "answer", turnId: "turn-1" }),
+      event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" }),
+    ])
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    await expect(createProviderAgentAdapter({ provider: "codex" }).generate(context(threadId) as never)).resolves.toMatchObject({ text: "{\"disposition\":\"merge\"}" })
+  })
+
+  it("keeps spawned sub-agent messages out of the final answer", async () => {
+    const threadId = "thread-sub-agent-messages"
+    // The runtime reports a spawned sub-agent under the parent turn. Its raw notification keeps the sub-agent turn.
+    const delta = (itemId: string, turnId: string, text: string) => event("content.delta", threadId, { delta: text, streamKind: "assistant_text" }, {
+      itemId,
+      raw: { method: "item/agentMessage/delta", payload: { delta: text, itemId, threadId: turnId === "turn-1" ? "provider-root" : "provider-child", turnId }, source: "codex.app-server.notification" },
+      turnId: "turn-1",
+    })
+    const events = [
+      delta("child-answer", "child-turn", "{\"disposition\":"),
+      delta("answer", "turn-1", "{\"disposition\":"),
+      delta("child-answer", "child-turn", "\"park\"}"),
+      delta("answer", "turn-1", "\"merge\"}"),
+      event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" }),
+    ]
+    runtime(threadId, events)
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    await expect(createProviderAgentAdapter({ provider: "codex" }).generate(context(threadId) as never)).resolves.toMatchObject({ text: "{\"disposition\":\"merge\"}" })
+    runtime(threadId, events)
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    const streamed = await collect(await createProviderAgentAdapter({ provider: "codex" }).stream!(context(threadId) as never)) as StreamEvent[]
+    expect(streamed.filter(value => value.type === "text-delta").map(value => value.phase)).toEqual(["commentary", "final", "commentary", "final"])
+  })
+
   it("keeps assistant item phases separate and forgets completed items", async () => {
     const threadId = "thread-message-phases"
     runtime(threadId, [
@@ -2583,13 +2620,49 @@ cli_auth_credentials_store = "keyring"
           activity: { kind: "action", name: "repository-host.write" },
           execute: vi.fn(),
           name: "repository_host_write",
+          title: "Updated repository",
         },
       },
     }) as never)) as Array<Record<string, unknown>>
 
     expect(events.slice(0, 2)).toEqual([
-      expect.objectContaining({ activity: { kind: "action", name: "repository-host.write" }, name: "repository_host_write", type: "tool-call" }),
-      expect.objectContaining({ activity: { kind: "action", name: "repository-host.write" }, name: "repository_host_write", type: "tool-result" }),
+      expect.objectContaining({ activity: { kind: "action", name: "repository-host.write" }, name: "repository_host_write", title: "Updated repository", type: "tool-call" }),
+      expect.objectContaining({ activity: { kind: "action", name: "repository-host.write" }, name: "repository_host_write", title: "Updated repository", type: "tool-result" }),
+    ])
+  })
+
+  it.each([
+    ["codex", undefined],
+    ["codex", "MCP tool call"],
+    ["codex", " "],
+    ["codex", "Provider search"],
+    ["claude-code", undefined],
+    ["claude-code", "MCP tool call"],
+    ["claude-code", " "],
+    ["claude-code", "Provider search"],
+  ] as const)("applies tool titles to %s generate traces with provider title %s", async (provider, title) => {
+    const threadId = "thread-generate-tool-title"
+    runtime(threadId, [
+      event("item.started", threadId, { data: { toolName: "search" }, itemType: "mcp_tool_call", title }, { itemId: "tool-1", turnId: "turn-1" }),
+      event("item.completed", threadId, { data: { toolName: "search" }, itemType: "mcp_tool_call", status: "completed" }, { itemId: "tool-1", turnId: "turn-1" }),
+      event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" }),
+    ])
+    const traceLog = createTraceEventLog({ content: "content" })
+    const runContext = context(threadId, {
+      tools: { search: { execute: vi.fn(), name: "search", title: "Searched records" } },
+    })
+    const adapter = createProviderAgentAdapter({ provider })
+    await Reflect.apply(adapter.generate, adapter, [{
+      ...runContext,
+      runtime: { ...runContext.runtime, traceLog },
+    }])
+
+    expect(traceLog.entries().filter(observation => observation.name.startsWith("agent.tool.")).map(observation => ({
+      name: observation.name,
+      title: observation.attributes?.["tool.title"],
+    }))).toEqual([
+      { name: "agent.tool.start", title: title === "Provider search" ? title : "Searched records" },
+      { name: "agent.tool.finish", title: title === "Provider search" ? title : "Searched records" },
     ])
   })
 
@@ -2708,7 +2781,7 @@ cli_auth_credentials_store = "keyring"
     const firstToolObservations = observations.filter(observation => observation.attributes?.["tool.id"] === "mcp-1")
     expect(firstToolObservations).toHaveLength(3)
     expect(firstToolObservations[0]?.attributes).toHaveProperty("tool.title", "airtable · search_records")
-    expect(firstToolObservations.slice(1).every(observation => !("tool.title" in (observation.attributes ?? {})))).toBe(true)
+    expect(firstToolObservations.slice(1).every(observation => observation.attributes?.["tool.title"] === "airtable · search_records")).toBe(true)
     expect(observations.filter(observation => observation.attributes?.["tool.id"] === "mcp-3").every(observation => !("tool.title" in (observation.attributes ?? {})))).toBe(true)
     expect(observations.find(observation => observation.name === "agent.tool.error")?.attributes).not.toHaveProperty("tool.output")
   })

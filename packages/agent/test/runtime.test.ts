@@ -1492,6 +1492,35 @@ describe("agent message protocol", () => {
     expect(observations[0]?.attributes?.["vitehub.observation.truncated"]).toBe(length > 64 * 1024 ? true : undefined)
   })
 
+  it.each(["async", "readable"])("preserves provider tool titles in %s streams and traces", async (kind) => {
+    const { defineAgent, defineCapability, streamAgent } = await import("../src/index.ts")
+    const traceLog = createTraceEventLog({ content: "content" })
+    const chunks = [
+      { id: "search-1", name: "search", title: "Search breakfast", type: "tool-call" },
+      { id: "search-1", name: "search", output: "Found breakfast", type: "tool-result" },
+      { type: "finish" },
+    ]
+    const agent = defineAgent({
+      capabilities: [defineCapability({ id: "search", tools: { search: { name: "search", title: "Searched meals" } } })],
+      driver: { run: () => kind === "readable"
+        ? new ReadableStream({
+            start(controller) {
+              for (const chunk of chunks) controller.enqueue(chunk)
+              controller.close()
+            },
+          })
+        : (async function* () { yield* chunks })() },
+    })
+
+    const stream = await streamAgent(agent, { memo: vi.fn(), runtime: "unknown", traceLog, waitUntil: vi.fn() }, {})
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    for await (const _event of stream as AsyncIterable<unknown>) {}
+
+    const toolEvents = traceLog.entries().filter(event => event.name === "agent.tool.start" || event.name === "agent.tool.finish")
+    expect(toolEvents).toHaveLength(2)
+    for (const event of toolEvents) expect(event.attributes?.["tool.title"]).toBe("Search breakfast")
+  })
+
   it("exports product actions as execute_tool spans with ViteHub rendering semantics", async () => {
     const { defineAgent, defineCapability, streamAgent } = await import("../src/index.ts")
     const traceLog = createTraceEventLog()
@@ -1681,6 +1710,41 @@ describe("agent message protocol", () => {
       result: expect.objectContaining({ text: "Done" }),
       toolResults: [expect.objectContaining({ output: { records: 2 }, toolCallId: "tool-1", toolName: "airtable" })],
     }))
+  })
+
+  it.each(["static", "resolved"])("includes %s adapter-local tool titles in AI SDK telemetry", async (kind) => {
+    const { createAiSdkAdapter } = await import("../src/ai-sdk.ts")
+    const traceLog = createTraceEventLog({ content: "content" })
+    loadAiSdk.mockResolvedValue({
+      isStepCount: () => () => false,
+      jsonSchema: vi.fn(schema => schema),
+      ToolLoopAgent: class {
+        constructor(private settings: Record<string, unknown>) {}
+
+        async generate() {
+          // SAFETY: The adapter configures AI SDK telemetry with this contract.
+          const telemetry = this.settings.telemetry as { integrations: import("ai").Telemetry[] }
+          for (const integration of telemetry.integrations) {
+            // SAFETY: Only tool identity and output fields are used by the integration.
+            await integration.onToolExecutionStart?.({ toolCallId: "local-1", toolName: "search" } as never)
+            // SAFETY: Only tool identity and output fields are used by the integration.
+            await integration.onToolExecutionEnd?.({ toolCallId: "local-1", toolName: "search", toolOutput: { type: "text", value: "done" } } as never)
+          }
+          return { text: "done" }
+        }
+      },
+    })
+    const tools = { search: { execute: () => "done", name: "search", title: "Searched meals" } }
+    const agent = adapterDefinition(createAiSdkAdapter({
+      // SAFETY: The mocked AI SDK does not call the model.
+      model: {} as never,
+      tools: kind === "static" ? tools : () => tools,
+    }))
+
+    await runAgent(agent, { memo: vi.fn(), runtime: "unknown", traceLog, waitUntil: vi.fn() }, { prompt: "Search meals" })
+    const events = traceLog.entries().filter(entry => entry.name === "agent.tool.start" || entry.name === "agent.tool.finish")
+    expect(events).toHaveLength(2)
+    for (const event of events) expect(event.attributes).toMatchObject({ "tool.name": "search", "tool.title": "Searched meals" })
   })
 
   it("exports product actions from AI SDK telemetry integrations", async () => {
