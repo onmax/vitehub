@@ -328,6 +328,17 @@ it("rolls back host Observability when host attachment fails", async () => {
   for (const close of closeHooks) await close()
 })
 
+it("cleans up telemetry when a later host attachment hook fails", async () => {
+  const { installObservability } = await import("../src/observability/host.ts")
+  const { useObservability } = await import("../src/observability.ts")
+  const flush = vi.fn(async () => {})
+  const plugin = installObservability({ service: "partial-attachment", exporter: { capture: async () => {}, exception: async () => {}, logs: async () => {}, flush } })
+  expect(() => plugin({ hooks: { hook(name) { if (name === "close") throw new Error("close hook failed") } } })).toThrow("close hook failed")
+  await new Promise(resolve => setTimeout(resolve, 10))
+  expect(flush).toHaveBeenCalledOnce()
+  expect(() => useObservability()).toThrow("Observability is not configured")
+})
+
 it("preserves host ownership and replaces injected Capabilities after shutdown", async () => {
   const { useObservability } = await import("../src/observability.ts")
   const { installObservability } = await import("../src/observability/host.ts")

@@ -286,34 +286,48 @@ export function agentEvlogPlugin(telemetry: AgentEvlog, reporters: readonly { st
     return hasRuntimeType(value, "number") && Number.isInteger(value) ? value : undefined
   }
   return (host) => {
-    host.hooks.hook("request", event => {
-      event.req.context ||= {}
-      event.req.context.requestId ||= crypto.randomUUID()
-    })
-    host.hooks.hook("evlog:drain", telemetry.drain)
-    host.hooks.hook("error", (error, context) => {
-      const request = context.event?.req
-      const status = statusCodeOf(error)
-      const properties = {
-        operation: "http.request",
-        method: request?.method,
-        path: request ? new URL(request.url).pathname : undefined,
-        request_id: request?.context?.requestId,
-        status_code: status,
-      }
-      // Client errors are expected request outcomes. Keep them visible as warning
-      // events without creating PostHog exception noise or fake failures.
-      if (request && status !== undefined && status >= 400 && status < 500) {
-        telemetry.event("http.request.failed", { ...properties, level: "warn" })
-      } else telemetry.exception(error, properties)
-    })
-    if (telemetry.status().configured) for (const reporter of reporters) reporter.start()
-    host.hooks.hook("close", async () => {
-      try { await Promise.all(reporters.map(reporter => reporter.stop())) }
+    const started: { stop(): Promise<void> }[] = []
+    let cleanupPromise: Promise<void> | undefined
+    const cleanup = () => cleanupPromise ??= (async () => {
+      try { await Promise.allSettled(started.map(reporter => reporter.stop())) }
       finally {
         try { await telemetry.flush() }
         finally { onClose?.() }
       }
-    })
+    })()
+    try {
+      host.hooks.hook("request", event => {
+        event.req.context ||= {}
+        event.req.context.requestId ||= crypto.randomUUID()
+      })
+      host.hooks.hook("evlog:drain", telemetry.drain)
+      host.hooks.hook("error", (error, context) => {
+        const request = context.event?.req
+        const status = statusCodeOf(error)
+        const properties = {
+          operation: "http.request",
+          method: request?.method,
+          path: request ? new URL(request.url).pathname : undefined,
+          request_id: request?.context?.requestId,
+          status_code: status,
+        }
+        // Client errors are expected request outcomes. Keep them visible as warning
+        // events without creating PostHog exception noise or fake failures.
+        if (request && status !== undefined && status >= 400 && status < 500) {
+          telemetry.event("http.request.failed", { ...properties, level: "warn" })
+        } else telemetry.exception(error, properties)
+      })
+      if (telemetry.status().configured) {
+        for (const reporter of reporters) {
+          started.push(reporter)
+          reporter.start()
+        }
+      }
+      host.hooks.hook("close", cleanup)
+    }
+    catch (error) {
+      void cleanup()
+      throw error
+    }
   }
 }
