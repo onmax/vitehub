@@ -261,6 +261,7 @@ const selectedActions = computed(() => {
   return {
     agent: invocation.agentName,
     deletable: record(actions.delete)?.available === true,
+    deleteUnavailableReason: stringValue(record(actions.delete)?.reason),
     id: invocation.id,
     rerun: (rerun?.available === true && prompt
       ? { available: true, prompt, ...(invokerProfileId ? { invokerProfileId } : {}) }

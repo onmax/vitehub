@@ -37,7 +37,7 @@ async function journaled(input: Parameters<typeof runAgent>[2], options: Partial
 }
 
 const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
-  attributes,
+  attributes: { "input.replay.version": 1, "input.hasInvoker": false, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false, ...attributes },
   name: "agent.invocation.start",
   sequence: 1,
   timestamp: new Date(0).toISOString(),
@@ -78,6 +78,31 @@ describe("agentInvocationRerunInput", () => {
       .toEqual({ available: true, invokerProfileId: "reviewer", prompt: "Hi" })
   })
 
+  it.each(["invoker", "actor"])("rejects a direct %s even with a profile", async (key) => {
+    for (const invokerProfileId of [undefined, "reviewer"]) {
+      const record = await journaled({ context: { [key]: { id: "direct-user", kind: "user" }, invokerProfileId }, prompt: "Hi" })
+      expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-invoker" })
+    }
+  })
+
+  it("rejects persisted records without the replay schema", () => {
+    for (const attributes of [
+      { "input.prompt": "Hi", "agent.invoker.id": "reviewer" },
+      { "input.prompt": "Hi", "input.hasOptions": false },
+      { "input.prompt": "Hi", "input.replay.version": 1 },
+    ]) {
+      expect(agentInvocationRerunInput({ observations: [{ ...start({}), attributes }] }))
+        .toEqual({ available: false, reason: "replay-metadata-unavailable" })
+    }
+  })
+
+  it.each(["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages"])("rejects replay metadata missing %s", (key) => {
+    const observation = start({ "input.prompt": "Hi" })
+    delete observation.attributes![key]
+    expect(agentInvocationRerunInput({ observations: [observation] }))
+      .toEqual({ available: false, reason: "replay-metadata-unavailable" })
+  })
+
   it("retains restored invokers after the selected profile is removed", async () => {
     const input = restoreResolvedAgentInvokerInput(portableResolvedAgentInvokerInput(withResolvedAgentInvokerInput(
       { context: { invokerProfileId: "removed-profile" }, prompt: "Hi" },
@@ -86,6 +111,7 @@ describe("agentInvocationRerunInput", () => {
     const record = await journaled(input)
     expect(record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes)
       .toMatchObject({ "agent.invoker.id": "resolved-user", "agent.invoker.profile.id": "removed-profile" })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-invoker" })
   })
 
   it("disables rerun when a redactor rewrites the captured prompt", async () => {
@@ -97,8 +123,8 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
   })
 
-  it.each(["agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt"])("rejects replay when redaction changes %s", async (key) => {
-    for (const replacement of [undefined, key === "agent.invoker.profile.id" ? "other-profile" : key !== "input.hasPrompt"]) {
+  it.each(["input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt"])("rejects replay when redaction changes %s", async (key) => {
+    for (const replacement of [undefined, key === "agent.invoker.profile.id" ? "other-profile" : key === "input.replay.version" ? 2 : key !== "input.hasPrompt"]) {
       const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Original prompt" }, {
         redact: observation => observation.name === "agent.invocation.start"
           ? { ...observation, attributes: { ...observation.attributes, [key]: replacement } }

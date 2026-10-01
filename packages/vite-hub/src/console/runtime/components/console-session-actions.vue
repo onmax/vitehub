@@ -12,6 +12,7 @@ const props = defineProps<{
   agentsBase: string;
   apiBase: string;
   deletable: boolean;
+  deleteUnavailableReason?: string;
   id: string;
   rerun: ConsoleSessionRerun;
 }>();
@@ -27,6 +28,8 @@ const confirmOpen = ref(false);
 
 const rerunUnavailable: Record<string, string> = {
   "invocation-not-terminal": "Rerun is available after the session finishes",
+  "replay-metadata-unavailable": "Rerun is unavailable: the session has no complete replay metadata",
+  "input-has-invoker": "Rerun is unavailable: this session received a direct invoker identity",
   "input-has-options": "Rerun is unavailable: this session received call options",
   "input-has-data": "Rerun is unavailable: this session received structured input",
   "input-redacted": "Rerun is unavailable: the recorded input or Invoker Profile was redacted",
@@ -40,7 +43,9 @@ const rerunLabel = computed(() => {
   return rerunUnavailable[props.rerun.reason] ?? "Rerun is unavailable for this session";
 });
 const deleteLabel = computed(() =>
-  props.deletable ? "Delete session" : "Delete is available after the session finishes",
+  props.deletable ? "Delete session" : props.deleteUnavailableReason === "store-delete-unavailable"
+    ? "Delete is unavailable: the invocation store does not support deletion"
+    : "Delete is available after the session finishes",
 );
 
 watch(

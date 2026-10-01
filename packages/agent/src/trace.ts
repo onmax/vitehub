@@ -4,7 +4,7 @@ import { emitTraceEvent } from "@vite-hub/runtime"
 import { redactCredentialText } from "./internal/credential-redaction.ts"
 
 import { agentErrorDetails } from "./agent-error.ts"
-import { agentInvokerLabel } from "./invoker.ts"
+import { agentInvokerLabel, resolveInputAgentInvoker } from "./invoker.ts"
 import { isAttachmentPart, type Message, type StreamEvent } from "./messages.ts"
 import type {
   AgentDriverContribution,
@@ -96,6 +96,8 @@ function invocationAttributes(
     "channel.delivery.id": context.runtime.channelDelivery?.id,
     "channel.delivery.provider": context.runtime.channelDelivery?.provider,
     "channel.delivery.source.id": context.runtime.channelDelivery?.sourceId,
+    "input.replay.version": 1,
+    "input.hasInvoker": resolveInputAgentInvoker(context.input.context) !== undefined,
     "input.hasData": context.input.data !== undefined,
     "input.hasMessages": Boolean(context.input.messages?.length),
     "input.hasOptions": context.input.options !== undefined,

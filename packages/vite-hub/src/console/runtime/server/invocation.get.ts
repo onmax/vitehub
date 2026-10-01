@@ -17,7 +17,7 @@ type ConsoleInvocationRerun =
 
 /** Record actions that Console invoke access allows. */
 interface ConsoleInvocationActions {
-  delete: { available: boolean }
+  delete: { available: boolean, reason?: "store-delete-unavailable" }
   rerun: ConsoleInvocationRerun
 }
 
@@ -70,7 +70,9 @@ function invocationActions(invocation: AgentInvocationRecord): ConsoleInvocation
     ? { available: false, reason: "invoker-profile-unavailable" }
     : input
   return {
-    delete: { available: terminalStatuses.has(invocation.status) },
+    delete: getConsoleInvocations().supportsDelete
+      ? { available: terminalStatuses.has(invocation.status) }
+      : { available: false, reason: "store-delete-unavailable" },
     rerun,
   }
 }
@@ -97,6 +99,7 @@ export async function deleteConsoleInvocation(event: ConsoleRequestEvent): Promi
   const summary = await invocations.getSummary(id)
   if (!summary) throw notFound()
   if (!summary.agentName || !getConsoleAgentDefinition(summary.agentName)) throw actionError(403, "Deleting this invocation requires Console invoke access for its Agent.")
+  if (!invocations.supportsDelete) throw actionError(409, "This invocation store does not support deletion.")
   const outcome = await invocations.delete(id)
   if (outcome === "not-found") throw notFound()
   if (outcome === "not-terminal") throw actionError(409, "Only completed, failed, or cancelled invocations can be deleted.")

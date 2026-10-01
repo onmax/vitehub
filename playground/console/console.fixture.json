@@ -564,6 +564,11 @@
           "attributes": {
             "input.hasMessages": false,
             "input.hasPrompt": true,
+            "input.replay.version": 1,
+            "input.hasInvoker": false,
+            "input.hasData": false,
+            "input.hasOptions": false,
+            "input.hasMessages": false,
             "input.prompt": "The newer Console screens do more, but the whole thing is starting to feel generated. Review the hierarchy and density."
           }
         },

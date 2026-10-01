@@ -2048,6 +2048,48 @@ describe("Agent invocation console", () => {
     }
   })
 
+  it("disables legacy reruns and deletion for a custom store without delete", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-custom-actions-"))
+    const { delete: _delete, ...store } = createMemoryAgentInvocationStore()
+    const invocations = defineAgentInvocations({ store })
+    const record = fixtureDocument("legacy-session").invocations[0]!
+    await store.create({ ...record, observations: [{
+      attributes: { "input.prompt": "Original prompt", "agent.invoker.id": "support" },
+      name: "agent.invocation.start",
+      sequence: 1,
+      timestamp: record.createdAt,
+      type: "run",
+    }] })
+    const definition = defineAgent({ driver: { run: () => "done" }, invocations, name: "support" })
+    const event = (body?: unknown): ConsoleRequestEvent => {
+      const method = body === undefined ? "GET" : "POST"
+      const url = "http://localhost/api/_vitehub/console/invocations/legacy-session"
+      return {
+        headers: new Headers({ host: "localhost" }),
+        method,
+        node: { req: { method, socket: { remoteAddress: "127.0.0.1" }, url } },
+        req: { ...(body === undefined ? {} : { json: async () => body }), method, url },
+      }
+    }
+    try {
+      installConsoleAgentDefinitions([
+        { definition: { default: definition }, fallbackName: "help" },
+      ], { invoke: true, projectRoot: root })
+      await expect(invocationHandler(event())).resolves.toMatchObject({ invocation: { actions: {
+        delete: { available: false, reason: "store-delete-unavailable" },
+        rerun: { available: false, reason: "replay-metadata-unavailable" },
+      } } })
+      await expect(invocationHandler(event({ action: "delete" }))).rejects.toMatchObject({
+        statusCode: 409,
+        statusMessage: "This invocation store does not support deletion.",
+      })
+      await expect(invocations.get("legacy-session")).resolves.toBeDefined()
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
   it("reruns and deletes journaled invocations only with Console invoke access", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-invocation-actions-"))
     let release: (value: string) => void = () => {}

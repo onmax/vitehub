@@ -61,6 +61,7 @@ describe.each(Object.entries(stores))("%s Agent Invocation deletion", (_name, cr
 
     await expect(invocations.delete("old-completed")).resolves.toBe("deleted")
     await expect(invocations.delete("old-completed")).resolves.toBe("not-found")
+    expect(invocations.supportsDelete).toBe(true)
     await expect(invocations.delete("old-running")).resolves.toBe("not-terminal")
     await expect(invocations.get("old-completed")).resolves.toBeUndefined()
     await expect(invocations.get("old-running")).resolves.toMatchObject({ status: "running" })
@@ -147,6 +148,7 @@ describe("Agent Invocation retention", () => {
   it("reports a store without delete or prune support", async () => {
     const { delete: _delete, prune: _prune, ...store } = createMemoryAgentInvocationStore()
     const invocations = defineAgentInvocations({ store })
+    expect(invocations.supportsDelete).toBe(false)
     await expect(invocations.delete("missing")).rejects.toMatchObject({ code: "AGENT_R0932" })
     await expect(invocations.delete("missing")).rejects.toThrow("does not support deletion")
     await expect(invocations.prune()).rejects.toMatchObject({ code: "AGENT_R0932" })

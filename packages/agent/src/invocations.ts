@@ -236,6 +236,8 @@ export interface AgentInvocations {
   /** Durably append evidence to a live or terminal invocation. Repeated IDs return the existing observation. */
   appendObservation(id: string, event: TraceEvent, options: { id: string }): Promise<AgentInvocationRecord | undefined>
   readonly [agentInvocationsBrand]: true
+  /** Whether the configured store implements deletion. */
+  readonly supportsDelete: boolean
   /** Deletes one terminal record. Rejects when the store does not implement deletion. */
   delete(id: string): Promise<AgentInvocationDeleteOutcome>
   get(id: string, options?: { observationNames?: readonly string[] }): Promise<AgentInvocationRecord | undefined>
@@ -950,6 +952,10 @@ export async function agentInvocationId(runId: string, agentName?: string): Prom
 export type AgentInvocationRerunUnavailableReason =
   /** The journal has no start observation with a text prompt. */
   | "input-not-captured"
+  /** The record predates the replay schema or lacks its required metadata. */
+  | "replay-metadata-unavailable"
+  /** The Invocation supplied an invoker identity, which the journal does not replay. */
+  | "input-has-invoker"
   /** The Invocation received structured input, which the journal does not replay. */
   | "input-has-data"
   /** The Invocation received call options, which the journal does not replay. */
@@ -986,6 +992,9 @@ export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "o
   if (attributes["input.hasMessages"] === true || attributes["input.messages"] !== undefined) return { available: false, reason: "input-has-messages" }
   const prompt = attributes["input.prompt"]
   if (!hasRuntimeType(prompt, "string") || !prompt.trim()) return { available: false, reason: "input-not-captured" }
+  if (attributes["input.replay.version"] !== 1 || ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages"]
+    .some(key => !hasRuntimeType(attributes[key], "boolean"))) return { available: false, reason: "replay-metadata-unavailable" }
+  if (attributes["input.hasInvoker"] === true) return { available: false, reason: "input-has-invoker" }
   const invokerProfileId = attributes["agent.invoker.profile.id"]
   return { available: true, ...hasRuntimeType(invokerProfileId, "string") && invokerProfileId ? { invokerProfileId } : {}, prompt }
 }
@@ -1805,7 +1814,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const identity = observationIdentity(observation)
       if (!redacted) return
       const inputRedacted = observation.name === "agent.invocation.start"
-        && ["input.prompt", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt"]
+        && ["input.prompt", "input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt"]
           .some(key => observation.attributes?.[key] !== redacted.attributes?.[key])
       return {
         ...redacted,
@@ -1831,6 +1840,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
   const store = options.store
   const invocations: BoundAgentInvocations = {
     [agentInvocationsBrand]: true,
+    get supportsDelete() { return hasRuntimeType(store.delete, "function") },
     async [recoverInterruptedAgentInvocationsSymbol](recoveryOptions) {
       return await failInterruptedAgentInvocations(store, recoveryOptions)
     },
