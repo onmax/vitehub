@@ -54,7 +54,7 @@ vitehub({
 })
 ```
 
-Enabled integrations use `agent-state.sqlite`, `console.sqlite`, `kv/`, `blob/`, and `workspaces/` under this directory. Named local KV and Blob stores get separate subdirectories. Explicit paths and remote providers take precedence; disabled services stay disabled. Relative paths resolve from the configuration process's working directory.
+Enabled integrations use `agent-state.sqlite`, `console.sqlite`, `kv/`, `blob/`, and `workspaces/` under this directory. Inline Console Auth uses `console-auth.sqlite`. Named local KV and Blob stores get separate subdirectories. Explicit paths and remote providers take precedence; disabled services stay disabled. Relative paths resolve from the configuration process's working directory.
 
 The host must provide a persistent, writable filesystem at this path. The option does not create a volume or make an ephemeral filesystem durable, and it is rejected for other presets. Keep the existing provider configuration for hosted storage.
 
@@ -82,4 +82,4 @@ Standalone provider bundles receive the public origin and application base from 
 
 The value must be an `http(s)` origin without a path. ViteHub adds the application base path. It applies to `vite build` only; `vite dev` uses the request origin. Without `publicUrl`, request-bound links and Auth use the request origin, and links created outside a request are omitted. Auth uses the configured origin whose host matches the request host when the function form is set.
 
-Use `agent.providers.state.url`, `console.databaseUrl`, or each store's path option to preserve an existing location. Existing runtime database URL overrides still take precedence. Changing the directory does not migrate stored data.
+Use `agent.providers.state.url`, `console.databaseUrl`, `console.auth.databasePath`, or each store's path option to preserve an existing location. Existing runtime database URL overrides still take precedence. Changing the directory does not migrate stored data.

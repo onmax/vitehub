@@ -76,7 +76,7 @@ describe("schedule provider output", () => {
     Reflect.deleteProperty(globalThis, "scheduleUrl")
   })
 
-  it.each(["source publication", "source abort", "function swap", "backup cleanup"] as const)("preserves consistent Netlify output after %s failure", async (failure) => {
+  it.each(["source publication", "source abort", "function swap", "backup cleanup", "rollback restore", "persistent rollback restore", "rollback removal"] as const)("preserves consistent Netlify output after %s failure", async (failure) => {
     const rootDir = await createTempProject("vitehub-schedule-netlify-publication-")
     const retainedSourcesDir = join(rootDir, ".vitehub", "retained", "sources")
     const retainedHandler = join(retainedSourcesDir, "cleanup.schedule.ts")
@@ -96,6 +96,10 @@ describe("schedule provider output", () => {
     const functionFile = join(functionRoot, "vitehub-schedule-cleanup.mjs")
     const sourcesDir = join(outputRoot, "schedule", "sources")
     const sourceFile = join(sourcesDir, "cleanup.schedule.ts")
+    const otherFunctionFile = join(functionRoot, "other-function.mjs")
+    const otherConfigFile = join(outputRoot, "config.json")
+    await writeFile(otherFunctionFile, "export default () => 'other'")
+    await writeFile(otherConfigFile, '{"other":true}')
     const previousFunction = await readFile(functionFile, "utf8")
     const previousSource = await readFile(sourceFile, "utf8")
     await writeFile(retainedHandler, source("replacement"))
@@ -104,10 +108,12 @@ describe("schedule provider output", () => {
     const nextOptions = { ...options, signal: controller.signal }
     const originalPublish = providerSources.publishProviderSourcesToDeploymentOutputs
     const originalRename = fs.renameSync
+    const originalAsyncRename = fsPromises.rename
+    const originalRmSync = fs.rmSync
     const originalRm = fsPromises.rm
     const publication = vi.spyOn(providerSources, "publishProviderSourcesToDeploymentOutputs").mockImplementation(async (publicationOptions) => {
       await originalPublish(publicationOptions)
-      if (publicationOptions.destinations.some(destination => destination.sourcesDir.startsWith(sourcesDir))) {
+      if (publicationOptions.destinations.some(destination => destination.sourcesDir === join(`${outputRoot}.pending`, "schedule", "sources"))) {
         if (failure === "source publication") {
           injected = true
           throw new Error("source publication failed")
@@ -119,14 +125,27 @@ describe("schedule provider output", () => {
       }
     })
     const swap = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
-      if (failure === "function swap" && from === `${functionRoot}.pending`) {
+      if (["function swap", "rollback restore", "persistent rollback restore", "rollback removal"].includes(failure) && from === `${outputRoot}.pending`) {
         injected = true
         throw new Error("function swap failed")
       }
+      if (["rollback restore", "persistent rollback restore"].includes(failure) && from === `${outputRoot}.previous`) {
+        throw new Error("rollback restore failed")
+      }
       return originalRename(from, to)
     })
+    const restore = vi.spyOn(fsPromises, "rename").mockImplementation(async (from, to) => {
+      if (failure === "persistent rollback restore" && from === `${outputRoot}.previous`) throw new Error("rollback restore failed")
+      return await originalAsyncRename(from, to)
+    })
+    const removal = vi.spyOn(fs, "rmSync").mockImplementation((path, rmOptions) => {
+      if (failure === "rollback removal" && [functionRoot, sourcesDir].includes(String(path))) {
+        throw new Error("rollback removal failed")
+      }
+      return originalRmSync(path, rmOptions)
+    })
     const cleanup = vi.spyOn(fsPromises, "rm").mockImplementation(async (path, rmOptions) => {
-      if (failure === "backup cleanup" && path === `${functionRoot}.previous`) {
+      if (failure === "backup cleanup" && path === `${outputRoot}.previous`) {
         injected = true
         throw new Error("backup cleanup failed")
       }
@@ -138,24 +157,33 @@ describe("schedule provider output", () => {
         expect(await readFile(functionFile, "utf8")).not.toBe(previousFunction)
         expect(await readFile(sourceFile, "utf8")).toBe(source("replacement"))
       }
+      else if (failure === "persistent rollback restore") {
+        await expect(generateProviderOutputsWithinLock(nextOptions)).rejects.toThrow(`previous output retained at ${outputRoot}.previous`)
+        expect(await readFile(join(`${outputRoot}.previous`, "functions", "vitehub-schedule-cleanup.mjs"), "utf8")).toBe(previousFunction)
+        expect(await readFile(join(`${outputRoot}.previous`, "schedule", "sources", "cleanup.schedule.ts"), "utf8")).toBe(previousSource)
+        expect(existsSync(`${outputRoot}.pending`)).toBe(true)
+      }
       else {
-        await expect(generateProviderOutputsWithinLock(nextOptions)).rejects.toThrow(`${failure} failed`)
+        await expect(generateProviderOutputsWithinLock(nextOptions)).rejects.toThrow(["rollback restore", "rollback removal"].includes(failure) ? "function swap failed" : `${failure} failed`)
         expect(await readFile(functionFile, "utf8")).toBe(previousFunction)
         expect(await readFile(sourceFile, "utf8")).toBe(previousSource)
       }
       expect(injected).toBe(true)
-      expect(existsSync(`${functionRoot}.pending`)).toBe(false)
-      expect(existsSync(`${sourcesDir}.pending`)).toBe(false)
+      if (failure !== "persistent rollback restore") expect(existsSync(`${outputRoot}.pending`)).toBe(false)
     }
     finally {
       publication.mockRestore()
       swap.mockRestore()
+      restore.mockRestore()
+      removal.mockRestore()
       cleanup.mockRestore()
     }
     await generateProviderOutputs(options)
     expect(await readFile(sourceFile, "utf8")).toBe(source("replacement"))
-    expect(existsSync(`${functionRoot}.previous`)).toBe(false)
-    expect(existsSync(`${sourcesDir}.previous`)).toBe(false)
+    expect(await readFile(otherFunctionFile, "utf8")).toBe("export default () => 'other'")
+    expect(await readFile(otherConfigFile, "utf8")).toBe('{"other":true}')
+    expect(existsSync(`${outputRoot}.previous`)).toBe(false)
+    expect(existsSync(`${outputRoot}.pending`)).toBe(false)
   })
 
   it("waits for sibling Netlify bundles before releasing the lock after failure", async () => {
@@ -179,7 +207,7 @@ describe("schedule provider output", () => {
     const siblingFinished = new Promise<void>(resolve => { markSiblingFinished = resolve })
     const originalBundle = esbuild.bundleEsmEntry
     const bundle = vi.spyOn(esbuild, "bundleEsmEntry").mockImplementation(async (entry, output, options) => {
-      if (!output.startsWith(`${functionRoot}.pending/`)) return await originalBundle(entry, output, options)
+      if (!output.startsWith(`${createDefaultNetlifyOutputRoot(rootDir)}.pending/functions/`)) return await originalBundle(entry, output, options)
       if (output.endsWith("vitehub-schedule-cleanup.mjs")) {
         await siblingStarted
         markFailureStarted()
@@ -207,7 +235,7 @@ describe("schedule provider output", () => {
       await new Promise(resolve => setTimeout(resolve, 200))
       expect(settled).toBe(false)
       expect(lockReleased).toBe(false)
-      expect(existsSync(`${functionRoot}.pending`)).toBe(true)
+      expect(existsSync(`${createDefaultNetlifyOutputRoot(rootDir)}.pending/functions`)).toBe(true)
       await expect(readFile(previousFunction, "utf8")).resolves.toBe(previousOutput)
 
       releaseSibling()

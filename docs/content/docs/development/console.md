@@ -137,7 +137,7 @@ The Console registers its page, assets, and RPC endpoint under `/_vitehub/**`. T
 
 ViteHub sends `X-Robots-Tag: noindex, nofollow` on the Console route and includes the equivalent robots meta tag in the standalone Console page. These directives keep the Console out of search engines that honor them. They do not restrict access, so keep the production access policy below.
 
-Console Auth can use its own Better Auth session. It does not require the application's Primary Auth Definition. For a Node host, the inline GitHub setup accepts only verified email addresses in `allowedEmails`:
+Console Auth can use its own Better Auth session. It does not require the application's Primary Auth Definition. For a Node host, the inline GitHub setup accepts verified email addresses in `allowedEmails`, active members of a GitHub organization in `org`, or both:
 
 If you previously protected the Console through Primary Auth, remove its `/_vitehub/**` and `/api/_vitehub/console/**` access routes when you switch to `console.auth`. Keep `auth: true` if application routes still use Primary Auth. Otherwise, both auth guards apply and maintainers must sign in twice.
 
@@ -161,9 +161,24 @@ export default defineConfig({
 })
 ```
 
-Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `BETTER_AUTH_SECRET` in the server environment. `baseURL` is the public origin used for OAuth redirects. It defaults to `vitehub({ publicUrl })`, then the request origin; set one of them when a proxy terminates TLS. The GitHub callback URL is `https://agent.example.com/api/_vitehub/console/auth/callback/github`. For Nuxt apps mounted below `/`, ViteHub includes `app.baseURL` in the callback and redirects. Put `databasePath` on persistent storage. Console Auth creates or updates its Better Auth tables before the first protected request. It refuses a missing database or secret. Application requests and channel requests keep their own authentication.
+To admit an organization instead of listing emails, set `org` to one GitHub organization login or a list. Sign-in then requests the `read:org` and `user:email` scopes. It requires an active membership (`GET /user/memberships/orgs/<org>`) in one of the organizations and a verified email. A primary verified email is preferred. When you set both `org` and `allowedEmails`, a user must pass both checks. Sign-in selects an allowlisted verified email, preferring the primary when it is allowlisted. Adding or changing the organization gate invalidates existing session cookies and requires a new sign-in. Any OAuth sign-in already in progress when the gate changes must also be restarted. Organization case, order, and duplicate entries do not change the gate. Membership is checked at sign-in, so a removed member keeps access until the session expires. Set `session.expiresIn` in seconds to shorten sessions. When `dataDir` is set, `databasePath` defaults to `<dataDir>/console-auth.sqlite`:
 
-For a custom provider, GitHub organization check, or Better Auth server plugins, commit `vitehub/console/auth/server.ts` and use `console: { access: 'auth', auth: {} }`. The file can import `defineAuth` and export a Console definition:
+```ts [vite.config.ts]
+export default defineConfig({
+  plugins: [vitehub({
+    preset: 'node',
+    dataDir: '/var/lib/app',
+    console: {
+      access: 'auth',
+      auth: { provider: 'github', org: 'acme', session: { expiresIn: 12 * 60 * 60 } },
+    },
+  })],
+})
+```
+
+Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `BETTER_AUTH_SECRET` in the server environment. `baseURL` is the public origin used for OAuth redirects. It defaults to `vitehub({ publicUrl })`, then the request origin; set one of them when a proxy terminates TLS. The GitHub callback URL is `https://agent.example.com/api/_vitehub/console/auth/callback/github`. For Nuxt apps mounted below `/`, ViteHub includes `app.baseURL` in the callback and redirects. Put `databasePath` on persistent storage. ViteHub creates its parent directory and makes the file readable only by its owner. Console Auth creates or updates its Better Auth tables before the first protected request. It refuses a missing database or secret. Application requests and channel requests keep their own authentication.
+
+For a custom provider or Better Auth server plugins, commit `vitehub/console/auth/server.ts` and use `console: { access: 'auth', auth: {} }`. The file can import `defineAuth` and export a Console definition:
 
 ```ts [vitehub/console/auth/server.ts]
 import { DatabaseSync } from 'node:sqlite'
@@ -387,6 +402,20 @@ console: {
 
 These limits apply only to the Console fallback journal. If discovered Agent Definitions configure a shared journal, set its limits in `defineAgentInvocations()` instead. See [Agent Invocations](/docs/agents/invocations) for defaults and supported bounds. Larger limits increase record storage and memory use.
 
+The SQLite and libSQL fallback journal keeps every completed, failed, and cancelled record by default. The D1 fallback uses the Agent store defaults of 30 days and 10,000 terminal records. Set `retention` to change these limits:
+
+```ts
+console: {
+  exposure: 'host-managed',
+  retention: {
+    maxAgeMs: 14 * 24 * 60 * 60 * 1000,
+    maxRecords: 5000,
+  },
+}
+```
+
+Both limits are optional. The journal applies them after it creates a record and after a record reaches a terminal state. Pending and running records are always kept. Like `observations`, `retention` applies only to the Console fallback journal.
+
 Set `VITEHUB_CONSOLE_DATABASE_URL` when the journal belongs on another volume or libSQL endpoint. Relative `file:` paths resolve from the ViteHub project root:
 
 ```dotenv [.env]
@@ -400,7 +429,15 @@ VITEHUB_CONSOLE_DATABASE_URL=libsql://my-database.turso.io
 VITEHUB_CONSOLE_DATABASE_AUTH_TOKEN=secret-token
 ```
 
-The journal has no automatic TTL or deletion. In production, the operator must define how long to retain the file and how to remove records that may contain sensitive data. Workflow, Queue, and Schedule Definition inspection do not use the journal. Workflow and Queue do not expose run or message history because ViteHub does not yet have provider-independent contracts for listing that operational data. The Schedule page is a build-time Definition catalog; it does not include runtime-created Schedule records or their run store yet.
+The SQLite and libSQL journal has no automatic TTL unless you set `retention`. In production, the operator must define how long to retain records that may contain sensitive data. Delete one terminal record or prune old ones from the CLI:
+
+```sh
+vitehub agent invocations delete INVOCATION_ID
+vitehub agent invocations prune --older-than 14d --dry-run
+vitehub agent invocations prune --older-than 14d
+```
+
+These commands open `.vitehub/data/console.sqlite`, or `VITEHUB_CONSOLE_DATABASE_URL` when it is set. Pass `--database` when `dataDir` or `databaseUrl` moves the journal. Deleting a record also removes its row in the Console usage index. It does not delete Blob attachments, because Console uploads are not keyed by invocation and a later conversation can reference the same image. Workflow, Queue, and Schedule Definition inspection do not use the journal. Workflow and Queue do not expose run or message history because ViteHub does not yet have provider-independent contracts for listing that operational data. The Schedule page is a build-time Definition catalog; it does not include runtime-created Schedule records or their run store yet.
 
 The fallback applies only when an Agent Definition does not configure `invocations`. An explicit `defineAgent({ invocations })` store remains authoritative, and its sessions are not copied into `console.sqlite` or read by the built-in Console.
 
@@ -439,9 +476,9 @@ Blob inspection calls only the configured store's `list` operation. It returns a
 
 ## Inspect the Agent context
 
-Open an Agent Invocation and expand **Captured setup** to inspect the context resolved for that run. The Console shows the final instruction blocks and the model-visible tools, including each tool's description, input JSON Schema, and output JSON Schema when one is available. This is the post-composition contract after the Agent Definition, Capabilities, and runtime tool resolution have been applied, so it also covers dynamic tools whose contract cannot be generated into static documentation.
+Open an Agent Invocation and expand **Captured setup** to inspect the context resolved for that run. The Console shows the final instruction blocks and the model-visible tools, including each tool's label, icon, description, input JSON Schema, and output JSON Schema when one is available. Tools declare the label and icon with [`title` and `icon`](/docs/capabilities/custom-capabilities#minimum-shape). This is the post-composition contract after the Agent Definition, Capabilities, and runtime tool resolution have been applied, so it also covers dynamic tools whose contract cannot be generated into static documentation.
 
-Invocation journals are metadata-only by default. In that mode, Captured setup includes tool names but omits instructions, descriptions, and schemas. Configure the Agent's invocation journal with `configuration: 'content'` to retain the resolved context independently of other trace content. `content: 'content'` also retains it. Large journal observations remain subject to ViteHub's trace bounds and are marked when truncated. That context can contain secrets or customer data contributed by application code, so use the same access, retention, and encryption controls as prompts and model output. See [Agent Invocations](/docs/agents/invocations#observe-the-outcome) for configuration details.
+Invocation journals are metadata-only by default. In that mode, Captured setup includes tool names, labels, and icons but omits instructions, descriptions, and schemas. Configure the Agent's invocation journal with `configuration: 'content'` to retain the resolved context independently of other trace content. `content: 'content'` also retains it. Large journal observations remain subject to ViteHub's trace bounds and are marked when truncated. That context can contain secrets or customer data contributed by application code, so use the same access, retention, and encryption controls as prompts and model output. See [Agent Invocations](/docs/agents/invocations#observe-the-outcome) for configuration details.
 
 ## Inspect usage
 
@@ -484,6 +521,6 @@ Images must be PNG, JPEG, WebP, or GIF, with at most ten images and 10 MiB combi
 
 ## Inspect capabilities
 
-Open the right panel's tab chooser and select **Capabilities**. Select a Capability to inspect its recorded data and tools. MCP groups tools by server and preserves original tool names and schemas. Title shows its generation settings, progress, and result. Other Capabilities have a default tools and configuration view.
+Open the right panel's tab chooser and select **Capabilities**. Select a Capability to inspect its recorded data and tools. Tool rows and calls use each tool's declared label and icon. MCP groups tools by server and preserves original tool names and schemas. Title shows its generation settings, progress, and result. Other Capabilities have a default tools and configuration view.
 
 The panel reads the selected Invocation's snapshots. It does not run MCP discovery or title generation. Missing or truncated capture is marked. Developers can [contribute a read-only view](/docs/capabilities/custom-capabilities#contribute-an-inspection-view) with the shared JSON Render component catalog.

@@ -608,15 +608,21 @@ async function writeNetlifyScheduleFunctions(options: {
   const publishedSourcesDir = resolve(dirname(options.registryFile), "sources")
   const netlifySourcesDir = resolve(options.outputRoot, "schedule", "sources")
   const includedSourcesDir = relative(functionRoot, netlifySourcesDir).replace(/\\/g, "/")
-  const stagedFunctionRoot = `${functionRoot}.pending`
-  const backupFunctionRoot = `${functionRoot}.previous`
-  const stagedSourcesDir = `${netlifySourcesDir}.pending`
-  const backupSourcesDir = `${netlifySourcesDir}.previous`
+  const stagedOutputRoot = `${options.outputRoot}.pending`
+  const backupOutputRoot = `${options.outputRoot}.previous`
+  const stagedFunctionRoot = resolve(stagedOutputRoot, "functions")
+  const stagedSourcesDir = resolve(stagedOutputRoot, "schedule", "sources")
+  let preserveRecovery = false
+  // Recover a complete previous publication before preparing another generation.
+  if (!existsSync(options.outputRoot) && existsSync(backupOutputRoot)) {
+    renameSync(backupOutputRoot, options.outputRoot)
+  }
   try {
-    await rm(stagedFunctionRoot, { force: true, recursive: true })
-    await cp(functionRoot, stagedFunctionRoot, { force: true, recursive: true }).catch((error: NodeJS.ErrnoException) => {
+    await rm(stagedOutputRoot, { force: true, recursive: true })
+    await cp(options.outputRoot, stagedOutputRoot, { force: true, recursive: true, verbatimSymlinks: true }).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error
     })
+    await rm(stagedSourcesDir, { force: true, recursive: true })
     const existingFiles = await readdir(stagedFunctionRoot).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? [] : Promise.reject(error))
     await Promise.all(existingFiles.filter(file => /^vitehub-schedule-.+\.mjs$/.test(file)).map(file => rm(resolve(stagedFunctionRoot, file), { force: true, recursive: true })))
 
@@ -669,45 +675,40 @@ async function writeNetlifyScheduleFunctions(options: {
       await rebasePublishedProviderSourceLinks(stagedSourcesDir, stagedSourcesDir, netlifySourcesDir)
     }
     options.signal?.throwIfAborted()
-    const publications = [
-      { live: netlifySourcesDir, staged: stagedSourcesDir, backup: backupSourcesDir, movedPrevious: false, installed: false },
-      { live: functionRoot, staged: stagedFunctionRoot, backup: backupFunctionRoot, movedPrevious: false, installed: false },
-    ]
-    for (const publication of publications) {
-      rmSync(publication.backup, { force: true, recursive: true })
-    }
+    // Functions and retained sources must move together, including during recovery.
+    rmSync(backupOutputRoot, { force: true, recursive: true })
+    let movedPrevious = false
     try {
-      for (const publication of publications) {
-        if (existsSync(publication.live)) {
-          renameSync(publication.live, publication.backup)
-          publication.movedPrevious = true
-        }
-        if (existsSync(publication.staged)) {
-          renameSync(publication.staged, publication.live)
-          publication.installed = true
-        }
+      if (existsSync(options.outputRoot)) {
+        renameSync(options.outputRoot, backupOutputRoot)
+        movedPrevious = true
       }
+      renameSync(stagedOutputRoot, options.outputRoot)
     }
     catch (error) {
-      const failures: unknown[] = [error]
-      for (const publication of publications.toReversed()) {
+      if (movedPrevious) {
         try {
-          if (publication.installed) rmSync(publication.live, { force: true, recursive: true })
-          if (publication.movedPrevious) renameSync(publication.backup, publication.live)
+          renameSync(backupOutputRoot, options.outputRoot)
         }
         catch (restoreError) {
-          failures.push(restoreError)
+          // Retry a transient restore failure without deleting either complete pair.
+          try {
+            await rename(backupOutputRoot, options.outputRoot)
+          }
+          catch (retryError) {
+            preserveRecovery = true
+            throw new AggregateError([error, restoreError, retryError], `Netlify Schedule rollback failed; previous output retained at ${backupOutputRoot}`)
+          }
         }
       }
-      if (failures.length > 1) throw new AggregateError(failures, "Netlify Schedule publication rollback failed")
       throw error
     }
     // Publication is committed. Cleanup must not turn successful output into a failed generation.
-    await Promise.all(publications.map(publication => rm(publication.backup, { force: true, recursive: true }).catch(() => undefined)))
+    await rm(backupOutputRoot, { force: true, recursive: true }).catch(() => undefined)
     if (outputs.length === 0) await removeEmptyDirectories(functionRoot, options.rootDir).catch(() => undefined)
   }
   finally {
-    await Promise.all([stagedFunctionRoot, stagedSourcesDir].map(directory => rm(directory, { force: true, recursive: true }).catch(() => undefined)))
+    if (!preserveRecovery) await rm(stagedOutputRoot, { force: true, recursive: true }).catch(() => undefined)
   }
 }
 

@@ -2674,13 +2674,49 @@ cli_auth_credentials_store = "keyring"
           activity: { kind: "action", name: "repository-host.write" },
           execute: vi.fn(),
           name: "repository_host_write",
+          title: "Updated repository",
         },
       },
     }) as never)) as Array<Record<string, unknown>>
 
     expect(events.slice(0, 2)).toEqual([
-      expect.objectContaining({ activity: { kind: "action", name: "repository-host.write" }, name: "repository_host_write", type: "tool-call" }),
-      expect.objectContaining({ activity: { kind: "action", name: "repository-host.write" }, name: "repository_host_write", type: "tool-result" }),
+      expect.objectContaining({ activity: { kind: "action", name: "repository-host.write" }, name: "repository_host_write", title: "Updated repository", type: "tool-call" }),
+      expect.objectContaining({ activity: { kind: "action", name: "repository-host.write" }, name: "repository_host_write", title: "Updated repository", type: "tool-result" }),
+    ])
+  })
+
+  it.each([
+    ["codex", undefined],
+    ["codex", "MCP tool call"],
+    ["codex", " "],
+    ["codex", "Provider search"],
+    ["claude-code", undefined],
+    ["claude-code", "MCP tool call"],
+    ["claude-code", " "],
+    ["claude-code", "Provider search"],
+  ] as const)("applies tool titles to %s generate traces with provider title %s", async (provider, title) => {
+    const threadId = "thread-generate-tool-title"
+    runtime(threadId, [
+      event("item.started", threadId, { data: { toolName: "search" }, itemType: "mcp_tool_call", title }, { itemId: "tool-1", turnId: "turn-1" }),
+      event("item.completed", threadId, { data: { toolName: "search" }, itemType: "mcp_tool_call", status: "completed" }, { itemId: "tool-1", turnId: "turn-1" }),
+      event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" }),
+    ])
+    const traceLog = createTraceEventLog({ content: "content" })
+    const runContext = context(threadId, {
+      tools: { search: { execute: vi.fn(), name: "search", title: "Searched records" } },
+    })
+    const adapter = createProviderAgentAdapter({ provider })
+    await Reflect.apply(adapter.generate, adapter, [{
+      ...runContext,
+      runtime: { ...runContext.runtime, traceLog },
+    }])
+
+    expect(traceLog.entries().filter(observation => observation.name.startsWith("agent.tool.")).map(observation => ({
+      name: observation.name,
+      title: observation.attributes?.["tool.title"],
+    }))).toEqual([
+      { name: "agent.tool.start", title: title === "Provider search" ? title : "Searched records" },
+      { name: "agent.tool.finish", title: title === "Provider search" ? title : "Searched records" },
     ])
   })
 
@@ -2799,7 +2835,7 @@ cli_auth_credentials_store = "keyring"
     const firstToolObservations = observations.filter(observation => observation.attributes?.["tool.id"] === "mcp-1")
     expect(firstToolObservations).toHaveLength(3)
     expect(firstToolObservations[0]?.attributes).toHaveProperty("tool.title", "airtable · search_records")
-    expect(firstToolObservations.slice(1).every(observation => !("tool.title" in (observation.attributes ?? {})))).toBe(true)
+    expect(firstToolObservations.slice(1).every(observation => observation.attributes?.["tool.title"] === "airtable · search_records")).toBe(true)
     expect(observations.filter(observation => observation.attributes?.["tool.id"] === "mcp-3").every(observation => !("tool.title" in (observation.attributes ?? {})))).toBe(true)
     expect(observations.find(observation => observation.name === "agent.tool.error")?.attributes).not.toHaveProperty("tool.output")
   })

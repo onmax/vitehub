@@ -3,7 +3,7 @@ import { installConsoleInvocations, type ConsoleD1Journal } from "./invocations.
 import * as v from "valibot"
 
 import type { AgentInput, AgentInvocations } from "@vite-hub/agent"
-import type { AgentInvocationsOptions } from "@vite-hub/agent/server"
+import type { AgentInvocationRetentionOptions, AgentInvocationsOptions } from "@vite-hub/agent/server"
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
 
 export const consoleAgentsKey: unique symbol = Symbol.for("vitehub.console.agents")
@@ -17,7 +17,7 @@ export type ConsoleAgentDefinitionEntry = {
 
 export type ConsoleAgentDefinitionInstallation =
   | { invocations: AgentInvocations, projectRoot?: never }
-  | { invocations?: never, invoke?: boolean, databaseUrl?: string, d1?: ConsoleD1Journal, observations?: AgentInvocationsOptions["observations"], projectRoot: string }
+  | { invocations?: never, invoke?: boolean, databaseUrl?: string, d1?: ConsoleD1Journal, observations?: AgentInvocationsOptions["observations"], projectRoot: string, retention?: AgentInvocationRetentionOptions }
 
 type ConsoleAgentInvocations = AgentInvocations & {
   [consoleAgentDefinitionsKey]?: ReadonlyMap<string, AgentInput>
@@ -80,7 +80,7 @@ function resolveConsoleAgentInvocations(
   if (configured.length > 1) {
     throw viteHubErrorDiagnostics.VITE_HUB_R0047({ message: "[vitehub] Console cannot inspect multiple Agent invocation journals. Configure one shared journal for the discovered Agent Definitions." })
   }
-  return installConsoleInvocations(installation.projectRoot, configured[0], installation.observations, installation.databaseUrl, installation.d1)
+  return installConsoleInvocations(installation.projectRoot, configured[0], installation.observations, installation.databaseUrl, installation.d1, installation.retention)
 }
 
 export function installConsoleAgents(
