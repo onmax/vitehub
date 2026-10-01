@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
-import * as v from "valibot"
 
-import { agentInvocationRerunInput, createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
+import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
 import { parseConsoleFixture } from "../../packages/vite-hub/src/console/fixture.ts"
 import {
   createUsageSummary,
@@ -11,15 +10,10 @@ import {
 } from "../../packages/vite-hub/src/console/runtime/server/usage.ts"
 import { consoleSearchExcerpt } from "../../packages/vite-hub/src/console/runtime/server/search.ts"
 
-import { consoleDefinitionSectionIds } from "../../packages/vite-hub/src/console/runtime/definitions.ts"
-import type { ConsoleDefinitionCatalog, ConsoleDefinitionSectionId } from "../../packages/vite-hub/src/console/runtime/definitions.ts"
-import type { ConsoleSectionId } from "../../packages/vite-hub/src/console/runtime/sections.ts"
-
 import type { Plugin } from "vite"
 import databaseFixture from "./database.fixture.json" with { type: "json" }
 import fixtureDocument from "./console.fixture.json" with { type: "json" }
 import manifest from "./package.json" with { type: "json" }
-import { playgroundConsoleContributions } from "./sections.ts"
 
 const fixture = parseConsoleFixture(fixtureDocument)
 const store = createMemoryAgentInvocationStore()
@@ -28,90 +22,8 @@ for (const record of fixture.invocations) {
   store.create(input)
 }
 const invocations = defineAgentInvocations({ content: "content", store })
-const deleteActionSchema = v.strictObject({ action: v.literal("delete") })
-const sections = [
-  "env",
-  "agents",
-  "usage",
-  "blob",
-  "databases",
-  "kv",
-  "rate-limits",
-  "sandboxes",
-  "workspaces",
-  "workflows",
-  "queues",
-  "schedules",
-] as const satisfies readonly ConsoleSectionId[]
+const sections = ["env", "connections", "agents", "usage", "database", "kv", "workflows", "queues"] as const
 const definitions = {
-  databases: [
-    {
-      fields: [
-        { label: "Mode", value: "Named" },
-        { label: "Tables", value: databaseFixture.tables.map(table => table.name).join(", ") },
-      ],
-      file: "server/database/auth.ts",
-      name: databaseFixture.schema,
-      source: "database",
-    },
-  ],
-  "rate-limits": [
-    {
-      fields: [
-        { label: "Limit", value: "20" },
-        { label: "Window", value: "1m" },
-        { label: "Enforcement", value: "Strict" },
-        { label: "Provider failure", value: "Deny" },
-        { label: "Source location", value: "12:9" },
-      ],
-      file: "server/api/agents/[agent]/invoke.post.ts",
-      name: "agent-invoke",
-      source: "require-rate-limit",
-    },
-    {
-      fields: [
-        { label: "Limit", value: "120" },
-        { label: "Window", value: "1h" },
-        { label: "Enforcement", value: "Best effort" },
-        { label: "Provider failure", value: "Allow" },
-        { label: "Source location", value: "8:3" },
-      ],
-      file: "server/api/search.get.ts",
-      name: "console-search",
-      source: "require-rate-limit",
-    },
-  ],
-  sandboxes: [
-    {
-      fields: [{ label: "Kind", value: "Definition" }],
-      file: "server/sandboxes/release-check.ts",
-      name: "release-check",
-      source: "server-sandboxes",
-    },
-    {
-      fields: [{ label: "Kind", value: "Package entry" }],
-      file: "server/sandboxes/docs-preview.sandbox.ts",
-      name: "docs-preview",
-      source: "vite-suffix",
-    },
-  ],
-  workspaces: [
-    {
-      fields: [
-        { label: "Kind", value: "Workspace Definition" },
-        { label: "Source root", value: "docs/content" },
-      ],
-      file: "server/workspaces/docs.ts",
-      name: "docs",
-      source: "workspace",
-    },
-    {
-      fields: [{ label: "Kind", value: "Agent workspace" }],
-      file: "server/agents/release-engineer/workspace.ts",
-      name: "release-engineer",
-      source: "server-agent-workspaces",
-    },
-  ],
   queues: [
     {
       fields: [],
@@ -124,51 +36,6 @@ const definitions = {
       file: "server/queues/release-notes.ts",
       name: "release-notes",
       source: "queue",
-    },
-  ],
-  schedules: [
-    {
-      fields: [
-        { label: "Kind", value: "Static schedule" },
-        { label: "Cron", value: "0 3 * * *" },
-        { label: "Time zone", value: "UTC" },
-        { label: "Manual", value: "Enabled" },
-      ],
-      file: "server/schedules/nightly-release-notes.ts",
-      name: "nightly-release-notes",
-      runnable: true,
-      source: "server-schedules",
-    },
-    {
-      fields: [
-        { label: "Kind", value: "Runtime target" },
-        { label: "Runtime schedules", value: "Allowed" },
-      ],
-      file: "server/schedules/invocation-reminder.ts",
-      name: "invocation-reminder",
-      source: "server-schedules",
-    },
-    {
-      fields: [
-        { label: "Kind", value: "Static schedule" },
-        { label: "Cron", value: "*/5 * * * *" },
-        { label: "Time zone", value: "UTC" },
-        { label: "Manual", value: "Enabled" },
-      ],
-      file: "server/schedules/sync-inbox.ts",
-      name: "sync-inbox",
-      runnable: true,
-      source: "server-schedules",
-    },
-    {
-      fields: [
-        { label: "Kind", value: "Static schedule" },
-        { label: "Cron", value: "0 4 * * *" },
-        { label: "Time zone", value: "UTC" },
-      ],
-      file: "server/schedules/cleanup.ts",
-      name: "cleanup",
-      source: "server-schedules",
     },
   ],
   workflows: [
@@ -192,18 +59,6 @@ const definitions = {
       name: "rebuild-console-index",
       source: "workflow",
     },
-  ],
-} as const satisfies Required<ConsoleDefinitionCatalog>
-const blobStores = {
-  default: [
-    { contentType: "image/png", customMetadata: { agent: "interface-engineer" }, httpEtag: "\"5f1c2a\"", httpMetadata: { cacheControl: "private, max-age=3600" }, pathname: "attachments/ainv_console_navigation/landscape.png", size: 482_311, uploadedAt: "2026-08-30T17:42:10.000Z" },
-    { contentType: "image/png", customMetadata: { agent: "interface-engineer" }, httpEtag: "\"8a04d7\"", httpMetadata: { cacheControl: "private, max-age=3600" }, pathname: "attachments/ainv_console_navigation/portrait.png", size: 301_876, uploadedAt: "2026-08-30T17:42:12.000Z" },
-    { contentType: "application/json", customMetadata: {}, httpEtag: "\"c93e11\"", httpMetadata: {}, pathname: "exports/usage/2026-08.json", size: 18_204, uploadedAt: "2026-08-31T00:05:00.000Z" },
-    { contentType: "text/markdown; charset=utf-8", customMetadata: { release: "0.0.1" }, httpEtag: "\"1b77f0\"", httpMetadata: { contentLanguage: "en" }, pathname: "releases/0.0.1/notes.md", size: 6_912, uploadedAt: "2026-08-29T12:30:00.000Z" },
-  ],
-  public: [
-    { contentType: "image/svg+xml", customMetadata: {}, httpEtag: "\"44d2b9\"", httpMetadata: { cacheControl: "public, max-age=31536000, immutable" }, pathname: "brand/vitehub-mark.svg", size: 1_284, uploadedAt: "2026-08-12T09:00:00.000Z", urlAvailable: true },
-    { contentType: "image/png", customMetadata: {}, httpEtag: "\"e0a613\"", httpMetadata: { cacheControl: "public, max-age=86400" }, pathname: "docs/console-home.png", size: 214_540, uploadedAt: "2026-08-28T15:20:00.000Z", urlAvailable: true },
   ],
 } as const
 const kvStores = {
@@ -232,6 +87,78 @@ async function body(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}")
 }
 
+const googleScopes = ["https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.send"]
+const connections = new Map([
+  ["gmail", {
+    account: { email: "ada@example.com", id: "108230129837" },
+    actions: [
+      { highRisk: false, id: "gmail.users.messages.list", method: "GET", write: false },
+      { highRisk: false, id: "gmail.users.messages.modify", method: "POST", write: true },
+      { highRisk: true, id: "gmail.users.messages.send", method: "POST", write: true },
+    ],
+    connectedAt: "2026-09-21T08:12:00.000Z",
+    name: "gmail",
+    provider: "google",
+    refreshedAt: "2026-09-29T07:58:00.000Z",
+    scopes: { declared: googleScopes, granted: googleScopes, missing: [] as string[] },
+    status: "connected",
+  }],
+  ["calendar", {
+    account: { email: "ada@example.com", id: "108230129837" },
+    actions: [{ highRisk: false, id: "calendar.events.list", method: "GET", write: false }],
+    connectedAt: "2026-08-02T10:40:00.000Z",
+    name: "calendar",
+    provider: "google",
+    scopes: {
+      declared: ["https://www.googleapis.com/auth/calendar.events"],
+      granted: [] as string[],
+      missing: ["https://www.googleapis.com/auth/calendar.events"],
+    },
+    status: "reauth_required",
+  }],
+  ["support-inbox", {
+    actions: [{ highRisk: false, id: "gmail.users.threads.list", method: "GET", write: false }],
+    name: "support-inbox",
+    provider: "google",
+    scopes: { declared: ["https://www.googleapis.com/auth/gmail.readonly"], granted: [] as string[], missing: ["https://www.googleapis.com/auth/gmail.readonly"] },
+    status: "disconnected",
+  }],
+])
+const connectionActivity = [
+  { action: "use", actor: { id: "email-labeller", kind: "agent" }, id: "cact_004", invocationId: "ainv_email_labeller", key: "connection/gmail", operation: "gmail.users.messages.send", operationId: "cop_004", outcome: "denied", timestamp: "2026-09-29T08:03:00.000Z" },
+  { action: "use", actor: { id: "email-labeller", kind: "agent" }, id: "cact_003", invocationId: "ainv_email_labeller", key: "connection/gmail", operation: "gmail.users.messages.modify", operationId: "cop_003", outcome: "succeeded", timestamp: "2026-09-29T08:02:00.000Z" },
+  { action: "resolve", actor: { id: "email-labeller", kind: "agent" }, id: "cact_002", key: "connection/gmail", operationId: "cop_002", outcome: "succeeded", timestamp: "2026-09-29T08:01:00.000Z" },
+  { action: "replace", actor: { id: "ada", kind: "user" }, id: "cact_001", key: "connection/gmail", operationId: "cop_001", outcome: "succeeded", timestamp: "2026-09-21T08:12:00.000Z" },
+]
+const connectionApprovals = [
+  { action: "gmail.users.messages.send", actor: "agent:email-labeller", createdAt: "2026-09-29T08:03:00.000Z", id: "capr_002", input: { to: "team@example.com" }, invocationId: "ainv_email_labeller", name: "gmail", status: "pending" },
+  { action: "gmail.users.messages.send", actor: "agent:email-labeller", createdAt: "2026-09-28T16:20:00.000Z", decidedAt: "2026-09-28T16:24:00.000Z", decidedBy: "user:ada", id: "capr_001", input: { to: "ada@example.com" }, name: "gmail", status: "executed" },
+]
+
+// Synthetic Connections management API. It accepts the same JSON actions as `/_vitehub/connections`.
+async function handleConnections(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  const input = await body(request) as { action?: string, id?: string, name?: string, status?: string }
+  const approvalView = ({ input: _input, ...approval }: typeof connectionApprovals[number]) => approval
+  const connection = input.name ? connections.get(input.name) : undefined
+  const approval = connectionApprovals.find(entry => entry.id === input.id)
+  switch (input.action) {
+    case "list": return json(response, { connections: [...connections.values()] })
+    case "inspect": return connection ? json(response, { connection }) : json(response, { error: { code: "CONNECTION_INVALID", message: `No Connection Definition was discovered for "${input.name}".` } }, 400)
+    case "revoke":
+      if (!connection) return json(response, { error: { code: "CONNECTION_INVALID", message: "Unknown Connection." } }, 400)
+      Object.assign(connection, { scopes: { ...connection.scopes, granted: [], missing: connection.scopes.declared }, status: "revoked" })
+      return json(response, { connection })
+    case "activity": return json(response, { activity: input.before ? [] : connectionActivity.filter(event => event.key === `connection/${input.name}`) })
+    case "approvals": return json(response, { approvals: connectionApprovals.filter(entry => (!input.name || entry.name === input.name) && (!input.status || entry.status === input.status)).map(approvalView) })
+    case "approve":
+    case "deny":
+      if (!approval || approval.status !== "pending") return json(response, { error: { code: "CONNECTION_INVALID", message: "This approval is not pending." } }, 400)
+      Object.assign(approval, { decidedAt: new Date().toISOString(), decidedBy: "user:local", status: input.action === "approve" ? "executed" : "denied" })
+      return json(response, input.action === "approve" ? { approval: approvalView(approval), result: { id: "msg_synthetic" } } : { approval: approvalView(approval) })
+    default: return json(response, { error: { code: "CONNECTION_INVALID", message: "Invalid Connections request." } }, 400)
+  }
+}
+
 function summary(record: Awaited<ReturnType<typeof invocations.get>>): Record<string, unknown> | undefined {
   if (!record) return
   const { observations: _observations, ...value } = record
@@ -257,31 +184,6 @@ function formattedKVValue(key: string, name: keyof typeof kvStores, value: unkno
     type: Array.isArray(value) ? "array" : value === null ? "null" : typeof value,
     value: text,
   }
-}
-
-function blobPage(url: URL): Record<string, unknown> | undefined {
-  const requested = url.searchParams.get("store") || "default"
-  if (requested !== "default" && requested !== "public") return
-  const prefix = url.searchParams.get("prefix") || ""
-  const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 100, 1), 1_000)
-  const offset = Math.max(Number(url.searchParams.get("cursor")) || 0, 0)
-  const matches = blobStores[requested]
-    .filter(blob => blob.pathname.startsWith(prefix))
-    .toSorted((left, right) => left.pathname.localeCompare(right.pathname))
-  const hasMore = offset + limit < matches.length
-  return {
-    blobs: matches.slice(offset, offset + limit),
-    ...(hasMore ? { cursor: String(offset + limit) } : {}),
-    hasMore,
-    limit,
-    prefix,
-    store: requested,
-    stores: Object.keys(blobStores),
-  }
-}
-
-function definitionSection(value: string | null): ConsoleDefinitionSectionId | undefined {
-  return consoleDefinitionSectionIds.find(section => section === value)
 }
 
 function databaseCell(value: unknown): { kind: string, value: string } {
@@ -357,22 +259,11 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       { path: "env.server.labeller.dryRun", source: "env", secret: false, required: true, hasDefault: true, type: "boolean" },
       { path: "env.server.labeller.minConfidence", source: "env", secret: false, required: true, hasDefault: true, type: "number" },
       { path: "env.server.appName", source: "literal", secret: false, required: false, hasDefault: false },
-    ], ...(url.searchParams.get("status") === "1"
-      ? { status: [
-          { path: "env.server.github.token", status: "available", blocking: false },
-          { path: "env.server.openai.apiKey", status: "available", blocking: false },
-          { path: "env.server.codex.auth", status: "error", blocking: true },
-          { path: "env.server.webhookSecret", status: "missing", blocking: true },
-          { path: "env.server.logLevel", status: "defaulted", blocking: false },
-          { path: "env.server.labeller.dryRun", status: "defaulted", blocking: false },
-          { path: "env.server.labeller.minConfidence", status: "defaulted", blocking: false },
-          { path: "env.server.appName", status: "available", blocking: false },
-        ] }
-      : {}) })
+    ] })
     return true
   }
   if (path === "/api/_vitehub/console/sections") {
-    json(response, { contributions: playgroundConsoleContributions, projectName: manifest.name, sections })
+    json(response, { projectName: manifest.name, sections })
     return true
   }
 
@@ -431,23 +322,6 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path.startsWith("/api/_vitehub/console/invocations/")) {
     const id = decodeURIComponent(path.slice("/api/_vitehub/console/invocations/".length))
-    if (request.method === "POST") {
-      let action: unknown
-      try { action = await body(request) }
-      catch {
-        json(response, { error: "Malformed invocation action." }, 400)
-        return true
-      }
-      if (!v.safeParse(deleteActionSchema, action).success) {
-        json(response, { error: "Bad Request" }, 400)
-        return true
-      }
-      const outcome = await invocations.delete(id)
-      if (outcome === "deleted") json(response, { id, outcome })
-      else if (outcome === "not-terminal") json(response, { error: "Only completed, failed, or cancelled invocations can be deleted." }, 409)
-      else json(response, { error: "Invocation not found" }, 404)
-      return true
-    }
     const record = await invocations.get(id)
     const invocation = summary(record)
     if (!record || !invocation) {
@@ -455,16 +329,8 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       return true
     }
     const usage = invocationUsage(record)
-    // Synthetic Agents have no Invoker Profiles, so rerun uses the default invoker.
-    const rerun = ["cancelled", "completed", "failed"].includes(record.status)
-      ? agentInvocationRerunInput(record)
-      : { available: false, reason: "invocation-not-terminal" } as const
-    const actions = {
-      delete: { available: ["cancelled", "completed", "failed"].includes(record.status) },
-      rerun: rerun.available ? { available: true, prompt: rerun.prompt } : rerun,
-    }
     json(response, {
-      invocation: { ...invocation, actions, ...(usage ? { usage } : {}) },
+      invocation: { ...invocation, ...(usage ? { usage } : {}) },
       observations: record.observations,
     })
     return true
@@ -485,16 +351,6 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       now: "2026-08-30T18:00:00.000Z",
       window,
     }))
-    return true
-  }
-
-  if (path === "/api/_vitehub/console/blob") {
-    const page = blobPage(url)
-    if (!page) {
-      json(response, { error: "Blob store not found" }, 404)
-      return true
-    }
-    json(response, page)
     return true
   }
 
@@ -526,27 +382,12 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
   }
 
   if (path === "/api/_vitehub/console/definitions") {
-    const section = definitionSection(url.searchParams.get("section"))
-    if (!section) {
+    const section = url.searchParams.get("section")
+    if (section !== "queues" && section !== "workflows") {
       json(response, { error: "A valid definition section is required" }, 400)
       return true
     }
-    json(response, { definitions: definitions[section], kind: "definition-catalog", section })
-    return true
-  }
-
-  if (path === "/api/_vitehub/console/schedule-run" && request.method === "POST") {
-    const startedAt = new Date()
-    const completedAt = new Date(startedAt.getTime() + 1_240)
-    json(response, {
-      run: {
-        completedAt: completedAt.toISOString(),
-        id: `srun_manual_sync-inbox_${startedAt.toISOString()}`,
-        scheduleId: "sync-inbox",
-        startedAt: startedAt.toISOString(),
-        status: "succeeded",
-      },
-    })
+    json(response, { definitions: definitions[section], section })
     return true
   }
 
@@ -595,6 +436,15 @@ export function consoleMockAPI(): Plugin {
             response.statusCode = 302
             response.setHeader("location", "/_vitehub/")
             response.end()
+            return
+          }
+          if (request.method === "POST" && url.pathname === "/_vitehub/connections") {
+            await handleConnections(request, response)
+            return
+          }
+          if (request.method === "GET" && url.pathname.startsWith("/_vitehub/connections/connect/")) {
+            response.setHeader("content-type", "text/html; charset=utf-8")
+            response.end("<!doctype html><title>Connected</title><p>Synthetic playground. No provider was contacted. You can close this tab.</p>")
             return
           }
           if (await handleAPI(request, response, url)) return

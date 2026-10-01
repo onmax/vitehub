@@ -105,6 +105,8 @@ In production, configure `hubConnections({ database: 'vite-hub/database/drizzle'
 
 Open `https://<your-app>/_vitehub/connections/connect/google` while signed in to your app. `vitehub connections connect google --url https://<your-app>` prints that URL.
 
+With the Console enabled, open **Connections** in the Console and select **Connect** or **Reconnect**. The same page shows activity, decides approvals, and revokes a Connection. When Console auth is active, these actions record the signed-in Console user as `user:<id>`. See [Console](/docs/development/console#manage-connections).
+
 ## Call the API
 
 ```ts [server/tasks/label.ts]

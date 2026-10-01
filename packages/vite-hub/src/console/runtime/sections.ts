@@ -1,21 +1,20 @@
-/** Sections that the Console UI in `vite-hub` renders with its own components. Owner packages contribute the others. */
-export const consoleBuiltinSectionIds = ["env", "agents", "usage", "blob", "databases", "kv"] as const
+export const consoleSectionIds = ["env", "connections", "agents", "usage", "blob", "database", "databases", "kv", "rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"] as const
 
-export type ConsoleBuiltinSectionId = (typeof consoleBuiltinSectionIds)[number]
+export type ConsoleSectionId = (typeof consoleSectionIds)[number]
 
-/** A built-in section id or the id of a section that an owner package contributes. */
-export type ConsoleSectionId = string
-
-export interface ConsoleSectionDetails {
+export const consoleSectionDetails: Readonly<Record<ConsoleSectionId, {
   readonly description: string
   readonly icon: string
   readonly label: string
   readonly routeName: string
-}
-
-/** Details of built-in sections. Contributed sections get their details from the navigation response. */
-export const consoleSectionDetails: Readonly<Record<ConsoleBuiltinSectionId, ConsoleSectionDetails>> = {
+}>> = {
   env: { description: "Inspect Server Env declarations and their providers.", icon: "i-ph-key-light", label: "Env", routeName: "vitehub-console-env" },
+  connections: {
+    description: "Connect OAuth accounts, review activity, and decide pending approvals.",
+    icon: "i-lucide-plug-zap",
+    label: "Connections",
+    routeName: "vitehub-console-connections",
+  },
   agents: {
     description: "Inspect Agent sessions and invocation details.",
     icon: "i-ph-robot-light",
@@ -34,8 +33,14 @@ export const consoleSectionDetails: Readonly<Record<ConsoleBuiltinSectionId, Con
     label: "Blob",
     routeName: "vitehub-console-blob",
   },
+  database: {
+    description: "Inspect database tables, rows, columns, and relationships.",
+    icon: "i-ph-database-light",
+    label: "Database",
+    routeName: "vitehub-console-database",
+  },
   databases: {
-    description: "Inspect Database schemas, relationships, and live table rows.",
+    description: "Inspect discovered Database Definitions and static schema metadata.",
     icon: "i-lucide-database",
     label: "Databases",
     routeName: "vitehub-console-databases",
@@ -46,6 +51,42 @@ export const consoleSectionDetails: Readonly<Record<ConsoleBuiltinSectionId, Con
     label: "KV",
     routeName: "vitehub-console-kv",
   },
+  "rate-limits": {
+    description: "Inspect discovered Rate Limit policies and their source locations.",
+    icon: "i-lucide-gauge",
+    label: "Rate Limits",
+    routeName: "vitehub-console-rate-limits",
+  },
+  sandboxes: {
+    description: "Inspect discovered Sandbox Definitions without starting runtime resources.",
+    icon: "i-lucide-container",
+    label: "Sandboxes",
+    routeName: "vitehub-console-sandboxes",
+  },
+  workspaces: {
+    description: "Inspect discovered Workspace Definitions and their source roots.",
+    icon: "i-lucide-folder-kanban",
+    label: "Workspaces",
+    routeName: "vitehub-console-workspaces",
+  },
+  workflows: {
+    description: "Inspect discovered Workflow Definitions and their source metadata.",
+    icon: "i-ph-git-branch-light",
+    label: "Workflows",
+    routeName: "vitehub-console-workflows",
+  },
+  queues: {
+    description: "Inspect discovered Queue Definitions and their source metadata.",
+    icon: "i-ph-tray-light",
+    label: "Queues",
+    routeName: "vitehub-console-queues",
+  },
+  schedules: {
+    description: "Inspect discovered Schedule Definitions and static timing metadata.",
+    icon: "i-lucide-calendar-clock",
+    label: "Schedules",
+    routeName: "vitehub-console-schedules",
+  },
 }
 
 interface ConsoleSectionStorage {
@@ -54,42 +95,27 @@ interface ConsoleSectionStorage {
 }
 
 const lastConsoleSectionStorageKey = "vitehub-console:last-section"
-const consoleSectionIdPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 
-/** Returns true for a lowercase route segment. Built-in and contributed section ids use this form. */
 export function isConsoleSectionId(value: unknown): value is ConsoleSectionId {
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Section ids come from untrusted JSON and browser storage.
-  return typeof value === "string" && consoleSectionIdPattern.test(value)
+  return consoleSectionIds.some((section) => section === value)
 }
 
-export function isConsoleBuiltinSectionId(value: unknown): value is ConsoleBuiltinSectionId {
-  return consoleBuiltinSectionIds.some(section => section === value)
-}
-
-/** Route name of a contributed section. The Console serves it at `/_vitehub/<id>`. */
-export function consoleSectionRouteName(section: ConsoleSectionId): string {
-  return `vitehub-console-${section}`
-}
-
-/**
- * Returns the enabled section ids in navigation order. Owner packages contribute `rate-limits`, `sandboxes`,
- * `workspaces`, `workflows`, `queues`, and `schedules`. `console/contributions.ts` maps each id to its owner.
- */
-export function resolveConsoleSectionIds(options: { env?: unknown; agent?: unknown; blob?: unknown; database?: unknown; kv?: unknown; preset?: unknown; queue?: unknown; rateLimit?: unknown; sandbox?: unknown; schedule?: unknown; workflow?: unknown; workspace?: unknown }): ConsoleSectionId[] {
+export function resolveConsoleSectionIds(options: { env?: unknown; connections?: unknown; agent?: unknown; blob?: unknown; database?: unknown; kv?: unknown; preset?: unknown; queue?: unknown; rateLimit?: unknown; sandbox?: unknown; schedule?: unknown; workflow?: unknown; workspace?: unknown }): ConsoleSectionId[] {
   const workflowEnabled = options.workflow !== false
     && Boolean(options.workflow || (options.agent && options.preset !== "netlify"))
   return [
-    ...(options.env ? ["env"] : []),
-    ...(options.agent ? ["agents", "usage"] : []),
-    ...(options.blob ? ["blob"] : []),
-    ...(options.database ? ["databases"] : []),
-    ...(options.kv ? ["kv"] : []),
-    ...(options.rateLimit ? ["rate-limits"] : []),
-    ...(options.sandbox ? ["sandboxes"] : []),
-    ...(options.workspace ? ["workspaces"] : []),
-    ...(workflowEnabled ? ["workflows"] : []),
-    ...(options.queue ? ["queues"] : []),
-    ...(options.schedule ? ["schedules"] : []),
+    ...(options.env ? ["env" as const] : []),
+    ...(options.connections ? ["connections" as const] : []),
+    ...(options.agent ? ["agents" as const, "usage" as const] : []),
+    ...(options.blob ? ["blob" as const] : []),
+    ...(options.database ? ["databases" as const] : []),
+    ...(options.kv ? ["kv" as const] : []),
+    ...(options.rateLimit ? ["rate-limits" as const] : []),
+    ...(options.sandbox ? ["sandboxes" as const] : []),
+    ...(options.workspace ? ["workspaces" as const] : []),
+    ...(workflowEnabled ? ["workflows" as const] : []),
+    ...(options.queue ? ["queues" as const] : []),
+    ...(options.schedule ? ["schedules" as const] : []),
   ]
 }
 
