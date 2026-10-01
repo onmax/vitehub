@@ -181,6 +181,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
       }),
     },
     config(config, env) {
+      const cliDiscovery = "vitehubCliDiscovery" in config && config.vitehubCliDiscovery === true
       rateLimit = config.rateLimit ?? rateLimit
       const configuredNitro = (config as { nitro?: unknown }).nitro
       projectRoot = resolveViteHubProjectRoot(config.root || process.cwd(), { projectRoot: rateLimit.projectRoot })
@@ -188,7 +189,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
       if (configuredProvider) provider = configuredProvider
       collectDeclarations()
       // `configResolved` writes this file before the Development Server starts Nitro.
-      if (env?.command === "serve") devHandler = resolve(config.root || process.cwd(), generatedNitroDevHandler)
+      if (env?.command === "serve" && !cliDiscovery) devHandler = resolve(config.root || process.cwd(), generatedNitroDevHandler)
       const nitro = mergeNitroConfig(
         config,
         configuredNitro,
@@ -196,7 +197,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
         resolveRateLimitNamespace(rateLimit.namespace),
         configuredProvider,
         resolveNitroHosting(configuredNitro) === "cloudflare",
-        devHandler,
+        cliDiscovery ? undefined : devHandler,
       )
       ;(config as { nitro?: unknown }).nitro = nitro
     },
@@ -211,7 +212,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
       cloudflareOwnedByNitro = hasNitroConfigContext(config) && nitroCloudflare
       provider = resolveProvider(rateLimit, config.command, configuredNitro)!
       collectDeclarations()
-      if (config.command === "serve") devHandler ??= resolve(config.root, generatedNitroDevHandler)
+      if (config.command === "serve" && !cliDiscovery) devHandler ??= resolve(config.root, generatedNitroDevHandler)
       ;(config as { nitro?: unknown }).nitro = mergeNitroConfig(
         config,
         configuredNitro,
@@ -219,7 +220,7 @@ export function hubRateLimit(options: RateLimitVitePluginOptions = {}): RateLimi
         resolveRateLimitNamespace(rateLimit.namespace),
         provider,
         nitroCloudflare,
-        config.command === "serve" ? devHandler : undefined,
+        config.command === "serve" && !cliDiscovery ? devHandler : undefined,
       )
       await writeRateLimitManifest(config.root, declarations, provider)
       const pluginFile = resolve(config.root, generatedNitroPlugin)

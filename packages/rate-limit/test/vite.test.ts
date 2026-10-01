@@ -348,7 +348,12 @@ describe("hubRateLimit", () => {
       original = await readFile(devHandler, "utf8")
     }
     const discoveryPlugin = hubRateLimit()
-    await (discoveryPlugin.configResolved as (config: unknown) => Promise<void>)({ ...config, vitehubCliDiscovery: true } as never)
+    const discoveryConfig = { ...config, nitro: { handlers: [{ handler: "consumer.ts", route: "/consumer" }] }, vitehubCliDiscovery: true }
+    const configure = discoveryPlugin.config as (config: unknown, env: { command: "serve" }) => unknown
+    configure(discoveryConfig, { command: "serve" })
+    expect(discoveryConfig.nitro.handlers).toEqual([{ handler: "consumer.ts", route: "/consumer" }])
+    await (discoveryPlugin.configResolved as (config: unknown) => Promise<void>)(discoveryConfig as never)
+    expect(discoveryConfig.nitro.handlers).toEqual([{ handler: "consumer.ts", route: "/consumer" }])
     if (existing) expect(await readFile(devHandler, "utf8")).toBe(original)
     else await expect(access(devHandler)).rejects.toMatchObject({ code: "ENOENT" })
   })
