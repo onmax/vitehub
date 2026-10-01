@@ -335,10 +335,10 @@ function decodeBase64Url(data: string): string {
   return new TextDecoder().decode(bytes)
 }
 
-function flattenParts(part: GmailApiPart | undefined, parts: GmailApiPart[] = []): GmailApiPart[] {
-  if (!part) return parts
+function flattenParts(part: GmailApiPart | undefined, excludeAttachments = false, parts: GmailApiPart[] = []): GmailApiPart[] {
+  if (!part || (excludeAttachments && part.filename)) return parts
   parts.push(part)
-  for (const child of part.parts || []) flattenParts(child, parts)
+  for (const child of part.parts || []) flattenParts(child, excludeAttachments, parts)
   return parts
 }
 
@@ -449,7 +449,8 @@ function messageDate(internalDate: string | undefined, header: string | undefine
 
 async function toGmailMessage(client: GmailClient, message: v.InferOutput<typeof apiMessageSchema>, bodyLimit: number): Promise<GmailMessage> {
   const parts = flattenParts(message.payload)
-  const part = messageBodyPart(parts)
+  const bodyParts = flattenParts(message.payload, true)
+  const part = messageBodyPart(bodyParts)
   if (!part?.body?.data && part?.body?.attachmentId) {
     const attachment = await gmailRequest(client, v.object({ data: v.string() }), { method: "GET", path: `messages/${encodeURIComponent(message.id)}/attachments/${encodeURIComponent(part.body.attachmentId)}` })
     part.body.data = attachment.data
@@ -459,7 +460,7 @@ async function toGmailMessage(client: GmailClient, message: v.InferOutput<typeof
     attachments: parts.flatMap(part => part.filename
       ? [{ attachmentId: part.body?.attachmentId, filename: part.filename, mimeType: part.mimeType || "application/octet-stream", size: part.body?.size ?? 0 }]
       : []),
-    body: bodyText(parts, bodyLimit),
+    body: bodyText(bodyParts, bodyLimit),
     cc: splitAddresses(headers.cc),
     date: messageDate(message.internalDate, headers.date),
     from: headers.from ?? "",

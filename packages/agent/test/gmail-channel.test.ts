@@ -876,6 +876,35 @@ describe("gmail() Channel", () => {
     ])
   })
 
+  it.each([false, true])("excludes attached-message descendants from the primary body with attachment-backed child %s", async (attachmentBacked) => {
+    const message = { id: "m1", threadId: "thread-1", payload: { mimeType: "multipart/mixed", parts: [
+      { mimeType: "message/rfc822", filename: "forwarded.eml", body: { attachmentId: "forwarded", size: 200 }, parts: [
+        { mimeType: "multipart/alternative", parts: [
+          { mimeType: "text/plain", body: attachmentBacked ? { attachmentId: "forwarded-text" } : { data: base64Url("Attached message secret") } },
+          { mimeType: "text/plain", filename: "nested.txt", body: { attachmentId: "nested", size: 20 } },
+        ] },
+      ] },
+      { mimeType: "text/html", body: { attachmentId: "main-html" } },
+    ] } }
+    const client = vi.fn<GmailClient>(async request => {
+      if (request.path === "messages/m1") return message
+      if (request.path === "threads/thread-1") return { id: "thread-1", messages: [message] }
+      if (request.path === "messages/m1/attachments/main-html") return { data: base64Url("<p>Main message body</p>") }
+      if (request.path === "messages/m1/attachments/forwarded-text") return { data: base64Url("Attached message secret") }
+      throw new Error(`Unexpected request: ${request.path}`)
+    })
+    const loaded = await getGmailMessage(client, "m1", 12)
+    expect(loaded?.body).toBe("Main message")
+    expect(loaded?.attachments).toEqual([
+      { attachmentId: "forwarded", filename: "forwarded.eml", mimeType: "message/rfc822", size: 200 },
+      { attachmentId: "nested", filename: "nested.txt", mimeType: "text/plain", size: 20 },
+    ])
+    expect((await getGmailThread(client, "thread-1", 12))[0]?.body).toBe("Main message")
+    expect(client.mock.calls.filter(([request]) => request.path.includes("/attachments/")).map(([request]) => request.path)).toEqual([
+      "messages/m1/attachments/main-html", "messages/m1/attachments/main-html",
+    ])
+  })
+
   it("propagates an attachment-body fetch failure instead of treating the message as deleted", async () => {
     const client: GmailClient = async request => {
       if (request.path === "messages/m1") return { id: "m1", threadId: "thread-1", payload: { mimeType: "text/plain", body: { attachmentId: "body-1" } } }
