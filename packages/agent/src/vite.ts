@@ -175,8 +175,8 @@ interface GeneratedAgentRuntimeCapability {
 
 const generatedAgentRuntimeCapabilityDefinitions: GeneratedAgentRuntimeCapability[] = [
   { importName: "blob", name: "blob", packageName: "@vite-hub/blob", pluginName: "@vite-hub/blob/vite" },
+  { importName: "connections", name: "connections", packageName: "@vite-hub/connections/server", pluginName: "@vite-hub/connections/vite" },
   { importName: "console", name: "console", packageName: "vite-hub/console/server", pluginName: "vite-hub/console" },
-  { importName: "connections", name: "connections", packageName: "@vite-hub/connections/agent", pluginName: "@vite-hub/connections/vite" },
   { importName: "agentDb", name: "db", packageName: "@vite-hub/database/drizzle", pluginName: "@vite-hub/database/vite" },
   { importName: "email", name: "email", packageName: "@vite-hub/email/server", pluginName: "@vite-hub/email/vite" },
   { importName: "kv", name: "kv", packageName: "@vite-hub/kv", pluginName: "@vite-hub/kv/vite" },
@@ -237,7 +237,8 @@ async function writeStandaloneAgentRuntimeCapabilities(
   config: Pick<ResolvedConfig, "plugins" | "root">,
   capabilities: GeneratedAgentRuntimeCapability[],
 ): Promise<GeneratedAgentRuntimeCapability[]> {
-  const standaloneCapabilities = capabilities.filter(capability => capability.name !== "db")
+  // Database-backed primitives need the host runtime.
+  const standaloneCapabilities = capabilities.filter(capability => capability.name !== "db" && capability.name !== "connections")
   const emailCapability = standaloneCapabilities.find(capability =>
     capability.name === "email" && capability.packageName !== false
   )

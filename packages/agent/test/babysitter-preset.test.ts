@@ -217,7 +217,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     ...(preset.postPushGraceMs === undefined ? {} : { postPushGraceMs: preset.postPushGraceMs }),
     ...(preset.providerRetryDelayMs === undefined ? {} : { providerRetryDelayMs: preset.providerRetryDelayMs }),
   });
-  const passes: Array<{ tools: string[]; prompt: string; session: string; instructions: string }> = [];
+  const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; prompt: string; session: string; instructions: string }> = [];
   let operation: "pushRepair" | "requestAutoMerge" | "updatePullRequest" | undefined;
   let operationArguments: Record<string, unknown> = {};
   createProviderRuntime.mockImplementation(async () => {
@@ -244,8 +244,10 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
           }),
         );
         try {
+          const listedTools = (await client.listTools()).tools;
           passes.push({
-            tools: (await client.listTools()).tools.map((tool) => tool.name),
+            tools: listedTools.map((tool) => tool.name),
+            descriptions: Object.fromEntries(listedTools.map((tool) => [tool.name, tool.description])),
             prompt: input.input,
             session: threadId,
             instructions: await readFile(join(workerDirectory!, "AGENTS.md"), "utf8"),
@@ -381,6 +383,7 @@ describe("Babysitter preset runtime", () => {
     expect(() => defineAgent({ extends: babysitter, options: { merge: "direct", autoMerge: true } })).toThrow(/deprecated/);
     // @ts-expect-error -- only provider Drivers can repair a checkout.
     expect(() => defineAgent({ extends: babysitter, options: { driver: "model" } })).toThrow(/driver must be/);
+    expect(() => defineAgent({ extends: babysitter, options: { noFindingsReviews: [""] } })).toThrow(/noFindingsReviews cannot contain an empty prefix/);
     expect(() => defineAgent({ extends: babysitter, options: { merge: { strategy: "direct", method: "fast-forward" as "squash" } } })).toThrow(/merge.method/);
   });
 
@@ -665,6 +668,9 @@ describe("Babysitter preset runtime", () => {
     expect(f.passes[0]?.prompt).toContain("new-review-bot[bot]");
     expect(f.passes[0]?.instructions).toContain("Preserve the documented API contract.");
     expect(f.passes[0]?.instructions).not.toContain("{{{ instructions }}}");
+    // An open thread disables the wait, so the pass resolves fixed threads before it parks.
+    expect(f.passes[0]?.instructions).toContain("After pushing, resolve the review threads that push fixes, then stop");
+    expect(f.passes[0]?.descriptions.pushRepair).toContain("resolve any review threads fixed by the push before ending the pass");
     const environment = createProviderRuntime.mock.calls[0]?.[0].environment;
     expect(environment).not.toHaveProperty("GH_TOKEN");
     expect(environment).toHaveProperty("OPENAI_API_KEY", "provider-only");

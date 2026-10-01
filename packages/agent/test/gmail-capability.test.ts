@@ -1,331 +1,299 @@
+import { execFileSync } from "node:child_process"
+
+import * as v from "valibot"
 import { describe, expect, it, vi } from "vitest"
 
-import { validateAgentCapabilityComposition, validateCapabilityRuntimeRequirement } from "../src/capability-runtime.ts"
+import { validateAgentCapabilityComposition } from "../src/capability-runtime.ts"
 import { gmail } from "../src/capabilities.ts"
-import { createAgentInspectionMetadata, defineAgent } from "../src/index.ts"
+import { createAgentInspectionMetadata, defineAgent, runAgent } from "../src/index.ts"
 
 import type { AgentCapabilityDefinition, AgentToolSet } from "../src/types.ts"
-import type { ExecResult, WorkspaceSession } from "@vite-hub/workspace"
 
-type CommandHandler = (args: string[]) => ExecResult | Promise<ExecResult>
+type Call = { input: Record<string, unknown>, method: string, signal?: AbortSignal }
+type Handler = (method: string, input: Record<string, unknown>) => unknown
 
-async function capabilityTools(capability: AgentCapabilityDefinition, handler: CommandHandler) {
-  if (typeof capability.tools !== "function") throw new Error("gmail capability must expose a tool resolver")
-  const sessions: Array<WorkspaceSession & { close: ReturnType<typeof vi.fn>, exec: ReturnType<typeof vi.fn> }> = []
-  const startSession = vi.fn(async () => {
-    const session = {
-      close: vi.fn(async () => {}),
-      commit: vi.fn(async () => {}),
-      exec: vi.fn(async (command: string, args: string[] = [], options?: { timeout?: number }) => {
-        expect(command).toBe("gog")
-        expect(options?.timeout).toBe(60_000)
-        return await handler(args)
-      }),
-    } as unknown as WorkspaceSession & { close: ReturnType<typeof vi.fn>, exec: ReturnType<typeof vi.fn> }
-    sessions.push(session)
-    return session
-  })
-  const tools = await capability.tools({ workspace: { startSession } } as never) as AgentToolSet
-  return { sessions, startSession, tools }
+function base64Url(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64url")
 }
 
-function result(stdout: string, exitCode = 0, stderr = ""): ExecResult {
-  return { args: [], command: "gog", exitCode, stderr, stdout }
+function fakeConnections(handler: Handler) {
+  const calls: Call[] = []
+  const uses: Array<{ name: string, options: unknown }> = []
+  const method = (name: string) => vi.fn(async (input: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
+    calls.push({ input, method: name, ...(options?.signal ? { signal: options.signal } : {}) })
+    return await handler(name, input)
+  })
+  const primitive = {
+    use: vi.fn((name: string, options: unknown) => {
+      uses.push({ name, options })
+      return {
+        gmail: {
+          users: {
+            drafts: { create: method("drafts.create") },
+            labels: { list: method("labels.list") },
+            messages: { attachments: { get: method("messages.attachments.get") }, get: method("messages.get"), list: method("messages.list"), modify: method("messages.modify") },
+          },
+        },
+      }
+    }),
+  }
+  return { calls, primitive, uses }
+}
+
+function contextStore(values: Record<string, unknown>) {
+  return { get: (key: string) => values[key] }
+}
+
+async function capabilityTools(capability: AgentCapabilityDefinition, handler: Handler, values: Record<string, unknown> = { "agent.invocation.traceId": "inv_1", "agent.name": "inbox" }) {
+  if (typeof capability.tools !== "function") throw new Error("gmail capability must expose a tool resolver")
+  const connections = fakeConnections(handler)
+  const tools = await capability.tools({ capabilities: { connections: connections.primitive }, context: contextStore(values) } as never) as AgentToolSet
+  return { ...connections, tools }
+}
+
+function connectionError(code: string, fields: Record<string, unknown> = {}): Error {
+  return Object.assign(new Error(code), { code, ...fields })
 }
 
 describe("gmail capability", () => {
-  it.each([true, false])("describes effective Skill persistence when conditional writes are %s", async (conditionalWrites) => {
-    const capability = gmail()
-    if (typeof capability.workspace !== "function") throw new Error("expected workspace resolver")
-    const contribution = await capability.workspace({ workspace: {
-      fs: { writeFile: vi.fn() },
-      capabilities: async () => ({ conditionalWrites }),
-    } } as never)
-    if (!contribution) throw new Error("expected workspace contribution")
-    const source = contribution.sources?.["skill.gmail"]
-    expect(source).toHaveProperty("content", expect.stringContaining(conditionalWrites ? "This Skill persists between invocations." : "This Skill is available only for this invocation."))
-    expect(source).toHaveProperty("content", expect.stringContaining("check that both `gmail_search` and `gmail_auth` are available"))
-  })
-
-  it("defines the read and draft tool boundaries with explicit runtime requirements", async () => {
-    const read = gmail()
-    const readRuntime = await capabilityTools(read, () => result('{"accounts":[]}'))
-    if (typeof read.workspace !== "function") throw new Error("expected workspace resolver")
-    const readWorkspace = await read.workspace({} as never)
-    if (!readWorkspace) throw new Error("expected workspace contribution")
-
+  it("exposes the selected tools and requires the connections primitive", async () => {
+    const read = gmail({ connection: "google" })
     expect(read).toMatchObject({
       id: "gmail",
-      metadata: { command: "gog", mode: "read", skillPath: ".agents/skills/gmail/SKILL.md", sourceKey: "skill.gmail" },
+      metadata: { connection: "google", tools: ["read", "search"] },
       mode: "read",
-      requires: [
-        { primitive: "workspace", workspace: { mode: "write", required: true } },
-      ],
+      requires: [{ primitive: "connections" }],
     })
-    expect(Object.keys(readRuntime.tools).sort()).toEqual(["gmail_auth", "gmail_search"])
-    expect(readWorkspace.sources?.["skill.gmail"]).toHaveProperty("workspacePath", ".agents/skills/gmail/SKILL.md")
-    expect(readWorkspace.sources?.["skill.gmail"]).toHaveProperty("content", expect.stringContaining("Use `gmail_search`"))
-    expect(readWorkspace.sources?.["skill.gmail"]).toHaveProperty("content", expect.stringContaining("authorization codes separately from the required full redirect URL"))
-    expect(readWorkspace.sources?.["skill.gmail"]).toHaveProperty("content", expect.stringContaining("using the `access` returned"))
-    expect(readWorkspace.sources?.["skill.gmail"]).not.toHaveProperty("content", expect.stringContaining("gog"))
-    expect(readWorkspace.sources?.["skill.gmail"]).not.toHaveProperty("content", expect.stringContaining("shell"))
-    expect(() => gmail({ mode: "send" as never })).toThrow('must be "read" or "draft"')
-    expect(() => validateAgentCapabilityComposition([read], { driverKind: "provider", hasWorkspace: true, workspaceMode: "write" })).not.toThrow()
-    expect(() => validateAgentCapabilityComposition([read], { driverKind: "model", hasWorkspace: true, workspaceMode: "write" }))
-      .toThrow("requires a provider Agent Driver")
-    await expect(validateCapabilityRuntimeRequirement(read, { fs: { exists: vi.fn() } } as never, "read"))
-      .rejects.toThrow('requires workspace.mode: "write"')
+    expect(read.workspace).toBeUndefined()
+    expect(Object.keys((await capabilityTools(read, () => ({}))).tools).sort()).toEqual(["gmail_read", "gmail_search"])
 
-    const draft = gmail({ mode: "draft" })
-    const draftRuntime = await capabilityTools(draft, () => result('{"accounts":[]}'))
-    if (typeof draft.workspace !== "function") throw new Error("expected workspace resolver")
-    const draftWorkspace = await draft.workspace({} as never)
-    if (!draftWorkspace) throw new Error("expected workspace contribution")
-    expect(draft).toMatchObject({ metadata: { mode: "draft" }, mode: "write" })
-    expect(Object.keys(draftRuntime.tools).sort()).toEqual(["gmail_auth", "gmail_draft", "gmail_search"])
-    expect(draftWorkspace.sources?.["skill.gmail"]).toHaveProperty("content", expect.stringContaining("create an unsent draft"))
+    const all = gmail({ connection: "google", tools: ["draft", "labels", "modify", "read", "search"] })
+    expect(all).toMatchObject({ mode: "write" })
+    expect(Object.keys((await capabilityTools(all, () => ({}))).tools).sort())
+      .toEqual(["gmail_draft", "gmail_labels", "gmail_modify", "gmail_read", "gmail_search"])
+    expect(gmail({ connection: "google", tools: ["labels"] })).toMatchObject({ mode: "read" })
 
-    const inspected = createAgentInspectionMetadata(defineAgent({
-      capabilities: [draft],
-      driver: "codex",
-      workspace: { mode: "write" },
-    }))
+    expect(() => gmail({} as never)).toThrow("requires a Connection name")
+    expect(() => gmail({ connection: "   " })).toThrow("requires a Connection name")
+    expect(() => gmail({ connection: "google", tools: [] })).toThrow("gmail({ tools })")
+    expect(() => gmail({ connection: "google", tools: ["send" as never] })).toThrow("gmail({ tools })")
+    await expect(Promise.resolve().then(() => (read.tools as (context: never) => unknown)({ capabilities: {} } as never)))
+      .rejects.toThrow("requires the connections primitive")
+  })
+
+  it("does not need a Workspace or provider Driver and lists its tools in inspection", () => {
+    const capability = gmail({ connection: "google", tools: ["search", "modify"] })
+    expect(() => validateAgentCapabilityComposition([capability], { driverKind: "model", hasWorkspace: false })).not.toThrow()
+    const inspected = createAgentInspectionMetadata(defineAgent({ capabilities: [capability], driver: "codex", workspace: { mode: "read" } }))
     expect(inspected.tools).toContainEqual(expect.objectContaining({
-      commands: ["gmail_auth", "gmail_search", "gmail_draft"],
+      commands: ["gmail_modify", "gmail_search"],
+      description: "Use Gmail through the google Connection.",
       name: "gmail",
     }))
   })
 
-  it("forwards the tool execution signal to Gmail commands", async () => {
-    const runtime = await capabilityTools(gmail(), args => result(args[0] === "auth"
-      ? '{"accounts":[{"email":"test@example.com","services":["gmail"],"scopes":["https://www.googleapis.com/auth/gmail.readonly"],"valid":true}]}'
-      : '{"threads":[]}'))
+  it("calls the Connection as the Agent actor with the invocation id and abort signal", async () => {
+    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["labels"] }), () => ({ labels: [{ id: "Label_1", name: "Receipts", type: "user" }] }))
     const controller = new AbortController()
+    await expect(runtime.tools.gmail_labels!.execute?.({}, { abortSignal: controller.signal } as never)).resolves.toEqual({
+      labels: [{ id: "Label_1", name: "Receipts", type: "user" }],
+      status: "ok",
+    })
+    expect(runtime.uses).toEqual([{ name: "google", options: { actor: "agent:inbox", invocationId: "inv_1" } }])
+    expect(runtime.calls).toEqual([{ input: { userId: "me" }, method: "labels.list", signal: controller.signal }])
+  })
 
-    await runtime.tools.gmail_search!.execute?.({ account: "test@example.com" }, { abortSignal: controller.signal })
+  it("preserves the definition name when runAgent has no host identity", async () => {
+    const connections = fakeConnections(() => ({ labels: [] }))
+    const agent = defineAgent({
+      name: "inbox",
+      capabilities: [gmail({ connection: "google", tools: ["labels"] })],
+      driver: { run: async context => await context.tools?.gmail_labels?.execute?.({}) },
+    })
+    const result = await runAgent(agent, { capabilities: { connections: connections.primitive }, memo: (_key, create) => create(), runtime: "unknown", waitUntil: () => {} }, {})
+    expect(result).toMatchObject({ status: "ok" })
+    expect(connections.uses).toEqual([expect.objectContaining({ options: expect.objectContaining({ actor: "agent:inbox" }) })])
+  })
 
-    for (const session of runtime.sessions) {
-      expect(session.exec).toHaveBeenCalledWith("gog", expect.any(Array), expect.objectContaining({ abortSignal: controller.signal }))
+  it("retrieves external text parts and preserves the abort signal", async () => {
+    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["read"] }), (method) => method === "messages.get"
+      ? { id: "m1", payload: { mimeType: "text/plain", body: { attachmentId: "a1" } } }
+      : { data: base64Url("External body") })
+    const controller = new AbortController()
+    await expect(runtime.tools.gmail_read!.execute?.({ id: "m1" }, { abortSignal: controller.signal } as never)).resolves.toMatchObject({ message: { body: "External body" } })
+    expect(runtime.calls.at(-1)).toEqual({ method: "messages.attachments.get", input: { id: "a1", messageId: "m1", userId: "me" }, signal: controller.signal })
+  })
+
+  it.each([
+    { filename: "notes.txt" },
+    { headers: [{ name: "Content-Disposition", value: "attachment; filename=notes.txt" }] },
+  ])("selects the HTML body instead of a text attachment, %j", async (attachment) => {
+    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["read"] }), () => ({
+      id: "m1",
+      payload: { mimeType: "multipart/mixed", parts: [
+        { ...attachment, mimeType: "text/plain", body: { attachmentId: "a1", data: base64Url("Attached file") } },
+        { mimeType: "text/html", body: { data: base64Url("<p>Email body</p>") } },
+      ] },
+    }))
+    await expect(runtime.tools.gmail_read!.execute?.({ id: "m1" })).resolves.toMatchObject({ message: { body: "Email body" } })
+    expect(runtime.calls).toHaveLength(1)
+  })
+
+  it.each(["team/google", "équipe/google", "a b"])("uses the discovered Connection name %s", async (name) => {
+    const runtime = await capabilityTools(gmail({ connection: name, tools: ["labels"] }), () => ({ labels: [] }))
+    await runtime.tools.gmail_labels!.execute?.({})
+    expect(runtime.uses[0]?.name).toBe(name)
+  })
+
+  it.each(["text/plain", "text/html"])("decodes the declared MIME charset for %s", async (mimeType) => {
+    const body = mimeType === "text/html" ? "<p>Résumé</p>" : "Résumé"
+    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["read"] }), () => ({
+      id: "m1", payload: { mimeType, headers: [{ name: "Content-Type", value: `${mimeType}; charset=\"iso-8859-1\"` }], body: { data: Buffer.from(body, "latin1").toString("base64url") } },
+    }))
+    await expect(runtime.tools.gmail_read!.execute?.({ id: "m1" })).resolves.toMatchObject({ message: { body: "Résumé" } })
+  })
+
+  it("falls back to UTF-8 when the MIME charset is unsupported", async () => {
+    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["read"] }), () => ({
+      id: "m1", payload: { mimeType: "text/plain", headers: [{ name: "Content-Type", value: "text/plain; charset=not-a-real-charset" }], body: { data: base64Url("Résumé") } },
+    }))
+    await expect(runtime.tools.gmail_read!.execute?.({ id: "m1" })).resolves.toMatchObject({ message: { body: "Résumé" } })
+  })
+
+  it("folds long Unicode draft subjects into valid encoded words", async () => {
+    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["draft"] }), () => ({ id: "d1" }))
+    const subject = "Résumé 🚀".repeat(20)
+    await runtime.tools.gmail_draft!.execute?.({ body: "body", subject, to: ["a@example.com"] })
+    const message = (runtime.calls[0]!.input.requestBody as { message: { raw: string } }).message
+    const mime = Buffer.from(message.raw, "base64url").toString("utf8")
+    const header = mime.match(/Subject: ([\s\S]*?)\r\nMIME-Version:/)![1]!
+    const words = header.split(/\r\n /)
+    expect(words.length).toBeGreaterThan(1)
+    expect(words.every(word => word.length <= 75)).toBe(true)
+    expect(words.map(word => Buffer.from(word.slice(10, -2), "base64").toString("utf8")).join("")).toBe(subject)
+  })
+
+  it("searches with message metadata", async () => {
+    const runtime = await capabilityTools(gmail({ connection: "google" }), (method, input) => method === "messages.list"
+      ? { messages: [{ id: "m1" }, { id: "m2" }], nextPageToken: "next" }
+      : {
+          id: input.id,
+          labelIds: ["INBOX"],
+          payload: { headers: [{ name: "From", value: "a@example.com" }, { name: "subject", value: `Hello ${String(input.id)}` }] },
+          snippet: "Hi",
+          threadId: "t1",
+        })
+
+    const result = await runtime.tools.gmail_search!.execute?.({ max: 2, query: "is:unread" })
+    expect(result).toEqual({
+      messages: [
+        { date: undefined, from: "a@example.com", id: "m1", labelIds: ["INBOX"], snippet: "Hi", subject: "Hello m1", threadId: "t1", to: undefined },
+        { date: undefined, from: "a@example.com", id: "m2", labelIds: ["INBOX"], snippet: "Hi", subject: "Hello m2", threadId: "t1", to: undefined },
+      ],
+      nextPageToken: "next",
+      status: "ok",
+    })
+    expect(runtime.calls[0]).toEqual({ input: { maxResults: 2, q: "is:unread", userId: "me" }, method: "messages.list" })
+    expect(runtime.calls[1]).toEqual({ input: { format: "metadata", id: "m1", metadataHeaders: ["Date", "From", "Subject", "To"], userId: "me" }, method: "messages.get" })
+
+    await runtime.tools.gmail_search!.execute?.({})
+    expect(runtime.calls.at(-3)).toMatchObject({ input: { maxResults: 10, q: "in:inbox" } })
+    await expect(runtime.tools.gmail_search!.execute?.({ max: 51 })).rejects.toThrow("max must be an integer from 1 to 50")
+  })
+
+  it("reads the plain-text body, falls back to HTML, and truncates", async () => {
+    const plain = { payload: { mimeType: "multipart/alternative", parts: [
+      { body: { data: base64Url("<p>HTML</p>") }, mimeType: "text/html" },
+      { body: { data: base64Url("Olá, plain body") }, mimeType: "text/plain" },
+    ] } }
+    const html = { payload: { body: { data: base64Url("<style>x{}</style><p>Line &amp; one</p><br>two") }, mimeType: "text/html" } }
+    const runtime = await capabilityTools(gmail({ connection: "google" }), (_method, input) => ({ id: input.id, ...(input.id === "html" ? html : plain) }))
+
+    await expect(runtime.tools.gmail_read!.execute?.({ id: "plain" })).resolves.toMatchObject({
+      message: { body: "Olá, plain body", id: "plain", truncated: false },
+      status: "ok",
+    })
+    expect(runtime.calls[0]).toEqual({ input: { format: "full", id: "plain", userId: "me" }, method: "messages.get" })
+    await expect(runtime.tools.gmail_read!.execute?.({ id: "html" })).resolves.toMatchObject({ message: { body: "Line & one\n\ntwo" } })
+    await expect(runtime.tools.gmail_read!.execute?.({ id: "plain", maxChars: 3 })).resolves.toMatchObject({ message: { body: "Olá", truncated: true } })
+    await expect(runtime.tools.gmail_read!.execute?.({ id: "../x" })).rejects.toThrow("must be a Gmail message id")
+  })
+
+  it("modifies labels with validated ids", async () => {
+    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["modify"] }), () => ({ id: "m1", labelIds: ["Label_1"] }))
+    await expect(runtime.tools.gmail_modify!.execute?.({ addLabelIds: ["Label_1"], id: "m1", removeLabelIds: ["INBOX"] })).resolves.toEqual({
+      message: { id: "m1", labelIds: ["Label_1"] },
+      status: "ok",
+    })
+    expect(runtime.calls).toEqual([{ input: { id: "m1", requestBody: { addLabelIds: ["Label_1"], removeLabelIds: ["INBOX"] }, userId: "me" }, method: "messages.modify" }])
+    await expect(runtime.tools.gmail_modify!.execute?.({ id: "m1" })).rejects.toThrow("requires addLabelIds or removeLabelIds")
+    await expect(runtime.tools.gmail_modify!.execute?.({ addLabelIds: ["a b"], id: "m1" })).rejects.toThrow("Gmail label ids")
+  })
+
+  it("creates drafts as RFC 2822 messages and rejects header injection", async () => {
+    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["draft"] }), () => ({ id: "d1", message: { id: "m1", threadId: "t1" } }))
+    await expect(runtime.tools.gmail_draft!.execute?.({
+      bcc: ["hidden@example.com"],
+      body: "Hello\nÜber",
+      subject: "Café",
+      to: ["person@example.com"],
+    })).resolves.toEqual({ draft: { id: "d1", messageId: "m1", threadId: "t1" }, status: "ok" })
+
+    const raw = (runtime.calls[0]!.input.requestBody as { message: { raw: string } }).message.raw
+    const message = Buffer.from(raw, "base64url").toString("utf8")
+    const [headers, body] = message.split("\r\n\r\n")
+    expect(headers!.split("\r\n")).toEqual([
+      "To: person@example.com",
+      "Bcc: hidden@example.com",
+      `Subject: =?UTF-8?B?${Buffer.from("Café").toString("base64")}?=`,
+      "MIME-Version: 1.0",
+      "Content-Type: text/plain; charset=UTF-8",
+      "Content-Transfer-Encoding: base64",
+    ])
+    expect(Buffer.from(body!.replace(/\r\n/g, ""), "base64").toString("utf8")).toBe("Hello\nÜber")
+
+    await expect(runtime.tools.gmail_draft!.execute?.({ body: "x", subject: "Hi\r\nBcc: evil@example.com", to: ["a@example.com"] }))
+      .rejects.toThrow("subject must be one line")
+    await expect(runtime.tools.gmail_draft!.execute?.({ body: "x", subject: "Hi", to: ["a@example.com, evil@example.com"] }))
+      .rejects.toThrow("valid email address")
+    await expect(runtime.tools.gmail_draft!.execute?.({ body: "x", subject: "Hi", to: [] }))
+      .rejects.toThrow("at least one email address")
+    expect(runtime.calls).toHaveLength(1)
+  })
+
+  it("returns Connection failures as tool results", async () => {
+    const failures: Record<string, Error> = {
+      m1: connectionError("CONNECTION_APPROVAL_REQUIRED", { requestId: "approval_1" }),
+      m2: connectionError("CONNECTION_REAUTH_REQUIRED"),
+      m3: connectionError("CONNECTION_DENIED"),
+      m4: connectionError("CONNECTION_PROVIDER", { status: 404 }),
+      m5: new Error("network down"),
     }
+    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["modify"] }), (_method, input) => {
+      throw failures[input.id as string]
+    })
+    const modify = (id: string) => runtime.tools.gmail_modify!.execute?.({ addLabelIds: ["Label_1"], id })
+
+    await expect(modify("m1")).resolves.toMatchObject({ approvalId: "approval_1", message: expect.stringContaining("vitehub connections approvals approve approval_1"), status: "approval_required" })
+    await expect(modify("m2")).resolves.toMatchObject({ connection: "google", message: expect.stringContaining("vitehub connections connect 'google'"), status: "reauth_required" })
+    await expect(modify("m3")).resolves.toMatchObject({ status: "denied" })
+    await expect(modify("m4")).resolves.toMatchObject({ httpStatus: 404, status: "provider_error" })
+    await expect(modify("m5")).rejects.toThrow("network down")
   })
 
-  it("forwards only the configured Gmail keyring secret to Gmail commands", async () => {
-    vi.stubEnv("GOG_KEYRING_PASSWORD", "keyring-secret")
-    vi.stubEnv("UNRELATED_APPLICATION_SECRET", "do-not-forward")
-    const runtime = await capabilityTools(gmail(), args => result(args[0] === "auth"
-      ? '{"accounts":[{"email":"test@example.com","services":["gmail"],"scopes":["https://www.googleapis.com/auth/gmail.readonly"],"valid":true}]}'
-      : '{"threads":[]}'))
-
-    await runtime.tools.gmail_search!.execute?.({ account: "test@example.com" })
-
-    for (const session of runtime.sessions) {
-      expect(session.exec).toHaveBeenCalledWith("gog", expect.any(Array), expect.objectContaining({
-        env: { GOG_KEYRING_PASSWORD: "keyring-secret" },
-      }))
-    }
-    vi.unstubAllEnvs()
+  it.each(["team/a b", "team/a'b", "team/$(printf injected)"])("quotes reauthorization for %s as one shell argument", async (connection) => {
+    const runtime = await capabilityTools(gmail({ connection, tools: ["labels"] }), () => { throw connectionError("CONNECTION_REAUTH_REQUIRED") })
+    const result = await runtime.tools.gmail_labels!.execute?.({})
+    const parsed = v.parse(v.object({ message: v.string(), status: v.literal("reauth_required") }), result)
+    const argument = parsed.message.match(/`vitehub connections connect (.*?)`/)?.[1]
+    expect(argument).toBeDefined()
+    const output = execFileSync("bash", ["-c", `set -- ${argument}; printf '%s\\n' "$#" "$1"`], { encoding: "utf8" })
+    expect(output).toBe(`1\n${connection}\n`)
   })
 
-  it("returns structured authorization states and validates the continuation", async () => {
-    let state: "compose-only" | "connected" | "configuration" | "disconnected" | "invalid-url" = "connected"
-    const calls: string[][] = []
-    const runtime = await capabilityTools(gmail(), (args) => {
-      calls.push(args)
-      if (args[0] === "auth" && args[1] === "list") {
-        return result(state === "connected"
-          ? '{"accounts":[{"email":"test@example.com","services":["gmail"],"scopes":["https://www.googleapis.com/auth/gmail.readonly"],"valid":true}]}'
-          : state === "compose-only"
-            ? '{"accounts":[{"email":"test@example.com","services":["gmail"],"scopes":["https://www.googleapis.com/auth/gmail.compose"],"valid":true}]}'
-            : '{"accounts":[]}')
-      }
-      if (args.includes("--step") && args.includes("1")) {
-        return state === "configuration"
-          ? result("", 1, "No OAuth client credentials stored")
-          : result(state === "invalid-url"
-            ? '{"auth_url":"https://example.com/phishing"}'
-            : '{"auth_url":"https://accounts.google.com/o/oauth2/auth?state=test"}')
-      }
-      if (args.includes("--step") && args.includes("2")) return result('{"account":"test@example.com"}')
-      if (args[0] === "gmail" && args[1] === "search") return result('{"threads":[{"id":"thread-1","subject":"Hello"}]}')
-      throw new Error(`Unexpected gog args: ${args.join(" ")}`)
-    })
-
-    await expect(runtime.tools.gmail_auth!.execute?.({ action: "start", account: "test@example.com" })).resolves.toEqual({
-      account: "test@example.com",
-      status: "connected",
-    })
-    await expect(runtime.tools.gmail_auth!.execute?.({
-      access: "draft",
-      action: "start",
-      account: "test@example.com",
-    })).rejects.toThrow('access "draft" requires gmail({ mode: "draft" })')
-    await expect(runtime.tools.gmail_search!.execute?.({ max: 50, query: "-from:spam@example.com" })).resolves.toEqual({
-      account: "test@example.com",
-      result: { threads: [{ id: "thread-1", subject: "Hello" }] },
-      status: "ok",
-    })
-    expect(calls).toContainEqual([
-      "gmail", "search", "--account", "test@example.com", "--max", "50",
-      "--json", "--no-input", "--readonly", "--gmail-no-send", "--wrap-untrusted",
-      "--", "-from:spam@example.com",
-    ])
-
-    state = "compose-only"
-    await expect(runtime.tools.gmail_auth!.execute?.({ action: "start", account: "test@example.com" })).resolves.toMatchObject({
-      status: "authorization_required",
-    })
-
-    state = "disconnected"
-    await expect(runtime.tools.gmail_auth!.execute?.({ action: "start", account: "test@example.com" })).resolves.toEqual({
-      access: "read",
-      account: "test@example.com",
-      authorizationUrl: "https://accounts.google.com/o/oauth2/auth?state=test",
-      status: "authorization_required",
-    })
-    expect(calls).toContainEqual([
-      "auth", "add", "test@example.com", "--services", "gmail", "--readonly",
-      "--remote", "--step", "1", "--json", "--no-input",
-    ])
-
-    state = "configuration"
-    await expect(runtime.tools.gmail_auth!.execute?.({ action: "start", account: "test@example.com" })).resolves.toEqual({
-      setupUrl: "https://github.com/openclaw/gogcli/blob/main/docs/quickstart.md",
-      status: "configuration_required",
-    })
-
-    state = "invalid-url"
-    await expect(runtime.tools.gmail_auth!.execute?.({ action: "start", account: "test@example.com" }))
-      .rejects.toThrow("could not start authorization")
-
-    await expect(runtime.tools.gmail_auth!.execute?.({
-      action: "complete",
-      account: "test@example.com",
-      redirectUrl: "https://example.com/?code=x&state=y",
-    })).rejects.toThrow("HTTP localhost URL containing code and state")
-    await expect(runtime.tools.gmail_auth!.execute?.({
-      action: "complete",
-      account: "test@example.com",
-      redirectUrl: "http://localhost:8080/?code=x&state=y",
-    })).resolves.toEqual({ account: "test@example.com", status: "connected" })
-    expect(runtime.sessions.every(session => session.close.mock.calls.length === 1)).toBe(true)
-  })
-
-  it("creates drafts with no-send and rejects invalid input before command execution", async () => {
-    let connected = true
-    const calls: string[][] = []
-    const runtime = await capabilityTools(gmail({ mode: "draft" }), (args) => {
-      calls.push(args)
-      if (args[0] === "auth" && args[1] === "list") {
-        return result(connected
-          ? '{"accounts":[{"email":"test@example.com","services":["gmail"],"scopes":["https://mail.google.com/"],"valid":true}]}'
-          : '{"accounts":[]}')
-      }
-      if (args.includes("--step") && args.includes("1")) return result('{"auth_url":"https://accounts.google.com/o/oauth2/auth?state=test"}')
-      if (args[0] === "gmail" && args[1] === "drafts") return result('{"draft":{"id":"draft-1"}}')
-      throw new Error(`Unexpected gog args: ${args.join(" ")}`)
-    })
-
-    await expect(runtime.tools.gmail_draft!.execute?.({
-      bcc: [],
-      body: "Draft body",
-      cc: [],
-      subject: "Hello",
-      to: ["person@example.com"],
-    })).resolves.toEqual({
-      account: "test@example.com",
-      result: { draft: { id: "draft-1" } },
-      status: "ok",
-    })
-    const draftCall = calls.find(args => args[0] === "gmail" && args[1] === "drafts")!
-    expect(draftCall).toContain("--gmail-no-send")
-    expect(draftCall).not.toContain("send")
-
-    await expect(runtime.tools.gmail_draft!.execute?.({
-      body: "  Indented body\n\n",
-      subject: "Whitespace",
-      to: ["person@example.com"],
-    })).resolves.toMatchObject({ status: "ok" })
-    const whitespaceDraftCall = calls.findLast(args => args[0] === "gmail" && args[1] === "drafts")!
-    expect(whitespaceDraftCall[whitespaceDraftCall.indexOf("--body") + 1]).toBe("  Indented body\n\n")
-
-    connected = false
-    await expect(runtime.tools.gmail_auth!.execute?.({ action: "start", account: "test@example.com" })).resolves.toMatchObject({
-      status: "authorization_required",
-    })
-    expect(calls).toContainEqual([
-      "auth", "add", "test@example.com", "--services", "gmail", "--gmail-scope", "full",
-      "--remote", "--step", "1", "--json", "--no-input",
-    ])
-
-    connected = true
-    const ambiguous = await capabilityTools(gmail({ mode: "draft" }), args => args[0] === "auth"
-      ? result('{"accounts":[{"email":"draft@example.com","services":["gmail"],"scopes":["https://mail.google.com/"],"valid":true},{"email":"read@example.com","services":["gmail"],"scopes":["https://www.googleapis.com/auth/gmail.readonly"],"valid":true}]}')
-      : result('{"draft":{"id":"unexpected"}}'))
-    await expect(ambiguous.tools.gmail_draft!.execute?.({
-      body: "Body",
-      subject: "Choose an account",
-      to: ["person@example.com"],
-    })).resolves.toEqual({ status: "account_required" })
-    expect(ambiguous.sessions).toHaveLength(1)
-
-    const beforeInvalidInput = calls.length
-    await expect(runtime.tools.gmail_draft!.execute?.({
-      body: "Body",
-      subject: "Hello",
-      to: ["first@example.com,second@example.com"],
-    })).rejects.toThrow("valid email address")
-    await expect(runtime.tools.gmail_draft!.execute?.({
-      body: "Body\0",
-      subject: "Hello",
-      to: ["person@example.com"],
-    })).rejects.toThrow("gmail_draft body")
-    await expect(runtime.tools.gmail_search!.execute?.({ max: 51 })).rejects.toThrow("integer from 1 to 50")
-    expect(calls).toHaveLength(beforeInvalidInput)
-  })
-
-  it("keeps searches on read authorization in draft mode", async () => {
-    const calls: string[][] = []
-    const runtime = await capabilityTools(gmail({ mode: "draft" }), (args) => {
-      calls.push(args)
-      if (args[0] === "auth" && args[1] === "list") {
-        return result('{"accounts":[{"email":"test@example.com","services":["gmail"],"scopes":["https://www.googleapis.com/auth/gmail.readonly"],"valid":true}]}')
-      }
-      if (args[0] === "gmail" && args[1] === "search") return result('{"threads":[]}')
-      throw new Error(`Unexpected gog args: ${args.join(" ")}`)
-    })
-
-    await expect(runtime.tools.gmail_search!.execute?.({ account: "test@example.com" })).resolves.toMatchObject({
-      status: "ok",
-    })
-    expect(calls.some(args => args.includes("--gmail-scope"))).toBe(false)
-  })
-
-  it("accepts compose-only credentials for draft creation", async () => {
-    const calls: string[][] = []
-    const runtime = await capabilityTools(gmail({ mode: "draft" }), (args) => {
-      calls.push(args)
-      if (args[0] === "auth" && args[1] === "list") {
-        return result('{"accounts":[{"email":"test@example.com","services":["gmail"],"scopes":["https://www.googleapis.com/auth/gmail.compose"],"valid":true}]}')
-      }
-      if (args[0] === "gmail" && args[1] === "drafts") return result('{"draft":{"id":"draft-1"}}')
-      throw new Error(`Unexpected gog args: ${args.join(" ")}`)
-    })
-
-    await expect(runtime.tools.gmail_draft!.execute?.({
-      body: "Body",
-      subject: "Compose only",
-      to: ["person@example.com"],
-    })).resolves.toMatchObject({ status: "ok" })
-    expect(calls.some(args => args.includes("--step"))).toBe(false)
-  })
-
-  it("closes the Workspace Session when a Gmail command fails", async () => {
-    const runtime = await capabilityTools(gmail(), (args) => args[0] === "auth"
-      ? result('{"accounts":[{"email":"test@example.com","services":["gmail"],"scopes":["https://www.googleapis.com/auth/gmail.readonly"],"valid":true}]}')
-      : result("", 2, "search failed"))
-
-    await expect(runtime.tools.gmail_search!.execute?.({ query: "in:inbox" })).rejects.toThrow("gmail_search failed")
-    expect(runtime.sessions).toHaveLength(2)
-    expect(runtime.sessions.every(session => session.close.mock.calls.length === 1)).toBe(true)
+  it("uses a generic Agent actor when the Agent name is unknown", async () => {
+    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["labels"] }), () => ({}), {})
+    await runtime.tools.gmail_labels!.execute?.({})
+    expect(runtime.uses).toEqual([{ name: "google", options: { actor: "agent:agent" } }])
   })
 })
