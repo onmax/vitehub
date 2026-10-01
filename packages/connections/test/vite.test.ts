@@ -356,4 +356,15 @@ describe("hubConnections", () => {
     await expect(readFile(join(root, "packages/one/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
     await expect(readFile(join(root, "packages/two/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
   });
+
+  it("recovers an abandoned manifest lock", async () => {
+    const root = await createTempProject();
+    const lock = join(root, ".vitehub/connections-types.json.lock");
+    await mkdir(lock, { recursive: true });
+    await utimes(lock, new Date(0), new Date(0));
+
+    await hubConnections().api.prepareTypes({ projectRoot: root });
+
+    await expect(readFile(join(root, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+  });
 });
