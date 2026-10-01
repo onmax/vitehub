@@ -26,6 +26,6 @@ export interface Observability {
 /** Return the host instance configured by `vitehub({ observability })`. */
 export function useObservability(): Observability {
   const observability = hostObservability()
-  if (!observability) throw agentDiagnostics.AGENT_R0933()
+  if (!observability) throw agentDiagnostics.AGENT_R0939()
   return observability
 }
