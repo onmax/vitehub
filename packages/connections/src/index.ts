@@ -18,6 +18,7 @@ export type {
   ConnectionDefinition,
   ConnectionDefinitionRegistry,
   ConnectionEffect,
+  ConnectionFetchInit,
   ConnectionInspection,
   ConnectionMethod,
   ConnectionMethodPattern,

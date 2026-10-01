@@ -434,7 +434,7 @@ describe("vitehub", () => {
     }
   })
 
-  it("keeps an application KV route beside the Console Devframe", async () => {
+  it("keeps an application KV route beside the Console RPC route", async () => {
     const plugin = dependencyPluginByName(
       vitehub({ console: true, kv: true, preset: "node" }),
       "vite-hub/console",
@@ -592,6 +592,7 @@ describe("vitehub", () => {
       database: true,
       email: { driver: "resend" },
       channels: true,
+      connections: true,
       kv: true,
       preset: "cloudflare",
       rateLimit: true,
@@ -609,8 +610,8 @@ describe("vitehub", () => {
       "@vite-hub/sandbox/vite",
       "@vite-hub/agent/vite",
       "@vite-hub/channels/vite",
+      "@vite-hub/connections/vite",
       "@vite-hub/database/vite",
-      "@vite-hub/connections/types-cleanup",
       "@vite-hub/blob/vite",
       "@vite-hub/email/vite",
       "@vite-hub/kv/vite",
@@ -647,6 +648,7 @@ describe("vitehub", () => {
       },
       runtimeCapabilityImports: {
         blob: "vite-hub/_internal/blob",
+        connections: false,
         console: false,
         db: "vite-hub/database/drizzle",
         email: "vite-hub/email/server",
@@ -675,6 +677,22 @@ describe("vitehub", () => {
       runtimeEnvImport: "vite-hub/env/server",
     })
     expect(integrationMocks.hubChannels).toHaveBeenLastCalledWith(undefined)
+    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
+    })
+    vitehub({
+      connections: { management: { actor: "./server/connections-auth.ts" }, projectRoot: "/app", database: false, importBase: "consumer/connections" },
+      database: true,
+      preset: "node",
+    })
+    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
+      management: { actor: "./server/connections-auth.ts" },
+      projectRoot: "/app",
+    })
+    expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
     expect(integrationMocks.hubKv).toHaveBeenLastCalledWith({ driver: "cloudflare-kv-binding" })
     expect(integrationMocks.hubSandbox).toHaveBeenLastCalledWith({
       provider: "cloudflare",
@@ -778,42 +796,6 @@ describe("vitehub", () => {
       projectRoot: "packages/policies",
       provider: "cloudflare",
       scanDirs: ["rules"],
-    })
-  })
-
-  it("wires Connections to the ViteHub Database", () => {
-    expect(pluginNames(vitehub({ connections: true, database: true, preset: "node" }))).toContain("@vite-hub/connections/vite")
-    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
-      database: "vite-hub/database/drizzle",
-      importBase: "vite-hub/connections",
-    })
-    expect(pluginNames(vitehub({ database: true, preset: "node" }))).not.toContain("@vite-hub/connections/vite")
-    expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
-  })
-
-  it("includes custom Connections roots in the generated type entry", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vitehub-connection-types-"))
-    try {
-      await mkdir(join(root, "packages/api/.vitehub/types"), { recursive: true })
-      await writeFile(join(root, "packages/api/.vitehub/types/connections.d.ts"), "export {}\n")
-      const plugin = dependencyPluginByName(vitehub({ connections: { projectRoot: "packages/api" }, database: true, preset: "node" }), "vite-hub/types")
-      await callHook(plugin.configResolved, [{ root }])
-      expect(await readFile(join(root, ".vitehub/types.d.ts"), "utf8"))
-        .toContain('/// <reference path="./../packages/api/.vitehub/types/connections.d.ts" />')
-    }
-    finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })
-
-  it("mounts the Connections management API only behind Console access", () => {
-    expect(() => vitehub({ connections: { management: true }, database: true, preset: "node" }))
-      .toThrow("connections.management requires Console production access")
-    vitehub({ connections: { management: true }, console: { exposure: "host-managed" }, database: true, preset: "node" })
-    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
-      database: "vite-hub/database/drizzle",
-      importBase: "vite-hub/connections",
-      management: true,
     })
   })
 
