@@ -1098,7 +1098,6 @@ async function runAgentAsWorkflow<
   if ("discoveryDefault" in binding && workflowConfig === false) return undefined
   if (input.context?.[requireAgentWorkflowContextKey] === true && workflowConfig && workflowConfig.provider === "cloudflare") {
     if (!cloudflareEnv) return undefined
-    await activity?.update("queued")
     try {
       const workflowName = resolveAgentWorkflowName(agent, binding, context)
       const workflowBindingName = workflowConfig.binding || (await loadAgentWorkflowModule()).getCloudflareWorkflowBindingName(workflowName)
@@ -1122,9 +1121,24 @@ async function runAgentAsWorkflow<
   if (input.context?.[requireAgentWorkflowContextKey] === true && hasNonportableCapabilities) return undefined
   if ("discoveryDefault" in binding && hasNonportableCapabilities) return undefined
 
-  if (!(input.context?.[requireAgentWorkflowContextKey] === true && workflowConfig && workflowConfig.provider === "cloudflare")) {
-    await activity?.update("queued")
+  // Replay reserves the logical Invocation before any activity or provider
+  // dispatch. This keeps workflow preparation side effects behind the claim.
+  // SAFETY: Replay sets this private boolean marker on its runtime; other runtimes may omit it.
+  const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
+  if (exclusive) {
+    const dispatchJournal = hasAgentDefinition(agent)
+      ? await bindAgentInvocations(agent.invocations, context, {
+          agentName: agentInvocationName(agent, context),
+          requireNew: true,
+        })
+      : undefined
+    if (dispatchJournal?.claimStatus !== "owned") {
+      if (dispatchJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
+      throw new Error("Could not acquire the Invocation execution claim.")
+    }
+    await dispatchJournal.releaseClaim()
   }
+  await activity?.update("queued")
   let workflowName: string
   let handle: WorkflowHandle<AgentWorkflowInvocationPayload<CALL_OPTIONS>, AgentWorkflowOutput<TOutput>>
   let parsedInput: AgentRunInput<CALL_OPTIONS>
@@ -1239,23 +1253,6 @@ async function runAgentAsWorkflow<
     catch {
       return false
     }
-  }
-  // Replay reserves the logical Invocation before dispatch. Release the execution
-  // claim for the Workflow worker; the persisted record prevents another replay start.
-  // SAFETY: Replay sets this private boolean marker on its runtime; other runtimes may omit it.
-  const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
-  if (exclusive) {
-    const dispatchJournal = hasAgentDefinition(agent)
-      ? await bindAgentInvocations(agent.invocations, context, {
-          agentName: agentInvocationName(agent, context),
-          requireNew: true,
-        })
-      : undefined
-    if (dispatchJournal?.claimStatus !== "owned") {
-      if (dispatchJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
-      throw new Error("Could not acquire the Invocation execution claim.")
-    }
-    await dispatchJournal.releaseClaim()
   }
   let run: AgentWorkflowRun<AgentWorkflowOutput<TOutput>>
   try {
