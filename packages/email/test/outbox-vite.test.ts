@@ -45,6 +45,21 @@ async function configure(plugin: ReturnType<typeof hubEmail>, root: string, comm
 const devHandler = (root: string) => join(root, ".vitehub", "nitro", "email", "dev-handler.ts")
 
 describe("Email development outbox output", () => {
+  it("re-exports the runtime identity through the Vite virtual definition", async () => {
+    const root = await createTempProject()
+    const plugin = hubEmail({ driver: "resend", outbox: { deliver: false } })
+    const { definition } = await configure(plugin, root, "serve")
+    const load = plugin.load
+    if (!(load instanceof Function)) throw new Error("Expected the Email load hook")
+    const virtual: unknown = await load.call({}, "\0#vitehub/email/definition")
+    if (typeof virtual !== "string") throw new Error("Expected the virtual definition source")
+    const file = join(root, "virtual-email.mjs")
+    await writeFile(file, virtual)
+    const generated: { outboxRuntimeId: string } = await import(pathToFileURL(definition).href)
+    const resolved: { outboxRuntimeId: string } = await import(pathToFileURL(file).href)
+    expect(resolved.outboxRuntimeId).toBe(generated.outboxRuntimeId)
+  })
+
   it("never adds the outbox or its handler to build output", async () => {
     for (const command of ["build", undefined] as const) {
       const root = await createTempProject()

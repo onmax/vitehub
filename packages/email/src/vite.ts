@@ -215,6 +215,7 @@ function renderEmailDefinitionModule(
   return [
     `import definition from ${JSON.stringify(definition.handler)}`,
     "export { definition }",
+    `export { outboxRuntimeId } from ${JSON.stringify(definition.handler)}`,
     "export default definition",
     "",
   ].join("\n")
