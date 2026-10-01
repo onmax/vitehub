@@ -96,7 +96,7 @@ function invocationAttributes(
     "channel.delivery.id": context.runtime.channelDelivery?.id,
     "channel.delivery.provider": context.runtime.channelDelivery?.provider,
     "channel.delivery.source.id": context.runtime.channelDelivery?.sourceId,
-    "input.replay.version": 3,
+    "input.replay.version": 4,
     "input.hasInvoker": resolveInputAgentInvoker(context.input.context) !== undefined,
     "input.hasContext": hasUnreplayableAgentInputContext(context.input.context),
     "input.hasRunMetadata": Object.entries(context.runtime.run ?? {}).some(([key, value]) => key !== "runId" && value !== undefined),
@@ -418,11 +418,13 @@ export async function traceAgentInvocationStart<TRuntimeConfig extends AgentRunt
   context: AgentTraceContext<TRuntimeConfig>,
   replayInput: AgentRunInput = context.input,
   replayHasContext = hasUnreplayableAgentInputContext(replayInput.context),
+  replayHasAbortSignal = replayInput.abortSignal !== undefined,
 ): Promise<void> {
   await traceAgentEvent(context, {
     attributes: invocationAttributes({ ...context, input: replayInput }, {
-      "input.hasTransformedPrompt": context.input.prompt !== replayInput.prompt,
+      "input.promptChanged": context.input.prompt !== replayInput.prompt,
       "input.hasContext": replayHasContext,
+      "input.hasAbortSignal": replayHasAbortSignal,
     }, true),
     name: "agent.invocation.start",
     type: "run",

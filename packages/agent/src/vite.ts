@@ -899,6 +899,8 @@ function generatedWorkspaceSourceRootHelper(name: string, workspaceDefinitionFro
     "  if (typeof setDiscoveredSkills === 'function') setDiscoveredSkills(skills)",
     "  if (!Object.keys(skills).length && !Object.getOwnPropertyDescriptor(agent, skillsSymbol)?.get) Reflect.deleteProperty(agent, skillsSymbol)",
     `  const resolvedAgent = ${typescript ? "(" : ""}Object.keys(skills).length ? Object.create(Object.getPrototypeOf(agent), Object.getOwnPropertyDescriptors(agent)) : agent${typescript ? ") as Agent & Partial<WorkspaceAgentDefinition>" : ""}`,
+    "  const sourceSymbol = Symbol.for('vitehub.agent.definitionSource')",
+    "  if (resolvedAgent !== agent) Object.defineProperty(resolvedAgent, sourceSymbol, { configurable: true, value: agent })",
     "  if (Object.keys(skills).length && typeof setDiscoveredSkills !== 'function') {",
     "    const descriptor = { configurable: true, enumerable: true, value: skills }",
     "    Object.defineProperty(agent, skillsSymbol, descriptor)",
@@ -923,6 +925,7 @@ function generatedWorkspaceSourceRootHelper(name: string, workspaceDefinitionFro
     "  for (const key of Reflect.ownKeys(resolvedAgent)) {",
     `    if (key === skillsSymbol || !Object.prototype.propertyIsEnumerable.call(resolvedAgent, key)) Object.defineProperty(decoratedAgent, key, Object.getOwnPropertyDescriptor(resolvedAgent, key)${typescript ? "!" : ""})`,
     "  }",
+    "  Object.defineProperty(decoratedAgent, sourceSymbol, { configurable: true, value: resolvedAgent })",
     `  const sourceDefaults = Object.fromEntries(Object.entries(sources).filter(([key, source]) => source !== workspace.sources?.[key] && source !== existingSources?.[key]))${typescript ? " as NonNullable<Exclude<WorkspaceAgentOptions['workspace'], string | { name: string }>['sources']>" : ""}`,
     "  inheritAgentLayerOptions(resolvedAgent, decoratedAgent, { workspace: { sourceRootDir, ...(Object.keys(sourceDefaults).length ? { sources: sourceDefaults } : {}) } })",
     `  return decoratedAgent${typescript ? " as unknown as Agent" : ""}`,
@@ -3158,9 +3161,9 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       if (resolved) {
         const alias = isRecord(mergedNitro.alias) ? { ...mergedNitro.alias } : {}
         alias[agentRegistryId] = join(generatedRoot, generatedAgentRegistry)
-        mergedNitro.alias = { ...alias, ...workerAliases }
+        mergedNitro.alias = { ...workerAliases, ...alias }
       }
-      const result: UserConfig & { nitro?: NitroConfig } = {
+      const result: UserConfig = {
         define: {
           __VITEHUB_AGENT_APP_ROOT__: JSON.stringify(root),
           ...config.define,
@@ -3171,14 +3174,27 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           },
         },
       }
-      if (resolved) result.resolve = { alias: { [agentRegistryId]: join(generatedRoot, generatedAgentRegistry), ...workerAliases } }
+      if (resolved) {
+        // Vite prepends returned aliases. Append Worker fallbacks in place so user aliases match first.
+        const configuredAliases = config.resolve?.alias
+        config.resolve = {
+          ...config.resolve,
+          alias: Array.isArray(configuredAliases)
+            ? [...configuredAliases, ...Object.entries(workerAliases).map(([find, replacement]) => ({ find, replacement }))]
+            : { ...workerAliases, ...configuredAliases },
+        }
+        result.resolve = { alias: { [agentRegistryId]: join(generatedRoot, generatedAgentRegistry) } }
+      }
       if (agent !== undefined) result.agent = agent
       if (nitroHandlers.length) {
         // SAFETY: Vite's build options accept the Rolldown external field merged by this boundary.
         result.build = mergeBuildExternal(config as BuildWithRolldownOptions, optionalAgentRuntimeExternals)
       }
       if (nitroContext || nitroHandlers.length || installCloudflareState || installProcessDiscordGateway) {
-        result.nitro = mergedNitro
+        // Replace the Nitro config in place. Vite concatenates arrays when it merges a returned config,
+        // so returning the complete Nitro config would repeat every user entry, such as Wrangler secrets.
+        // SAFETY: Nitro's Vite plugin reads this open `nitro` key from the user config; mergedNitro starts from its value.
+        ;(config as { nitro?: NitroConfig }).nitro = mergedNitro
       }
       return result
     },

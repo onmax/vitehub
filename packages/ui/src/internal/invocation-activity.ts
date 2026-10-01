@@ -524,6 +524,26 @@ export function invocationActivities(invocation: AgentInvocationView): Invocatio
   return visibleActivities;
 }
 
+/** Count distinct calls per tool name. */
+export function invocationToolUsage(invocation: AgentInvocationView): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  const seen = new Set<string>();
+  for (const observation of invocation.observations) {
+    const name = observation.attributes?.["tool.name"];
+    if (!hasRuntimeType(name, "string") || !name) continue;
+    const id = observation.attributes?.["tool.id"];
+    if (hasRuntimeType(id, "string") && id) {
+      const key = `${name}:${id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+    } else if (!observation.name.endsWith(".start")) {
+      continue;
+    }
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return counts;
+}
+
 export function latestInvocationTokens(activities: readonly InvocationActivity[]): number | undefined {
   const snapshots = activities.flatMap(activity => activity.totalTokens === undefined ? [] : [activity.totalTokens]);
   return snapshots.length ? Math.max(...snapshots) : undefined;
@@ -533,7 +553,7 @@ export function invocationActivityTitle(activity: InvocationActivity): string {
   const explicit = activity.attributes["vitehub.activity.title"];
   if (hasRuntimeType(explicit, "string") && explicit.trim()) return explicit.trim();
   if (activity.name === "vitehub.observation.truncated") return "Trace content was truncated";
-  if (activity.name === "vitehub.agent.configured") return "Agent configured";
+  if (activity.name === "vitehub.agent.configured") return agentConfigurationTitle(activity);
   if (activity.skill) return `Read ${activity.skill.name} skill`;
   if (activity.kind === "preparation") return "Prepared session";
   if (activity.kind === "system") return "System configuration";
@@ -555,6 +575,16 @@ export function invocationActivityTitle(activity: InvocationActivity): string {
   return normalizedTitle(activity.name.replace(/\.(start|finish|error|decision|recorded)$/, "").replaceAll(".", " "));
 }
 
+function agentConfigurationTitle(activity: InvocationActivity): string {
+  const configuration = record(activity.attributes["vitehub.agent.configuration"]);
+  if (!configuration) return "Agent configured";
+  const agent = stringAttribute(record(configuration.agent) ?? {}, "name") ?? "Agent";
+  const capabilities = Array.isArray(configuration.capabilities) ? configuration.capabilities.length : 0;
+  return capabilities
+    ? `Configured ${agent} with ${capabilities} ${capabilities === 1 ? "capability" : "capabilities"}`
+    : `Configured ${agent}`;
+}
+
 export function agentConfigurationSummary(activity: InvocationActivity): string | undefined {
   if (activity.name !== "vitehub.agent.configured") return;
   const configuration = record(activity.attributes["vitehub.agent.configuration"]);
@@ -562,11 +592,9 @@ export function agentConfigurationSummary(activity: InvocationActivity): string 
   const driver = record(configuration.driver);
   const model = record(driver?.model);
   const modelName = stringAttribute(model ?? {}, "id") ?? stringAttribute(driver ?? {}, "provider");
-  const capabilities = Array.isArray(configuration.capabilities) ? configuration.capabilities.length : 0;
   const tools = Array.isArray(configuration.tools) ? configuration.tools.length : 0;
   return [
     modelName,
-    capabilities ? `${capabilities} ${capabilities === 1 ? "capability" : "capabilities"}` : undefined,
     tools ? `${tools} ${tools === 1 ? "tool" : "tools"}` : undefined,
   ].filter(Boolean).join(" · ") || undefined;
 }

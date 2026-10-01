@@ -37,7 +37,7 @@ async function journaled(input: Parameters<typeof runAgent>[2], options: Partial
 }
 
 const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
-  attributes: { "input.replay.version": 3, "input.hasTransformedPrompt": false, "input.hasContext": false, "input.hasRunMetadata": false, "input.hasTimeout": false, "input.hasAbortSignal": false, "input.hasInvoker": false, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false, ...attributes },
+  attributes: { "input.replay.version": 4, "input.promptChanged": false, "input.hasContext": false, "input.hasRunMetadata": false, "input.hasTimeout": false, "input.hasAbortSignal": false, "input.hasInvoker": false, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false, ...attributes },
   name: "agent.invocation.start",
   sequence: 1,
   timestamp: new Date(0).toISOString(),
@@ -68,7 +68,7 @@ describe("agentInvocationRerunInput", () => {
     await runAgent(agent, runtime(runId), { prompt: "original" })
     await vi.waitFor(async () => { expect(await invocations.getByRunId(runId)).toMatchObject({ status: "completed" }) })
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ prompt: "wrapped:original" }))
-    expect(agentInvocationRerunInput((await invocations.getByRunId(runId))!)).toEqual({ available: false, reason: "input-prompt-transformed" })
+    expect(agentInvocationRerunInput((await invocations.getByRunId(runId))!)).toEqual({ available: false, reason: "input-prompt-changed" })
   })
 
   it("rejects input commands whose handlers replace the caller prompt", async () => {
@@ -86,7 +86,7 @@ describe("agentInvocationRerunInput", () => {
     await vi.waitFor(async () => { expect(await invocations.getByRunId("command-replay")).toMatchObject({ status: "completed" }) })
     expect(call).toHaveBeenCalledOnce()
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ prompt: "Review this: changes" }))
-    expect(agentInvocationRerunInput((await invocations.getByRunId("command-replay"))!)).toEqual({ available: false, reason: "input-prompt-transformed" })
+    expect(agentInvocationRerunInput((await invocations.getByRunId("command-replay"))!)).toEqual({ available: false, reason: "input-prompt-changed" })
   })
 
   it("retains a profile selector's original context fields after in-place preparation", async () => {
@@ -181,7 +181,7 @@ describe("agentInvocationRerunInput", () => {
           : observation,
       })
       const attributes = record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes
-      expect(attributes).toMatchObject({ "input.replay.version": 3, "input.hasTransformedPrompt": false, "input.hasInvoker": direct, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false })
+      expect(attributes).toMatchObject({ "input.replay.version": 4, "input.promptChanged": false, "input.hasInvoker": direct, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false })
       expect(agentInvocationRerunInput(record).available).toBe(false)
     }
   })
@@ -232,7 +232,8 @@ describe("agentInvocationRerunInput", () => {
       { "input.prompt": "Hi", "input.hasOptions": false },
       { "input.prompt": "Hi", "input.replay.version": 1 },
       { "input.prompt": "Hi", "input.replay.version": 2 },
-      { "input.prompt": "Hi", "input.hasTransformedPrompt": undefined },
+      { "input.prompt": "Hi", "input.replay.version": 3 },
+      { "input.prompt": "Hi", "input.promptChanged": undefined },
       { "input.prompt": "Hi", "input.hasAbortSignal": undefined },
     ]) {
       expect(agentInvocationRerunInput({ observations: [{ ...start({}), attributes }] }))
@@ -267,7 +268,7 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
   })
 
-  it.each(["input.replay.version", "input.hasTransformedPrompt", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal"])("rejects replay when redaction changes %s", async (key) => {
+  it.each(["input.replay.version", "input.promptChanged", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal"])("rejects replay when redaction changes %s", async (key) => {
     for (const replacement of [undefined, key === "agent.invoker.profile.id" ? "other-profile" : key === "input.replay.version" ? 1 : key !== "input.hasPrompt"]) {
       const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Original prompt" }, {
         redact: observation => observation.name === "agent.invocation.start"

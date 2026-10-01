@@ -1,6 +1,7 @@
 import { consoleInvocationsFallbackKey, resolveConsoleInvocations } from "../../internal.ts"
 import { installConsoleInvocations, type ConsoleD1Journal } from "./invocations.ts"
 import * as v from "valibot"
+import { markDiscoveredAgentName } from "@vite-hub/agent/server/internal"
 
 import type { AgentInput, AgentInvocations } from "@vite-hub/agent"
 import type { AgentInvocationRetentionOptions, AgentInvocationsOptions } from "@vite-hub/agent/server"
@@ -111,7 +112,10 @@ export function installConsoleAgentDefinitions(
         consoleAssignedInvocations.delete(agent)
       }
     }
-    return agent?.name?.trim() ? agent.name : fallbackName
+    if (agent?.name?.trim()) return agent.name
+    // Invocations started outside a host route record the name that the Console lists.
+    if (agent) markDiscoveredAgentName(agent, fallbackName)
+    return fallbackName
   })
   const installed = installConsoleAgents(names, invocations)
   // SAFETY: This intersection only attaches console-owned metadata to the Agent invocation journal.

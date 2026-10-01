@@ -80,7 +80,7 @@ export async function requestConsole(
   if (options.body !== undefined) input.body = options.body
   // Each call is one complete request, so hosts can route consecutive calls to different instances.
   const response = await fetch(consoleRpcCallURL(path), {
-    body: JSON.stringify({ input, method: call.method }),
+    body: JSON.stringify({ method: call.method, input }),
     cache: "no-store",
     credentials: "same-origin",
     headers: { "content-type": "application/json", [consoleRpcHeader]: "1" },
