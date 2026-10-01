@@ -313,7 +313,7 @@ Public HTTP errors keep the `ViteHubError` mapping. An unrecognized diagnostic
 maps to the generic `INTERNAL` response. Approval and cancellation behavior does
 not change.
 
-See [Errors and diagnostics](https://vitehub.dev/docs/reference/diagnostics)
+See [Errors and diagnostics](https://vitehub.dev/docs/reference/errors-diagnostics)
 for the code format and an application catalog example.
 
 ## Chat state
@@ -491,7 +491,7 @@ Import `observability()` and `createAgentEvlog()` from `@vite-hub/agent/evlog`, 
 
 `createAgentEvlog()` from `@vite-hub/agent/evlog` exports invocation lifecycle events through evlog. Add its `capability` to your Agent, connect its `drain` to the host, and await `flush()` after invocation background tasks finish. `@vite-hub/agent/evlog/posthog` adds PostHog events, Error Tracking and the official evlog log drain through optional dependencies.
 
-`createPapercutReporter()` from `@vite-hub/agent/capabilities` journals reports in persistent Agent Invocations before delivery and replays pending reports after restart. See [evlog](../../docs/content/docs/agents/evlog.md) for delivery, privacy and shutdown contracts.
+`createPapercutReporter()` from `@vite-hub/agent/capabilities` journals reports in persistent Agent Invocations before delivery and replays pending reports after restart. See [observability](../../docs/content/docs/agents/observability.md) for delivery, privacy and shutdown contracts.
 
 GitHub Channels with `activity: true` keep one managed comment per pull request. A single table lists current and recent session links, status, relative start times, and completed durations. Task checkboxes and the latest result appear below; previous results are collapsed. Full transcripts stay in the linked sessions.
 
@@ -659,7 +659,7 @@ agent: {
 
 The generated `/api/_vitehub/ready` route supports GET and HEAD, returning 503 until preparation succeeds. `requireNonEmpty` rejects an empty prepared Workspace; it is opt-in. Set `route` to change the readiness path.
 
-`agentEvlogPlugin(telemetry, reporters)` from `@vite-hub/agent/evlog` owns Nitro request IDs, drain and error hooks, reporter lifecycle, and shutdown flush. See the [evlog guide](https://vitehub.dev/docs/agents/evlog) for host drain reuse and background delivery.
+`agentEvlogPlugin(telemetry, reporters)` from `@vite-hub/agent/evlog` owns Nitro request IDs, drain and error hooks, reporter lifecycle, and shutdown flush. See the [observability guide](https://vitehub.dev/docs/agents/observability) for host drain reuse and background delivery.
 
 Set `transcripts: { retention: "forever" }` in `createLibsqlAgentState()` to preserve Chat transcript rows before startup expiry cleanup and ignore future transcript TTLs. Other state still expires normally. This cannot recover rows already deleted.
 
