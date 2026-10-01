@@ -1278,7 +1278,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       root = await mkdtemp(join(tmpdir(), "vitehub-provider-inspection-"))
       const command = hasRuntimeType(binary, "string") && binary.trim() ? binary : options.provider === "codex" ? "codex" : "claude"
       const launch = normalizedProviderLaunch(await waitForProviderOperation(resolveRuntimeValue(options.launch, {
-        ...context, command: requirements.length ? "sh" : command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: home ? ["CODEX_HOME"] : [],
+        ...context, command: requirements.length ? "sh" : command, providerCommand: command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: home ? ["CODEX_HOME"] : [],
       }), signal))
       signal?.throwIfAborted()
       if (requirements.length) requirementCapture = {
@@ -2793,6 +2793,7 @@ async function* runProvider<
       const launchContext: AgentProviderLaunchContext<TRuntimeConfig> = {
         ...resolverContext,
         command: providerCommand,
+        providerCommand,
         cwd: root,
         environment: Object.freeze({ ...providerRuntimeEnvironment }),
         requiredEnvironment,

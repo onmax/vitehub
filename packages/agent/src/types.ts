@@ -1436,7 +1436,10 @@ export interface AgentProviderLaunchCommand {
 
 export interface AgentProviderLaunchContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
   extends AgentProviderCredentialContext<TRuntimeConfig> {
+  /** Executable the wrapper must start. Requirement inspection starts `sh`; invocations start the provider. */
   command: string
+  /** Original provider executable. Use this to select a provider-specific runner. */
+  providerCommand: string
   cwd: string
   environment: Readonly<AgentProviderEnvironment>
   /** Framework-owned environment names injected when the provider process starts. Filtered executors must forward them. */

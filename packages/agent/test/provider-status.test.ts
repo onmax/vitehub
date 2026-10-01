@@ -125,6 +125,21 @@ describe("provider inspection", () => {
     expect(status).toMatchObject({ missingCommands: [], readiness: "ready" })
   })
 
+  it("routes shell inspection by provider identity while preserving wrapper arguments", async () => {
+    const launch = vi.fn(({ command, providerCommand }: { command: string, providerCommand: string }) => ({
+      command: providerCommand === process.execPath ? "sh" : "vitehub-wrong-provider-runner",
+      args: ["-c", 'exec "$@"', "provider-runner", command],
+    }))
+    inspectProvider.mockImplementation(async options => {
+      expect(execFileSync(options.settings.binaryPath, ["-e", 'process.stdout.write("provider-runner")'], { encoding: "utf8" })).toBe("provider-runner")
+      return ready()
+    })
+
+    const status = await inspectAgentProvider({ provider: "codex", providerSettings: { binaryPath: process.execPath }, launch, requirements: ["sh"] }, context())
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ command: "sh", providerCommand: process.execPath }))
+    expect(status).toMatchObject({ missingCommands: [], readiness: "ready" })
+  })
+
   it("checks requirements inside the provider's single-use launcher execution", async () => {
     let executions = 0
     const launch = vi.fn(async ({ command, cwd }: { command: string, cwd: string }) => {

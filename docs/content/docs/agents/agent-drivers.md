@@ -124,11 +124,20 @@ export default defineAgent({
 })
 ```
 
-ViteHub resolves `env` once, then gives `launch` the selected environment, provider executable, temporary working directory, and abort signal. The wrapper receives its configured arguments followed by the provider runtime arguments. ViteHub writes an owner-only temporary launcher outside the Workspace and removes it after the provider runtime stops. Launch wrappers require a POSIX host. They change process startup only; authorization, remote isolation, and wrapper credentials remain application-owned.
+ViteHub resolves `env` once, then gives `launch` the selected environment, executable to start in `command`, original provider executable in `providerCommand`, temporary working directory, and abort signal. Use `command` to construct wrapper arguments and `providerCommand` to select a provider-specific runner. They are equal during invocations. The wrapper receives its configured arguments followed by the provider runtime arguments. ViteHub writes an owner-only temporary launcher outside the Workspace and removes it after the provider runtime stops. Launch wrappers require a POSIX host. They change process startup only; authorization, remote isolation, and wrapper credentials remain application-owned.
 
 Agent inspection reports whether `env` and `launch` are static or dynamic without resolving either value.
 
 Set `requirements` to the commands that the provider's own shell needs, for example `['git', 'gh', 'unzip', 'apply_patch']`. `agent.status()` checks each command with `command -v` where the Driver runs, or `where.exe` for a local Windows Driver. With `launch`, requirements need a resolver. Status inspection resolves it once with `command: 'sh'`. Each provider probe checks the commands in that same shell before it starts the provider, so checking requirements does not allocate another runner. A status probe may execute the resolved launcher more than once for separate provider checks. If the launcher does not report command-check results, requirement readiness remains unknown. Missing commands make the status `unavailable` and appear in `status.missingCommands` and `status.reason`. Invocations do not repeat the check.
+
+Resolvers that route by the provider executable must use `providerCommand` before enabling `requirements`. During requirement inspection, `command` is `sh` and `providerCommand` still identifies the provider. An application-owned runner selector can use both fields:
+
+```ts
+launch: ({ command, providerCommand }) => ({
+  args: ['exec', '--', command],
+  command: selectRunnerForProvider(providerCommand),
+})
+```
 
 Threads resume with the provider's opaque cursor. ViteHub normalizes assistant text, reasoning, native and Capability tool activity, approvals, provider questions, usage, warnings, errors, and terminal state into Agent Invocation events.
 
