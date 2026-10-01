@@ -1462,6 +1462,25 @@ describe("agent CLI", () => {
     }
   })
 
+  it("times out stalled Invocation cancellation discovery before posting", async () => {
+    const stderr = stream()
+    let signal: AbortSignal | null | undefined
+    const stalledFetch = vi.fn<typeof fetch>(async (_input, init) => {
+      signal = init?.signal
+      if (!signal) throw new Error("Discovery has no timeout signal")
+      const discoverySignal = signal
+      return await new Promise<Response>((_resolve, reject) => {
+        discoverySignal.addEventListener("abort", () => reject(discoverySignal.reason), { once: true })
+      })
+    })
+    expect(await runAgentInvocationsCli(["cancel", "invocation-1", "--timeout", "10"], {
+      env: {}, stderr, stdout: stream(),
+    }, { fetch: stalledFetch })).toBe(1)
+    expect(signal?.aborted).toBe(true)
+    expect(stalledFetch).toHaveBeenCalledTimes(1)
+    expect(stderr.output()).not.toBe("")
+  })
+
   it("reports a rejected Invocation cancel request", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-invocation-cancel-"))
     try {
