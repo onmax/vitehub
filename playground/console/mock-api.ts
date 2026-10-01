@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
+import * as v from "valibot"
 
 import { agentInvocationRerunInput, createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
 import { parseConsoleFixture } from "../../packages/vite-hub/src/console/fixture.ts"
@@ -22,6 +23,7 @@ for (const record of fixture.invocations) {
   store.create(input)
 }
 const invocations = defineAgentInvocations({ content: "content", store })
+const deleteActionSchema = v.strictObject({ action: v.literal("delete") })
 const sections = ["env", "agents", "usage", "database", "kv", "workflows", "queues"] as const
 const definitions = {
   queues: [
@@ -259,7 +261,7 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
         json(response, { error: "Bad Request" }, 400)
         return true
       }
-      if (!action || typeof action !== "object" || Array.isArray(action) || (action as { action?: unknown }).action !== "delete" || Object.keys(action).length !== 1) {
+      if (!v.safeParse(deleteActionSchema, action).success) {
         json(response, { error: "Bad Request" }, 400)
         return true
       }
