@@ -61,10 +61,10 @@ function context(primitive: unknown) {
   }
 }
 
-async function tools(capability: AgentCapabilityDefinition, primitive: unknown): Promise<Record<string, AgentToolDefinition>> {
+async function tools(capability: AgentCapabilityDefinition, primitive: unknown, abortSignal?: AbortSignal): Promise<Record<string, AgentToolDefinition>> {
   if (typeof capability.tools !== "function") throw new Error("gmail capability must expose a tool resolver")
   // SAFETY: The Gmail tools read only the fields that the fake context sets.
-  return await capability.tools(context(primitive) as never) as Record<string, AgentToolDefinition>
+  return await capability.tools({ ...context(primitive), abortSignal } as never) as Record<string, AgentToolDefinition>
 }
 
 async function run(tool: AgentToolDefinition | undefined, input: unknown): Promise<unknown> {
@@ -101,6 +101,26 @@ const message = {
 }
 
 describe("gmail capability", () => {
+  it.each(["execution", "context"])("forwards the %s cancellation signal to every Gmail request", async (source) => {
+    const controller = new AbortController()
+    const { primitive, runtime } = connections({ responses: {
+      "gmail.messages.list": () => ({ messages: [{ id: "m1", threadId: "t1" }] }),
+      "gmail.messages.get": () => message,
+      "gmail.drafts.create": () => ({ id: "d1", message: { id: "m2", threadId: "t1" } }),
+    } })
+    const gmailTools = await tools(gmail({ operations: ["search", "read", "draft"] }), primitive, source === "context" ? controller.signal : undefined)
+    for (const [name, input] of [
+      ["gmail_search", {}],
+      ["gmail_read", { id: "m1" }],
+      ["gmail_draft", { body: "x", subject: "Hi", to: ["bob@example.com"] }],
+    ] as const) {
+      const tool = gmailTools[name]!
+      await tool.execute!(input as never, { abortSignal: source === "execution" ? controller.signal : undefined } as never)
+    }
+    expect(runtime.call).toHaveBeenCalledTimes(4)
+    for (const call of runtime.call.mock.calls) expect(call[3]).toMatchObject({ signal: controller.signal })
+  })
+
   it("defines tools, requirements, and inspection from the enabled operations", async () => {
     const { primitive } = connections()
     const read = gmail()

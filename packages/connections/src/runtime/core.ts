@@ -51,6 +51,8 @@ export interface ConnectionCallOptions {
   event?: unknown
   /** Operation id for `fetch`, matched by access patterns. Default: `fetch.<method>`. */
   operation?: string
+  /** Cancels an Operation request, including its response body. */
+  signal?: AbortSignal
   trace?: ConnectionTrace
 }
 
@@ -368,7 +370,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         headers.set("content-type", "application/json")
         body = JSON.stringify(request.body)
       }
-      return execute(name, value, base, url, { body, headers, method: request.method }, callOptions, async (response) => {
+      return execute(name, value, base, url, { body, headers, method: request.method, ...(callOptions.signal ? { signal: callOptions.signal } : {}) }, callOptions, async (response) => {
         if (!response.ok) {
           await response.body?.cancel().catch(() => undefined)
           throw connectionError("provider_failed", { connection: name, operation: operation.id, status: response.status })
