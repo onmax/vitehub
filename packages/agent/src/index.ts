@@ -7754,6 +7754,7 @@ async function executeAgentInvocation<
       if (invocationJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
       throw new Error("Could not acquire the Invocation execution claim.")
     }
+    if (inheritedClaim) await invocationJournal?.confirmWorkflowDispatch()
   }
   catch (error) {
     await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
