@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+import { getCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
+import { inspectServerEnv } from "@vite-hub/env"
+import { installConsoleEnv } from "../src/console/runtime/server/env.ts"
+
 import { requestConsole } from "../src/console/runtime/client/request.ts"
 import { consoleRpcHeader, consoleRpcMethods } from "../src/console/runtime/rpc.ts"
 import consoleRpcHandler, { handleConsoleRpcRequest } from "../src/console/runtime/server/rpc.ts"
@@ -21,6 +25,25 @@ afterEach(() => {
 })
 
 describe("Console RPC", () => {
+  it("preserves request bindings through Env status inspection", async () => {
+    installConsoleSections("/console-rpc-env", ["env"])
+    const binding = "request-only-secret"
+    installConsoleEnv("/console-rpc-env", { entries: [] }, undefined, async event => {
+      expect(getCloudflareEnv(event, { fallback: false })).toEqual({ RPC_TOKEN: binding })
+      return inspectServerEnv({ token: { required: true, schema: { kind: "string" }, secret: true, source: { kind: "env", label: "env:RPC_TOKEN", name: "RPC_TOKEN", serializable: true } } }, event)
+    })
+    const request = Object.assign(new Request(callURL, {
+      body: JSON.stringify({ input: { query: { status: "1" } }, method: consoleRpcMethods.env }),
+      headers: { "content-type": "application/json", [consoleRpcHeader]: "1" },
+      method: "POST",
+    }), { runtime: { name: "cloudflare", cloudflare: { context: { waitUntil: vi.fn(), passThroughOnException: vi.fn() }, env: { RPC_TOKEN: binding } } } })
+    const response = await consoleRpcHandler.fetch(request)
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toMatchObject({ ok: true, value: { status: [{ status: "available", blocking: false }] } })
+    expect(JSON.stringify(body)).not.toContain(binding)
+  })
+
   it("serves consecutive calls from different handler instances", async () => {
     installConsoleSections("/console-rpc-test", ["agents", "usage"])
     installConsoleProjectName("/console-rpc-test", "Stateless Console")

@@ -50,7 +50,7 @@ describe("ViteHub CLI config loading", () => {
     expect(loadNuxt).toHaveBeenCalledWith({
       cwd: root,
       dev: true,
-      overrides: { vitehubCliDiscovery: true },
+      overrides: { devtools: { enabled: false }, vitehubCliDiscovery: true },
       ready: true,
     })
     expect(close).toHaveBeenCalledOnce()

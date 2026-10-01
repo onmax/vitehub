@@ -354,7 +354,18 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       { path: "env.server.labeller.dryRun", source: "env", secret: false, required: true, hasDefault: true, type: "boolean" },
       { path: "env.server.labeller.minConfidence", source: "env", secret: false, required: true, hasDefault: true, type: "number" },
       { path: "env.server.appName", source: "literal", secret: false, required: false, hasDefault: false },
-    ] })
+    ], ...(url.searchParams.get("status") === "1"
+      ? { status: [
+          { path: "env.server.github.token", status: "available", blocking: false },
+          { path: "env.server.openai.apiKey", status: "available", blocking: false },
+          { path: "env.server.codex.auth", status: "error", blocking: true },
+          { path: "env.server.webhookSecret", status: "missing", blocking: true },
+          { path: "env.server.logLevel", status: "defaulted", blocking: false },
+          { path: "env.server.labeller.dryRun", status: "defaulted", blocking: false },
+          { path: "env.server.labeller.minConfidence", status: "defaulted", blocking: false },
+          { path: "env.server.appName", status: "available", blocking: false },
+        ] }
+      : {}) })
     return true
   }
   if (path === "/api/_vitehub/console/sections") {

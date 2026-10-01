@@ -1,4 +1,4 @@
-import type { ServerEnvDescription } from "@vite-hub/env"
+import type { ServerEnvDescription, ServerEnvInspection } from "@vite-hub/env"
 import type { AgentInvocations } from "@vite-hub/agent"
 import type { BlobStorage } from "@vite-hub/blob"
 import type { RuntimeDatabaseEntry } from "@vite-hub/database/drizzle"
@@ -57,7 +57,11 @@ type ConsoleDefinitionsByRoot = {
   readonly size: number
 }
 
-export type ConsoleEnvInspection = ServerEnvDescription & { manage?: (request: Request) => Promise<Response> }
+export type ConsoleEnvInspection = ServerEnvDescription & {
+  /** Loads status-only Server Env inspection on request. It may call providers. */
+  inspect?: (event: unknown) => Promise<ServerEnvInspection>
+  manage?: (request: Request) => Promise<Response>
+}
 
 export interface ConsoleKVInspection {
   storage: KVStorage

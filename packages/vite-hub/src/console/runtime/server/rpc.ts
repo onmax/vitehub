@@ -1,4 +1,4 @@
-import { resolveWaitUntil } from "@vite-hub/internal/runtime/cloudflare-env"
+import { getCloudflareEnv, resolveWaitUntil } from "@vite-hub/internal/runtime/cloudflare-env"
 import { defineHandler } from "h3"
 import * as v from "valibot"
 
@@ -49,6 +49,7 @@ const inputSchema = v.object({
 })
 
 interface ConsoleRpcContext {
+  env?: Record<string, unknown>
   waitUntil?: (task: Promise<unknown>) => void
 }
 
@@ -68,6 +69,7 @@ function requestEvent(operation: string, input: ConsoleRpcInput, context: Consol
   if (input.agent) params.agent = input.agent
   if (input.id) params.id = input.id
   const event: ConsoleRequestEvent = {
+    env: context.env,
     context: Object.keys(params).length ? { params } : undefined,
     method: input.method ?? "GET",
     req: {
@@ -226,7 +228,7 @@ export async function handleConsoleRpcRequest(request: Request, context: Console
 
 const consoleRpcHandler: EventHandlerWithFetch<EventHandlerRequest, Promise<Response>> = defineHandler((event) => {
   const waitUntil = resolveWaitUntil(event, { preferHost: true })
-  return handleConsoleRpcRequest(event.req, waitUntil ? { waitUntil } : {})
+  return handleConsoleRpcRequest(event.req, { env: getCloudflareEnv(event, { fallback: false }), waitUntil })
 })
 
 export default consoleRpcHandler
