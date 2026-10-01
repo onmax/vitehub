@@ -370,6 +370,10 @@ const body = {
 
 History must contain valid ViteHub Messages with `user` or `assistant` roles and unique IDs. Parts must be `text`, `file`, `image`, or `audio`. The Console preserves message metadata and appends the new prompt as a user Message. It rejects malformed Messages, `system` or `tool` roles, and other parts before starting the Agent. This includes tool calls, tool results, and approval parts nested in user or assistant Messages. Omit `messages` for a prompt-only invocation. Each request creates a new invocation; history does not resume a previous runtime session.
 
+### Replay Channel history
+
+The Console exposes `POST /_vitehub/channels/replay` for the [`vitehub channels replay`](/docs/development/cli#replay-channel-history) command. The request must name an Agent and Channel, and the Channel must declare a history Collection. The route validates the Collection query and replays at most 10 messages per request, returning a cursor when more history remains. It requires Console invocation access and the same authentication and origin checks as other Console RPC routes. Use the CLI's `--url` mode for deployed Console access; it forwards the configured authorization, session cookie, or Cloudflare Access credentials.
+
 ### Rerun and delete sessions
 
 Rerun is available after the session completes, fails, or is cancelled.

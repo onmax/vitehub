@@ -361,4 +361,50 @@ describe("defineChannel({ history })", () => {
     const agent = defineAgent({ channels: { mailbox: rawChannel } as never, driver: { run: () => "ok" }, runtime: false })
     await expect(replayChannel(agent, "mailbox", { force: true })).rejects.toMatchObject({ code: "AGENT_R0933" })
   })
+
+  it("rejects ambiguous history on a raw AgentChannelDefinition", async () => {
+    const load = vi.fn(async () => ({ items: [], nextCursor: null }))
+    const collection = defineCollection(load, {
+      cursor: (item: { id: string }) => item.id,
+      cursorSchema: v.string(),
+    })
+    const invoke = (name: string) => ({ input: { prompt: name } })
+    const agent = defineAgent({
+      channels: {
+        raw: {
+          kind: "raw",
+          history: { collection, key: (item: { id: string }) => item.id },
+          triggers: {
+            first: { invoke: () => invoke("first") },
+            second: { invoke: () => invoke("second") },
+          },
+        },
+      },
+      driver: { run: vi.fn() },
+      runtime: false,
+    })
+
+    await expect(replayChannel(agent, "raw", { dryRun: true })).rejects.toMatchObject({ code: "AGENT_R0933" })
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  it("rejects a history trigger that is absent from a raw definition", async () => {
+    const collection = defineCollection(async () => [], {
+      cursor: (item: { id: string }) => item.id,
+      cursorSchema: v.string(),
+    })
+    const agent = defineAgent({
+      channels: {
+        raw: {
+          kind: "raw",
+          history: { collection, key: (item: { id: string }) => item.id, trigger: "missing" },
+          triggers: { first: { invoke: () => ({ input: { prompt: "first" } }) } },
+        },
+      },
+      driver: { run: vi.fn() },
+      runtime: false,
+    })
+
+    await expect(replayChannel(agent, "raw", { dryRun: true })).rejects.toMatchObject({ code: "AGENT_R0930" })
+  })
 })
