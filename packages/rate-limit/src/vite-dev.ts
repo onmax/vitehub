@@ -14,13 +14,6 @@ export interface RateLimitDevEndpointOptions {
   nitroBaseURL?: () => string | undefined
 }
 
-/**
- * Registers the guarded `vitehub rate-limit` endpoint on a Vite Development Server.
- *
- * `GET` reports the root and whether the Nitro runtime is reachable. `POST` forwards one Rate Limit operation into
- * the Nitro dev environment, because the Nitro runtime owns the counters. Hosts without an in-process Nitro
- * environment get `501` with a clear message.
- */
 function isLoopbackHost(host: string | string[] | undefined): boolean {
   if (host === undefined) return true
   const value = Array.isArray(host) ? host[0] : host
@@ -31,6 +24,13 @@ function isLoopbackHost(host: string | string[] | undefined): boolean {
   catch { return false }
 }
 
+/**
+ * Registers the guarded `vitehub rate-limit` endpoint on a Vite Development Server.
+ *
+ * `GET` reports the root and whether the Nitro runtime is reachable. `POST` forwards one Rate Limit operation into
+ * the Nitro dev environment, because the Nitro runtime owns the counters. Hosts without an in-process Nitro
+ * environment get `501` with a clear message.
+ */
 export function registerRateLimitDevEndpoint(server: ViteHubNitroDevServer, options: RateLimitDevEndpointOptions): void {
   const host = server.config.server.host
   if (host === true || (host && !["localhost", "127.0.0.1", "::1", "[::1]"].includes(host))) {
