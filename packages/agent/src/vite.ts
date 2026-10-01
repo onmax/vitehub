@@ -3083,7 +3083,17 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           },
         },
       }
-      if (resolved) result.resolve = { alias: { [agentRegistryId]: join(generatedRoot, generatedAgentRegistry), ...workerAliases } }
+      if (resolved) {
+        // Vite prepends returned aliases. Append Worker fallbacks in place so user aliases match first.
+        const configuredAliases = config.resolve?.alias
+        config.resolve = {
+          ...config.resolve,
+          alias: Array.isArray(configuredAliases)
+            ? [...configuredAliases, ...Object.entries(workerAliases).map(([find, replacement]) => ({ find, replacement }))]
+            : { ...workerAliases, ...configuredAliases },
+        }
+        result.resolve = { alias: { [agentRegistryId]: join(generatedRoot, generatedAgentRegistry) } }
+      }
       if (agent !== undefined) result.agent = agent
       if (nitroHandlers.length) {
         // SAFETY: Vite's build options accept the Rolldown external field merged by this boundary.

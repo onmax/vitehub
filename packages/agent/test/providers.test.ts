@@ -2070,6 +2070,34 @@ describe("agent Vite plugin", () => {
     }
   })
 
+  it.each([
+    undefined,
+    { "pkce-challenge": "/app/pkce-worker-shim.ts", "user-module": "/app/user-module.ts" },
+    [{ find: "pkce-challenge", replacement: "/app/pkce-worker-shim.ts" }],
+    [{ find: /^pkce-challenge$/, replacement: "/app/pkce-worker-shim.ts" }],
+  ])("preserves configured Vite aliases %j with the Worker fallback", async (alias) => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const result = await resolveAgentViteConfig(hubAgent(), {
+      preset: "cloudflare",
+      resolve: { alias },
+      root: hostedAgentRoot,
+    })
+    const aliases: NonNullable<NonNullable<UserConfig["resolve"]>["alias"]> = result.resolve.alias
+    const entries = Array.isArray(aliases) ? aliases : Object.entries(aliases).map(([find, replacement]) => ({ find, replacement }))
+    const matched = entries.find(entry => typeof entry.find === "string" ? entry.find === "pkce-challenge" : entry.find.test("pkce-challenge"))
+
+    if (alias === undefined) {
+      expect(matched?.replacement).toMatch(/\/index\.browser\.js$/)
+    }
+    else {
+      expect(matched?.replacement).toBe("/app/pkce-worker-shim.ts")
+    }
+    if (alias && !Array.isArray(alias)) {
+      expect(entries.find(entry => entry.find === "user-module")?.replacement).toBe("/app/user-module.ts")
+    }
+    expect(entries.filter(entry => entry.find === "#vitehub/agent/registry")).toHaveLength(1)
+  })
+
   it("uses a configured import in the Cloudflare Agent state Rollup entry", async () => {
     const { hubAgent } = await import("../src/vite.ts")
     // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
