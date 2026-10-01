@@ -85,7 +85,15 @@ describe("vitehub channels replay", () => {
     ])
     const code = await runAgentChannelReplayCli(
       ["--agent", "labeller", "--channel", "mailbox", "--url", "https://mail.example.com/app", "--dry-run", "--folder", "inbox"],
-      { env: { VITEHUB_CONSOLE_AUTHORIZATION: "Basic abc" }, stderr: output(), stdout },
+      {
+        env: {
+          CF_ACCESS_CLIENT_ID: "client-id",
+          CF_ACCESS_CLIENT_SECRET: "client-secret",
+          VITEHUB_CONSOLE_AUTHORIZATION: "Basic abc",
+        },
+        stderr: output(),
+        stdout,
+      },
       { fetch: fetcher as typeof fetch },
     )
 
@@ -95,6 +103,8 @@ describe("vitehub channels replay", () => {
       url: "https://mail.example.com/app/_vitehub/channels/replay",
     })
     expect(requests[1]?.headers.get("authorization")).toBe("Basic abc")
+    expect(requests[1]?.headers.get("cf-access-client-id")).toBe("client-id")
+    expect(requests[1]?.headers.get("cf-access-client-secret")).toBe("client-secret")
     expect(stdout.chunks.join("")).toContain("failed    m1: Invalid input")
     expect(stdout.chunks.join("")).toContain("Dry run: Channel message writes were recorded, not sent.")
   })

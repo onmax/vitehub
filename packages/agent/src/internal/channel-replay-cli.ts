@@ -49,7 +49,7 @@ function writeUsage(context: ChannelReplayCliContext, queryHelp: string[] = []):
     "Without --url, the command uses the running Vite Development Server.",
     "",
     "Options:",
-    "  --url <url>          Deployed Console URL. Set VITEHUB_CONSOLE_AUTHORIZATION or VITEHUB_CONSOLE_COOKIE to authenticate.",
+    "  --url <url>          Deployed Console URL. Set VITEHUB_CONSOLE_AUTHORIZATION, VITEHUB_CONSOLE_COOKIE, or CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET to authenticate.",
     "  --server <url>       Vite Development Server URL. Defaults to VITEHUB_DEV_SERVER_URL or http://localhost:5173.",
     "  --dry-run            Record Channel message writes in the trace instead of sending them.",
     "  --force              Replay items that already have an Invocation.",
@@ -130,6 +130,8 @@ function replayTarget(parsed: ParsedChannelReplayArgs & { agent: string }, env: 
     const base = baseUrl(parsed.url, "--url")
     if (env.VITEHUB_CONSOLE_AUTHORIZATION) headers.set("authorization", env.VITEHUB_CONSOLE_AUTHORIZATION)
     if (env.VITEHUB_CONSOLE_COOKIE) headers.set("cookie", env.VITEHUB_CONSOLE_COOKIE)
+    if (env.CF_ACCESS_CLIENT_ID) headers.set("cf-access-client-id", env.CF_ACCESS_CLIENT_ID)
+    if (env.CF_ACCESS_CLIENT_SECRET) headers.set("cf-access-client-secret", env.CF_ACCESS_CLIENT_SECRET)
     return {
       body: replay => ({ agent: parsed.agent, ...replay }),
       headers,
@@ -162,7 +164,7 @@ async function sendReplay(target: ReplayTarget, replay: Record<string, unknown>,
     throw cliError(target.remote ? `Channel replay request to ${target.url} failed.` : `No Compatible Vite Development Server found at ${new URL(target.url).origin}.`)
   }
   if (target.remote && (response.status === 401 || response.status === 403 || (response.status >= 300 && response.status < 400))) {
-    throw cliError(`Console authentication failed with HTTP ${response.status}. Set VITEHUB_CONSOLE_AUTHORIZATION or VITEHUB_CONSOLE_COOKIE.`)
+    throw cliError(`Console authentication failed with HTTP ${response.status}. Set VITEHUB_CONSOLE_AUTHORIZATION, VITEHUB_CONSOLE_COOKIE, or CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET.`)
   }
   const text = await response.text()
   let json: unknown
