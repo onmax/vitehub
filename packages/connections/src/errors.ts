@@ -1,44 +1,39 @@
-import { isViteHubError, ViteHubError } from "@vite-hub/runtime"
+import { ViteHubError } from "@vite-hub/runtime"
 
-export type ConnectionErrorReason = "approval_required" | "denied" | "execution_unknown" | "invalid" | "provider" | "reauth_required"
-export type ConnectionErrorCode = `CONNECTION_${Uppercase<ConnectionErrorReason>}`
+const messages = {
+  approval_required: "Approval is required for this Connection Operation.",
+  denied: "Connection access denied.",
+  invalid: "Invalid Connection request.",
+  key_mismatch: "The Connection was sealed with a different encryption key. Reconnect it.",
+  missing: "The Connection is not connected.",
+  needs_reconnect: "The Connection needs to be reconnected.",
+  not_configured: "Connections are not configured. Enable `vitehub({ connections: true })` with a database.",
+  not_found: "No Connection Definition was discovered for this name.",
+  origin_not_allowed: "The request URL is not an allowed origin for this Connection.",
+  provider_failed: "The Connection provider request failed.",
+  unavailable: "The Connection is busy. Try again.",
+} as const
+
+export type ConnectionErrorCode = keyof typeof messages
 
 export interface ConnectionErrorDetails {
-  [key: string]: string | number | undefined
-  action?: string
+  [key: string]: number | string | undefined
   connection?: string
-  /** HTTP status from the provider. Set only for `CONNECTION_PROVIDER`. */
+  operation?: string
   status?: number
 }
 
-const errorCodes = {
-  approval_required: "CONNECTION_APPROVAL_REQUIRED",
-  denied: "CONNECTION_DENIED",
-  execution_unknown: "CONNECTION_EXECUTION_UNKNOWN",
-  invalid: "CONNECTION_INVALID",
-  provider: "CONNECTION_PROVIDER",
-  reauth_required: "CONNECTION_REAUTH_REQUIRED",
-} as const satisfies Record<ConnectionErrorReason, ConnectionErrorCode>
-
-/** A Connection failure. The message and details never contain token values. */
-export class ConnectionError extends ViteHubError<ConnectionErrorCode, ConnectionErrorDetails> {
-  readonly reason: ConnectionErrorReason
-
-  constructor(reason: ConnectionErrorReason, message: string, options: { details?: ConnectionErrorDetails, requestId?: string } = {}) {
-    super(errorCodes[reason], message, options)
-    this.reason = reason
-  }
-
-  /** HTTP status from the provider, when the provider rejected the call. */
-  get status(): number | undefined {
-    return this.details?.status
-  }
+/** Public Connection error. Messages never include tokens or provider response bodies. */
+export function connectionError(code: ConnectionErrorCode, details: ConnectionErrorDetails = {}, cause?: unknown): ViteHubError {
+  const clean = Object.fromEntries(Object.entries(details).filter(([, value]) => value !== undefined))
+  return new ViteHubError(`CONNECTIONS_${code.toUpperCase()}`, messages[code], {
+    ...(cause === undefined ? {} : { cause }),
+    ...(Object.keys(clean).length ? { details: clean } : {}),
+  })
 }
 
-export function isConnectionError(error: unknown): error is ConnectionError {
-  return error instanceof ConnectionError
-}
-
-export function isEnvBridgeError(error: unknown, code: string): boolean {
-  return isViteHubError(error) && error.code === code
+export function isConnectionError(error: unknown, code?: ConnectionErrorCode): error is ViteHubError {
+  return error instanceof ViteHubError
+    && error.code.startsWith("CONNECTIONS_")
+    && (code === undefined || error.code === `CONNECTIONS_${code.toUpperCase()}`)
 }
