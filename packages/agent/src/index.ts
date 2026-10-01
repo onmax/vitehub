@@ -1060,9 +1060,27 @@ async function runAgentAsWorkflow<
   const binding = resolveAgentWorkflowRuntimeBinding<TRuntimeConfig>(agent)
   const cloudflareEnv = context.cloudflare?.env || getCloudflareEnv(context)
   if (!binding || ("discoveryDefault" in binding && !context.agentIdentity)) return undefined
-  const activity = hasAgentDefinition(agent) ? createActiveAgentActivity(agent, context) : undefined
+  // SAFETY: Replay sets this private boolean marker on its runtime; other runtimes may omit it.
+  const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
+  let activity = exclusive ? undefined : hasAgentDefinition(agent) ? createActiveAgentActivity(agent, context) : undefined
+  let replayReserved = false
+  const ensureActivity = async () => {
+    if (!exclusive || replayReserved) return
+    const journal = hasAgentDefinition(agent)
+      ? await bindAgentInvocations(agent.invocations, context, { agentName: agentInvocationName(agent, context), requireNew: true })
+      : undefined
+    if (journal?.claimStatus !== "owned") {
+      if (journal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
+      throw new Error("Could not acquire the Invocation execution claim.")
+    }
+    // The persisted reservation excludes other replay starts while the worker acquires its own lease.
+    await journal.releaseClaim()
+    replayReserved = true
+    activity = hasAgentDefinition(agent) ? createActiveAgentActivity(agent, context) : undefined
+  }
   // Preparation failures happen before a provider run can create its journal.
   const recordPreparationFailure = async (error: unknown) => {
+    await ensureActivity()
     const status = input.abortSignal?.aborted ? "cancelled" : "failed"
     await activity?.update(status, error)
     if (!hasAgentDefinition(agent)) return
@@ -1084,6 +1102,7 @@ async function runAgentAsWorkflow<
     workflowRuntimeState = await loadAgentWorkflowRuntimeStateModule()
   }
   catch (error) {
+    await ensureActivity()
     await activity?.update("queued")
     await recordPreparationFailure(error)
     throw error
@@ -1098,6 +1117,7 @@ async function runAgentAsWorkflow<
   if ("discoveryDefault" in binding && workflowConfig === false) return undefined
   if (input.context?.[requireAgentWorkflowContextKey] === true && workflowConfig && workflowConfig.provider === "cloudflare") {
     if (!cloudflareEnv) return undefined
+    if (!exclusive) await activity?.update("queued")
     try {
       const workflowName = resolveAgentWorkflowName(agent, binding, context)
       const workflowBindingName = workflowConfig.binding || (await loadAgentWorkflowModule()).getCloudflareWorkflowBindingName(workflowName)
@@ -1121,24 +1141,10 @@ async function runAgentAsWorkflow<
   if (input.context?.[requireAgentWorkflowContextKey] === true && hasNonportableCapabilities) return undefined
   if ("discoveryDefault" in binding && hasNonportableCapabilities) return undefined
 
-  // Replay reserves the logical Invocation before any activity or provider
-  // dispatch. This keeps workflow preparation side effects behind the claim.
-  // SAFETY: Replay sets this private boolean marker on its runtime; other runtimes may omit it.
-  const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
-  if (exclusive) {
-    const dispatchJournal = hasAgentDefinition(agent)
-      ? await bindAgentInvocations(agent.invocations, context, {
-          agentName: agentInvocationName(agent, context),
-          requireNew: true,
-        })
-      : undefined
-    if (dispatchJournal?.claimStatus !== "owned") {
-      if (dispatchJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
-      throw new Error("Could not acquire the Invocation execution claim.")
-    }
-    await dispatchJournal.releaseClaim()
+  await ensureActivity()
+  if (exclusive || !(input.context?.[requireAgentWorkflowContextKey] === true && workflowConfig && workflowConfig.provider === "cloudflare")) {
+    await activity?.update("queued")
   }
-  await activity?.update("queued")
   let workflowName: string
   let handle: WorkflowHandle<AgentWorkflowInvocationPayload<CALL_OPTIONS>, AgentWorkflowOutput<TOutput>>
   let parsedInput: AgentRunInput<CALL_OPTIONS>

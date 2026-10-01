@@ -15,13 +15,15 @@ afterEach(() => {
   })
 })
 
-it("reserves concurrent Workflow replay starts and hands the journal to the worker", async () => {
+it("reserves concurrent Workflow replays before activity and hands the journal to the worker", async () => {
   const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
   const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
   let entered = 0
   let release!: () => void
   const ready = new Promise<void>((resolve) => { release = resolve })
+  const update = vi.fn()
   const channel = defineChannel("mailbox", {
+    activity: { update },
     history: {
       collection: defineCollection(async () => [{ id: "m1" }], { cursor: item => item.id, cursorSchema: v.string() }),
       key: item => item.id,
@@ -32,7 +34,7 @@ it("reserves concurrent Workflow replay starts and hands the journal to the work
         invoke: async () => {
           if (++entered === 2) release()
           await ready
-          return { input: { prompt: "hello" } }
+          return { input: { prompt: "hello" }, run: { runId: "trigger-run", channelId: "mailbox", activity: { target: { message: "m1" } } } }
         },
       }),
     },
@@ -54,6 +56,7 @@ it("reserves concurrent Workflow replay starts and hands the journal to the work
   })
   const agent = defineAgent({ channels: { mailbox: channel }, driver: { run: () => "unused" }, invocations, name: "replay-workflow", runtime: workflow("replay-workflow") })
   const results = await Promise.all([replayChannel(agent, "mailbox", { runtime }), replayChannel(agent, "mailbox", { runtime })])
+  expect(update.mock.calls.filter(([context]) => context.activity.status === "queued")).toHaveLength(1)
   expect(providerRun).toHaveBeenCalledTimes(1)
   expect(results.reduce((sum, result) => sum + result.processed, 0)).toBe(1)
   expect(results.reduce((sum, result) => sum + result.skipped, 0)).toBe(1)

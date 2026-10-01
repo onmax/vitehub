@@ -200,7 +200,7 @@ More history remains. Continue with --cursor Im0zIg
 
 The command reads the history query schema first. When the schema converts to JSON Schema, which Zod 4 and Valibot schemas do, `--help` with `--agent` and `--channel` lists its keys as flags, and an unknown flag fails before replay starts. Other schemas accept `--filter key=value`. The server always validates the query with the same schema.
 
-With `--url`, the command posts to `/_vitehub/channels/replay` on the deployment. That route requires the [Console](/docs/development/console#replay-channel-history) with invocation enabled, and it is protected like every other Console route. Set `VITEHUB_CONSOLE_AUTHORIZATION` to an `Authorization` header value that the Console access policy accepts, or `VITEHUB_CONSOLE_COOKIE` to a signed-in Console session cookie. Each request replays at most 10 messages, so progress appears while a long replay runs, and the command prints a cursor when history remains.
+With `--url`, the command posts to `/_vitehub/channels/replay` on the deployment. That route requires the [Console](/docs/development/console#replay-channel-history) with invocation enabled, and it is protected like every other Console route. Set `VITEHUB_CONSOLE_AUTHORIZATION` to an `Authorization` header value that the Console access policy accepts, or `VITEHUB_CONSOLE_COOKIE` to a signed-in Console session cookie. For Cloudflare Access, set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to a service token. The command forwards them as `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Each request replays at most 10 messages, so progress appears while a long replay runs, and the command prints a cursor when history remains.
 
 ## Manage Database migrations
 

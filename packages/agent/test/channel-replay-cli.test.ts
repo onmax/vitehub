@@ -95,6 +95,22 @@ describe("vitehub channels replay", () => {
     expect(stdout.chunks.join("")).toContain("Continue with --cursor c3")
   })
 
+  it("forwards Cloudflare Access service credentials only to a remote Console", async () => {
+    const env = { CF_ACCESS_CLIENT_ID: "service-id", CF_ACCESS_CLIENT_SECRET: "service-secret" }
+    for (const remote of [false, true]) {
+      const { fetcher, requests } = replayFetch([{ failed: 0, items: [], nextCursor: null, processed: 0, skipped: 0 }])
+      const args = ["--agent", "labeller", "--channel", "mailbox", ...(remote ? ["--url", "https://mail.example.com/app"] : [])]
+      expect(await runAgentChannelReplayCli(args, { env, stderr: output(), stdout: output() }, { fetch: fetcher as typeof fetch })).toBe(0)
+      for (const request of requests) {
+        expect(request.headers.get("cf-access-client-id")).toBe(remote ? "service-id" : null)
+        expect(request.headers.get("cf-access-client-secret")).toBe(remote ? "service-secret" : null)
+      }
+    }
+    const stdout = output()
+    await runAgentChannelReplayCli(["--help"], { env: {}, stderr: output(), stdout })
+    expect(stdout.chunks.join("")).toContain("CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET")
+  })
+
   it("posts to the deployed Console with credentials from the environment and fails on item failures", async () => {
     const stdout = output()
     const { fetcher, requests } = replayFetch([
