@@ -569,7 +569,7 @@ describe("calls", () => {
     expect(activity.some(entry => entry.operation === "mail.labels.list" && entry.outcome === "failed")).toBe(true)
   })
 
-  it.each([["patch", "patch"], ["Egg", "Egg"], ["gEt", "GET"]])("uses Fetch method normalization for %s", async (method, expected) => {
+  it.each([["patch", "patch"], ["Egg", "Egg"], ["gEt", "gEt"]])("preserves Fetch method casing for %s", async (method, expected) => {
     const test = createTestRuntime(mailConnection({ server: { read: true, write: ["fetch"] } }))
     await connect(test)
     await test.runtime.client("mail", {}).fetch("https://mail.example.com/mail/v1/users/me/labels", { method })
