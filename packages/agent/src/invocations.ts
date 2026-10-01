@@ -76,7 +76,16 @@ const storeOperationTimedOut = Symbol("vitehub.storeOperationTimedOut")
 export type AgentInvocationAnnotationValue = boolean | number | string | null
 export type AgentInvocationRecordStatus = AgentInvocationStatus
 
+export interface AgentInvocationWorkflowBinding {
+  name: string
+  provider: string
+  /** Absent while provider acknowledgement is unknown. */
+  id?: string
+}
+
 export interface AgentInvocationRecord {
+  /** Durable provider dispatch intent and acknowledged physical identity. */
+  workflow?: AgentInvocationWorkflowBinding
   agentName?: string
   annotations?: Record<string, AgentInvocationAnnotationValue>
   /** Capability IDs observed during this Invocation, including uses omitted from a truncated trace. */
@@ -132,6 +141,7 @@ export interface AgentInvocationStoreCreateResult {
 }
 
 export interface AgentInvocationStoreUpdateInput {
+  workflow?: AgentInvocationWorkflowBinding
   /** Append with a stable observation identity and a sequence assigned atomically by the store. */
   appendObservation?: Omit<TraceEventLogEntry, "sequence">
   annotations?: AgentInvocationRecord["annotations"]
@@ -306,7 +316,8 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   ready(): Promise<void>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
   handoffClaim(): Promise<string | undefined>
-  confirmWorkflowDispatch(): Promise<boolean>
+  prepareWorkflowDispatch(binding: AgentInvocationWorkflowBinding): Promise<boolean>
+  confirmWorkflowDispatch(binding?: AgentInvocationWorkflowBinding): Promise<boolean>
   releaseClaim(): Promise<void>
   running(): Promise<void>
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
@@ -344,6 +355,7 @@ function cloneSummary(record: AgentInvocationRecord): AgentInvocationSummary {
   const { observations: _observations, ...summary } = record
   return {
     ...summary,
+    ...(record.workflow ? { workflow: { ...record.workflow } } : {}),
     ...(record.annotations ? { annotations: { ...record.annotations } } : {}),
     ...(record.capabilityIds ? { capabilityIds: [...record.capabilityIds] } : {}),
     ...(record.observationLimits ? { observationLimits: { ...record.observationLimits } } : {}),
@@ -1384,6 +1396,7 @@ export function applyAgentInvocationStoreUpdate(
   }
   const updated: AgentInvocationRecord = {
     ...record,
+    ...(input.workflow ? { workflow: { ...input.workflow } } : {}),
     ...(configuredAnnotations
       ? { annotations: mergeConfigurationAnnotations(record.annotations, configuredAnnotations) }
       : {}),
@@ -2239,12 +2252,23 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           const token = await boundedStoreOperation(() => store.getClaimToken(recordId))
           return token === storeOperationTimedOut ? undefined : token
         },
-        async confirmWorkflowDispatch() {
+        async prepareWorkflowDispatch(binding) {
+          return await update({ workflow: binding, timestamp: new Date().toISOString() })
+        },
+        async confirmWorkflowDispatch(binding) {
           let confirmed = false
           // Renewing here would rotate the token already sent to the worker.
           await write(async () => {
-            const record = await boundedStoreOperation(() => store.get(recordId))
+            let record = await boundedStoreOperation(() => store.get(recordId))
             if (!record || record === storeOperationTimedOut) return
+            if (binding) {
+              const associated = await boundedStoreOperation(() => store.update(recordId, {
+                workflow: binding,
+                timestamp: new Date().toISOString(),
+              }, claimId))
+              if (!associated || associated === storeOperationTimedOut) return
+              record = associated
+            }
             const updated = await boundedStoreOperation(() => store.update(recordId, {
               annotations: { ...record.annotations, [pendingAgentInvocationAnnotation]: false },
               timestamp: new Date().toISOString(),

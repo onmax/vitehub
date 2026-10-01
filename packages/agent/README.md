@@ -362,7 +362,9 @@ Learn more at [vitehub.dev](https://vitehub.dev).
 
 ## Invocation summaries
 
-Channel history replay stores the trigger's `annotations`, `channelId`, `origin`, and `threadId` on the claimed Invocation before Driver execution or Workflow dispatch. A failed metadata write fails that item before execution. Custom stores must apply those fields in `update()` under the supplied execution claim.
+Channel history replay stores the trigger's `annotations`, `channelId`, `origin`, and `threadId` on the claimed Invocation before Driver execution or Workflow dispatch. A failed metadata write fails that item before execution. Custom stores must apply those fields and the `workflow` dispatch binding in `update()` under the supplied execution claim.
+
+Native Vercel replay retains the logical replay ID in the Invocation and stores the provider-assigned Workflow ID in `workflow`. Dispatch intent is persisted before submission. If acknowledgement is lost before a provider ID can be retained, replay reports the unknown outcome and blocks resubmission. The Workflow worker confirms its physical ID before Driver execution. Recovery and cancellation use the provider ID.
 
 `defineAgentInvocations()` returns `getSummary(id)` for metadata reads without observations. Every store must implement this method. Use `get(id)` for the full record or `get(id, { observationNames: ["agent.invocation.finish"] })` to read only observations with those exact names. An empty list returns no observations. The built-in SQL stores filter observation payloads inside the database. Custom stores can apply the same option to avoid loading unrelated payloads; the Invocations wrapper also filters their returned records. Both methods return `undefined` when the Invocation does not exist.
 

@@ -185,8 +185,8 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
     const id = options.force ? `${stableId}:${crypto.randomUUID()}` : stableId
     let reservation: AgentInvocationJournal<TRuntimeConfig> | undefined
     try {
-      const itemRuntime = { ...runtime, ...(!options.force && invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), request: undefined, run: { ...runtime.run, runId: id } }
-      if (!options.force && invocations) reservation = await reserveAgentChannelItem(agent, itemRuntime)
+      const itemRuntime = { ...runtime, ...(invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), request: undefined, run: { ...runtime.run, runId: id } }
+      if (invocations) reservation = await reserveAgentChannelItem(agent, itemRuntime)
       const invocation = await resolveAgentTriggerInvocation(agent, itemRuntime, triggerId, item)
       if (isResolvedAgentTriggerHandledInvocation(invocation)) { await reservation?.finish("completed"); return { id, key, reason: "handled", status: "skipped" } }
       const run = { ...runtime.run, ...invocation.run, runId: id }

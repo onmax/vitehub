@@ -69,10 +69,10 @@ import {
   githubChannelIdentity,
 } from "./channels.ts"
 import { registerMessageChannelDeferredReplyTrace, setChatFinalReplyText, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
-import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, createAgentInvocationContextStore } from "./invocation-context.ts"
+import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, agentInvocationWorkflowBinding, createAgentInvocationContextStore } from "./invocation-context.ts"
 import { agentInvocationCallerAbortSignal, copyAgentInvocationCallerAbortSignal, markAgentInvocationCallerAbortSignal } from "./internal/invocation-input.ts"
 import { bindAgentRunEvents, type AgentRunEventPublisher } from "./run-events.ts"
-import { AgentInvocationClaimConflict, bindAgentInvocations, exclusiveAgentInvocation, inheritedAgentInvocationClaim, pendingAgentInvocationAnnotations, type AgentInvocationJournal } from "./invocations.ts"
+import { AgentInvocationClaimConflict, bindAgentInvocations, exclusiveAgentInvocation, inheritedAgentInvocationClaim, pendingAgentInvocationAnnotations, type AgentInvocationJournal, type AgentInvocationWorkflowBinding } from "./invocations.ts"
 import { isAttachmentPart, materializeMessageAttachmentData, type AgentMessagePhase, type Message } from "./messages.ts"
 import {
   createFallbackAgentInvoker,
@@ -1069,18 +1069,27 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
       const workflowName = resolveAgentWorkflowName(agent, binding, context)
       const handle = await getAgentWorkflowHandle<TRuntimeConfig, unknown, unknown>(agent, workflowName, Boolean(context.agentIdentity))
       const recoveryConfig = (await loadAgentWorkflowRuntimeStateModule()).getWorkflowRuntimeConfig()
-      // SAFETY: the private symbol is only set by the replay reservation path on this runtime context.
-      const exclusive = (context as AgentRuntimeContext & { [exclusiveAgentInvocation]?: boolean })[exclusiveAgentInvocation] === true
-      // Native Vercel Workflows assign their own run IDs. A pending replay
-      // reservation therefore cannot be matched to a provider run after the
-      // caller exits, so retrying it could dispatch a duplicate Workflow.
-      if (exclusive && recoveryConfig && recoveryConfig.provider === "vercel") throw new AgentInvocationClaimConflict()
       const stableId = context.run?.runId || ""
-      const providerId = recoveryConfig && recoveryConfig.provider === "cloudflare" ? await portableAgentWorkflowRunId(stableId) : stableId
+      const stored = await agent.invocations?.getByRunId(stableId, agentInvocationName(agent, context))
+      const dispatch = stored?.workflow
+      // Legacy reservations lack dispatch intent and may already have been accepted.
+      if (!dispatch && recoveryConfig && recoveryConfig.provider === "vercel") throw new AgentInvocationClaimConflict()
+      if (dispatch && (dispatch.provider !== (recoveryConfig && recoveryConfig.provider) || dispatch.name !== workflowName)) {
+        throw new Error("Workflow dispatch identity changed; replay cannot safely submit this Invocation again.")
+      }
+      if ((recoveryConfig && recoveryConfig.provider) === "vercel" && dispatch) {
+        if (!dispatch.id) {
+          throw new Error("Workflow dispatch acknowledgement is unknown; replay cannot safely submit this Invocation again.")
+        }
+      }
+      const providerId = (recoveryConfig && recoveryConfig.provider) === "vercel" && dispatch?.id ? dispatch.id : recoveryConfig && recoveryConfig.provider === "cloudflare" ? await portableAgentWorkflowRunId(stableId) : stableId
       const accepted = await handle.getRun(providerId)
       if (accepted.status !== "unknown") {
         if (!await journal.confirmWorkflowDispatch()) throw new Error("Could not confirm the accepted Workflow Invocation.")
         throw new AgentInvocationClaimConflict()
+      }
+      if ((recoveryConfig && recoveryConfig.provider) === "vercel" && dispatch) {
+        throw new Error("The acknowledged Workflow run is unavailable; replay cannot safely submit this Invocation again.")
       }
     } catch (error) {
       await journal.releaseClaim()
@@ -1278,7 +1287,7 @@ async function runAgentAsWorkflow<
     ? `${context.run.runId}:${channelDeliveryBinding.steer.claimId}${options.fresh ? `:${crypto.randomUUID()}` : ""}`
     : context.run?.runId
   const workflowRunId = context.run?.runId && (!options.fresh || durableChannelDelivery)
-    ? exclusive && workflowConfig && workflowConfig.provider === "vercel"
+    ? exclusive && (workflowConfig && workflowConfig.provider) === "vercel"
       ? undefined
       : workflowConfig && workflowConfig.provider === "cloudflare"
       ? await portableAgentWorkflowRunId(workflowProviderRunId ?? context.run.runId)
@@ -1302,7 +1311,7 @@ async function runAgentAsWorkflow<
           workflowName,
         },
         ...(context.trace ? { trace: context.trace } : {}),
-      }, { id: recoveryId }))
+      }, (workflowConfig && workflowConfig.provider) === "vercel" ? {} : { id: recoveryId }))
       return true
     }
     catch {
@@ -1311,6 +1320,9 @@ async function runAgentAsWorkflow<
   }
   let run: AgentWorkflowRun<AgentWorkflowOutput<TOutput>>
   if (replayJournal) {
+    if (!await replayJournal.prepareWorkflowDispatch({ name: workflowName, provider: (workflowConfig && workflowConfig.provider) || "unknown" })) {
+      throw new Error("Could not persist the Workflow dispatch intent.")
+    }
     payload.invocationClaimToken = await replayJournal.handoffClaim()
     if (!payload.invocationClaimToken) throw new Error("Could not transfer the Invocation execution claim.")
   }
@@ -1323,7 +1335,7 @@ async function runAgentAsWorkflow<
   }
   catch (error) {
     await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
-    const ambiguous = isAmbiguousWorkflowStartFailure(error)
+    const ambiguous = Boolean(replayJournal && (workflowConfig && workflowConfig.provider) === "vercel" && inputHandedOff) || isAmbiguousWorkflowStartFailure(error)
     const failedRunId = !options.fresh && context.run?.runId
       ? context.run.runId
       : workflowRunId || (ambiguous ? undefined : createTraceId())
@@ -1341,7 +1353,7 @@ async function runAgentAsWorkflow<
     }
     throw error
   }
-  await replayJournal?.confirmWorkflowDispatch()
+  await replayJournal?.confirmWorkflowDispatch({ name: workflowName, provider: run.provider, id: run.id })
   if (run.status === "cancelled" || run.status === "completed" || run.status === "failed") {
     await activity?.update(
       run.status,
@@ -1359,7 +1371,7 @@ async function runAgentAsWorkflow<
   // Vercel's native Workflow owns durable suspension, but arbitrary Agent Definitions cannot
   // be compiled into that deterministic bundle. Its journal begins in the Agent worker instead.
   let invocationJournal: AgentInvocationJournal<TRuntimeConfig> | undefined
-  if (hasAgentDefinition(agent) && agent.invocations && run.provider !== "vercel") {
+  if (hasAgentDefinition(agent) && agent.invocations && (run.provider !== "vercel" || replayJournal)) {
     const snapshot = agentInvocationSnapshotFromWorkflow(run)
     if (!snapshot || (snapshot.status !== "cancelled" && snapshot.status !== "completed" && snapshot.status !== "failed")) {
       const sourceRunId = options.fresh && !durableChannelDelivery ? run.id : context.run?.runId ?? run.id
@@ -7836,7 +7848,7 @@ async function executeAgentInvocation<
       if (invocationJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
       throw new Error("Could not acquire the Invocation execution claim.")
     }
-    if (inheritedClaim && !await invocationJournal?.confirmWorkflowDispatch()) {
+    if (inheritedClaim && !await invocationJournal?.confirmWorkflowDispatch((context as AgentRuntimeContext & { [agentInvocationWorkflowBinding]?: AgentInvocationWorkflowBinding })[agentInvocationWorkflowBinding])) {
       await invocationJournal?.releaseClaim()
       throw new Error("Could not confirm the Workflow Invocation handoff.")
     }

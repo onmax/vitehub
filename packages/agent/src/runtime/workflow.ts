@@ -6,7 +6,7 @@ import { createAgentRuntimeContext } from "./context.ts"
 import { workspaceAgentWithSourceRoot } from "../workspace-agent.ts"
 import { decodeColocatedAgentSkills, withColocatedAgentSkills } from "../internal/colocated-agent-skills.ts"
 import { loadAgentWorkflowModule, loadAgentWorkflowRuntimeStateModule, loadConfiguredAgentWorkflowCapabilities } from "../internal/workflow-runtime-loaders.ts"
-import { agentInvocationRunId } from "../invocation-context.ts"
+import { agentInvocationRunId, agentInvocationWorkflowBinding } from "../invocation-context.ts"
 import { markAgentInvocationCallerAbortSignal } from "../internal/invocation-input.ts"
 import { agentInvocationRecoveryTasks } from "../internal/invocation-recovery.ts"
 import { bindAgentInvocations, inheritedAgentInvocationClaim } from "../invocations.ts"
@@ -338,6 +338,7 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
   }
 
   if (payload.invocationClaimToken) {
+    Object.defineProperty(runtimeContext, agentInvocationWorkflowBinding, { enumerable: true, value: { name: context.name, provider: context.provider, id: context.id } })
     Object.defineProperty(runtimeContext, inheritedAgentInvocationClaim, { enumerable: true, value: payload.invocationClaimToken })
   }
 

@@ -52,6 +52,7 @@ export type {
   AgentInvocationRerunUnavailableReason,
   AgentInvocationRetentionOptions,
   AgentInvocationSummary,
+  AgentInvocationWorkflowBinding,
   AgentInvocations,
   AgentInvocationsOptions,
   AgentInvocationStore,

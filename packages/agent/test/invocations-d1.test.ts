@@ -190,11 +190,12 @@ describe("D1 Agent Invocation store", () => {
     const journal = store()
     await journal.create(invocation("metadata", { channelId: "host-channel", origin: "dev", threadId: "host-thread" }))
     expect(await journal.claim("metadata", "owner", 30000)).toBe(true)
-    const metadata = { annotations: { trigger: "history" }, channelId: "mailbox", origin: "history-trigger", threadId: "message-thread", timestamp }
+    const metadata = { workflow: { name: "native", provider: "vercel", id: "physical-id" }, annotations: { trigger: "history" }, channelId: "mailbox", origin: "history-trigger", threadId: "message-thread", timestamp }
     expect(await journal.update("metadata", metadata, "stale-owner")).toBeUndefined()
     expect(await journal.getSummary("metadata")).toMatchObject({ channelId: "host-channel", origin: "dev", threadId: "host-thread" })
-    expect(await journal.update("metadata", metadata, "owner")).toMatchObject({ annotations: metadata.annotations, channelId: metadata.channelId, origin: metadata.origin, threadId: metadata.threadId })
-    expect(await journal.getSummary("metadata")).toMatchObject({ annotations: metadata.annotations, channelId: metadata.channelId, origin: metadata.origin, threadId: metadata.threadId })
+    expect((await journal.getSummary("metadata"))?.workflow).toBeUndefined()
+    expect(await journal.update("metadata", metadata, "owner")).toMatchObject({ workflow: metadata.workflow, annotations: metadata.annotations, channelId: metadata.channelId, origin: metadata.origin, threadId: metadata.threadId })
+    expect(await journal.getSummary("metadata")).toMatchObject({ workflow: metadata.workflow, annotations: metadata.annotations, channelId: metadata.channelId, origin: metadata.origin, threadId: metadata.threadId })
   })
 
   it("fences an update when ownership changes between its read and write", async () => {
