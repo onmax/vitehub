@@ -4,6 +4,7 @@ import { isConnectionError } from "./errors.ts"
 import { CONNECTIONS_ROUTE } from "./route.ts"
 import { getConnectionsRuntime } from "./runtime/state.ts"
 
+import type { ConnectionApproval } from "./types.ts"
 import type { ConnectionsRuntime } from "./runtime.ts"
 
 export { CONNECTIONS_ROUTE }
@@ -33,6 +34,10 @@ const actionSchema = v.variant("action", [
   v.object({ action: v.literal("approve"), id }),
   v.object({ action: v.literal("deny"), id }),
 ])
+
+function approvalSummary({ input: _input, ...summary }: ConnectionApproval): Omit<ConnectionApproval, "input"> {
+  return summary
+}
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -151,9 +156,15 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions = {}
         case "revoke": return json({ connection: await connections.revoke({ actor, name: input.name }) })
         case "activity": return json({ activity: await connections.activity(input) })
         case "approval-counts": return json({ counts: await connections.approvalCounts() })
-        case "approvals": return json(await connections.approvals({ ...(input.before ? { before: input.before } : {}), ...(input.name ? { name: input.name } : {}), ...(input.status ? { status: input.status } : {}) }))
-        case "approve": return json(await connections.approve({ actor, id: input.id }))
-        case "deny": return json({ approval: await connections.deny({ actor, id: input.id }) })
+        case "approvals": {
+          const page = await connections.approvals({ ...(input.before ? { before: input.before } : {}), ...(input.name ? { name: input.name } : {}), ...(input.status ? { status: input.status } : {}) })
+          return json({ ...page, approvals: page.approvals.map(approvalSummary) })
+        }
+        case "approve": {
+          const result = await connections.approve({ actor, id: input.id })
+          return json({ ...result, approval: approvalSummary(result.approval) })
+        }
+        case "deny": return json({ approval: approvalSummary(await connections.deny({ actor, id: input.id })) })
       }
     }
     catch (error) {

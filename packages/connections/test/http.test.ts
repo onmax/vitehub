@@ -43,6 +43,22 @@ describe("createConnectionsHandler", () => {
     expect(callback.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections;")
   })
 
+  it("returns approval summaries without stored provider input", async () => {
+    const test = createTestRuntime()
+    await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:mail", createdAt: new Date().toISOString(), id: "private-approval", input: { body: "private-message-content", recipient: "private@example.com" }, name: "mail", status: "pending" })
+    const handler = createConnectionsHandler({ runtime: () => test.runtime })
+    for (const action of ["approvals", "deny"]) {
+      const response = await handler(post(action === "approvals" ? { action, name: "mail" } : { action, id: "private-approval" }))
+      expect(response.status).toBe(200)
+      const text = await response.text()
+      expect(text).not.toContain("private-message-content")
+      expect(text).not.toContain("private@example.com")
+      expect(text).not.toContain('"input"')
+      expect(text).toContain("private-approval")
+    }
+    expect(await test.store.approvals.get("private-approval")).toMatchObject({ input: { body: "private-message-content" } })
+  })
+
   it("pages every pending approval without unbounded reads or decision gaps", async () => {
     const test = createTestRuntime()
     for (let index = 0; index < 205; index++) {
