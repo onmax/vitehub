@@ -4,11 +4,13 @@ import { getViteMode } from "@vite-hub/internal/build/mode"
 import { defaultCloudflareCompatibilityDate } from "@vite-hub/internal/build/cloudflare"
 import {
   contributeProviderDeploymentOutput,
+  createDefaultCloudflareOutputRoot,
   createProviderDeploymentOutputGenerationState,
   finalizeProviderDeploymentOutputs,
   useProviderOutputCatalog,
 } from "@vite-hub/internal/build/deployment-output"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
+import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 import { isPlainObject } from "@vite-hub/internal/object"
 import {
   createNoExternalAddition,
@@ -20,6 +22,7 @@ import {
 
 import { discoverBrowserDefinitions } from "./discovery.ts"
 
+import type { ViteHubDefinitionSummary, ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import type { Plugin, ResolvedConfig } from "vite"
 import type { BrowserEngine } from "./types.ts"
 import { browserErrorDiagnostics } from "./error-diagnostics.ts"
@@ -34,6 +37,22 @@ export type BrowserVitePlugin = Plugin & {
   api: {
     getConfig(): Required<BrowserModuleOptions>
   }
+  vitehub: ViteHubInspectionPluginMetadata
+}
+
+export interface BrowserInspectionOptions {
+  projectRoot: string
+  rootDir: string
+  serverDirs?: string[]
+}
+
+/** Lists Browser Definitions as serializable inspection summaries. */
+export function inspectBrowserDefinitions(options: BrowserInspectionOptions): ViteHubDefinitionSummary[] {
+  return summarizeDefinitions(options.projectRoot, discoverBrowserDefinitions({
+    rootDir: options.rootDir,
+    serverDirs: options.serverDirs,
+    serverRootDir: options.projectRoot,
+  }), "browser")
 }
 
 const browserRegistryId = "#vitehub/browser/registry"
@@ -201,6 +220,23 @@ export function hubBrowser(options?: BrowserModuleOptions | false): BrowserViteP
     name: "@vite-hub/browser/vite",
     enforce: "pre",
     api: { getConfig: () => resolvedOptions },
+    vitehub: {
+      inspect: () => {
+        if (!enabled) return
+        return {
+          definitions: [{
+            kind: "browser",
+            label: "Browsers",
+            list: () => inspectBrowserDefinitions({ projectRoot, rootDir: resolved?.root ?? projectRoot, serverDirs }),
+          }],
+          providerOutput: [{
+            description: "Generated Cloudflare Browser worker",
+            owner: "browser",
+            path: resolve(createDefaultCloudflareOutputRoot(resolved?.root ?? projectRoot), "wrangler.json"),
+          }],
+        }
+      },
+    },
     config(config) {
       applyConfig(config)
     },

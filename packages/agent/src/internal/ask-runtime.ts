@@ -9,6 +9,7 @@ import type { AgentRunInput } from "../types.ts"
 
 type Advocaat = typeof import("advocaat")
 type AdvocaatQuestion = Parameters<Advocaat["ask"]>[1][string]
+type AdvocaatEntry = Parameters<Advocaat["ask"]>[0]
 
 /** The Server Env group that `typesafeEnv()` declares. */
 export const typesafeEnvGroup = "typesafe"
@@ -72,15 +73,11 @@ async function typesafeOptions(context: AskRequestContext) {
   } as const
 }
 
-function toEntry(value: unknown): AskEntry {
-  if (value === undefined || value === null) return null
-  if (hasRuntimeType(value, "string")) return value
-  if (hasRuntimeType(value, "number")) return Number.isFinite(value) ? String(value) : null
-  if (hasRuntimeType(value, "boolean")) return String(value)
-  // JSON round trip drops functions and undefined values, like the request body would.
+function toEntry(value: unknown): AdvocaatEntry {
+  // Normalize each entry root to the SDK contract, preserving scalars inside JSON structures.
   const serialized = JSON.stringify(value)
-  // advocaat uses null as empty state and does not accept undefined in its public types.
-  return serialized === undefined ? null : JSON.parse(serialized)
+  const parsed: AskEntry = serialized === undefined ? null : JSON.parse(serialized)
+  return hasRuntimeType(parsed, "number") || hasRuntimeType(parsed, "boolean") ? String(parsed) : parsed
 }
 
 function invalidQuestion(name: string) {
@@ -108,14 +105,19 @@ function validateQuestionCriteria(name: string, question: AskQuestion): void {
 }
 
 function toAdvocaatQuestion(name: string, question: AskQuestion): AdvocaatQuestion {
+  validateQuestionCriteria(name, question)
+  const instructions = toEntry(question.instructions)
   switch (question.type) {
     case "chance":
-      return { criteria: question.criteria, instructions: question.instructions, type: "noul" }
+      return { criteria: question.criteria ? Object.fromEntries(Object.entries(question.criteria).map(([key, value]) => [key, toEntry(value)])) : undefined, instructions, type: "noul" }
     case "choice":
-    case "score":
-    case "if":
     case "switch":
-      validateQuestionCriteria(name, question)
+      return { ...question, instructions, criteria: Object.fromEntries(Object.entries(question.criteria).map(([key, value]) => [key, toEntry(value)])) }
+    case "score": {
+      const [first, second, ...rest] = question.criteria
+      return { ...question, instructions, criteria: [toEntry(first), toEntry(second), ...rest.map(toEntry)] }
+    }
+    case "if":
       return question
   }
   throw invalidQuestion(name)
@@ -142,6 +144,14 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
   const advocaat = await loadAdvocaat()
   const options = await typesafeOptions(context)
   const answers = await advocaat.ask(toEntry(state), wire, { ...options, signal: context.abortSignal })
-  // SAFETY: advocaat answers under the same keys, with the answer shapes that AskAnswers describes for each question type.
-  return answers as AskAnswers<Q>
+  const result = Object.fromEntries(Object.entries(answers).map(([name, answer]) => {
+    if (hasRuntimeType(answer, "string") || hasRuntimeType(answer, "boolean")) return [name, answer]
+    const question = questions[name]
+    // Score legends describe the public criteria, before SDK entry normalization.
+    return [name, question?.type === "score" && answer.type === "score"
+      ? { ...answer, legend: Object.fromEntries(question.criteria.map((level, index) => [String(index), level])) }
+      : answer]
+  }))
+  // SAFETY: SDK answers preserve question keys and answer shapes; score legends restore the original public criteria.
+  return result as AskAnswers<Q>
 }

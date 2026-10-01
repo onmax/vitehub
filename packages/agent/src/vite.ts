@@ -13,7 +13,8 @@ import { encodeProviderOutputAliases, resolveViteHubBundleDefines } from "@vite-
 import { rebasePublishedProviderSourceLinks, removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources, rewriteRetainedProviderSourcePaths } from "@vite-hub/internal/build/provider-output-sources"
 import { copyNodeRuntimePackages, copyVercelFunctionRuntimePackages } from "@vite-hub/internal/build/vercel-runtime-packages"
 import { deploymentPresetFromNitro } from "@vite-hub/internal/deployment"
-import { createNoExternalAddition, generatedViteHubWatchIgnoredAddition, hasNitroConfigContext, isServerEnvironment, resolveViteHubGeneratedRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, generatedViteHubWatchIgnoredAddition, resolveViteHubGeneratedRoot, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 
 import { registerAgentInvocationStreamEndpoint } from "./vite/invocation-stream-endpoint.ts"
@@ -37,12 +38,13 @@ export type { AgentChannelEnv } from "./channel-env-discovery.ts"
 
 import type { Plugin, ResolvedConfig, UserConfig } from "vite"
 import type { ProviderDeploymentOutputWriter, ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import type { ViteHubDefinitionSummary, ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import type { CloudflareAgentStateMigration, CloudflareAgentStateRollupTarget, CloudflareAgentStateTarget } from "./cloudflare.ts"
 import type { AgentModuleOptions, DiscoveredAgentDefinition, ResolvedAgentModuleOptions } from "./types.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 
 interface AgentCliContributingPlugin {
-  vitehub?: {
+  vitehub?: ViteHubInspectionPluginMetadata & {
     agent?: {
       transformWorkflowRegistry: (code: string, id: string) => string
     }
@@ -56,7 +58,7 @@ interface AgentCliContributingPlugin {
 export type AgentVitePlugin = Plugin & AgentCliContributingPlugin
 
 const agentPackageName = "@vite-hub/agent"
-const noExternalAddition = createNoExternalAddition(agentPackageName, "@t3tools/provider-runtime")
+const mergeNoExternal = createNoExternalAddition(agentPackageName, "@t3tools/provider-runtime")
 const generatedAgentDenoServer = "agent/deno-server.ts"
 const generatedAgentDiscordGatewayRouteHandler = "agent/discord-gateway-route.ts"
 const generatedAgentDiscordGatewayPlugin = "agent/discord-gateway-plugin.ts"
@@ -3085,6 +3087,35 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           serverDirs,
         })
       },
+      inspect: () => {
+        if (agent === false) return
+        const rootDir = resolve(resolved?.root ?? process.cwd())
+        const normalized = normalizeAgentOptions(agent)
+        const hostedAgents = Boolean(normalized && hasHostedAgentDefinitions(rootDir, serverDirs))
+        const denoHostedAgents = hostedAgents && normalized !== false && normalized?.runtime === "deno"
+        return {
+          definitions: [{
+            kind: "agent",
+            label: "Agents",
+            list: () => {
+              const rootDir = resolve(resolved?.root ?? process.cwd())
+              return inspectAgentDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
+            },
+          }],
+          providerOutput: [
+            ...(denoHostedAgents ? [{
+              description: "Generated Deno Agent server",
+              owner: "agent",
+              path: resolve(resolveViteHubGeneratedRoot(resolved ?? { root: rootDir }), generatedAgentDenoServer),
+            }] : []),
+            ...(hostedAgents && !denoHostedAgents && resolveAgentHosting(resolved) === "netlify" ? [{
+                description: "Generated Netlify Agent function",
+                owner: "agent",
+                path: resolve(createDefaultNetlifyOutputRoot(rootDir), "functions", `${netlifyAgentFunctionName}.mjs`),
+            }] : []),
+          ],
+        }
+      },
     },
     config(config, environment) {
       agent = config.agent ?? agent
@@ -3273,7 +3304,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         // SAFETY: Vite passes its environment build configuration, which this adapter augments without changing its owned fields.
         build: mergeBuildExternal(config as BuildWithRolldownOptions, []),
         resolve: {
-          noExternal: noExternalAddition(config.resolve?.noExternal),
+          noExternal: mergeNoExternal(config.resolve?.noExternal),
         },
       }
     },
@@ -3461,6 +3492,17 @@ export function discoverAgentDefinitionEntries(
     handler: definition.handler,
     name: definition.name,
   }])).values()].sort((left, right) => left.name.localeCompare(right.name) || left.handler.localeCompare(right.handler))
+}
+
+export interface AgentInspectionOptions {
+  projectRoot: string
+  rootDir: string
+  serverDirs?: string[]
+}
+
+/** Lists Agent Definitions as serializable inspection summaries. */
+export function inspectAgentDefinitions(options: AgentInspectionOptions): ViteHubDefinitionSummary[] {
+  return summarizeDefinitions(options.projectRoot, discoverAgentDefinitionEntries(options.rootDir, options.serverDirs), "agent")
 }
 
 declare module "vite" {

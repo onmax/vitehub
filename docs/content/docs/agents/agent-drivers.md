@@ -286,6 +286,8 @@ export default defineAgent({
 | `ask.chance(instructions, criteria?)` | `{ chance }`, the probability of yes. |
 | `ask.if(instructions, { threshold? })` | `true` when the probability of yes is above `threshold`. The threshold must be between `0` and `1` and defaults to `0.5`. |
 
+State, instructions, and criteria accept JSON values. Root numbers and booleans become text for the `advocaat` Entry contract. Numbers and booleans inside objects or arrays stay native. Score legends retain the original level descriptions.
+
 `driver.ask` accepts only `ask` and `capacity`. Missing `advocaat`, a missing `typesafe` group, and a missing TypeSafe API key fail the Invocation with a diagnostic. The Console and `vitehub agent info` show the Driver kind as `ask`. When an ask Driver Agent uses [`llmGate()`](/docs/capabilities/llm-gate) or [`llmRoute()`](/docs/capabilities/llm-route) without a `model`, the decision also uses Jev.
 
 ### Provider exit evidence

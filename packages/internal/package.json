@@ -28,6 +28,7 @@
     "./runtime/vercel-hosted": "./dist/runtime/vercel-hosted.js",
     "./runtime/cloudflare-env": "./dist/runtime/cloudflare-env.js",
     "./http-request": "./dist/http-request.js",
+    "./inspect": "./dist/inspect.js",
     "./runtime/random": "./dist/runtime/random.js",
     "./runtime/time-zone": "./dist/runtime/time-zone.js",
     "./build/cloudflare": "./dist/build/cloudflare.js",

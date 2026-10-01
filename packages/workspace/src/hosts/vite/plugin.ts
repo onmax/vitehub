@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path"
 
-import { createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { createDefaultCloudflareOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { copyVercelFunctionRuntimePackages } from "@vite-hub/internal/build/vercel-runtime-packages"
 import { createNoExternalAddition, generatedViteHubWatchIgnoredAddition, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
@@ -17,6 +17,7 @@ import { normalizeWorkspaceOptions } from "../../config.ts"
 import { normalizeWorkspaceDefinition } from "../../core/registry.ts"
 import { installHostedWorkspaceRuntime } from "../../hosted.ts"
 import { installHostedVercelBlobWorkspaceRuntime } from "../../hosted-vercel-blob.ts"
+import { inspectWorkspaceDefinitions } from "../../inspect.ts"
 import { configureCloudflareArtifacts } from "../../integrations/cloudflare.ts"
 import { ensureWorkspaceDevToken, refreshWorkspaceDevToken, runWorkspaceDevCommand, validateWorkspaceDevToken, workspaceDevHeader, workspaceDevHeaderValue, workspaceDevRoute, workspaceDevTokenServerId } from "../../server.ts"
 
@@ -27,6 +28,7 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import type { WorkspaceBuildState } from "../../build/integration.ts"
 import type { ResolvedWorkspaceModuleOptions, WorkspaceDefinitionInput, WorkspaceModuleOptions } from "../../core/types.ts"
 import type { WorkspaceDevTokenOptions } from "../../server.ts"
+import type { ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import { workspaceErrorDiagnostics } from "../../error-diagnostics.ts"
 
 const WORKSPACE_PACKAGE_NAME = "@vite-hub/workspace"
@@ -1654,7 +1656,7 @@ export interface WorkspaceVitePluginAPI {
 }
 
 interface WorkspaceCliContributingPlugin {
-  vitehub?: { cli?: () => unknown | Promise<unknown> }
+  vitehub?: ViteHubInspectionPluginMetadata & { cli?: () => unknown | Promise<unknown> }
 }
 
 const setWorkspacePluginHosting: unique symbol = Symbol("vitehub.workspace.setHosting")
@@ -1694,7 +1696,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
   let resolved: ResolvedConfig | undefined
   let providerOutput: ReturnType<typeof useProviderOutputCatalog> | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
-  let resolvedOptions: ReturnType<typeof normalizeWorkspaceOptions> = false
+  let resolvedOptions: ReturnType<typeof normalizeWorkspaceOptions> | undefined
   let projectRoot: string | undefined
   let viteRoot: string | undefined
   let assetsRegistryFile: string | undefined
@@ -1820,7 +1822,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
     },
     async buildStart() {
       providerOutputGenerations.capture(this, providerOutput)
-      if (!resolved) return
+      if (!resolved || !resolvedOptions) return
       const roots = {
         projectRoot: projectRoot || resolveViteHubProjectRoot(resolved.root),
         viteRoot: viteRoot || resolve(resolved.root),
@@ -1836,7 +1838,8 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
         await providerOutputGenerations.reset(this, providerOutput, error)
         return
       }
-      if (!resolved || shouldSkipViteProviderBuild(resolved.command, getViteMode())) return
+      if (!resolved || !resolvedOptions || shouldSkipViteProviderBuild(resolved.command, getViteMode())) return
+      const workspaceOptions = resolvedOptions
       const roots = {
         projectRoot: projectRoot || resolveViteHubProjectRoot(resolved.root),
         viteRoot: viteRoot || resolve(resolved.root),
@@ -1854,7 +1857,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
           await writeCloudflareArtifactsProviderOutput(
             roots.projectRoot,
             resolved!.build?.outDir ?? "dist/client",
-            resolvedOptions,
+            workspaceOptions,
             definitions,
             readCloudflareState,
             write,
@@ -1901,6 +1904,37 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
     vitehub: {
       cli: async () => {
         return createWorkspaceCliContributor()
+      },
+      inspect: async () => {
+        if (resolvedOptions === false) return
+        const roots = projectRoot && viteRoot
+          ? { projectRoot, viteRoot }
+          : resolveWorkspacePluginRoots(resolved?.root ?? process.cwd(), publicOptions)
+        const artifacts = resolvedOptions
+          ? await resolveCloudflareArtifactsConfigs(resolvedOptions, discoverDefinitions(roots, serverDirs), roots.projectRoot, {
+              aliases: resolved?.resolve ? workspaceDefinitionLoaderAliases(resolved.resolve.alias) : undefined,
+              resolveModule: resolved?.createResolver?.(),
+            })
+          : []
+        return {
+          definitions: [{
+            kind: "workspace",
+            label: "Workspaces",
+            list: () => {
+              const roots = projectRoot && viteRoot
+                ? { projectRoot, viteRoot }
+                : resolveWorkspacePluginRoots(resolved?.root ?? process.cwd(), publicOptions)
+              return inspectWorkspaceDefinitions({ projectRoot: roots.projectRoot, rootDir: roots.viteRoot, serverDirs, serverRootDir: roots.projectRoot })
+            },
+          }],
+          providerOutput: artifacts.length > 0
+            ? [{
+                description: "Generated Cloudflare Workspace artifacts config",
+                owner: "workspace",
+                path: resolve(createDefaultCloudflareOutputRoot(roots.projectRoot), "wrangler.json"),
+              }]
+            : [],
+        }
       },
     },
     async handleHotUpdate(ctx: HmrContext) {

@@ -13,6 +13,7 @@ export default defineConfig({
       "src/env.ts",
       "src/effect.ts",
       "src/http-request.ts",
+      "src/inspect.ts",
       "src/object.ts",
       "src/provision.ts",
       "src/provision-state.ts",
