@@ -53,7 +53,7 @@ type ConsoleNitroConfig = {
   baseURL?: string
   handlers?: Array<{ handler: string, method?: string, route: string }>
   plugins?: string[]
-  publicAssets?: Array<{ baseURL?: string, dir: string, fallthrough?: boolean }>
+  publicAssets?: Array<{ baseURL?: string, dir: string, fallthrough?: boolean, maxAge?: number }>
   [key: string]: unknown
 }
 
@@ -390,7 +390,8 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       const registrationBase = consoleNitroMountBase(baseURL, nitro.baseURL)
       for (const handler of [
         { handler: join(consoleRuntimeRoot, "server/status.get.js"), route: "/api/_vitehub/console/status", method: "get" },
-        { handler: join(consoleRuntimeRoot, "server/usage.get.js"), route: "/api/_vitehub/console/usage", method: "get" },
+        // The Usage section reads the Agent invocation journal, which exists only with the Agents section.
+        ...(sections.includes("agents") && sections.includes("usage") ? [{ handler: join(consoleRuntimeRoot, "server/usage.get.js"), route: "/api/_vitehub/console/usage", method: "get" }] : []),
         ...(consoleAuthHandlers?.signIn ? [{ handler: consoleAuthHandlers.signIn, route: "/_vitehub/sign-in", method: "get" }] : []),
         { handler: join(consoleRuntimeRoot, "server/page.get.js"), route: "/_vitehub" },
         { handler: join(consoleRuntimeRoot, "server/page.get.js"), route: "/_vitehub/**" },
@@ -413,6 +414,8 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         baseURL: consoleAuthPath(registrationBase, "/_vitehub/assets"),
         dir: consolePublicRoot,
         fallthrough: false,
+        // Every Console asset name contains a content hash.
+        maxAge: 60 * 60 * 24 * 365,
       })
 
       consoleConfig.nitro = { ...kit.config, publicAssets }

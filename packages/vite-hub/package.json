@@ -259,6 +259,7 @@
   "devDependencies": {
     "@iconify-json/lucide": "catalog:ui",
     "@iconify-json/ph": "catalog:ui",
+    "@iconify/vue": "catalog:ui",
     "@nuxt/ui": "catalog:nuxt",
     "@vite-hub/internal": "workspace:*",
     "@vitejs/plugin-vue": "^6.0.8",

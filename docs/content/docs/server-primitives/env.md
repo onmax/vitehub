@@ -372,6 +372,6 @@ Secret Env provides type friction and default redaction, but it is not a complet
 
 ## Next steps
 
-- Learn the server primitive model in [Server primitives for any host](/docs/concepts/server-primitives-for-any-host).
+- Learn the server primitive model in [Server primitives](/docs/server-primitives#how-a-primitive-works-in-your-app).
 - Use Env with [Auth](/docs/server-primitives/auth) when Auth runtime options need secrets.
 - Expose agent abilities through [Official capabilities](/docs/capabilities/official-capabilities) without making secrets model-facing.
