@@ -135,7 +135,8 @@ describe("Email development outbox output", () => {
   it("gives separate applications and restarts fresh outbox identities", async () => {
     const firstRoot = await createTempProject()
     const secondRoot = await createTempProject()
-    const first = await configure(hubEmail({ driver: "resend", outbox: { deliver: false } }), firstRoot, "serve")
+    const firstPlugin = hubEmail({ driver: "resend", outbox: { deliver: false } })
+    const first = await configure(firstPlugin, firstRoot, "serve")
     const firstModule: { definition: EmailDefinition, outboxRuntimeId: string } = await import(pathToFileURL(first.definition).href)
     await createEmail(firstModule.definition).send({ from: "hello@example.com", subject: "First app", text: "Hi", to: "ada@example.com" })
     const second = await configure(hubEmail({ driver: "resend", outbox: { deliver: false } }), secondRoot, "serve")
@@ -147,6 +148,12 @@ describe("Email development outbox output", () => {
     expect(await clear.json()).toEqual({ cleared: 1 })
     expect(readEmailOutboxConsoleRecords(firstModule.outboxRuntimeId)).toHaveLength(1)
     expect(getEmailOutbox(firstModule.outboxRuntimeId)?.list()).toHaveLength(1)
+    await createEmail(secondModule.definition).send({ from: "hello@example.com", subject: "Retained second app", text: "Hi", to: "ada@example.com" })
+    const close = firstPlugin.closeBundle
+    if (!(close instanceof Function)) throw new Error("Expected an Email teardown hook")
+    await Reflect.apply(close, undefined, [])
+    expect(getEmailOutbox(firstModule.outboxRuntimeId)).toBeUndefined()
+    expect(getEmailOutbox(secondModule.outboxRuntimeId)?.list()).toHaveLength(1)
     const restarted = await configure(hubEmail({ driver: "resend", outbox: { deliver: false } }), firstRoot, "serve")
     const restartedModule: { outboxRuntimeId: string } = await import(`${pathToFileURL(restarted.definition).href}?restart`)
     expect(restartedModule.outboxRuntimeId).not.toBe(firstModule.outboxRuntimeId)

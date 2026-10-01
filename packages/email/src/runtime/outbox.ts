@@ -86,6 +86,14 @@ function state(runtimeId = "default"): EmailOutboxState | undefined {
   return (globalThis as OutboxGlobal)[outboxState]?.get(runtimeId)
 }
 
+/** Removes only this runtime's messages and identity during development server teardown. */
+export function disposeEmailOutbox(runtimeId: string): void {
+  const current = state(runtimeId)
+  current?.messages.splice(0)
+  // SAFETY: The owner-created registry shares generated outbox state between bundles.
+  ;(globalThis as OutboxGlobal)[outboxState]?.delete(runtimeId)
+}
+
 function normalizeLimit(value: number | undefined): number {
   if (value === undefined) return defaultEmailOutboxLimit
   return Math.min(Math.max(Math.trunc(value), 1), maximumEmailOutboxLimit)

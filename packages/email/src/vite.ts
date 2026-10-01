@@ -20,6 +20,7 @@ import type { Plugin, ResolvedConfig } from "vite"
 import { emailDevRuntimeRoute } from "./dev.ts"
 import { emailErrorDiagnostics } from "./error-diagnostics.ts"
 import { discoverEmailTemplates } from "./templates.ts"
+import { disposeEmailOutbox } from "./runtime/outbox.ts"
 import { registerEmailDevEndpoint } from "./vite-dev.ts"
 
 import type { EmailTemplate } from "./templates.ts"
@@ -517,6 +518,9 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
       buildStarted = true
       for (const templatesRoot of templatesRoots) this.addWatchFile(templatesRoot)
       for (const file of watchFiles) this.addWatchFile(file)
+    },
+    closeBundle() {
+      disposeEmailOutbox(outboxRuntimeId)
     },
     configureServer(server) {
       registerEmailDevEndpoint(server, {
