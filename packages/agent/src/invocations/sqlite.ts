@@ -104,6 +104,13 @@ function capabilityIdsProjection() {
   ))`
 }
 
+// The index on this expression must use the same SQL text as the queries that read it.
+function triggeredByProjection() {
+  const source = "CASE WHEN json_valid(summary) THEN summary ELSE record END"
+  return `CASE WHEN json_type(${source}, '$.annotations.triggeredBy') = 'text'
+    THEN json_extract(${source}, '$.annotations.triggeredBy') END`
+}
+
 function serializedSummary(record: Omit<AgentInvocationRecord, "cursor">): string {
   const { observations: _observations, ...summary } = record
   return JSON.stringify(summary, (_key, value) => typeof value === "bigint" ? String(value) : value)
@@ -403,6 +410,13 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
       await client.execute(`CREATE INDEX IF NOT EXISTS ${table}_legacy_agent_name_sequence
         ON ${table} (json_extract(record, '$.agentName'), sequence DESC)
         WHERE agent_name IS NULL OR agent_name = ''`)
+      // Tables from older versions store summary and capability_ids after the large record column.
+      // Reading those values from the row walks every overflow page of record, so filter lists read them from these indexes.
+      // Partial indexes keep the query planner from choosing them for Invocation list queries.
+      await client.execute(`CREATE INDEX IF NOT EXISTS ${table}_agent_name_capability_ids
+        ON ${table} (agent_name, capability_ids) WHERE capability_ids IS NOT NULL`)
+      await client.execute(`CREATE INDEX IF NOT EXISTS ${table}_agent_name_triggered_by
+        ON ${table} (agent_name, ${triggeredByProjection()}) WHERE ${triggeredByProjection()} IS NOT NULL`)
       await client.execute(`CREATE TABLE IF NOT EXISTS ${table}_claims (
         id TEXT PRIMARY KEY,
         claim_id TEXT NOT NULL,
@@ -660,13 +674,20 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
         sql: `UPDATE ${table} SET capability_ids = ${capabilityIdsProjection()}
           WHERE capability_ids IS NULL AND ${filter}`,
       })))
+      // A writer can invalidate the cache between these statements. Resolve those rows
+      // from their current record so an active Invocation never returns stale IDs.
+      // Cached IDs come from the covering index. Only legacy rows without agent_name read the row.
+      const rows = selectedAgent
+        ? `SELECT capability_ids AS ids FROM ${table} WHERE agent_name = ? AND capability_ids IS NOT NULL
+          UNION ALL SELECT ${capabilityIdsProjection()} FROM ${table} WHERE agent_name = ? AND capability_ids IS NULL
+          UNION ALL SELECT COALESCE(capability_ids, ${capabilityIdsProjection()}) FROM ${table}
+            WHERE (agent_name IS NULL OR agent_name = '') AND json_extract(record, '$.agentName') = ?`
+        : `SELECT capability_ids AS ids FROM ${table} WHERE capability_ids IS NOT NULL
+          UNION ALL SELECT ${capabilityIdsProjection()} FROM ${table} WHERE capability_ids IS NULL`
       const result = await client.execute({
-        args,
-        // A writer can invalidate the cache between these statements. Resolve those rows
-        // from their current record so an active Invocation never returns stale IDs.
+        args: selectedAgent ? [selectedAgent, selectedAgent, selectedAgent] : [],
         sql: `SELECT DISTINCT capability.value AS capability_id
-          FROM ${table}, json_each(COALESCE(capability_ids, ${capabilityIdsProjection()})) AS capability
-          WHERE ${filter} ORDER BY capability_id`,
+          FROM (${rows}) AS invocation, json_each(invocation.ids) AS capability ORDER BY capability_id`,
       })
       return result.rows.flatMap((row) => {
         return hasRuntimeType(row.capability_id, "string") ? [row.capability_id] : []
@@ -675,17 +696,18 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     async listTriggeredBy(agentName) {
       await initialize()
       const selectedAgent = agentName?.trim()
-      const args = selectedAgent ? [selectedAgent, selectedAgent] : []
-      const agentFilter = selectedAgent
-        ? " AND (agent_name = ? OR ((agent_name IS NULL OR agent_name = '') AND json_extract(record, '$.agentName') = ?))"
-        : ""
+      const triggeredBy = triggeredByProjection()
+      // Equality lookups on agent_name read the label from the expression index. Only legacy rows without agent_name read the row.
+      const rows = selectedAgent
+        ? `SELECT ${triggeredBy} AS triggered_by FROM ${table} WHERE agent_name = ? AND ${triggeredBy} IS NOT NULL
+          UNION ALL SELECT ${triggeredBy} FROM ${table}
+            WHERE (agent_name IS NULL OR agent_name = '') AND json_extract(record, '$.agentName') = ?`
+        : `SELECT ${triggeredBy} AS triggered_by FROM ${table}
+            WHERE agent_name IN (SELECT DISTINCT agent_name FROM ${table} WHERE agent_name IS NOT NULL) AND ${triggeredBy} IS NOT NULL
+          UNION ALL SELECT ${triggeredBy} FROM ${table} WHERE agent_name IS NULL AND ${triggeredBy} IS NOT NULL`
       const result = await client.execute({
-        args,
-        sql: `SELECT DISTINCT json_extract(CASE WHEN json_valid(summary) THEN summary ELSE record END, '$.annotations.triggeredBy') AS triggered_by
-          FROM ${table}
-          WHERE json_type(CASE WHEN json_valid(summary) THEN summary ELSE record END, '$.annotations.triggeredBy') = 'text'
-            AND trim(json_extract(CASE WHEN json_valid(summary) THEN summary ELSE record END, '$.annotations.triggeredBy')) <> ''${agentFilter}
-          ORDER BY triggered_by`,
+        args: selectedAgent ? [selectedAgent, selectedAgent] : [],
+        sql: `SELECT DISTINCT triggered_by FROM (${rows}) WHERE trim(triggered_by) <> '' ORDER BY triggered_by`,
       })
       return result.rows.flatMap(row => hasRuntimeType(row.triggered_by, "string") ? [row.triggered_by] : [])
     },
