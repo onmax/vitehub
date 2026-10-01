@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { consoleInvocationUrl, resolvePublicUrl } from "../src/index.ts"
+import { consoleInvocationUrl, registerPublicUrlAgentName, resolvePublicUrl } from "../src/index.ts"
 
 describe("public URL", () => {
   afterEach(() => {
@@ -21,6 +21,17 @@ describe("public URL", () => {
 
     vi.stubGlobal("__VITEHUB_PUBLIC_URL__", { url: "https://agents.example.com" })
     expect(resolvePublicUrl({ agentName: "bot", request: { url: "http://10.0.0.1:3000/" } })).toBe("https://agents.example.com")
+  })
+
+  it("resolves explicit names without overriding exact configured names", () => {
+    vi.stubGlobal("__VITEHUB_PUBLIC_URL__", { agents: { discovered: "https://discovered.example.com", exact: "https://exact.example.com" } })
+    registerPublicUrlAgentName("declared", "discovered")
+    expect(resolvePublicUrl({ agentName: "declared" })).toBe("https://discovered.example.com")
+    registerPublicUrlAgentName("exact", "discovered")
+    expect(resolvePublicUrl({ agentName: "exact" })).toBe("https://exact.example.com")
+    registerPublicUrlAgentName("ambiguous", "discovered")
+    registerPublicUrlAgentName("ambiguous", "exact")
+    expect(resolvePublicUrl({ agentName: "ambiguous" })).toBeUndefined()
   })
 
   it("builds one Console invocation URL with the application base path", () => {

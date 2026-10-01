@@ -1,10 +1,11 @@
+import { registerPublicUrlAgentName } from "@vite-hub/runtime"
 import { hasRuntimeType } from "./runtime-type.ts"
 import { agentDefinitionSourceSymbol } from "./agent-definition-source.ts"
 
 // Discovery names an Agent Definition from its file when the definition has no explicit name.
 export const discoveredAgentName: unique symbol = Symbol.for("vitehub.discoveredAgentName")
 
-type DiscoveredAgent = { [discoveredAgentName]?: unknown }
+type DiscoveredAgent = { [discoveredAgentName]?: unknown, name?: unknown }
 
 function linkedDefinitions(agent: unknown): object[] {
   const linked: object[] = []
@@ -31,6 +32,9 @@ export function markDiscoveredAgentName(agent: unknown, name: string): void {
   })
   for (const definition of linked) {
     Object.defineProperty(definition, discoveredAgentName, { configurable: true, value: ambiguous ? null : name })
+    // SAFETY: linkedDefinitions returns objects; the explicit name remains untrusted until checked.
+    const explicitName = (definition as DiscoveredAgent).name
+    if (hasRuntimeType(explicitName, "string") && explicitName) registerPublicUrlAgentName(explicitName, name)
   }
 }
 
