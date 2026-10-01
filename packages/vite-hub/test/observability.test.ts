@@ -2,9 +2,15 @@ import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "vite"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { env } from "@vite-hub/env"
+import evlog from "evlog/nitro/v3"
 import { vitehub } from "../src/index.ts"
+
+vi.mock("evlog/nitro/v3", async (importOriginal) => {
+  const module = await importOriginal<typeof import("evlog/nitro/v3")>()
+  return { ...module, default: vi.fn(module.default) }
+})
 
 type ObservabilityConfig = { root: string, env?: { server?: Record<string, unknown> }, nitro?: { modules?: unknown[], plugins?: string[] } }
 
@@ -24,7 +30,7 @@ describe("vitehub({ observability })", () => {
         preset: "node",
         agent: true,
         console: { exposure: "host-managed" },
-        observability: { service: "support", posthog: { apiKey, host: "https://eu.i.posthog.com" }, evlog: { pretty: false }, papercuts: { eventPrefix: "acme.papercut" } },
+        observability: { service: "support", environment: "production", posthog: { apiKey, host: "https://eu.i.posthog.com" }, evlog: { pretty: false, env: { service: "other", environment: "staging", version: "1.2.3" } }, papercuts: { eventPrefix: "acme.papercut" } },
       })
       const config: ObservabilityConfig = { root }
       // SAFETY: The plugin reads only the root and the ViteHub-owned env and nitro keys, which this fixture supplies.
@@ -34,6 +40,7 @@ describe("vitehub({ observability })", () => {
 
       expect(config.env?.server?.observability).toEqual({ posthog: { apiKey } })
       expect(config.nitro?.modules).toEqual([expect.objectContaining({ name: "evlog" })])
+      expect(evlog).toHaveBeenLastCalledWith(expect.objectContaining({ env: { service: "support", environment: "production", version: "1.2.3" } }))
       const generated = join(root, ".vitehub/nitro/observability/plugin.mjs")
       expect(config.nitro?.plugins).toEqual([generated])
       const source = await readFile(generated, "utf8")

@@ -117,9 +117,8 @@ export function observabilityVitePlugin(options: ObservabilityOptions, target: {
       kit.addPlugin(plugin)
       const modules = Array.isArray(kit.config.modules) ? kit.config.modules : []
       const evlogOptions = options.evlog ?? {}
-      const env: NonNullable<NitroModuleOptions["env"]> = { service: options.service }
+      const env: NonNullable<NitroModuleOptions["env"]> = { ...evlogOptions.env, service: options.service }
       if (options.environment) env.environment = options.environment
-      Object.assign(env, evlogOptions.env)
       // One evlog module per Nitro app. Skip it when this hook already ran on the same config.
       if (!modules.some(module => module instanceof Object && "name" in module && module.name === "evlog")) {
         kit.config.modules = [...modules, evlog({ ...evlogOptions, env })]
