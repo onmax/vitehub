@@ -130,8 +130,12 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     }
     if (candidates.length === 1) return candidates[0]
     const publicDefine = JSON.stringify({ publicUrl: config.define?.__VITEHUB_PUBLIC_URL__, base: config.define?.__VITEHUB_APP_BASE_URL__ })
-    return candidates.find(candidate => candidate.config.build.outDir === config.build.outDir
+    const matches = candidates.filter(candidate => candidate.config.build.outDir === config.build.outDir
       && JSON.stringify({ publicUrl: candidate.config.define?.__VITEHUB_PUBLIC_URL__, base: candidate.config.define?.__VITEHUB_APP_BASE_URL__ }) === publicDefine)
+    if (matches.length !== 1) return undefined
+    const [match] = matches
+    scheduleBuildConfigs.set(config, match)
+    return match
   }
 
   function providerRuntimeImportAliases(provider: "cloudflare" | "vercel", generation?: ProviderDeploymentOutputGeneration, catalog = providerOutput): Record<string, string> {
