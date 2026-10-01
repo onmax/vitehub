@@ -2630,6 +2630,7 @@ summary.vh-invocation-inspector__group-heading:focus-visible,
   outline-offset: 2px;
 }
 
+.vh-agent-tool-list__item small,
 .vh-agent-tool-list__disclosure > summary small {
   color: var(--vh-ui-dimmed);
   flex: 1;
@@ -2638,6 +2639,18 @@ summary.vh-invocation-inspector__group-heading:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.vh-agent-tool-list__icon {
+  color: var(--vh-ui-muted);
+  display: inline-flex;
+  flex: none;
+}
+
+.vh-agent-tool-list__icon > *,
+.vh-invocation-event__icon > .iconify {
+  height: 0.875rem;
+  width: 0.875rem;
 }
 
 .vh-agent-tool-list > [data-used="false"] {

@@ -5,10 +5,11 @@ import { redactCredentialText } from "./internal/credential-redaction.ts"
 
 import { agentErrorDetails } from "./agent-error.ts"
 import { agentInvokerLabel } from "./invoker.ts"
-import { isAttachmentPart, type AgentActivity, type Message, type StreamEvent } from "./messages.ts"
+import { isAttachmentPart, type Message, type StreamEvent } from "./messages.ts"
 import type {
   AgentDriverContribution,
   AgentInvocationContextStore,
+  AgentToolDefinition,
   AgentChannelDeliveryEffectIntent,
   AgentInvoker,
   AgentRunInput,
@@ -94,8 +95,10 @@ function invocationAttributes(
     "channel.delivery.id": context.runtime.channelDelivery?.id,
     "channel.delivery.provider": context.runtime.channelDelivery?.provider,
     "channel.delivery.source.id": context.runtime.channelDelivery?.sourceId,
+    "input.hasData": context.input.data !== undefined,
     "input.hasMessages": Boolean(context.input.messages?.length),
     "input.hasPrompt": Boolean(context.input.prompt),
+    ...(includeInput && context.input.data !== undefined ? { "input.data": context.input.data } : {}),
     ...(includeInput && context.input.messages?.length ? { "input.messages": traceMessages(context.input.messages) } : {}),
     ...(includeInput && context.input.prompt ? { "input.prompt": context.input.prompt } : {}),
     "runtime.name": context.runtime.runtime,
@@ -665,7 +668,7 @@ function firstString(...values: unknown[]): string | undefined {
 
 export function aiSdkTelemetryIntegration<TRuntimeConfig extends AgentRuntimeConfig>(
   context: AgentTraceContext<TRuntimeConfig>,
-  toolActivities?: ReadonlyMap<string, AgentActivity>,
+  toolDefaults?: ReadonlyMap<string, Pick<AgentToolDefinition, "activity" | "title">>,
 ): Telemetry {
   const modelAttributes = (event: unknown) => ({
     "model.id": firstString(valueFromPath(event, ["model", "modelId"]), valueFromPath(event, ["model", "id"]), valueFromPath(event, ["modelId"])),
@@ -674,11 +677,13 @@ export function aiSdkTelemetryIntegration<TRuntimeConfig extends AgentRuntimeCon
   })
   const toolAttributes = (event: unknown) => {
     const name = firstString(valueFromPath(event, ["toolCall", "toolName"]), valueFromPath(event, ["toolName"]), valueFromPath(event, ["name"]), valueFromPath(event, ["tool", "name"]))
-    const activity = name ? toolActivities?.get(name) : undefined
+    const defaults = name ? toolDefaults?.get(name) : undefined
+    const activity = defaults?.activity
     return {
       "step.id": firstString(valueFromPath(event, ["toolCall", "toolCallId"]), valueFromPath(event, ["toolCallId"]), valueFromPath(event, ["id"]), valueFromPath(event, ["tool", "id"])) || "tool",
       "tool.id": firstString(valueFromPath(event, ["toolCall", "toolCallId"]), valueFromPath(event, ["toolCallId"]), valueFromPath(event, ["id"]), valueFromPath(event, ["tool", "id"])),
       "tool.name": name,
+      ...(defaults?.title ? { "tool.title": defaults.title } : {}),
       "vitehub.action.name": activity?.kind === "action" ? activity.name : undefined,
       "vitehub.activity.kind": activity?.kind || "tool",
     }

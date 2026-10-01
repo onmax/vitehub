@@ -46,6 +46,8 @@ const invocation = {
 };
 ```
 
+A tool entry can include `label` and `icon` from the tool's declared `title` and `icon`. The tool list and the session's tool calls use them. `createViteHubUI()` registers Nuxt UI's `UIcon` to render the icon; without `UIcon`, they keep the built-in icons.
+
 Do not reconstruct configuration from the current Agent Definition. Dynamic Capabilities, instructions, Workspace bindings, Sources, driver, and runtime may have changed since the invocation ran.
 
 Only include instruction content when the current viewer may inspect it. The component does not fetch missing configuration or authorize access.
