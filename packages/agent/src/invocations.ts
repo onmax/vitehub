@@ -121,7 +121,8 @@ export interface AgentInvocationStoreUpdateInput {
   /** Append with a stable observation identity and a sequence assigned atomically by the store. */
   appendObservation?: Omit<TraceEventLogEntry, "sequence">
   annotations?: AgentInvocationRecord["annotations"]
-  cancelNotEnforcedBy?: string
+  /** Current Driver that cannot enforce cancellation. `null` clears a previous Driver's marker. */
+  cancelNotEnforcedBy?: string | null
   /** Requests cancellation. Stores ignore it on terminal records. */
   cancelRequestedAt?: string
   capabilityIds?: readonly string[]
@@ -1229,7 +1230,6 @@ export function applyAgentInvocationStoreUpdate(
       : {}),
     ...(capabilityIds.length ? { capabilityIds } : {}),
     ...(input.cancelRequestedAt && !record.cancelRequestedAt ? { cancelRequestedAt: input.cancelRequestedAt } : {}),
-    ...(input.cancelNotEnforcedBy && !record.cancelNotEnforcedBy ? { cancelNotEnforcedBy: boundedString(input.cancelNotEnforcedBy) } : {}),
     ...(input.error ? { error: input.error } : {}),
     ...(title ? { title } : {}),
     ...(titleUpdated ? { titleSequence: input.observation!.sequence } : {}),
@@ -1248,6 +1248,11 @@ export function applyAgentInvocationStoreUpdate(
     const annotations = normalizeAnnotations(input.annotations)
     if (annotations) updated.annotations = annotations
     else delete updated.annotations
+  }
+  if (Object.hasOwn(input, "cancelNotEnforcedBy")) {
+    const driver = input.cancelNotEnforcedBy ? boundedString(input.cancelNotEnforcedBy) : undefined
+    if (driver) updated.cancelNotEnforcedBy = driver
+    else delete updated.cancelNotEnforcedBy
   }
   return updated
 }
@@ -1810,7 +1815,8 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           const latest = await boundedStoreOperation(() => store.getSummary(recordId))
           if (latest && latest !== storeOperationTimedOut) {
             readCancellationRequest(latest)
-            if (terminalStatus(latest.status)) finished = true
+            // The claim-owning finalizer still needs to persist truncation and other cleanup metadata.
+            if (terminalStatus(latest.status) && !finishing) finished = true
           }
         }
         if (ownsRecord && finished) {
@@ -2049,7 +2055,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             .map(observationPersistenceKey)
           pendingObservations.length = 0
           if (runningRequested && !runningPersisted) {
-            runningPersisted = await update({ status: "running", timestamp: new Date().toISOString() })
+            runningPersisted = await update({ cancelNotEnforcedBy: cancelNotEnforcedBy ?? null, status: "running", timestamp: new Date().toISOString() })
           }
           const failure = errorDetails(error)
           for (const observation of pendingOutcomes.slice(0, -1)) {
@@ -2140,7 +2146,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           runningRequested = true
           const markRunning = async () => {
             runningPersisted = await update({
-              ...(cancelNotEnforcedBy ? { cancelNotEnforcedBy } : {}),
+              cancelNotEnforcedBy: cancelNotEnforcedBy ?? null,
               status: "running",
               timestamp: new Date().toISOString(),
             })
@@ -2166,7 +2172,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         },
         watchCancellation(driver) {
           if (finished || finishing || unregisterCancellation) return
-          if (!driver.enforced) cancelNotEnforcedBy = driver.name
+          cancelNotEnforcedBy = driver.enforced ? undefined : driver.name
           unregisterCancellation = registerAgentInvocationCancellation(store, recordId, { abort: requestCancellation, driver: () => runningRequested ? driver : undefined })
         },
       }

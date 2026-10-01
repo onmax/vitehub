@@ -16,6 +16,7 @@ vi.mock("../src/internal/ai-sdk-runtime.ts", () => ({
 
 import { agentInvocationId, defineAgent, runAgent, startAgentInvocation } from "../src/index.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
+import { bindAgentInvocations } from "../src/invocations.ts"
 
 import type { AgentInvocationRecordStatus, AgentInvocations } from "../src/index.ts"
 
@@ -52,6 +53,34 @@ afterEach(() => {
 })
 
 describe("Agent Invocation cancel", () => {
+  it.each([
+    { driver: { enforced: true, name: "model" }, expected: undefined },
+    { driver: { enforced: true, name: "codex" }, expected: undefined },
+    { driver: { enforced: false, name: "run" }, expected: "run" },
+  ])("refreshes recovered cancellation metadata for the $driver.name Driver", async ({ driver, expected }) => {
+    const runId = `recovered-${driver.name}`
+    const id = await agentInvocationId(runId)
+    const store = createMemoryAgentInvocationStore()
+    const timestamp = new Date().toISOString()
+    await store.create({ cancelNotEnforcedBy: "old-run", createdAt: timestamp, id, observations: [], status: "running", traceId: "recovered-trace", updatedAt: timestamp })
+    const invocations = defineAgentInvocations({ store })
+    // A separate store facade shares durable records without sharing process-local abort handles.
+    const remoteInvocations = defineAgentInvocations({ store: { ...store } })
+    const journal = await bindAgentInvocations(invocations, runtime(runId))
+    if (!journal) throw new Error("Expected recovered invocation journal")
+    try {
+      journal.watchCancellation(driver)
+      await journal.running()
+      expect((await invocations.get(id))?.cancelNotEnforcedBy).toBe(expected)
+      const result = await remoteInvocations.cancel(id)
+      expect(result).toMatchObject({ delivery: "journal", outcome: "requested", status: "running" })
+      expect(result.notEnforcedBy).toBe(expected)
+    }
+    finally {
+      await journal.finish("cancelled")
+    }
+  })
+
   it("aborts a running model Driver in this process", async () => {
     modelGenerate.mockImplementation(async (input: { abortSignal?: AbortSignal }) => await untilAborted(input.abortSignal))
     const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })

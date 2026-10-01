@@ -126,7 +126,7 @@ async function configurePluginServer(plugin: { configureServer?: unknown }, serv
 }
 
 async function invokeMiddleware(
-  handler: Connect.NextHandleFunction,
+  handlers: readonly Connect.NextHandleFunction[],
   body: Record<string, unknown>,
   url: string,
   headers: IncomingMessage["headers"],
@@ -164,7 +164,14 @@ async function invokeMiddleware(
       },
     } as unknown as ServerResponse
 
-    handler(req, res, () => reject(new Error("middleware passed through")))
+    let nextHandler = 0
+    const next = (error?: unknown) => {
+      if (error) return reject(error)
+      const handler = handlers[nextHandler++]
+      if (!handler) return reject(new Error("middleware passed through"))
+      handler(req, res, next)
+    }
+    next()
   })
 }
 
@@ -240,7 +247,7 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
     const plugin = (await import("../src/vite.ts")).hubAgent()
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "review",
       payload: { prompt: "review" },
       trigger: "github.webhook",
@@ -287,7 +294,7 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "support",
       workspaceCommand: { command: "pnpm", args: ["test"] },
     }, agentInvocationStreamRoute, {
@@ -322,7 +329,7 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
     const token = await readWorkspaceDevToken(root, { serverId: workspaceDevTokenServerId(3000) })
     expect(getWorkspaceHostedStoreLoader()).toBeUndefined()
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "support",
       workspaceCommand: { command: "pnpm", args: ["test"] },
     }, agentInvocationStreamRoute, {
@@ -353,7 +360,7 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
     await configurePluginServer(plugin, server)
     const token = await readWorkspaceDevToken(root, { serverId: workspaceDevTokenServerId(3000) })
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "support",
       workspaceCommand: { command: "pnpm", args: ["test"] },
     }, agentInvocationStreamRoute, {
@@ -391,7 +398,7 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
     await configurePluginServer(plugin, server)
     const token = await readWorkspaceDevToken(root, { serverId: workspaceDevTokenServerId(3000) })
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "support",
       timeout: 1234,
       workspaceCommand: { args: ["test", "--filter", "api"], command: "pnpm" },
@@ -453,7 +460,7 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
     await configurePluginServer(plugin, server)
     const token = await readWorkspaceDevToken(root, { serverId: workspaceDevTokenServerId(3000) })
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "support",
       workspaceCommand: { command: "ls" },
     }, agentInvocationStreamRoute, {
@@ -488,7 +495,7 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
     await configurePluginServer(plugin, server)
     const token = await readWorkspaceDevToken(root, { serverId: workspaceDevTokenServerId(3000) })
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "support",
       workspaceCommand: { command: "ls" },
     }, agentInvocationStreamRoute, {
@@ -523,7 +530,7 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
     await configurePluginServer(plugin, server)
     const token = await readWorkspaceDevToken(root, { serverId: workspaceDevTokenServerId(3000) })
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "support",
       workspaceCommand: { command: "ls" },
     }, agentInvocationStreamRoute, {
@@ -575,7 +582,7 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
     await configurePluginServer(plugin, server)
     const token = await readWorkspaceDevToken(root, { serverId: workspaceDevTokenServerId(3000) })
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "support",
       workspaceCommand: { args: ["dev"], command: "pnpm" },
     }, agentInvocationStreamRoute, {
