@@ -72,6 +72,7 @@ export type ViteHubConsoleSectionContent =
 const sectionIdPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 
 export function isViteHubConsoleSectionId(value: unknown): value is string {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This public boundary validates untrusted section ids before applying the route pattern.
   return typeof value === "string" && sectionIdPattern.test(value)
 }
 
