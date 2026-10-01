@@ -7,6 +7,8 @@ import {
   resolveViteHubDevServerUrl,
 } from "@vite-hub/internal/cli"
 
+import { redactInspectionText } from "@vite-hub/internal/inspect"
+
 import { rateLimitDevHeader, rateLimitDevHeaderValue, rateLimitDevRoute } from "./dev.ts"
 import { rateLimitErrorDiagnostics } from "./error-diagnostics.ts"
 
@@ -193,8 +195,9 @@ async function readFailure(response: Response): Promise<{ code?: string, message
 }
 
 function writeFailure(parsed: Pick<ParsedRateLimitArgs, "json">, context: RateLimitCliContext, failure: { code?: string, message: string }): number {
-  if (parsed.json) context.stdout.write(`${JSON.stringify({ error: failure }, null, 2)}\n`)
-  else context.stderr.write(`${failure.message}\n`)
+  const message = redactInspectionText(failure.message)
+  if (parsed.json) context.stdout.write(`${JSON.stringify({ error: { ...failure, message } }, null, 2)}\n`)
+  else context.stderr.write(`${message}\n`)
   return 1
 }
 
@@ -215,7 +218,7 @@ async function runRateLimitCommand(
   catch (error) {
     const terminator = args.indexOf("--")
     if (args.slice(0, terminator < 0 ? args.length : terminator).includes("--json")) return writeFailure({ json: true }, context, { message: error instanceof Error ? error.message : String(error) })
-    context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+    writeFailure({ json: false }, context, { message: error instanceof Error ? error.message : String(error) })
     writeUsage(command, context.stderr)
     return 1
   }
@@ -276,7 +279,7 @@ export async function runRateLimitCli(args: string[], context: RateLimitCliConte
   const [name, ...rest] = args
   const command = rateLimitCommands.find(entry => entry.name === name)
   if (!command) {
-    context.stderr.write(`${name ? `Unknown rate-limit command: ${name}\n` : ""}Commands: ${rateLimitCommands.map(entry => entry.name).join(", ")}\n`)
+    context.stderr.write(`${name ? `Unknown rate-limit command: ${redactInspectionText(name)}\n` : ""}Commands: ${rateLimitCommands.map(entry => entry.name).join(", ")}\n`)
     return 1
   }
   return await runRateLimitCommand(command, rest, context, options)
