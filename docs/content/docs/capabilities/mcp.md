@@ -150,9 +150,33 @@ Tool integrity requires `ai` 7.0.19 or newer only when `integrity` is configured
 
 The external MCP Server owns its own credentials, availability, and tool behavior.
 
-During resolution and tool discovery, transient transport failures make only the affected server unavailable. Other servers retain their tools. HTTP 408, 409, 429, and 5xx responses, recognized network errors, and bounded timeouts produce entries in the Invocation input context at `vitehub.mcp.warnings`. Each entry records the server, phase, and HTTP status when available. Inspection marks the server `Unavailable`.
+During resolution and tool discovery, transient transport failures make only the affected server unavailable. Other servers retain their tools. HTTP 408, 409, 429, and 5xx responses, recognized network errors, and bounded timeouts produce entries in the Invocation input context at `vitehub.mcp.warnings`. Each entry records the server, phase, and HTTP status when available. Read them with `getMcpWarnings(input)`, which returns typed `McpAvailabilityWarning` entries. Inspection marks the server `Unavailable`.
 
 Authentication, configuration, cancellation, protocol errors, duplicate tools, and tool-definition integrity drift remain fatal. This degradation applies to `mcp()`; Executor connection and discovery failures remain fatal.
+
+### Tell chat users about unavailable servers
+
+Set `unavailableNotice` to append a notice to the final chat reply when a server is unavailable. `true` uses the default text, for example `> ⚠️ posthog tools were temporarily unavailable. I answered with the remaining context.` A function receives the names of the unavailable servers and returns the notice.
+
+```ts
+mcp({
+  servers: { posthog: posthogServer },
+  unavailableNotice: servers => `${servers.join(', ')} was unavailable. This answer may be incomplete.`,
+})
+```
+
+With `messages.loading` or durable delivery, the notice is part of the final reply. When the reply streams, or with `stream: false`, the notice follows as a separate message. With `messages.delivery: 'manual'`, ViteHub posts no notice. Read the warnings in a finish hook with `getMcpWarnings(event.input)`:
+
+```ts
+import { getMcpWarnings } from 'vite-hub/agent/capabilities'
+
+hooks: {
+  'agent:finish': (event) => {
+    const servers = getMcpWarnings(event.input).map(warning => warning.server)
+    if (servers.length) return event.reply(`Unavailable: ${servers.join(', ')}`)
+  },
+}
+```
 
 ## Driver support
 
@@ -178,6 +202,7 @@ Confirm that the Capability fails before model execution.
 | --- | --- | --- | --- |
 | `integrity` | `Record<string, McpToolFingerprints>` | none | Approved AI SDK tool fingerprints keyed by configured server name. Blocks added or changed definitions. |
 | `servers` | `Record<string, McpServerConfig>` | required | MCP clients, client configs, optional absent values, or resolvers keyed by server name. |
+| `unavailableNotice` | `boolean \| ((servers: string[]) => string)` | `false` | Append a notice to the final chat reply when a server is unavailable. `true` uses the default text. |
 
 Cover MCP usage guidance in Agent Driver Instructions with explicit Capability coverage blocks. Keep MCP tool descriptions with the MCP Server because they are structured tool contracts.
 
