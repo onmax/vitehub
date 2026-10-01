@@ -215,7 +215,8 @@ async function readValue(parsed: ParsedKVArgs, cwd: string): Promise<unknown> {
   const text = raw.startsWith("@") ? await readFile(resolve(cwd, raw.slice(1)), "utf8") : raw
   if (!parsed.jsonValue) return text
   try {
-    return JSON.parse(text) as unknown
+    const value: unknown = JSON.parse(text)
+    return value
   }
   catch (error) {
     throw kvErrorDiagnostics.KV_R0019({ message: `The value is not valid JSON: ${error instanceof Error ? error.message : String(error)}` })

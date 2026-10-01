@@ -103,8 +103,8 @@ function errorCode(cause: unknown): string | undefined {
 }
 
 function unwrap<TResult>(result: KVResult<TResult>): TResult {
-  const [error, value] = result
-  if (!error) return value as TResult
+  if (result[0] === null) return result[1]
+  const error = result[0]
   const cause = error.cause
   const causeMessage = cause instanceof Error ? ` ${cause.message}` : ""
   throw new KVDevRequestError(`${error.message}${causeMessage}`, 502, errorCode(cause) ?? error.code)
