@@ -2127,12 +2127,16 @@ describe("Agent invocation console", () => {
         await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "running" })
       })
       await expect(invocationHandler(detailEvent(running.id))).resolves.toMatchObject({
-        invocation: { actions: { delete: { available: false }, rerun: { available: false, reason: "invocation-active" } } },
+        invocation: { actions: { delete: { available: false }, rerun: { available: false, reason: "invocation-not-terminal" } } },
       })
       await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 409 })
       release("done")
       await vi.waitFor(async () => {
         await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "completed" })
+      })
+
+      await expect(invocationHandler(detailEvent(running.id))).resolves.toMatchObject({
+        invocation: { actions: { rerun: { available: true, prompt: "Keep running." } } },
       })
 
       await expect(invocationHandler(detailEvent(completed.id, { action: "cancel" }))).rejects.toMatchObject({ statusCode: 400 })

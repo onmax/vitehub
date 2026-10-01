@@ -257,12 +257,12 @@ const input = record ? agentInvocationRerunInput(record) : undefined
 if (input?.available) {
   await runAgent(agent, context, {
     prompt: input.prompt,
-    context: { invokerProfileId: input.invokerProfileId },
+    ...(input.invokerProfileId ? { context: { invokerProfileId: input.invokerProfileId } } : {}),
   })
 }
 ```
 
-The result has `available: false` and a `reason` when the record cannot reproduce its input: `input-not-captured` for a missing prompt, `input-has-data` for structured input, `input-has-options` for call options, `input-has-messages` for prior Messages, `input-redacted` for a rewritten prompt, or `input-truncated` for a bounded prompt. Structured input and call options are not replayed. Redaction of the prompt, selected profile, or input-presence metadata disables replay. The journal keeps `input.prompt` only when `metadataContent` or `content: 'content'` includes it. When the start observation recorded an Invoker Profile, `invokerProfileId` holds the selected profile ID, even when an invoker resolver changes the identity.
+The result has `available: false` and a `reason` when the record cannot reproduce its input: `input-not-captured` for a missing prompt, `input-has-data` for structured input, `input-has-options` for call options, `input-has-messages` for prior Messages, `input-redacted` for changed input or Invoker Profile replay metadata, or `input-truncated` for a bounded prompt. Structured input and call options are not replayed. The journal keeps `input.prompt` only when `metadataContent` or `content: 'content'` includes it. When the start observation recorded an Invoker Profile, `invokerProfileId` holds the selected profile ID, even when an invoker resolver changes the identity.
 
 Use `configuration: 'content'` to retain resolved instructions and tool descriptions/schemas independently of other trace content. The default is `configuration: 'metadata'`. Console journals enable configuration retention for inspection; existing records cannot recover contracts that were not saved. Recorded configuration still uses the journal's observation limits and marks truncated values.
 

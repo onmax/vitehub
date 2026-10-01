@@ -26,14 +26,14 @@ const error = ref<string>();
 const confirmOpen = ref(false);
 
 const rerunUnavailable: Record<string, string> = {
+  "invocation-not-terminal": "Rerun is available after the session finishes",
   "input-has-options": "Rerun is unavailable: this session received call options",
   "input-has-data": "Rerun is unavailable: this session received structured input",
-  "input-redacted": "Rerun is unavailable: the recorded input was redacted",
-  "invocation-active": "Rerun is unavailable: this session is still active",
+  "input-redacted": "Rerun is unavailable: the recorded input or Invoker Profile was redacted",
   "input-has-messages": "Rerun is unavailable: this session received messages or attachments",
   "input-not-captured": "Rerun is unavailable: the prompt was not recorded",
-  "input-truncated": "Rerun is unavailable: the recorded input is incomplete",
-  "invoker-profile-unavailable": "Rerun is unavailable: the original Invoker Profile is no longer configured",
+  "input-truncated": "Rerun is unavailable: the recorded prompt is incomplete",
+  "invoker-profile-unavailable": "Rerun is unavailable: the recorded Invoker Profile is no longer configured",
 };
 const rerunLabel = computed(() => {
   if (props.rerun.available) return "Rerun with the same prompt";

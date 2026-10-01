@@ -13,7 +13,7 @@ import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
 
 type ConsoleInvocationRerun =
   | { available: true, invokerProfileId?: string, prompt: string }
-  | { available: false, reason: AgentInvocationRerunUnavailableReason | "invoker-profile-unavailable" | "invocation-active" }
+  | { available: false, reason: AgentInvocationRerunUnavailableReason | "invoker-profile-unavailable" | "invocation-not-terminal" }
 
 /** Record actions that Console invoke access allows. */
 interface ConsoleInvocationActions {
@@ -60,15 +60,15 @@ function actionError(statusCode: number, statusMessage: string): Error {
 function invocationActions(invocation: AgentInvocationRecord): ConsoleInvocationActions | undefined {
   const agent = invocation.agentName ? getConsoleAgentDefinition(invocation.agentName) : undefined
   if (!agent) return
-  const input = agentInvocationRerunInput(invocation)
+  const input = terminalStatuses.has(invocation.status)
+    ? agentInvocationRerunInput(invocation)
+    : { available: false, reason: "invocation-not-terminal" } as const
   const profile = input.available && input.invokerProfileId
     ? consoleAgentInvokerProfiles(agent).find(candidate => candidate.id === input.invokerProfileId)
     : undefined
-  const rerun: ConsoleInvocationRerun = !terminalStatuses.has(invocation.status)
-    ? { available: false, reason: "invocation-active" }
-    : input.available && input.invokerProfileId && !profile
-      ? { available: false, reason: "invoker-profile-unavailable" }
-      : input
+  const rerun: ConsoleInvocationRerun = input.available && input.invokerProfileId && !profile
+    ? { available: false, reason: "invoker-profile-unavailable" }
+    : input
   return {
     delete: { available: terminalStatuses.has(invocation.status) },
     rerun,

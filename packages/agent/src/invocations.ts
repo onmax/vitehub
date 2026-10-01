@@ -37,13 +37,13 @@ const MAX_OBSERVATION_VALUE_ITEMS = 256
 const MAX_AGENT_CONFIGURATION_ITEMS = 32 * 1024
 const MAX_AGENT_CONFIGURATION_COLLECTION_ITEMS = 8 * 1024
 export const AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE = "vitehub.observation.truncated"
-const AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE = "vitehub.input.promptRedacted"
+const AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE = "vitehub.input.redacted"
 const AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE = "vitehub.observation.id"
 const PROMPT_TRUNCATED_ATTRIBUTE = "input.prompt.truncated"
 const INVOKER_PROFILE_TRUNCATED_ATTRIBUTE = "agent.invoker.profile.id.truncated"
 const APPENDED_OBSERVATION_ATTRIBUTE = "vitehub.observation.appended"
 const CANONICAL_TRACE_ATTRIBUTE_KEYS = new Set([
-  AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE,
+  AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE,
   AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE,
   APPENDED_OBSERVATION_ATTRIBUTE,
   PROMPT_TRUNCATED_ATTRIBUTE,
@@ -838,7 +838,7 @@ function boundedObservation(
   }
   const payload = boundedObservationPayload(observation.payload, payloadBudget, builtIns)
   const canonicalAttributes: Record<string, unknown> = {}
-  if (observation.attributes?.[AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE] === true) canonicalAttributes[AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE] = true
+  if (observation.attributes?.[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] === true) canonicalAttributes[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] = true
   if (observation.name === "agent.invocation.start" && observation.attributes?.["input.prompt"] !== undefined) {
     canonicalAttributes[PROMPT_TRUNCATED_ATTRIBUTE] = observation.attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
   }
@@ -978,7 +978,7 @@ export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "o
   const start = record.observations.find(observation => observation.name === "agent.invocation.start")
   const attributes = start?.attributes
   if (!attributes) return { available: false, reason: "input-not-captured" }
-  if (attributes[AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE] === true) return { available: false, reason: "input-redacted" }
+  if (attributes[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] === true) return { available: false, reason: "input-redacted" }
   if (attributes[INVOKER_PROFILE_TRUNCATED_ATTRIBUTE] === true || attributes[PROMPT_TRUNCATED_ATTRIBUTE] === true
     || (attributes[PROMPT_TRUNCATED_ATTRIBUTE] === undefined && attributes[AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE] === true)) return { available: false, reason: "input-truncated" }
   if (attributes["input.hasData"] === true) return { available: false, reason: "input-has-data" }
@@ -1812,7 +1812,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         attributes: {
           ...redacted.attributes,
           ...(identity !== undefined ? { [AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE]: identity } : {}),
-          ...(inputRedacted || observation.attributes?.[AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE] === true ? { [AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE]: true } : {}),
+          ...(inputRedacted || observation.attributes?.[AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE] === true ? { [AGENT_INVOCATION_INPUT_REDACTED_ATTRIBUTE]: true } : {}),
         },
       }
     }
