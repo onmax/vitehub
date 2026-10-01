@@ -17,7 +17,7 @@ import { rateLimitErrorDiagnostics } from "./error-diagnostics.ts"
 const driverErrorSchema = v.custom<Error>((value) => {
   const nativeError = "isError" in Error && v.is(v.function(), Error.isError)
     ? Error.isError(value) === true
-    : v.is(v.object({}), value) && !(Symbol.toStringTag in value) && Object.prototype.toString.call(value) === "[object Error]"
+    : v.is(v.instance(Error), value) || (v.is(v.object({}), value) && !(Symbol.toStringTag in value) && Object.prototype.toString.call(value) === "[object Error]")
   return nativeError && v.is(v.object({ message: v.string(), name: v.string() }), value)
 })
 
