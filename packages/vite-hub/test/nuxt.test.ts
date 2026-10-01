@@ -451,6 +451,14 @@ describe("ViteHub Nuxt integration", () => {
     }])
   })
 
+  it("replays Env configuration with the selected CLI stage", async () => {
+    const development = createNuxt(true)
+    development.nuxt.options.vite = { mode: "staging" }
+    await viteHubNuxtModule({ preset: "node" }, development.nuxt)
+    await development.runNitroConfigHook({})
+    expect(mocks.envHook).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ command: "serve", mode: "staging" }))
+  })
+
   it("enables Agent invocation in Nuxt development and keeps production read-only by default", async () => {
     const development = createNuxt(true)
     const existingConsoleHandler = vi.fn()

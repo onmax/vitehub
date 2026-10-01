@@ -5,7 +5,7 @@ import { createRequire } from "node:module"
 import { existsSync, statSync } from "node:fs"
 import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { basename, dirname, extname, join, relative, resolve } from "node:path"
-import { pathToFileURL } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { parseAst } from "vite"
 
 import { contributeProviderDeploymentOutput, createDefaultNetlifyOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, useProviderOutputCatalog, writeProviderDeploymentOutputs } from "@vite-hub/internal/build/deployment-output"
@@ -78,6 +78,8 @@ const resolvedScheduleTargetsId = "\0#vitehub/schedule/targets"
 const scheduleRuntimeImport = "@vite-hub/schedule/runtime"
 const scheduleVitePluginName = "@vite-hub/schedule/vite"
 const workspacePackageName = "@vite-hub/workspace"
+const optionalAskDriverPeer = "advocaat"
+const agentPackageRoot = fileURLToPath(new URL("../", import.meta.url)).replace(/\\/g, "/")
 const optionalAgentRuntimeExternals = [
   "@anthropic-ai/claude-agent-sdk",
   "bufferutil",
@@ -99,6 +101,13 @@ const optionalNetlifyAgentBundleExternals = [
   ...optionalAgentRuntimeExternals,
   "vitest/*",
 ]
+
+function isAgentPackageImporter(importer: string | undefined): boolean {
+  if (!importer) return false
+  const normalized = importer.replace(/\\/g, "/")
+  return normalized.includes("/node_modules/@vite-hub/agent/")
+    || normalized.startsWith(agentPackageRoot)
+}
 
 function resolveNetlifyAgentBundleExternals(options: AgentGeneratedImportOptions): string[] {
   const bundled = new Set<string>()
@@ -2836,6 +2845,12 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
 
   return {
     name: "@vite-hub/agent/vite",
+    async resolveId(source, importer, options) {
+      if (source !== optionalAskDriverPeer || !isAgentPackageImporter(importer)) return
+      // The ask Driver imports this optional peer lazily. Keep it external when the application does not install it,
+      // so Agents without driver.ask still build. An ask Driver then reports the missing package when it runs.
+      return await this.resolve(source, importer, { ...options, skipSelf: true }) ?? { external: true, id: source }
+    },
     async configureServer(server) {
       const clearUnlinkedEveExtensionOwnership = (file: string) => clearEveExtensionOwnership(file.replace(/\\/g, "/"))
       server.watcher?.on("add", clearUnlinkedEveExtensionOwnership)

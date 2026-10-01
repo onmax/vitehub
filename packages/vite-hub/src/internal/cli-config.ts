@@ -20,7 +20,7 @@ type ResolveViteConfig = (
 type LoadNuxt = (options: {
   cwd: string
   dev: boolean
-  overrides: { vitehubCliDiscovery: true }
+  overrides: { devtools: { enabled: false }, vitehubCliDiscovery: true }
   ready: true
 }) => Promise<{
   close?: () => Promise<void> | void
@@ -68,7 +68,7 @@ export async function loadViteHubCliConfig(
   const nuxt = await loadNuxt({
     cwd: rootDir,
     dev: command === "serve",
-    overrides: { vitehubCliDiscovery: true },
+    overrides: { devtools: { enabled: false }, vitehubCliDiscovery: true },
     ready: true,
   })
   try {

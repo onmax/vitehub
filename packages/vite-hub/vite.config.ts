@@ -237,6 +237,7 @@ export default defineConfig({
       "src/console/runtime/client/invocation.ts",
       "src/console/runtime/client/request.ts",
       "src/console/runtime/client/env-management.ts",
+      "src/console/runtime/client/env-status.ts",
       "src/console/runtime/client/schedule-run.ts",
       "src/console/runtime/client/time.ts",
       "src/console/runtime/definitions.ts",
@@ -271,6 +272,7 @@ export default defineConfig({
         delete exports["./console/runtime/client/invocation"];
         delete exports["./console/runtime/client/request"];
         delete exports["./console/runtime/client/env-management"];
+        delete exports["./console/runtime/client/env-status"];
         delete exports["./console/runtime/client/schedule-run"];
         delete exports["./console/runtime/client/time"];
         delete exports["./console/runtime/definitions"];

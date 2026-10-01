@@ -402,6 +402,9 @@ export type {
   AgentInspectionModelMetadata,
   AgentInspectionToolDefinition,
   AgentInspectionValue,
+  AgentAskDriver,
+  AgentAskQuestions,
+  AgentAskQuestionsResolver,
   AgentDriver,
   AgentDriverAdaptiveCapacityOptions,
   AgentDriverCapacityOptions,
@@ -1894,6 +1897,27 @@ export { agentWithSkills } from "./internal/colocated-agent-skills.ts"
 export { isResolvedAgentTriggerHandledInvocation, verifyAgentWebhookRequest } from "./trigger-runtime.ts"
 export type { AgentWebhookVerificationResult, ResolvedAgentTriggerHandledInvocation, ResolvedAgentTriggerInvocation, ResolvedAgentTriggerInvocationResult } from "./trigger-runtime.ts"
 export * from "./messages.ts"
+export { ask } from "./ask.ts"
+export type {
+  AskAnswer,
+  AskAnswers,
+  AskChanceAnswer,
+  AskChanceCriteria,
+  AskChanceQuestion,
+  AskChoiceAnswer,
+  AskChoiceCriteria,
+  AskChoiceLabels,
+  AskChoiceQuestion,
+  AskEntry,
+  AskIfQuestion,
+  AskJson,
+  AskQuestion,
+  AskQuestions,
+  AskScoreAnswer,
+  AskScoreCriteria,
+  AskScoreQuestion,
+  AskSwitchQuestion,
+} from "./ask.ts"
 export {
   agentInvocationStreamRoute,
   createAgentInvocationStreamResponse,
@@ -2023,7 +2047,7 @@ function defineBaseAgent<
   const { box, capabilities, cli, description, hooks, invocations, messages, name, runtime = defaultAgentWorkflowRuntime(), runEvents, uiMessageStream, version, workspace } = options
   const channels = normalizeAgentChannels(options.channels)
   const github = options.github ?? githubChannelIdentity(channels)
-  const run = driver.kind === "run" ? driver.run : undefined
+  const run = driver.kind === "run" || driver.kind === "ask" ? driver.run : undefined
   const capabilitiesResolver = hasRuntimeType(capabilities, "function")
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     ? capabilities as AgentCapabilitiesResolver<TRuntimeConfig, WorkspaceName, CALL_OPTIONS>
@@ -3053,7 +3077,7 @@ export function agentWithColocatedInstructions<Agent>(agent: Agent, instructions
   const settings = (agent as AgentDefinition & { __vitehubAgentSettings?: AgentSettings }).__vitehubAgentSettings
   if (!settings) return agent
   const driver = normalizeAgentDriver(settings)
-  if (driver.kind === "run") return agent
+  if (driver.kind === "run" || driver.kind === "ask") return agent
   const configured = driver.instructions
   const template = configured && hasRuntimeType(configured, "object") && !Array.isArray(configured)
     && "template" in configured && !("mode" in configured)

@@ -58,11 +58,13 @@ console.log(publicEnv.appName)
 | `loadServerEnv` from `#vitehub/env/server` | Load one immutable Server Env snapshot, including provider-backed values. |
 | `describeServerEnv` from `#vitehub/env/server` | List declaration metadata without reading host values or calling providers. |
 | `inspectServerEnv` from `#vitehub/env/server` | Inspect status-only Server Env metadata without returning values. |
+| `isBlockingServerEnvEntry` from `@vite-hub/env` | Check whether an inspection entry makes `loadServerEnv()` fail. |
 | `usePublicEnv` from `#vitehub/env/public` | Read generated Public Env from browser-safe code. |
 | `useServerEnv` from `#vitehub/env/server` | Read generated Server Env from server code. |
 | `SecretEnv` from `@vite-hub/env` or `@vite-hub/env/secret` | Represent Secret Env values that redact by default. |
 | `resolveServerEnv` from `@vite-hub/env` or `@vite-hub/env/server` | Resolve a server env registry manually. |
 | `openWorkflowEnv` from `@vite-hub/env` or `@vite-hub/env/presets` | Use the OpenWorkflow env preset. |
+| `typesafeEnv` from `@vite-hub/env` or `@vite-hub/env/presets` | Declare the TypeSafe Jev group for [`driver.ask`](/docs/agents/agent-drivers#use-an-ask-driver). |
 | `parseSchema` from `@vite-hub/env` or `@vite-hub/env/schema` | Parse Standard Schema-compatible values. |
 
 ## Configure Env
@@ -289,7 +291,9 @@ This GitHub token authenticates application-owned Source materialization; it is 
 
 `describeServerEnv()` returns declaration paths, source kinds, provider aliases, secret flags, required flags, whether a default exists, and the parsed value type such as `boolean` or `"draft" | "send"`. It never resolves values or calls provider `read()`. Use it for inventory. Default values, source variable names, provider keys, and provider module paths are omitted. The Console Env section uses this metadata and inherits Console access protection. A provider with Env Bridge management also offers masked previews and runtime replacement in its detail panel. Administrators can view persisted activity and manage per-credential grants. These controls additionally enforce the provider's authentication and permissions; host variables stay read-only.
 
-`inspectServerEnv()` uses the same provider load boundary and reports only declaration paths, source kinds, masking, and `available`, `defaulted`, `missing`, `invalid`, or `error` status. It never includes values, hashes, lengths, provider keys, or provider failure text. This is the safe primitive for future CLI and Console projections.
+`inspectServerEnv()` uses the same provider load boundary and reports only declaration paths, source kinds, provider aliases, masking, required flags, and `available`, `defaulted`, `missing`, `invalid`, or `error` status. It never includes values, hashes, lengths, provider keys, or provider failure text. Paths match `describeServerEnv()`. `isBlockingServerEnvEntry()` returns `true` for an entry that makes `loadServerEnv()` fail: a required value is missing, a value is invalid, or a provider failed.
+
+Check a stage from the terminal with `vitehub env inspect` or `vitehub env check`. `env check` exits with `1` for any blocking entry, so CI and deploy steps can run it before a release. Both commands load the stage's Vite env files and never print values. Read [CLI](/docs/development/cli#check-server-env) for options and output. The Console Env section shows the same status when you select **Check status**.
 
 Provider reads are read-only and receive the caller's abort signal. For managed credentials, [Env Bridge](/docs/server-primitives/env-bridge) adds conditional replacement, scoped access, and durable activity. Env resolution does not add watches, leases, or cross-request caches. Providers must not import the generated Server Env module; use the local `env` snapshot passed to `read()` for bootstrap credentials.
 
@@ -335,6 +339,27 @@ Add the generated type directory to `tsconfig.json` when the app wants field-lev
 Read application secrets through Server Env inside Agent and Capability callbacks. Don't pass secrets through Agent Invocation metadata or model-facing instructions.
 
 Env is usually not an agent-facing Capability. Other Capabilities consume Server Env when they need credentials, provider tokens, or app-owned configuration.
+
+The [ask Driver](/docs/agents/agent-drivers#use-an-ask-driver) reads the `typesafe` group. Declare it with `typesafeEnv()`:
+
+```ts [vite.config.ts]
+import { typesafeEnv } from 'vite-hub/env'
+
+export default defineConfig({
+  env: {
+    server: {
+      typesafe: typesafeEnv({ provider: 'vercel' }),
+    },
+  },
+})
+```
+
+| `provider` | `apiKey` source | `model` default |
+| --- | --- | --- |
+| `"typesafe"` (default) | Required Secret Env `TYPESAFE_API_KEY`. | `jev-latest` |
+| `"vercel"` | Optional Secret Env `AI_GATEWAY_API_KEY`. Without it, the client uses `VERCEL_OIDC_TOKEN` on Vercel. | `typesafe-ai/jev` |
+
+`TYPESAFE_DEFAULT_MODEL` overrides the model. The `model` option changes the default.
 
 ## Production checks
 
