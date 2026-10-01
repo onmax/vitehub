@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { createClient } from "@libsql/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { createLibsqlAgentState, createSqliteAgentState, type SqliteAgentStateDriver, ViteHubSqliteAgentStateAdapter } from "../src/state/sqlite.ts"
+import { createLibsqlAgentState, createSqliteAgentState, type LibsqlAgentStateClient, type SqliteAgentStateDriver, ViteHubSqliteAgentStateAdapter } from "../src/state/sqlite.ts"
 
 import type { QueueEntry, StateAdapter } from "chat"
 import type { AgentWebhookQueueDelivery } from "../src/internal/webhook-queue.ts"
@@ -71,12 +71,13 @@ describe("SQLite Agent State Provider", () => {
       expect(createLibsqlAgentState({ url }).durable).toBe(true)
       expect(createLibsqlAgentState({ url, durable: false }).durable).toBe(false)
     }
-    const client = createClient({ url: ":memory:" })
-    try {
-      expect(createLibsqlAgentState({ client }).durable).toBe(false)
-      expect(createLibsqlAgentState({ client, url: "file:unused.db" }).durable).toBe(false)
-      expect(createLibsqlAgentState({ client, durable: true }).durable).toBe(true)
-    } finally { client.close() }
+    const client: LibsqlAgentStateClient = {
+      execute: () => ({ rows: [] }),
+      transaction: () => ({ execute: () => ({ rows: [] }), commit: () => {}, rollback: () => {} }),
+    }
+    expect(createLibsqlAgentState({ client }).durable).toBe(false)
+    expect(createLibsqlAgentState({ client, url: "file:unused.db" }).durable).toBe(false)
+    expect(createLibsqlAgentState({ client, durable: true }).durable).toBe(true)
     const driver: SqliteAgentStateDriver = { execute: () => ({ rows: [] }) }
     expect(createSqliteAgentState({ driver }).durable).toBe(false)
     expect(createSqliteAgentState({ driver, durable: true }).durable).toBe(true)
