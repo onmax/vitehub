@@ -68,7 +68,7 @@ setConnectionsRuntime({
 | `management` | `false` | Mount the management API in production. Protect it with authentication. |
 | `projectRoot` | Vite root | Project root for discovery. |
 
-CLI approval JSON output includes the stored write input. Approval execution JSON also includes the provider result. The Console requests approval summaries that omit both fields from browser responses.
+CLI approval JSON output includes the stored write input. Approval execution JSON also includes the provider result. The Console requests approval summaries that omit both fields from browser responses. Summary lists select only approval metadata from storage and do not load saved call inputs.
 
 ## Generate API catalogs
 

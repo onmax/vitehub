@@ -13,6 +13,8 @@ export type {
   ConnectionApproval,
   ConnectionApprovalPage,
   ConnectionApprovalStatus,
+  ConnectionApprovalSummary,
+  ConnectionApprovalSummaryPage,
   ConnectionCallOptions,
   ConnectionClient,
   ConnectionClientTree,

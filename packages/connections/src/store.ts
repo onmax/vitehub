@@ -7,7 +7,7 @@ import { ConnectionError } from "./errors.ts"
 
 import type { EnvAccessStore, EnvBridge, EnvSecretStore } from "@vite-hub/env/bridge"
 import type { EnvDatabase } from "@vite-hub/env/database"
-import type { ConnectionApproval, ConnectionApprovalPage, ConnectionApprovalStatus } from "./types.ts"
+import type { ConnectionApproval, ConnectionApprovalPage, ConnectionApprovalStatus, ConnectionApprovalSummary, ConnectionApprovalSummaryPage } from "./types.ts"
 
 export interface ConnectionState {
   accountEmail?: string
@@ -36,6 +36,8 @@ export interface ConnectionStore {
     get: (id: string) => Promise<ConnectionApproval | undefined>
     /** Return at most 100 approvals in insertion order, newest first. */
     list: (input: { before?: string, name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApprovalPage>
+    /** Return at most 100 approval summaries without reading saved call inputs. */
+    listSummaries: (input: { before?: string, name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApprovalSummaryPage>
     /** Count pending approvals for the configured Connection names without loading call inputs. */
     pendingCounts: (names: readonly string[]) => Promise<Record<string, number>>
     /** Move an approval from one status to another. Returns `undefined` when the status was not `from`. */
@@ -89,6 +91,8 @@ const approvalRow = v.object({
   trace_id: v.nullable(v.string()),
 })
 
+const approvalSummaryRow = v.omit(approvalRow, ["input"])
+
 function parseJson(value: string): unknown {
   try {
     return JSON.parse(value)
@@ -103,8 +107,7 @@ function stringArray(value: string): string[] {
   return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : []
 }
 
-function toApproval(row: unknown): ConnectionApproval {
-  const stored = v.parse(approvalRow, row)
+function mapApprovalSummary(stored: v.InferOutput<typeof approvalSummaryRow>): ConnectionApprovalSummary {
   return {
     action: stored.action,
     actor: stored.actor,
@@ -113,12 +116,20 @@ function toApproval(row: unknown): ConnectionApproval {
     ...(stored.decided_by ? { decidedBy: stored.decided_by } : {}),
     ...(stored.error ? { error: stored.error } : {}),
     id: stored.id,
-    input: parseJson(stored.input),
     ...(stored.invocation_id ? { invocationId: stored.invocation_id } : {}),
     name: stored.name,
     status: stored.status,
     ...(stored.trace_id ? { traceId: stored.trace_id } : {}),
   }
+}
+
+function toApprovalSummary(row: unknown): ConnectionApprovalSummary {
+  return mapApprovalSummary(v.parse(approvalSummaryRow, row))
+}
+
+function toApproval(row: unknown): ConnectionApproval {
+  const stored = v.parse(approvalRow, row)
+  return { ...mapApprovalSummary(stored), input: parseJson(stored.input) }
 }
 
 /**
@@ -142,7 +153,12 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
     ready = undefined
     throw error
   }))
-  const approvalColumns = sql`id, name, actor, action, input, status, trace_id, invocation_id, created_at, decided_at, decided_by, error`
+  const approvalSummaryColumns = sql`id, name, actor, action, status, trace_id, invocation_id, created_at, decided_at, decided_by, error`
+  const approvalColumns = sql`${approvalSummaryColumns}, input`
+  async function listApprovalRows(columns: typeof approvalColumns, { before, name, status }: { before?: string, name?: string, status?: ConnectionApprovalStatus }) {
+    await initialize()
+    return await db.all(sql`SELECT ${columns} FROM vitehub_connection_approvals WHERE 1 = 1 ${name ? sql`AND name = ${name}` : sql``} ${status ? sql`AND status = ${status}` : sql``} ${before ? sql`AND sequence < (SELECT sequence FROM vitehub_connection_approvals WHERE id = ${before})` : sql``} ORDER BY sequence DESC LIMIT 101`)
+  }
 
   return {
     ...envStore,
@@ -193,10 +209,15 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
         const row = (await db.all(sql`SELECT ${approvalColumns} FROM vitehub_connection_approvals WHERE id = ${id}`))[0]
         return row === undefined ? undefined : toApproval(row)
       },
-      async list({ before, name, status }) {
-        await initialize()
-        const rows = await db.all(sql`SELECT ${approvalColumns} FROM vitehub_connection_approvals WHERE 1 = 1 ${name ? sql`AND name = ${name}` : sql``} ${status ? sql`AND status = ${status}` : sql``} ${before ? sql`AND sequence < (SELECT sequence FROM vitehub_connection_approvals WHERE id = ${before})` : sql``} ORDER BY sequence DESC LIMIT 101`)
+      async list(input) {
+        const rows = await listApprovalRows(approvalColumns, input)
         const approvals = rows.slice(0, 100).map(toApproval)
+        const nextCursor = rows.length > 100 ? approvals.at(-1)?.id : undefined
+        return nextCursor ? { approvals, nextCursor } : { approvals }
+      },
+      async listSummaries(input) {
+        const rows = await listApprovalRows(approvalSummaryColumns, input)
+        const approvals = rows.slice(0, 100).map(toApprovalSummary)
         const nextCursor = rows.length > 100 ? approvals.at(-1)?.id : undefined
         return nextCursor ? { approvals, nextCursor } : { approvals }
       },

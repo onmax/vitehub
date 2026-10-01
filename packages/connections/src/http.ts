@@ -162,8 +162,9 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions = {}
         case "approval-counts": return json({ counts: await connections.approvalCounts() })
         case "approvals":
         case "approval-summaries": {
-          const page = await connections.approvals({ ...(input.before ? { before: input.before } : {}), ...(input.name ? { name: input.name } : {}), ...(input.status ? { status: input.status } : {}) })
-          return json(input.action === "approval-summaries" ? { ...page, approvals: page.approvals.map(approvalSummary) } : page)
+          const list = input.action === "approval-summaries" ? connections.approvalSummaries : connections.approvals
+          const page = await list({ ...(input.before ? { before: input.before } : {}), ...(input.name ? { name: input.name } : {}), ...(input.status ? { status: input.status } : {}) })
+          return json(page)
         }
         case "approve":
         case "approve-summary": {

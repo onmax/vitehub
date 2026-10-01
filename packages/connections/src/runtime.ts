@@ -8,6 +8,7 @@ import type {
   ConnectionApproval,
   ConnectionApprovalPage,
   ConnectionApprovalStatus,
+  ConnectionApprovalSummaryPage,
   ConnectionDefinition,
   ConnectionInspection,
   ConnectionTokenResponse,
@@ -67,6 +68,8 @@ export interface ConnectionsRuntime {
   activity: (input: { before?: string, name: string }) => Promise<readonly EnvActivity[]>
   /** Return a bounded page. Pass `nextCursor` as `before` to continue. */
   approvals: (input?: { before?: string, name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApprovalPage>
+  /** Read a bounded metadata page without loading saved call inputs. */
+  approvalSummaries: (input?: { before?: string, name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApprovalSummaryPage>
   approvalCounts: () => Promise<Record<string, number>>
   /** Approve a pending write and run it under the actor that requested it. */
   approve: (input: { actor?: string, id: string }) => Promise<{ approval: ConnectionApproval, result?: unknown }>
@@ -624,6 +627,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return await (await getStore()).approvals.list(input)
   }
 
+  async function approvalSummaries(input: { before?: string, name?: string, status?: ConnectionApprovalStatus } = {}): Promise<ConnectionApprovalSummaryPage> {
+    return await (await getStore()).approvals.listSummaries(input)
+  }
+
   async function approvalCounts(): Promise<Record<string, number>> {
     return await (await getStore()).approvals.pendingCounts(Object.keys(options.definitions))
   }
@@ -681,6 +688,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     activity,
     approvals,
     approvalCounts,
+    approvalSummaries,
     approve,
     authorize,
     client: buildClient,

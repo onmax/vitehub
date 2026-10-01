@@ -222,6 +222,14 @@ export interface ConnectionApproval {
   traceId?: string
 }
 
+/** Approval metadata without its saved call input. */
+export type ConnectionApprovalSummary = Omit<ConnectionApproval, "input">
+
+export interface ConnectionApprovalSummaryPage {
+  approvals: ConnectionApprovalSummary[]
+  nextCursor?: string
+}
+
 /** A bounded approval page. Pass `nextCursor` as `before` to read older approvals. */
 export interface ConnectionApprovalPage {
   approvals: ConnectionApproval[]
