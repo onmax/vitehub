@@ -103,10 +103,16 @@ export function registerScheduleDevRunEndpoint(server: ViteDevServer, options: {
   const baseRoute = configuredBase === "/"
     ? scheduleDevRunRoute
     : `${configuredBase.replace(/\/$/, "")}${scheduleDevRunRoute}`
+  let closed = false
+  server.httpServer?.once("close", () => { closed = true })
   server.middlewares.use((req, res, next) => {
     const pathname = new URL(req.url || "/", "http://localhost").pathname
     if (pathname !== scheduleDevRunRoute && pathname !== baseRoute) {
       next()
+      return
+    }
+    if (closed) {
+      writeJSON(res, 403, { message: "Forbidden Schedule run token." })
       return
     }
     handleScheduleDevRun(server, req, res, options.serverId).catch((error: unknown) => {

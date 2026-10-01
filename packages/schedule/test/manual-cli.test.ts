@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process"
+import { EventEmitter } from "node:events"
 import { createServer } from "node:http"
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { Readable } from "node:stream"
 import { promisify } from "node:util"
 import { expect, it, vi } from "vitest"
 import { createViteHubDevToken, removeViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
@@ -88,6 +90,30 @@ it("preserves authenticated Console targeting for static run and redacts its res
   expect(JSON.parse(stdout)).toMatchObject({ status: "failed", error: { name: "access_token=[redacted]", message: "Bearer [redacted]" } })
   expect(stdout).not.toMatch(/secret-name|private-secret|secret-stack/)
   expect(stderr).toBe("")
+})
+
+it("rejects retained manual-run middleware after the Vite server closes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "vitehub-manual-close-"))
+  const credential = await createViteHubDevToken(root, scheduleDevTokenNamespace)
+  const httpServer = new EventEmitter()
+  let middleware: ((req: IncomingMessage, res: ServerResponse, next: () => void) => void) | undefined
+  registerScheduleDevRunEndpoint({
+    config: { root, base: "/" },
+    httpServer,
+    middlewares: { use(handler: NonNullable<typeof middleware>) { middleware = handler } },
+    ssrLoadModule: vi.fn(),
+  } as unknown as ViteDevServer, { serverId: credential.serverId })
+  httpServer.emit("close")
+  const response = { statusCode: 200, setHeader: vi.fn(), end: vi.fn() }
+  middleware!(Object.assign(Readable.from([]), {
+    headers: { host: "localhost" },
+    method: "GET",
+    url: scheduleDevRunRoute,
+  }) as unknown as IncomingMessage, response as unknown as ServerResponse, vi.fn())
+  expect(response.statusCode).toBe(403)
+  expect(response.end).toHaveBeenCalled()
+  await removeViteHubDevToken(root, { namespace: scheduleDevTokenNamespace, serverId: credential.serverId })
+  await rm(root, { recursive: true, force: true })
 })
 
 
