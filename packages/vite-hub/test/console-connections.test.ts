@@ -10,6 +10,7 @@ import {
   connectionApprovalsSchema,
   connectionConnectURL,
   connectionListSchema,
+  loadConnectionApprovals,
   requestConnectionsManagement,
 } from "../src/console/runtime/client/connections-management.ts"
 import { ConsoleRequestError } from "../src/console/runtime/client/request.ts"
@@ -43,6 +44,18 @@ describe("Connections management client", () => {
       headers: { "content-type": "application/json" },
       method: "POST",
     })
+  })
+
+  it("retains older pending decisions when the newest 100 approvals are decided", async () => {
+    const base = { action: "gmail.users.messages.modify", actor: "agent:mail", createdAt: "2026-09-29T08:00:00.000Z", name: "gmail" }
+    const pending = { ...base, id: "old-pending", status: "pending" }
+    vi.stubGlobal("fetch", vi.fn(async (_endpoint, init: RequestInit) => {
+      const input = JSON.parse(String(init.body)) as { status?: string }
+      return Response.json({ approvals: input.status === "pending" ? [pending] : Array.from({ length: 100 }, (_, index) => ({ ...base, id: `new-${index}`, status: "executed" })) })
+    }))
+    const result = await loadConnectionApprovals("/_vitehub/connections", "gmail")
+    expect(result.history).toHaveLength(100)
+    expect(result.pending).toEqual([pending])
   })
 
   it("does not keep approval inputs", async () => {

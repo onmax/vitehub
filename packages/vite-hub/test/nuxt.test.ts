@@ -1981,6 +1981,28 @@ describe("ViteHub Nuxt integration", () => {
     expect(result.outputFiles?.[0]?.text).toContain("auth resolver reached")
   })
 
+  it("attributes Connections actions to Auth supplied in the Nuxt Vite config", async () => {
+    const authDefinition = "/tmp/vitehub-nuxt/custom-server/auth.ts"
+    await mkdir(resolve(authDefinition, ".."), { recursive: true })
+    await writeFile(authDefinition, `export default defineAuth({ access: { routes: [
+      { route: "/_vitehub/**", authorize: authorizeConsole },
+      { route: "/api/_vitehub/console/**", authorize: authorizeConsole },
+    ] } })`)
+    try {
+      const { nuxt, runNitroConfigHook } = createNuxt(false, [{ name: "@vite-hub/auth/vite" }])
+      Object.assign(nuxt.options.vite, { auth: true })
+      await viteHubNuxtModule({ connections: true, database: true, console: { access: "auth" }, preset: "node" }, nuxt)
+      const config: { alias?: Record<string, string> } = {}
+      await runNitroConfigHook(config)
+      const actor = config.alias?.["#vitehub/console/connections-actor"]
+      expect(actor).toBeDefined()
+      expect(await readFile(actor!, "utf8")).toContain("getAuthForRequest")
+    }
+    finally {
+      await rm(authDefinition, { force: true })
+    }
+  })
+
   it("rejects Auth-backed production Console when replay config disables Auth", async () => {
     const production = createNuxt(false)
     Object.assign(production.nuxt.options.vite, { auth: false as const })

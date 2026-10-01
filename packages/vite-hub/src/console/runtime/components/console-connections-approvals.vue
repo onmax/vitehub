@@ -1,19 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import type * as v from "valibot";
 import {
   connectionApprovalResultSchema,
-  connectionApprovalsSchema,
+  loadConnectionApprovals,
   requestConnectionsManagement,
 } from "../client/connections-management";
 const props = defineProps<{ endpoint: string; name: string }>();
 const emit = defineEmits<{ changed: [] }>();
-const approvals = ref<v.InferOutput<typeof connectionApprovalsSchema>["approvals"]>([]);
+const approvals = ref<Awaited<ReturnType<typeof loadConnectionApprovals>>["history"]>([]);
 const loaded = ref(false);
 const busy = ref(false);
 const error = ref("");
 const notice = ref("");
-const pending = computed(() => approvals.value.filter((approval) => approval.status === "pending"));
+const pending = ref<Awaited<ReturnType<typeof loadConnectionApprovals>>["history"]>([]);
 const decided = computed(() => approvals.value.filter((approval) => approval.status !== "pending"));
 async function run(action: () => Promise<void>) {
   busy.value = true;
@@ -28,13 +27,9 @@ async function run(action: () => Promise<void>) {
   }
 }
 async function fetchApprovals() {
-  const result = await requestConnectionsManagement(
-    props.endpoint,
-    "approvals",
-    connectionApprovalsSchema,
-    { name: props.name },
-  );
-  approvals.value = result.approvals;
+  const result = await loadConnectionApprovals(props.endpoint, props.name);
+  approvals.value = result.history;
+  pending.value = result.pending;
   loaded.value = true;
 }
 function load() {
