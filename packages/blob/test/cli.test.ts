@@ -70,7 +70,7 @@ const binary = Uint8Array.from([0, 255, 1, 128, 10, 13, 0xef, 0xbb, 0xbf, 0xc3, 
 const object = { contentType: "image/png", customMetadata: {}, httpEtag: "\"abc\"", httpMetadata: {}, pathname: "images/a.png", size: 1234, uploadedAt: "2026-09-29T10:00:00.000Z" }
 
 describe("vitehub blob", () => {
-  it.each([["head", "--json"], ["list", "--limit", "0", "--json"]])("returns JSON for argument errors: %j", async (...args) => {
+  it.each([["head", "--json"], ["list", "--limit", "0", "--json"], ["list", "--timeout", "4294967296", "--json"], ["list", "--timeout", "2147483648", "--json"]])("returns JSON for argument errors: %j", async (...args) => {
     const output = context()
     const fetch = vi.fn()
     await expect(runBlobCli(args, output.context, { fetch })).resolves.toBe(1)
