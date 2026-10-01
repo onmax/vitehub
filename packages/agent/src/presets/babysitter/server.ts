@@ -224,7 +224,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
    * Merges a PR that inbox evidence, the merge policy, and GitHub's live state all report ready.
    * Returns false, and the PR gets a normal pass, on any doubt.
    */
-  async function mergeReadyPullRequest(claim: Claim, owner: Record<string, unknown>): Promise<boolean> {
+  async function mergeReadyPullRequest(claim: Claim, owner: Record<string, unknown>, signal: AbortSignal): Promise<boolean> {
     if (merge.mode !== "direct") return false;
     const { snapshot } = claim;
     const { repository, number } = snapshot;
@@ -242,7 +242,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       return false;
     }
     try {
-      const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".");
+      const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", signal);
       const current = liveMergeReadiness(live, decision.head);
       if (!current.ready) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: current.reason });
@@ -255,8 +255,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "claim changed before merge" });
         return false;
       }
+      signal.throwIfAborted();
       // GitHub rejects the merge when the head no longer matches sha.
-      await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000 });
+      await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000, signal });
     } catch (error) {
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
       return false;
@@ -485,7 +486,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             schedulerEvent("babysitter.stack.retargeted", { ...owner, ...retargeted });
             return;
           }
-          if (merge.mode === "direct" && (await mergeReadyPullRequest(inboxClaim, owner))) return;
+          if (merge.mode === "direct" && (await mergeReadyPullRequest(inboxClaim, owner, passSignal))) return;
           const pullRequest = snapshotPullRequest(inboxClaim.snapshot);
           const webhookSnapshot = inboxClaim.snapshot;
           await github.withPullRequestCheckout(
