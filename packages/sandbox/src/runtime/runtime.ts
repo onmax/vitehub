@@ -71,11 +71,13 @@ async function loadSandboxDefinition(name: string): Promise<SandboxRegistryEntry
   const entry = registry[name]
   if (!entry)
     return undefined
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry entries intentionally support generated lazy loader functions and resolved definitions.
   return typeof entry === 'function' ? (await entry()).default : entry
 }
 
 function hasValidSandboxBundle(definition: SandboxRegistryEntry) {
   return !!definition.bundle
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Bundles come from generated registry data and require runtime shape validation.
     && typeof definition.bundle === 'object'
     && typeof definition.bundle.entry === 'string'
     && definition.bundle.entry.length > 0
