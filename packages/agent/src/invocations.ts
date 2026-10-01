@@ -968,6 +968,8 @@ export async function agentInvocationId(runId: string, agentName?: string): Prom
 
 /** Why a journaled Invocation cannot be started again with the same input. */
 export type AgentInvocationRerunUnavailableReason =
+  /** The Invocation has not reached a terminal state. */
+  | "invocation-not-terminal"
   /** The journal has no start observation with a text prompt. */
   | "input-not-captured"
   /** The record predates the replay schema or lacks its required metadata. */
@@ -1010,7 +1012,10 @@ export type AgentInvocationRerunInput =
  * Reads the complete prompt and invoker that the journal captured when the Invocation started.
  * A caller can start a new Invocation with this input. The original record does not change.
  */
-export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "observations">): AgentInvocationRerunInput {
+export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "observations"> & Partial<Pick<AgentInvocationRecord, "status">>): AgentInvocationRerunInput {
+  if (record.status !== undefined && !terminalStatus(record.status)) {
+    return { available: false, reason: "invocation-not-terminal" }
+  }
   const start = record.observations.find(observation => observation.name === "agent.invocation.start")
   const attributes = start?.attributes
   if (!attributes) return { available: false, reason: "input-not-captured" }

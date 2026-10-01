@@ -387,6 +387,8 @@ describe("agentInvocationRerunInput", () => {
   })
 
   it("requires a complete start observation with a text prompt", () => {
+    expect(agentInvocationRerunInput({ status: "running", observations: [start({ "input.prompt": "Hi" })] }))
+      .toEqual({ available: false, reason: "invocation-not-terminal" })
     expect(agentInvocationRerunInput({ observations: [] })).toEqual({ available: false, reason: "input-not-captured" })
     expect(agentInvocationRerunInput({ observations: [start({ "input.prompt": "  " })] })).toEqual({ available: false, reason: "input-not-captured" })
     expect(agentInvocationRerunInput({ observations: [start({ "input.prompt": "Hi", [AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE]: true })] }))
