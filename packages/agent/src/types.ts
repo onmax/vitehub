@@ -1,4 +1,5 @@
 import type { AgentActivity, Message, StreamEvent } from "./messages.ts"
+import type { AskAnswerType, AskQuestion } from "./ask.ts"
 import type { AgentRunEventPublisher, AgentRunEvents } from "./run-events.ts"
 import type { AgentInvocationAnnotationValue, AgentInvocations } from "./invocations.ts"
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from "@standard-schema/spec"
@@ -30,7 +31,6 @@ import type {
 } from "@vite-hub/workspace"
 import type { BoxDefinition } from "@vite-hub/box"
 import type { channelDeliveryHandlers } from "./internal/channel-delivery-handlers.ts"
-import type { ReplayChannelResult } from "./channel-replay.ts"
 import type {
   AgentChannelOptions,
   AgentWebChatChannelOptions,
@@ -90,6 +90,19 @@ export interface AgentHostIdentity {
   readonly workspace?: WorkspaceName
 }
 
+export interface AgentGitHubAccess {
+  /** Environment for `gh` and `git`: `GH_TOKEN`, `GITHUB_TOKEN`, a Git credential helper, and the commit identity. */
+  env: Record<string, string>
+  token: string
+}
+
+/** The GitHub identity of an Agent. `createGitHubHost()` from `vite-hub/agent/server/github` returns one. */
+export interface AgentGitHub {
+  access(input?: { repository?: string, signal?: AbortSignal }): Promise<AgentGitHubAccess>
+  /** Login of the identity, when it is known. */
+  identity?(): string | undefined
+}
+
 export interface AgentRuntimeContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
   extends Omit<RuntimeHostContext<TRuntimeConfig>, "cloudflare" | "platform" | "runtime"> {
   agentIdentity?: AgentHostIdentity
@@ -97,6 +110,8 @@ export interface AgentRuntimeContext<TRuntimeConfig extends AgentRuntimeConfig =
   box?: AgentBoxContext<TRuntimeConfig>
   channelDelivery?: AgentChannelDelivery
   cloudflare?: RuntimeHostContext<TRuntimeConfig>["cloudflare"]
+  /** The Agent GitHub identity from `defineAgent({ github })`. */
+  githubIdentity?: AgentGitHub
   toolStepReporter?: (step: AgentToolStep) => MaybePromise<void>
   run?: AgentRunMetadata
   runtime: AgentRuntimeName
@@ -231,9 +246,15 @@ export interface AgentInvokerOptions<
 export interface AgentRunInput<
   CALL_OPTIONS = unknown,
   TContext extends object = AgentRunInputContextValues,
+  TData = unknown,
 > {
   abortSignal?: AbortSignal
   context?: TContext
+  /**
+   * Structured Invocation input. `defineAgent({ data })` validates it before Capabilities, hooks, and the Driver run.
+   * Model and provider Drivers do not read it; use `prompt` or `messages` for model text.
+   */
+  data?: TData
   message?: string | Message
   messages?: Message[]
   /**
@@ -376,9 +397,13 @@ export interface AgentToolInspection {
   /** Capability that registered this tool, when known. */
   capabilityId?: string;
   description?: string
+  /** The tool's declared `icon`. Kept when content capture is off. */
+  icon?: string
   inputSchema?: AgentInspectionValue
   name: string
   mcp?: { server: string, name: string }
+  /** The tool's declared `title`. Kept when content capture is off, like Capability inspection labels. */
+  label?: string
   outputSchema?: AgentInspectionValue
 }
 
@@ -633,17 +658,18 @@ export type AgentWebhookSecretToken<TRuntimeConfig extends AgentRuntimeConfig = 
   MaybeResolvable<string | false | undefined, AgentCallbackContext<TRuntimeConfig>>
 
 export interface AgentWebhookRegistrationDefinition<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
-  /** Reject admission unless Channel State persists across host restarts. */
-  durableState?: boolean
   adapter?: string
   channelId?: string
   id?: string
   method?: "POST" | (string & {})
   path?: string
   provider: string
-  signature?: "github-sha256" | (string & {}) | {
+  signature?: "github-sha256" | "stripe-sha256" | (string & {}) | {
+    preset: "stripe-sha256"
+    /** Maximum age of the signed `t` timestamp in integer seconds. Must be finite and non-negative. Defaults to 300. Future timestamps pass the age check. */
+    toleranceSeconds?: number
+  } | {
     verify: (input: {
-      context: AgentCallbackContext<TRuntimeConfig>
       header: string
       rawBody: Uint8Array
       request: Request
@@ -672,27 +698,6 @@ export interface AgentTriggerContext<
   }
 }
 
-/** One message that `AgentChannelTriggerContext.dispatch()` sends through a Channel trigger. */
-export interface AgentChannelDispatchItem {
-  /** Trigger input. */
-  input: unknown
-  /** Stable key, such as the provider message ID. The Invocation ID derives from it. */
-  key: string
-}
-
-export interface AgentChannelDispatchOptions {
-  /** Record Channel message writes in the trace instead of calling the provider. */
-  dryRun?: boolean
-  /** Trigger of the same Channel that receives each item. */
-  trigger: string
-}
-
-/** Durable state of one Channel. Keys that start with `keyPrefix` belong to the Channel. */
-export interface AgentChannelStateBinding {
-  keyPrefix: string
-  state: StateAdapter
-}
-
 export interface AgentChannelTriggerContext<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
 > extends AgentCallbackContext<TRuntimeConfig> {
@@ -700,13 +705,6 @@ export interface AgentChannelTriggerContext<
   agentCapabilities: readonly AgentCapabilityDefinition<TRuntimeConfig>[]
   agentName?: string
   channel: AgentChannelDefinition<TRuntimeConfig>
-  /** The Channel's State Adapter. Present when a webhook route runs the trigger. */
-  channelState?: AgentChannelStateBinding
-  /**
-   * Starts one Invocation per item through another trigger of this Channel, for a webhook that carries several messages.
-   * Items use the same Invocation IDs as `replayChannel()`, so an item that already has an Invocation is skipped.
-   */
-  dispatch: (items: readonly AgentChannelDispatchItem[], options: AgentChannelDispatchOptions) => Promise<ReplayChannelResult>
   trigger: {
     channelId: string
     id: `${string}.${string}`
@@ -750,13 +748,36 @@ export interface AgentRunCallbackContext<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TContextValues extends object = AgentInvocationContextValues,
+  TData = unknown,
 > extends AgentCallbackContext<TRuntimeConfig> {
   actor: AgentActor
   context: AgentInvocationContextStore<TContextValues>
-  input: AgentRunInput<CALL_OPTIONS>
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, TData>
   invoker: AgentInvoker
   run?: AgentRunMetadata
 }
+
+export interface AgentInterceptContext<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+  TData = unknown,
+> extends AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData> {
+  /** Invocation `data` after `defineAgent({ data })` validation. */
+  data: TData
+}
+
+/**
+ * Handles an Invocation before the Driver runs.
+ * Return `undefined` to continue to the Driver. Return another value to finish the Invocation with that value as its output.
+ */
+export type AgentInterceptHandler<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+  TData = unknown,
+  TIntercept = unknown,
+> = (context: AgentInterceptContext<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData>) => MaybePromise<TIntercept | undefined>
 
 export interface AgentRunResult {
   artifacts?: readonly PublishedAgentDeliveryArtifact[]
@@ -795,17 +816,22 @@ export interface AgentFinishEvent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TOutput = unknown,
+  TData = unknown,
 > {
   actor: AgentActor
   error?: unknown
   errorMessage?: string
   extensions: AgentFinishExtensions
-  input: AgentRunInput<CALL_OPTIONS>
+  input: AgentRunInput<CALL_OPTIONS, AgentRunInputContextValues, TData>
   invoker: AgentInvoker
   invocation: {
+    /** True when output consumption was cancelled instead of completed. */
+    cancelled?: boolean
     durationMs: number
     resultKind?: string
     run?: AgentRunMetadata
+    /** The `traceId` of the stored invocation record. Present when the Agent has an invocation journal. */
+    traceId?: string
     usage?: AgentUsageRecord
   }
   result?: TOutput
@@ -819,7 +845,8 @@ export type AgentFinishHookEvent<
   CALL_OPTIONS = unknown,
   TOutput = unknown,
   TMessage = AgentChannelMessage | undefined,
-> = Omit<AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS, TOutput>, "error" | "errorMessage"> & {
+  TData = unknown,
+> = Omit<AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS, TOutput, TData>, "error" | "errorMessage"> & {
   /** The Channel message that started this Invocation, or `undefined` without a Channel. */
   message: TMessage
   reaction: (input: AgentChannelDeliveryReactionInput, options?: AgentChannelDeliveryEffectIntentOptions) => AgentChannelDeliveryEffectIntent<"reaction">
@@ -831,7 +858,8 @@ export type AgentErrorHookEvent<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TMessage = AgentChannelMessage | undefined,
-> = Omit<AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS>, "error" | "errorMessage" | "result" | "text"> & {
+  TData = unknown,
+> = Omit<AgentFinishEvent<TRuntimeConfig, CALL_OPTIONS, unknown, TData>, "error" | "errorMessage" | "result" | "text"> & {
   error: unknown
   errorMessage: string
   /** The Channel message that started this Invocation, or `undefined` without a Channel. */
@@ -846,8 +874,9 @@ export type AgentErrorHook<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TMessage = AgentChannelMessage | undefined,
+  TData = unknown,
 > = {
-  bivarianceHack(event: AgentErrorHookEvent<TRuntimeConfig, CALL_OPTIONS, TMessage>): MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
+  bivarianceHack(event: AgentErrorHookEvent<TRuntimeConfig, CALL_OPTIONS, TMessage, TData>): MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
 }["bivarianceHack"]
 
 export type AgentFinishHook<
@@ -855,15 +884,19 @@ export type AgentFinishHook<
   CALL_OPTIONS = unknown,
   TOutput = unknown,
   TMessage = AgentChannelMessage | undefined,
+  TData = unknown,
 > = {
-  bivarianceHack(event: AgentFinishHookEvent<TRuntimeConfig, CALL_OPTIONS, TOutput, TMessage>): MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
+  bivarianceHack(event: AgentFinishHookEvent<TRuntimeConfig, CALL_OPTIONS, TOutput, TMessage, TData>): MaybePromise<void | AgentChannelDeliveryFinishEffectResult>
 }["bivarianceHack"]
 
 export type AgentInputHook<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
   TContextValues extends object = AgentInvocationContextValues,
-> = (context: AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues>) => MaybePromise<void>
+  TData = unknown,
+> = {
+  bivarianceHack(context: AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData>): MaybePromise<void>
+}["bivarianceHack"]
 
 export interface AgentInvocationHooks<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -871,10 +904,11 @@ export interface AgentInvocationHooks<
   TContextValues extends object = AgentInvocationContextValues,
   TOutput = unknown,
   TMessage = AgentChannelMessage | undefined,
+  TData = unknown,
 > {
-  "agent:error"?: AgentErrorHook<TRuntimeConfig, CALL_OPTIONS, TMessage>
-  "agent:finish"?: AgentFinishHook<TRuntimeConfig, CALL_OPTIONS, TOutput, TMessage>
-  "agent:input"?: AgentInputHook<TRuntimeConfig, CALL_OPTIONS, TContextValues>
+  "agent:error"?: AgentErrorHook<TRuntimeConfig, CALL_OPTIONS, TMessage, TData>
+  "agent:finish"?: AgentFinishHook<TRuntimeConfig, CALL_OPTIONS, TOutput, TMessage, TData>
+  "agent:input"?: AgentInputHook<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData>
 }
 
 export type AgentHookOwner = "agent" | "capability" | "channel" | "runtime" | "integration" | (string & {})
@@ -934,7 +968,7 @@ export type AgentToolResolverWithWorkspace<
   | ((context: AgentAdapterMetadataContext<TRuntimeConfig, Name>) => MaybePromise<unknown>)
 
 export type AgentCapabilityMode = "read" | "write"
-export type AgentDriverKind = "model" | "provider" | "run"
+export type AgentDriverKind = "ask" | "model" | "provider" | "run"
 
 export interface AgentCapabilityCliStandardSchemaResultSuccess<T = unknown> {
   issues?: undefined
@@ -1417,6 +1451,8 @@ export interface AgentProviderStatus {
   stale: boolean
   installed?: boolean
   authenticated?: boolean
+  /** Commands from `driver.requirements` that the Driver shell cannot find. Present when requirements are checked. */
+  missingCommands?: string[]
   reason?: string
   usageLimits?: AgentProviderUsageLimits
 }
@@ -1438,6 +1474,12 @@ export interface AgentProviderDriverOptions<
   /** Provider approval policy. Defaults to `"ask"`; `"allow-all"` requires an explicit opt-in. */
   permissions?: AgentProviderPermissions
   providerSettings?: Record<string, unknown>
+  /**
+   * Commands the Driver shell needs, such as `git`, `gh`, or `unzip`.
+   * `status()` checks them where the Driver runs. With `driver.launch`, a resolver is required
+   * and each inspection probe checks commands in its shell before starting the provider.
+   */
+  requirements?: readonly string[]
   /** SQLite file used to persist provider session cursors across process restarts. */
   sessionStorePath?: string
 }
@@ -1481,7 +1523,10 @@ export interface AgentProviderLaunchCommand {
 
 export interface AgentProviderLaunchContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
   extends AgentProviderCredentialContext<TRuntimeConfig> {
+  /** Executable the wrapper must start. Requirement inspection starts `sh`; invocations start the provider. */
   command: string
+  /** Original provider executable. Use this to select a provider-specific runner. */
+  providerCommand: string
   cwd: string
   environment: Readonly<AgentProviderEnvironment>
   /** Framework-owned environment names injected when the provider process starts. Filtered executors must forward them. */
@@ -1528,6 +1573,7 @@ export interface AgentModelDriver<
   CALL_OPTIONS = unknown,
   TOutput = unknown,
 > {
+  ask?: never
   capacity?: AgentDriverCapacityOptions
   credentials?: never
   execution?: AgentModelExecutionOptions<TRuntimeConfig, CALL_OPTIONS>
@@ -1555,6 +1601,7 @@ export interface AgentRunDriver<
   TContextValues extends object = AgentInvocationContextValues,
   TOutput = unknown,
 > {
+  ask?: never
   capacity?: AgentDriverCapacityOptions
   credentials?: never
   execution?: never
@@ -1575,6 +1622,51 @@ export interface AgentRunDriver<
   workDir?: never
 }
 
+/** Jev questions whose answers form `TOutput`. Build each question with `ask.choice()`, `ask.score()`, and the other `ask` builders. */
+export type AgentAskQuestions<TOutput = Record<string, unknown>> = {
+  readonly [K in keyof TOutput]: AskQuestion & AskAnswerType<TOutput[K]>
+}
+
+export type AgentAskQuestionsResolver<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+  TOutput = Record<string, unknown>,
+> =
+  | AgentAskQuestions<TOutput>
+  | ((context: AgentRunContext<TRuntimeConfig, CALL_OPTIONS, WorkspaceName, TContextValues>) => MaybePromise<AgentAskQuestions<TOutput>>)
+
+/**
+ * Answers typed questions with TypeSafe Jev in one request. The answers are the Invocation output.
+ * Jev reads Invocation `data` when present, else the prompt, else the latest user message.
+ * Credentials and the model come from the Server Env group `typesafe`, declared with `typesafeEnv()`.
+ */
+export interface AgentAskDriver<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+  TOutput = unknown,
+> {
+  ask: AgentAskQuestionsResolver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>
+  capacity?: AgentDriverCapacityOptions
+  credentials?: never
+  execution?: never
+  instructions?: never
+  kind?: never
+  launch?: never
+  model?: never
+  permissionMode?: never
+  permissions?: never
+  providerSettings?: never
+  reasoningEffort?: never
+  reasoningSummary?: never
+  sessionStorePath?: never
+  run?: never
+  sandbox?: never
+  sessionKey?: never
+  workDir?: never
+}
+
 export type AgentDriver<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   CALL_OPTIONS = unknown,
@@ -1583,6 +1675,7 @@ export type AgentDriver<
 > =
   | AgentModelDriver<TRuntimeConfig, CALL_OPTIONS, TOutput>
   | AgentRunDriver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>
+  | AgentAskDriver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>
   | BuiltInAgentDriver<CALL_OPTIONS, TOutput>
 
 export type CustomAgentDriver<
@@ -1593,6 +1686,7 @@ export type CustomAgentDriver<
 > =
   | AgentModelDriver<TRuntimeConfig, CALL_OPTIONS, TOutput>
   | AgentRunDriver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>
+  | AgentAskDriver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>
 
 export interface AgentDefinitionCliOptions {
   capabilities?: boolean
@@ -1624,7 +1718,8 @@ export type AgentDefinitionHooks<
   TContextValues extends object = AgentInvocationContextValues,
   TOutput = unknown,
   TMessage = AgentChannelMessage | undefined,
-> = AgentCapabilityHooks<TRuntimeConfig> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput, TMessage>
+  TData = unknown,
+> = AgentCapabilityHooks<TRuntimeConfig> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput, TMessage, TData>
 
 type AgentSharedSettings<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -1633,14 +1728,26 @@ type AgentSharedSettings<
   TContextValues extends object = AgentInvocationContextValues,
   TCapabilities extends AgentCapabilitiesInput<TRuntimeConfig, WorkspaceName, CALL_OPTIONS> | undefined = AgentCapabilitiesInput<TRuntimeConfig, WorkspaceName, CALL_OPTIONS> | undefined,
   TOutput = unknown,
+  TData = unknown,
+  TIntercept = never,
+  TDataInput = TData,
 > = {
   box?: AgentBoxInput<TRuntimeConfig>
+  /**
+   * GitHub identity for this Agent. Provider Drivers receive its `access().env`,
+   * and the pull request checkout and `git()` use its token.
+   */
+  github?: AgentGitHub
   health?: AgentHealthDescriptor
   capabilities?: TCapabilities
   channels?: AgentChannelInputs<TRuntimeConfig>
   cli?: AgentDefinitionCliOptions
+  /** Standard Schema for Invocation `data`. ViteHub validates `data` before Capabilities, hooks, and the Driver run. */
+  data?: StandardSchemaV1<TDataInput, TData>
   description?: string
-  hooks?: AgentCapabilityHooks<TRuntimeConfig> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>
+  hooks?: AgentCapabilityHooks<TRuntimeConfig> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput | TIntercept, AgentChannelMessage | undefined, TData>
+  /** Finishes the Invocation before the Driver runs when it returns a value other than `undefined`. */
+  intercept?: AgentInterceptHandler<TRuntimeConfig, CALL_OPTIONS, TContextValues, TData, TIntercept>
   invoker?: AgentInvokerOptions<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues>
   invocations?: AgentInvocations
   messages?: AgentMessageChannelSettings<TRuntimeConfig>
@@ -1660,11 +1767,36 @@ export type AgentSettings<
   TCapabilities extends AgentCapabilitiesInput<TRuntimeConfig, WorkspaceName, CALL_OPTIONS> | undefined = AgentCapabilitiesInput<TRuntimeConfig, WorkspaceName, CALL_OPTIONS> | undefined,
   TOutput = unknown,
   TDriver extends AgentDriver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput> = AgentDriver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>,
-> = AgentSharedSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TCapabilities, TOutput> & {
+  TData = unknown,
+  TIntercept = never,
+  TDataInput = TData,
+> = AgentSharedSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TCapabilities, TOutput, TData, TIntercept, TDataInput> & {
   driver: TDriver
 }
 
 declare const agentOutputType: unique symbol
+declare const agentDataType: unique symbol
+declare const agentDriverOutputType: unique symbol
+declare const agentInterceptOutputType: unique symbol
+
+/** Carries the Invocation `data` type that `runAgent()` and related calls accept. This is the `data` schema input type. */
+export interface AgentDataCarrier<TDataInput = unknown> {
+  [agentDataType]?: TDataInput
+}
+
+declare const agentDataOutputType: unique symbol
+
+export interface AgentDataOutputCarrier<TData = unknown> {
+  [agentDataOutputType]?: TData
+}
+
+export interface AgentDriverOutputCarrier<TOutput = unknown> {
+  [agentDriverOutputType]?: [TOutput]
+}
+
+export interface AgentInterceptOutputCarrier<TOutput = unknown> {
+  [agentInterceptOutputType]?: [TOutput]
+}
 
 export interface AgentDefinition<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -1672,16 +1804,21 @@ export interface AgentDefinition<
   TInvokerProfile extends AgentInvokerProfile = AgentInvokerProfile,
   TContextValues extends object = AgentInvocationContextValues,
   TOutput = unknown,
-> {
+  TDataInput = unknown,
+  TDriverOutput = TOutput,
+  TData = unknown,
+  TInterceptOutput = TOutput,
+> extends AgentDataCarrier<TDataInput>, AgentDataOutputCarrier<TData>, AgentDriverOutputCarrier<TDriverOutput>, AgentInterceptOutputCarrier<TInterceptOutput> {
   [agentOutputType]?: TOutput
   box?: AgentBoxInput<TRuntimeConfig>
+  github?: AgentGitHub
   health?: AgentHealthDescriptor
   capabilities?: AgentCapabilityDefinition<TRuntimeConfig>[]
   channels?: AgentChannels<TRuntimeConfig>
   chat?: AgentChatOptions<TRuntimeConfig>
   cli?: AgentDefinitionCliOptions
   description?: string
-  hooks?: AgentCapabilityHooks<TRuntimeConfig, WorkspaceName> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>
+  hooks?: AgentCapabilityHooks<TRuntimeConfig, WorkspaceName> & AgentHookObserverHooks & AgentInvocationHooks<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput, AgentChannelMessage | undefined, TData>
   invoker?: AgentInvokerOptions<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues>
   invocations?: AgentInvocations
   messages?: AgentMessageChannelSettings<TRuntimeConfig>
@@ -1689,7 +1826,11 @@ export interface AgentDefinition<
   runtime?: AgentRuntimeBinding
   runEvents?: AgentRunEvents
   /** Inspect provider credentials and quota without creating an invocation or sending a prompt. */
-  status?(context: AgentRuntimeContext<TRuntimeConfig>, options?: { abortSignal?: AbortSignal }): Promise<AgentProviderStatus>
+  status?(context: AgentRuntimeContext<TRuntimeConfig>, options?: {
+    abortSignal?: AbortSignal
+    /** Defaults to true. Invocation preflight sets false to avoid repeating command checks. */
+    checkRequirements?: boolean
+  }): Promise<AgentProviderStatus>
   resolve(context: AgentRuntimeContext<TRuntimeConfig>): Promise<AgentAdapter<CALL_OPTIONS>>
   run?(context: AgentRunContext<TRuntimeConfig, CALL_OPTIONS, WorkspaceName, TContextValues>): MaybePromise<Response | AgentRunResult | AsyncIterable<StreamEvent> | unknown>
   uiMessageStream?: AgentUIMessageStreamProjectionResolver<TRuntimeConfig, CALL_OPTIONS, TContextValues>
@@ -1706,7 +1847,7 @@ export type AgentInput<
   TOutput = unknown,
   CALL_OPTIONS = any,
   TInvokerProfile extends AgentInvokerProfile = any,
-> = AgentDefinition<TContext extends AgentRuntimeContext<infer TRuntimeConfig> ? TRuntimeConfig : AgentRuntimeConfig, CALL_OPTIONS, TInvokerProfile, any, TOutput>
+> = AgentDefinition<TContext extends AgentRuntimeContext<infer TRuntimeConfig> ? TRuntimeConfig : AgentRuntimeConfig, CALL_OPTIONS, TInvokerProfile, any, TOutput, unknown, TOutput, unknown, unknown>
 
 export type AgentRegistryModule<TContext extends AgentRuntimeContext<any> = AgentRuntimeContext> =
   | { default?: AgentInput<TContext> }
@@ -1981,7 +2122,10 @@ export interface AgentMessageChannelSettings<TRuntimeConfig extends AgentRuntime
   dedupeTtlMs?: number
   delivery?: "automatic" | "manual"
   durable?: boolean
-  errorFallbackText?: string | null | ((context: AgentChatErrorHookArgs<TRuntimeConfig>) => MaybePromise<string | null | undefined>)
+  errorFallbackText?: string | null | ((context: AgentChatErrorHookArgs<TRuntimeConfig> & {
+    /** The text ViteHub sends when `errorFallbackText` is not set. */
+    defaultText: string
+  }) => MaybePromise<string | null | undefined>)
   fallbackStreamingPlaceholderText?: string | readonly string[] | null | ((context: AgentChatAgentHookArgs<TRuntimeConfig>) => MaybePromise<string | null | undefined>)
   final?: {
     delivery: "new-message"
@@ -2071,11 +2215,11 @@ export type AgentChannelMessageMethod<
   | AgentChannelMessageMethodHandler<TRuntimeConfig, TData>
   | { read: true, handler: AgentChannelMessageMethodHandler<TRuntimeConfig, TData> }
 
-/** `channel`, `data`, and `kind` are reserved for the handle's own properties. */
+/** `channel`, `data`, `kind`, and `then` are reserved for the handle's own properties and Promise protocol. */
 export type AgentChannelMessageMethods<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
-> = Record<string, AgentChannelMessageMethod<TRuntimeConfig, TData>> & { [TName in "channel" | "data" | "kind"]?: never }
+> = Record<string, AgentChannelMessageMethod<TRuntimeConfig, TData>> & { [TName in "channel" | "data" | "kind" | "then"]?: never }
 
 export interface AgentChannelMessageDefinition<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -2099,12 +2243,12 @@ type AgentChannelMessageMethodResult<TMethod> =
 
 /** Callable form of Channel message methods, without the Channel context argument. */
 export type AgentChannelMessageCalls<TMethods> = {
-  readonly [TName in keyof TMethods]: (...args: AgentChannelMessageMethodArgs<TMethods[TName]>) => Promise<Awaited<AgentChannelMessageMethodResult<TMethods[TName]>>>
+  readonly [TName in keyof TMethods]: (...args: AgentChannelMessageMethodArgs<TMethods[TName]>) => Promise<Awaited<AgentChannelMessageMethodResult<TMethods[TName]>> | (TMethods[TName] extends { read: true } ? never : undefined)>
 }
 
-/** Message methods that the Discord, Slack, Teams, and Telegram Channels provide. */
+/** Message methods available when Discord, Slack, Teams, or Telegram has an adapter and messages are enabled. */
 export interface AgentChannelReplyCalls {
-  readonly reply: (input: AgentChannelDeliveryReplyInput) => Promise<void>
+  readonly reply?: (input: AgentChannelDeliveryReplyInput) => Promise<void>
 }
 
 /** Message methods that the GitHub Channel provides. They exist only when the Channel has a GitHub App. */
@@ -2175,7 +2319,12 @@ type AgentChannelMessageFromInput<TName extends string, TInput> =
         AgentChannelMessageData<TInput>,
         Omit<AgentBuiltInChannelMessageCalls<TKind>, keyof AgentChannelDeclaredMethods<TInput>> & AgentChannelMessageCalls<AgentChannelDeclaredMethods<TInput>>
       >
-      : AgentChannelMessage<TName, AgentChannelInputKind<TName>, unknown, AgentBuiltInChannelMessageCalls<AgentChannelInputKind<TName>>>
+      : AgentChannelMessage<
+        TName,
+        AgentChannelInputKind<TName>,
+        AgentChannelMessageData<TInput>,
+        Omit<AgentBuiltInChannelMessageCalls<AgentChannelInputKind<TName>>, keyof AgentChannelDeclaredMethods<TInput>> & AgentChannelMessageCalls<AgentChannelDeclaredMethods<TInput>>
+      >
 
 /** Hook `event.message` type for an Agent's `channels` option. */
 export type AgentChannelMessageOf<TChannels> =
@@ -2299,11 +2448,15 @@ export interface AgentToolDefinition<TInput = unknown, TOutput = unknown> {
   activity?: AgentActivity
   description?: string
   execute?: (input: TInput, context?: AgentToolExecutionContext) => MaybePromise<TOutput>
+  /** Iconify icon name for inspection interfaces, for example `i-lucide-database`. The Console includes the Lucide set. */
+  icon?: string
   inputSchema?: AgentToolSchema<TInput>
   metadata?: Record<string, unknown>
   name: string
   outputSchema?: AgentToolSchema<TOutput>
   policy?: AgentToolPolicyDecision | ((context: AgentToolPolicyContext) => MaybePromise<AgentToolPolicyDecision>)
+  /** Short past-tense label for each call in traces, for example `Searched meals`. */
+  title?: string
 }
 
 export type AgentToolSet = Record<string, AgentToolDefinition>
@@ -2385,6 +2538,7 @@ export interface AgentInspectionProviderMetadata {
   permissions: AgentProviderPermissions
   provider?: string
   providerSettings?: string[]
+  requirements?: readonly string[]
   reasoningEffort?: CodexReasoningEffort
   reasoningSummary?: CodexReasoningSummary
   sessionStore?: "sqlite"
@@ -2400,7 +2554,7 @@ export interface AgentInspectionDriverMetadata {
   }
   readonly executionAuthority: ExecutionAuthority
   execution?: AgentInspectionModelExecutionMetadata
-  kind: "model" | "provider" | "run" | "unknown"
+  kind: AgentDriverKind | "unknown"
   model?: AgentInspectionModelMetadata
   provider?: AgentInspectionProviderMetadata
 }

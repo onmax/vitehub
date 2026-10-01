@@ -12,9 +12,6 @@ import type {
   AgentChannelDefinition,
   AgentChannelDeliveryEffectIntent,
   AgentChannelDeliveryFinishEffect,
-  AgentChannelDispatchItem,
-  AgentChannelDispatchOptions,
-  AgentChannelStateBinding,
   AgentChannels,
   AgentInput,
   AgentRunInput,
@@ -95,30 +92,6 @@ export function agentChannelOptions<TRuntimeConfig extends AgentRuntimeConfig>(
   return (agent.channels || workspaceOptions?.channels || {}) as AgentChannels<TRuntimeConfig>
 }
 
-const channelTriggerStates = new WeakMap<Request, { binding: AgentChannelStateBinding, channelId: string }>()
-
-/** Gives the triggers of one Channel its State Adapter for the lifetime of a webhook request. */
-export function bindAgentChannelTriggerState(request: Request, channelId: string, binding: AgentChannelStateBinding): void {
-  channelTriggerStates.set(request, { binding, channelId })
-}
-
-function agentChannelTriggerState(request: Request | undefined, channelId: string): AgentChannelStateBinding | undefined {
-  const bound = request ? channelTriggerStates.get(request) : undefined
-  return bound?.channelId === channelId ? bound.binding : undefined
-}
-
-async function dispatchAgentChannelItems<TRuntimeConfig extends AgentRuntimeConfig>(
-  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
-  context: ResolvedAgentRuntimeContext<TRuntimeConfig>,
-  channelId: string,
-  items: readonly AgentChannelDispatchItem[],
-  options: AgentChannelDispatchOptions,
-) {
-  // Loaded on use: Channel replay depends on the Agent runner, which depends on this module.
-  const { dispatchChannelItems } = await import("./channel-replay.ts")
-  return await dispatchChannelItems(agent, context, channelId, items, options)
-}
-
 function assertTriggerName(name: unknown, owner: string): asserts name is string {
   if (typeof name !== "string" || !name.trim()) {
     throw agentDiagnostics.AGENT_R0868({ message: `[vitehub] ${owner} trigger names must be non-empty strings.` })
@@ -191,7 +164,6 @@ export async function resolveAgentTriggers<
   for (const [channelId, channel] of Object.entries(agentChannelOptions(agent))) {
     const channelCapabilities = normalizeCapabilities([...capabilities, ...(channel.capabilities || [])]) as AgentCapabilityDefinition<TRuntimeConfig>[]
     const channelWebhooks = normalizeChannelWebhookRegistrations(channelId, channel.kind, channel.webhooks)
-    const channelState = agentChannelTriggerState(context.request, channelId)
     const capabilityWebhookTrigger = capabilityWebhookTriggerForChannel(triggers, channelId, channel.kind)
     if (capabilityWebhookTrigger && channelWebhooks?.length) {
       capabilityWebhookTrigger.webhooks = [
@@ -215,9 +187,6 @@ export async function resolveAgentTriggers<
           agentCapabilities: channelCapabilities,
           agentName: agent.name || runtimeContext.agentIdentity?.name,
           channel,
-          ...(channelState ? { channelState } : {}),
-          dispatch: (items: readonly AgentChannelDispatchItem[], options: AgentChannelDispatchOptions) =>
-            dispatchAgentChannelItems(agent, context, channelId, items, options),
           trigger: {
             channelId,
             id,
@@ -325,6 +294,44 @@ async function constantTimeEqual(left: string, right: string): Promise<boolean> 
   return diff === 0
 }
 
+function stripeSignatureTolerance(signature: AgentWebhookRegistrationDefinition["signature"]): number | undefined {
+  if (signature === "stripe-sha256") return 300
+  if (isRecord(signature) && "preset" in signature && signature.preset === "stripe-sha256") return signature.toleranceSeconds ?? 300
+  return undefined
+}
+
+// Verifies `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">`. Any matching `v1` passes, as during secret rotation.
+async function verifyStripeSignature(secret: string, header: string, rawBody: Uint8Array, toleranceSeconds: number): Promise<boolean> {
+  if (!Number.isFinite(toleranceSeconds) || toleranceSeconds < 0) return false
+  let timestamp: string | undefined
+  let signatureCount = 0
+  const signatures: string[] = []
+  for (const part of header.split(",")) {
+    const separator = part.indexOf("=")
+    if (separator <= 0) continue
+    const key = part.slice(0, separator).trim()
+    const value = part.slice(separator + 1).trim()
+    if (key === "t") timestamp = value
+    else if (key === "v1") {
+      // Bound unauthenticated cryptographic work while allowing secret rotation.
+      if (++signatureCount > 32) return false
+      if (/^[a-f0-9]{64}$/.test(value)) signatures.push(value)
+    }
+  }
+  if (!timestamp || !/^\d+$/.test(timestamp) || !signatures.length) return false
+  const timestampSeconds = Number(timestamp)
+  if (!Number.isSafeInteger(timestampSeconds)) return false
+  if (Math.floor(Date.now() / 1000) - timestampSeconds > toleranceSeconds) return false
+  const prefix = new TextEncoder().encode(`${timestamp}.`)
+  const payload = new Uint8Array(prefix.length + rawBody.length)
+  payload.set(prefix)
+  payload.set(rawBody, prefix.length)
+  const expected = await hmacSha256(secret, payload.buffer)
+  let verified = false
+  for (const signature of signatures) verified = await constantTimeEqual(expected, signature) || verified
+  return verified
+}
+
 function webhookVerificationError(message: string): AgentHttpError {
   return new AgentHttpError(401, message)
 }
@@ -381,7 +388,7 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
     }))
     .filter((entry): entry is { headerValue: string | null, registration: AgentWebhookRegistrationDefinition } =>
       // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Authored verifier callbacks require runtime validation at the webhook boundary.
-      entry.headerValue !== null || (typeof entry.registration.signature === "object" && entry.registration.signature !== null && typeof entry.registration.signature.verify === "function"))
+      entry.headerValue !== null || (typeof entry.registration.signature === "object" && entry.registration.signature !== null && "verify" in entry.registration.signature && typeof entry.registration.signature.verify === "function"))
 
   if (!targeted.length) {
     return options.requireSecretHeader
@@ -395,9 +402,9 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
       return { registration, verified: true }
     }
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Webhook signature verifiers cross the user configuration boundary and require runtime validation.
-    if (typeof registration.signature === "object" && registration.signature !== null && typeof registration.signature.verify === "function") {
+    if (typeof registration.signature === "object" && registration.signature !== null && "verify" in registration.signature && typeof registration.signature.verify === "function") {
       const rawBody = options.rawBody ? Uint8Array.from(options.rawBody) : new Uint8Array(await request.clone().arrayBuffer())
-      if (await registration.signature.verify({ context: verificationContext, header: headerValue ?? "", rawBody, request, secret: secretToken || "" })) {
+      if (await registration.signature.verify({ header: headerValue ?? "", rawBody, request, secret: secretToken || "" })) {
         return { registration, verified: true }
       }
       continue
@@ -406,6 +413,14 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
       throw webhookVerificationError(`[vitehub] Webhook registration "${registration.id || registration.provider}" declares secretHeader "${registration.secretHeader}" but no secretToken is configured. Verification requires secretToken from Server Env; secretToken: false explicitly disables verification.`)
     }
     if (headerValue === null) continue
+    const stripeTolerance = stripeSignatureTolerance(registration.signature)
+    if (stripeTolerance !== undefined) {
+      const rawBody = options.rawBody ? Uint8Array.from(options.rawBody) : new Uint8Array(await request.clone().arrayBuffer())
+      if (await verifyStripeSignature(secretToken, headerValue, rawBody, stripeTolerance)) {
+        return { registration, verified: true }
+      }
+      continue
+    }
     if (registration.signature === "github-sha256") {
       const body = options.rawBody ? Uint8Array.from(options.rawBody).buffer : await request.clone().arrayBuffer()
       const expected = `sha256=${await hmacSha256(secretToken, body)}`
@@ -433,7 +448,8 @@ function withAgentTriggerContext<CALL_OPTIONS>(
   message?: unknown,
 ): AgentRunInput<CALL_OPTIONS> {
   const context = { ...input.context }
-  if (message !== undefined) context[channelMessageContextKey] = message
+  if (message === undefined) delete context[channelMessageContextKey]
+  else context[channelMessageContextKey] = message
   const effects = delivery?.effects ? Array.isArray(delivery.effects) ? delivery.effects : [delivery.effects] : undefined
   const finishEffects = delivery?.finishEffects ? Array.isArray(delivery.finishEffects) ? delivery.finishEffects : [delivery.finishEffects] : undefined
   if (effects?.length) context[channelDeliveryEffectsContextKey] = effects as AgentChannelDeliveryEffectIntent[]
