@@ -2,6 +2,8 @@ import agentRegistry from "#vitehub/agent/registry"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { redactInspectionText } from "@vite-hub/internal/inspect"
 
+import * as v from "valibot"
+
 import { getAgentFromRegistry } from "../index.ts"
 import { agentInvocationsDevGuard } from "../invocations-dev.ts"
 import { isAgentInvocations } from "../invocations.ts"
@@ -13,13 +15,15 @@ function failure(message: string, status: number): Response {
   return Response.json({ error: { message: redactInspectionText(message) } }, { status })
 }
 
+const cancelRequestSchema = v.object({
+  id: v.pipe(v.string(), v.trim(), v.nonEmpty()),
+  operation: v.literal("cancel"),
+})
+
 async function readBody(request: Request): Promise<AgentInvocationsDevRequestBody | undefined> {
   const value: unknown = await request.json().catch(() => undefined)
-  if (typeof value !== "object" || value === null) return
-  const operation: unknown = Reflect.get(value, "operation")
-  const id: unknown = Reflect.get(value, "id")
-  if (operation !== "cancel" || typeof id !== "string" || !id.trim()) return
-  return { id: id.trim(), operation }
+  const parsed = v.safeParse(cancelRequestSchema, value)
+  return parsed.success ? parsed.output : undefined
 }
 
 /**

@@ -177,7 +177,7 @@ async function request<T>(url: URL, fetchImpl: typeof fetch, timeout: number, pa
   return parseResponse(value)
 }
 
-const cancelOutcomes = new Set<unknown>(["cancelled", "not-found", "requested", "terminal", "unavailable"])
+const cancelOutcomes = new Set<unknown>(["not-found", "requested", "terminal", "unavailable"])
 
 function parseCancelResult(value: unknown): AgentInvocationCancelResult {
   if (
@@ -238,15 +238,14 @@ async function cancelFailureMessage(response: Response): Promise<string> {
 function cancelMessage(result: AgentInvocationCancelResult): string {
   if (result.outcome === "not-found") return `${result.id} not found`
   if (result.outcome === "terminal") return `${result.id} already ${result.status ?? "finished"}`
-  if (result.outcome === "cancelled") return `${result.id} cancelled`
   if (result.outcome === "unavailable") return `${result.id} cancel request was not recorded`
   if (result.notEnforcedBy) return `${result.id} cancel requested, not enforced by ${result.notEnforcedBy}`
-  if (result.delivery === "journal") return `${result.id} cancel requested; the owner instance reads it at its next claim renewal`
+  if (result.delivery === "journal") return `${result.id} cancel request recorded; execution stop is unconfirmed`
   return `${result.id} cancel requested`
 }
 
 function cancelExitCode(result: AgentInvocationCancelResult): number {
-  if (result.outcome === "cancelled" || result.outcome === "requested") return 0
+  if (result.outcome === "requested") return 0
   return result.outcome === "terminal" && result.status === "cancelled" ? 0 : 1
 }
 

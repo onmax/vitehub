@@ -29,6 +29,7 @@ const cancellationHandlesKey = Symbol.for("vitehub.agentInvocationCancellations"
 export const agentInvocationCancellationCode = "AGENT_R0970"
 
 function handles(owner: AgentInvocationStore): Map<string, Set<AgentInvocationCancellationHandle>> {
+  // SAFETY: The registry uses a module-owned global symbol; unknown values are checked before use.
   const root = globalThis as typeof globalThis & Record<symbol, unknown>
   const existing = root[cancellationHandlesKey]
   // SAFETY: This module owns the global symbol and stores only this store-keyed registry there.

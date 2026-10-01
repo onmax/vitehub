@@ -195,22 +195,21 @@ export interface AgentInvocationsOptions {
 
 export interface AgentInvocationCancelResult {
   /**
-   * How the run learns about the request.
-   * `local`: a run in this process was aborted.
-   * `journal`: the run that holds the Invocation reads the request within 10 seconds.
+   * Where the request was sent or recorded; this does not confirm execution stopped.
+   * `local`: a run in this process received an aborted signal.
+   * `journal`: the store retained the request for a current or future execution owner.
    */
   delivery?: "journal" | "local"
   id: string
-  /** Driver that received the request but cannot enforce it. The run continues until the Driver returns. */
+  /** Driver that cannot enforce an abort request. This does not confirm that its execution owner received the request. */
   notEnforcedBy?: string
   /**
-   * `requested`: a live run received the request.
-   * `cancelled`: no live run held the Invocation, so the journal recorded `cancelled`.
+   * `requested`: the request was recorded or sent locally; owner observation is unconfirmed.
    * `terminal`: the Invocation already finished.
    * `not-found`: the journal has no Invocation with this id.
    * `unavailable`: the store did not keep the request and no run in this process holds the Invocation.
    */
-  outcome: "cancelled" | "not-found" | "requested" | "terminal" | "unavailable"
+  outcome: "not-found" | "requested" | "terminal" | "unavailable"
   status?: AgentInvocationRecordStatus
 }
 

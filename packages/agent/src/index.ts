@@ -7227,7 +7227,7 @@ async function executeAgentInvocationWithCapacityLease<
   })
 }
 
-function invocationCancellationDriver(definition: object | undefined): AgentInvocationCancellationDriver {
+function invocationCancellationDriver(definition: unknown): AgentInvocationCancellationDriver {
   // SAFETY: Agent definition normalization stores the Driver kind and normalized Driver under these internal symbols.
   const internal = definition as { [baseAgentDriver]?: unknown, [baseAgentDriverKind]?: AgentDriverKind } | undefined
   const driver = internal?.[baseAgentDriver]

@@ -19,7 +19,8 @@ const error = ref<string>();
 const notEnforcedBy = ref<string>();
 const notice = computed(() => {
   const driver = notEnforcedBy.value ?? (props.cancelRequested ? props.notEnforcedBy : undefined);
-  return driver ? `Cancel requested, not enforced by ${driver}` : undefined;
+  if (driver) return `Cancel requested, not enforced by ${driver}`;
+  return props.cancelRequested ? "Cancellation requested; completion not confirmed" : undefined;
 });
 const label = computed(() =>
   props.cancelRequested ? "Cancel requested" : "Cancel session",

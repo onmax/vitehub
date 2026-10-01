@@ -256,11 +256,10 @@ Nuxt runs Nitro outside the Vite process, and plain Vite has no Nitro. On these 
 
 | Output | Meaning | Exit status |
 | --- | --- | --- |
-| `cancelled` | No run held the Invocation, so the journal recorded `cancelled`. | 0 |
-| `cancel requested` | A run in the Nitro runtime stopped. The journal records `cancelled` when the run returns. | 0 |
-| `cancel requested; the owner instance reads it at its next claim renewal` | Another process holds the Invocation. It reads the request within 10 seconds. | 0 |
-| `cancel requested, not enforced by <driver>` | The Driver received the request but cannot stop the run. The run continues until the Driver returns. | 0 |
-| `already <status>` | The Invocation already finished. | 1 for `completed` or `failed` |
+| `cancel requested` | A run in the Nitro runtime received an aborted signal. Its final journal state confirms whether it stopped. | 0 |
+| `cancel request recorded; execution stop is unconfirmed` | The journal retained the request for a current or future owner. A crashed owner cannot observe it until execution recovery. | 0 |
+| `cancel requested, not enforced by <driver>` | The Driver cannot enforce an abort request. Delivery does not confirm that its execution owner received the request. | 0 |
+| `already <status>` | The Invocation already finished. | 0 for `cancelled`; 1 for `completed` or `failed` |
 | `not found` | The journal has no Invocation with this id. | 1 |
 
 `--json` prints the `AgentInvocationCancelResult` from `invocations.cancel(id)`. The command is development-only. In a deployed app, call `invocations.cancel(id)` from your own authorized server route.

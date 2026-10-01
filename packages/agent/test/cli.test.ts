@@ -1429,8 +1429,9 @@ describe("agent CLI", () => {
     try {
       const results = [
         { delivery: "local", id: "invocation-1", notEnforcedBy: "run", outcome: "requested", status: "running" },
-        { id: "invocation-1", outcome: "cancelled", status: "cancelled" },
+        { id: "invocation-1", outcome: "terminal", status: "cancelled" },
         { id: "invocation-1", outcome: "terminal", status: "completed" },
+        { delivery: "journal", id: "invocation-1", outcome: "requested", status: "running" },
       ]
       const fetchCancel = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => init?.method === "POST"
         ? Response.json(results.shift())
@@ -1452,10 +1453,11 @@ describe("agent CLI", () => {
 
       const json = await run(["cancel", "invocation-1", "--json", "--url", "http://127.0.0.1:5174"])
       expect(json.exitCode).toBe(0)
-      expect(JSON.parse(json.stdout)).toEqual({ id: "invocation-1", outcome: "cancelled", status: "cancelled" })
+      expect(JSON.parse(json.stdout)).toEqual({ id: "invocation-1", outcome: "terminal", status: "cancelled" })
       expect(fetchCancel.mock.calls[3]?.[0]).toBe("http://127.0.0.1:5174/__vitehub/agent/invocations/dev")
 
       expect(await run(["cancel", "invocation-1"])).toEqual({ exitCode: 1, stderr: "", stdout: "invocation-1 already completed\n" })
+      expect(await run(["cancel", "invocation-1"])).toEqual({ exitCode: 0, stderr: "", stdout: "invocation-1 cancel request recorded; execution stop is unconfirmed\n" })
     }
     finally {
       await rm(rootDir, { force: true, recursive: true })

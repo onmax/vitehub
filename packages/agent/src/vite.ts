@@ -2844,7 +2844,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           nitroBaseURL: () => {
             // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
             const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
-            return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
+            return hasRuntimeType(baseURL, "string") ? baseURL : process.env.NITRO_APP_BASE_URL
           },
           route: agentInvocationsDevRoute,
           runtimeRoute: agentInvocationsDevRuntimeRoute,
