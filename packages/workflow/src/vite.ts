@@ -76,14 +76,17 @@ function resolveStringAliases(config: ResolvedConfig): Record<string, string> {
 export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: InternalWorkflowModuleOptions = {}): WorkflowVitePlugin {
   let providerOutput: ProviderOutputCatalog | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
-  let hasFinalNitroEnvironment = false
   let resolved: ResolvedConfig | undefined
   const defaultWorkflow: WorkflowModuleOptions | undefined = internalOptions.implicitlyEnabled
     && normalizeHosting(internalOptions.hosting).includes("netlify")
     ? false
     : options
   let workflow = defaultWorkflow
-  const scheduleBuildConfigs = new WeakMap<ResolvedConfig, { workflow: WorkflowModuleOptions | undefined, serverDirs: string[] | undefined }>()
+  const scheduleBuildConfigs = new WeakMap<ResolvedConfig, {
+    providerOutput: ProviderOutputCatalog | undefined
+    workflow: WorkflowModuleOptions | undefined
+    serverDirs: string[] | undefined
+  }>()
   const buildConfigs = new WeakMap<object, {
     config: ResolvedConfig
     providerOutput: ProviderOutputCatalog | undefined
@@ -95,10 +98,11 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
   const fallbackEnvironment = {}
   const buildEnvironment = (context: { environment?: object } | undefined): object =>
     context?.environment ?? context ?? fallbackEnvironment
-  const shouldSkipProviderOutputEnvironment = (context: { environment?: { name?: string } } | undefined): boolean => {
+  const shouldSkipProviderOutputEnvironment = (context: { environment?: { name?: string, config?: ResolvedConfig } } | undefined): boolean => {
     const environmentName = context?.environment?.name
-    const viteHubNitroContext = resolved && Reflect.get(resolved, VITEHUB_NITRO_CONFIG_CONTEXT) === true
-    const ownerEnvironment = hasFinalNitroEnvironment ? "nitro" : "ssr"
+    const config = context?.environment?.config ?? resolved
+    const viteHubNitroContext = config && Reflect.get(config, VITEHUB_NITRO_CONFIG_CONTEXT) === true
+    const ownerEnvironment = config?.environments?.nitro ? "nitro" : "ssr"
     return Boolean(environmentName && environmentName !== ownerEnvironment && viteHubNitroContext)
   }
 
@@ -191,14 +195,13 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     },
     configResolved(config) {
       resolved = config
-      hasFinalNitroEnvironment = Boolean(config.environments?.nitro)
       providerOutput = useProviderOutputCatalog(config)
       workflow = config.workflow ?? defaultWorkflow
       // SAFETY: The framework adds optional forwarded server directories to resolved Vite configuration.
       const buildConfig = config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[], __vitehubWorkflowServerDirs?: string[] }
       const buildServerDirs = buildConfig[VITEHUB_SERVER_DIRS] ?? buildConfig.__vitehubWorkflowServerDirs
       serverDirs = buildServerDirs
-      scheduleBuildConfigs.set(config, { workflow, serverDirs: buildServerDirs })
+      scheduleBuildConfigs.set(config, { providerOutput, workflow, serverDirs: buildServerDirs })
     },
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) {
@@ -230,10 +233,29 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     buildStart() {
       if (shouldSkipProviderOutputEnvironment(this)) return
       const context = buildEnvironment(this)
-      if (resolved) {
+      // Vite's builder can resolve several environments before starting any of
+      // them. Read the environment config here so a reused plugin does not use
+      // the last configResolved call for every build.
+      const environmentConfig = this?.environment?.config
+      if (environmentConfig) {
+        // SAFETY: This private fallback field is copied from the plugin's config hook by Vite.
+        const config = environmentConfig as typeof environmentConfig & { [VITEHUB_SERVER_DIRS]?: string[], __vitehubWorkflowServerDirs?: string[] }
+        const scheduled = scheduleBuildConfigs.get(config) ?? {
+          providerOutput: useProviderOutputCatalog(config),
+          serverDirs: config[VITEHUB_SERVER_DIRS] ?? config.__vitehubWorkflowServerDirs,
+          workflow: config.workflow ?? defaultWorkflow,
+        }
+        buildConfigs.set(context, {
+          config: environmentConfig,
+          providerOutput: scheduled.providerOutput,
+          serverDirs: scheduled.serverDirs,
+          workflow: scheduled.workflow,
+        })
+      }
+      else if (resolved) {
         buildConfigs.set(context, { config: resolved, providerOutput, serverDirs, workflow })
       }
-      providerOutputGenerations.capture(this, providerOutput)
+      providerOutputGenerations.capture(this, buildConfigs.get(context)?.providerOutput ?? providerOutput)
     },
     async buildEnd(error) {
       if (shouldSkipProviderOutputEnvironment(this)) return
@@ -253,8 +275,8 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       const generation = providerOutputGenerations.get(this)
       const environment = generation ?? buildEnvironment(this)
       const artifactDir = resolve(rootDir, ".vitehub/workflow-generations", randomUUID())
-      const workflowOptions = build?.workflow ?? workflow
-      const workflowServerDirs = build?.serverDirs ?? serverDirs
+      const workflowOptions = build ? build.workflow : workflow
+      const workflowServerDirs = build ? build.serverDirs : serverDirs
       const transformRegistry = plugins
         .find(plugin => plugin.vitehub?.agent?.transformWorkflowRegistry)
         ?.vitehub?.agent?.transformWorkflowRegistry
