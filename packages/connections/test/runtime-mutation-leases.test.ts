@@ -224,13 +224,16 @@ it.each(["different", "unidentified"] as const)("quarantines a rotated provider 
 })
 
 
-it.each(["marker audit", "state write", "marker write"] as const)("recovers Connection metadata after confirmed revocation and %s failure", async stage => {
+it.each(["marker audit", "state write", "marker write", "response body"] as const)("recovers Connection metadata after confirmed revocation and %s failure", async stage => {
   const test = createTestRuntime()
   await connect(test)
   const original = await test.store.secrets.read("connection/mail")
   const runtime = createConnectionsRuntime({ definitions: { mail: mailConnection() }, store: test.store, now: () => test.now.value, fetch: async (input, init) => {
     const response = await test.provider.fetch(input, init)
-    if (String(input) === "https://auth.example.com/revoke") test.provider.valid.clear()
+    if (String(input) === "https://auth.example.com/revoke") {
+      test.provider.valid.clear()
+      if (stage === "response body") return new Response(new ReadableStream({ start(controller) { controller.error(new TypeError("Revoke response body lost")) } }), { status: 200 })
+    }
     return response
   } })
   if (stage === "marker audit") {
@@ -250,11 +253,29 @@ it.each(["marker audit", "state write", "marker write"] as const)("recovers Conn
   if (stage === "marker write") test.store.bridge.replace = async () => { throw new Error("Revoke marker unavailable") }
   await expect(runtime.revoke({ name: "mail" })).rejects.toBeDefined()
   expect(test.provider.valid.has(ACCESS_TOKEN)).toBe(false)
-  expect(await runtime.inspect("mail")).toMatchObject({ status: stage === "marker write" ? "reauth_required" : "revoked" })
+  expect(await runtime.inspect("mail")).toMatchObject({ status: stage === "marker write" || stage === "response body" ? "reauth_required" : "revoked" })
   const current = await test.store.secrets.read("connection/mail")
-  if (stage === "marker write") expect(current).toEqual(original)
+  if (stage === "marker write" || stage === "response body") expect(current).toEqual(original)
   else expect(JSON.parse(current!.value)).toEqual({ revoked: true })
   const count = test.provider.calls.length
   await expect(runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
   expect(test.provider.calls).toHaveLength(count)
+})
+
+
+it("does not quarantine a newer token revision after confirmed revocation of the original grant", async () => {
+  const test = createTestRuntime()
+  await connect(test)
+  const original = await test.store.secrets.read("connection/mail")
+  const state = await test.store.state.get("mail")
+  if (!original?.revision || !state) throw new Error("Expected connected grant")
+  test.store.bridge.replace = async input => {
+    await test.store.secrets.replace({ expectedRevision: input.expectedRevision, key: input.key, value: JSON.stringify({ ...JSON.parse(original.value), accessToken: "new-access", grantId: "new-grant" }) })
+    throw new Error("A newer grant won before the revoke marker was saved")
+  }
+  await expect(test.runtime.revoke({ name: "mail" })).rejects.toBeDefined()
+  const replacement = await test.store.secrets.read("connection/mail")
+  expect(replacement?.revision).not.toBe(original.revision)
+  expect(JSON.parse(replacement!.value)).toMatchObject({ accessToken: "new-access", grantId: "new-grant" })
+  expect(await test.store.state.get("mail")).toEqual(state)
 })
