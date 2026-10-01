@@ -346,6 +346,7 @@ describe("Babysitter preset runtime", () => {
     expect(() => defineAgent({ extends: babysitter, options: { merge: "direct", autoMerge: true } })).toThrow(/deprecated/);
     // @ts-expect-error -- only provider Drivers can repair a checkout.
     expect(() => defineAgent({ extends: babysitter, options: { driver: "model" } })).toThrow(/driver must be/);
+    expect(() => defineAgent({ extends: babysitter, options: { noFindingsReviews: [""] } })).toThrow(/noFindingsReviews cannot contain an empty prefix/);
     expect(() => defineAgent({ extends: babysitter, options: { merge: { strategy: "direct", method: "fast-forward" as "squash" } } })).toThrow(/merge.method/);
   });
 
