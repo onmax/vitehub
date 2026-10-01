@@ -176,7 +176,10 @@ async function readBody(request: Request): Promise<BlobDevRequestBody> {
   if (limit !== undefined) parsed.limit = limit
   if (pathname !== undefined) parsed.pathname = pathname
   if (prefix !== undefined) parsed.prefix = prefix
-  if (store) parsed.store = store
+  if (store !== undefined) {
+    if (!store.trim()) throw new BlobDevRequestError("store must be a non-empty string.", 400)
+    parsed.store = store
+  }
   return parsed
 }
 

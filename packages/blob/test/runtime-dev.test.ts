@@ -50,6 +50,13 @@ async function run(body: unknown): Promise<{ body: Record<string, unknown>, stat
 const binary = Uint8Array.from([0, 255, 1, 128, 10, 13, 0xef, 0xbb, 0xbf, 0xc3, 0x28])
 
 describe("Blob dev runtime handler", () => {
+  it.each(["", "   "])("rejects store %j without changing the default store", async (store) => {
+    await run({ data: Buffer.from("original").toString("base64"), operation: "put", pathname: "original.txt" })
+    expect((await run({ operation: "del", pathname: "original.txt", store })).status).toBe(400)
+    expect((await run({ data: "", operation: "put", pathname: "unexpected.txt", store })).status).toBe(400)
+    expect((await run({ operation: "list" })).body).toMatchObject({ blobs: [{ pathname: "original.txt" }] })
+  })
+
   it("lists stores in the Console order", async () => {
     await expect(listBlobDevStores()).resolves.toEqual([
       { driver: "fs", name: "default" },
