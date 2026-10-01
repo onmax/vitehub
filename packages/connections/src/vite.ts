@@ -97,18 +97,17 @@ async function readManifest(root: string) {
 }
 
 async function readOwners(root: string) {
-  const owners = await readTypesManifest(root, generatedTypesOwnersManifest, generatedTypesOwnerSchema);
-  if (owners?.length) return owners;
   const recovery = await readTypesManifest(root, generatedTypesOwnersRecoveryManifest, generatedTypesOwnerSchema);
-  return recovery?.length ? recovery : owners;
+  if (recovery?.length) return recovery;
+  return await readTypesManifest(root, generatedTypesOwnersManifest, generatedTypesOwnerSchema);
 }
 
 async function writeOwners(root: string, owners: GeneratedTypesOwner[]): Promise<void> {
   // Keep the complete shared owner list recoverable without scanning other app roots.
-  // Publish the authoritative copy first. If the process exits before the
-  // recovery copy is replaced, readers still see the complete new owner list.
-  await writeTypesManifest(root, generatedTypesOwnersManifest, owners);
+  // Publish recovery first and select it first. If the process exits before the
+  // primary copy is replaced, readers still see the complete new owner list.
   await writeTypesManifest(root, generatedTypesOwnersRecoveryManifest, owners);
+  await writeTypesManifest(root, generatedTypesOwnersManifest, owners);
 }
 
 async function removeOwners(root: string): Promise<void> {
