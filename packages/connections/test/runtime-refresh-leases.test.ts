@@ -53,7 +53,7 @@ it("requires reconnect after an expired refresh for the same token revision", as
   expect(await test.runtime.inspect("mail")).toMatchObject({ status: "reauth_required" })
 })
 
-it("fences lease release and only recovers expired leases for a newer token revision", async () => {
+it("fences release and refuses expired leases even for a newer token revision", async () => {
   const test = createTestRuntime()
   const leases = test.store.refreshLeases
   const first = { expiresAt: 10, name: "mail", now: 0, owner: "first", revision: "old-token" }
@@ -61,10 +61,10 @@ it("fences lease release and only recovers expired leases for a newer token revi
   expect(await leases.claim({ ...first, owner: "second" })).toBe("busy")
   expect(await leases.claim({ ...first, expiresAt: 30, now: 20, owner: "second" })).toBe("expired")
   const next = { ...first, expiresAt: 30, now: 20, owner: "second", revision: "new-token" }
-  expect(await leases.claim(next)).toBe("acquired")
-  await leases.release("mail", "first")
-  expect(await leases.claim({ ...next, owner: "third" })).toBe("busy")
+  expect(await leases.claim(next)).toBe("expired")
   await leases.release("mail", "second")
+  expect(await leases.claim({ ...next, owner: "third" })).toBe("expired")
+  await leases.release("mail", "first")
   expect(await leases.claim({ ...next, owner: "third" })).toBe("acquired")
 })
 

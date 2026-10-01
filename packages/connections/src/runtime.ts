@@ -23,6 +23,7 @@ const AUTHORIZATION_TTL_MS = 10 * 60_000
 const APPROVAL_EXECUTION_TTL_MS = 5 * 60_000
 
 interface StoredToken {
+  grantId?: string
   accountId?: string
   accessToken: string
   expiresAt?: number
@@ -42,6 +43,7 @@ export interface ConnectionsRuntimeOptions {
 interface CallContext {
   actor: string
   approved?: boolean
+  approvedGrantId?: string
   definition: ConnectionDefinition
   name: string
   options: UseConnectionOptions
@@ -104,6 +106,7 @@ const definitionSchema = v.looseObject({
   scopes: v.array(v.string()),
 })
 const storedTokenSchema = v.object({
+  grantId: v.optional(v.string()),
   accountId: v.optional(v.string()),
   accessToken: v.string(),
   expiresAt: v.optional(v.number()),
@@ -120,8 +123,8 @@ const tokenResponseSchema = v.object({
   token_type: v.optional(v.string()),
 })
 const approvalInputSchema = v.variant("kind", [
-  v.object({ input: v.unknown(), kind: v.literal("method") }),
-  v.object({ body: v.optional(v.string()), headers: v.optional(v.record(v.string(), v.string())), kind: v.literal("fetch"), method: v.string(), redirect: v.optional(v.picklist(["error", "follow", "manual"])), url: v.string() }),
+  v.object({ grantId: v.optional(v.string()), input: v.unknown(), kind: v.literal("method") }),
+  v.object({ grantId: v.optional(v.string()), body: v.optional(v.string()), headers: v.optional(v.record(v.string(), v.string())), kind: v.literal("fetch"), method: v.string(), redirect: v.optional(v.picklist(["error", "follow", "manual"])), url: v.string() }),
 ])
 
 function isDefinition(value: unknown): value is ConnectionDefinition {
@@ -271,7 +274,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     await (await getStore()).access.append(event)
   }
 
-  async function tokenRequest(definition: ConnectionDefinition, parameters: Record<string, string>, signal?: AbortSignal, onDispatch?: () => void): Promise<ConnectionTokenResponse> {
+  async function tokenRequest(definition: ConnectionDefinition, parameters: Record<string, string>, signal?: AbortSignal, onDispatch?: () => void, onResponse?: () => void): Promise<ConnectionTokenResponse> {
     const provider = definition.provider
     const clientId = await resolveValue(provider.clientId)
     const clientSecret = await resolveValue(provider.clientSecret)
@@ -289,6 +292,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const parsedError = v.safeParse(v.object({ error: v.string() }), body)
     const error = parsedError.success ? parsedError.output.error : undefined
     if (!response.ok || error) {
+      onResponse?.()
       throw new ConnectionError(error === "invalid_grant" ? "reauth_required" : "provider", `Provider "${provider.id}" rejected the token request${error ? ` (${error})` : ""}.`, {
         details: { status: response.status },
       })
@@ -297,6 +301,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     if (!token.success) {
       throw new ConnectionError("provider", `Provider "${provider.id}" returned no access token.`)
     }
+    onResponse?.()
     return token.output
   }
 
@@ -307,6 +312,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   ): StoredToken {
     return {
       accountId: previous?.accountId,
+      grantId: previous?.grantId,
       accessToken: response.access_token,
       expiresAt: response.expires_in === undefined ? undefined : now() + response.expires_in * 1000,
       refreshToken: response.refresh_token ?? previous?.refreshToken,
@@ -360,14 +366,14 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         if (!await setStatus(name, { status: "reauth_required" }, stored.revision)) return await readCurrentToken(name)
         throw new ConnectionError("reauth_required", `Connection "${name}" has no refresh token. Connect it again.`, { details: { connection: name } })
       }
-      if (!connections.refreshLeases) throw new ConnectionError("invalid", "The Connection store must provide atomic refresh leases.")
+      if (!connections.refreshLeases) throw new ConnectionError("invalid", "The Connection store must provide atomic token mutation leases.")
       const lease = await connections.refreshLeases.claim({ expiresAt: now() + REFRESH_LEASE_MS, name, now: now(), owner, revision: stored.revision })
       if (lease === "expired") {
-        if (!await setStatus(name, { status: "reauth_required" }, stored.revision)) continue
-        throw new ConnectionError("reauth_required", `Connection "${name}" has an unconfirmed refresh outcome. Connect it again.`, { details: { connection: name } })
+        await setStatus(name, { status: "reauth_required" }, stored.revision)
+        throw unresolvedMutation(name)
       }
       if (lease === "busy") {
-        if (Date.now() >= deadline) throw new ConnectionError("provider", `Connection "${name}" is still refreshing. Try again.`, { details: { connection: name } })
+        if (Date.now() >= deadline) throw new ConnectionError("provider", `Connection "${name}" has a token mutation in progress. Try again.`, { details: { connection: name } })
         await new Promise(resolve => setTimeout(resolve, 25))
         continue
       }
@@ -452,6 +458,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
           let token = parseToken(secret.unseal(), context.name)
           if (expiresSoon(token)) token = await refresh(context.name, context.definition, token.accessToken, false)
           const call = (current: StoredToken) => {
+            if (context.approved && (!context.approvedGrantId || current.grantId !== context.approvedGrantId)) {
+              throw new ConnectionError("invalid", "Approval belongs to a previous Connection grant.")
+            }
             const headers: Record<string, string> = {
               accept: "application/json",
               ...init.headers,
@@ -525,12 +534,14 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return undefined
     }
     if (decision === "approve") {
+      const current = await (await getStore()).secrets.read(tokenKey(context.name))
+      const token = current ? parseToken(current.value, context.name) : undefined
       const approval: ConnectionApproval = {
         action: providerRequest.action,
         actor: context.actor,
         createdAt: new Date(now()).toISOString(),
         id: `approval_${randomToken().slice(0, 20)}`,
-        input: approvalInput,
+        input: { ...approvalInput, grantId: token?.grantId },
         name: context.name,
         status: "pending",
         traceId: context.options.traceId,
@@ -658,52 +669,81 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     if (!authorization || authorization.expiresAt < now()) throw new ConnectionError("invalid", "The authorization request is unknown or expired. Start the connection again.")
     const name = authorization.name
     const loaded = await definition(name)
-    const response = await tokenRequest(loaded, {
-      code: input.code,
-      code_verifier: authorization.verifier,
-      grant_type: "authorization_code",
-      redirect_uri: authorization.redirectUri,
-    })
-    const account = loaded.provider.account(response)
-    const key = tokenKey(name)
-    // Bind the account check to the same token revision used by the conditional write.
-    const current = await connections.secrets.read(key)
-    const previous = current ? v.safeParse(storedTokenSchema, JSON.parse(current.value)) : undefined
-    const state = await connections.state.get(name)
-    const accountId = previous?.success ? previous.output.accountId ?? state?.accountId : state?.status === "revoked" ? undefined : state?.accountId
-    if (accountId && (!account || accountId !== account.id)) {
-      throw new ConnectionError("invalid", account ? `Connection "${name}" belongs to another account. Revoke it before you connect a different account.` : `Provider "${loaded.provider.id}" did not identify the account. The existing Connection was not replaced.`, { details: { connection: name } })
+    const owner = await claimMutationLease(name)
+    let releaseLease = true
+    try {
+      const response = await tokenRequest(loaded, {
+        code: input.code,
+        code_verifier: authorization.verifier,
+        grant_type: "authorization_code",
+        redirect_uri: authorization.redirectUri,
+      }, AbortSignal.timeout(REFRESH_WAIT_MS), () => { releaseLease = false }, () => { releaseLease = true })
+      releaseLease = true
+      const account = loaded.provider.account(response)
+      const key = tokenKey(name)
+      // Bind the account check to the same token revision used by the conditional write.
+      const current = await connections.secrets.read(key)
+      const previous = current ? v.safeParse(storedTokenSchema, JSON.parse(current.value)) : undefined
+      const state = await connections.state.get(name)
+      const accountId = previous?.success ? previous.output.accountId ?? state?.accountId : state?.status === "revoked" ? undefined : state?.accountId
+      if (accountId && (!account || accountId !== account.id)) {
+        throw new ConnectionError("invalid", account ? `Connection "${name}" belongs to another account. Revoke it before you connect a different account.` : `Provider "${loaded.provider.id}" did not identify the account. The existing Connection was not replaced.`, { details: { connection: name } })
+      }
+      const token = toStoredToken(response, previous?.success ? previous.output : undefined, [
+        ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),
+      ])
+      token.accountId = account?.id
+      token.grantId = randomToken()
+      // Quarantine the Connection if its new grant cannot be saved durably.
+      releaseLease = false
+      const replacement = await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
+      const timestamp = new Date(now()).toISOString()
+      const persisted = await connections.state.putForToken({
+        accountEmail: account?.email,
+        accountId: account?.id,
+        connectedAt: timestamp,
+        name,
+        refreshedAt: timestamp,
+        scopes: token.scopes,
+        status: "connected",
+        updatedAt: timestamp,
+      }, replacement.revision)
+      if (!persisted) throw new ConnectionError("invalid", "The Connection token changed during authorization.")
+      releaseLease = true
+      return await inspect(name)
     }
-    const token = toStoredToken(response, previous?.success ? previous.output : undefined, [
-      ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),
-    ])
-    token.accountId = account?.id
-    // A losing callback must not revoke a provider grant that can include the winning token.
-    const replacement = await connections.bridge.replace(envContext(authorization.actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
-    const timestamp = new Date(now()).toISOString()
-    await connections.state.putForToken({
-      accountEmail: account?.email,
-      accountId: account?.id,
-      connectedAt: timestamp,
-      name,
-      refreshedAt: timestamp,
-      scopes: token.scopes,
-      status: "connected",
-      updatedAt: timestamp,
-    }, replacement.revision)
-    return await inspect(name)
+    catch (error) {
+      if (!releaseLease) {
+        const current = await connections.secrets.inspect(tokenKey(name)).catch(() => undefined)
+        await setStatus(name, { status: "reauth_required" }, current?.revision ?? null).catch(() => undefined)
+      }
+      throw error
+    }
+    finally {
+      if (releaseLease) await connections.refreshLeases.release(name, owner).catch(() => undefined)
+    }
   }
 
-  async function revokeProviderToken(definition: ConnectionDefinition, token: string): Promise<void> {
-    if (!definition.provider.revocationEndpoint) return
-    try {
-      await request(definition.provider.revocationEndpoint, {
-        body: new URLSearchParams({ token }),
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        method: "POST",
-      })
+  function unresolvedMutation(name: string): ConnectionError {
+    return new ConnectionError("reauth_required", `Connection "${name}" has an unconfirmed token mutation. Confirm the provider outcome and repair its mutation lease before connecting again.`, { details: { connection: name } })
+  }
+
+  async function claimMutationLease(name: string): Promise<string> {
+    const connections = await getStore()
+    if (!connections.refreshLeases) throw new ConnectionError("invalid", "The Connection store must provide atomic token mutation leases.")
+    const owner = randomToken()
+    const deadline = Date.now() + REFRESH_WAIT_MS
+    while (true) {
+      const revision = (await connections.secrets.inspect(tokenKey(name)))?.revision ?? "unconnected"
+      const lease = await connections.refreshLeases.claim({ expiresAt: now() + REFRESH_LEASE_MS, name, now: now(), owner, revision })
+      if (lease === "acquired") return owner
+      if (lease === "expired") {
+        await setStatus(name, { status: "reauth_required" }, revision === "unconnected" ? null : revision)
+        throw unresolvedMutation(name)
+      }
+      if (Date.now() >= deadline) throw new ConnectionError("provider", `Connection "${name}" has a token mutation in progress. Try again.`, { details: { connection: name } })
+      await new Promise(resolve => setTimeout(resolve, 25))
     }
-    catch {}
   }
 
   async function revoke(input: { actor?: string, name: string }): Promise<ConnectionInspection> {
@@ -711,24 +751,44 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const connections = await getStore()
     const key = tokenKey(input.name)
     const actor = input.actor ?? "user:local"
-    const stored = await connections.secrets.inspect(key)
-    let revision: string | null = null
-    if (stored) {
-      revision = await connections.bridge.use(envContext(actor), key, "revoke", async (secret, metadata) => {
-        if (!metadata?.revision) throw new ConnectionError("invalid", "Connection revocation requires the Env Bridge to provide the leased token revision.")
-        let token: StoredToken | undefined
-        try {
-          token = parseToken(secret.unseal(), input.name)
-        }
-        catch {}
-        if (token) await revokeProviderToken(loaded, token.refreshToken ?? token.accessToken)
-        // Fence the marker with the revision of the token sent to the provider.
-        const replacement = await connections.bridge.replace(envContext(actor), { expectedRevision: metadata.revision, key, value: JSON.stringify({ revoked: true }) })
-        return replacement.revision
-      })
+    const owner = await claimMutationLease(input.name)
+    let releaseLease = true
+    try {
+      const stored = await connections.secrets.inspect(key)
+      let revision: string | null = null
+      if (stored) {
+        revision = await connections.bridge.use(envContext(actor), key, "revoke", async (secret, metadata) => {
+          if (!metadata?.revision) throw new ConnectionError("invalid", "Connection revocation requires the Env Bridge to provide the leased token revision.")
+          let token: StoredToken | undefined
+          try {
+            token = parseToken(secret.unseal(), input.name)
+          }
+          catch {}
+          if (token && loaded.provider.revocationEndpoint) {
+            // A lost response can leave a grant-wide revoke running at the provider.
+            releaseLease = false
+            const response = await request(loaded.provider.revocationEndpoint, {
+              body: new URLSearchParams({ token: token.refreshToken ?? token.accessToken }),
+              headers: { "content-type": "application/x-www-form-urlencoded" },
+              method: "POST",
+              signal: AbortSignal.timeout(REFRESH_WAIT_MS),
+            })
+            await response.arrayBuffer()
+            releaseLease = true
+          }
+          // Keep the mutation lease until the revoked marker and metadata are durable.
+          releaseLease = false
+          const replacement = await connections.bridge.replace(envContext(actor), { expectedRevision: metadata.revision, key, value: JSON.stringify({ revoked: true }) })
+          return replacement.revision
+        })
+      }
+      if (!await setStatus(input.name, { status: "revoked" }, revision)) throw new ConnectionError("invalid", "The Connection token changed during revocation.")
+      releaseLease = true
+      return await inspect(input.name)
     }
-    await setStatus(input.name, { status: "revoked" }, revision)
-    return await inspect(input.name)
+    finally {
+      if (releaseLease) await connections.refreshLeases.release(input.name, owner).catch(() => undefined)
+    }
   }
 
   async function list(): Promise<ConnectionInspection[]> {
@@ -775,6 +835,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const context: CallContext = {
         actor: approval.actor,
         approved: true,
+        approvedGrantId: stored.grantId,
         definition: loaded,
         name: approval.name,
         options: {

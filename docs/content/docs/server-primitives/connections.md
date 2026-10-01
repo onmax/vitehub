@@ -75,7 +75,9 @@ Start the development server, then run:
 vitehub connections connect google --port 8976
 ```
 
-Connection state writes are conditional on the current encrypted token revision. A delayed callback or failed refresh cannot replace metadata from a newer grant or revoke.
+Connection state writes are conditional on the current encrypted token revision. Authorization-code exchange, refresh, and revoke share a durable per-Connection mutation lease. A callback waits for provider revocation to finish before it exchanges its code.
+
+An expired unresolved lease blocks token mutations even after the token revision changes. Confirm that the old request can no longer affect the provider grant before repairing its lease in the application store. The default SQLite table is `vitehub_connection_refresh_leases`. Inspect its `name`, `owner`, `revision`, and `expires_at` columns, then remove only the confirmed former operation's `name` and `owner` row. Expiry alone does not permit removal. Connect again after repair.
 
 The command prints the provider URL. Open it, grant access, and the loopback callback stores the token. A Connection has one account. To change the account, revoke the Connection first.
 

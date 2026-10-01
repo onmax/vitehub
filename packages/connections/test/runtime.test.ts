@@ -79,7 +79,7 @@ describe("connect", () => {
     expect(await test.runtime.inspect("mail")).toMatchObject({ scopes: { granted: ["openid"], missing: ["mail.modify"] } })
   })
 
-  it("does not let a stale failed refresh invalidate a reconnected account", async () => {
+  it("waits for a failed refresh to settle before reconnecting", async () => {
     const test = createTestRuntime()
     await connect(test, { expires_in: 1 })
     let enter!: () => void
@@ -96,10 +96,13 @@ describe("connect", () => {
       return await request(input, init)
     } })
     const call = test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    const failed = expect(call).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
     await entered
-    await connect(test)
+    const reconnecting = connect(test)
     resume()
-    await expect(call).resolves.toMatchObject({ labels: [{ id: "INBOX" }] })
+    await failed
+    await reconnecting
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).resolves.toMatchObject({ labels: [{ id: "INBOX" }] })
     expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
   })
 
@@ -151,14 +154,15 @@ describe("connect", () => {
     }
     const callback = connect(test)
     await entered
-    await test.runtime.revoke({ name: "mail" })
+    const revoking = test.runtime.revoke({ name: "mail" })
     resume()
     await callback
+    await revoking
     expect(await test.runtime.inspect("mail")).toMatchObject({ status: "revoked" })
     await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
   })
 
-  it("blocks the provider call when revoke follows a refreshed token replacement", async () => {
+  it("waits for refresh persistence before revoking the replacement token", async () => {
     const definition = mailConnection()
     const test = createTestRuntime({ ...definition, provider: { ...definition.provider, revocationEndpoint: undefined } })
     await connect(test, { expires_in: 1 })
@@ -174,14 +178,15 @@ describe("connect", () => {
     test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600 } })
     const call = test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
     await entered
-    await test.runtime.revoke({ name: "mail" })
+    const revoking = test.runtime.revoke({ name: "mail" })
     resume()
-    await expect(call).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
-    expect(test.provider.calls.filter(call => call.url.startsWith("https://mail.example.com/"))).toHaveLength(0)
+    await Promise.allSettled([call])
+    await revoking
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
     expect(await test.runtime.inspect("mail")).toMatchObject({ status: "revoked" })
   })
 
-  it("keeps the winning grant usable when a concurrent callback loses replacement", async () => {
+  it("serializes concurrent callbacks without revoking either provider grant", async () => {
     const test = createTestRuntime()
     const providerFetch = test.provider.fetch
     test.provider.valid.add("access-one")
@@ -196,18 +201,26 @@ describe("connect", () => {
     const second = createConnectionsRuntime({ definitions: { mail: mailConnection() }, store: test.store, fetch: test.provider.fetch, now: () => test.now.value })
     const replace = test.store.bridge.replace
     let arrived = 0
+    let enter!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
     let resume!: () => void
     const release = new Promise<void>(resolve => { resume = resolve })
     test.store.bridge.replace = async (...args) => {
-      if (++arrived === 2) resume()
-      await release
+      if (++arrived === 1) { enter(); await release }
       return await replace(...args)
     }
-    const results = await Promise.allSettled([
-      connect(test, { access_token: "access-one", refresh_token: "refresh-one", id_token: "account-one" }),
-      connect({ ...test, runtime: second }, { access_token: "access-two", refresh_token: "refresh-two", id_token: "account-one" }),
-    ])
-    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1)
+    const first = connect(test, { access_token: "access-one", refresh_token: "refresh-one", id_token: "account-one" })
+    await entered
+    const other = connect({ ...test, runtime: second }, { access_token: "access-two", refresh_token: "refresh-two", id_token: "account-one" })
+    let blockedExchanges: number
+    try {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      blockedExchanges = test.provider.calls.filter(call => call.url === "https://auth.example.com/token").length
+    }
+    finally { resume() }
+    const results = await Promise.allSettled([first, other])
+    expect(blockedExchanges).toBe(1)
+    expect(results.map(result => result.status)).toEqual(["fulfilled", "fulfilled"])
     expect(await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).toMatchObject({ labels: [{ id: "INBOX" }] })
     expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toEqual([])
     expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-one" }, status: "connected" })
@@ -241,14 +254,11 @@ describe("connect", () => {
     }
     const first = connect(test)
     await entered
-    try {
-      await expect(connect({ ...test, runtime: second }, { access_token: "other-access", id_token: "account-2", refresh_token: "other-refresh" })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
-      expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toHaveLength(revoked ? 1 : 0)
-    }
-    finally {
-      resume()
-      await first
-    }
+    const other = connect({ ...test, runtime: second }, { access_token: "other-access", id_token: "account-2", refresh_token: "other-refresh" })
+    resume()
+    await first
+    await expect(other).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toHaveLength(revoked ? 1 : 0)
     expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" }, status: "connected" })
     await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
     expect(test.provider.calls.at(-1)!.headers.get("authorization")).toBe(`Bearer ${ACCESS_TOKEN}`)
