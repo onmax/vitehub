@@ -290,7 +290,7 @@ export async function handleChannelReplayRequest<TRuntimeConfig extends AgentRun
   try {
     if (describe === true) return replayJson(describeChannelHistory(agent, channel))
     return replayJson(await replayChannel(agent, channel, {
-      ...(cursor ? { cursor } : {}),
+      ...(cursor !== undefined ? { cursor } : {}),
       ...(dryRun === true ? { dryRun: true } : {}),
       ...(force === true ? { force: true } : {}),
       ...(limit !== undefined || Number.isFinite(maxLimit) ? { limit: Math.min(limit ?? maxLimit, maxLimit) } : {}),

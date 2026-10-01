@@ -5,6 +5,7 @@ import { defineCollection } from "../../source/src/index.ts"
 import { defineChannel, defineChannelTrigger } from "../src/channels.ts"
 import { pendingAgentInvocationAnnotation } from "../src/invocations.ts"
 import { defineAgent } from "../src/index.ts"
+import { handleChannelReplayRequest } from "../src/channel-replay.ts"
 import { channelReplayRunId, createMemoryAgentInvocationStore, defineAgentInvocations, describeChannelHistory, replayChannel } from "../src/server.ts"
 
 interface Email {
@@ -113,6 +114,13 @@ function memoryInvocations() {
 }
 
 describe("replayChannel()", () => {
+  it("rejects an empty HTTP cursor", async () => {
+    const { agent } = labeller({ invocations: memoryInvocations() })
+    const response = await handleChannelReplayRequest(agent, { channel: "mailbox", cursor: "" })
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({ code: "AGENT_R0936" })
+  })
+
   it("replays protected Channels without authenticating the host HTTP request", async () => {
     const { agent, run } = labeller({ invocations: memoryInvocations() })
     const channel = agent.channels?.mailbox
