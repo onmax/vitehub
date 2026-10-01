@@ -1,5 +1,8 @@
 import type { EnvDatabase } from "@vite-hub/env/database"
 
+/** Maximum name length that fits the Env Bridge `connection/<name>` key. */
+export const CONNECTION_NAME_MAX_LENGTH = 501
+
 /** Type shape of one provider API method. Generated catalogs describe each method with it. */
 export interface ConnectionMethodSignature {
   body: unknown
@@ -102,7 +105,7 @@ export interface ConnectionDefinition<
 }
 
 /** Fetch options supported by Connections. Bodies are persisted for approval replay. */
-export type ConnectionFetchInit = Omit<RequestInit, "body"> & { body?: string }
+export type ConnectionFetchInit = Pick<RequestInit, "headers" | "method" | "redirect" | "signal"> & { body?: string }
 
 export type ConnectionDefinitionRegistry = Record<string, () => Promise<unknown>>
 

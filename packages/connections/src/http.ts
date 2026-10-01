@@ -3,6 +3,7 @@ import * as v from "valibot";
 import { isConnectionError } from "./errors.ts";
 import { CONNECTIONS_ROUTE } from "./route.ts";
 import { getConnectionsRuntime } from "./runtime/state.ts";
+import { CONNECTION_NAME_MAX_LENGTH } from "./types.ts";
 
 import type { ConnectionsRuntime } from "./runtime.ts";
 
@@ -19,7 +20,7 @@ export interface ConnectionsHandlerOptions {
 
 // Discovery preserves filesystem-valid characters, including symbols such as `+`.
 // Keep management validation in step with the generated registry.
-const name = v.pipe(v.string(), v.minLength(1));
+const name = v.pipe(v.string(), v.minLength(1), v.maxLength(CONNECTION_NAME_MAX_LENGTH));
 const id = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
 const actionSchema = v.variant("action", [
   v.object({ action: v.literal("list") }),

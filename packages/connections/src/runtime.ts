@@ -255,6 +255,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         if (isDefinition(module)) return module
         const parsedModule = v.safeParse(v.object({ default: v.unknown() }), module)
         return parsedModule.success && isDefinition(parsedModule.output.default) ? parsedModule.output.default : undefined
+      }).then((result) => {
+        if (!result) definitions.delete(name)
+        return result
+      }, (error: unknown) => {
+        definitions.delete(name)
+        throw error
       })
       definitions.set(name, loaded)
     }
@@ -424,6 +430,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     catch (error) {
       if (!dispatched) throw error
       // A failed request can have rotated the provider grant before its response was lost.
+      if (isConnectionError(error) && error.reason === "provider") throw error
       if (!await setStatus(name, { status: "reauth_required" }, tokenRevision)) return await readCurrentToken(name)
       if (isConnectionError(error) && error.reason === "reauth_required") {
         throw new ConnectionError("reauth_required", `Connection "${name}" must be connected again. Run \`vitehub connections connect ${name}\`.`, { details: { connection: name } })

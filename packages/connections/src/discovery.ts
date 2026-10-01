@@ -10,6 +10,7 @@ import {
 import { resolve } from "pathe"
 
 import type { DiscoveredConnectionDefinition } from "./types.ts"
+import { CONNECTION_NAME_MAX_LENGTH } from "./types.ts"
 
 const connectionSuffixPattern = /\.connection\.(?:c|m)?[jt]s$/i
 
@@ -43,5 +44,5 @@ export function discoverConnectionDefinitions(options: { rootDir: string, scanDi
         normalizeName: (directory, file) => normalizePathDefinitionName(directory, file).replace(/\.connection$/i, ""),
       }),
     ]),
-  )
+  ).filter(definition => definition.name.length <= CONNECTION_NAME_MAX_LENGTH)
 }
