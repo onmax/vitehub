@@ -1035,7 +1035,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
   // A reassigned global freeze helper cannot be trusted for static inspection.
-  // Record direct, computed, and defineProperty writes before recognizing any
+  // Record direct, computed, and property descriptor writes before recognizing any
   // Object.freeze call as value-preserving.
   for (let index = 0; index < tokens.length; index++) {
     const objectEnd = intrinsicObjectEnd(index)
@@ -1043,12 +1043,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (receiverEnd === undefined) continue
     const member = memberAccess(receiverEnd - 1)
     if (objectEnd !== undefined && member?.name === "freeze" && assignmentOperator(member.end)) mutatedBindings.add("Object")
-    if (member?.name === "defineProperty" && tokens[member.end] === "(") {
+    if ((member?.name === "defineProperty" || (objectEnd !== undefined && member?.name === "defineProperties")) && tokens[member.end] === "(") {
       const target = resolveReference(member.end + 1, new Set(), true)
       const targetEnd = intrinsicObjectEnd(target)
       if (targetEnd === undefined || tokens[targetEnd] !== ",") continue
+      // Descriptor maps may be opaque or contain computed freeze properties.
       const property = resolveReference(targetEnd + 1)
-      if (propertyName(tokens[property] ?? "") === "freeze") mutatedBindings.add("Object")
+      if (member.name === "defineProperties" || propertyName(tokens[property] ?? "") === "freeze") mutatedBindings.add("Object")
     }
   }
   const opaqueCalls = new Set<number>()
@@ -1572,10 +1573,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const signedNumber = ["-", "+"].includes(tokens[index])
     const number = tokens[index + (signedNumber ? 1 : 0)]
     const numericZero = /^(?:\d|\.\d)/.test(number ?? "") && Number(number!.replace(/_/g, "").replace(/n$/, "")) === 0
-    if (!["false", "null", '""', "''", "``"].includes(tokens[index]) && !numericZero) return true
+    const numericIndex = index + (signedNumber ? 1 : 0)
+    const numericNaN = globalBindingReference(numericIndex, "NaN")
+    if (!["false", "null", '""', "''", "``"].includes(tokens[index]) && !numericZero && !numericNaN) return true
     // A compound expression starting with a falsy literal may still return a
     // Workspace. Numeric literals are complete tokens, including decimal and radix forms.
-    let end = index + (numericZero && signedNumber ? 2 : 1)
+    let end = index + ((numericZero || numericNaN) && signedNumber ? 2 : 1)
     let scope = tokenScopes[index]
     for (;;) {
       if (tokens[end] === "as" || tokens[end] === "satisfies") { end = skipAssertion(end); continue }

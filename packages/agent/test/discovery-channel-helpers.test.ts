@@ -1042,6 +1042,9 @@ it.each([
   'Object.freeze = value => value;',
   'Object["freeze"] = value => value;',
   'Object.defineProperty(Object, "freeze", { value: value => value });',
+  'Object.defineProperties(Object, { freeze: { value: value => ({ pullRequest: true }) } });',
+  'Object["defineProperties"](globalThis["Object"], { ["freeze"]: { value: value => ({ pullRequest: true }) } });',
+  'globalThis.Object.defineProperties(Object, descriptors);',
   'globalThis.Object.freeze = value => value;',
   'globalThis["Object"].freeze = value => value;',
   'globalThis.Object["freeze"] = value => value;',
@@ -1072,6 +1075,8 @@ it.each([
   'function configure(Reflect) { Reflect["defineProperty"](Object, "freeze", {}); }',
   'const globalThis = { Reflect: { defineProperty() {} } }; globalThis.Reflect.defineProperty(Object, "freeze", {});',
   'function configure(Object) { Reflect.defineProperty(Object, "freeze", {}); }',
+  'function configure(Object) { Object.defineProperties(Object, { freeze: {} }); }',
+  'function configure(globalThis) { globalThis.Object.defineProperties(Object, { freeze: {} }); }',
 ])("preserves intrinsic freeze after writes through shadowed globals: %s", async setup => {
   expect((await discover(`${imports} ${setup} export default defineAgent({ channels: { custom: github(Object.freeze({ pullRequest: false })) } })`))?.workspace).toBeUndefined()
 })
@@ -1208,6 +1213,8 @@ it.each([
   ['defineCapability({ workspace: false })', false],
   ['{ id: "stateless", workspace: null }', false],
   ['defineCapability({ workspace: 0 })', false],
+  ...["NaN", "+NaN", "-NaN", "(NaN)", "NaN as number", "NaN && {}", "NaN ?? {}"].map(value => [`{ id: "stateless", workspace: ${value} }`, false] as const),
+  ['{ id: "storage", workspace: NaN || {} }', true],
   ...["0.0", "-0.0", "+0.0", ".0", "0.", "0e3", "0e-3", "0x0", "0b0", "0o0", "0_0.0_0", "0n", "0x0n", "1e-999"].flatMap(zero => [
     [`{ id: "stateless", workspace: ${zero} }`, false],
     [`{ id: "stateless", workspace: false || ${zero} }`, false],
@@ -1351,4 +1358,9 @@ it.each([
 it("keeps read-only conditional option receivers stateless", async () => {
   const definition = await discover(`${imports} const options = { pullRequest: false }; const other = {}; const enabled = (true ? options : other).pullRequest; export default defineAgent({ channels: { custom: github(options) } })`)
   expect(definition?.workspace).toBeUndefined()
+})
+
+it("preserves shadowed NaN Capability Workspace values", async () => {
+  const source = `${imports} const NaN = {}; export default defineAgent({ capabilities: [{ id: "storage", workspace: NaN }] })`
+  expect((await discover(source))?.workspace).toBe("review")
 })
