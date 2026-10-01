@@ -72,6 +72,26 @@ describe("redactInspectionValue", () => {
     })
   })
 
+  it.each([
+    "https://token@example.test/path",
+    "https://user:@example.test/path",
+    "https://user%3Apassword@example.test/path",
+    "https://user%40realm:%70ass%2Fword@example.test/path",
+    "https://user%2Ftenant@example.test/path",
+  ])("redacts username-only, empty-password, and encoded URL user info in %s", (url) => {
+    expect(redactInspectionValue({ url })).toEqual({ url: "[redacted]" })
+    expect(redactInspectionText(`Connection ${url} failed`)).toBe("Connection https://[redacted]@example.test/path failed")
+  })
+
+  it.each([
+    "https://example.test/path@public",
+    "https://example.test/path?contact=user@example.test",
+    "https://example.test/path#contact=user@example.test",
+  ])("preserves public URL path, query, and fragment at signs in %s", (url) => {
+    expect(redactInspectionValue({ url })).toEqual({ url })
+    expect(redactInspectionText(`Connection ${url} failed`)).toBe(`Connection ${url} failed`)
+  })
+
   it("redacts URL user info through the final raw at sign", () => {
     const url = "postgres://user@example.com:db-password@host/db"
     expect(redactInspectionValue({ url })).toEqual({ url: "[redacted]" })

@@ -108,8 +108,8 @@ export function isViteHubDevHostAllowed(server: Pick<ViteHubDevEndpointServer, "
   if (host === undefined) return true
   const { allowedHosts = [], host: listenHost, https } = server.config.server
   if (allowedHosts === true || https) return true
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vite's config contract permits a string host here.
-  return hostHeaderAllowed(host, typeof listenHost === "string" ? [...allowedHosts, listenHost] : allowedHosts)
+  if (listenHost === undefined || listenHost === true || listenHost === false) return hostHeaderAllowed(host, allowedHosts)
+  return hostHeaderAllowed(host, [...allowedHosts, listenHost])
 }
 
 /**
