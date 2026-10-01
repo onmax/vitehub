@@ -412,6 +412,15 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             await pullRequestInbox.release(inboxClaim);
             return;
           }
+          // A merge intent is a durable fence. Hydration clears it only after
+          // a closed PR read proves the external merge completed. Keep a
+          // recovered or superseded claim out of the repair path while the
+          // outcome is still inconclusive, even when its lease identity has
+          // changed since the intent was recorded.
+          if (await pullRequestInbox.hasPersistedMergeIntent(repository, number)) {
+            await pullRequestInbox.release(inboxClaim);
+            return;
+          }
           if (!pullRequestInbox.eligible(repository, inboxClaim.snapshot.pr)) {
             await pullRequestInbox.finish(inboxClaim, {
               text: "PR closed or outside the configured filter.",
