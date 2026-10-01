@@ -26,7 +26,8 @@ function isChannelDefinition(value: unknown): value is ChannelDefinition {
 }
 
 async function loadChannelDefinition(name: string): Promise<ChannelDefinition | undefined> {
-  const entry = getRegistry()[name]
+  const registry = getRegistry()
+  const entry = Object.hasOwn(registry, name) ? registry[name] : undefined
   if (!entry) return undefined
   const loaded = await entry()
   if (isChannelDefinition(loaded)) return loaded
@@ -59,7 +60,10 @@ export function useChannel<TConnectors extends ChannelConnectorMap = ChannelConn
     name,
     async send(text, options) {
       try {
-        resolved ||= resolveChannel<TConnectors>(name)
+        resolved ||= resolveChannel<TConnectors>(name).catch((cause: unknown) => {
+          resolved = undefined
+          throw cause
+        })
         return await (await resolved).send(text, options)
       }
       catch (cause) {

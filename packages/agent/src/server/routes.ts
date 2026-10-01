@@ -18,9 +18,10 @@ import { awaitAgentInvocationResult } from "../agent-invocation.ts"
 import type { AgentInvocationController } from "../agent-invocation.ts"
 import { appendLatestFinalText, hasTraceableStreamResult, isAsyncIterable, streamAgentOutputToEvents } from "../agent-output.ts"
 import { toAgentPublicError } from "../agent-error.ts"
-import { getAccessCapabilityOptions } from "../capabilities/access-metadata.ts"
+import { getAccessCapabilityOptions } from "../capabilities/access.ts"
 import { assertChatDeliveryOptions, CHAT_FINISH_EXTENSION_CONTEXT_KEY, getChatCapabilityOptions, resolveChatErrorFallbackText } from "../chat-trigger.ts"
 import {
+  chatMessageHookArgs,
   chatTriggerHistoryLimit,
   createChatMessageTriggerInput,
   derivedChatTriggerInvoker,
@@ -35,7 +36,7 @@ import { deliveryArtifactAttachments } from "../delivery-artifacts.ts"
 import { createAgentInvocationContextStore } from "../invocation-context.ts"
 import { withAgentInvocationResponseOwner } from "../internal/agent-invocation-response-owner.ts"
 import { sameInlineInvoker } from "../internal/inline-invoker.ts"
-import { agentInvocationId } from "../invocations.ts"
+import { agentInvocationId, recoverInterruptedAgentInvocations } from "../invocations.ts"
 import { finalChannelOutputContextKey, hasOnlyPortableAgentWorkflowCapabilities, requireAgentWorkflowContextKey } from "../internal/final-channel-output.ts"
 import { agentChannelHistoryHeader } from "../internal/channel-history.ts"
 import { agentChannelSyncProviderHeader } from "../internal/channel-sync.ts"
@@ -52,8 +53,8 @@ import {
 import { AgentHttpError, toHttpErrorResponse } from "../http-error.ts"
 import { isWorkflowRun } from "../http-response.ts"
 import { messageChannelStateContextKey } from "../internal/channels.ts"
-import { chatFinishDeliveryRegistrarKey, chatFinishDirectReplyTrace, chatFinishPrimaryReplyTrace } from "../internal/chat-finish-delivery.ts"
-import type { ChatFinishDeliveryCallback, ChatFinishDeliveryCapture, ChatFinishDeliveryRegistrar } from "../internal/chat-finish-delivery.ts"
+import { chatFinalReplyContextKey, chatFinishDeliveryRegistrarKey, chatFinishDirectReplyTrace, chatFinishPrimaryReplyTrace } from "../internal/chat-finish-delivery.ts"
+import type { ChatFinalReplyMode, ChatFinishDeliveryCallback, ChatFinishDeliveryCapture, ChatFinishDeliveryRegistrar } from "../internal/chat-finish-delivery.ts"
 import { createAgentChatApprovalCustody, resolveAgentChatApprovalTtl } from "../internal/chat-approvals.ts"
 import { agentChatInvocationIdHeader } from "../internal/routes.ts"
 import { requireAtomicAgentStateQueue } from "../internal/state-queue.ts"
@@ -150,7 +151,8 @@ import type {
   WebhookOptions,
 } from "chat"
 import type { UIMessage } from "ai"
-import type { AgentWebhookQueueDelivery, AgentWebhookQueueLease, AgentWebhookQueueStateAdapter } from "../internal/webhook-queue.ts"
+import type { AgentWebhookQueueDelivery, AgentWebhookQueueLease, AgentWebhookQueueRegistration, AgentWebhookQueueStateAdapter } from "../internal/webhook-queue.ts"
+import type { AgentInvocations } from "../invocations.ts"
 import type { AgentChannelDeliveryTracker, AgentChannelDeliveryWorkflowBinding } from "../internal/channel-delivery.ts"
 import type { ResumableChatProcessClaim } from "../internal/resumable-chat.ts"
 import { agentDiagnostics, isAgentTypeDiagnostic } from "../agent-diagnostics.ts"
@@ -195,7 +197,15 @@ export function setAgentChannelDeliveryWorkflowStateResolver(resolver: AgentChan
 export interface AgentChannelWebhookRouteHandler {
   (request: Request, webhook?: string, options?: AgentChannelWebhookRouteOptions): Promise<Response>
   deliveries(request: Request, webhook?: string, options?: AgentChannelWebhookRouteOptions & { limit?: number }): Promise<AgentChannelDeliveryInspection[]>
-  resume(options?: AgentChannelWebhookRouteOptions): () => Promise<void>
+  resume(options?: AgentChannelWebhookResumeOptions): () => Promise<void>
+}
+
+export interface AgentChannelWebhookResumeOptions extends AgentChannelWebhookRouteOptions {
+  /**
+   * Before the queue resumes, fail this Agent's pending or running invocations that started before this time.
+   * Invocations that a persisted queued delivery will run again stay active.
+   */
+  recoverInterruptedBefore?: number
 }
 
 export interface AgentDiscordGatewayRouteOptions extends AgentRouteRuntimeOptions {
@@ -331,6 +341,8 @@ interface QueuedChatFinishMessage {
   callbacks: ChatFinishDeliveryCallback[]
   directCallback?: ChatFinishDeliveryCallback
   message: AgentChatMessage
+  shouldSkip?: () => boolean
+  continueOnError?: boolean
 }
 
 type AgentChatQueuedFinishExtension = AgentChatFinishExtension & ChatFinishDeliveryRegistrar & {
@@ -701,7 +713,7 @@ async function matchedWebhookRegistrationRequiresVerification(
   requireConfiguredSecret: boolean,
 ): Promise<boolean> {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Authored custom verifier objects require verification independently of shared secrets.
-  if (registration.signature && typeof registration.signature === "object") return true
+  if (registration.signature && typeof registration.signature === "object" && "verify" in registration.signature) return true
   if (registration.secretToken !== undefined) return (await resolveMaybe(registration.secretToken, context)) !== false
   return requireConfiguredSecret && registration.secretHeader !== undefined
 }
@@ -1000,6 +1012,7 @@ const defaultWebhookQueueRetryMs = 1_000
 const maxWebhookQueueAttempts = 3
 const maxWebhookQueueExecutionMs = 900_000
 const maxWebhookLateReconciliationMs = 60_000
+const webhookLateReconciliationPollMs = 1_000
 
 function positiveWebhookConcurrencyLimit(value: number | undefined): number | undefined {
   if (value === undefined) return
@@ -1446,6 +1459,9 @@ async function executeQueuedWebhookDelivery(
         }
         inspection = undefined
         if (result?.outcome === "available" && result.invocation && ["completed", "failed", "cancelled"].includes(result.invocation.status)) return true
+        // In-process inspect() resolves as a microtask. Wait between inspections so
+        // the loop cannot starve the event loop until the deadline.
+        await Promise.race([new Promise(resolve => setTimeout(resolve, webhookLateReconciliationPollMs)), deadline])
       }
     } finally {
       if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
@@ -4648,11 +4664,13 @@ function createChatFinishExtension(
   const messages: QueuedChatFinishMessage[] = []
   const extension: AgentChatQueuedFinishExtension = {
     [chatFinishMessagesKey]: messages,
-    [chatFinishDeliveryRegistrarKey]: (message, callback) => {
+    [chatFinishDeliveryRegistrarKey]: (message, callback, options) => {
       const queued = messages.findLast(candidate => candidate.callbacks.length === 0 && Object.is(candidate.message, message))
       if (!queued) return false
       queued.directCallback = undefined
       queued.callbacks.push(callback)
+      queued.shouldSkip = options?.shouldSkip
+      queued.continueOnError = options?.continueOnError
       return true
     },
     provider: chatRegistrationOrigin(registration),
@@ -4800,6 +4818,11 @@ async function flushChatFinishExtensionMessages(
     else if (callbacks.length) captureStaticChatFinishMessage(message, capture)
     try {
       abortSignal?.throwIfAborted()
+      if (queued.shouldSkip?.()) {
+        capture.skipped = "Same text as the final reply."
+        await settleChatFinishDeliveryCallbacks(callbacks, capture)
+        continue
+      }
       if (abortSignal && isAsyncIterable(message)) {
         message = manualDelivery.placeholder ? await collectAbortableChatMessage(message, abortSignal) : abortableChatMessage(message, abortSignal)
       }
@@ -4866,6 +4889,8 @@ async function flushChatFinishExtensionMessages(
     catch (error) {
       capture.error = error instanceof Error ? error.message : String(error)
       await settleChatFinishDeliveryCallbacks(callbacks, capture)
+      // A failed automatic final reply must leave the queued finish-hook fallback deliverable.
+      if (queued.continueOnError && index + 1 < messages.length && !abortSignal?.aborted) continue
       const skippedCapture: ChatFinishDeliveryCapture = {
         content: "",
         skipped: `Skipped after an earlier queued reply failed: ${capture.error}`,
@@ -5308,8 +5333,11 @@ async function handleChatSdkMessage(
       }
     }
 
-    const manualDelivery = options?.loading !== undefined || options?.delivery === "manual"
-    const streamsPhasedReplies = !manualDelivery && (options?.stream !== false || options?.commentary !== undefined)
+    // Only delivery: "manual" leaves the final text to finish hooks. A loading
+    // message buffers the reply and posts the final text when the Agent finishes.
+    const manualDelivery = options?.delivery === "manual"
+    const bufferedDelivery = manualDelivery || options?.loading !== undefined
+    const streamsPhasedReplies = !bufferedDelivery && (options?.stream !== false || options?.commentary !== undefined)
     input = {
       ...input,
       messages,
@@ -5326,7 +5354,7 @@ async function handleChatSdkMessage(
       return
     }
 
-    typing = streamsPhasedReplies || manualDelivery ? startChatTypingRefresh(thread, context) : undefined
+    typing = streamsPhasedReplies || bufferedDelivery ? startChatTypingRefresh(thread, context) : undefined
     assertChatDeliveryOptions(options || {})
     run = invocation.run
     if (inlineTurn) inlineTurn.runId = run?.runId
@@ -5341,7 +5369,7 @@ async function handleChatSdkMessage(
       ...(invocation.run ? { run: invocation.run } : {}),
     }
     const durableDelivery =
-      manualDelivery &&
+      bufferedDelivery &&
       options?.durable !== false &&
       (options?.durable === true ||
         ((options?.concurrency === undefined || options.concurrency === "parallel" || options.concurrency === "steer") &&
@@ -5364,16 +5392,18 @@ async function handleChatSdkMessage(
         // SAFETY: The owning Agent runtime boundary establishes the asserted representation before this value is used.
         state: "chat" as const,
       }
+      const workflowContext = {
+        ...resolvedInvocationInput.context,
+        [agentChannelDeliveryWorkflowContextKey]: workflowBinding,
+        [finalChannelOutputContextKey]: true,
+        [requireAgentWorkflowContextKey]: true,
+      }
+      if (!manualDelivery) Object.assign(workflowContext, { [chatFinalReplyContextKey]: "pending" satisfies ChatFinalReplyMode })
       // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
       let workflowInput = withResolvedAgentInvokerInput(
         {
           ...resolvedInvocationInput,
-          context: {
-            ...resolvedInvocationInput.context,
-            [agentChannelDeliveryWorkflowContextKey]: workflowBinding,
-            [finalChannelOutputContextKey]: true,
-            [requireAgentWorkflowContextKey]: true,
-          },
+          context: workflowContext,
         },
         invoker,
       ) as AgentRunInput
@@ -5922,7 +5952,7 @@ async function handleChatSdkMessage(
     invocationDeadlineAbort ??= new AbortController()
     const inlineRunContext = run?.runId ? withAgentInvocationResponseOwner(runContext, run.runId) : runContext
     const thinkingFallback = invocation.metadata?.thinkingFallback
-    if (manualDelivery && isRuntimeString(thinkingFallback)) {
+    if (bufferedDelivery && isRuntimeString(thinkingFallback)) {
       const placeholderDelivery = thread.post(thinkingFallback).then(async (placeholder) => {
         if (invocationDeadlineAbort?.signal.aborted) {
           await deleteManualDeliveryPlaceholder(placeholder)
@@ -5937,7 +5967,7 @@ async function handleChatSdkMessage(
       )
     }
     chatFinish = createChatFinishExtension(input, registration)
-    progress = manualDelivery
+    progress = bufferedDelivery
       ? createManualDeliveryProgressUpdater(manualDeliveryState, context.waitUntil, invocationDeadlineAbort?.signal, {
           intervalMs: options?.loading?.intervalMs,
           updates: options?.loading?.updates,
@@ -5959,7 +5989,8 @@ async function handleChatSdkMessage(
           context: {
             ...resolvedInvocationInput.context,
             [messageChannelStateContextKey]: state,
-            ...(options?.stream === false || manualDelivery ? { [finalChannelOutputContextKey]: true } : {}),
+            ...(options?.stream === false || bufferedDelivery ? { [finalChannelOutputContextKey]: true } : {}),
+            ...(manualDelivery ? {} : { [chatFinalReplyContextKey]: (bufferedDelivery ? "pending" : "posted") satisfies ChatFinalReplyMode }),
           },
         },
         invoker,
@@ -5972,7 +6003,7 @@ async function handleChatSdkMessage(
       // framework-owned placeholder without exposing ordinary Agent text.
       await enforceChatInvocationTimeout(
         (async () => {
-          const result = manualDelivery
+          const result = bufferedDelivery
             ? // SAFETY: The route normalized this value for an internal boundary whose generic signature cannot express the narrowed variant.
               await streamAgent(agent as never, inlineRunContext as never, invocationInput as never, {
                 output: "events",
@@ -5981,7 +6012,7 @@ async function handleChatSdkMessage(
               await runAgentInline(agent as never, inlineRunContext as never, invocationInput as never)
           // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
           const text = await collectAgentOutput(result, progress?.update, (toolResult) => toolResults.push(toolResult))
-          if (!manualDelivery && text) {
+          if (!bufferedDelivery && text) {
             await deliverPrimaryChatReply(chatFinish, async () => {
               invocationDeadlineAbort?.signal.throwIfAborted()
               if (!(await postDiscordSplitContent(thread, { markdown: text }, invocationDeadlineAbort?.signal))) {
@@ -7069,6 +7100,7 @@ export function createChannelChatRouteHandler(
       )
       const trustedInput = mergeAgentChannelChatRouteInput(baseInput, trustInput ? trustAgentChannelChatRouteInput(body, routeOptions.input) : undefined)
       const resumableMessageId = trustedInput.run?.messageId
+      const currentMessage = structuredClone(chatMessageHookArgs(baseInput.messages.at(-1)))
       const inputContext = {
         agentName,
         // SAFETY: The route normalized this value for an internal boundary whose generic signature cannot express the narrowed variant.
@@ -7088,6 +7120,7 @@ export function createChannelChatRouteHandler(
         : undefined
       const admittedInput = mergeAgentChannelChatRouteInput(trustedInput, await routeOptions.admission?.context?.(inputContext))
       let triggerInput = mergeAgentChannelChatRouteInput(admittedInput, await routeOptions.mapInput?.({ ...inputContext, input: admittedInput }))
+      triggerInput = { ...triggerInput, currentMessage }
       if (resumableSession) {
         const claim = resumableSession.claim(resumableMessageId || "default")
         if (claim.kind === "existing") return await claim.response
@@ -7253,6 +7286,36 @@ export function createChannelChatRouteHandler(
     return await readAgentChannelDeliveries(state, handlerOptions.limit, `chat:${agentName}:${registration.provider}:`)
   }
   return handler
+}
+
+async function recoverInterruptedWebhookAgentInvocations(
+  agent: AgentInput<ViteAgentRouteRuntimeContext>,
+  context: ViteAgentRouteRuntimeContext,
+  before: number,
+  queues: { owns: (scope: string) => boolean, state: AgentWebhookQueueStateAdapter }[],
+): Promise<void> {
+  // Durable Workflows own their invocations and may not hold a journal claim while suspended.
+  if (!isRecord(agent) || !agent.invocations || await hasActiveWorkflowRuntime(agent, context)) return
+  const agentName = firstString(agent.name, context.agentIdentity?.name)
+  if (!agentName) return
+  // A persisted delivery with a run ID runs again under the same invocation record.
+  const resumed = new Set<string>()
+  for (const { owns, state } of queues) {
+    for (const scope of await state.webhookDeliveryScopes()) {
+      if (!owns(scope)) continue
+      for (const delivery of await state.webhookDeliveries(scope)) {
+        const run = delivery.invocation?.run
+        if (isRecord(run) && isRuntimeString(run.runId) && run.runId) {
+          resumed.add(await agentInvocationId(run.runId, agentName))
+        }
+      }
+    }
+  }
+  // SAFETY: Agent Definitions own this field; recovery validates it through the journal boundary.
+  await recoverInterruptedAgentInvocations(agent.invocations as AgentInvocations, {
+    before,
+    recover: invocation => invocation.agentName === agentName && !resumed.has(invocation.id),
+  })
 }
 
 export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRouteRuntimeContext>): AgentChannelWebhookRouteHandler {
@@ -7811,8 +7874,9 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
       .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt))
       .slice(0, handlerOptions.limit ?? 100)
   }
-  handler.resume = (handlerOptions = {}) => {
+  handler.resume = ({ recoverInterruptedBefore, ...handlerOptions } = {}) => {
     const agentScopePrefix = `webhook:${webhookScopeComponent(routeAgentIdentity(handlerOptions)?.name || "agent")}:`
+    let recoveryBefore = recoverInterruptedBefore
     return webhookQueue.resume(async (registrar) => {
       const request = new Request("http://vitehub.local/_vitehub/webhook-queue")
       const context = createRuntimeContext(
@@ -7824,18 +7888,20 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
         handlerOptions.capabilities,
         routeAgentIdentity(handlerOptions),
       )
-      if (handlerOptions.webhookState && !stateResolverOwnsScope(handlerOptions.webhookState)) {
-        // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
-        const state = await resolveMaybe(handlerOptions.webhookState, context as never)
-        if (state) {
-          await state.connect()
-          registrar.track(state, handlerOptions, agentScopePrefix)
-        }
+      const trackedStates = new Set<StateAdapter>()
+      const sharedState = handlerOptions.webhookState && !stateResolverOwnsScope(handlerOptions.webhookState)
+      if (sharedState && !isRuntimeFunction(handlerOptions.webhookState)) {
+        // SAFETY: Non-resolver webhook state is the state adapter itself.
+        const state = handlerOptions.webhookState as StateAdapter
+        await state.connect()
+        trackedStates.add(state)
       }
+      const registrations: AgentWebhookQueueRegistration<AgentChannelWebhookRouteOptions>[] = []
       for (const { registration } of await agentWebhookRegistrations(agent, context)) {
         const webhookState = await resolveAgentWebhookState(context, registration, handlerOptions)
+        if (sharedState && webhookState) trackedStates.add(webhookState.state)
         if (webhookState && hasAgentWebhookQueue(webhookState.state)) {
-          await registrar.register({
+          registrations.push({
             backendId: await resolveWebhookStateBackendId(webhookState.state),
             options: handlerOptions,
             scope: webhookState.keyPrefix,
@@ -7843,6 +7909,16 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
           })
         }
       }
+      if (recoveryBefore !== undefined) {
+        // Recover before the queue claims work, so recovery cannot race a resumed delivery.
+        await recoverInterruptedWebhookAgentInvocations(agent, context, recoveryBefore, [
+          ...[...trackedStates].filter(hasAgentWebhookQueue).map(state => ({ owns: (scope: string) => scope.startsWith(agentScopePrefix), state })),
+          ...registrations.map(({ scope, state }) => ({ owns: (candidate: string) => candidate === scope, state })),
+        ]).catch(error => console.error("[vitehub] Interrupted Agent invocation recovery failed.", error))
+        recoveryBefore = undefined
+      }
+      for (const state of trackedStates) registrar.track(state, handlerOptions, agentScopePrefix)
+      for (const registration of registrations) await registrar.register(registration)
     }, { scopePrefix: agentScopePrefix })
   }
   return handler

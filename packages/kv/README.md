@@ -52,7 +52,9 @@ export default defineConfig({
 
 Use `hubKv()` in Vite to resolve KV config and expose the `kv` runtime helper to server code.
 
-Providers include local `fs-lite`, [Cloudflare Workers KV](https://developers.cloudflare.com/kv/), and [Upstash Redis](https://upstash.com/docs/redis/overall/getstarted). The storage layer is built on [unstorage](https://unstorage.unjs.io/guide).
+Providers include local `fs-lite`, Deno KV, [Cloudflare Workers KV](https://developers.cloudflare.com/kv/), and [Upstash Redis](https://upstash.com/docs/redis/overall/getstarted). The storage layer is built on [unstorage](https://unstorage.unjs.io/guide).
+
+Deno KV accepts `kv.set(key, value, { ttl: seconds })` to expire a value. Omitting `ttl` keeps the value until it is deleted or replaced. Initialization failures do not disable a store for the life of the process. The next operation can retry initialization.
 
 ## Listing keys
 

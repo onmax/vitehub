@@ -17,13 +17,13 @@ The package requires Node.js 24 or newer. Vite is an optional peer and is needed
 Use `createChannel()` when application code already has the connector and does not need file discovery.
 
 ```ts
-import { createChannel, defineChannel } from "@vite-hub/channels";
+import { createChannel, defineOutboundChannel } from "@vite-hub/channels";
 
 const delivered: string[] = [];
 
 const alerts = createChannel(
   "alerts",
-  defineChannel({
+  defineOutboundChannel({
     connectors: {
       log: {
         send(text: string, options: { label: string }) {
@@ -79,9 +79,9 @@ ViteHub discovers files below `server/channels` and files named `*.channel.ts`. 
 
 ```ts
 // server/channels/alerts.ts
-import { defineChannel } from "@vite-hub/channels";
+import { defineOutboundChannel } from "@vite-hub/channels";
 
-export default defineChannel({
+export default defineOutboundChannel({
   connectors: {
     log: {
       send(text: string, options: { label: string }) {
@@ -121,8 +121,12 @@ Channels is an outbound delivery interface. It does not include Slack, Telegram,
 
 `send()` waits for the selected connector and returns `[null, receipt]` or `[error, null]`. Invalid input, discovery failures, and connector failures return an `Error` in the first slot. Check it before using the receipt. Channels does not persist messages, retry delivery, impose a timeout, deduplicate sends, or recover work after the process exits. Add those behaviors before `send()` or inside the connector when the delivery contract requires them.
 
-Every send writes `outbound.started`, `outbound.completed`, or `outbound.failed` JSON metadata under the `vitehub.channel.send` scope. ViteHub omits message text and connector options from those events. Failed events include up to 2,000 characters of the thrown error message, so connectors must not put credentials or message content in errors. Connector code can still read, transmit, or log every value it receives; keep credentials in server-only configuration and redact provider failures before throwing them.
+Only connectors declared as own properties of the definition can receive messages. An omitted `connector` uses `defaultConnector`; an empty or invalid selector returns an error. A failed definition load can be retried by a later `send()` call.
 
-This package is separate from Agent Channels. `@vite-hub/channels` sends ordinary application messages. [`@vite-hub/agent/channels`](https://vitehub.dev/docs/agents/channels) describes where Agent Invocations come from, inbound delivery, threads, and Agent reply policy.
+For each connector delivery, Channels attempts to write `outbound.started` and either `outbound.completed` or `outbound.failed` JSON metadata under the `vitehub.channel.send` scope. Input validation and definition-loading failures return before delivery logging starts. ViteHub omits message text and connector options from those events. Failed events include up to 2,000 characters of the thrown error message, so connectors must not put credentials or message content in errors. Connector code can still read, transmit, or log every value it receives; keep credentials in server-only configuration and redact provider failures before throwing them.
 
-Read the [Channels guide](https://vitehub.dev/docs/reference/channels) for Server Env credentials, H3 and Nitro handlers, multiple connectors, generated types, and delivery logs. Use the [public import reference](https://vitehub.dev/docs/reference/import-paths) when composing the owner package directly.
+Delivery logging is best effort. A logging failure does not change the result of a send. An inaccessible optional message `id` is omitted from the receipt and log without changing delivery success.
+
+This package is separate from Agent Channels. `@vite-hub/channels` sends ordinary application messages with `defineOutboundChannel()`. The earlier `defineChannel()` export is a deprecated alias for one release; `defineChannel()` from `@vite-hub/agent/channels` defines an Agent Channel Kind. [`@vite-hub/agent/channels`](https://vitehub.dev/docs/agents/channels) describes where Agent Invocations come from, inbound delivery, threads, and Agent reply policy.
+
+Read the [Channels guide](https://vitehub.dev/docs/server-primitives/channels) for Server Env credentials, H3 and Nitro handlers, multiple connectors, generated types, and delivery logs. Use the [public import reference](https://vitehub.dev/docs/reference/import-paths) when composing the owner package directly.

@@ -129,6 +129,7 @@ export type TitleTemplateVariable =
 
 export interface TitleOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   channelDelivery?: "always" | "once-per-thread"
+  /** A Driver that returns text. `driver.ask` returns Jev answers, so it is not supported. */
   driver?: AgentDriver<TRuntimeConfig>
   execute?: (input: TitleExecuteInput) => MaybePromise<TitleExecuteResult>
   fallback?: string
@@ -412,13 +413,16 @@ async function generateTitleWithDriver(
   if (!options.driver && !inheritedDriver) return
   // SAFETY: The guard above requires an explicit driver when no normalized driver was inherited.
   const driver = inheritedDriver ?? normalizeAgentDriver({ driver: options.driver } as never)
+  if (driver.kind === "ask") {
+    throw agentDiagnostics.AGENT_R0933({ message: "[vitehub] title({ driver }) requires a Driver that returns text. driver.ask returns Jev answers." })
+  }
   if (driver.kind === "run") {
     // SAFETY: Title Capability normalization establishes the asserted delivery and stream contract.
     return await titleResultText(context, await driver.run(titleRunContext(context, input, prompt) as never))
   }
   const runContext = titleAdapterRunContext(context, input, prompt)
   if (driver.kind === "provider") {
-    const { createProviderAgentAdapter } = await import("../provider-agent.ts")
+    const { createProviderAgentAdapter } = await import("#vitehub/agent/provider-agent")
     // SAFETY: Title Capability normalization establishes the asserted delivery and stream contract.
     return await titleResultText(context, await createProviderAgentAdapter(driver).generate(runContext as never))
   }

@@ -1493,6 +1493,35 @@ describe("agent message protocol", () => {
     expect(observations[0]?.attributes?.["vitehub.observation.truncated"]).toBe(length > 64 * 1024 ? true : undefined)
   })
 
+  it.each(["async", "readable"])("preserves provider tool titles in %s streams and traces", async (kind) => {
+    const { defineAgent, defineCapability, streamAgent } = await import("../src/index.ts")
+    const traceLog = createTraceEventLog({ content: "content" })
+    const chunks = [
+      { id: "search-1", name: "search", title: "Search breakfast", type: "tool-call" },
+      { id: "search-1", name: "search", output: "Found breakfast", type: "tool-result" },
+      { type: "finish" },
+    ]
+    const agent = defineAgent({
+      capabilities: [defineCapability({ id: "search", tools: { search: { name: "search", title: "Searched meals" } } })],
+      driver: { run: () => kind === "readable"
+        ? new ReadableStream({
+            start(controller) {
+              for (const chunk of chunks) controller.enqueue(chunk)
+              controller.close()
+            },
+          })
+        : (async function* () { yield* chunks })() },
+    })
+
+    const stream = await streamAgent(agent, { memo: vi.fn(), runtime: "unknown", traceLog, waitUntil: vi.fn() }, {})
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    for await (const _event of stream as AsyncIterable<unknown>) {}
+
+    const toolEvents = traceLog.entries().filter(event => event.name === "agent.tool.start" || event.name === "agent.tool.finish")
+    expect(toolEvents).toHaveLength(2)
+    for (const event of toolEvents) expect(event.attributes?.["tool.title"]).toBe("Search breakfast")
+  })
+
   it("exports product actions as execute_tool spans with ViteHub rendering semantics", async () => {
     const { defineAgent, defineCapability, streamAgent } = await import("../src/index.ts")
     const traceLog = createTraceEventLog()
@@ -1684,9 +1713,44 @@ describe("agent message protocol", () => {
     }))
   })
 
+  it.each(["static", "resolved"])("includes %s adapter-local tool titles in AI SDK telemetry", async (kind) => {
+    const { createAiSdkAdapter } = await import("../src/ai-sdk.ts")
+    const traceLog = createTraceEventLog({ content: "content" })
+    loadAiSdk.mockResolvedValue({
+      isStepCount: () => () => false,
+      jsonSchema: vi.fn(schema => schema),
+      ToolLoopAgent: class {
+        constructor(private settings: Record<string, unknown>) {}
+
+        async generate() {
+          // SAFETY: The adapter configures AI SDK telemetry with this contract.
+          const telemetry = this.settings.telemetry as { integrations: import("ai").Telemetry[] }
+          for (const integration of telemetry.integrations) {
+            // SAFETY: Only tool identity and output fields are used by the integration.
+            await integration.onToolExecutionStart?.({ toolCallId: "local-1", toolName: "search" } as never)
+            // SAFETY: Only tool identity and output fields are used by the integration.
+            await integration.onToolExecutionEnd?.({ toolCallId: "local-1", toolName: "search", toolOutput: { type: "text", value: "done" } } as never)
+          }
+          return { text: "done" }
+        }
+      },
+    })
+    const tools = { search: { execute: () => "done", name: "search", title: "Searched meals" } }
+    const agent = adapterDefinition(createAiSdkAdapter({
+      // SAFETY: The mocked AI SDK does not call the model.
+      model: {} as never,
+      tools: kind === "static" ? tools : () => tools,
+    }))
+
+    await runAgent(agent, { memo: vi.fn(), runtime: "unknown", traceLog, waitUntil: vi.fn() }, { prompt: "Search meals" })
+    const events = traceLog.entries().filter(entry => entry.name === "agent.tool.start" || entry.name === "agent.tool.finish")
+    expect(events).toHaveLength(2)
+    for (const event of events) expect(event.attributes).toMatchObject({ "tool.name": "search", "tool.title": "Searched meals" })
+  })
+
   it("exports product actions from AI SDK telemetry integrations", async () => {
     const { aiSdkTelemetryIntegration } = await import("../src/trace.ts")
-    const traceLog = createTraceEventLog()
+    const traceLog = createTraceEventLog({ content: "content" })
     const invocationContext = new Map<string, unknown>()
     const telemetry = aiSdkTelemetryIntegration({
       context: {
@@ -1700,7 +1764,7 @@ describe("agent message protocol", () => {
       input: {},
       invoker: { id: "test", kind: "user" },
       runtime: { capabilities: {}, memo: vi.fn(), runtime: "unknown", runtimeConfig: {}, traceLog, waitUntil: vi.fn() },
-    }, new Map([["repository_host_write", { kind: "action", name: "repository-host.write" }]]))
+    }, new Map([["repository_host_write", { activity: { kind: "action", name: "repository-host.write" }, title: "Wrote repository" }]]))
 
     // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
     await telemetry.onToolExecutionStart?.({ toolCallId: "action-1", toolName: "repository_host_write" } as never)
@@ -1715,6 +1779,7 @@ describe("agent message protocol", () => {
       expect(entry.attributes).toMatchObject({
         "capability.id": "repository-host",
         "tool.name": "repository_host_write",
+        "tool.title": "Wrote repository",
         "vitehub.action.name": "repository-host.write",
         "vitehub.activity.kind": "action",
       })
@@ -5683,7 +5748,7 @@ describe("agent message protocol", () => {
   it("rejects streaming and commentary with manual message delivery", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { telegram } = await import("../src/channels.ts")
-    const error = "messages.delivery \"manual\" cannot be combined with messages.stream or messages.commentary"
+    const error = "messages.delivery \"manual\" and messages.loading cannot be combined with messages.stream or messages.commentary"
 
     expect(() => defineAgent({
       channels: {
@@ -6360,6 +6425,43 @@ describe("agent message protocol", () => {
     }, {})).resolves.toMatchObject({ text: "ok" })
 
     await expect(useWorkspace(workspaceName, { mode: "write" }).diff()).resolves.toMatchObject({ entries: [] })
+  })
+
+  it.each([
+    { commit: false, diffs: 0, snapshots: 0 },
+    { commit: true, diffs: 1, snapshots: 1 },
+  ])("diffs the Workspace for auto-commit only when commit can apply, commit: $commit", async ({ commit, diffs, snapshots }) => {
+    const { defineAgent, runAgent } = await import("../src/index.ts")
+    const { registerWorkspaceAgent } = await import("../src/server/workspace.ts")
+    const workspaceName = `agent-auto-commit-${String(commit)}-${Math.random().toString(36).slice(2)}`
+    let diff: ReturnType<typeof vi.spyOn> | undefined
+    let snapshot: ReturnType<typeof vi.spyOn> | undefined
+    const agent = registerWorkspaceAgent(defineAgent({
+      runtime: false,
+      workspace: {
+        commit,
+        mode: "write",
+        store: { provider: "memory" },
+      },
+      driver: { async run({ workspace }) {
+          // SAFETY: This test fixture intentionally constructs the exact writable Workspace contract.
+          const writableWorkspace = workspace as WritableWorkspaceFacade
+          await writableWorkspace.fs.writeFile("notes.md", "notes")
+          diff = vi.spyOn(writableWorkspace, "diff")
+          snapshot = vi.spyOn(writableWorkspace, "snapshot")
+          return { text: "ok" }
+        } },
+    }), { workspace: workspaceName })
+
+    await expect(runAgent(agent, {
+      agentIdentity: { name: "writer", workspace: workspaceName },
+      memo: vi.fn(),
+      runtime: "unknown",
+      waitUntil: vi.fn(),
+    }, {})).resolves.toMatchObject({ text: "ok" })
+
+    expect(diff).toHaveBeenCalledTimes(diffs)
+    expect(snapshot).toHaveBeenCalledTimes(snapshots)
   })
 
   it("classifies Workspace auto-commit failures as ViteHub teardown", async () => {

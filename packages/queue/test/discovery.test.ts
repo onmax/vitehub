@@ -4,7 +4,7 @@ import { join } from "node:path"
 
 import { afterEach, describe, expect, it } from "vitest"
 
-import { createRuntimeRegistryContents } from "@vite-hub/internal/definition-discovery"
+import { createRuntimeRegistryContents } from "@vite-hub/internal/definition-catalog"
 import { discoverQueueDefinitions } from "../src/discovery.ts"
 
 const directories: string[] = []
@@ -29,7 +29,7 @@ describe("discoverQueueDefinitions", () => {
     expect(createRuntimeRegistryContents(registryFile, [{
       handler: sourceFile,
       name: "welcome",
-    }])).toContain('"welcome": async () => import(')
+    }])).toContain('["welcome"]: async () => import(')
   })
 
   it("discovers queue names for vite suffix and server entrypoints", async () => {

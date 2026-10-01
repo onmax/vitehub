@@ -1,6 +1,6 @@
-import { defineChannel } from "./definition.ts"
+import { defineOutboundChannel } from "./definition.ts"
 
-import type { ChannelClient, ChannelConnectorMap, ChannelDefinition, ChannelSendOptions, ChannelSendOutcome } from "./types.ts"
+import type { ChannelClient, ChannelConnectorMap, ChannelConnectorResult, ChannelDefinition, ChannelSendOptions, ChannelSendOutcome } from "./types.ts"
 import { channelsErrorDiagnostics } from "./error-diagnostics.ts"
 
 const uninspectableSendErrorMessage = "Channel send failed with an uninspectable value."
@@ -30,8 +30,27 @@ function channelSendErrorMessage(error: Error): string {
   return uninspectableSendErrorMessage
 }
 
-function logDelivery(event: string, deliveryId: string, channel: string, connector: string, extra: Record<string, unknown> = {}): void {
-  console.info(JSON.stringify({ scope: "vitehub.channel.send", event, deliveryId, channel, connector, ...extra }))
+function logDelivery(event: string, deliveryId: string, channel: string, connector: string, extra?: () => Record<string, unknown>): void {
+  try {
+    console.info(JSON.stringify({ scope: "vitehub.channel.send", event, deliveryId, channel, connector, ...extra?.() }))
+  }
+  catch {
+    // Logging must not change delivery results or encourage retrying a delivered message.
+  }
+}
+
+function normalizeConnectorResult(result: ChannelConnectorResult): ChannelConnectorResult {
+  const normalized: ChannelConnectorResult = Object.fromEntries(Reflect.ownKeys(result)
+    .filter(key => key !== "id" && Object.prototype.propertyIsEnumerable.call(result, key))
+    .map(key => [key, Reflect.get(result, key)]))
+  try {
+    const id = result.id
+    if (id !== undefined) normalized.id = id
+  }
+  catch {
+    // Delivery already succeeded. An inaccessible optional ID must not encourage a resend.
+  }
+  return normalized
 }
 
 export function createChannel<
@@ -41,7 +60,7 @@ export function createChannel<
   name: string,
   definition: ChannelDefinition<TConnectors, TDefault>,
 ): ChannelClient<TConnectors, TDefault> {
-  defineChannel(definition)
+  defineOutboundChannel(definition)
 
   return {
     name,
@@ -60,12 +79,17 @@ export function createChannel<
         }
 
         // SAFETY: The object check above establishes that options can carry a connector selector.
-        connectorName = (options as { connector?: string }).connector || definition.defaultConnector
-        if (!connectorName) {
+        const requestedConnector = (options as { connector?: unknown }).connector
+        const selectedConnector = requestedConnector === undefined ? definition.defaultConnector : requestedConnector
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Reject malformed JavaScript selectors before resolving a configured connector.
+        if (typeof selectedConnector !== "string" || selectedConnector.length === 0) {
           throw channelError(`Channel "${name}" requires a connector in send options.`)
         }
+        connectorName = selectedConnector
 
-        const connector = definition.connectors[connectorName]
+        const connector = Object.hasOwn(definition.connectors, connectorName)
+          ? definition.connectors[connectorName]
+          : undefined
         if (!connector) {
           throw channelError(`Channel "${name}" does not define connector "${connectorName}".`)
         }
@@ -79,9 +103,10 @@ export function createChannel<
         if (!result || typeof result !== "object") {
           throw channelError(`Channel connector "${connectorName}" returned an invalid result.`)
         }
-        logDelivery("outbound.completed", deliveryId, name, connectorName, { messageId: result.id })
+        const normalized = normalizeConnectorResult(result)
+        logDelivery("outbound.completed", deliveryId, name, connectorName, () => ({ messageId: normalized.id }))
         return [null, {
-          ...result,
+          ...normalized,
           channel: name,
           connector: connectorName,
           deliveryId,
@@ -89,7 +114,7 @@ export function createChannel<
       }
       catch (cause) {
         const error = toChannelSendError(cause)
-        if (deliveryId && connectorName) logDelivery("outbound.failed", deliveryId, name, connectorName, { error: channelSendErrorMessage(error) })
+        if (deliveryId && connectorName) logDelivery("outbound.failed", deliveryId, name, connectorName, () => ({ error: channelSendErrorMessage(error) }))
         return [error, null]
       }
     },

@@ -1,11 +1,14 @@
 import discoveredDefinition from "#vitehub/auth/definition"
 import { betterAuth } from "better-auth"
+import { resolvePublicUrl } from "@vite-hub/runtime"
 
 import { normalizeAuthBasePath } from "./shared.ts"
 import { throwAuthenticationProviderError } from "./errors.ts"
 import { getAuthenticationSession } from "./session.ts"
 
+import type { AccessAuthorizeOption, PublicUrlConfig } from "@vite-hub/runtime"
 import type {
+  AuthAccessAuthorize,
   AuthAccessConfiguration,
   AuthAccessAuthorizationContext,
   AuthAccessRoute,
@@ -22,6 +25,8 @@ import type {
 } from "./types.ts"
 import { authErrorDiagnostics } from "./error-diagnostics.ts"
 
+declare const __VITEHUB_PUBLIC_URL__: PublicUrlConfig | undefined
+
 type AuthRuntimeEnvResolver = (event?: unknown) => Record<string, unknown>
 
 function hasRuntimeOptions(options: AuthRuntimeOptions | undefined): boolean {
@@ -31,6 +36,12 @@ function hasRuntimeOptions(options: AuthRuntimeOptions | undefined): boolean {
 function hasRequestRuntimeOptions(definition: AuthDefinition): boolean {
   if (typeof definition.options === "function") return true
   return typeof definition.options.runtime === "function"
+}
+
+function hasConfiguredPublicUrl(): boolean {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The build injects this value only when `vitehub({ publicUrl })` is set.
+  return typeof __VITEHUB_PUBLIC_URL__ !== "undefined"
+    && Boolean(__VITEHUB_PUBLIC_URL__?.url || Object.keys(__VITEHUB_PUBLIC_URL__?.agents ?? {}).length)
 }
 
 let authRuntimeEnvResolver: AuthRuntimeEnvResolver | undefined
@@ -124,11 +135,6 @@ function hasStaticTrustedOrigins(definition: AuthDefinition): boolean {
   return typeof definition.options !== "function" && "trustedOrigins" in definition.options
 }
 
-function definitionBasePath(definition: AuthDefinition): string | undefined {
-  if (typeof definition.options === "function") return
-  return definition.options.basePath
-}
-
 function stripViteHubOptions(
   options: AuthRuntimeOptions & Record<string, unknown>,
 ): AuthBetterAuthRuntimeOptions {
@@ -185,11 +191,11 @@ export function createAuthRequestRuntimeOptions(
     ...resolveRequestRuntimeOptions(definition, request, event),
     ...runtimeOptions,
   }
-  const baseURL = requestRuntimeOptions.baseURL || new URL(request.url).origin
+  const baseURL = requestRuntimeOptions.baseURL || resolvePublicUrl({ request })
   return {
-    baseURL,
     ...(!hasTrustedOrigins(requestRuntimeOptions) && !hasStaticTrustedOrigins(definition) ? { trustedOrigins: [baseURL] } : {}),
     ...requestRuntimeOptions,
+    baseURL,
   } as AuthRuntimeOptions
 }
 
@@ -243,8 +249,24 @@ function resolveBetterAuthOptionsForRequest(
   runtimeOptions?: AuthRuntimeOptions,
   event?: unknown,
 ): AuthBetterAuthRuntimeOptions {
+  return createBetterAuthOptionsFromResolved(resolveDefinitionOptionsForRequest(definition, request, runtimeOptions, event))
+}
+
+function resolveDefinitionOptionsForRequest(
+  definition: AuthDefinition,
+  request: Pick<Request, "headers" | "url">,
+  runtimeOptions?: AuthRuntimeOptions,
+  event?: unknown,
+): AuthRuntimeOptions & Record<string, unknown> {
+  // SAFETY: The request resolver preserves Definition metadata until stripViteHubOptions removes it.
   const requestRuntimeOptions = createAuthRequestRuntimeOptions(definition, request, runtimeOptions, event) as AuthRuntimeOptions & Record<string, unknown>
-  return createBetterAuthOptionsFromResolved(resolveDefinitionOptions(definition, request, event, requestRuntimeOptions))
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Auth Definitions accept either an options object or a request resolver.
+  if (typeof definition.options === "function") return requestRuntimeOptions
+  // SAFETY: Static storage metadata is removed before these options reach Better Auth.
+  return {
+    ...definition.options,
+    ...requestRuntimeOptions,
+  } as AuthRuntimeOptions & Record<string, unknown>
 }
 
 export function createAuth(
@@ -311,7 +333,7 @@ export function getAuthForRequest(
   event?: unknown,
 ): ViteHubAuth {
   const definition = resolveDefaultDefinition()
-  if (!hasRequestRuntimeOptions(definition) && !hasRuntimeOptions(runtimeOptions)) {
+  if (!hasRequestRuntimeOptions(definition) && !hasRuntimeOptions(runtimeOptions) && !hasConfiguredPublicUrl()) {
     return getAuthForDefinition(definition)
   }
   return createAuthenticationProvider(resolveBetterAuthOptionsForRequest(definition, request, runtimeOptions, event))
@@ -338,15 +360,6 @@ export function handleAuth(
   return handleAuthRequest(resolveDefaultDefinition(), request, runtimeOptions, input)
 }
 
-function authRequestBasePath(definition: AuthDefinition, request: Pick<Request, "headers" | "url">, event?: unknown): string {
-  const options = createAuthRequestRuntimeOptions(definition, request, {}, event) as AuthRuntimeOptions & { basePath?: unknown }
-  return normalizeAuthBasePath(typeof options.basePath === "string" ? options.basePath : definitionBasePath(definition))
-}
-
-function authBaseURL(definition: AuthDefinition, request: Pick<Request, "headers" | "url">, event?: unknown): string {
-  return new URL(createAuthRequestRuntimeOptions(definition, request, {}, event).baseURL as string).origin
-}
-
 function wantsHtml(request: Pick<Request, "headers" | "method">): boolean {
   return request.method === "GET" && request.headers.get("accept")?.includes("text/html") === true
 }
@@ -361,13 +374,11 @@ function createForbiddenResponse(request: Pick<Request, "headers" | "method">): 
 }
 
 function authAccessRoutes(
-  definition: AuthDefinition,
-  request: Pick<Request, "headers" | "url">,
-  event: unknown,
+  options: AuthRuntimeOptions & Record<string, unknown>,
   routeIndexes: number[],
 ): AuthAccessRoute[] {
   // SAFETY: Auth Definitions validate `access` before the runtime resolves their options.
-  const routes = (resolveDefinitionOptions(definition, request, event) as { access?: AuthAccessConfiguration }).access?.routes
+  const routes = (options as { access?: AuthAccessConfiguration }).access?.routes
   return routeIndexes.map((routeIndex) => {
     const route = routes?.[routeIndex]
     if (!route) {
@@ -378,13 +389,15 @@ function authAccessRoutes(
 }
 
 async function createSignInResponse(
-  definition: AuthDefinition,
-  request: AuthRequest,
+  auth: ViteHubAuth,
+  options: AuthRuntimeOptions & Record<string, unknown>,
   signIn: AuthSignInConfiguration,
-  event?: unknown,
 ): Promise<Response> {
-  const origin = authBaseURL(definition, request, event)
-  const response = await handleAuthRequest(definition, new Request(`${origin}${authRequestBasePath(definition, request, event)}/sign-in/social`, {
+  // SAFETY: The request resolver supplies baseURL from the runtime configuration or request origin.
+  const origin = new URL(options.baseURL as string).origin
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- basePath comes from Definition metadata carried alongside Better Auth runtime options.
+  const basePath = normalizeAuthBasePath(typeof options.basePath === "string" ? options.basePath : undefined)
+  const response = await auth.handler(new Request(`${origin}${basePath}/sign-in/social`, {
     body: JSON.stringify({
       callbackURL: signIn.callbackURL,
       errorCallbackURL: signIn.errorCallbackURL,
@@ -398,7 +411,7 @@ async function createSignInResponse(
       "origin": origin,
     },
     method: "POST",
-  }), undefined, event)
+  }))
 
   if (!response.ok) return response
 
@@ -413,6 +426,23 @@ async function createSignInResponse(
   return new Response(null, { headers, status: 302 })
 }
 
+async function readRequestSession(input: AuthRequestInput, definition: AuthDefinition) {
+  const request = unwrapAuthRequest(input)
+  const options = resolveDefinitionOptionsForRequest(definition, request, undefined, input)
+  const auth = createAuthenticationProvider(createBetterAuthOptionsFromResolved(options))
+  const session = await getAuthenticationSession(auth, { headers: request.headers })
+  return { auth, options, request, session }
+}
+
+async function runAccessAuthorize(
+  authorize: AuthAccessAuthorize,
+  context: AuthAccessAuthorizationContext,
+): Promise<Response | undefined> {
+  const result = await authorize(context)
+  if (result instanceof Response) return result
+  if (result !== true) return createForbiddenResponse(context.request)
+}
+
 async function requireAuthRequest(
   input: AuthRequestInput,
   definition: AuthDefinition,
@@ -420,9 +450,7 @@ async function requireAuthRequest(
   requiredAuthorizeRouteIndexes: number[] = [],
   redirectToSignIn = true,
 ): Promise<Response | undefined> {
-  const request = unwrapAuthRequest(input)
-  const auth = createAuthenticationProvider(resolveBetterAuthOptionsForRequest(definition, request, undefined, input))
-  const session = await getAuthenticationSession(auth, { headers: request.headers })
+  const { auth, options, request, session } = await readRequestSession(input, definition)
   if (session) {
     if (routeIndexes === undefined) return
 
@@ -432,16 +460,15 @@ async function requireAuthRequest(
       user: session.user,
     }
     const requiredAuthorizeRoutes = new Set(requiredAuthorizeRouteIndexes)
-    const routes = authAccessRoutes(definition, request, input, routeIndexes)
+    const routes = authAccessRoutes(options, routeIndexes)
     for (const [index, route] of routes.entries()) {
       const authorize = route instanceof Object ? route.authorize : undefined
       if (!authorize && requiredAuthorizeRoutes.has(routeIndexes[index]!)) {
         return createForbiddenResponse(request)
       }
       if (!authorize) continue
-      const result = await authorize(context)
-      if (result instanceof Response) return result
-      if (result !== true) return createForbiddenResponse(request)
+      const rejection = await runAccessAuthorize(authorize, context)
+      if (rejection) return rejection
     }
     return
   }
@@ -461,9 +488,9 @@ async function requireAuthRequest(
     })
   }
 
-  const signIn = (resolveDefinitionOptions(definition, request, input) as { access?: AuthAccessConfiguration }).access?.signIn
+  const signIn = (options as { access?: AuthAccessConfiguration }).access?.signIn
   return signIn
-    ? await createSignInResponse(definition, request, signIn, input)
+    ? await createSignInResponse(auth, options, signIn)
     : Response.json({ error: "Unauthorized." }, { status: 401 })
 }
 
@@ -472,6 +499,25 @@ export async function requireAuth(
   definition: AuthDefinition = resolveDefaultDefinition(),
 ): Promise<Response | undefined> {
   return requireAuthRequest(input, definition)
+}
+
+/**
+ * Authorizes one request for a resource such as a Blob serve route or a Collection.
+ * Returns `401` without a session, `403` when `authorize` returns `false`, and a custom `Response` as-is.
+ * It never redirects to sign-in, so image and fetch requests receive a status code.
+ */
+export async function authorizeRequest(
+  input: AuthRequestInput,
+  authorize: AccessAuthorizeOption,
+  definition: AuthDefinition = resolveDefaultDefinition(),
+): Promise<Response | undefined> {
+  if (authorize !== true && !(authorize instanceof Function)) {
+    throw authErrorDiagnostics.AUTH_R0014({ message: "[vitehub] `authorize` must be true or a function." })
+  }
+  const { request, session } = await readRequestSession(input, definition)
+  if (!session) return Response.json({ error: "Unauthorized." }, { status: 401 })
+  if (authorize === true) return
+  return runAccessAuthorize(authorize, { request, session: session.session, user: session.user })
 }
 
 export async function requireAuthAccessRoutes(

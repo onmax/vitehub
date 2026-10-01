@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest"
+import { resolve } from "pathe"
+import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
+import { createDefaultVercelOutputRoot } from "@vite-hub/internal/build/deployment-output"
 
 import { normalizeWorkflowOptions } from "../src/config.ts"
 import { createCloudflareWorkflowBindings, getCloudflareWorkflowBindingName, getCloudflareWorkflowClassName, getCloudflareWorkflowName } from "../src/integrations/cloudflare.ts"
@@ -6,6 +9,15 @@ import { getVercelWorkflowName } from "../src/integrations/vercel.ts"
 import { hubWorkflow } from "../src/vite.ts"
 
 describe("workflow config", () => {
+  it("inspects the standalone Vercel function without a Nitro function name", async () => {
+    const entries = await collectViteHubProviderOutputEntries([hubWorkflow({ provider: "vercel" })])
+    expect(entries).toEqual([{
+      description: "Generated Vercel Workflow function",
+      owner: "workflow",
+      path: resolve(createDefaultVercelOutputRoot(process.cwd()), "functions/__server.func/index.mjs"),
+    }])
+  })
+
   it("serializes shared Provider Output finalization", () => {
     expect(hubWorkflow().closeBundle).toMatchObject({ order: "post", sequential: true })
   })
@@ -67,6 +79,15 @@ describe("workflow config", () => {
     })
   })
 
+  it("preserves SQLite filenames and trims Postgres URLs while rejecting blank values", () => {
+    const sqlite = { path: " workflow.sqlite " }
+    const postgres = { url: " postgres://localhost/workflow " }
+    expect(normalizeWorkflowOptions({ provider: "openworkflow", sqlite })).toMatchObject({ sqlite })
+    expect(normalizeWorkflowOptions({ provider: "openworkflow", postgres })).toMatchObject({ postgres: { url: "postgres://localhost/workflow" } })
+    expect(() => normalizeWorkflowOptions({ provider: "openworkflow", sqlite: { path: "   " } })).toThrow(/non-empty string/)
+    expect(() => normalizeWorkflowOptions({ provider: "openworkflow", postgres: { url: "   " } })).toThrow(/non-empty string/)
+  })
+
   it("accepts runtime env declarations for OpenWorkflow SQLite storage", () => {
     const path = {
       default: "file:.data/workflow.sqlite",
@@ -82,13 +103,11 @@ describe("workflow config", () => {
     })
   })
 
-  it("infers openworkflow from node hosting with a database reference", () => {
-    expect(normalizeWorkflowOptions({
+  it.each([undefined, "openworkflow", "cloudflare", "vercel"])("rejects unsupported database references with provider %s", (provider) => {
+    expect(() => normalizeWorkflowOptions({
       database: "workflow",
-    }, { hosting: "node-server" })).toEqual({
-      database: "workflow",
-      provider: "openworkflow",
-    })
+      provider,
+    } as never, { hosting: "node-server" })).toThrow(/workflow\.database.*not supported/)
   })
 
   it("does not infer openworkflow from docker hosting without Postgres config", () => {

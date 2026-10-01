@@ -4,7 +4,7 @@ import { join } from "node:path"
 
 import { afterEach, describe, expect, it } from "vitest"
 
-import { createRuntimeRegistryContents } from "@vite-hub/internal/definition-discovery"
+import { createRuntimeRegistryContents } from "@vite-hub/internal/definition-catalog"
 import { discoverSandboxDefinitions, discoverServerSandboxDefinitions } from "../src/discovery.ts"
 import { resolveSandboxProject } from "../src/project.ts"
 
@@ -148,6 +148,6 @@ describe("discoverServerSandboxDefinitions", () => {
     expect(createRuntimeRegistryContents(registryFile, [{
       handler: sourceFile,
       name: "release-notes",
-    }])).toContain('"release-notes": async () => import(')
+    }])).toContain('["release-notes"]: async () => import(')
   })
 })

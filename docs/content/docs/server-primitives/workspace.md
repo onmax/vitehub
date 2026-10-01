@@ -56,7 +56,7 @@ export default defineWorkspace({
 | Source resolution, request, and preparation helpers from `@vite-hub/workspace/runtime` | Integrate resolved Workspace Sources and process-local readiness into runtime facades. |
 | `defineWorkspaceFileHandler`, `readWorkspaceFileResponse` from `@vite-hub/workspace/server` | Serve Workspace files from H3 routes. |
 | `hubWorkspace` from `@vite-hub/workspace/vite` | Register Workspace discovery, generated types, assets, and runtime wiring. |
-| `@vite-hub/workspace/loader`, `@vite-hub/workspace/publish`, `@vite-hub/workspace/test` | Add loaders and publishers, or create test Workspaces. |
+| `@vite-hub/workspace/loader`, `@vite-hub/workspace/publish`, `@vite-hub/workspace/test` | Add loaders and publishers, or register test Workspaces. |
 
 Workspace definition, Source Binding, rule, hook, store, sync, facade, and session types are exported from `@vite-hub/workspace`. Source resolution runtime types are exported from `@vite-hub/workspace/runtime`.
 
@@ -95,6 +95,35 @@ The Vite config key is `workspace`.
 Without a `store`, development uses Local. Production uses Memory on Cloudflare, Vercel Blob when `BLOB_READ_WRITE_TOKEN` exists, Memory on Vercel without that token, and Local on other hosts. You must select Cloudflare Artifacts or GitHub yourself.
 
 Custom Stores can implement `removeEmptyDirectory(path)` for build Source cleanup. It must remove only an empty directory, preserve files and missing paths, and reject nonempty directories within the Store mutation boundary. Without this optional method, cleanup retains generated directories. Local, Memory, and Cloudflare Artifacts implement it.
+
+Public Workspace paths reserve `.git` at any depth and `.vitehub` at the root, regardless of case. This includes NTFS stream suffixes such as `.vitehub::$INDEX_ALLOCATION`, spellings with trailing ASCII periods or spaces such as `.vitehub.`, and NTFS short-name aliases such as `git~1`. ViteHub rejects these spellings on every host.
+
+### Local filesystem access
+
+Local Stores reject symlinks during reads, file metadata access, writes, directory creation, and explicit listing-prefix resolution. Directory listings omit symlinks. Removing a leaf symlink unlinks the link itself; removal cannot follow a symlink in a parent directory. Empty-directory cleanup preserves symlinks.
+
+Use configured [Source Bindings](/docs/server-primitives/source) to include files from another location. Existing symlink aliases, including links into `.vitehub` metadata, are no longer accepted as Workspace paths.
+
+These checks do not isolate the host filesystem from another process that can change paths during an operation. Use operating-system permissions or a sandbox when untrusted code can write to the same filesystem. Persist the Local Store root on a volume when Workspace files must survive instance replacement.
+
+### Recover a Local Store after a crash
+
+Local Store lock markers do not expire by age. A crashed process can leave a marker that makes later operations report `Timed out waiting to read Workspace` or `Timed out waiting to write Workspace`.
+
+Stop every process using the Workspace before recovery. Prevent changes to the Store and its ancestor directories throughout the call. Then run `recoverLocalWorkspaceLocks()` with the exact directory configured as the Local Store's `root`:
+
+```ts
+import { recoverLocalWorkspaceLocks } from '@vite-hub/workspace/runtime'
+
+await recoverLocalWorkspaceLocks({
+  root: '/srv/app/.vitehub/workspaces/docs',
+  offline: true,
+})
+```
+
+The `offline: true` flag confirms exclusive offline access; it does not stop other processes. Restart the Workspace processes after recovery succeeds.
+
+Interrupted file removals require a separate retry. If reads report `Interrupted Workspace removal`, retry removal of the reported path with `force: true` and, for directories, `recursive: true` before restoring files. This prevents restored files from reusing deleted Source ownership.
 
 ### Cloudflare Artifacts
 
@@ -315,6 +344,8 @@ Stores can return `revision` from `stat()` to identify a stored file version. Th
 | `workspace.fs` write mode | read methods plus `writeFile`, `appendFile`, `mkdir`, `rm`, `movePath`, `copyPath` |
 | writable facade | `diff`, `snapshot`, `history.checkpoint`, `history.rebase`, `materializeSources`, `sync`, `startSession`, optional Store metadata methods `getMeta` and `setMeta`, and `tools` |
 | tools | default tools, `tools.inspect(options)`, `tools.write(options)`, `tools.none()` |
+
+Workspace shell tools do not permit controlled `curl` by default. Pass `sourceRequests: true` to `createWorkspaceTools(workspace, { sourceRequests: true })` or `workspace.tools.inspect({ sourceRequests: true })` to allow requests to visible Source targets. The Agent `workspaceShell()` Capability explicitly enables these scoped requests.
 
 ### Runtime method options
 
