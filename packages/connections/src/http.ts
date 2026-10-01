@@ -17,7 +17,9 @@ export interface ConnectionsHandlerOptions {
   runtime?: () => ConnectionsRuntime;
 }
 
-const name = v.pipe(v.string(), v.regex(/^[\w.-]+(?:\/[\w.-]+)*$/));
+// Discovery preserves filesystem-valid characters, including symbols such as `+`.
+// Keep management validation in step with the generated registry.
+const name = v.pipe(v.string(), v.minLength(1));
 const id = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
 const actionSchema = v.variant("action", [
   v.object({ action: v.literal("list") }),

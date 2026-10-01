@@ -10,6 +10,7 @@ import type {
   ConnectionApproval,
   ConnectionApprovalStatus,
   ConnectionDefinition,
+  ConnectionFetchInit,
   ConnectionInspection,
   ConnectionTokenResponse,
   ConnectionValue,
@@ -68,7 +69,7 @@ type ApprovalInput =
 /** An untyped client. `useConnection()` wraps it in the typed client tree. */
 export interface ConnectionRuntimeClient {
   call: (action: string, input?: unknown, options?: { signal?: AbortSignal }) => Promise<unknown>
-  fetch: (input: string | URL, init?: RequestInit) => Promise<Response>
+  fetch: (input: string | URL, init?: ConnectionFetchInit) => Promise<Response>
 }
 
 export interface ConnectionsRuntime {
@@ -593,15 +594,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return response ? await readResponse(response) : undefined
   }
 
-  async function callFetch(context: CallContext, input: string | URL, init: RequestInit = {}): Promise<Response | undefined> {
+  async function callFetch(context: CallContext, input: string | URL, init: ConnectionFetchInit = {}): Promise<Response | undefined> {
     const url = new URL(input)
     const method = (init.method ?? "GET").toUpperCase()
     const write = method !== "GET" && method !== "HEAD"
     const allowed = Object.values(providerApis(context.definition)).some(catalog => url.origin === new URL(catalog.rootUrl).origin)
     if (!allowed) throw new ConnectionError("invalid", `Connection "${context.name}" does not send its token to ${url.origin}.`, { details: { connection: context.name } })
-    if (init.body !== undefined && init.body !== null && !v.is(v.string(), init.body)) {
-      throw new ConnectionError("invalid", "Connection fetch accepts only a string body.")
-    }
     const body = init.body ?? undefined
     const headers: Record<string, string> = {}
     for (const [key, value] of new Headers(init.headers)) {
@@ -623,7 +621,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       async call(action: string, input?: unknown, callOptions?: { signal?: AbortSignal }): Promise<unknown> {
         return await callMethod(await resolveContext(), action, input, callOptions?.signal)
       },
-      async fetch(input: string | URL, init?: RequestInit): Promise<Response> {
+      async fetch(input: string | URL, init?: ConnectionFetchInit): Promise<Response> {
         return await callFetch(await resolveContext(), input, init) ?? new Response(null, { status: 204 })
       },
     }

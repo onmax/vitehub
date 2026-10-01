@@ -101,6 +101,9 @@ export interface ConnectionDefinition<
   access?: Readonly<Record<string, ConnectionAccessRule<ConnectionActionPattern<TApis>>>>
 }
 
+/** Fetch options supported by Connections. Bodies are persisted for approval replay. */
+export type ConnectionFetchInit = Omit<RequestInit, "body"> & { body?: string }
+
 export type ConnectionDefinitionRegistry = Record<string, () => Promise<unknown>>
 
 /** Loads the ViteHub Database that the default store uses. */
@@ -153,7 +156,7 @@ export type ConnectionClient<TApis extends object = object, TSelection = Connect
    * Call a provider URL with the Connection token. GET is a read. Other methods are
    * writes, and an access rule must name `fetch` to allow them.
    */
-  fetch: (input: string | URL, init?: RequestInit) => Promise<Response>
+  fetch: (input: string | URL, init?: ConnectionFetchInit) => Promise<Response>
 } & {
   readonly [TApi in keyof TApis & keyof TSelection]: ConnectionClientTree<SelectedMethods<TApis[TApi], SelectionPatterns<TSelection, TApi>>, TDryRun>
 }

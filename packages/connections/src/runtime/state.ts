@@ -9,7 +9,7 @@ import { createDatabaseConnectionStore } from "../store.ts"
 import type { ConnectionDefinitionName, ConnectionRegistryClient } from "../registry-types.ts"
 import type { ConnectionRuntimeClient, ConnectionsRuntime, ConnectionsRuntimeOptions } from "../runtime.ts"
 import type { ConnectionStore } from "../store.ts"
-import type { ConnectionClient, UseConnectionOptions } from "../types.ts"
+import type { ConnectionClient, ConnectionFetchInit, UseConnectionOptions } from "../types.ts"
 
 let runtime: ConnectionsRuntime | undefined
 
@@ -77,7 +77,7 @@ export function useConnection(name: string, options: UseConnectionOptions = {}):
   return new Proxy({ name } as ConnectionClient, {
     get(target, property) {
       if (property === "name") return target.name
-      if (property === "fetch") return (input: string | URL, init?: RequestInit) => resolveClient().fetch(input, init)
+      if (property === "fetch") return (input: string | URL, init?: ConnectionFetchInit) => resolveClient().fetch(input, init)
       const key = v.safeParse(v.string(), property)
       if (!key.success || key.output === "then" || key.output === "toJSON") return undefined
       return methodProxy({
