@@ -616,7 +616,7 @@ function resolvedDriverExecutionAuthority<
   driver: ReturnType<typeof normalizeAgentDriver<TRuntimeConfig, CALL_OPTIONS>>,
   runtime?: AgentRuntimeName,
 ): ExecutionAuthority {
-  if (driver.kind === "model") return noExecutionAuthority
+  if (driver.kind === "model" || driver.kind === "ask") return noExecutionAuthority
   if (driver.kind === "provider" && (runtime === "cloudflare-agents" || runtime === "deno")) return noExecutionAuthority
   return driver.kind === "provider" ? staticDriverExecutionAuthority(driver) : unknownExecutionAuthority
 }
@@ -844,6 +844,7 @@ function staticDriverMetadata<
       provider: providerMetadata(driver),
     }
   }
+  if (driver.kind === "ask") return { executionAuthority: noExecutionAuthority, kind: "ask" }
   return { executionAuthority: unknownExecutionAuthority, kind: "run" }
 }
 
@@ -880,6 +881,7 @@ async function resolvedDriverMetadata<
       provider: providerMetadata(driver),
     }
   }
+  if (driver.kind === "ask") return { executionAuthority: noExecutionAuthority, kind: "ask" }
   return { executionAuthority: unknownExecutionAuthority, kind: "run" }
 }
 
@@ -944,7 +946,8 @@ function agentChannelMetadataInstructions<
   definition: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
 ): string[] {
   const settings = agentSettings(definition)
-  if (!settings || normalizeAgentDriver(settings).kind === "run") return []
+  const driverKind = settings ? normalizeAgentDriver(settings).kind : undefined
+  if (!driverKind || driverKind === "run" || driverKind === "ask") return []
   return inspectMessageChannelInstructions(definition.channels)
 }
 

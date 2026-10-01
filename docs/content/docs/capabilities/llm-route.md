@@ -49,6 +49,7 @@ Duplicate writers for the same invocation context value fail early.
 Choice keys must be stable identifiers.
 
 The Capability requires either an explicit model option or an Agent model resolver available to Capabilities.
+An Agent with [`driver.ask`](/docs/agents/agent-drivers#use-an-ask-driver) and no `model` option records a single choice locally or decides between multiple choices with TypeSafe Jev.
 
 ## Driver support
 
@@ -57,11 +58,22 @@ The Capability requires either an explicit model option or an Agent model resolv
 | Model-backed | Runs the pre-invocation decision and records the route before model execution. |
 | Provider-backed | Runs the pre-invocation decision before provider execution when a model resolver is available. |
 | Custom-run-backed | Records the decision before `driver.run`; custom code decides how to use it. |
+| Ask-backed | Without `model`, records a single choice locally or asks Jev one `ask.choice()` question with 2 to 255 choices. A `driver.ask` function can read the decision from Invocation context. |
+
+## Jev decisions
+
+When the Capability has no `model` option, an ask Driver Agent records a single configured choice locally with confidence `1` and probability `1`. This route decision needs no credentials and sends no Jev request. The main ask Driver still needs its configured credentials.
+
+With 2 to 255 choices, the Capability sends the route to TypeSafe Jev.
+The state is the Invocation `data` when a caller sets it. Otherwise it is `{ request, history? }` from the latest user text and the `history` option.
+
+The decision has `choice`, `confidence`, and `probabilities`, a map from choice key to probability. Jev decisions have no `reason`.
+Credentials come from the `typesafe` Server Env group, as for the ask Driver.
 
 ## Verify routing
 
 Run one invocation and inspect the context value for `llm-route` or your custom id.
-Confirm that the value includes `choice`. It may also include confidence or a reason.
+Confirm that the value includes `choice`. It may also include confidence, probabilities, or a reason.
 
 Add a test case for an invalid model response if you provide a custom model wrapper.
 Confirm that the Capability rejects choices outside the configured map.
@@ -73,7 +85,7 @@ Confirm that the Capability rejects choices outside the configured map.
 | `choices` | `Record<string, string \| { label?: string; description?: string }>` | required | Developer-defined route choices. |
 | `history` | `boolean \| number` | `false` | Include recent conversation history in the classifier prompt. |
 | `id` | `string` | `"llm-route"` | Capability id and invocation context key. |
-| `model` | `AgentModelResolver` | Agent model | Model used for the pre-invocation decision. |
+| `model` | `AgentModelResolver` | Agent model, or Jev for ask Driver Agents | Model used for the pre-invocation decision. |
 | `prompt` | `string` | generated | Additional classifier prompt text. |
 
 ## Related pages
