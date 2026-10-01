@@ -6,6 +6,7 @@ import { existsSync, statSync } from "node:fs"
 import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { basename, dirname, extname, join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
+import { parseAst } from "vite"
 
 import { contributeProviderDeploymentOutput, createDefaultNetlifyOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, useProviderOutputCatalog, writeProviderDeploymentOutputs } from "@vite-hub/internal/build/deployment-output"
 import { encodeProviderOutputAliases } from "@vite-hub/internal/build/esbuild"
@@ -44,6 +45,9 @@ interface AgentCliContributingPlugin {
       transformWorkflowRegistry: (code: string, id: string) => string
     }
     cli?: unknown
+    providerOutput?: {
+      prepareSources: (sources: { resolve: (path: string) => string }) => Promise<void>
+    }
   }
 }
 
@@ -152,6 +156,7 @@ interface GeneratedAgentRuntimeCapability {
 const generatedAgentRuntimeCapabilityDefinitions: GeneratedAgentRuntimeCapability[] = [
   { importName: "blob", name: "blob", packageName: "@vite-hub/blob", pluginName: "@vite-hub/blob/vite" },
   { importName: "console", name: "console", packageName: "vite-hub/console/server", pluginName: "vite-hub/console" },
+  { importName: "connections", name: "connections", packageName: "@vite-hub/connections/agent", pluginName: "@vite-hub/connections/vite" },
   { importName: "agentDb", name: "db", packageName: "@vite-hub/database/drizzle", pluginName: "@vite-hub/database/vite" },
   { importName: "email", name: "email", packageName: "@vite-hub/email/server", pluginName: "@vite-hub/email/vite" },
   { importName: "kv", name: "kv", packageName: "@vite-hub/kv", pluginName: "@vite-hub/kv/vite" },
@@ -890,9 +895,13 @@ function generatedWorkspaceSourceRootHelper(name: string, workspaceDefinitionFro
     "    return [key, encoding === 'base64' ? { ...options, content: Uint8Array.from(atob(content), byte => byte.charCodeAt(0)) } : source]",
     "  }))",
     "  const skillsSymbol = Symbol.for('vitehub.agent.colocatedSkills')",
-    "  if (!Object.keys(skills).length) Reflect.deleteProperty(agent, skillsSymbol)",
+    "  const setDiscoveredSkills = Reflect.get(agent, Symbol.for('vitehub.agent.discoveredSkillsSetter'))",
+    "  if (typeof setDiscoveredSkills === 'function') setDiscoveredSkills(skills)",
+    "  if (!Object.keys(skills).length && !Object.getOwnPropertyDescriptor(agent, skillsSymbol)?.get) Reflect.deleteProperty(agent, skillsSymbol)",
     `  const resolvedAgent = ${typescript ? "(" : ""}Object.keys(skills).length ? Object.create(Object.getPrototypeOf(agent), Object.getOwnPropertyDescriptors(agent)) : agent${typescript ? ") as Agent & Partial<WorkspaceAgentDefinition>" : ""}`,
-    "  if (Object.keys(skills).length) {",
+    "  const sourceSymbol = Symbol.for('vitehub.agent.definitionSource')",
+    "  if (resolvedAgent !== agent) Object.defineProperty(resolvedAgent, sourceSymbol, { configurable: true, value: agent })",
+    "  if (Object.keys(skills).length && typeof setDiscoveredSkills !== 'function') {",
     "    const descriptor = { configurable: true, enumerable: true, value: skills }",
     "    Object.defineProperty(agent, skillsSymbol, descriptor)",
     "    if (resolvedAgent !== agent) {",
@@ -906,7 +915,7 @@ function generatedWorkspaceSourceRootHelper(name: string, workspaceDefinitionFro
     "  const sources = {",
     "    ...existingSources,",
     "    ...(colocatedInstructions ? { __vitehubAgentInstructions: { content: colocatedInstructions, materialize: 'startup', mount: '', workspacePath: 'AGENTS.md' } } : {}),",
-    "    ...skills,",
+    "    ...Reflect.get(resolvedAgent, skillsSymbol),",
     "    ...workspace.sources,",
     "  }",
     "  const resolvedSources = Object.keys(sources).length ? sources : undefined",
@@ -914,8 +923,9 @@ function generatedWorkspaceSourceRootHelper(name: string, workspaceDefinitionFro
     `  const workspaceOptions = { ...options, workspace: { ...workspace, ...(resolvedSources ? { sources: resolvedSources } : {}), sourceRootDir: resolvedSourceRootDir } }${typescript ? " as WorkspaceAgentOptions" : ""}`,
     `  const decoratedAgent = { ...resolvedAgent, ...${workspaceDefinitionFromOptions}(workspaceOptions), __vitehubWorkspaceAgentOptions: workspaceOptions }`,
     "  for (const key of Reflect.ownKeys(resolvedAgent)) {",
-    `    if (!Object.prototype.propertyIsEnumerable.call(resolvedAgent, key)) Object.defineProperty(decoratedAgent, key, Object.getOwnPropertyDescriptor(resolvedAgent, key)${typescript ? "!" : ""})`,
+    `    if (key === skillsSymbol || !Object.prototype.propertyIsEnumerable.call(resolvedAgent, key)) Object.defineProperty(decoratedAgent, key, Object.getOwnPropertyDescriptor(resolvedAgent, key)${typescript ? "!" : ""})`,
     "  }",
+    "  Object.defineProperty(decoratedAgent, sourceSymbol, { configurable: true, value: resolvedAgent })",
     `  const sourceDefaults = Object.fromEntries(Object.entries(sources).filter(([key, source]) => source !== workspace.sources?.[key] && source !== existingSources?.[key]))${typescript ? " as NonNullable<Exclude<WorkspaceAgentOptions['workspace'], string | { name: string }>['sources']>" : ""}`,
     "  inheritAgentLayerOptions(resolvedAgent, decoratedAgent, { workspace: { sourceRootDir, ...(Object.keys(sourceDefaults).length ? { sources: sourceDefaults } : {}) } })",
     `  return decoratedAgent${typescript ? " as unknown as Agent" : ""}`,
@@ -966,6 +976,48 @@ function applyCodeReplacements(
     transformed = transformed.slice(0, replacement.start) + replacement.value + transformed.slice(replacement.end)
   }
   return transformed
+}
+
+// Direct imports can create derived Agents before any generated registry loads the parent.
+function transformDiscoveredAgentSkills(
+  code: string,
+  parse: (code: string) => unknown,
+  skills: NonNullable<ReturnType<typeof readColocatedAgentSkills>>,
+  agentImportBase: string,
+): string | undefined {
+  const program = parse(code)
+  if (!isPositionedNode(program) || !Array.isArray(program.body)) return
+  const decorate = (value: string) => `vitehubWithColocatedAgentSkills(${value}, vitehubDecodeColocatedAgentSkills(${JSON.stringify(skills)}))`
+  for (const statement of program.body) {
+    if (!isPositionedNode(statement)) continue
+    const declaration = statement.declaration
+    if (statement.type === "ExportDefaultDeclaration" && isPositionedNode(declaration)) {
+      if (declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration") return
+      return [
+        `import { decodeColocatedAgentSkills as vitehubDecodeColocatedAgentSkills, withColocatedAgentSkills as vitehubWithColocatedAgentSkills } from ${JSON.stringify(subpath(agentImportBase, "server/internal"))}`,
+        applyCodeReplacements(code, [{ start: declaration.start, end: declaration.end, value: decorate(code.slice(declaration.start, declaration.end)) }]),
+      ].join("\n")
+    }
+    if (statement.type !== "ExportNamedDeclaration" || !Array.isArray(statement.specifiers)) continue
+    for (const specifier of statement.specifiers) {
+      if (!isPositionedNode(specifier) || !isPositionedNode(specifier.exported) || !isPositionedNode(specifier.local)) continue
+      if (specifier.exported.name !== "default" || !hasRuntimeType(specifier.local.name, "string")) continue
+      if (isPositionedNode(statement.source)) {
+        const source = code.slice(statement.source.start, statement.source.end)
+        return [
+          `import { decodeColocatedAgentSkills as vitehubDecodeColocatedAgentSkills, withColocatedAgentSkills as vitehubWithColocatedAgentSkills } from ${JSON.stringify(subpath(agentImportBase, "server/internal"))}`,
+          `import { ${specifier.local.name} as vitehubReexportedAgent } from ${source}`,
+          code,
+          `${decorate("vitehubReexportedAgent")}`,
+        ].join("\n")
+      }
+      return [
+        `import { decodeColocatedAgentSkills as vitehubDecodeColocatedAgentSkills, withColocatedAgentSkills as vitehubWithColocatedAgentSkills } from ${JSON.stringify(subpath(agentImportBase, "server/internal"))}`,
+        code,
+        `${decorate(specifier.local.name)}`,
+      ].join("\n")
+    }
+  }
 }
 
 interface EveExtensionImport {
@@ -2871,6 +2923,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       if (resolved?.root) {
         moduleIds.push(join(resolved.root, generatedScheduleRuntimeRegistrySuffix).replace(/\\/g, "/"))
         if (colocatedResourceUpdate) {
+          moduleIds.push(...discoverScheduledAgentDefinitions(resolved.root, serverDirs).map(definition => definition.handler.replace(/\\/g, "/")))
           const root = resolveViteHubGeneratedRoot(resolved)
           moduleIds.push(...[
             generatedAgentDenoServer,
@@ -2924,6 +2977,14 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           getAgentImportBase(agent, frameworkOptions),
           specifier => resolveEveExtensionPackage(resolved!, specifier, normalizedId, false),
         ) ?? transformed
+        const agentModule = /\.agent\.(?:c|m)?[jt]s$/i.test(normalizedId)
+          || definitionServerDirs.some(directory => normalizedId.startsWith(`${resolve(directory, "agents").replace(/\\/g, "/")}/`))
+        const definition = agentModule && discoverScheduledAgentDefinitions(resolved.root, serverDirs)
+          .find(definition => definition.handler.replace(/\\/g, "/") === normalizedId)
+        const skills = definition && readColocatedAgentSkills(definition.handler)
+        if (skills) {
+          transformed = transformDiscoveredAgentSkills(transformed, value => this.parse(value), skills, getAgentImportBase(agent, frameworkOptions)) ?? transformed
+        }
         if (transformed !== code) return transformed
       }
       if (isGeneratedAgentWorkflowRegistryId(normalizedId)) {
@@ -2953,6 +3014,20 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         : transformScheduleTargets(code, definitions)
     },
     vitehub: {
+      providerOutput: {
+        async prepareSources(sources) {
+          if (agent === false || !resolved) return
+          for (const definition of discoverScheduledAgentDefinitions(resolved.root, serverDirs)) {
+            const skills = readColocatedAgentSkills(definition.handler)
+            if (!skills) continue
+            const handler = sources.resolve(definition.handler)
+            if (handler === definition.handler || !existsSync(handler)) continue
+            const code = await readFile(handler, "utf8")
+            const transformed = transformDiscoveredAgentSkills(code, value => parseAst(value, { lang: "ts" }), skills, getAgentImportBase(agent, frameworkOptions))
+            if (transformed) await writeFile(handler, transformed, "utf8")
+          }
+        },
+      },
       agent: {
         transformWorkflowRegistry: (code, id) => isGeneratedAgentWorkflowRegistryId(id)
           ? transformGeneratedAgentWorkflowRegistry(
@@ -3086,9 +3161,9 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       if (resolved) {
         const alias = isRecord(mergedNitro.alias) ? { ...mergedNitro.alias } : {}
         alias[agentRegistryId] = join(generatedRoot, generatedAgentRegistry)
-        mergedNitro.alias = { ...alias, ...workerAliases }
+        mergedNitro.alias = { ...workerAliases, ...alias }
       }
-      const result: UserConfig & { nitro?: NitroConfig } = {
+      const result: UserConfig = {
         define: {
           __VITEHUB_AGENT_APP_ROOT__: JSON.stringify(root),
           ...config.define,
@@ -3099,14 +3174,27 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           },
         },
       }
-      if (resolved) result.resolve = { alias: { [agentRegistryId]: join(generatedRoot, generatedAgentRegistry), ...workerAliases } }
+      if (resolved) {
+        // Vite prepends returned aliases. Append Worker fallbacks in place so user aliases match first.
+        const configuredAliases = config.resolve?.alias
+        config.resolve = {
+          ...config.resolve,
+          alias: Array.isArray(configuredAliases)
+            ? [...configuredAliases, ...Object.entries(workerAliases).map(([find, replacement]) => ({ find, replacement }))]
+            : { ...workerAliases, ...configuredAliases },
+        }
+        result.resolve = { alias: { [agentRegistryId]: join(generatedRoot, generatedAgentRegistry) } }
+      }
       if (agent !== undefined) result.agent = agent
       if (nitroHandlers.length) {
         // SAFETY: Vite's build options accept the Rolldown external field merged by this boundary.
         result.build = mergeBuildExternal(config as BuildWithRolldownOptions, optionalAgentRuntimeExternals)
       }
       if (nitroContext || nitroHandlers.length || installCloudflareState || installProcessDiscordGateway) {
-        result.nitro = mergedNitro
+        // Replace the Nitro config in place. Vite concatenates arrays when it merges a returned config,
+        // so returning the complete Nitro config would repeat every user entry, such as Wrangler secrets.
+        // SAFETY: Nitro's Vite plugin reads this open `nitro` key from the user config; mergedNitro starts from its value.
+        ;(config as { nitro?: NitroConfig }).nitro = mergedNitro
       }
       return result
     },

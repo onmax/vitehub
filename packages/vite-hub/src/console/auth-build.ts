@@ -6,11 +6,11 @@ import { env } from "@vite-hub/env"
 import { createRuntimeEnvRegistry } from "@vite-hub/env/vite"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { build } from "esbuild"
+import { resolveInlineConsoleAuthGates, type InlineConsoleAuth } from "./auth-inline-config.ts"
 import { cloudflareAccessIssuer, consoleAuthMountBase, consoleAuthPath } from "./auth-path.ts"
 
 import type { EnvRuntimeRegistry } from "@vite-hub/env"
 import type { CloudflareAccessConsoleAuth } from "./auth-cloudflare-access.ts"
-import type { InlineConsoleAuth } from "./auth-inline.ts"
 import type { ConsoleAuthMode } from "./internal.ts"
 
 export interface ConsoleAuthFiles {
@@ -125,9 +125,7 @@ export function resolveConsoleAuthConfig(root: string, config: ConsoleAuthConfig
     if (discoverFile(root, "server")) {
       throw new TypeError("[vitehub] Inline Console Auth conflicts with vitehub/console/auth/server.")
     }
-    if (config.provider !== "github" || !config.allowedEmails?.length || !config.databasePath || config.databasePath === ":memory:") {
-      throw new TypeError("[vitehub] Inline Console Auth requires provider: 'github', allowedEmails, and a persistent databasePath.")
-    }
+    resolveInlineConsoleAuthGates(config)
     if (config.client && discoverFile(root, "client")) {
       throw new TypeError("[vitehub] Console Auth client is configured both by path and by vitehub/console/auth/client.")
     }
