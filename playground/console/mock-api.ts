@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 import * as v from "valibot"
 
-import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
+import { agentInvocationRerunInput, createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
 import { parseConsoleFixture } from "../../packages/vite-hub/src/console/fixture.ts"
 import {
   createUsageSummary,
@@ -153,6 +153,14 @@ function summary(record: Awaited<ReturnType<typeof invocations.get>>): Record<st
   if (!record) return
   const { observations: _observations, ...value } = record
   return value
+}
+
+function detailActions(record: NonNullable<Awaited<ReturnType<typeof invocations.get>>>): Record<string, unknown> {
+  const terminal = record.status === "cancelled" || record.status === "completed" || record.status === "failed"
+  return {
+    delete: { available: terminal },
+    rerun: agentInvocationRerunInput(record),
+  }
 }
 
 function storeName(value: string | null): keyof typeof kvStores | undefined {
@@ -337,7 +345,7 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
     }
     const usage = invocationUsage(record)
     json(response, {
-      invocation: { ...invocation, ...(usage ? { usage } : {}) },
+      invocation: { ...invocation, actions: detailActions(record), ...(usage ? { usage } : {}) },
       observations: record.observations,
     })
     return true
