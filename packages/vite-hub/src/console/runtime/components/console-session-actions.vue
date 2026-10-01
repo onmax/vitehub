@@ -31,6 +31,8 @@ const rerunUnavailable: Record<string, string> = {
   "replay-metadata-unavailable": "Rerun is unavailable: the session has no complete replay metadata",
   "input-has-context": "Rerun is unavailable: this session received trusted invocation context",
   "input-has-run-metadata": "Rerun is unavailable: this session received runtime run metadata",
+  "input-has-abort-signal": "Rerun is unavailable: this session received a cancellation signal",
+  "input-prompt-changed": "Rerun is unavailable: input preparation changed the prompt",
   "input-has-timeout": "Rerun is unavailable: this session received a timeout",
   "input-has-invoker": "Rerun is unavailable: this session received a direct invoker identity",
   "input-has-options": "Rerun is unavailable: this session received call options",

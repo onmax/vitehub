@@ -457,7 +457,8 @@ async function removeDeletedInvocation(id: string): Promise<void> {
     selectedInvocationId.value = undefined;
     closeDetails();
   }
-  // Refresh first: the Agent route selects the first listed session.
+  // Exclude the deleted session even if refreshing the list fails.
+  list.invocations.value = list.invocations.value.filter(invocation => invocation.id !== id);
   await list.refresh();
   if (selected && agentName) {
     await router.push({

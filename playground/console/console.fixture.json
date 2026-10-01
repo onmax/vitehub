@@ -564,7 +564,9 @@
           "attributes": {
             "input.hasMessages": false,
             "input.hasPrompt": true,
-            "input.replay.version": 2,
+            "input.replay.version": 3,
+            "input.hasAbortSignal": false,
+            "input.promptChanged": false,
             "input.hasContext": false,
             "input.hasRunMetadata": false,
             "input.hasTimeout": false,

@@ -1978,8 +1978,12 @@ describe("Agent invocation console", () => {
   it.each(["support", ".", "team/support"])("starts an enabled Agent invocation for %j", async (name) => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-invoke-agent-"))
     try {
+      let receivedPrompt: unknown
       const definition = defineAgent({
-        driver: { run: () => "done" },
+        driver: { run: (context) => {
+          receivedPrompt = context.input.prompt
+          return "done"
+        } },
         invoker: {
           profiles: [{ id: "support", kind: "person", label: "Support agent" }],
         },
@@ -2013,6 +2017,7 @@ describe("Agent invocation console", () => {
           status: "completed",
         })
       })
+      expect(receivedPrompt).toBe(" Test this Agent ")
     }
     finally {
       await rm(root, { force: true, recursive: true })
@@ -2123,7 +2128,7 @@ describe("Agent invocation console", () => {
     ], { invoke, projectRoot: root })
     try {
       install(true)
-      const completed = await start("Summarize the release notes.")
+      const completed = await start("  Summarize the release notes.\n")
       await vi.waitFor(async () => {
         await expect(definition.invocations?.get(completed.id)).resolves.toMatchObject({ status: "completed" })
       })
@@ -2131,10 +2136,21 @@ describe("Agent invocation console", () => {
         invocation: {
           actions: {
             delete: { available: true },
-            rerun: { available: true, invokerProfileId: "support", prompt: "Summarize the release notes." },
+            rerun: { available: true, invokerProfileId: "support", prompt: "  Summarize the release notes.\n" },
           },
         },
       })
+
+      const originalDetail = await getConsoleInvocationDetail(detailEvent(completed.id))
+      const rerun = originalDetail.invocation.actions?.rerun
+      expect(rerun?.available).toBe(true)
+      if (!rerun?.available) throw new Error("Expected replayable prompt")
+      const replayed = await start(rerun.prompt, rerun.invokerProfileId)
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(replayed.id)).resolves.toMatchObject({ status: "completed" })
+      })
+      const replayedDetail = await getConsoleInvocationDetail(detailEvent(replayed.id))
+      expect(replayedDetail.invocation.actions?.rerun).toEqual(rerun)
 
       for (const profiles of [[], [{ id: "renamed-support", kind: "person" as const }]]) {
         const reconfigured = defineAgent({
@@ -2225,6 +2241,8 @@ describe("Agent invocation console", () => {
       installConsoleAgentDefinitions([
         { definition: { default: definition }, fallbackName: "help" },
       ], { invoke: true, projectRoot: root })
+      await expect(agentInvocationsHandler(request({ prompt: " \n\t " })))
+        .rejects.toMatchObject({ statusCode: 400, statusMessage: "Agent invocation requires a prompt." })
       await expect(agentInvocationsHandler(request({ invokerProfileId: "unknown", prompt: "hello" })))
         .rejects.toMatchObject({ statusCode: 400, statusMessage: "Unknown Agent invocation profile." })
       await expect(agentInvocationsHandler(request({ extra: true, prompt: "hello" })))

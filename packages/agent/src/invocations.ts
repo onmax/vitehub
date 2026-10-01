@@ -48,6 +48,8 @@ const CANONICAL_TRACE_ATTRIBUTE_KEYS = new Set([
   "input.hasContext",
   "input.hasRunMetadata",
   "input.hasTimeout",
+  "input.hasAbortSignal",
+  "input.promptChanged",
   "input.hasData",
   "input.hasOptions",
   "input.hasMessages",
@@ -849,8 +851,8 @@ function boundedObservation(
   const payload = boundedObservationPayload(observation.payload, payloadBudget, builtIns)
   const canonicalAttributes: Record<string, unknown> = {}
   if (observation.name === "agent.invocation.start") {
-    if (observation.attributes?.["input.replay.version"] === 2) canonicalAttributes["input.replay.version"] = 2
-    for (const key of ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout"]) {
+    if (observation.attributes?.["input.replay.version"] === 3) canonicalAttributes["input.replay.version"] = 3
+    for (const key of ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.promptChanged"]) {
       const value = observation.attributes?.[key]
       if (hasRuntimeType(value, "boolean")) canonicalAttributes[key] = value
     }
@@ -987,6 +989,10 @@ export type AgentInvocationRerunUnavailableReason =
   | "input-has-run-metadata"
   /** The original Invocation set a timeout. */
   | "input-has-timeout"
+  /** The original Invocation supplied a cancellation signal. */
+  | "input-has-abort-signal"
+  /** Input preparation changed the prompt. */
+  | "input-prompt-changed"
 
 export type AgentInvocationRerunInput =
   | {
@@ -1013,12 +1019,14 @@ export function agentInvocationRerunInput(record: Pick<AgentInvocationRecord, "o
   if (attributes["input.hasMessages"] === true || attributes["input.messages"] !== undefined) return { available: false, reason: "input-has-messages" }
   const prompt = attributes["input.prompt"]
   if (!hasRuntimeType(prompt, "string") || !prompt.trim()) return { available: false, reason: "input-not-captured" }
-  if (attributes["input.replay.version"] !== 2 || ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout"]
+  if (attributes["input.replay.version"] !== 3 || ["input.hasInvoker", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.promptChanged"]
     .some(key => !hasRuntimeType(attributes[key], "boolean"))) return { available: false, reason: "replay-metadata-unavailable" }
   if (attributes["input.hasInvoker"] === true) return { available: false, reason: "input-has-invoker" }
   if (attributes["input.hasContext"] === true) return { available: false, reason: "input-has-context" }
   if (attributes["input.hasRunMetadata"] === true) return { available: false, reason: "input-has-run-metadata" }
   if (attributes["input.hasTimeout"] === true) return { available: false, reason: "input-has-timeout" }
+  if (attributes["input.hasAbortSignal"] === true) return { available: false, reason: "input-has-abort-signal" }
+  if (attributes["input.promptChanged"] === true) return { available: false, reason: "input-prompt-changed" }
   const invokerProfileId = attributes["agent.invoker.profile.id"]
   return { available: true, ...hasRuntimeType(invokerProfileId, "string") && invokerProfileId ? { invokerProfileId } : {}, prompt }
 }
@@ -1838,7 +1846,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const identity = observationIdentity(observation)
       if (!redacted) return
       const inputRedacted = observation.name === "agent.invocation.start"
-        && ["input.prompt", "input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout"]
+        && ["input.prompt", "input.replay.version", "input.hasInvoker", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt", "input.hasContext", "input.hasRunMetadata", "input.hasTimeout", "input.hasAbortSignal", "input.promptChanged"]
           .some(key => observation.attributes?.[key] !== redacted.attributes?.[key])
       return {
         ...redacted,
