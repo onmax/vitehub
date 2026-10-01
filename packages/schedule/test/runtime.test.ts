@@ -953,6 +953,55 @@ describe("KV Schedule Run Store", () => {
     }
   })
 
+  it.each([true, false])("groups legacy run payloads once per batch when indexes are available: %s", async indexAvailable => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    const response = await serializeResponse(new Response("retained legacy payload"))
+    for (const scheduleId of ["alpha", "beta", "gamma", "delta"]) {
+      for (let index = 0; index < 8; index++) {
+        const scheduledAt = new Date(Date.UTC(2026, 0, 1, 0, index))
+        await store.createRun({ id: `${index % 2 ? "srun_runtime_" : "manual_"}${scheduleId}_opaque%_${index}`,
+          scheduleId, target: "report", scheduledAt, createdAt: scheduledAt, updatedAt: scheduledAt,
+          status: "failed", attemptCount: 1, error: { name: "Error", message: "retained" }, response })
+      }
+    }
+    for (const key of await kvStore.keys("vitehub:schedule/schedule-run-index")) await kvStore.del(key)
+    if (!indexAvailable) {
+      const set = kvStore.set.bind(kvStore)
+      vi.spyOn(kvStore, "set").mockImplementation(async (key, value) => {
+        if (key.includes("/schedule-run-index/")) throw new Error("index unavailable")
+        return set(key, value)
+      })
+    }
+    const get = vi.spyOn(kvStore, "get")
+    const clone = vi.spyOn(globalThis, "structuredClone")
+    try {
+      const results = await store.listRunsBatch!([
+        ...["alpha", "beta", "gamma", "delta"].map(scheduleId => ({ scheduleId, limit: 1 })),
+        { scheduleId: "alpha", runtimeOnly: true, limit: 1 },
+        { runtimeOnly: true, limit: 3 }, {}, { scheduleId: "alpha" }, { runtimeOnly: true }, { limit: 0 },
+      ])
+      expect(results.slice(0, 4).map(runs => runs[0]?.scheduleId)).toEqual(["alpha", "beta", "gamma", "delta"])
+      expect(results[4]?.[0]?.id).toBe("srun_runtime_alpha_opaque%_7")
+      expect(results[5]).toHaveLength(3)
+      expect(results[5]?.every(run => run.id.startsWith("srun_runtime_") && run.scheduledAt.getUTCMinutes() === 7)).toBe(true)
+      expect(results.slice(6).map(runs => runs.length)).toEqual([32, 8, 16, 0])
+      expect(get).toHaveBeenCalledTimes(32)
+      // Retained payloads are decoded once, then copied only for matching output records.
+      expect(clone.mock.calls.length).toBeLessThanOrEqual(32 + results.flat().length)
+      results[0]![0]!.error!.message = "changed"
+      results[0]![0]!.scheduledAt.setUTCFullYear(2000)
+      expect(results[4]?.[0]?.error?.message).toBe("retained")
+      expect(results[4]?.[0]?.scheduledAt.getUTCFullYear()).toBe(2026)
+      get.mockClear()
+      expect((await store.listRunsBatch!([{ scheduleId: "alpha", limit: 1 }]))[0]?.[0]?.id).toBe("srun_runtime_alpha_opaque%_7")
+      expect(get).toHaveBeenCalledTimes(indexAvailable ? 1 : 32)
+    }
+    finally {
+      clone.mockRestore()
+    }
+  })
+
   it("shares key enumeration and opaque legacy reads within each history batch", async () => {
     const kvStore = createTestKVStore()
     const store = createKVScheduleRunStore({ kvStore })

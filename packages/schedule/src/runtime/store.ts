@@ -413,6 +413,18 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
     const runtime: IndexedRun[] = []
     const bySchedule = new Map<string, { all: IndexedRun[], runtime: IndexedRun[] }>()
     const unknown: string[] = []
+    const recordsByKey = new Map<string, ScheduleRunRecord | undefined>()
+    function groupRun(key: string, metadata: { id: string, scheduleId: string, scheduledAt: number }) {
+      const entry = { key, scheduledAt: metadata.scheduledAt }
+      known.push(entry)
+      const group = bySchedule.get(metadata.scheduleId) ?? { all: [], runtime: [] }
+      bySchedule.set(metadata.scheduleId, group)
+      group.all.push(entry)
+      if (metadata.id.startsWith("srun_runtime_")) {
+        runtime.push(entry)
+        group.runtime.push(entry)
+      }
+    }
     for (const key of keys) {
       let id: string
       try {
@@ -427,46 +439,49 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
         unknown.push(key)
         continue
       }
-      const entry = { key, scheduledAt: metadata.scheduledAt }
-      known.push(entry)
-      const group = bySchedule.get(metadata.scheduleId) ?? { all: [], runtime: [] }
-      bySchedule.set(metadata.scheduleId, group)
-      group.all.push(entry)
-      if (metadata.id.startsWith("srun_runtime_")) {
-        runtime.push(entry)
-        group.runtime.push(entry)
+      groupRun(key, metadata)
+    }
+    // Group legacy records once per snapshot, even when their index cannot be published.
+    for (let offset = 0; offset < unknown.length; offset += 16) {
+      const batch = await Promise.all(unknown.slice(offset, offset + 16).map(async key => {
+        const stored = await store.get<StoredScheduleRunRecord>(key)
+        const run = stored ? deserializeScheduleRun(stored) : undefined
+        recordsByKey.set(key, run)
+        if (run) await indexRun(run)
+        return { key, run }
+      }))
+      for (const { key, run } of batch) {
+        if (run) groupRun(key, { id: run.id, scheduleId: run.scheduleId, scheduledAt: run.scheduledAt.getTime() })
       }
     }
     for (const entries of [known, runtime, ...[...bySchedule.values()].flatMap(group => [group.all, group.runtime])]) {
       entries.sort((left, right) => right.scheduledAt - left.scheduledAt)
     }
-    return { keys, known, runtime, bySchedule, unknown, unknownKeys: new Set(unknown), recordsByKey: new Map<string, StoredScheduleRunRecord | null | undefined>() }
+    return { keys, known, runtime, bySchedule, recordsByKey }
   }
 
   async function listRuns(options: ScheduleRunListOptions, snapshot: Awaited<ReturnType<typeof readSnapshot>>) {
-    const { keys, unknown, unknownKeys, recordsByKey } = snapshot
+    const { keys, recordsByKey } = snapshot
     const group = options.scheduleId === undefined ? undefined : snapshot.bySchedule.get(options.scheduleId)
     const known = options.scheduleId === undefined
       ? (options.runtimeOnly ? snapshot.runtime : snapshot.known)
       : (options.runtimeOnly ? group?.runtime : group?.all) ?? []
-    // Read legacy records without an index with bounded concurrency, preserving their history.
+    // Read selected indexed records with bounded concurrency; legacy records are already cached.
     const records: ScheduleRunRecord[] = []
     const selectedKeys = options.scheduleId === undefined && options.limit === undefined && !options.runtimeOnly
       ? keys
-      : [...unknown, ...known.slice(0, options.limit).map(entry => entry.key)]
+      : known.slice(0, options.limit).map(entry => entry.key)
     for (let index = 0; index < selectedKeys.length; index += 16) {
       const batch = await Promise.all(selectedKeys.slice(index, index + 16).map(async (key) => {
-        const cached = recordsByKey.has(key)
-        const stored = cached ? recordsByKey.get(key) : await store.get<StoredScheduleRunRecord>(key)
-        recordsByKey.set(key, stored)
-        if (!stored) return
-        const run = deserializeScheduleRun(stored)
-        if (!cached && unknownKeys.has(key)) await indexRun(run)
+        if (recordsByKey.has(key)) return recordsByKey.get(key)
+        const stored = await store.get<StoredScheduleRunRecord>(key)
+        const run = stored ? deserializeScheduleRun(stored) : undefined
+        recordsByKey.set(key, run)
         return run
       }))
       records.push(...batch.flatMap(run => run ? [run] : []))
     }
-    return selectRuns(records, options)
+    return selectRuns(records, options).map(cloneScheduleRun)
   }
 
   return {
