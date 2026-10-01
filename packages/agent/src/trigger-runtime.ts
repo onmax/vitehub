@@ -397,7 +397,7 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Webhook signature verifiers cross the user configuration boundary and require runtime validation.
     if (typeof registration.signature === "object" && registration.signature !== null && typeof registration.signature.verify === "function") {
       const rawBody = options.rawBody ? Uint8Array.from(options.rawBody) : new Uint8Array(await request.clone().arrayBuffer())
-      if (await registration.signature.verify({ header: headerValue ?? "", rawBody, request, secret: secretToken || "" })) {
+      if (await registration.signature.verify({ context: verificationContext, header: headerValue ?? "", rawBody, request, secret: secretToken || "" })) {
         return { registration, verified: true }
       }
       continue

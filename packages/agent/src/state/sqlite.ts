@@ -33,6 +33,8 @@ export interface SqliteAgentStateDriver extends SqliteAgentStateExecutor {
 }
 
 export interface SqliteAgentStateOptions {
+  /** Custom drivers or clients must declare whether their storage survives a restart. */
+  durable?: boolean
   driver: SqliteAgentStateDriver
   tablePrefix?: string
   /** Preserve Chat user transcripts, including existing rows, before expiry cleanup. */
@@ -127,6 +129,7 @@ async function retrySqliteBusy<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAdapter {
+  readonly durable: boolean
   private readonly preserveTranscripts: boolean
   private connected = false
   private connectPromise?: Promise<void>
@@ -139,6 +142,7 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
     if (!options.driver) {
       throw agentDiagnostics.AGENT_R0850({ message: "[vitehub] SQLite Agent State requires a driver." })
     }
+    this.durable = options.durable === true
     this.preserveTranscripts = options.transcripts?.retention === "forever"
     this.driver = options.driver
     this.tables = createTables(options.tablePrefix)
@@ -829,6 +833,9 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
 
   return createSqliteAgentState({
     ...options,
+    durable: options.client ? options.durable === true : options.url
+      ? !options.url.includes(":memory:") && !/[?&]mode=memory(?:&|$)/.test(options.url) && options.durable !== false
+      : options.durable === true,
     driver: {
       async connect() {
         client ||= await openClient()

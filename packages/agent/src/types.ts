@@ -633,6 +633,8 @@ export type AgentWebhookSecretToken<TRuntimeConfig extends AgentRuntimeConfig = 
   MaybeResolvable<string | false | undefined, AgentCallbackContext<TRuntimeConfig>>
 
 export interface AgentWebhookRegistrationDefinition<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
+  /** Reject admission unless Channel State persists across host restarts. */
+  durableState?: boolean
   adapter?: string
   channelId?: string
   id?: string
@@ -641,6 +643,7 @@ export interface AgentWebhookRegistrationDefinition<TRuntimeConfig extends Agent
   provider: string
   signature?: "github-sha256" | (string & {}) | {
     verify: (input: {
+      context: AgentCallbackContext<TRuntimeConfig>
       header: string
       rawBody: Uint8Array
       request: Request

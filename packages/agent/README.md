@@ -295,6 +295,8 @@ export default defineConfig({
 
 `provider: "sqlite"` uses the built-in libSQL-compatible state backend, so `file:` URLs work for local or explicitly persistent Node deployments and hosted libSQL URLs work remotely. Cloudflare, Vercel, and Netlify production output rejects `file:` Agent state before it can write to an ephemeral filesystem.
 
+Gmail push routes require persistent State and return HTTP 503 for missing or in-memory State. Custom adapters must expose `readonly durable: true` through `DurableAgentStateAdapter` and implement `AtomicAgentStateLockAdapter`. Custom SQLite drivers and libSQL clients must explicitly set `durable: true` when their storage survives a restart. Google OIDC verification runs before delivery State is opened or written.
+
 You can also wire the adapter manually when `chat({ state })` should own the state provider:
 
 ```ts

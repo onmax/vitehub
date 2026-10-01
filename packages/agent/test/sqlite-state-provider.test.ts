@@ -63,6 +63,25 @@ describe("SQLite Agent State Provider", () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })))
   })
 
+  it("declares persistence only for known durable storage or explicit custom storage", () => {
+    for (const url of [":memory:", "file::memory:", "file:test?mode=memory"]) {
+      expect(createLibsqlAgentState({ url, durable: true }).durable).toBe(false)
+    }
+    for (const url of ["file:state.db", "libsql://database.example"]) {
+      expect(createLibsqlAgentState({ url }).durable).toBe(true)
+      expect(createLibsqlAgentState({ url, durable: false }).durable).toBe(false)
+    }
+    const client = createClient({ url: ":memory:" })
+    try {
+      expect(createLibsqlAgentState({ client }).durable).toBe(false)
+      expect(createLibsqlAgentState({ client, url: "file:unused.db" }).durable).toBe(false)
+      expect(createLibsqlAgentState({ client, durable: true }).durable).toBe(true)
+    } finally { client.close() }
+    const driver: SqliteAgentStateDriver = { execute: () => ({ rows: [] }) }
+    expect(createSqliteAgentState({ driver }).durable).toBe(false)
+    expect(createSqliteAgentState({ driver, durable: true }).durable).toBe(true)
+  })
+
   it("preserves existing expired transcripts before cleanup and ignores new transcript TTLs", async () => {
     const { state, url } = await createState()
     await state.connect()

@@ -203,11 +203,103 @@ function stream() {
   }
 }
 
-afterEach(() => {
+const durableWebhookFixtures: Array<{ directory: string, state: ReturnType<typeof createLibsqlAgentState> }> = []
+
+async function createDurableGmailWebhookHandler(...args: Parameters<typeof createChannelWebhookRouteHandler>) {
+  const directory = await mkdtemp(join(tmpdir(), "vitehub-gmail-webhook-"))
+  const state = createLibsqlAgentState({ url: `file:${join(directory, "state.db")}` })
+  durableWebhookFixtures.push({ directory, state })
+  const handler = createChannelWebhookRouteHandler(...args)
+  return (...args: Parameters<typeof handler>) => handler(args[0], args[1], { webhookState: () => state, ...args[2] })
+}
+
+afterEach(async () => {
   vi.unstubAllEnvs()
+  for (const fixture of durableWebhookFixtures.splice(0)) {
+    await fixture.state.disconnect()
+    await rm(fixture.directory, { recursive: true, force: true })
+  }
 })
 
 describe("gmail() Channel", () => {
+  it("rejects unauthenticated pushes before connecting or writing delivery state", async () => {
+    stubGmailEnv()
+    const google = await createGoogle()
+    const directory = await mkdtemp(join(tmpdir(), "vitehub-gmail-admission-"))
+    const state = createLibsqlAgentState({ url: `file:${join(directory, "state.db")}` })
+    durableWebhookFixtures.push({ directory, state })
+    const connect = vi.spyOn(state, "connect")
+    const set = vi.spyOn(state, "set")
+    const setIfNotExists = vi.spyOn(state, "setIfNotExists")
+    const append = vi.spyOn(state, "appendToList")
+    const agent = defineAgent({ channels: { gmail: gmail({ fetch: google.fetch }) }, driver: { run: vi.fn(() => "ok") }, name: "gmail-admission" })
+    const handler = createChannelWebhookRouteHandler(agent)
+    for (let index = 0; index < 3; index++) {
+      const response = await handler(new Request(audience, {
+        body: JSON.stringify({ message: { data: base64Url(JSON.stringify({ emailAddress: "max@example.com", historyId: 100 })), messageId: `unauthorized-${index}` }, subscription }),
+        headers: { authorization: "Bearer forged", "content-type": "application/json" }, method: "POST",
+      }), "gmail", { agentName: "gmail-admission", webhookState: () => state })
+      expect(response.status).toBe(401)
+    }
+    expect(connect).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+    expect(setIfNotExists).not.toHaveBeenCalled()
+    expect(append).not.toHaveBeenCalled()
+    expect(google.calls.some(call => call.path === "profile")).toBe(false)
+  })
+
+  it.each(["missing", "webhook-memory", "chat-memory"] as const)("rejects authenticated pushes with %s state instead of losing their cursor", async mode => {
+    stubGmailEnv()
+    const google = await createGoogle()
+    const driver = vi.fn(() => "ok")
+    const agent = defineAgent({ channels: { gmail: gmail({ fetch: google.fetch }) }, driver: { run: driver }, name: `gmail-state-${mode}` })
+    const state = createLibsqlAgentState({ url: ":memory:" })
+    const handler = createChannelWebhookRouteHandler(agent)
+    const tasks: Promise<unknown>[] = []
+    try {
+      const response = await handler(new Request(audience, {
+        body: JSON.stringify({ message: { data: base64Url(JSON.stringify({ emailAddress: "max@example.com", historyId: 100 })), messageId: "non-durable" }, subscription }),
+        headers: { authorization: `Bearer ${await google.token()}`, "content-type": "application/json" }, method: "POST",
+      }), "gmail", { agentName: `gmail-state-${mode}`, waitUntil: task => void tasks.push(task),
+        ...(mode === "webhook-memory" ? { webhookState: () => state } : mode === "chat-memory" ? { state: () => state } : {}) })
+      await Promise.all(tasks)
+      expect(response.status).toBe(503)
+      expect(driver).not.toHaveBeenCalled()
+      expect(google.calls.some(call => call.path === "profile")).toBe(false)
+    } finally { await state.disconnect() }
+  })
+
+  it("resumes the stored Gmail cursor through a recreated webhook handler and SQLite connection", async () => {
+    stubGmailEnv()
+    const google = await createGoogle()
+    google.history.set("100", { historyId: "105", ids: ["m1"] })
+    const directory = await mkdtemp(join(tmpdir(), "vitehub-gmail-restart-route-"))
+    const url = `file:${join(directory, "state.db")}`
+    const driver = vi.fn(() => "ok")
+    const createHandler = () => createChannelWebhookRouteHandler(defineAgent({
+      channels: { gmail: gmail({ fetch: google.fetch }) }, driver: { run: driver }, name: "gmail-restart-route",
+    }))
+    const push = async (handler: ReturnType<typeof createHandler>, state: ReturnType<typeof createLibsqlAgentState>, historyId: number) => {
+      const tasks: Promise<unknown>[] = []
+      const response = await handler(new Request(audience, {
+        body: JSON.stringify({ message: { data: base64Url(JSON.stringify({ emailAddress: "max@example.com", historyId })), messageId: `restart-${historyId}` }, subscription }),
+        headers: { authorization: `Bearer ${await google.token()}`, "content-type": "application/json" }, method: "POST",
+      }), "gmail", { agentName: "gmail-restart-route", webhookState: () => state, waitUntil: task => void tasks.push(task) })
+      await Promise.all(tasks)
+      expect(response.status).toBe(204)
+    }
+    const first = createLibsqlAgentState({ url })
+    durableWebhookFixtures.push({ directory, state: first })
+    await push(createHandler(), first, 100)
+    expect(driver).not.toHaveBeenCalled()
+    await first.disconnect()
+    const restarted = createLibsqlAgentState({ url })
+    durableWebhookFixtures.push({ directory, state: restarted })
+    await push(createHandler(), restarted, 105)
+    expect(driver).toHaveBeenCalledTimes(1)
+    expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("startHistoryId"))).toContain("100")
+  })
+
   it.each(["initialize", "advance", "pending"] as const)("atomically fences %s after lease takeover between renewal and mutation", async (phase) => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-gmail-fencing-"))
     const url = `file:${join(root, "state.db")}`
@@ -692,7 +784,7 @@ describe("gmail() Channel", () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {})
     const driver = vi.fn(() => "ok")
     const agent = defineAgent({ channels: { gmail: gmail({ client, fetch: google.fetch }) }, driver: { run: driver }, name: `ack-profile-${result}` })
-    const handler = createChannelWebhookRouteHandler(agent)
+    const handler = await createDurableGmailWebhookHandler(agent)
     const tasks: Promise<unknown>[] = []
     let response: Response | undefined
     const request = new Request(audience, {
@@ -757,7 +849,7 @@ describe("gmail() Channel", () => {
     const fetch: typeof globalThis.fetch = async (input, init) => new URL(String(input)).pathname.includes("/certs")
       ? await first.fetch(input, init) : await current.fetch(input, init)
     const agent = defineAgent({ channels: { gmail: gmail({ fetch }) }, driver: { run: () => "ok" }, name: "rotate-profile" })
-    const handler = createChannelWebhookRouteHandler(agent)
+    const handler = await createDurableGmailWebhookHandler(agent)
     const push = async (emailAddress: string, historyId: number) => {
       const tasks: Promise<unknown>[] = []
       const response = await handler(new Request(audience, {
@@ -788,7 +880,7 @@ describe("gmail() Channel", () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {})
     const agentName = `rotate-broker-${notification}`
     const agent = defineAgent({ channels: { gmail: gmail({ client, fetch: first.fetch }) }, driver: { run: driver }, name: agentName })
-    const handler = createChannelWebhookRouteHandler(agent)
+    const handler = await createDurableGmailWebhookHandler(agent)
     const push = async (emailAddress: string, historyId: number) => {
       const tasks: Promise<unknown>[] = []
       const response = await handler(new Request(audience, {
@@ -824,7 +916,7 @@ describe("gmail() Channel", () => {
     const gate = new Promise<void>(resolve => { release = resolve })
     const driver = vi.fn(async () => { await gate; return "ok" })
     const agent = defineAgent({ channels: { gmail: gmail({ fetch: google.fetch }) }, driver: { run: driver }, name: "local-flush" })
-    const handler = createChannelWebhookRouteHandler(agent)
+    const handler = await createDurableGmailWebhookHandler(agent)
     const push = async (historyId: number) => await handler(new Request(audience, {
       body: JSON.stringify({ message: { data: base64Url(JSON.stringify({ emailAddress: "max@example.com", historyId })), messageId: String(historyId) }, subscription }),
       headers: { authorization: `Bearer ${await google.token()}`, "content-type": "application/json" }, method: "POST",
@@ -860,7 +952,7 @@ describe("gmail() Channel", () => {
       invocations,
       name: "labeller",
     })
-    const handler = createChannelWebhookRouteHandler(agent)
+    const handler = await createDurableGmailWebhookHandler(agent)
     const push = async (historyId: string, options: { authorization?: string, subscription?: string, emailAddress?: string, onResponse?: () => void } = {}) => {
       const tasks: Promise<unknown>[] = []
       const response = await handler(new Request(audience, {
@@ -959,7 +1051,7 @@ describe("gmail() Channel", () => {
       invocations,
       name: agentName,
     })
-    const handler = createChannelWebhookRouteHandler(agent)
+    const handler = await createDurableGmailWebhookHandler(agent)
     const push = async () => {
       const tasks: Promise<unknown>[] = []
       const response = await handler(new Request(audience, {
@@ -1009,7 +1101,7 @@ describe("gmail() Channel", () => {
       invocations,
       name: agentName,
     })
-    const handler = createChannelWebhookRouteHandler(agent)
+    const handler = await createDurableGmailWebhookHandler(agent)
     const push = async (historyId: string) => {
       const tasks: Promise<unknown>[] = []
       const response = await handler(new Request(audience, {

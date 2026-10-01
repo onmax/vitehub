@@ -1,4 +1,4 @@
-export type { AgentStateCacheMutation, AtomicAgentStateLockAdapter } from "./internal/state-lock.ts"
+export type { AgentStateCacheMutation, AtomicAgentStateLockAdapter, DurableAgentStateAdapter } from "./internal/state-lock.ts"
 import type { AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
 export type { AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
 import { invocationUsageWithAuxiliaryCalls } from "./internal/auxiliary-usage.ts"

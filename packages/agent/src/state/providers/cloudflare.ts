@@ -39,6 +39,7 @@ export interface CloudflareAgentStateOptions {
 }
 
 export class ViteHubAgentStateAdapter implements StateAdapter {
+  readonly durable = true
   private connected = false
   private readonly defaultName: string
   private readonly locationHint?: string

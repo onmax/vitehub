@@ -1,4 +1,4 @@
-import { requireAtomicAgentStateLock, type AgentStateCacheMutation, type AtomicAgentStateLockAdapter } from "../internal/state-lock.ts"
+import { isDurableAgentState, requireAtomicAgentStateLock, type AgentStateCacheMutation, type AtomicAgentStateLockAdapter } from "../internal/state-lock.ts"
 import { parseStandardSchema } from "@vite-hub/internal/http-request"
 import { runWithActiveCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { createExecutionContext, createRuntimeContext as createHostRuntimeContext } from "@vite-hub/runtime"
@@ -2545,6 +2545,7 @@ function isExpired(expiresAt: number | null | undefined): boolean {
 }
 
 class ViteHubInMemoryChatStateAdapter implements StateAdapter {
+  readonly durable = false
   private cache = new Map<string, { expiresAt?: number; value: unknown }>()
   private connected = false
   private lists = new Map<string, Array<{ expiresAt?: number; value: unknown }>>()
@@ -2727,7 +2728,8 @@ function getInMemoryChatState(key: string): StateAdapter {
 function withChatStateScope(state: StateAdapter, channelPrefix: string, agentPrefix: string): StateAdapter {
   const key = (value: string) => `${value.startsWith("transcripts:user:") ? agentPrefix : channelPrefix}${value}`
   const lock = (value: Lock) => ({ ...value, threadId: key(value.threadId) })
-  const scoped: StateAdapter = {
+  const scoped: StateAdapter & { durable: boolean } = {
+    durable: isDurableAgentState(state),
     async acquireLock(threadId, ttlMs) {
       const acquired = await state.acquireLock(key(threadId), ttlMs)
       return acquired ? { ...acquired, threadId } : null
@@ -7364,6 +7366,9 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
         (trigger.id === "chat.message" ? undefined : workflowCustody ? undefined : webhookDeliveryState) ||
         (chatDeliveryState ? { keyPrefix: chatDeliveryState.titleKeyPrefix, state: chatDeliveryState.state } : undefined)
       if (!deliveryState) throw agentDiagnostics.AGENT_R0842({ message: "[vitehub] Agent Channel delivery state did not resolve." })
+      if (registration.durableState && !isDurableAgentState(deliveryState.state)) {
+        return createJsonErrorResponse(503, "This Channel requires durable State. Configure persistent SQLite/libSQL storage or Cloudflare Durable Objects.")
+      }
       await deliveryState.state.connect()
       const webhookPayload = parseWebhookPayload(rawBody)
       const messageIdentity = agentChannelDeliveryMessageIdentity(registration.provider, webhookPayload)

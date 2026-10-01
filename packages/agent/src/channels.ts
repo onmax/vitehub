@@ -1,6 +1,7 @@
 import { matchesGitHubPullRequestFilter } from './internal/github-pull-request-filter.ts'
 export { matchesGitHubPullRequestFilter } from './internal/github-pull-request-filter.ts'
 import { createHash, createSign } from "node:crypto"
+import { AgentHttpError } from "./http-error.ts"
 import { CHAT_FINISH_EXTENSION_CONTEXT_KEY } from "./chat-trigger.ts"
 import { defineCapability, trustGitHubPullRequestWorkspaceCapability } from "./capability-runtime.ts"
 import { asUnknownBoundary, hasRuntimeType } from "./internal/runtime-type.ts"
@@ -3445,8 +3446,20 @@ export function gmail<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeCo
         webhooks: [],
       }),
     },
-    // Pub/Sub authenticates with a Google OIDC token that the push trigger verifies.
-    webhooks: { secretToken: false },
+    webhooks: {
+      durableState: true,
+      signature: {
+        async verify({ context, rawBody, request }) {
+          const settings = await gmailChannelSettings(context)
+          let payload: unknown
+          try { payload = JSON.parse(new TextDecoder().decode(rawBody)) }
+          catch { throw new AgentHttpError(400, "Invalid Pub/Sub push request.") }
+          const push = await readGmailPush({ payload, request: { headers: Object.fromEntries(request.headers.entries()) } }, settings, options.fetch ?? globalThis.fetch)
+          if (!push.ok) throw new AgentHttpError(push.status, push.reason)
+          return true
+        },
+      },
+    },
   })
   return withAgentChannelSyncDefinition<TRuntimeConfig, typeof channel>(defineMessageChannelInstructions(channel, gmailInstructions(labels)), {
     provider: "gmail",

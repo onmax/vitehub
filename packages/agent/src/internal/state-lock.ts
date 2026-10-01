@@ -1,5 +1,10 @@
 import type { Lock, StateAdapter } from "chat"
-import { isRuntimeFunction } from "./runtime-value.ts"
+import { isRuntimeFunction, isRuntimeObject } from "./runtime-value.ts"
+
+/** State storage that retains its data across process and host restarts. */
+export interface DurableAgentStateAdapter extends StateAdapter {
+  readonly durable: true
+}
 
 export type AgentStateCacheMutation = { key: string, type: "delete" } | { key: string, type: "set", value: unknown }
 
@@ -18,4 +23,9 @@ export function requireAtomicAgentStateLock(state: StateAdapter): AtomicAgentSta
   }
   // SAFETY: The adapter explicitly implements the atomic mutation contract checked above.
   return candidate as AtomicAgentStateLockAdapter
+}
+
+/** Durable State retains Channel cursors across process and host restarts. */
+export function isDurableAgentState(state: StateAdapter): state is DurableAgentStateAdapter {
+  return isRuntimeObject(state) && "durable" in state && state.durable === true
 }
