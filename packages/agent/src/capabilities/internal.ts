@@ -4,7 +4,7 @@ import type {
 } from "../types.ts"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
-function primitiveHandle(context: AgentCapabilityContext, name: string): unknown {
+export function primitiveHandle(context: AgentCapabilityContext, name: string): unknown {
   const handle = context.capabilities?.[name] as { value?: unknown } | unknown
   return typeof handle === "object" && handle !== null && "value" in handle
     ? (handle as { value?: unknown }).value

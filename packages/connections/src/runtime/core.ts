@@ -46,7 +46,13 @@ export interface ConnectionCallOptions {
   approved?: boolean
   audit?: "all" | "changes"
   dryRun?: boolean
+  /** Effect for `fetch`. Default: GET and HEAD are reads, other methods are writes. */
+  effect?: ConnectionEffect
   event?: unknown
+  /** Operation id for `fetch`, matched by access patterns. Default: `fetch.<method>`. */
+  operation?: string
+  /** Cancels token acquisition and the Operation request, including its response body. */
+  signal?: AbortSignal
   trace?: ConnectionTrace
 }
 
@@ -133,8 +139,23 @@ function errorStatus(error: unknown): number | undefined {
   return typeof status === "number" ? status : undefined
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
+function cancellable<T>(work: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+  if (!signal) return work
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort)
+      reject(signal.reason)
+    }
+    signal.addEventListener("abort", abort, { once: true })
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort))
+    if (signal.aborted) abort()
+  })
+}
+
+function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return cancellable(new Promise<void>(resolve => timer = setTimeout(resolve, ms)), signal)
+    .finally(() => clearTimeout(timer))
 }
 
 /** Host-independent Connections runtime. The generated module supplies registry, database, and key. */
@@ -180,8 +201,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return value
   }
 
-  function providerContext(event: unknown): ConnectionProviderContext {
-    return { event, fetch: fetcher }
+  function providerContext(event: unknown, signal?: AbortSignal | null): ConnectionProviderContext {
+    return {
+      event,
+      fetch: signal ? (input, init) => fetcher(input, { ...init, signal }) : fetcher,
+      ...(signal ? { signal } : {}),
+    }
   }
 
   async function record(activity: Omit<ConnectionActivity, "id" | "timestamp">, event?: unknown): Promise<void> {
@@ -225,13 +250,15 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   }
 
   /** Returns a valid token set. Refreshes under a lease when it expires soon or when `force` is set. */
-  async function tokens(name: string, value: ConnectionDefinition, event: unknown, actor: ConnectionActor, force = false): Promise<ConnectionTokenSet> {
+  async function tokens(name: string, value: ConnectionDefinition, event: unknown, actor: ConnectionActor, force = false, signal?: AbortSignal | null): Promise<ConnectionTokenSet> {
     const db = store(event)
     const deadline = Date.now() + leaseWaitMs
     let delay = 50
     let initialRevision: string | undefined
     while (true) {
+      signal?.throwIfAborted()
       const stored = await db.tokens(name)
+      signal?.throwIfAborted()
       if (!stored) throw connectionError("missing", { connection: name })
       if (stored.grant.status === "needs-reconnect") throw connectionError("needs_reconnect", { connection: name })
       // A grant from another provider must never reach the new provider.
@@ -248,21 +275,27 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       if (await db.lease(name, stored.grant.revision, now, now + leaseMs)) {
         const started = Date.now()
         try {
-          const refreshed = await value.provider.refresh(stored.tokens, providerContext(event))
+          signal?.throwIfAborted()
+          const refreshed = await cancellable(value.provider.refresh(stored.tokens, providerContext(event, signal)), signal)
+          signal?.throwIfAborted()
+          // Once the store write starts it cannot be rolled back through the store
+          // contract. The refresh may commit, but cancellation must still prevent
+          // this invocation from reporting a successful acquisition.
           await db.write({ expectedRevision: stored.grant.revision, name, provider: value.provider.id, tokens: { ...refreshed, account: refreshed.account ?? stored.tokens.account } })
+          signal?.throwIfAborted()
           await recordQuietly({ action: "refresh", actor, connection: name, durationMs: Date.now() - started, outcome: "succeeded" }, event)
           return refreshed
         }
         catch (error) {
           const reconnect = isConnectionError(error, "needs_reconnect")
           // The revision keeps a stale refresh from marking a newer grant.
-          await db.release(name, stored.grant.revision, reconnect ? "needs-reconnect" : "error", errorCode(error)).catch(() => undefined)
+          await db.release(name, stored.grant.revision, signal?.aborted ? stored.grant.status : reconnect ? "needs-reconnect" : "error", signal?.aborted ? stored.grant.lastError : errorCode(error)).catch(() => undefined)
           await recordQuietly({ action: "refresh", actor, connection: name, durationMs: Date.now() - started, error: errorCode(error), outcome: "failed", ...(errorStatus(error) ? { status: errorStatus(error) } : {}) }, event)
           throw reconnect ? connectionError("needs_reconnect", { connection: name }, error) : error
         }
       }
       if (Date.now() + delay > deadline) throw connectionError("unavailable", { connection: name })
-      await sleep(delay)
+      await sleep(delay, signal)
       delay = Math.min(delay * 2, 800)
     }
   }
@@ -273,13 +306,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       headers.set("authorization", `${token.tokenType.toLowerCase() === "bearer" ? "Bearer" : token.tokenType} ${token.accessToken}`)
       return fetcher(url, { ...init, headers })
     }
-    const token = await tokens(name, value, event, actor)
+    const token = await tokens(name, value, event, actor, false, init.signal)
     const response = await authorize(token)
     // A stream body was read by the first request and cannot be sent again.
     if (response.status !== 401 || !token.refreshToken || init.body instanceof ReadableStream) return response
     // One retry after a forced refresh covers tokens that the provider revoked early.
     await response.body?.cancel().catch(() => undefined)
-    return authorize(await tokens(name, value, event, actor, true))
+    return authorize(await tokens(name, value, event, actor, true, init.signal))
   }
 
   async function guard(
@@ -364,7 +397,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         headers.set("content-type", "application/json")
         body = JSON.stringify(request.body)
       }
-      return execute(name, value, base, url, { body, headers, method: request.method }, callOptions, async (response) => {
+      return execute(name, value, base, url, { body, headers, method: request.method, ...(callOptions.signal ? { signal: callOptions.signal } : {}) }, callOptions, async (response) => {
         if (!response.ok) {
           await response.body?.cancel().catch(() => undefined)
           throw connectionError("provider_failed", { connection: name, operation: operation.id, status: response.status })
@@ -406,13 +439,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const value = await definition(name)
       const url = new URL(input)
       const method = (init.method ?? "GET").toUpperCase()
-      const effect: ConnectionEffect = method === "GET" || method === "HEAD" ? "read" : "write"
-      const base = await guard(name, value, { effect, id: `fetch.${method.toLowerCase()}` }, callOptions, url)
+      const effect: ConnectionEffect = callOptions.effect ?? (method === "GET" || method === "HEAD" ? "read" : "write")
+      const base = await guard(name, value, { effect, id: callOptions.operation ?? `fetch.${method.toLowerCase()}` }, callOptions, url)
       if (callOptions.dryRun && effect === "write") {
         await recordQuietly({ ...base, outcome: "skipped" }, callOptions.event)
         return new Response(null, { headers: { "x-vitehub-connection-skipped": "dry-run" }, status: 204 })
       }
-      return execute(name, value, base, url, { ...init, method }, callOptions, async response => response)
+      return execute(name, value, base, url, { ...init, method, ...(callOptions.signal ? { signal: callOptions.signal } : {}) }, callOptions, async response => response)
     },
     inspect,
     async list(event) {

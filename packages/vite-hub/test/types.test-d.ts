@@ -4,7 +4,7 @@ import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core"
 import { vitehub } from "vite-hub"
 import { createMessage, defineAgent } from "vite-hub/agent"
 import type { ConsoleAgentInvocationInput } from "vite-hub/console"
-import { email, executor } from "vite-hub/agent/capabilities"
+import { email, gmail } from "vite-hub/agent/capabilities"
 import { useDatabase } from "vite-hub/database/drizzle"
 import { env } from "vite-hub/env"
 import { requireRateLimit } from "vite-hub/rate-limit"
@@ -56,7 +56,7 @@ expectTypeOf<NonNullable<typeof consoleInput.messages>[number]["role"]>().toEqua
 expectTypeOf(createMessage({ role: "user", text: "Earlier question" }).role).toEqualTypeOf<"user">()
 expectTypeOf(defineAgent).toBeFunction()
 expectTypeOf(email).toBeFunction()
-expectTypeOf(executor).toBeFunction()
+expectTypeOf(gmail).toBeFunction()
 expectTypeOf(env).toBeFunction()
 expectTypeOf(requireRateLimit).toBeFunction()
 expectTypeOf(defineWorkspace).toBeFunction()

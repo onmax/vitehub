@@ -250,6 +250,28 @@ describe("Connections runtime fetch", () => {
     ])
   })
 
+  it("uses the operation and effect overrides for access and activity", async () => {
+    const api = mockFetch(() => new Response("ok"))
+    const { name, runtime, store } = setupRuntime({
+      definition: { access: { server: { deny: ["mcp.docs.rpc.ping"] } }, provider: fakeProvider().provider },
+      fetch: api.fetch,
+    })
+    await store.write({ name, provider: "fake", tokens: tokenSet() })
+
+    // A POST with a read effect is allowed by the default rule.
+    const read = await runtime.fetch(name, "https://api.example/mcp", { method: "POST" }, { actor: server, audit: "all", effect: "read", operation: "mcp.docs.rpc.tools/list" })
+    expect(read.status).toBe(200)
+    await expectCode(runtime.fetch(name, "https://api.example/mcp", { method: "POST" }, { actor: server, effect: "read", operation: "mcp.docs.rpc.ping" }), "CONNECTIONS_DENIED")
+    await expectCode(runtime.fetch(name, "https://api.example/mcp", undefined, { actor: server, effect: "write", operation: "mcp.docs.tools.search" }), "CONNECTIONS_DENIED")
+
+    expect(api.calls).toHaveLength(1)
+    expect((await runtime.activity({})).map(event => `${event.operation}:${event.effect}:${event.outcome}`)).toEqual([
+      "mcp.docs.tools.search:write:denied",
+      "mcp.docs.rpc.ping:read:denied",
+      "mcp.docs.rpc.tools/list:read:succeeded",
+    ])
+  })
+
   it("allows fetch writes by pattern and skips them in dry run", async () => {
     const api = mockFetch(() => new Response("ok"))
     const { name, runtime, store } = setupRuntime({

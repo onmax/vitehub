@@ -13,6 +13,12 @@ export interface McpClient {
 }
 
 export interface McpClientConfig extends AiSdkMcpClientConfig {
+  /**
+   * Name of a Connection in `server/connections/`. The Connection sends the `Authorization` header,
+   * checks access for each request, and records activity. It replaces `transport.fetch`.
+   * Requires an `http` or `sse` transport config without `authProvider`.
+   */
+  connection?: string
   initializationOptions?: {
     signal?: AbortSignal
     timeout?: number

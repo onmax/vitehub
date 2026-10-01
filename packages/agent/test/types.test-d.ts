@@ -3,7 +3,7 @@ import type { LanguageModel } from "ai"
 
 import { defineAgent, defineAgentInvoker, defineCapability, defineFinishEffect, runAgent, runAgentInline, startAgentInvocation, type AgentActor, type AgentCallbackContext, type AgentCapabilityCliCommand, type AgentCapabilityCliResolver, type AgentCapabilityDefinition, type AgentChannelDeliveryEffectContext, type AgentChannelDeliveryEffectIntent, type AgentChannelDeliveryEffectKind, type AgentChannelDeliveryFinishEffect, type AgentChannelDeliveryFinishEffectContext, type AgentChannelDefinition, type AgentChannelDeliveryReplyPayload, type AgentChannelDeliveryReplyStream, type AgentChannelFactory, type AgentChannelInput, type AgentChannelInputs, type AgentDeliveryArtifact, type AgentDriverAdaptiveCapacityOptions, type AgentDriverCapacityOptions, type AgentDriverCapacityQueueOptions, type AgentErrorHookEvent, type AgentFinishEvent, type AgentFinishHookEvent, type AgentGatewayModel, type AgentHookObserverEvent, type AgentInvoker, type AgentMessageChannelSettings, type AgentMessageDeliveryKind, type AgentModelInput, type AgentModuleOptions, type AgentRunInput, type AgentRunResult, type AgentRuntimeConfig, type AgentRuntimeContext, type AgentTriggerInvokeResult, type AgentTriggerRunInvokeResult, type AgentUIMessageStreamProjection, type AgentUsageRecord, type ImagePart, type PublishedAgentDeliveryArtifact, type ResolvedAgentRuntimeContext } from "../src/index.ts"
 import { createProcessAgentCapacity, type ProcessAgentCapacityOptions } from "../src/runtime/process.ts"
-import { access, chat, email, executor, getTranscriptionResults, git, inputCommands, kv, mcp, modelsDevPricing, openapi, sandbox, schedule, skills, streamTranscription, transcribe, usage, webSearch, workspaceShell, type AgentUsagePricing, type EmailCapabilityOptions, type EmailCapabilityToolPolicy, type ExecutorCapabilityOptions, type ModelsDevPricingOptions, type UsageOptions } from "../src/capabilities.ts"
+import { access, chat, email, getTranscriptionResults, git, gmail, inputCommands, kv, mcp, modelsDevPricing, openapi, sandbox, schedule, skills, streamTranscription, transcribe, usage, webSearch, workspaceShell, type AgentUsagePricing, type EmailCapabilityOptions, type EmailCapabilityToolPolicy, type ModelsDevPricingOptions, type UsageOptions } from "../src/capabilities.ts"
 import { defineChannel, github, http, pullRequest, teams, telegram, webChat, type GitHubPullRequestCommand, type GitHubPullRequestFilter, type GitHubPullRequestFilterContext, type GitHubPullRequestRunContext } from "../src/channels.ts"
 import { defineEval, hasCapabilityExtension, textContains, type AgentEvalDefinition, type AgentObservation, type AgentScorer } from "../src/eval.ts"
 import { remoteMcpServer } from "../src/mcp.ts"
@@ -75,32 +75,17 @@ describe("agent public types", () => {
     })
   })
 
-  it("types static and invocation-resolved Executor connections", () => {
-    const credential = { unseal: () => "executor-secret" }
-    const connection: ExecutorCapabilityOptions = {
-      apiKey: credential,
-      url: new URL("https://executor.sh/quiver/mcp"),
-    }
-
-    executor(connection)
-    const enabled: boolean = false
-    executor(enabled ? connection : false)
-    executor(null)
-    executor(undefined)
-    executor(async () => enabled
-      ? { apiKey: credential, url: "https://executor.sh/quiver/mcp" }
-      : false)
-    executor(async () => null)
-    executor(async () => undefined)
-
-    executor({ timeout: 5_000, url: "https://executor.sh/quiver/mcp" })
-
-    // @ts-expect-error Executor requires a URL or connection resolver.
-    executor({ apiKey: credential })
-    // @ts-expect-error Executor credentials must be strings or sealed values.
-    executor({ apiKey: 42, url: "https://executor.sh/quiver/mcp" })
-    // @ts-expect-error Executor connection timeouts must be numbers.
-    executor({ timeout: "soon", url: "https://executor.sh/quiver/mcp" })
+  it("types Connection-backed capabilities", () => {
+    gmail()
+    gmail({ connection: "google", operations: ["search", "read", "draft"] })
+    // @ts-expect-error Gmail tools are search, read, and draft. Sending is not available.
+    gmail({ operations: ["send"] })
+    openapi({ connection: "github", operations: ["reposGet"], spec: "https://example.com/openapi.json" })
+    mcp({
+      servers: {
+        executor: { connection: "executor", transport: { type: "http", url: "https://executor.sh/mcp" } },
+      },
+    })
   })
 
   it("types Eve extensions in static capabilities", () => {
