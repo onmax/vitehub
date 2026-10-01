@@ -2,6 +2,7 @@ import type { EnvActor } from "@vite-hub/env/bridge"
 
 import { ConnectionError } from "./errors.ts"
 
+import { isConnectionReadMethod } from "./types.ts"
 import type { ConnectionAccessRule, ConnectionActionInfo, ConnectionApiCatalog, ConnectionDefinition } from "./types.ts"
 
 export type ConnectionDecision = "allow" | "approve" | "deny"
@@ -43,7 +44,7 @@ export function connectionActions(definition: ConnectionDefinition): ConnectionA
     if (!patterns?.length) continue
     for (const [method, [httpMethod]] of Object.entries(catalog.methods)) {
       if (!patterns.some(pattern => matchesPattern(method, pattern))) continue
-      const write = httpMethod !== "GET"
+      const write = !isConnectionReadMethod(httpMethod)
       actions.push({
         highRisk: write && (catalog.highRisk ?? []).some(pattern => matchesPattern(method, pattern)),
         id: `${api}.${method}`,

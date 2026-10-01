@@ -54,11 +54,13 @@ export function google(options: GoogleProviderOptions): ConnectionProvider<Googl
         methods: gmailMethods,
         highRisk: [
           "users.drafts.send",
+          "users.drafts.delete",
           "users.messages.batchDelete",
           "users.messages.delete",
           "users.messages.send",
           "users.settings.*",
           "users.threads.delete",
+          "users.labels.delete",
         ],
       },
     },
