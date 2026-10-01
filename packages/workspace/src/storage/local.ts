@@ -286,19 +286,17 @@ async function withFilesystemWriterIntent<T>(lock: string, permissions: Pick<imp
   // marker wait, so a writer cannot lose every gate race to new admissions.
   const intents = `${lock}.writers`
   const intent = `${intents}/${randomUUID()}`
-  await ensureLockDirectory(intents)
-  if (process.platform !== "win32") await applyMetadataPermissions(intents, permissions.mode & 0o770, permissions.gid)
-  // The last writer can remove the empty parent between the checks above and
-  // this child creation. Recreate it and retry so concurrent writers remain
-  // serialized instead of failing with ENOENT.
+  // The last writer can remove the empty parent during permission setup or
+  // child creation. Retry the full sequence to revalidate the new parent.
   for (;;) {
     try {
+      await ensureLockDirectory(intents)
+      if (process.platform !== "win32") await applyMetadataPermissions(intents, permissions.mode & 0o770, permissions.gid)
       await mkdir(intent, { mode: 0o700 })
       break
     }
     catch (error) {
       if (Reflect.get(Object(error), "code") !== "ENOENT") throw error
-      await ensureLockDirectory(intents)
     }
   }
   try {
