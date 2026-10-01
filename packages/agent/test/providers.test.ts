@@ -1684,8 +1684,40 @@ describe("agent Vite plugin", () => {
     if (!isRuntimeFunction(configHook)) throw new Error("Expected an Agent config hook")
     // SAFETY: This fixture supplies the private Nitro config context read by the hook.
     const config = { [VITEHUB_NITRO_CONFIG_CONTEXT]: true, root: hostedAgentRoot } as never
-    expect(() => configHook.call({} as never, config, { command: "serve", mode: "development" })).toThrow(`${kind} route conflicts`)
+    expect(() => configHook.call({} as never, config, { command: "serve", mode: "development" })).toThrow(`${kind === "inspection" ? "development invocation" : kind} route conflicts`)
     expect(() => configHook.call({} as never, config, { command: "build", mode: "production" })).not.toThrow()
+  })
+
+  it.each([
+    { label: "Discord Gateway", routes: { discordGateway: "/_vitehub/agent/invocations/dev" } },
+    { label: "parameterized generated gateway", routes: { discordGateway: "/_vitehub/agent/[agent]/[action]" } },
+    { label: "exact application handler", handlers: [{ route: "/_vitehub/agent/invocations/dev", handler: "/app/handler.ts" }] },
+    { label: "wildcard application handler", handlers: [{ route: "/_vitehub/agent/**", handler: "/app/handler.ts" }] },
+    { label: "parameterized application handler", handlers: [{ route: "/_vitehub/agent/:agent/:action", handler: "/app/handler.ts" }] },
+  ])("reserves the development invocation route against $label", async ({ routes, handlers }) => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const plugin = hubAgent({ routes })
+    const configHook = plugin.config
+    if (!isRuntimeFunction(configHook)) throw new Error("Expected an Agent config hook")
+    // SAFETY: This fixture supplies the private Nitro context and configured handlers read by the hook.
+    const config = { [VITEHUB_NITRO_CONFIG_CONTEXT]: true, root: hostedAgentRoot, nitro: { handlers } } as never
+    expect(() => configHook.call({} as never, config, { command: "serve", mode: "development" })).toThrow("development invocation route conflicts")
+    expect(() => configHook.call({} as never, config, { command: "build", mode: "production" })).not.toThrow()
+  })
+
+  it("preserves Nitro middleware alongside the development invocation route", async () => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const plugin = hubAgent()
+    const configHook = plugin.config
+    if (!isRuntimeFunction(configHook)) throw new Error("Expected an Agent config hook")
+    const middleware = { route: "/**", handler: "/app/middleware.ts", middleware: true }
+    // SAFETY: This fixture supplies the private Nitro context and configured middleware read by the hook.
+    const config = { [VITEHUB_NITRO_CONFIG_CONTEXT]: true, root: hostedAgentRoot, nitro: { handlers: [middleware] } } as never
+    const result = configHook.call({} as never, config, { command: "serve", mode: "development" })
+    expect(result).toMatchObject({ nitro: { handlers: expect.arrayContaining([
+      middleware,
+      expect.objectContaining({ route: "/_vitehub/agent/invocations/dev", handler: expect.stringContaining("invocations-dev-handler.ts") }),
+    ]) } })
   })
 
   it.each([

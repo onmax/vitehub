@@ -362,6 +362,31 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.get(id))?.status).toBe("completed")
   })
 
+  it.each(["completed", "failed", "cancelled"] as const)("aborts a stale local owner when cancel sees a %s record after lease loss", async status => {
+    vi.useFakeTimers()
+    const backing = createMemoryAgentInvocationStore()
+    let rejectClaims = false
+    const store = { ...backing, claim: (...args: Parameters<typeof backing.claim>) => rejectClaims ? false : backing.claim(...args) }
+    const invocations = defineAgentInvocations({ store })
+    const runId = `stale-terminal-owner-${status}`
+    const journal = await bindAgentInvocations(invocations, runtime(runId))
+    if (!journal) throw new Error("Expected invocation journal")
+    journal.watchCancellation({ enforced: true, name: "model" })
+    try {
+      await journal.running()
+      const id = await agentInvocationId(runId)
+      rejectClaims = true
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(journal.abortSignal.aborted).toBe(false)
+      await backing.update(id, { status, timestamp: new Date().toISOString() })
+      expect(await invocations.cancel(id)).toEqual({ id, outcome: "terminal", status })
+      expect(journal.abortSignal.aborted).toBe(true)
+      expect((await backing.get(id))?.status).toBe(status)
+      expect((await backing.get(id))?.cancelRequestedAt).toBeUndefined()
+    }
+    finally { await journal.finish("cancelled") }
+  })
+
   it("removes the local cancellation handle when renewal observes a terminal record", async () => {
     const store = createMemoryAgentInvocationStore()
     const invocations = defineAgentInvocations({ store })

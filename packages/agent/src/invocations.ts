@@ -2216,7 +2216,10 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       assertInvocationId(id)
       const summary = await store.getSummary(id)
       if (!summary) return { id, outcome: "not-found" }
-      if (terminalStatus(summary.status)) return { id, outcome: "terminal", status: summary.status }
+      if (terminalStatus(summary.status)) {
+        abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
+        return { id, outcome: "terminal", status: summary.status }
+      }
       const timestamp = new Date().toISOString()
       // Persist the request first, so a run in another process and a later bind of this record read it.
       const flagged = await store.update(id, { cancelRequestedAt: timestamp, timestamp })

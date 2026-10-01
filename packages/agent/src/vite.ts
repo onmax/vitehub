@@ -3061,10 +3061,6 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       const devNitroHandlers = resolved && !denoOutput && nitroContext && environment?.command === "serve"
         ? [{ handler: join(generatedRoot, generatedAgentInvocationsDevHandler), route: agentInvocationsDevRuntimeRoute }]
         : []
-      const inspectionRoute = resolved && resolved.routes.inspection
-      if (inspectionRoute && devNitroHandlers.some(handler => agentRoutesOverlap(inspectionRoute, handler.route))) {
-        throw agentDiagnostics.AGENT_B0006({ message: `[vitehub] Agent inspection route conflicts with the generated route ${JSON.stringify(agentInvocationsDevRuntimeRoute)}.` })
-      }
       const nitro = installCloudflareState
         ? mergeCloudflareAgentStateNitroConfig(
             (config as { nitro?: unknown }).nitro,
@@ -3091,6 +3087,17 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           ...nitroHandlers.filter(handler => handler.handler !== join(generatedRoot, generatedAgentPreparationHandler)),
           ...devNitroHandlers,
         ])
+      }
+      if (devNitroHandlers.length) {
+        const existing = Array.isArray(nitro.handlers) ? nitro.handlers : []
+        const routes = existing.filter(isRecord).flatMap(handler => hasRuntimeType(handler.route, "string") ? [{ route: handler.route, middleware: handler.middleware === true }] : [])
+        for (const handler of devNitroHandlers) {
+          handler.route = validateAgentStaticRoute(handler.route, [
+            ...routes,
+            ...nitroHandlers,
+            ...devNitroHandlers.filter(candidate => candidate !== handler),
+          ], "development invocation")
+        }
       }
       const mergedAgentNitro = (nitroContext ? mergeAgentNitroExternals : cloneNitroConfig)(mergeNitroPlugins(
         mergeNitroHandlers(nitro, [...nitroHandlers, ...devNitroHandlers]),
