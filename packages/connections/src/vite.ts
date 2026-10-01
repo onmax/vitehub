@@ -1,159 +1,128 @@
-import { createRequire } from "node:module"
-import { dirname, resolve } from "node:path"
+import { resolve } from "node:path";
 
-import { createRuntimeEnvRegistry, env } from "@vite-hub/env/vite"
-import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
-import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
+import * as v from "valibot";
 
-import { createConnectionsCliContributor } from "./cli.ts"
-import { discoverConnectionDefinitions } from "./discovery.ts"
-import { connectionsErrorDiagnostics } from "./error-diagnostics.ts"
+import {
+  createNoExternalAddition,
+  hasNitroConfigContext,
+  isServerEnvironment,
+  resolveViteHubProjectRoot,
+  VITEHUB_SERVER_DIRS,
+} from "@vite-hub/internal/build/vite";
+import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog";
+import { createNitroServerKit } from "@vite-hub/internal/nitro-kit";
 
-import type { EnvRuntimeRegistry, EnvVariableDeclaration } from "@vite-hub/env"
-import type { ViteHubCliPluginMetadata } from "@vite-hub/internal/cli"
-import type { DiscoveredConnectionDefinition } from "./types.ts"
-import type { Plugin, ResolvedConfig } from "vite"
+import { discoverConnectionDefinitions } from "./discovery.ts";
 
-export const CONNECTIONS_RUNTIME_ID = "#vitehub/connections/runtime"
-export const CONNECTIONS_VITE_PLUGIN_NAME = "@vite-hub/connections/vite"
+import type { ViteHubCliContributor } from "@vite-hub/internal/cli";
+import type { Plugin, ResolvedConfig } from "vite";
+import type { DiscoveredConnectionDefinition } from "./types.ts";
 
-const resolvedConnectionsRuntimeId = `\0${CONNECTIONS_RUNTIME_ID}`
-const addNoExternal = createNoExternalAddition("@vite-hub/connections")
+export const CONNECTIONS_REGISTRY_ID = "#vitehub/connections/registry";
+export const CONNECTIONS_VITE_PLUGIN_NAME = "@vite-hub/connections/vite";
+
+const resolvedConnectionsRegistryId = `\0${CONNECTIONS_REGISTRY_ID}`;
+const noExternalAddition = createNoExternalAddition("@vite-hub/connections");
 
 export interface ConnectionsVitePluginOptions {
-  /** Database that stores grants and activity. Default: `"default"`. */
-  database?: string
+  /** Module that exports the ViteHub Database as `db`. Set `false` when the app has no database. */
+  database?: string | false;
+  /** Package that the generated handler imports from. */
+  importBase?: string;
   /**
-   * 32-byte base64url key that seals grants.
-   * Default: `env({ secret: true, optional: true, source: env.source("VITEHUB_CONNECTIONS_KEY") })`.
+   * Mount the management API in production. The development server always mounts it.
+   * Production requires an actor module whose default export authenticates each Request
+   * and returns `user:<id>` or `undefined` to deny access.
    */
-  encryptionKey?: EnvVariableDeclaration
-  projectRoot?: string
-}
-
-interface InternalConnectionsVitePluginOptions {
-  databaseImport?: string
-  runtimeEnvImport?: string
+  management?: boolean | { actor: string };
+  projectRoot?: string;
 }
 
 export interface ConnectionsVitePluginAPI {
-  getDefinitions: () => DiscoveredConnectionDefinition[]
-  refresh: () => DiscoveredConnectionDefinition[]
+  getDefinitions: () => DiscoveredConnectionDefinition[];
+  refresh: () => DiscoveredConnectionDefinition[];
 }
 
-export type ConnectionsVitePlugin = Plugin & { api: ConnectionsVitePluginAPI, vitehub: ViteHubCliPluginMetadata }
+export type ConnectionsVitePlugin = Plugin<ConnectionsVitePluginAPI> & {
+  api: ConnectionsVitePluginAPI;
+  vitehub: { cli: () => Promise<ViteHubCliContributor> };
+};
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- config values are untyped records from Vite and Nitro.
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function keyRegistry(declaration: EnvVariableDeclaration = env({ optional: true, secret: true, source: env.source("VITEHUB_CONNECTIONS_KEY") })): EnvRuntimeRegistry {
-  if (!declaration.secret) {
-    throw connectionsErrorDiagnostics.CONNECTIONS_B0001({ message: "[vitehub] connections.encryptionKey must be a secret env() declaration." })
-  }
-  if (declaration.source?.kind === "provider") {
-    throw connectionsErrorDiagnostics.CONNECTIONS_B0001({ message: "[vitehub] connections.encryptionKey cannot use env.provider() because the key is resolved synchronously." })
-  }
-  if (declaration.default !== undefined) {
-    throw connectionsErrorDiagnostics.CONNECTIONS_B0002({ message: "[vitehub] connections.encryptionKey cannot have a default because defaults are included in build output." })
-  }
-  return createRuntimeEnvRegistry({ key: declaration }, { path: "connections" })
-}
-
-function defaultRuntimeEnvImport(): string {
-  return resolve(dirname(createRequire(import.meta.url).resolve("@vite-hub/env/package.json")), "dist/server.js")
-}
-
-function renderRuntime(
+function renderRegistry(
   definitions: DiscoveredConnectionDefinition[],
-  options: { database: string, databaseImport: string, keys: EnvRuntimeRegistry, runtimeEnvImport: string },
+  database: string | false,
 ): string {
   return [
-    `import { databases as vitehubConnectionsDatabases } from ${JSON.stringify(options.databaseImport)}`,
-    `import { resolveServerEnv as vitehubConnectionsEnv } from ${JSON.stringify(options.runtimeEnvImport)}`,
-    "",
-    `const keys = ${JSON.stringify(options.keys)}`,
     "const registry = Object.create(null)",
-    ...definitions.map(definition => `registry[${JSON.stringify(definition.name)}] = () => import(${JSON.stringify(definition.handler)})`),
+    ...definitions.map(
+      (definition) =>
+        `registry[${JSON.stringify(definition.name)}] = () => import(${JSON.stringify(definition.handler)})`,
+    ),
     "",
-    "export default {",
-    `  database: () => vitehubConnectionsDatabases[${JSON.stringify(options.database)}]?.db,`,
-    "  encryptionKey: (event) => vitehubConnectionsEnv(keys, event).key?.unseal(),",
-    "  registry,",
-    "}",
+    database
+      ? `export const database = () => import(${JSON.stringify(database)}).then(module => module.db)`
+      : "export const database = undefined",
+    "export default registry",
     "",
-  ].join("\n")
+  ].join("\n");
 }
 
 function renderRegistryTypes(definitions: DiscoveredConnectionDefinition[]): string {
   return [
     "declare global {",
     "  interface ViteHubConnectionDefinitionModules {",
-    ...definitions.map(definition =>
-      `    ${JSON.stringify(definition.name)}: typeof import(${JSON.stringify(definition.handler)})`
+    ...definitions.map(
+      (definition) =>
+        `    ${JSON.stringify(definition.name)}: typeof import(${JSON.stringify(definition.handler)})`,
     ),
     "  }",
     "}",
     "",
     "export {}",
     "",
-  ].join("\n")
+  ].join("\n");
 }
 
-function configureNitroConnections(config: Record<string, unknown>, runtimeFile: string): Record<string, unknown> {
-  const nitro = isRecord(config.nitro) ? config.nitro : {}
-  const alias = isRecord(nitro.alias) ? nitro.alias : {}
-  const externals = isRecord(nitro.externals) ? nitro.externals : {}
-  const existingInline = Array.isArray(externals.inline) ? externals.inline : []
-  const inline = externals.inline === true
-    ? true
-    : [...new Set([...existingInline, "vite-hub", "@vite-hub/connections"])]
-  return {
-    ...nitro,
-    alias: { ...alias, [CONNECTIONS_RUNTIME_ID]: runtimeFile },
-    externals: { ...externals, inline },
-  }
-}
-
-function isConnectionDefinitionFile(file: string, projectRoot: string, serverDirs: string[] | undefined): boolean {
-  const normalized = resolve(file).replace(/\\/g, "/")
+function isConnectionDefinitionFile(
+  file: string,
+  projectRoot: string,
+  serverDirs: string[] | undefined,
+): boolean {
+  const normalized = resolve(file).replace(/\\/g, "/");
+  if (/\.connection\.(?:c|m)?[jt]s$/i.test(normalized)) return true;
   return (serverDirs ?? [resolve(projectRoot, "server")]).some((directory) => {
-    const connectionDirectory = `${resolve(directory, "connections").replace(/\\/g, "/")}/`
-    return normalized.startsWith(connectionDirectory)
-      && /\.(?:c|m)?[jt]sx?$/i.test(normalized.slice(connectionDirectory.length))
-  })
+    const connectionDirectory = `${resolve(directory, "connections").replace(/\\/g, "/")}/`;
+    return normalized.startsWith(connectionDirectory) && /\.(?:[jt]sx?|[cm][jt]s)$/i.test(normalized);
+  });
 }
 
-/**
- * Discovers `server/connections/*.ts` and generates the Connections runtime module.
- * Grants and activity are stored in the app database.
- */
-export function hubConnections(options: ConnectionsVitePluginOptions & InternalConnectionsVitePluginOptions = {}): ConnectionsVitePlugin {
-  const keys = keyRegistry(options.encryptionKey)
-  const renderOptions = {
-    database: options.database ?? "default",
-    databaseImport: options.databaseImport ?? "@vite-hub/database/drizzle",
-    keys,
-    runtimeEnvImport: options.runtimeEnvImport ?? defaultRuntimeEnvImport(),
-  }
-  let resolved: ResolvedConfig | undefined
-  let definitions: DiscoveredConnectionDefinition[] = []
-  let serverDirs: string[] | undefined
-  let projectRoot = process.cwd()
-  let nitroRuntimeFile: string | undefined
+export function hubConnections(options: ConnectionsVitePluginOptions = {}): ConnectionsVitePlugin {
+  const importBase = options.importBase ?? "@vite-hub/connections";
+  const database = options.database ?? false;
+  let resolved: ResolvedConfig | undefined;
+  let definitions: DiscoveredConnectionDefinition[] = [];
+  let serverDirs: string[] | undefined;
+  let projectRoot = process.cwd();
+  let nitroRegistryFile: string | undefined;
 
   function refresh(): DiscoveredConnectionDefinition[] {
-    projectRoot = resolveViteHubProjectRoot(resolve(resolved?.root ?? process.cwd()), { projectRoot: options.projectRoot })
-    definitions = discoverConnectionDefinitions({ rootDir: projectRoot, serverDirs })
-    return definitions
+    projectRoot = resolveViteHubProjectRoot(resolve(resolved?.root ?? process.cwd()), {
+      projectRoot: options.projectRoot,
+    });
+    definitions = discoverConnectionDefinitions({ rootDir: projectRoot, serverDirs });
+    return definitions;
   }
 
   async function refreshGeneratedFiles(): Promise<void> {
     await Promise.all([
-      writeFileIfChanged(resolve(projectRoot, ".vitehub", "types", "connections.d.ts"), renderRegistryTypes(definitions)),
-      ...(nitroRuntimeFile ? [writeFileIfChanged(nitroRuntimeFile, renderRuntime(definitions, renderOptions))] : []),
-    ])
+      writeFileIfChanged(
+        resolve(projectRoot, ".vitehub", "types", "connections.d.ts"),
+        renderRegistryTypes(definitions),
+      ),
+      ...(nitroRegistryFile
+        ? [writeFileIfChanged(nitroRegistryFile, renderRegistry(definitions, database))]
+        : []),
+    ]);
   }
 
   return {
@@ -164,47 +133,115 @@ export function hubConnections(options: ConnectionsVitePluginOptions & InternalC
       refresh,
     },
     vitehub: {
-      cli: createConnectionsCliContributor,
+      cli: async () => {
+        const { createConnectionsCliContributor } = await import("./cli.ts");
+        return createConnectionsCliContributor();
+      },
     },
-    async config(config) {
-      // SAFETY: The vite-hub distribution sets VITEHUB_SERVER_DIRS to a string array before this plugin runs.
-      serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
+    async config(config, environment) {
+      serverDirs =
+        v.parse(v.optional(v.array(v.string())), Reflect.get(config, VITEHUB_SERVER_DIRS)) ??
+        serverDirs;
       const nextConfig: Record<string, unknown> = {
-        ssr: { noExternal: addNoExternal(config.ssr?.noExternal) },
+        ssr: { noExternal: noExternalAddition(config.ssr?.noExternal) },
+      };
+      if (!hasNitroConfigContext(config)) return nextConfig;
+
+      const root = resolveViteHubProjectRoot(resolve(config.root || process.cwd()), {
+        projectRoot: options.projectRoot,
+      });
+      const generatedDir = resolve(root, ".vitehub", "nitro", "connections");
+      nitroRegistryFile = resolve(generatedDir, "registry.ts");
+      const handlerFile = resolve(generatedDir, "handler.ts");
+      await writeFileIfChanged(
+        nitroRegistryFile,
+        renderRegistry(discoverConnectionDefinitions({ rootDir: root, serverDirs }), database),
+      );
+
+      const nitroInput: unknown = Reflect.get(config, "nitro");
+      const nitro = v.parse(
+        v.looseObject({
+          alias: v.optional(v.record(v.string(), v.unknown()), {}),
+          externals: v.optional(
+            v.looseObject({
+              inline: v.optional(v.union([v.literal(true), v.array(v.unknown())]), []),
+            }),
+            {},
+          ),
+        }),
+        nitroInput ?? {},
+      );
+      const alias = nitro.alias;
+      const externals = nitro.externals;
+      const inline =
+        externals.inline === true
+          ? true
+          : [
+              ...new Set([
+                ...(Array.isArray(externals.inline) ? externals.inline : []),
+                "vite-hub",
+                "@vite-hub/connections",
+              ]),
+            ];
+      nitro.alias = { ...alias, [CONNECTIONS_REGISTRY_ID]: nitroRegistryFile };
+      nitro.externals = { ...externals, inline };
+
+      if (environment.command === "serve" || options.management) {
+        const actorModule =
+          options.management && options.management !== true ? options.management.actor : undefined;
+        if (environment.command !== "serve" && !actorModule?.trim()) {
+          throw new Error(
+            "Connections management in production requires management: { actor: <authentication module> }.",
+          );
+        }
+        const actorImport = actorModule?.startsWith(".") ? resolve(root, actorModule) : actorModule;
+        await writeFileIfChanged(
+          handlerFile,
+          [
+            `import { createConnectionsHandler } from ${JSON.stringify(`${importBase}/server`)}`,
+            "",
+            ...(actorModule ? [`import actor from ${JSON.stringify(actorImport)}`] : []),
+            "",
+            actorModule
+              ? "const handle = createConnectionsHandler({ actor })"
+              : 'const handle = createConnectionsHandler({ actor: () => "user:local" })',
+            "",
+            "export default (event: { req: Request }) => handle(event.req)",
+            "",
+          ].join("\n"),
+        );
+        const kit = createNitroServerKit(nitro);
+        kit.addHandler({ handler: handlerFile, route: "/_vitehub/connections" });
+        kit.addHandler({ handler: handlerFile, route: "/_vitehub/connections/**" });
+        Object.assign(nitro, kit.config);
       }
-      if (hasNitroConfigContext(config)) {
-        const root = resolveViteHubProjectRoot(resolve(config.root || process.cwd()), { projectRoot: options.projectRoot })
-        nitroRuntimeFile = resolve(root, ".vitehub", "nitro", "connections", "runtime.ts")
-        await writeFileIfChanged(nitroRuntimeFile, renderRuntime(discoverConnectionDefinitions({ rootDir: root, serverDirs }), renderOptions))
-        // SAFETY: hasNitroConfigContext checked that config is an object with Nitro settings.
-        ;(config as { nitro?: Record<string, unknown> }).nitro = configureNitroConnections(config as Record<string, unknown>, nitroRuntimeFile)
-      }
-      return nextConfig
+      Reflect.set(config, "nitro", nitro);
+      return nextConfig;
     },
     async configResolved(config) {
-      resolved = config
-      refresh()
-      await refreshGeneratedFiles()
+      resolved = config;
+      refresh();
+      await refreshGeneratedFiles();
     },
     configEnvironment(name, config) {
-      if (!isServerEnvironment(name, config)) return
+      if (!isServerEnvironment(name, config)) return;
       return {
-        resolve: { noExternal: addNoExternal(config.resolve?.noExternal) },
-      }
+        resolve: { noExternal: noExternalAddition(config.resolve?.noExternal) },
+      };
     },
     async handleHotUpdate(context) {
-      if (!isConnectionDefinitionFile(context.file, projectRoot, serverDirs)) return
-      resolved = context.server.config
-      refresh()
-      await refreshGeneratedFiles()
-      const module = context.server.moduleGraph.getModuleById(resolvedConnectionsRuntimeId)
-      if (module) context.server.moduleGraph.invalidateModule(module)
+      if (!isConnectionDefinitionFile(context.file, projectRoot, serverDirs)) return;
+      resolved = context.server.config;
+      refresh();
+      await refreshGeneratedFiles();
+      const module = context.server.moduleGraph.getModuleById(resolvedConnectionsRegistryId);
+      if (module) context.server.moduleGraph.invalidateModule(module);
     },
     resolveId(id) {
-      if (id === CONNECTIONS_RUNTIME_ID) return resolvedConnectionsRuntimeId
+      if (id === CONNECTIONS_REGISTRY_ID) return resolvedConnectionsRegistryId;
     },
     load(id) {
-      if (id === resolvedConnectionsRuntimeId) return renderRuntime(definitions, renderOptions)
+      if (id === resolvedConnectionsRegistryId) return renderRegistry(definitions, database);
     },
-  }
+  };
 }

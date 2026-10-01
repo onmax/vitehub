@@ -7,12 +7,45 @@ import { pathToFileURL } from "node:url"
 import { createBuilder, resolveConfig } from "vite"
 import { describe, expect, it } from "vitest"
 
+import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
 import { env, hubEnv } from "@vite-hub/env/vite"
 import { vitehub } from "../src/index.ts"
 
 import type { EnvViteUserConfig } from "@vite-hub/env"
 
 describe("built-in deployment preset integration", () => {
+  it.each([undefined, "custom-output"])(
+    "inspects deployment output from a separate Nitro root with output %s",
+    async (outputDir) => {
+      const root = await mkdtemp(join(tmpdir(), "vitehub-inspect-nitro-root-"));
+      try {
+        const nitroRoot = join(root, "nitro");
+        await mkdir(nitroRoot);
+        const config = await resolveConfig(
+          {
+            configFile: false,
+            root,
+            nitro: { rootDir: nitroRoot, ...(outputDir ? { output: { dir: outputDir } } : {}) },
+            plugins: [
+              vitehub({ preset: "node", blob: false, env: false, queue: false, rateLimit: false }),
+            ],
+          } as Parameters<typeof resolveConfig>[0],
+          "build",
+        );
+        const entries = await collectViteHubProviderOutputEntries(config.plugins);
+        expect(entries).toContainEqual(
+          expect.objectContaining({
+            owner: "vite-hub",
+            path: join(nitroRoot, outputDir ?? ".output", "deployment.json"),
+          }),
+        );
+      } finally {
+        await rm(root, { force: true, recursive: true });
+      }
+    },
+  );
+
+
   it.each(["cloudflare", "netlify", "vercel", "deno", "node"] as const)("resolves the minimal %s preset with real owner plugins", async (preset) => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-preset-config-"))
     const config = await resolveConfig({

@@ -1,14 +1,17 @@
 import { resolve } from "node:path"
 import { Readable } from "node:stream"
 
-import { createNoExternalAddition, generatedViteHubWatchIgnoredAddition, isServerEnvironment, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, isServerEnvironment, generatedViteHubWatchIgnoredAddition, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
+import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 
 import { resolveAuthViteConfig } from "./config.ts"
+import { discoverAuthDefinitions } from "./discovery.ts"
 import { getAuthForDefinition, handleAuthRequest, resetAuth } from "./server.ts"
 import { isAuthRequestPath } from "./shared.ts"
 
+import type { ViteHubDefinitionSummary, ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { Plugin, ResolvedConfig, UserConfig } from "vite"
 import type {
@@ -30,7 +33,7 @@ const envServerModuleId = "#vitehub/env/server"
 const envVitePluginName = "@vite-hub/env/vite"
 const generatedAuthAccessMiddlewareHandler = ".vitehub/auth/access-middleware.ts"
 const generatedAuthRouteHandler = ".vitehub/auth/route.ts"
-const noExternalAddition = createNoExternalAddition(authPackageName)
+const mergeNoExternal = createNoExternalAddition(authPackageName)
 
 type NitroConfig = Record<string, unknown>
 type NitroHandler = { handler: string; method?: string; middleware?: boolean; route: string }
@@ -40,7 +43,18 @@ export interface AuthVitePluginAPI {
   refresh: () => ResolvedAuthViteConfig | undefined
 }
 
-export type AuthVitePlugin = Plugin & { api: AuthVitePluginAPI }
+export type AuthVitePlugin = Plugin & { api: AuthVitePluginAPI, vitehub: ViteHubInspectionPluginMetadata }
+
+export interface AuthInspectionOptions {
+  projectRoot: string
+  rootDir: string
+  serverDirs?: string[]
+}
+
+/** Lists the Auth Definition as a serializable inspection summary. */
+export function inspectAuthDefinitions(options: AuthInspectionOptions): ViteHubDefinitionSummary[] {
+  return summarizeDefinitions(options.projectRoot, discoverAuthDefinitions(options.rootDir, { serverDirs: options.serverDirs }), "server-auth")
+}
 
 export function createAuthNitroConfig(plugin: AuthVitePlugin, options: {
   nitro: Record<string, unknown>
@@ -307,6 +321,21 @@ export function hubAuth(options?: AuthModuleOptions, internalOptions: InternalAu
       getConfig: () => runtimeConfig,
       refresh: refreshRuntimeConfig,
     },
+    vitehub: {
+      inspect: () => {
+        if (resolvedOptions() === false) return
+        return {
+          definitions: [{
+            kind: "auth",
+            label: "Auth",
+            list: () => {
+              const rootDir = resolve(resolved?.root ?? process.cwd())
+              return inspectAuthDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
+            },
+          }],
+        }
+      },
+    },
     config(config) {
       const configRoot = config.root || process.cwd()
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
@@ -319,7 +348,7 @@ export function hubAuth(options?: AuthModuleOptions, internalOptions: InternalAu
       }
       return {
         ssr: {
-          noExternal: noExternalAddition(config.ssr?.noExternal),
+          noExternal: mergeNoExternal(config.ssr?.noExternal),
         },
         server: {
           watch: {
@@ -339,7 +368,7 @@ export function hubAuth(options?: AuthModuleOptions, internalOptions: InternalAu
         return
       }
       return {
-        resolve: { noExternal: noExternalAddition(config.resolve?.noExternal) },
+        resolve: { noExternal: mergeNoExternal(config.resolve?.noExternal) },
       }
     },
     configureServer(server) {

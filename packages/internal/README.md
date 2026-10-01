@@ -19,10 +19,13 @@ Do not install this package directly. Other ViteHub packages depend on it inside
 import { createRuntimeRegistryContents } from "@vite-hub/internal/definition-catalog"
 import { createNoExternalAddition } from "@vite-hub/internal/build/vite"
 import { normalizeHosting } from "@vite-hub/internal/hosting"
+import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 ```
 
 ## Used by
 
 Packages use it for definition discovery, generated runtime registries, Provider Output, hosted runtime helpers, and hosting normalization.
+
+Owner packages expose inspection data through `vitehub.inspect` on their Vite plugin. The contributor returns `definitions` inspectors and `providerOutput` entries from `@vite-hub/internal/inspect`. `vitehub inspect` and the Console render that data. They do not own it.
 
 Learn more at [vitehub.dev](https://vitehub.dev).

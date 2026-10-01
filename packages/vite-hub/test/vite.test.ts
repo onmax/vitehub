@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -63,7 +63,8 @@ vi.mock("@vite-hub/agent/vite", () => ({
 vi.mock("@vite-hub/internal/build/deno-runtime-packages", () => ({
   finalizeDenoDeploymentOutput: integrationMocks.finalizeDenoDeploymentOutput,
 }))
-vi.mock("@vite-hub/internal/build/deployment-plan-output", () => ({
+vi.mock("@vite-hub/internal/build/deployment-plan-output", async importOriginal => ({
+  ...await importOriginal<typeof import("@vite-hub/internal/build/deployment-plan-output")>(),
   finalizeDeploymentPlanOutput: integrationMocks.finalizeDeploymentPlanOutput,
 }))
 vi.mock("@vite-hub/auth/vite", () => ({
@@ -103,6 +104,7 @@ vi.mock("@vite-hub/workspace/vite", () => ({ hubWorkspace: integrationMocks.hubW
 
 import type { KVModuleOptions } from "@vite-hub/kv"
 import { resolveConfig, type Plugin, type PluginOption } from "vite"
+import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
 import { contributeProviderDeploymentOutput, useProviderOutputCatalog } from "../../internal/src/build/deployment-output.ts"
 import frameworkPackageManifest from "../package.json" with { type: "json" }
 import { vitehub } from "../src/index.ts"
@@ -244,6 +246,19 @@ describe("vitehub", () => {
     const output = dependencyPluginByName(vitehub({ preset: "node" }), "vite-hub/deployment-output")
 
     expect(output.closeBundle).toMatchObject({ order: "post", sequential: true })
+  })
+
+  it.each([{ configuredRoot: "/app/nitro", directory: undefined }, { configuredRoot: "/app/nitro", directory: "custom-output" }, { configuredRoot: "relative-nitro", directory: "custom-output" }])("inspects deployment paths from Nitro root $configuredRoot and output $directory", async ({ configuredRoot, directory }) => {
+    const root = "/app/vite"
+    const nitroRoot = resolve(configuredRoot)
+    const plugin = dependencyPluginByName(vitehub({ preset: "cloudflare" }), "vite-hub/deployment-output")
+    const config = await resolveConfig({ root, configFile: false }, "build")
+    Object.assign(config, { nitro: { preset: "cloudflare-module", rootDir: configuredRoot, ...(directory ? { output: { dir: directory } } : {}) } })
+    await callHook(plugin.configResolved, [config])
+    expect((await collectViteHubProviderOutputEntries([plugin])).map(entry => entry.path)).toEqual([
+      join(nitroRoot, directory ?? ".output", "deployment.json"),
+      join(nitroRoot, directory ?? ".output", "server/wrangler.json"),
+    ])
   })
 
   it("discards Provider Output after an output-phase build failure", async () => {
@@ -676,8 +691,19 @@ describe("vitehub", () => {
     })
     expect(integrationMocks.hubChannels).toHaveBeenLastCalledWith(undefined)
     expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
-      databaseImport: "vite-hub/database/drizzle",
-      runtimeEnvImport: "vite-hub/env/server",
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
+    })
+    vitehub({
+      connections: { management: { actor: "./server/connections-auth.ts" }, projectRoot: "/app", database: false, importBase: "consumer/connections" },
+      database: true,
+      preset: "node",
+    })
+    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
+      management: { actor: "./server/connections-auth.ts" },
+      projectRoot: "/app",
     })
     expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
     expect(integrationMocks.hubKv).toHaveBeenLastCalledWith({ driver: "cloudflare-kv-binding" })
@@ -1172,7 +1198,7 @@ describe("vitehub", () => {
     // SAFETY: The preset config hook populated Nitro commands and modules above.
     const nitroConfig = config.nitro as { commands: Record<string, unknown>, modules: unknown[] }
     nitroConfig.commands.deploy = "npx wrangler --cwd ./ deploy"
-    callHook(output.configResolved, [{ command: "build", nitro: nitroConfig }])
+    callHook(output.configResolved, [{ command: "build", root: "/app", nitro: nitroConfig }])
     const nitro = {
       hooks: { hook: vi.fn() },
       options: {
@@ -1332,6 +1358,7 @@ describe("vitehub", () => {
     const customResolver = { resolveId: vi.fn() }
 
     expect(() => callHook(plugin.configResolved, [{
+      root: "/app",
       command: "build",
       nitro: { preset: "deno-deploy" },
       plugins: [],

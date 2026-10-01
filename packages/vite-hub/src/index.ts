@@ -27,7 +27,7 @@ import { hubWorkflow } from "@vite-hub/workflow/vite"
 import { hubMarkdownTemplate } from "@vite-hub/markdown-template/vite"
 import { hubWorkspace } from "@vite-hub/workspace/vite"
 import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
-import { finalizeDeploymentPlanOutput } from "@vite-hub/internal/build/deployment-plan-output"
+import { describeDeploymentPlanOutput, finalizeDeploymentPlanOutput } from "@vite-hub/internal/build/deployment-plan-output"
 import { finalizeDenoDeploymentOutput } from "@vite-hub/internal/build/deno-runtime-packages"
 import { createNoExternalAddition, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS, type ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
 import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
@@ -477,6 +477,8 @@ function deploymentPlugins(
   let deployCommandOwned = false
   const resolvedBuildConfigs = new WeakMap<object, { current: ResolvedBuildConfig }>()
   let providerOutput: ReturnType<typeof useProviderOutputCatalog> | undefined
+  let deploymentRoot: string | undefined
+  let deploymentOutputDir: string | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   const deploymentEnvPlugin = { current: envPlugin }
   const subscribedEnvPlugins = new WeakSet<EnvVitePlugin>()
@@ -654,6 +656,9 @@ function deploymentPlugins(
             subscribeEnvPlugin(plugin)
           },
         },
+        inspect: () => ({
+          providerOutput: describeDeploymentPlanOutput(plan, deploymentRoot ?? process.cwd(), deploymentOutputDir),
+        }),
       },
       config(config) {
         deploymentEnvPlugin.current ??= findEnvPlugin(config.plugins)
@@ -665,6 +670,10 @@ function deploymentPlugins(
         }
       },
       configResolved(config) {
+        // SAFETY: Vite preserves the user-defined Nitro field on the resolved config, while ResolvedConfig omits framework extensions from its type.
+        const inspectionNitro = (config as ResolvedConfig & { nitro?: { rootDir?: string, output?: { dir?: string } } }).nitro
+        deploymentRoot = resolve(inspectionNitro?.rootDir ?? config.root)
+        deploymentOutputDir = inspectionNitro?.output?.dir
         const serverResolve = resolveServerOptions(config)
         const buildConfig = {
           alias: (serverResolve.alias ?? []).map(alias => ({
@@ -940,8 +949,8 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
   if (options.connections) {
     plugins.push(hubConnections({
       ...(options.connections === true ? {} : options.connections),
-      databaseImport: "vite-hub/database/drizzle",
-      runtimeEnvImport: "vite-hub/env/server",
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
     }))
   }
   if (options.database) plugins.push(hubDb(options.database === true ? undefined : options.database))

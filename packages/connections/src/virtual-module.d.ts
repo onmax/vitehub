@@ -1,4 +1,5 @@
-declare module "#vitehub/connections/runtime" {
-  const runtime: import("./types.js").ConnectionsRuntimeModule
-  export default runtime
+declare module "#vitehub/connections/registry" {
+  const registry: import("./types.js").ConnectionDefinitionRegistry
+  export const database: import("./types.js").ConnectionsDatabaseLoader | undefined
+  export default registry
 }

@@ -24,7 +24,9 @@ pnpm vitehub --help
 Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
-Expected help lists available namespaces. The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Env contributes `env` when `hubEnv()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, and the Console integration contributes `console` when `console` is enabled. The framework contributes `types` and `box`, and the CLI includes the built-in `provision` namespace. `box` does not load the project config, so it also runs in a deployed container without Vite. This output comes from an app that enables `agent`, `console`, `database`, `env`, `schedule`, and `workspace`:
+Expected help lists available namespaces.
+The CLI owns the `inspect` namespace. Plugin command contributions with that name are ignored.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Env contributes `env` when `hubEnv()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, and the Console integration contributes `console` when `console` is enabled. The framework contributes `types` and `box`, and the CLI includes the built-in `inspect` and `provision` namespaces. `box` does not load the project config, so it also runs in a deployed container without Vite. This output comes from an app that enables `agent`, `console`, `database`, `env`, `schedule`, and `workspace`:
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
@@ -38,6 +40,7 @@ Available namespaces:
   env          Server Env inspection workflows.
   schedule     Run Static Schedule Definitions on demand.
   types        Generate ViteHub TypeScript declarations.
+  inspect      Inspect discovered Definitions and generated Provider Output.
   provision    Idempotently create missing provider resources.
   box          Serve and check an SSH Box runner. Does not load the project config.
 ```
@@ -55,6 +58,7 @@ Package-contributed namespaces appear only when their package is enabled. For ex
 | `vitehub channels history`  | Available      | Agent Package                                     | Download one deployed conversation and its attachments.                                   |
 | `vitehub channels replay` | Available | Agent Package | Send past Channel messages from a Channel history through its trigger. |
 | `vitehub channels sync`     | Available      | Agent Package                                     | Inspect or apply provider-owned webhook registrations for a deployed stage.               |
+| `vitehub connections`       | Available      | Connections Package                               | Connect OAuth accounts, list Connections, read activity, and approve or deny writes.      |
 | `vitehub console dev`       | Available      | Console integration                               | Start the app's development command with deterministic Console fixture data.              |
 | `vitehub db generate`       | Available      | Database Package                                  | Refresh generated Database artifacts and generate Drizzle migrations.                     |
 | `vitehub db migrate`        | Available      | Database Package                                  | Refresh generated Database artifacts and apply Drizzle migrations.                        |
@@ -63,10 +67,46 @@ Package-contributed namespaces appear only when their package is enabled. For ex
 | `vitehub schedule run`      | Available      | Schedule Package                                  | Run a manual Static Schedule Definition now, locally or on a deployment.                  |
 | `vitehub workspace dev`     | Available      | Workspace Package                                 | Run commands through a Workspace Session exposed by a Compatible Vite Development Server. |
 | `vitehub types prepare`     | Available      | ViteHub Framework                                 | Prepare generated TypeScript declarations for editors and type checking.                  |
+| `vitehub inspect definitions` | Available | ViteHub CLI plus package inspection contributors | List the Definitions that each active package discovered. |
+| `vitehub inspect provider-output` | Available | ViteHub CLI plus package inspection contributors | List generated Provider Output files with secrets redacted. |
 | `vitehub provision run`     | Available      | ViteHub CLI plus package Provision Steps          | Create missing provider resources idempotently.                                           |
 | `vitehub provision status`  | Available      | ViteHub CLI plus package Provision Steps          | Show recorded provider ids and pending plan actions without applying them.                |
 | `vitehub box serve`         | Available      | ViteHub Framework with the Box Package            | Serve authenticated SSH commands for provider Drivers from a runner container.            |
 | `vitehub box check`         | Available      | ViteHub Framework with the Agent and Box Packages | Start a provider Driver through the SSH runner and report its readiness.                  |
+
+## Inspect Definitions and Provider Output
+
+`vitehub inspect` reads the same package-owned summaries that the Console shows. It does not start a server or call a provider. Each active package contributes its own kind: `agent`, `auth`, `browser`, `channel`, `database`, `queue`, `rate-limit`, `realtime`, `sandbox`, `schedule`, `workflow`, and `workspace`.
+
+```bash [Terminal]
+pnpm vitehub inspect definitions
+pnpm vitehub inspect definitions --kind rate-limit
+pnpm vitehub inspect definitions --json
+```
+
+```txt [Output]
+Rate Limits (rate-limit): 1
+  checkout  server/api/checkout.post.ts  [require-rate-limit]
+    Limit: 10
+    Window: 1m
+    Enforcement: Strict
+    Provider failure: Deny
+    Source location: 4:9
+```
+
+`--json` prints `{ "definitions": [{ "kind", "label", "definitions": [...] }] }`. Each Definition has `name`, `file` relative to the project root, `source`, and `fields`. An unknown `--kind` exits with status 1 and lists the available kinds.
+
+`inspect provider-output` lists the Provider Output files that active packages and the deployment preset write, and shows which ones exist. Deployment paths use the preset's default output directory, for example `.output` or `.vercel/output`. Run a production build first to generate deployment output.
+
+```bash [Terminal]
+pnpm build
+pnpm vitehub inspect provider-output
+pnpm vitehub inspect provider-output --json
+```
+
+`--json` includes the parsed content of each JSON file. The CLI redacts values under keys that name secrets, such as `token`, `secret`, `password`, or `apiKey`, every Worker `vars` value, and URLs with embedded credentials. Read [Provider output](/docs/reference/provider-output) for each file's owner and purpose.
+
+Packages contribute inspection through `vitehub.inspect` on their Vite plugin. The owner package defines the summary; the CLI and the Console only render it.
 
 ## Run an SSH Box runner
 
@@ -219,6 +259,21 @@ More history remains. Continue with --cursor Im0zIg
 The command reads the history query schema first. When the schema converts to JSON Schema, which Zod 4 and Valibot schemas do, `--help` with `--agent` and `--channel` lists its keys as flags, and an unknown flag fails before replay starts. Other schemas accept `--filter key=value`. The server always validates the query with the same schema.
 
 With `--url`, the command posts to `/_vitehub/channels/replay` on the deployment. That route requires the [Console](/docs/development/console#replay-channel-history) with invocation enabled, and it is protected like every other Console route. Set `VITEHUB_CONSOLE_AUTHORIZATION` to an `Authorization` header value that the Console access policy accepts, or `VITEHUB_CONSOLE_COOKIE` to a signed-in Console session cookie. For Cloudflare Access, set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to a service token. The command forwards them as `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Each request replays at most 10 messages, so progress appears while a long replay runs, and the command prints a cursor when history remains.
+## Manage Connections
+
+`vitehub connections` calls the Connections management API of a running app. It uses `http://localhost:5173` unless you pass `--url` or set `VITEHUB_CONNECTIONS_URL`.
+
+```sh
+pnpm vitehub connections connect google --port 8976
+pnpm vitehub connections list
+pnpm vitehub connections inspect google --json
+pnpm vitehub connections activity google
+pnpm vitehub connections approvals
+pnpm vitehub connections approvals approve <id>
+pnpm vitehub connections revoke google --confirm google
+```
+
+`connect` starts a loopback callback on `127.0.0.1` and prints the provider URL. The OAuth client must allow `http://127.0.0.1:<port>/callback`. With an HTTPS `--url`, `connect` prints the Console connect URL instead. See [Connections](/docs/server-primitives/connections).
 
 ## Manage Database migrations
 
@@ -417,6 +472,7 @@ CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm vitehub provision status
 
 | Symptom                                                   | Likely cause                                                                                                                                   | Fix                                                                                                       |
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `Unknown Definition kind` | No active package contributes that inspection kind. | Use a kind from the printed list, or enable the package integration. |
 | `Unknown ViteHub CLI namespace`                           | The package Vite Integration is not installed or is disabled.                                                                                  | Add the package's `hubX()` plugin to `vite.config.ts`.                                                    |
 | `env check` reports `missing !` for a value in `.env.<stage>` | `--stage` is missing or names another mode. | Pass the stage whose env file holds the value, for example `--stage staging`. |
 | `Provision requires --provider cloudflare\|vercel`        | The provider flag is missing or misspelled.                                                                                                    | Pass a supported provider explicitly.                                                                     |
