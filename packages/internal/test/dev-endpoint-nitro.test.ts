@@ -228,6 +228,7 @@ describe("Nitro dev handler", () => {
       "export default defineEventHandler(event => handleViteHubDevRequest(event.req))",
       "",
     ].join("\n"))
+    expect(renderViteHubNitroDevHandler({ arguments: ['runtime-"key'], export: "handleTestDevRequest", module: "test" })).toContain('handleViteHubDevRequest(event.req, "runtime-\\\"key")')
     expect(() => renderViteHubNitroDevHandler({ export: "default; evil()", module: "x" })).toThrow(TypeError)
   })
 })
