@@ -7,8 +7,12 @@ export function markAgentInvocationCallerAbortSignal(input: AgentRunInput, suppl
   callerAbortSignals.set(input, supplied)
 }
 
-export function copyAgentInvocationCallerAbortSignal(source: AgentRunInput, target: AgentRunInput): void {
-  if (callerAbortSignals.has(source)) callerAbortSignals.set(target, callerAbortSignals.get(source))
+/** Keep trusted provenance across a local clone that retains the same live signal. */
+export function copyAgentInvocationCallerAbortSignal<TInput extends AgentRunInput>(source: AgentRunInput, target: TInput): TInput {
+  if (source.abortSignal === target.abortSignal && callerAbortSignals.has(source)) {
+    callerAbortSignals.set(target, callerAbortSignals.get(source))
+  }
+  return target
 }
 
 export function agentInvocationCallerAbortSignal(input: AgentRunInput): boolean | undefined {

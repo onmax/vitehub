@@ -1,7 +1,7 @@
 import { createMessage } from "../src/messages.ts"
 import { describe, expect, it, vi } from "vitest"
 import * as v from "valibot"
-import { markAgentInvocationCallerAbortSignal } from "../src/internal/invocation-input.ts"
+import { agentInvocationCallerAbortSignal, markAgentInvocationCallerAbortSignal } from "../src/internal/invocation-input.ts"
 import { portableResolvedAgentInvokerInput, restoreResolvedAgentInvokerInput, withResolvedAgentInvokerInput } from "../src/invoker.ts"
 
 import { agentInvocationRerunInput, defineAgent, defineCapability, runAgent, startAgentInvocation } from "../src/index.ts"
@@ -182,6 +182,32 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput((await invocations.getByRunId(runId))!)).toEqual(direct
       ? { available: false, reason: "input-has-abort-signal" }
       : { available: true, prompt: "Hi" })
+  })
+
+  it("preserves controller provenance through optional data and message normalization", async () => {
+    const invocations = defineAgentInvocations({ metadataContent: ["input.prompt"], store: createMemoryAgentInvocationStore() })
+    const run = vi.fn(({ input }: { input: { abortSignal?: AbortSignal, data?: unknown } }) => {
+      expect(input.data).toBeUndefined()
+      expect(input.abortSignal).toBeDefined()
+      expect(agentInvocationCallerAbortSignal(input)).toBe(false)
+      return "done"
+    })
+    const agent = defineAgent({
+      capabilities: [defineCapability({
+        id: "normalize-messages",
+        prepare(context) { context.input.setMessages([createMessage({ role: "user", text: "Prepared message." })]) },
+      })],
+      data: v.optional(v.object({ count: v.number() })),
+      driver: { run },
+      invocations,
+      runtime: false,
+    })
+    await startAgentInvocation(agent, runtime("normalized-controller-signal"), { prompt: "Hi" }, { runId: "normalized-controller-signal" })
+    await vi.waitFor(async () => { expect(await invocations.getByRunId("normalized-controller-signal")).toMatchObject({ status: "completed" }) })
+    expect(run).toHaveBeenCalledOnce()
+    const record = (await invocations.getByRunId("normalized-controller-signal"))!
+    expect(record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes?.["input.hasAbortSignal"]).toBe(false)
+    expect(agentInvocationRerunInput(record)).toEqual({ available: true, prompt: "Hi" })
   })
 
   it("blocks replay when preparation installs a different cancellation signal", async () => {
