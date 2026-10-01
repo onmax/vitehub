@@ -125,7 +125,6 @@ const defaultCapabilityRuntimePhases = ["configure", "prepare", "bind", "input",
 export const channelDeliveryEffectsContextKey = "channel.delivery.effects"
 export const channelDeliveryFinishEffectsContextKey = "channel.delivery.finishEffects"
 type AgentCapabilityRuntimePhase = typeof defaultCapabilityRuntimePhases[number]
-export const optionalWorkspaceCapabilitySymbol: unique symbol = Symbol("vitehub.agent.optionalWorkspaceCapability")
 
 export interface ResolvedAgentFinishExtensionProvider {
   eager?: boolean
@@ -370,10 +369,6 @@ function validateSandboxCommands(commands: unknown): void {
 
 function capabilityRequiresWorkspace(capability: AgentCapabilityDefinition): boolean {
   const metadata = capability.metadata
-  const optionalWorkspace = hasRuntimeType(metadata, "object")
-    && metadata !== null
-    // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-    && (metadata as { [optionalWorkspaceCapabilitySymbol]?: unknown })[optionalWorkspaceCapabilitySymbol] === true
   const accessWorkspace = capability.id === "access"
     && hasRuntimeType(metadata, "object")
     && metadata !== null
@@ -382,7 +377,7 @@ function capabilityRequiresWorkspace(capability: AgentCapabilityDefinition): boo
   const sandboxCommands = capability.id === "sandbox"
     // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
     && Array.isArray((metadata as { commands?: unknown } | undefined)?.commands)
-  return capability.workspace && !optionalWorkspace
+  return Boolean(capability.workspace)
     || capability.id === "workspace-shell"
     || sandboxCommands
     || accessWorkspace
