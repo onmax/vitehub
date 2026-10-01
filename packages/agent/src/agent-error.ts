@@ -175,6 +175,17 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
   const timestamp = afterPrompt.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\s+\d{1,2}:\d{2}\s+[ap]\.?m\.?(?:\s+(?:UTC|GMT|UT|[ECMP][DS]T|CET|CEST|EET|EEST|BST|IST|JST|AEST|AEDT|[+-]\d{2}:?\d{2}))?)(?=\.|\s*$)/i)?.[1]
   const resetText = timestamp?.replace(/\.$/, "")
   if (!resetText || resetText.length > 64) return
+  const isoDate = resetText.match(/^(\d{4})-(\d{2})-(\d{2})T/i)
+  const namedDate = resetText.match(/^([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)(\d{4})/i)
+  const year = Number(isoDate?.[1] ?? namedDate?.[3])
+  const month = isoDate
+    ? Number(isoDate[2]) - 1
+    : ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(namedDate?.[1]?.slice(0, 3).toLowerCase() ?? "")
+  const day = Number(isoDate?.[3] ?? namedDate?.[2])
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month]
+  // Date.parse normalizes overflow days, so validate the provider's calendar date first.
+  if (daysInMonth === undefined || day < 1 || day > daysInMonth) return
   const time = Date.parse(resetText
     .replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, "$1")
     .replace(/\b([ap])\.m\.?/gi, "$1m"))

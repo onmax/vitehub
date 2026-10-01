@@ -111,6 +111,12 @@ describe("chat error fallback", () => {
     "token sk-live-secret",
     "the next billing cycle",
     "2026-99-15T01:23:00Z",
+    "2026-02-31T01:23:00Z",
+    "2026-04-31T01:23:00-07:00",
+    "2100-02-29T01:23:00Z",
+    "Feb 29, 2026 1:23 AM",
+    "Feb 30, 2026 1:23 AM UTC",
+    "Apr. 31st, 2026 1:23 p.m. PST",
     "Secret 15, 2026 1:23 AM",
   ])("omits private or invalid reset text: %s", async (reset) => {
     const message = `Quota exhausted. Try again at ${reset}.`
@@ -125,6 +131,20 @@ describe("chat error fallback", () => {
         expect(await resolveChatErrorFallbackText(undefined, { error, publicError } as never))
           .toBe("The AI provider usage limit has been reached. Usage will reset when the provider quota renews.")
       }
+    }
+  })
+
+  it.each([
+    ["2000-02-29T01:23:00Z", "2000-02-29T01:23:00.000Z"],
+    ["2028-02-29T23:23:00-07:00", "2028-03-01T06:23:00.000Z"],
+    ["Feb. 29th, 2028 1:23 p.m. UTC", "2028-02-29T13:23:00.000Z"],
+  ])("preserves valid leap dates and time zones: %s", (resetText, resetAt) => {
+    const message = `Quota exhausted. Try again at ${resetText}.`
+    for (const error of [
+      agentDiagnostics.AGENT_R0726({ message }),
+      { name: "AI_APICallError", statusCode: 429, data: { error: { code: "insufficient_quota", message } } },
+    ]) {
+      expect(toAgentPublicError(error, "http").details).toEqual({ resetText, resetAt })
     }
   })
 
