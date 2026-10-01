@@ -4628,6 +4628,45 @@ cli_auth_credentials_store = "keyring"
     }
   })
 
+  it("keeps generated instructions out of commits in a driver.cwd Git checkout", async () => {
+    const threadId = "thread-provider-cwd-git"
+    const cwd = await mkdtemp(join(tmpdir(), "vitehub-cwd-git-test-"))
+    const git = (...args: string[]) => {
+      const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return result.stdout
+    }
+    git("init", "-q")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@localhost")
+    await writeFile(join(cwd, "AGENTS.md"), "native instructions")
+    git("add", "-A")
+    git("commit", "-qm", "initial repository")
+    const originalFlags = git("ls-files", "-v", "--", "AGENTS.md")
+    const originalExclude = await readFile(join(cwd, ".git/info/exclude"), "utf8")
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+      async onSendTurn() {
+        expect(await readFile(join(cwd, "AGENTS.md"), "utf8")).toContain("generated invocation instructions")
+        await writeFile(join(cwd, "result.txt"), "Agent repair")
+        git("add", "-A")
+        git("commit", "-qm", "Agent repair")
+        expect(git("show", "HEAD:AGENTS.md")).toBe("native instructions")
+        expect(git("show", "HEAD:result.txt")).toBe("Agent repair")
+      },
+    })
+    try {
+      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+      await createProviderAgentAdapter({ cwd, instructions: "generated invocation instructions", provider: "codex" }).generate(context(threadId) as never)
+      expect(await readFile(join(cwd, "AGENTS.md"), "utf8")).toBe("native instructions")
+      expect(git("ls-files", "-v", "--", "AGENTS.md")).toBe(originalFlags)
+      expect(await readFile(join(cwd, ".git/info/exclude"), "utf8")).toBe(originalExclude)
+      expect(git("rev-list", "--count", "HEAD")).toBe("2\n")
+    }
+    finally {
+      await rm(cwd, { force: true, recursive: true })
+    }
+  })
+
   it("rejects a driver.cwd that is not an existing directory before the provider starts", async () => {
     const missing = join(tmpdir(), `vitehub-cwd-missing-${crypto.randomUUID()}`)
     const calls = createProviderRuntime.mock.calls.length
