@@ -35,9 +35,8 @@ Available namespaces:
   console      Console development workflows.
   agent        Agent development workflows.
   channels     External Channel registration workflows.
-  console      Console development workflows.
   db           Database development workflows.
-  schedule     Schedule development workflows.
+  schedule     Run Static Schedule Definitions on demand.
   types        Generate ViteHub TypeScript declarations.
   provision    Idempotently create missing provider resources.
   box          Serve and check an SSH Box runner. Does not load the project config.

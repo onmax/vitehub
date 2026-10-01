@@ -92,28 +92,6 @@ const definitions = {
       source: "vite-suffix",
     },
   ],
-  schedules: [
-    {
-      fields: [
-        { label: "Kind", value: "Static schedule" },
-        { label: "Cron", value: "0 3 * * *" },
-        { label: "Time zone", value: "UTC" },
-        { label: "Manual", value: "Enabled" },
-      ],
-      file: "server/schedules/nightly-release-notes.ts",
-      name: "nightly-release-notes",
-      source: "server-schedules",
-    },
-    {
-      fields: [
-        { label: "Kind", value: "Runtime target" },
-        { label: "Runtime schedules", value: "Allowed" },
-      ],
-      file: "server/schedules/invocation-reminder.ts",
-      name: "invocation-reminder",
-      source: "server-schedules",
-    },
-  ],
   workspaces: [
     {
       fields: [
@@ -146,6 +124,26 @@ const definitions = {
     },
   ],
   schedules: [
+    {
+      fields: [
+        { label: "Kind", value: "Static schedule" },
+        { label: "Cron", value: "0 3 * * *" },
+        { label: "Time zone", value: "UTC" },
+        { label: "Manual", value: "Enabled" },
+      ],
+      file: "server/schedules/nightly-release-notes.ts",
+      name: "nightly-release-notes",
+      source: "server-schedules",
+    },
+    {
+      fields: [
+        { label: "Kind", value: "Runtime target" },
+        { label: "Runtime schedules", value: "Allowed" },
+      ],
+      file: "server/schedules/invocation-reminder.ts",
+      name: "invocation-reminder",
+      source: "server-schedules",
+    },
     {
       fields: [
         { label: "Kind", value: "Static schedule" },
