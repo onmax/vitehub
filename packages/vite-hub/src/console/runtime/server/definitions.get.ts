@@ -1,4 +1,5 @@
 import { assertConsoleRequest, consoleRequestURL } from "./request.ts"
+import { getConsoleSchedules } from "./definitions.ts"
 import { resolveConsoleDefinitions } from "../../internal.ts"
 import { isConsoleSectionId } from "../sections.ts"
 
@@ -22,5 +23,11 @@ export default function consoleDefinitionsHandler(event: ConsoleRequestEvent): C
   const catalog = resolveConsoleDefinitions()?.content ?? {}
   const content = Object.hasOwn(catalog, section) ? catalog[section] : undefined
   if (!content) throw requestError(404, "Definition section not found.")
-  return { ...content, section }
+  if (section !== "schedules" || content.kind !== "definition-catalog") return { ...content, section }
+  const runnable = getConsoleSchedules()
+  return {
+    ...content,
+    definitions: content.definitions.map(definition => Object.hasOwn(runnable, definition.name) ? { ...definition, runnable: true } : definition),
+    section,
+  }
 }

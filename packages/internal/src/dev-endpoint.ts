@@ -25,6 +25,8 @@ export interface ViteHubDevEndpointServer {
       /** Host that the dev server listens on. A string host is also an allowed host. */
       host?: string | boolean
       /** When set, Vite does not check the `Host` header, because TLS binds the host name. */
+      hmr?: boolean | { host?: string }
+      origin?: string
       https?: unknown
       port?: number
     }
@@ -53,11 +55,8 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
 }
 
-const fileOrExtensionProtocol = /^(?:file|.+-extension):/i
-
 function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boolean {
-  if (fileOrExtensionProtocol.test(host)) return true
-  const trimmed = host.trim()
+  const trimmed = host.trim().toLowerCase()
   if (trimmed.startsWith("[")) {
     const end = trimmed.indexOf("]")
     return end > 0 && isIP(trimmed.slice(1, end)) === 6
@@ -66,16 +65,20 @@ function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boole
   const hostname = colon === -1 ? trimmed : trimmed.slice(0, colon)
   if (isIP(hostname) === 4) return true
   if (hostname === "localhost" || hostname.endsWith(".localhost")) return true
-  return allowedHosts.some(allowed => allowed === hostname
-    || (allowed.startsWith(".") && (allowed.slice(1) === hostname || hostname.endsWith(allowed))))
+  return allowedHosts.some(value => {
+    const allowed = value.toLowerCase()
+    return allowed === hostname
+      || (allowed.startsWith(".") && (allowed.slice(1) === hostname || hostname.endsWith(allowed)))
+  })
 }
 
 /**
  * Checks the `Host` header with the same rules as Vite's host validation.
  *
  * Accepts a missing header, IP literals, `localhost`, `*.localhost`, the configured
- * `server.host`, and `server.allowedHosts`. An entry that starts with `.` also accepts
- * its subdomains. `allowedHosts: true` or `server.https` accepts all hosts, as in Vite.
+ * `server.host`, `server.hmr.host`, `server.origin`, and `server.allowedHosts`. An entry that starts with `.` also accepts
+ * its subdomains. Vite includes the comma-separated environment host list in resolved `server.allowedHosts`.
+ * `allowedHosts: true` or `server.https` accepts all hosts, as in Vite.
  *
  * Dev endpoints run this check themselves, so they do not depend on the host
  * framework to run Vite's host validation before them. This blocks DNS rebinding:
@@ -84,9 +87,21 @@ function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boole
 export function isViteHubDevHostAllowed(server: Pick<ViteHubDevEndpointServer, "config">, req: IncomingMessage): boolean {
   const host = firstHeader(req.headers.host)
   if (host === undefined) return true
-  const { allowedHosts = [], host: listenHost, https } = server.config.server
+  const { allowedHosts = [], host: listenHost, hmr, origin, https } = server.config.server
   if (allowedHosts === true || https) return true
-  return hostHeaderAllowed(host, typeof listenHost === "string" ? [...allowedHosts, listenHost] : allowedHosts)
+  const additionalHosts = [...allowedHosts]
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vite allows a string hostname or a boolean listen-host setting.
+  if (typeof listenHost === "string") additionalHosts.push(listenHost)
+  if (hmr && hmr !== true && hmr.host) additionalHosts.push(hmr.host)
+  if (origin) {
+    try {
+      additionalHosts.push(new URL(origin).hostname)
+    }
+    catch {
+      // Invalid origins do not add a host allowance.
+    }
+  }
+  return hostHeaderAllowed(host, additionalHosts)
 }
 
 /**

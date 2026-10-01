@@ -1,5 +1,6 @@
 import ui from "@vite-hub/ui/vite";
 import vue from "@vitejs/plugin-vue";
+import lucide from "@iconify-json/lucide/icons.json" with { type: "json" };
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 
@@ -26,8 +27,9 @@ export default defineConfig({
         dts: false,
         icon: {
           clientBundle: {
-            // Contributed sections declare their icons in owner packages, which the scan does not read.
-            icons: [...consoleContributedSectionIcons],
+            // Agent tools can declare any Lucide icon, and the Console CSP blocks the Iconify API.
+            icons: [...new Set([...Object.keys(lucide.icons).map(name => `i-lucide-${name}`), ...consoleContributedSectionIcons])],
+            sizeLimitKb: 1024,
             scan: {
               globInclude: ["src/console/**/*.{js,ts,vue}"],
             },

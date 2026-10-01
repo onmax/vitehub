@@ -50,13 +50,13 @@ describe("redactInspectionValue", () => {
     expect(redactInspectionValue({
       d1_databases: [{ binding: "DB", database_id: "db-id" }],
       nested: { apiKey: "k", "Api key": "k", authorization: "Bearer x", password: "p", token: "t" },
-      urls: ["https://user:pass@example.com/db", "https://example.com/public"],
+      urls: ["https://user:pass@example.com/db", "redis://:password@example.com/0", "https://token@example.com/path", "https://user:@example.com/path", "https://example.com/public"],
       header: "Bearer abc",
       vars: { PUBLIC_FLAG: "on", STRIPE_KEY: "sk_live" },
     })).toEqual({
       d1_databases: [{ binding: "DB", database_id: "db-id" }],
       nested: { apiKey: "[redacted]", "Api key": "[redacted]", authorization: "[redacted]", password: "[redacted]", token: "[redacted]" },
-      urls: ["[redacted]", "https://example.com/public"],
+      urls: ["[redacted]", "[redacted]", "[redacted]", "[redacted]", "https://example.com/public"],
       header: "[redacted]",
       vars: { PUBLIC_FLAG: "[redacted]", STRIPE_KEY: "[redacted]" },
     })
@@ -73,11 +73,19 @@ describe("describeDeploymentPlanOutput", () => {
   it.each([
     ["cloudflare", ["/app/.output/deployment.json", "/app/.output/server/wrangler.json"]],
     ["vercel", ["/app/.vercel/output/deployment.json", "/app/.vercel/output/config.json"]],
-    ["netlify", ["/app/.netlify/deployment.json", "/app/.netlify/v1"]],
+    ["netlify", ["/app/.netlify/deployment.json", "/app/.netlify/functions-internal"]],
     ["node", ["/app/.output/deployment.json"]],
   ] as const)("lists the %s preset output", (preset, paths) => {
     const entries = describeDeploymentPlanOutput(resolveDeploymentPlan(preset), "/app")
     expect(entries.map(entry => entry.path)).toEqual(paths)
     expect(entries.every(entry => entry.owner === "vite-hub")).toBe(true)
+  })
+
+  it("uses the resolved Nitro output directory and Netlify deployment root", () => {
+    const plan = resolveDeploymentPlan("netlify")
+    expect(describeDeploymentPlanOutput(plan, "/app", "/app/custom/functions-internal").map(entry => entry.path)).toEqual([
+      "/app/custom/deployment.json",
+      "/app/custom/functions-internal",
+    ])
   })
 })

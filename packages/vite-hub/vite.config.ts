@@ -232,6 +232,8 @@ export default defineConfig({
       "src/console/runtime/client/invocation.ts",
       "src/console/runtime/client/request.ts",
       "src/console/runtime/client/env-management.ts",
+      "src/console/runtime/client/env-status.ts",
+      "src/console/runtime/client/schedule-run.ts",
       "src/console/runtime/client/time.ts",
       "src/console/runtime/definitions.ts",
       "src/console/runtime/rpc.ts",
@@ -242,7 +244,7 @@ export default defineConfig({
       "src/console/runtime/server/database.get.ts",
       "src/console/runtime/server/definitions.get.ts",
       "src/console/runtime/server/invocation-capabilities.get.ts",
-      "src/console/runtime/server/devframe.ts",
+      "src/console/runtime/server/rpc.ts",
       "src/console/runtime/server/invocation.get.ts",
       "src/console/runtime/server/invocation-workspace.get.ts",
       "src/console/runtime/server/invocations.get.ts",
@@ -250,6 +252,7 @@ export default defineConfig({
       "src/console/runtime/server/env-manage.ts",
       "src/console/runtime/server/kv.get.ts",
       "src/console/runtime/server/page.get.ts",
+      "src/console/runtime/server/schedule-run.ts",
       "src/console/runtime/server/search.get.ts",
       "src/console/runtime/server/sections.get.ts",
       "src/console/runtime/server/usage.get.ts",
@@ -264,6 +267,8 @@ export default defineConfig({
         delete exports["./console/runtime/client/invocation"];
         delete exports["./console/runtime/client/request"];
         delete exports["./console/runtime/client/env-management"];
+        delete exports["./console/runtime/client/env-status"];
+        delete exports["./console/runtime/client/schedule-run"];
         delete exports["./console/runtime/client/time"];
         delete exports["./console/runtime/definitions"];
         delete exports["./console/runtime/rpc"];
@@ -277,7 +282,7 @@ export default defineConfig({
         delete exports["./console/runtime/server/definitions"];
         delete exports["./console/runtime/server/definitions.get"];
         delete exports["./console/runtime/server/invocation-capabilities.get"];
-        delete exports["./console/runtime/server/devframe"];
+        delete exports["./console/runtime/server/rpc"];
         delete exports["./console/runtime/server/invocation.get"];
         delete exports["./console/runtime/server/invocation-workspace.get"];
         delete exports["./console/runtime/server/invocations.get"];
@@ -287,16 +292,19 @@ export default defineConfig({
         delete exports["./console/runtime/server/kv.get"];
         delete exports["./console/runtime/server/kv"];
         delete exports["./console/runtime/server/page.get"];
+        delete exports["./console/runtime/server/schedule-run"];
         delete exports["./console/runtime/server/search.get"];
         delete exports["./console/runtime/server/sections.get"];
         delete exports["./console/runtime/server/sections"];
         delete exports["./console/runtime/server/usage.get"];
         delete exports["./console/runtime/server/status.get"];
         delete exports["./console/auth-client"];
+        delete exports["./console/auth-cloudflare-access"];
         delete exports["./console/auth-inline"];
         return {
           ...exports,
           "./console/auth/client": "./dist/console/auth-client.js",
+          "./console/auth/cloudflare-access": "./dist/console/auth-cloudflare-access.js",
           "./console/auth/inline": "./dist/console/auth-inline.js",
           "./console/blob": "./dist/console/runtime/server/blob.js",
           "./console/database": "./dist/console/runtime/server/database.js",

@@ -16,7 +16,6 @@ import { posthogAgentExporter } from 'vite-hub/agent/evlog/posthog'
 export const telemetry = createAgentEvlog({
   service: 'support-agent',
   environment: 'development',
-  console: { origin: 'https://agents.example.com' },
   resources: nodeRuntimeResources(),
   exporter: posthogAgentExporter({
     apiKey: process.env.POSTHOG_API_KEY!,
@@ -52,7 +51,6 @@ const telemetry = createAgentEvlog({
   service: 'support-agent',
   environment: 'production',
   exporter,
-  console: { origin: 'https://agents.example.com' },
   papercuts: {
     async invocations() {
       const { getConsoleInvocations } = await import('vite-hub/console/server')
@@ -71,4 +69,4 @@ Delivery is at least once. A crash between destination acceptance and the persis
 
 `sessionUrl` supplies a trusted host URL for the invocation. `eventPrefix` and `uuidNamespace` let existing consumers retain their stored event names and report identities. Keep these stable across deployments. `stop()` closes the reporter and waits up to `deliveryTimeoutMs` for active work. A timed-out report is not marked as delivered.
 
-`console.origin` can be a function of the Agent name when one host serves several origins. `console.base` defaults to `/_vitehub`. An explicit `sessionUrl` callback takes precedence. Quota checks, application routing and deployment revision labels remain application configuration.
+Invocation links in events and reports use `vitehub({ publicUrl })`. Without it, events have no `session_url`. An explicit `sessionUrl` callback takes precedence. Quota checks, application routing and deployment revision labels remain application configuration.

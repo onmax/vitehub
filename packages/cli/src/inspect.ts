@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs"
 
 import { collectViteHubDefinitionInspectors, collectViteHubProviderOutputEntries, redactInspectionValue } from "@vite-hub/internal/inspect"
-import { PROVISION_STATE_FILE } from "@vite-hub/internal/provision-state"
+import { PROVISION_STATE_FILE, readProvisionStateSync } from "@vite-hub/internal/provision-state"
 import { relative, resolve } from "pathe"
 
 import type { ViteHubCliCommandNamespace, ViteHubCliContext } from "@vite-hub/internal/cli"
@@ -174,7 +174,26 @@ async function runProviderOutput(args: string[], context: InspectContext, plugin
     .sort((left, right) => left.path.localeCompare(right.path))
 
   if (parsed.json) {
-    writeJson(context, { providerOutput: reports })
+    const providerOutput = reports.map((report) => {
+      if (report.owner !== "cli" || report.path !== PROVISION_STATE_FILE || report.type !== "file" || report.content === "[unreadable JSON]")
+        return redactInspectionValue(report);
+      const state = readProvisionStateSync(context.rootDir);
+      const content = Object.fromEntries(
+        (["cloudflare", "vercel"] as const).filter(provider => state[provider]).map(provider => [
+          provider,
+          Object.fromEntries(
+            Object.entries(state[provider] ?? {}).map(([category, ids]) => [
+              category,
+              Object.fromEntries(
+                Object.entries(ids).map(([name, id]) => [name, redactInspectionValue(id)]),
+              ),
+            ]),
+          ),
+        ]),
+      );
+      return { ...report, content };
+    });
+    context.stdout.write(`${JSON.stringify({ providerOutput }, null, 2)}\n`);
     return 0
   }
 

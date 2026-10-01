@@ -10,6 +10,8 @@ export interface ConsoleDefinitionSummary {
   fields: readonly ConsoleDefinitionField[]
   file: string
   name: string
+  /** The Console can run this definition now. Only manual Schedule Definitions with Console invocation set it. */
+  runnable?: boolean
   source: string
 }
 
@@ -92,7 +94,7 @@ export function parseConsoleDefinitionSummaries(value: unknown): ConsoleDefiniti
   return value.flatMap((entry) => {
     const definition = record(entry)
     return text(definition?.name) && text(definition.file) && text(definition.source)
-      ? [{ fields: parseConsoleDefinitionFields(definition.fields), file: definition.file, name: definition.name, source: definition.source }]
+      ? [{ fields: parseConsoleDefinitionFields(definition.fields), file: definition.file, name: definition.name, runnable: definition.runnable === true ? true : undefined, source: definition.source }]
       : []
   })
 }

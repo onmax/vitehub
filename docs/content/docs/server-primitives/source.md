@@ -110,6 +110,8 @@ Use `sourceIgnores` from `vite-hub/source` for reusable dependency, generated-ou
 
 `file()` follows a symbolic link only when its resolved target stays inside the Source root. `glob()` is also confined to the Source root. By default, it rejects an item when its file or a parent directory is a symbolic link. Set `followSymlinks: true` to follow links when their resolved targets stay inside the Source root. This option controls which local files the Source can select. It does not isolate the process from concurrent file system changes.
 
+Source paths are relative to the configured root. ViteHub rejects Windows drive paths, drive-relative paths such as `C:secrets.txt`, and null bytes on every host. Local Workspace Stores have a stricter contract and reject symlink access.
+
 ### Cache options
 
 `github()`, `mcpResources()`, and custom Sources can expose a cache policy; `false` disables it. GitHub applies the policy to its own ref, archive, and metadata caches. Workspace can also consume the same policy when it decides whether materialized Source content is fresh.
@@ -368,15 +370,47 @@ ViteHub discovers modules in `server/collections` and generates their type
 registry and read-only GET routes. Each module exports a Collection with the
 same name as its filename, so `articles.ts` exports `articles` and maps to
 `/api/articles`. The Nuxt module auto-imports `useCollection`; outside Nuxt,
-import it from `vite-hub/source/client`. Everything in `server/collections` is
-public through its transformed shape; keep private definitions elsewhere and do
-not create a matching `server/api` handler. Restart Nuxt after adding, removing,
+import it from `vite-hub/source/client`. Do not create a matching `server/api`
+handler. Restart Nuxt after adding, removing,
 or renaming a Collection module so Nitro rebuilds its handler manifest. Use
 `filter` for validated request input. It stays
 fixed while `loadMore()` advances the opaque cursor. For a bounded Collection,
 set `all: true` to fetch every page asynchronously. `cursor` and `limit` are
 reserved route query parameters. Invalid limits, cursor encodings, and parsed
 filters return HTTP 400.
+
+### Protect a Collection
+
+A Collection route is public through its transformed shape unless it declares
+`authorize`. `authorize: true` requires a signed-in [Auth](/docs/server-primitives/auth)
+session. A callback uses the Auth access signature: it receives
+`{ request, session, user }` and returns `true`, `false`, or a `Response`.
+
+```ts [server/collections/meals.ts]
+export const meals = defineCollection({
+  source: table({ /* ... */ }),
+  authorize: ({ user }) => user.role === 'owner',
+  transform: meal => ({ id: meal.id, calories: meal.calories }),
+})
+```
+
+The loader overload accepts the same option: `defineCollection(load, { authorize, ... })`.
+ViteHub checks access before it parses the query or loads rows. A request without a
+session returns JSON `401`, `false` returns `403`, and a returned `Response` is sent
+as-is. The check reads the same-origin session cookie, so `useCollection()` needs no
+extra headers. It sets `error` to a `CollectionAccessError` with `status` `401` or
+`403`:
+
+```ts
+import { CollectionAccessError } from 'vite-hub/source/client'
+
+const { error } = useCollection('meals')
+const signedOut = computed(() => error.value instanceof CollectionAccessError && error.value.status === 401)
+```
+
+Enable Auth and define `server/auth.ts` before you use `authorize`. Without Auth,
+the generated route cannot read a session and fails closed with `SOURCE_R0025`.
+`authorize` decides access to the whole route. It does not filter rows per user.
 
 ## Use Sources with Workspace
 

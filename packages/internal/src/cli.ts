@@ -1,3 +1,5 @@
+import { isPlainObject } from "./object.ts"
+
 import type { ProvisionStep } from "./provision.ts"
 
 export interface ViteHubCliStreams {
@@ -241,9 +243,13 @@ export async function fetchViteHubDevEndpoint(
  * Writes the reason to `stderr` and returns `undefined` when the URL is not
  * valid, the server does not answer, or the server root does not match.
  */
-export async function discoverViteHubDevServer<TDiscovery extends { root?: unknown }>(
-  options: ViteHubDevServerDiscoveryOptions,
-): Promise<ViteHubDevServerTarget<TDiscovery> | undefined> {
+export function discoverViteHubDevServer(options: ViteHubDevServerDiscoveryOptions): Promise<ViteHubDevServerTarget<Record<string, unknown>> | undefined>
+export function discoverViteHubDevServer<TDiscovery extends { root?: unknown }>(
+  options: ViteHubDevServerDiscoveryOptions & { parseDiscovery: (value: unknown) => TDiscovery },
+): Promise<ViteHubDevServerTarget<TDiscovery> | undefined>
+export async function discoverViteHubDevServer(
+  options: ViteHubDevServerDiscoveryOptions & { parseDiscovery?: (value: unknown) => { root?: unknown } },
+): Promise<ViteHubDevServerTarget<{ root?: unknown }> | undefined> {
   let url: string
   try {
     url = viteHubDevEndpointUrl(options.serverUrl, options.endpoint.route)
@@ -266,9 +272,10 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
     options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
     return
   }
-  // SAFETY: the owner endpoint defines the discovery shape. Callers check each field before use.
-  const discovery = await response.json().catch(() => ({})) as TDiscovery
+  const value: unknown = await response.json().catch(() => undefined)
+  const discovery = options.parseDiscovery ? options.parseDiscovery(value) : isPlainObject(value) ? value : {}
   const isCompatibleRoot = options.isCompatibleRoot ?? ((rootDir: string, serverRoot: string) => serverRoot === rootDir)
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate the untrusted discovery root before comparing it with the local project.
   if (typeof discovery.root === "string" && !isCompatibleRoot(options.rootDir, discovery.root)) {
     options.stderr.write(`Compatible Vite Development Server root mismatch: ${discovery.root}\n`)
     return
