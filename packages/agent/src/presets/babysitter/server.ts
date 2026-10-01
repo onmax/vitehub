@@ -204,6 +204,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     if (merge.mode !== "direct") return false;
     const { snapshot } = claim;
     const { repository, number } = snapshot;
+    // A recovered claim may still represent an interrupted merge whose outcome
+    // has not been proven by a closed live read. Keep it out of the repair pass
+    // until hydration clears the fence.
+    if (await pullRequestInbox.hasMergeIntent(claim)) {
+      await pullRequestInbox.release(claim);
+      return true;
+    }
     const base = snapshot.pr?.base?.ref;
     if (!base) return false;
     const policy = await requiredChecks.read(repository, base);
