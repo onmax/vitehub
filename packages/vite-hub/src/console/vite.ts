@@ -200,12 +200,13 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   let databaseUrl: string | undefined
   let observations: AgentInvocationsOptions["observations"]
   let consoleAuthHandlers: Awaited<ReturnType<typeof writeConsoleAuthHandlers>> | undefined
+  let consoleAuthConfigForHandlers: ReturnType<typeof resolveConsoleAuthConfig> | undefined
   let refreshConsoleAuthClient: (() => Promise<void>) | undefined
 
   const refreshConsoleCatalog = serializeConsoleRefresh(async () => {
     if (!generatedPlugin || !projectRoot || !root) return
     const catalog = await discoverConsoleBuildCatalog({ databaseDiscoveryRoot, discoveryRoot: root, projectRoot, rateLimitDiscoveryRoot, rateLimitScanDirs, sandboxDiscoveryRoot: root, scheduleDiscoveryRoot, sections, serverDirs, workspaceDiscoveryRoot })
-    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, databaseUrl, Boolean(consoleAuthHandlers))
+    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, databaseUrl, consoleAuthHandlers?.auth ?? false)
     if (options.invocationRootState) updateConsoleInvocationRootState(options.invocationRootState, projectRoot, identity)
   })
 
@@ -295,12 +296,25 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         consoleAuth: configured !== true && configured.access === "auth" && Boolean(configured.auth),
         development: environment.command !== "build",
       })
-      const consoleAuthConfig = configured !== true && configured.access === "auth" && configured.auth
+      if (environment.command === "build" && configured !== true && configured.exposure === "host-managed" && options.preset === "cloudflare") {
+        config.logger?.warn('[vitehub] Cloudflare production Console uses host-managed exposure. Set console: { access: "auth", auth: { provider: "cloudflare-access" } } to enable Cloudflare Access verification.')
+      }
+      const resolvedConsoleAuthConfig = configured !== true && configured.access === "auth" && configured.auth
         ? resolveConsoleAuthConfig(root, configured.auth, options.preset)
         : undefined
-      consoleAuthHandlers = consoleAuthConfig ? await writeConsoleAuthHandlers(root, consoleAuthConfig) : undefined
+      // Cloudflare Access is enforced at the edge in production. Development keeps the Console unguarded so local
+      // preview behavior remains the same as the other host-managed modes.
+      const consoleAuthConfig = environment.command !== "build"
+        && resolvedConsoleAuthConfig && "provider" in resolvedConsoleAuthConfig && resolvedConsoleAuthConfig.provider === "cloudflare-access"
+        ? undefined
+        : resolvedConsoleAuthConfig
+      consoleAuthConfigForHandlers = consoleAuthConfig
+      // Vite's config hook has the user base available. Generate auth handlers with that mount so their route
+      // matching remains correct when the app is served below a path prefix.
+      const consoleAuthMountBase = config.base ?? "/"
+      consoleAuthHandlers = consoleAuthConfig ? await writeConsoleAuthHandlers(root, consoleAuthConfig, consoleAuthMountBase) : undefined
       refreshConsoleAuthClient = consoleAuthConfig
-        ? serializeConsoleRefresh(async () => { consoleAuthHandlers = await writeConsoleAuthHandlers(root!, consoleAuthConfig) })
+        ? serializeConsoleRefresh(async () => { consoleAuthHandlers = await writeConsoleAuthHandlers(root!, consoleAuthConfig, consoleAuthMountBase) })
         : undefined
       projectRoot = resolveViteHubProjectRoot(root)
       const configuredFixture = viteConfig.vitehubCliDiscovery
@@ -339,7 +353,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
           observations,
           undefined,
           databaseUrl,
-          Boolean(consoleAuthHandlers),
+          consoleAuthHandlers?.auth ?? false,
         )
       }
       // SAFETY: Nitro extends Vite's user config with this documented top-level configuration object.
@@ -370,7 +384,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       for (const handler of [
         { handler: join(consoleRuntimeRoot, "server/status.get.js"), route: "/api/_vitehub/console/status", method: "get" },
         { handler: join(consoleRuntimeRoot, "server/usage.get.js"), route: "/api/_vitehub/console/usage", method: "get" },
-        ...(consoleAuthHandlers ? [{ handler: consoleAuthHandlers.signIn, route: "/_vitehub/sign-in", method: "get" }] : []),
+        ...(consoleAuthHandlers && "signIn" in consoleAuthHandlers ? [{ handler: consoleAuthHandlers.signIn, route: "/_vitehub/sign-in", method: "get" }] : []),
         { handler: join(consoleRuntimeRoot, "server/page.get.js"), route: "/_vitehub" },
         { handler: join(consoleRuntimeRoot, "server/page.get.js"), route: "/_vitehub/**" },
       ]) kit.addHandler(handler)
@@ -380,7 +394,9 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         method: "get",
       })
       if (consoleAuthHandlers) {
-        kit.addHandler({ handler: consoleAuthHandlers.route, route: "/api/_vitehub/console/auth/**" })
+        if ("route" in consoleAuthHandlers && consoleAuthHandlers.route) {
+          kit.addHandler({ handler: consoleAuthHandlers.route, route: "/api/_vitehub/console/auth/**" })
+        }
         kit.addHandler({ handler: consoleAuthHandlers.middleware, middleware: true, route: "/**" })
       }
       addConsoleRpcHandler(kit.config, consoleRuntimeRoot)
@@ -410,6 +426,11 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
     },
     async configResolved(config) {
       root = config.root
+      if (consoleAuthConfigForHandlers) {
+        // A later Vite plugin may change the base after the initial config hook. Regenerate auth handlers with the
+        // final resolved mount so path matching and redirects use the effective base.
+        consoleAuthHandlers = await writeConsoleAuthHandlers(root, consoleAuthConfigForHandlers, config.base)
+      }
       projectRoot ||= resolveViteHubProjectRoot(config.root)
       generatedPlugin ||= resolve(config.root, generatedConsolePlugin)
       // SAFETY: ViteHub KV and Nitro extend the resolved Vite config with these documented keys.
