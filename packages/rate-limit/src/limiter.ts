@@ -165,7 +165,10 @@ export function createRateLimiter(options: CreateRateLimiterOptions): RateLimite
       if (!v.is(v.function(), driver.reset)) {
         return { reason: unsupportedReason(driver.name, "reset"), status: "unsupported" }
       }
-      const [error] = await driver.reset(driverInput(input))
+      const outcome: unknown = await driver.reset(driverInput(input))
+      const parsed = v.safeParse(v.strictTuple([v.nullable(v.instance(Error))]), outcome)
+      if (!parsed.success) throw rateLimitErrorDiagnostics.RATE_LIMIT_R0042({ message: "[vitehub] Rate Limit driver reset() must return [null] or [Error]." })
+      const [error] = parsed.output
       return error ? { cause: error.cause ?? error, status: "unavailable" } : { status: "reset" }
     },
   }
