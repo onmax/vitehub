@@ -535,6 +535,13 @@ it("ignores a non-null assertion on an imported Channel", async () => {
   expect(definition?.workspace).toBe("review")
 })
 
+it.each(["portal!()", "portal!.property", "portal![key]", "portal!?.property"])("rejects a continued non-null assertion on an imported Channel: %s", async expression => {
+  await expect(discover(
+    `import portal from "../../portal.ts"; const key = "property"; export default defineAgent({ channels: { github: ${expression} } })`,
+    { "portal.ts": 'import { github } from "vite-hub/agent/channels"; export default github({ pullRequest: true })' },
+  )).rejects.toThrow(/opaque Channel|imported Channel/)
+})
+
 it.each([
   "github({ get pullRequest() { return true } })",
   "github({ pullRequest: { get workspace() { return true } } })",
@@ -586,6 +593,7 @@ it.each(["π", "\\u03c0", "\\u{3c0}", "𐐀", "\\u{10400}", "a\\u200Cb"])("track
 
 it.each([
   ["portal.default", "export default", true],
+  ["portal.default!", "export default", true],
   ['portal["default"]', "export default", false],
   ["portal.channel", "export const channel =", true],
   ['portal["channel"]', "export const channel =", false],
@@ -596,7 +604,7 @@ it.each([
   expect((await discover(source.replace("export default defineAgent", `const channel = ${member}; export default defineAgent`).replace(`custom: ${member}`, "custom: channel"), files))?.workspace).toBe(enabled ? "review" : undefined)
 })
 
-it.each(["portal", "portal[key]", "portal.default()", "portal.default.capabilities", "portal.missing", "portal.default && github({ pullRequest: true })", "portal.default || github({ pullRequest: true })", "portal.default ?? github({ pullRequest: true })"])("rejects opaque relative Channel namespace members: %s", async (member) => {
+it.each(["portal", "portal[key]", "portal.default()", "portal.default.capabilities", "portal.default!()", "portal.default!.property", "portal.default![key]", "portal.default!?.property", "portal.missing", "portal.default && github({ pullRequest: true })", "portal.default || github({ pullRequest: true })", "portal.default ?? github({ pullRequest: true })"])("rejects opaque relative Channel namespace members: %s", async (member) => {
   await expect(discover(`import * as portal from "../../portal.ts"; const key = "default"; export default defineAgent({ channels: { custom: ${member} } })`, { "portal.ts": owning })).rejects.toThrow(/opaque Channel|imported Channel/)
 })
 
@@ -610,6 +618,7 @@ it("follows namespace re-exports of relative Channels", async () => {
   const source = 'import { portal } from "../../portal.ts"; export default defineAgent({ channels: { custom: portal.default } })'
   const files = { "portal.ts": 'export * as portal from "./inner.ts"', "inner.ts": owning }
   expect((await discover(source, files))?.workspace).toBe("review")
+  expect((await discover(source.replace("portal.default", "portal.default!"), files))?.workspace).toBe("review")
 })
 
 it.each([true, false])("follows named Channels in namespace re-exports with pullRequest %s", async enabled => {
@@ -627,7 +636,7 @@ it.each([true, false])("follows named Channels in namespace re-exports with pull
   }
 })
 
-it.each(["portal.missing", "portal.review()", "portal.review.capabilities", "portal.review || github({ pullRequest: true })"])('rejects opaque namespace re-export members: %s', async member => {
+it.each(["portal.missing", "portal.review()", "portal.review.capabilities", "portal.review!()", "portal.review!.property", "portal.review![key]", "portal.review!?.property", "portal.review || github({ pullRequest: true })"])('rejects opaque namespace re-export members: %s', async member => {
   await expect(discover(`import { portal } from "../../portal.ts"; export default defineAgent({ channels: { custom: ${member} } })`, {
     "portal.ts": 'export * as portal from "./inner.ts"',
     "inner.ts": `${imports} export const review = github({ pullRequest: false })`,
