@@ -124,9 +124,20 @@ export default defineAgent({
 })
 ```
 
-ViteHub resolves `env` once, then gives `launch` the selected environment, provider executable, temporary working directory, and abort signal. The wrapper receives its configured arguments followed by the provider runtime arguments. ViteHub writes an owner-only temporary launcher outside the Workspace and removes it after the provider runtime stops. Launch wrappers require a POSIX host. They change process startup only; authorization, remote isolation, and wrapper credentials remain application-owned.
+ViteHub resolves `env` once, then gives `launch` the selected environment, executable to start in `command`, original provider executable in `providerCommand`, temporary working directory, and abort signal. Use `command` to construct wrapper arguments and `providerCommand` to select a provider-specific runner. They are equal during invocations. The wrapper receives its configured arguments followed by the provider runtime arguments. ViteHub writes an owner-only temporary launcher outside the Workspace and removes it after the provider runtime stops. Launch wrappers require a POSIX host. They change process startup only; authorization, remote isolation, and wrapper credentials remain application-owned.
 
 Agent inspection reports whether `env` and `launch` are static or dynamic without resolving either value.
+
+Set `requirements` to the commands that the provider's own shell needs, for example `['git', 'gh', 'unzip', 'apply_patch']`. `agent.status()` checks each command with `command -v` where the Driver runs, or `where.exe` for a local Windows Driver. With `launch`, requirements need a resolver. Status inspection resolves it once with `command: 'sh'`. Each provider probe checks the commands in that same shell before it starts the provider, so checking requirements does not allocate another runner. A status probe may execute the resolved launcher more than once for separate provider checks. If the launcher does not report command-check results, requirement readiness remains unknown. Missing commands make the status `unavailable` and appear in `status.missingCommands` and `status.reason`. Invocations do not repeat the check.
+
+Resolvers that route by the provider executable must use `providerCommand` before enabling `requirements`. During requirement inspection, `command` is `sh` and `providerCommand` still identifies the provider. An application-owned runner selector can use both fields:
+
+```ts
+launch: ({ command, providerCommand }) => ({
+  args: ['exec', '--', command],
+  command: selectRunnerForProvider(providerCommand),
+})
+```
 
 Threads resume with the provider's opaque cursor. ViteHub normalizes assistant text, reasoning, native and Capability tool activity, approvals, provider questions, usage, warnings, errors, and terminal state into Agent Invocation events.
 
@@ -144,11 +155,18 @@ Threads resume with the provider's opaque cursor. ViteHub normalizes assistant t
 | `launch` | Provider command wrapper or invocation-time resolver. Receives the provider executable, working directory, selected environment, and abort signal. |
 | `permissions` | `"ask"`, `"allow-edits"`, or `"allow-all"`; defaults to `"ask"`. Set `"allow-all"` explicitly to run provider actions without approval. |
 | `providerSettings` | Advanced settings passed to the embedded provider runtime. Explicit settings override the installed Codex executable fallback. |
+| `requirements` | Command names that `status()` checks where the Driver runs. Missing commands are reported in `missingCommands`. |
 | `sessionStorePath` | Optional SQLite file for provider session cursors. Enables thread continuation after a process restart on the same persistent host volume. |
 | `output` | Optional structured Agent output contract. |
 | `capacity` | Optional process-local static or adaptive concurrency and queue limits. |
 
 Provider Drivers do not accept Agent Boxes, model-specific Provider Tool contributions, Cloudflare Agents, or Deno. Provider Workspaces are also unsupported on Windows. These boundaries fail explicitly. Workspace-scoped Skills and ordinary Capability tools are supported.
+
+### Cloudflare Workers
+
+Provider Drivers start local Codex or Claude Code processes, so they cannot run in a Cloudflare Worker. Worker builds exclude the provider Driver runtime and `@t3tools/provider-runtime`: `@vite-hub/agent` resolves its provider module to a Worker module through the `workerd` and `worker` package conditions. Apps that use only `{ model }` or `{ run }` Drivers do not bundle Node-only provider code.
+
+A Worker build fails with `AGENT_B0019` when a server module selects a provider Driver with `driver: 'codex'`, `driver: 'claude-code'`, `{ kind: 'codex' }`, `codexDriver()`, `claudeCodeDriver()`, or a first-party preset that uses Codex. The same check covers a provider Driver passed to the `title()` or `progressSummary()` Capability, including imported aliases and namespace calls. ViteHub checks parsed module syntax, so it ignores comments, strings, regular expressions, type-only imports, and unrelated objects. Computed or indirect selections are not resolved and fail at invocation time with `AGENT_R0928`. Deploy Agents that use provider Drivers to a Node.js host.
 
 ## Adaptive process capacity
 

@@ -21,6 +21,7 @@ function parseArguments(argv) {
   if (!task) throw new Error("Usage: node test/run-package-task.mjs <task> [options]")
 
   const options = {
+    excludedNames: [],
     maxParallel: DEFAULT_MAX_PARALLEL,
     packageNames: undefined,
     parallelSafePackages: DEFAULT_PARALLEL_SAFE_PACKAGES,
@@ -33,11 +34,19 @@ function parseArguments(argv) {
     const value = rest[index + 1]
     if (!value) throw new Error(`Missing value for ${flag}`)
     if (flag === "--workspace") options.workspaceRoot = resolve(value)
-    else if (flag === "--packages") options.packageNames = parseList(value)
+    else if (flag === "--packages") {
+      options.packageNames = parseList(value)
+      if (options.packageNames.length === 0) throw new Error("--packages must name at least one package")
+    }
+    else if (flag === "--exclude") {
+      options.excludedNames = parseList(value)
+      if (options.excludedNames.length === 0) throw new Error("--exclude must name at least one package")
+    }
     else if (flag === "--max-parallel") options.maxParallel = Number(value)
     else throw new Error(`Unknown option: ${flag}`)
   }
 
+  if (options.packageNames && options.excludedNames.length) throw new Error("--packages and --exclude cannot be combined")
   if (!Number.isInteger(options.maxParallel) || options.maxParallel < 1 || options.maxParallel > 4) {
     throw new Error("--max-parallel must be an integer from 1 to 4")
   }
@@ -68,11 +77,15 @@ function workspaceDependencies(pkg, packageByName) {
     .sort((left, right) => left.localeCompare(right))
 }
 
-function selectPackages(packages, task, requestedNames) {
+function selectPackages(packages, task, requestedNames, excludedNames = []) {
   const packageByName = new Map(packages.map(pkg => [pkg.name, pkg]))
-  const selectedNames = requestedNames?.length
-    ? requestedNames
-    : packages.filter(pkg => pkg.manifest.scripts?.[task]).map(pkg => pkg.name)
+  // Excluded names must exist, so a renamed package cannot silently leave a CI shard.
+  for (const name of excludedNames) if (!packageByName.has(name)) throw new Error(`Unknown workspace package: ${name}`)
+  const excluded = new Set(excludedNames)
+  const selectedNames = requestedNames
+    ?? packages.filter(pkg => pkg.manifest.scripts?.[task] && !excluded.has(pkg.name)).map(pkg => pkg.name)
+
+  if (selectedNames.length === 0) throw new Error(`No workspace packages define task: ${task}`)
 
   for (const name of selectedNames) {
     if (!packageByName.has(name)) throw new Error(`Unknown workspace package: ${name}`)
@@ -248,7 +261,7 @@ function renderSummary(task, packages, buildResults, taskResults) {
 export async function runPackageTask(options) {
   const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd())
   const packages = await loadPackages(workspaceRoot)
-  const { packageByName, selected } = selectPackages(packages, options.task, options.packageNames)
+  const { packageByName, selected } = selectPackages(packages, options.task, options.packageNames, options.excludedNames)
   const controller = options.controller ?? new AbortController()
   const execute = options.execute ?? ((pkg, phase, executionOptions) => executePackage(pkg, phase, {
     ...executionOptions,

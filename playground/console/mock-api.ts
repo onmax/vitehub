@@ -22,7 +22,7 @@ for (const record of fixture.invocations) {
   store.create(input)
 }
 const invocations = defineAgentInvocations({ content: "content", store })
-const sections = ["env", "agents", "usage", "database", "kv", "workflows", "queues"] as const
+const sections = ["env", "agents", "usage", "database", "kv", "workflows", "queues", "schedules"] as const
 const definitions = {
   queues: [
     {
@@ -36,6 +36,30 @@ const definitions = {
       file: "server/queues/release-notes.ts",
       name: "release-notes",
       source: "queue",
+    },
+  ],
+  schedules: [
+    {
+      fields: [
+        { label: "Kind", value: "Static schedule" },
+        { label: "Cron", value: "*/5 * * * *" },
+        { label: "Time zone", value: "UTC" },
+        { label: "Manual", value: "Enabled" },
+      ],
+      file: "server/schedules/sync-inbox.ts",
+      name: "sync-inbox",
+      runnable: true,
+      source: "server-schedules",
+    },
+    {
+      fields: [
+        { label: "Kind", value: "Static schedule" },
+        { label: "Cron", value: "0 4 * * *" },
+        { label: "Time zone", value: "UTC" },
+      ],
+      file: "server/schedules/cleanup.ts",
+      name: "cleanup",
+      source: "server-schedules",
     },
   ],
   workflows: [
@@ -179,11 +203,14 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path === "/api/_vitehub/console/env") {
     json(response, { entries: [
-      { path: "env.server.github.token", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false },
-      { path: "env.server.openai.apiKey", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false },
-      { path: "env.server.codex.auth", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false },
-      { path: "env.server.webhookSecret", source: "env", secret: true, required: true, hasDefault: false },
-      { path: "env.server.logLevel", source: "env", secret: false, required: false, hasDefault: true },
+      { path: "env.server.github.token", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false, type: "string" },
+      { path: "env.server.openai.apiKey", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false, type: "string" },
+      { path: "env.server.codex.auth", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false, type: "string" },
+      { path: "env.server.webhookSecret", source: "env", secret: true, required: true, hasDefault: false, type: "string" },
+      { path: "env.server.logLevel", source: "env", secret: false, required: false, hasDefault: true, type: '"debug" | "info" | "warn"' },
+      { path: "env.server.labeller.dryRun", source: "env", secret: false, required: true, hasDefault: true, type: "boolean" },
+      { path: "env.server.labeller.minConfidence", source: "env", secret: false, required: true, hasDefault: true, type: "number" },
+      { path: "env.server.appName", source: "literal", secret: false, required: false, hasDefault: false },
     ], ...(url.searchParams.get("status") === "1"
       ? { status: [
           { path: "env.server.github.token", status: "available", blocking: false },
@@ -191,6 +218,9 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
           { path: "env.server.codex.auth", status: "error", blocking: true },
           { path: "env.server.webhookSecret", status: "missing", blocking: true },
           { path: "env.server.logLevel", status: "defaulted", blocking: false },
+          { path: "env.server.labeller.dryRun", status: "defaulted", blocking: false },
+          { path: "env.server.labeller.minConfidence", status: "defaulted", blocking: false },
+          { path: "env.server.appName", status: "available", blocking: false },
         ] }
       : {}) })
     return true
@@ -316,11 +346,26 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path === "/api/_vitehub/console/definitions") {
     const section = url.searchParams.get("section")
-    if (section !== "queues" && section !== "workflows") {
+    if (section !== "queues" && section !== "schedules" && section !== "workflows") {
       json(response, { error: "A valid definition section is required" }, 400)
       return true
     }
     json(response, { definitions: definitions[section], section })
+    return true
+  }
+
+  if (path === "/api/_vitehub/console/schedule-run" && request.method === "POST") {
+    const startedAt = new Date()
+    const completedAt = new Date(startedAt.getTime() + 1_240)
+    json(response, {
+      run: {
+        completedAt: completedAt.toISOString(),
+        id: `srun_manual_sync-inbox_${startedAt.toISOString()}`,
+        scheduleId: "sync-inbox",
+        startedAt: startedAt.toISOString(),
+        status: "succeeded",
+      },
+    })
     return true
   }
 

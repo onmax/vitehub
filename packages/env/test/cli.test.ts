@@ -184,7 +184,7 @@ function realFeature(name: "check" | "inspect", projectRoot?: string): ViteHubCl
 }
 
 describe("Env CLI stage regeneration for Nuxt", () => {
-  it("loads Nuxt from the application root with custom Env output roots", async () => {
+  it("loads Nuxt from the application root with custom Vite and Env output roots", async () => {
     const root = await createStageFixture()
     await writeFile(join(root, "nuxt.config.mjs"), "export default {}\n")
     const kitRoot = join(root, "node_modules", "nuxt")
@@ -199,6 +199,8 @@ describe("Env CLI stage regeneration for Nuxt", () => {
       '}',
     ].join("\n"))
     const { context, output } = captureContext(root, {})
+    context.rootDir = join(root, "app")
+    await mkdir(context.rootDir, { recursive: true })
     expect(await realFeature("inspect", "packages/discovery").run(["--stage", "staging", "--json"], context)).toBe(0)
     expect(JSON.parse(output.stdout)).toMatchObject({ entries: [{ path: "env.server.staging", status: "available" }], stage: "staging" })
     expect(output.stdout).not.toContain(secretValue)

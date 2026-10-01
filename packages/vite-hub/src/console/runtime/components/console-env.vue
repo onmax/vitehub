@@ -22,6 +22,7 @@ const descriptionSchema = v.object({
       secret: v.boolean(),
       required: v.boolean(),
       hasDefault: v.boolean(),
+      type: v.optional(v.string()),
     }),
   ),
   status: v.optional(
@@ -85,6 +86,7 @@ const rows = computed(() =>
 const columns = computed<TableColumn<ServerEnvDescriptionEntry>[]>(() => [
   { accessorKey: "path", header: "Variable" },
   ...(statuses.value ? [{ id: "status", header: "Status" }] : []),
+  { id: "type", header: "Type" },
   { id: "source", header: "Source" },
   { id: "value", header: "Value" },
 ]);
@@ -106,7 +108,7 @@ function statusBadge(entry: ServerEnvDescriptionEntry) {
 function selectRow(_event: Event, row: TableRow<ServerEnvDescriptionEntry>) {
   selected.value = row.original;
 }
-async function refresh(includeStatus = Boolean(statuses.value)) {
+async function refresh(includeStatus = false) {
   request?.abort();
   const current = new AbortController();
   request = current;
@@ -267,6 +269,11 @@ onBeforeUnmount(() => request?.abort());
                 v-bind="statusBadge(row.original)"
                 size="sm"
                 variant="subtle" /><span v-else class="text-xs text-muted">Unknown</span></template
+            >
+            <template #type-cell="{ row }"
+              ><span class="font-mono text-xs text-muted">{{
+                row.original.type ?? "literal"
+              }}</span></template
             >
             <template #source-cell="{ row }"
               ><span class="text-xs text-muted">{{ sourceLabel(row.original) }}</span></template

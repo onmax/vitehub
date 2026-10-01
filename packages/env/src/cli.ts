@@ -16,6 +16,7 @@ import { isBlockingServerEnvEntry } from "./server.ts"
 type EnvCliCommand = "check" | "inspect"
 
 export interface EnvCliInspectInput {
+  applicationRoot?: string
   env: NodeJS.ProcessEnv
   rootDir: string
   stage: string
@@ -71,10 +72,10 @@ function parseArgs(args: string[]): ParsedEnvCliArgs {
     else if (arg === "--json") parsed.json = true
     else if (arg === "--stage" || arg.startsWith("--stage=")) {
       const value = arg === "--stage" ? args[++index] : arg.slice("--stage=".length)
-      if (!value || value.startsWith("-")) throw envErrorDiagnostics.ENV_R0022({ message: "--stage requires a name." })
+      if (!value || value.startsWith("-")) throw envErrorDiagnostics.ENV_R0025({ message: "--stage requires a name." })
       parsed.stage = value
     }
-    else throw envErrorDiagnostics.ENV_R0023({ message: `Unknown option: ${arg}` })
+    else throw envErrorDiagnostics.ENV_R0026({ message: `Unknown option: ${arg}` })
   }
   return parsed
 }
@@ -89,7 +90,7 @@ function isInspection(value: unknown): value is ServerEnvInspection {
 async function inspectStage(input: EnvCliInspectInput): Promise<ServerEnvInspection> {
   const explicitEnv = { ...input.env }
   const vite = await import("vite")
-  const projectRoot = input.rootDir
+  const projectRoot = input.applicationRoot ?? input.rootDir
   const hasNuxtConfig = ["js", "mjs", "cjs", "ts", "mts", "cts"].some(extension => existsSync(join(projectRoot, `nuxt.config.${extension}`)))
   const stageVite = {
     loadEnv: vite.loadEnv,
@@ -123,15 +124,15 @@ async function inspectStage(input: EnvCliInspectInput): Promise<ServerEnvInspect
     // Nuxt reloads its stage-specific declarations before this server resolves config.
     const selectedPlugin = server.config.plugins.find(plugin => plugin.name === "@vite-hub/env/vite")
     const selectedAPI = v.safeParse(v.object({ resolveProjectRoot: v.function() }), selectedPlugin?.api)
-    if (!selectedAPI.success) throw envErrorDiagnostics.ENV_R0024({ message: "[vitehub] The selected stage does not configure the Env plugin." })
+    if (!selectedAPI.success) throw envErrorDiagnostics.ENV_R0027({ message: "[vitehub] The selected stage does not configure the Env plugin." })
     const selectedRoot: unknown = selectedAPI.output.resolveProjectRoot(server.config.root)
-    if (!v.is(v.string(), selectedRoot)) throw envErrorDiagnostics.ENV_R0024({ message: "[vitehub] The selected Env plugin returned an invalid project root." })
+    if (!v.is(v.string(), selectedRoot)) throw envErrorDiagnostics.ENV_R0027({ message: "[vitehub] The selected Env plugin returned an invalid project root." })
     const modulePath = viteHubEnvServerModulePath(selectedRoot)
     const generated = await server.ssrLoadModule(pathToFileURL(modulePath).href)
     const inspect: unknown = generated.inspectServerEnv
-    if (!v.is(v.function(), inspect)) throw envErrorDiagnostics.ENV_R0024({ message: `[vitehub] The generated Server Env module does not export inspectServerEnv(): ${modulePath}` })
+    if (!v.is(v.function(), inspect)) throw envErrorDiagnostics.ENV_R0027({ message: `[vitehub] The generated Server Env module does not export inspectServerEnv(): ${modulePath}` })
     const inspection: unknown = await inspect()
-    if (!isInspection(inspection)) throw envErrorDiagnostics.ENV_R0025({ message: "[vitehub] inspectServerEnv() returned an invalid result." })
+    if (!isInspection(inspection)) throw envErrorDiagnostics.ENV_R0028({ message: "[vitehub] inspectServerEnv() returned an invalid result." })
     return inspection
   })
 }
@@ -193,7 +194,7 @@ async function runEnvCli(command: EnvCliCommand, args: string[], context: ViteHu
   const input: EnvCliInspectInput = { env: context.env, rootDir: context.rootDir, stage: parsed.stage ?? defaultEnvCliStage }
   const inspection = options.inspect
     ? await options.inspect(input)
-    : await inspectStage(input)
+    : await inspectStage({ ...input, applicationRoot: context.cwd })
   const report: EnvCliReport = {
     entries: inspection.entries,
     ok: !inspection.entries.some(isBlockingServerEnvEntry),

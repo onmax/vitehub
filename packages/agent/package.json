@@ -30,6 +30,12 @@
     "#vitehub/agent/registry": {
       "types": "./dist/runtime/empty-registry.d.ts",
       "default": "./dist/runtime/empty-registry.js"
+    },
+    "#vitehub/agent/provider-agent": {
+      "types": "./dist/provider-agent.d.ts",
+      "workerd": "./dist/runtime/provider-agent-worker.js",
+      "worker": "./dist/runtime/provider-agent-worker.js",
+      "default": "./dist/provider-agent.js"
     }
   },
   "exports": {
@@ -167,7 +173,7 @@
     "build": "vp pack",
     "dev": "vp pack --watch",
     "typecheck": "tsc --noEmit -p ./tsconfig.json",
-    "test": "vp run -t @vite-hub/agent#build && vp test && node --test test/browser-smoke-cleanup.test.mjs"
+    "test": "vp run -t @vite-hub/agent#build && vp test && node test/run-node-tests.mjs test/browser-smoke-cleanup.test.mjs"
   },
   "dependencies": {
     "@ai-sdk/gateway": "catalog:ai",
