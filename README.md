@@ -50,6 +50,8 @@ ViteHub finds the file, connects it to your server, and prepares the output for 
 
 ## Get started
 
+For a complete runnable setup, follow the [First Agent](https://vitehub.dev/docs/getting-started/first-agent) tutorial. The abbreviated configuration below assumes an existing Vite server application; `vitehub()` registers the build integration but does not create a server entry or framework.
+
 ```bash
 pnpm add vite-hub
 ```
@@ -64,7 +66,7 @@ export default defineConfig({
 });
 ```
 
-The [First Agent](https://vitehub.dev/docs/getting-started/first-agent) tutorial runs offline and needs no model key.
+The First Agent tutorial runs offline and needs no model key.
 
 Requirements: Node 24.15 or newer and Vite 8 or newer. Presets: `cloudflare`, `netlify`, `vercel`, `deno`, and `node`. See [runtime and host support](https://vitehub.dev/docs/frameworks-hosts/support-matrix) for details on each feature.
 
