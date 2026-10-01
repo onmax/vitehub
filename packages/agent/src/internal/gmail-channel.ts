@@ -364,11 +364,17 @@ function messageBodyPart(parts: GmailApiPart[]): GmailApiPart | undefined {
 }
 
 const latin1Charsets = new Set(["iso-8859-1", "iso_8859-1", "iso_8859-1:1987", "iso-ir-100", "latin1", "l1", "ibm819", "cp819", "csisolatin1"])
+// ISO-2022-KR is a historical MIME label but is not part of the Encoding Standard.
+// Some runtimes still accept it in TextDecoder, so reject it explicitly and keep
+// the documented UTF-8 fallback consistent across hosts.
+const unsupportedMimeCharsets = new Set(["iso-2022-kr"])
 
 function decodeMimeBody(data: string, charset: string | undefined): string {
   const bytes = decodeBase64UrlBytes(data)
+  const normalizedCharset = charset?.trim().toLowerCase()
+  if (normalizedCharset && unsupportedMimeCharsets.has(normalizedCharset)) return new TextDecoder().decode(bytes)
   // MIME ISO-8859-1 keeps C1 bytes; TextDecoder aliases it to Windows-1252.
-  if (charset && latin1Charsets.has(charset.trim().toLowerCase())) {
+  if (normalizedCharset && latin1Charsets.has(normalizedCharset)) {
     let text = ""
     for (let start = 0; start < bytes.length; start += 8192) text += String.fromCharCode(...bytes.subarray(start, start + 8192))
     return text

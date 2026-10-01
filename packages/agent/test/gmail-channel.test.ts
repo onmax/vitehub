@@ -1283,10 +1283,10 @@ describe("gmail() Channel", () => {
     expect((await getGmailMessage(client, "m1", 100))?.body).toBe(charset === "windows-1252" ? "A€é" : "A\u0080é")
   })
 
-  it("falls back to UTF-8 for an unsupported attachment-backed body charset", async () => {
+  it.each(["UTF-7", "ISO-2022-KR"])("falls back to UTF-8 for an unsupported attachment-backed body charset (%s)", async charset => {
     const client: GmailClient = async request => request.path.includes("/attachments/")
       ? { data: base64Url("Fallback café") }
-      : { id: "m1", threadId: "thread-1", payload: { mimeType: "text/plain", headers: [{ name: "Content-Type", value: 'text/plain; charset="UTF-7"' }], body: { attachmentId: "body" } } }
+      : { id: "m1", threadId: "thread-1", payload: { mimeType: "text/plain", headers: [{ name: "Content-Type", value: `text/plain; charset="${charset}"` }], body: { attachmentId: "body" } } }
     expect((await getGmailMessage(client, "m1", 100))?.body).toBe("Fallback café")
   })
 

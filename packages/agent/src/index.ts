@@ -67,7 +67,7 @@ import {
 import { registerMessageChannelDeferredReplyTrace, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
 import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, createAgentInvocationContextStore } from "./invocation-context.ts"
 import { bindAgentRunEvents, type AgentRunEventPublisher } from "./run-events.ts"
-import { AgentInvocationClaimConflict, bindAgentInvocations, exclusiveAgentInvocation, inheritedAgentInvocationClaim, pendingAgentInvocationAnnotations, type AgentInvocationJournal } from "./invocations.ts"
+import { AgentInvocationClaimConflict, bindAgentInvocations, exclusiveAgentInvocation, inheritedAgentInvocationClaim, pendingAgentInvocationAnnotation, pendingAgentInvocationAnnotations, type AgentInvocationJournal } from "./invocations.ts"
 import { isAttachmentPart, materializeMessageAttachmentData, type AgentMessagePhase, type Message } from "./messages.ts"
 import {
   createFallbackAgentInvoker,
@@ -7527,6 +7527,15 @@ async function executeAgentInvocation<
     if (inheritedClaim && workflowExecution && !await invocationJournal?.confirmWorkflowDispatch()) {
       await invocationJournal?.releaseClaim()
       throw new Error("Could not confirm the Workflow Invocation handoff.")
+    }
+    // An inline handoff is entering the driver in this worker. Clear the
+    // recoverable reservation before the driver can perform external writes.
+    // A later push or replay must treat every running journal as already executing.
+    if (inheritedClaim && !workflowExecution) {
+      await invocationJournal?.setAnnotations({
+        ...context.run?.annotations,
+        [pendingAgentInvocationAnnotation]: false,
+      })
     }
   }
   catch (error) {
