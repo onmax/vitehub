@@ -272,6 +272,7 @@ export class PullRequestInbox {
   async directMergeAttempt(repository: string, number: number): Promise<DirectMergeAttempt | undefined> {
     const value = await this.meta(this.directMergeKey(repository, number))
     if (!value || Object.prototype.toString.call(value) !== '[object Object]') return undefined
+    // SAFETY: the tag check above excludes null, arrays, and non-object metadata.
     const attempt = value as Record<string, unknown>
     if (!isRuntimeString(attempt.token) || !Number.isFinite(attempt.generation) || !Number.isFinite(attempt.revision) ||
       !isRuntimeString(attempt.head) || !Number.isFinite(attempt.startedAt)) return undefined
