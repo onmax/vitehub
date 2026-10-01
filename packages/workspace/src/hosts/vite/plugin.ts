@@ -5,6 +5,7 @@ import { createDefaultCloudflareOutputRoot, createProviderDeploymentOutputGenera
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { copyVercelFunctionRuntimePackages } from "@vite-hub/internal/build/vercel-runtime-packages"
 import { createNoExternalAddition, generatedViteHubWatchIgnoredAddition, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { registerViteHubDevEndpoint } from "@vite-hub/internal/dev-endpoint"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 
@@ -1257,32 +1258,6 @@ function isHostedWorkspaceStore(store: ResolvedWorkspaceModuleOptions["store"]):
   return store.provider === "cloudflare-artifacts" || store.provider === "github" || store.provider === "vercel-blob"
 }
 
-function requestOrigin(server: ViteDevServer, req: IncomingMessage): string {
-  const host = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host
-  if (host) {
-    const fallback = server.resolvedUrls?.local?.[0] || "http://localhost/"
-    return new URL(`${new URL(fallback).protocol}//${host}`).origin
-  }
-  const base = server.resolvedUrls?.local?.[0] || `http://localhost:${server.config.server.port || 5173}/`
-  return new URL(base).origin
-}
-
-function validateWorkspaceDevRequest(server: ViteDevServer, req: IncomingMessage): Response | undefined {
-  const header = req.headers[workspaceDevHeader]
-  if ((Array.isArray(header) ? header[0] : header) !== workspaceDevHeaderValue) {
-    return new Response("Forbidden Workspace Dev request.", { status: 403 })
-  }
-  const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin
-  if (origin && origin !== requestOrigin(server, req)) {
-    return new Response("Forbidden Workspace Dev origin.", { status: 403 })
-  }
-  if (req.method !== "POST") return
-  const contentType = Array.isArray(req.headers["content-type"]) ? req.headers["content-type"][0] : req.headers["content-type"]
-  if (!contentType?.toLowerCase().startsWith("application/json")) {
-    return new Response("Workspace Dev requests must use application/json.", { status: 415 })
-  }
-}
-
 function acceptsWorkspaceDevStream(req: IncomingMessage): boolean {
   const accept = Array.isArray(req.headers.accept) ? req.headers.accept.join(",") : req.headers.accept
   return Boolean(accept?.includes("application/x-ndjson"))
@@ -1326,10 +1301,6 @@ async function writeResponse(res: ServerResponse, response: Response): Promise<v
   }
 }
 
-function isWorkspaceDevRoute(req: IncomingMessage): boolean {
-  return new URL(req.url || "/", "http://localhost").pathname === workspaceDevRoute
-}
-
 function streamWorkspaceDevCommand(input: Parameters<typeof runWorkspaceDevCommand>[0], closeHost: () => Promise<void>): Response {
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
@@ -1360,8 +1331,6 @@ function streamWorkspaceDevCommand(input: Parameters<typeof runWorkspaceDevComma
 }
 
 async function handleWorkspaceDevRequest(server: ViteDevServer, req: IncomingMessage, workspaces: Array<{ name: string }>, tokenOptions: WorkspaceDevTokenOptions, abortSignal?: AbortSignal): Promise<Response> {
-  const validation = validateWorkspaceDevRequest(server, req)
-  if (validation) return validation
   if (req.method === "GET") {
     await ensureWorkspaceDevToken(server.config.root, tokenOptions)
     return Response.json({
@@ -1892,13 +1861,18 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
       const refresh = async (file: string) => await maybeRefreshTypesForFile(roots, file)
       devServer.watcher.on("add", refresh)
       devServer.watcher.on("unlink", refresh)
-      devServer.middlewares.use((req, res, next) => {
-        if (!isWorkspaceDevRoute(req)) return next()
-        const abort = createAbortSignalFromClose(res, "[vitehub] Workspace Dev response closed.")
-        void handleWorkspaceDevRequest(devServer, req, manifest.workspaces, tokenOptions, abort.signal)
-          .then(response => writeResponse(res, response))
-          .catch((error: unknown) => writeResponse(res, new Response(error instanceof Error ? error.message : "Workspace Dev request failed.", { status: 500 })))
-          .finally(abort.dispose)
+      registerViteHubDevEndpoint(devServer, {
+        handle: (req, res) => {
+          const abort = createAbortSignalFromClose(res, "[vitehub] Workspace Dev response closed.")
+          void handleWorkspaceDevRequest(devServer, req, manifest.workspaces, tokenOptions, abort.signal)
+            .then(response => writeResponse(res, response))
+            .catch((error: unknown) => writeResponse(res, new Response(error instanceof Error ? error.message : "Workspace Dev request failed.", { status: 500 })))
+            .finally(abort.dispose)
+        },
+        header: workspaceDevHeader,
+        headerValue: workspaceDevHeaderValue,
+        label: "Workspace Dev",
+        route: workspaceDevRoute,
       })
     },
     vitehub: {

@@ -109,6 +109,7 @@ Without `description`, the tool description names the Channel and states how man
 ## Related pages
 
 - [Channels](/docs/agents/channels)
+- [Channels Server Primitive](/docs/server-primitives/channels)
 - [Schedule Capability](/docs/capabilities/schedule)
 - [Schedule primitive](/docs/server-primitives/schedule)
 - [Custom capabilities](/docs/capabilities/custom-capabilities)

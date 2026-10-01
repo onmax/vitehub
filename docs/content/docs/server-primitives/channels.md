@@ -1,9 +1,9 @@
 ---
 title: Channels
 description: Define named server delivery channels and send through a selected connector.
-navigation.order: 54.5
-navigation.group: Application APIs
-icon: i-lucide-radio-tower
+navigation.order: 14.5
+navigation.group: Delivery
+icon: i-lucide-send
 ---
 
 `vite-hub/channels` gives server code one named destination for outbound messages. You define the connectors that a Channel can use, then call `useChannel(name).send(text, options)` from an H3 or Nitro handler.
