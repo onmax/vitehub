@@ -280,8 +280,15 @@ describe("agentInvocationRerunInput", () => {
   })
 
   it("keeps prompt replay available when unrelated metadata is bounded", async () => {
-    const record = await journaled({ prompt: "Complete prompt." }, {}, () => ({ id: "resolved", kind: "user", label: "x".repeat(2_000) }))
-    expect(agentInvocationRerunInput(record)).toEqual({ available: true, prompt: "Complete prompt." })
+    const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Complete prompt." }, {}, () => ({ id: "resolved", kind: "user", label: "x".repeat(2_000) }))
+    expect(agentInvocationRerunInput(record)).toEqual({ available: true, invokerProfileId: "reviewer", prompt: "Complete prompt." })
+  })
+
+  it("rejects an unprofiled invoker derived by the inline resolver", async () => {
+    const record = await journaled({ prompt: "Hi" }, {}, () => ({ id: "request-owner", kind: "user", label: "Request owner" }))
+    expect(record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes)
+      .toMatchObject({ "input.hasInvoker": false, "input.hasResolvedInvoker": true, "agent.invoker.id": "request-owner" })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-has-invoker" })
   })
 
   it("rejects replay when bounding changes the selected profile ID", async () => {

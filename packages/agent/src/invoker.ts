@@ -274,6 +274,7 @@ export async function resolveAgentInvoker<
   const normalizedOptions = normalizeAgentInvokerOptions(options)
   const profiles = normalizedOptions?.profiles || []
   invocationContext.set("agent.invoker.profile.id", undefined, { overwrite: true })
+  invocationContext.set("agent.invoker.resolved", false, { overwrite: true })
   const requestedInvoker = resolveInputAgentInvoker(input.context)
   if (requestedInvoker && hasResolvedAgentInvokerInput(input)) {
     const profileId = selectedProfileId(input.context)
@@ -303,6 +304,7 @@ export async function resolveAgentInvoker<
   if (run) resolveContext.run = run
   if (selectedProfile) resolveContext.selectedProfile = selectedProfile
   const resolved = await normalizedOptions?.resolve?.(resolveContext)
+  invocationContext.set("agent.invoker.resolved", resolved !== undefined && resolved !== null, { overwrite: true })
   if (requireMatchingRequestedInvoker && normalizedOptions?.resolve) {
     if (!requestedInvoker || resolved === undefined || resolved === null) {
       throw agentDiagnostics.AGENT_R0644({ message: "[vitehub] Scheduled Agent turns require matching invoker reauthorization." })

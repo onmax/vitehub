@@ -99,7 +99,7 @@ function invocationAttributes(
     "input.replay.version": 5,
     "input.hasInvoker": resolveInputAgentInvoker(context.input.context) !== undefined,
     // A resolver-derived invoker without a selected profile cannot be reconstructed by a rerun.
-    "input.hasResolvedInvoker": hasResolvedAgentInvokerInput(context.input) && context.context.get("agent.invoker.profile.id") === undefined,
+    "input.hasResolvedInvoker": (hasResolvedAgentInvokerInput(context.input) || context.context.get("agent.invoker.resolved") === true) && context.context.get("agent.invoker.profile.id") === undefined,
     "input.hasContext": hasUnreplayableAgentInputContext(context.input.context),
     "input.hasRunMetadata": Object.entries(context.runtime.run ?? {}).some(([key, value]) => key !== "runId" && value !== undefined),
     "input.hasDryRun": context.input.dryRun === true,
