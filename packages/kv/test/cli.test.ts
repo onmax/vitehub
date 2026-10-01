@@ -144,10 +144,25 @@ describe("KV review regressions", () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it.each(["0", "0e-400", "0.000e400", "0.25", "5e-324"])("preserves representable JSON numbers: %s", async value => {
+  it.each(["4e-324", "-4e-324", '{"rate":4e-324}', '[-4e-324]', "9e-324"])("rejects rounded JSON subnormals before discovery: %s", async value => {
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runKVCli(["set", "--json-value", "--json", "--", "a", value], output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output()).error.message).toContain("subnormal")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each(["", "hello", "hello\n", "hello\n\n", "first\nsecond", "héllo"])("prints strings unchanged: %j", async value => {
+    const output = context()
+    await expect(runKVCli(["get", "a"], output.context, { fetch: devServer({ found: true, key: "a", store: "default", value }) })).resolves.toBe(0)
+    expect(output.stdout.output()).toBe(value)
+    expect(output.stderr.output()).toBe("")
+  })
+
+  it.each(["0", "0e-400", "0.000e400", "0.25", "5e-324", "-5e-324", "50e-325", "1e-323", "1e-308"])("preserves representable JSON numbers: %s", async value => {
     const output = context()
     const fetch = devServer({ created: true, key: "a", store: "default", type: "number" })
-    await expect(runKVCli(["set", "a", value, "--json-value", "--json"], output.context, { fetch })).resolves.toBe(0)
+    await expect(runKVCli(["set", "--json-value", "--json", "--", "a", value], output.context, { fetch })).resolves.toBe(0)
     expect(sentBody(fetch)).toMatchObject({ value: Number(value) })
     expect(output.stderr.output()).toBe("")
   })
@@ -213,7 +228,7 @@ describe("vitehub kv", () => {
   it("prints values and reports missing keys with exit code 1", async () => {
     const text = context()
     await expect(runKVCli(["get", "greeting"], text.context, { fetch: devServer({ found: true, key: "greeting", store: "default", type: "string", value: "hello" }) })).resolves.toBe(0)
-    expect(text.stdout.output()).toBe("hello\n")
+    expect(text.stdout.output()).toBe("hello")
 
     const object = context()
     await expect(runKVCli(["get", "settings"], object.context, { fetch: devServer({ found: true, key: "settings", store: "default", type: "object", value: { theme: "dark" } }) })).resolves.toBe(0)
