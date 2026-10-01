@@ -200,13 +200,39 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
   if (isoTime?.[4] && isoTime[4].length > 3) return
   const offset = resetText.match(/[+-](\d{2}):?(\d{2})$/)
   if (offset && (Number(offset[1]) > 14 || Number(offset[2]) > 59 || Number(offset[1]) === 14 && Number(offset[2]) !== 0)) return
-  const time = Date.parse(resetText
+  const namedZone = resetText.match(/\s(UTC|GMT|UT|[ECMP][DS]T|CET|CEST|EET|EEST|BST|IST|JST|AEST|AEDT)$/i)?.[1]
+  const namedZoneOffsets: Record<string, string> = {
+    aest: "+10:00",
+    aedt: "+11:00",
+    bst: "+01:00",
+    cest: "+02:00",
+    cet: "+01:00",
+    cdt: "-05:00",
+    cst: "-06:00",
+    edt: "-04:00",
+    eest: "+03:00",
+    eet: "+02:00",
+    est: "-05:00",
+    gmt: "+00:00",
+    ist: "+05:30",
+    jst: "+09:00",
+    mdt: "-06:00",
+    mst: "-07:00",
+    pdt: "-07:00",
+    pst: "-08:00",
+    utc: "+00:00",
+    ut: "+00:00",
+  }
+  const parseText = namedZone
+    ? resetText.replace(new RegExp(`\\s${namedZone}$`, "i"), ` ${namedZoneOffsets[namedZone.toLowerCase()]}`)
+    : resetText
+  const time = Date.parse(parseText
     .replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, "$1")
     .replace(/\b([ap])\.m\.?/gi, "$1m"))
   if (!Number.isFinite(time)) return
   // Date.parse normalizes nonexistent local wall times during DST transitions.
   // Do not publish a reset instant that differs from the provider's unzoned clock.
-  if (namedTime && !namedTime[4] || isoTime && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(resetText)) {
+  if (namedTime && !namedTime[4] && !namedZone || isoTime && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(resetText)) {
     const parsed = new Date(time)
     const hour = namedTime
       ? Number(namedTime[1]) % 12 + (namedTime[3]?.toLowerCase() === "p" ? 12 : 0)

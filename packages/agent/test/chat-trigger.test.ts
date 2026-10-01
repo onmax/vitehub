@@ -214,6 +214,31 @@ describe("chat error fallback", () => {
     }
   })
 
+  it.each([
+    ["EST", "2026-09-15T18:23:00.000Z"],
+    ["EDT", "2026-09-15T17:23:00.000Z"],
+    ["CST", "2026-09-15T19:23:00.000Z"],
+    ["CDT", "2026-09-15T18:23:00.000Z"],
+    ["MST", "2026-09-15T20:23:00.000Z"],
+    ["MDT", "2026-09-15T19:23:00.000Z"],
+    ["PST", "2026-09-15T21:23:00.000Z"],
+    ["PDT", "2026-09-15T20:23:00.000Z"],
+    ["CET", "2026-09-15T12:23:00.000Z"],
+    ["CEST", "2026-09-15T11:23:00.000Z"],
+    ["EET", "2026-09-15T11:23:00.000Z"],
+    ["EEST", "2026-09-15T10:23:00.000Z"],
+    ["BST", "2026-09-15T12:23:00.000Z"],
+    ["IST", "2026-09-15T07:53:00.000Z"],
+    ["JST", "2026-09-15T04:23:00.000Z"],
+    ["AEST", "2026-09-15T03:23:00.000Z"],
+    ["AEDT", "2026-09-15T02:23:00.000Z"],
+  ])("parses named reset time zones: %s", (zone, resetAt) => {
+    const resetText = `Sep 15, 2026 1:23 PM ${zone}`
+    const message = `Quota exhausted. Try again at ${resetText}.`
+    expect(toAgentPublicError(agentDiagnostics.AGENT_R0726({ message }), "http").details)
+      .toEqual({ resetText, resetAt })
+  })
+
   it("reads reset times from AI SDK quota errors", () => {
     const error = {
       data: { error: { code: "insufficient_quota", message: "You exceeded your quota. Try again at 2026-09-15T01:23:00Z." } },
