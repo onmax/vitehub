@@ -1821,6 +1821,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               finished = true
               if (!terminalWriteCommitted) {
                 boundToTerminalRecord = true
+                requestCancellation()
                 stopWatchingCancellation()
               }
             }

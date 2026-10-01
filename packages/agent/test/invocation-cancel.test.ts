@@ -127,7 +127,7 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.get(id))?.status).toBe("completed")
   })
 
-  it.each(["unrelated", "foreign-unrelated", "reason", "wrapped-reason", "foreign-wrapped-reason", "abort-error", "foreign-abort-error"] as const)("classifies a cancelled custom handler's %s rejection by its actual error", async (failureKind) => {
+  it.each(["unrelated", "foreign-unrelated", "plain-abort-name", "hostile-tag", "reason", "wrapped-reason", "foreign-wrapped-reason", "abort-error", "foreign-abort-error"] as const)("classifies a cancelled custom handler's %s rejection by its actual error", async (failureKind) => {
     const release = deferred()
     const started = deferred()
     const failure = new Error("Independent handler failure")
@@ -139,6 +139,8 @@ describe("Agent Invocation cancel", () => {
         signal = context.input.abortSignal
         started.resolve()
         await release.promise
+        if (failureKind === "plain-abort-name") throw { name: "AbortError", message: "Independent handler failure" }
+        if (failureKind === "hostile-tag") throw Object.defineProperty(failure, Symbol.toStringTag, { get() { throw new Error("Hostile tag was read") } })
         if (failureKind === "reason") throw signal?.reason
         if (failureKind === "wrapped-reason") throw new Error("Handler stopped", { cause: signal?.reason })
         if (failureKind === "foreign-wrapped-reason") throw runInNewContext("new Error('Outer stop', { cause: new Error('Inner stop', { cause: reason }) })", { reason: signal?.reason })
@@ -149,7 +151,7 @@ describe("Agent Invocation cancel", () => {
       } },
       invocations,
     }), runtime(runId), {})
-    const rejected = expect(run).rejects.toThrow()
+    const rejected = expect(run).rejects.toBeDefined()
     await started.promise
     const { id } = await recordWithStatus(invocations, runId, "running")
     await invocations.cancel(id)
@@ -157,10 +159,10 @@ describe("Agent Invocation cancel", () => {
     release.resolve()
     await rejected
     const record = await invocations.get(id)
-    const cancelled = failureKind !== "unrelated" && failureKind !== "foreign-unrelated"
+    const cancelled = !["unrelated", "foreign-unrelated", "plain-abort-name", "hostile-tag"].includes(failureKind)
     expect(record?.status).toBe(cancelled ? "cancelled" : "failed")
     expect(record?.observations.some(entry => entry.name === "agent.invocation.cancelled")).toBe(cancelled)
-    if (failureKind === "unrelated") expect(record?.error?.message).toBe(failure.message)
+    if (failureKind === "unrelated" || failureKind === "hostile-tag") expect(record?.error?.message).toBe(failure.message)
   })
 
   it("completes a started custom run Invocation when its handler ignores cancel", async () => {
@@ -387,19 +389,32 @@ describe("Agent Invocation cancel", () => {
     finally { await journal.finish("cancelled") }
   })
 
-  it("removes the local cancellation handle when renewal observes a terminal record", async () => {
-    const store = createMemoryAgentInvocationStore()
+  it.each(["completed", "failed", "cancelled"] as const)("aborts the stale Driver before unregistering after terminal renewal: %s", async status => {
+    vi.useFakeTimers()
+    const backing = createMemoryAgentInvocationStore()
+    let rejectClaims = false
+    const store = { ...backing, claim: (...args: Parameters<typeof backing.claim>) => rejectClaims ? false : backing.claim(...args) }
     const invocations = defineAgentInvocations({ store })
-    const runId = "terminal-renewal-handle"
+    const runId = `terminal-renewal-handle-${status}`
     const journal = await bindAgentInvocations(invocations, runtime(runId))
     if (!journal) throw new Error("Expected invocation journal")
     journal.watchCancellation({ enforced: true, name: "model" })
-    await journal.running()
-    const id = await agentInvocationId(runId)
-    await store.update(id, { status: "completed", timestamp: new Date().toISOString() })
-    await journal.setAnnotations({ source: "renewal" })
-    await journal.finish("completed")
-    expect(abortLocalAgentInvocation(store, id, new Error("obsolete owner"))).toEqual({ aborted: false })
+    try {
+      await journal.running()
+      const id = await agentInvocationId(runId)
+      rejectClaims = true
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(journal.abortSignal.aborted).toBe(false)
+      await backing.update(id, { status, timestamp: new Date().toISOString() })
+      const terminalRecord = await backing.get(id)
+      rejectClaims = false
+      await journal.setAnnotations({ source: "renewal" })
+      expect(journal.abortSignal.aborted).toBe(true)
+      expect(abortLocalAgentInvocation(store, id, new Error("obsolete owner"))).toEqual({ aborted: false })
+      await journal.finish("cancelled")
+      expect(await backing.get(id)).toEqual(terminalRecord)
+    }
+    finally { await journal.finish("cancelled") }
   })
 
   it("keeps local cancellation observable while terminal persistence waits", async () => {

@@ -81,15 +81,25 @@ export function createAgentInvocationCancellationError(id: string): Error {
   return error
 }
 
-/** True when the error or one of its causes is a cancellation request reason for the selected Invocation. */
+/** True when the error, its causes, or aggregate failures contain cancellation for the selected Invocation. */
 export function isAgentInvocationCancellationError(error: unknown, id?: string): boolean {
   const seen = new Set<unknown>()
-  let current = error
-  while (current instanceof Error && !seen.has(current)) {
-    seen.add(current)
-    if (current instanceof Diagnostic && current.code === agentInvocationCancellationCode
-      && (id === undefined || Reflect.get(current, cancellationInvocationId) === id)) return true
-    current = current.cause
+  const pending = [error]
+  while (pending.length > 0) {
+    const current = pending.pop()
+    try {
+      if (!(current instanceof Error) || seen.has(current)) continue
+      seen.add(current)
+      if (current instanceof Diagnostic && current.code === agentInvocationCancellationCode
+        && (id === undefined || Reflect.get(current, cancellationInvocationId) === id)) return true
+      pending.push(current.cause)
+      if (current instanceof AggregateError) {
+        const errors: unknown = current.errors
+        if (Array.isArray(errors)) pending.push(...errors)
+      }
+    } catch {
+      // An unreadable error must not replace the original Invocation failure.
+    }
   }
   return false
 }

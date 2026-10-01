@@ -9075,7 +9075,7 @@ describe("server helpers", () => {
     }
   })
 
-  it.each(["own", "child", "wrapped child"] as const)("scopes queued webhook cancellation to its %s invocation", async cancellationScope => {
+  it.each(["own", "child", "wrapped child", "aggregate own", "aggregate child"] as const)("scopes queued webhook cancellation to its %s invocation", async cancellationScope => {
     const { defineAgent } = await import("../src/index.ts")
     const { github } = await import("../src/channels.ts")
     const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
@@ -9086,9 +9086,13 @@ describe("server helpers", () => {
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
     const complete = vi.spyOn(state, "completeWebhookDelivery")
     const retry = vi.spyOn(state, "retryWebhookDelivery")
-    const cancelledId = await agentInvocationId(cancellationScope === "own" ? "queued-webhook-invocation" : "child-invocation", cancellationScope === "own" ? "review" : "child")
+    const ownCancellation = cancellationScope === "own" || cancellationScope === "aggregate own"
+    const cancelledId = await agentInvocationId(ownCancellation ? "queued-webhook-invocation" : "child-invocation", ownCancellation ? "review" : "child")
     const run = vi.fn(() => {
       const cancelled = createAgentInvocationCancellationError(cancelledId)
+      if (cancellationScope === "aggregate own" || cancellationScope === "aggregate child") {
+        throw new AggregateError([cancelled, new Error("Finish lifecycle failed")], "Invocation lifecycle failed")
+      }
       throw cancellationScope === "wrapped child" ? new Error("Child invocation failed", { cause: cancelled }) : cancelled
     })
     const agent = defineAgent({
@@ -9126,10 +9130,10 @@ describe("server helpers", () => {
       )
 
       expect(response.status).toBe(200)
-      const settled = cancellationScope === "own" ? complete : retry
+      const settled = ownCancellation ? complete : retry
       await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce(), { timeout: 1_000 })
       expect(run).toHaveBeenCalledOnce()
-      expect(cancellationScope === "own" ? retry : complete).not.toHaveBeenCalled()
+      expect(ownCancellation ? retry : complete).not.toHaveBeenCalled()
     } finally {
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
