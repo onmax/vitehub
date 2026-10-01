@@ -322,7 +322,7 @@ it("rolls back host Observability when host attachment fails", async () => {
   const closeHooks: Array<() => Promise<void>> = []
   installObservability({ service: "retry" })({
     hooks: {
-      hook(name, callback) { if (name === "close") closeHooks.push(callback) },
+      hook(name, callback) { if (name === "close") closeHooks.push(callback as () => Promise<void>) },
     },
   })
   for (const close of closeHooks) await close()
