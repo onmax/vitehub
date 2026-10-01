@@ -3,18 +3,13 @@ import { getMessageText } from "../messages.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 import { importServerEnvModule } from "./server-env.ts"
 
-import type { AskAnswers, AskEntry, AskQuestion, AskQuestions } from "../ask.ts"
+import type { AskAnswers, AskQuestion, AskQuestions } from "../ask.ts"
 import type { Message } from "../messages.ts"
 import type { AgentRunInput } from "../types.ts"
 
-type AdvocaatQuestion = Record<string, unknown>
-interface Advocaat {
-  ask(
-    state: AskEntry,
-    questions: AdvocaatQuestion,
-    options: { apiKey?: string, model?: string, provider: string, signal?: AbortSignal },
-  ): Promise<Record<string, unknown>>
-}
+type Advocaat = typeof import("advocaat")
+type AdvocaatEntry = Parameters<Advocaat["ask"]>[0]
+type AdvocaatQuestion = Parameters<Advocaat["ask"]>[1][string]
 
 /** The Server Env group that `typesafeEnv()` declares. */
 export const typesafeEnvGroup = "typesafe"
@@ -78,15 +73,17 @@ async function typesafeOptions(context: AskRequestContext) {
   } as const
 }
 
-function toEntry(value: unknown): AskEntry {
+function toEntry(value: unknown): AdvocaatEntry {
   if (value === undefined || value === null) return null
   if (hasRuntimeType(value, "string")) return value
-  if (hasRuntimeType(value, "number")) return Number.isFinite(value) ? String(value) : null
-  if (hasRuntimeType(value, "boolean")) return String(value)
+  if (hasRuntimeType(value, "number")) return Number.isFinite(value) ? JSON.stringify(value) : null
+  if (hasRuntimeType(value, "boolean")) return JSON.stringify(value)
   // JSON round trip drops functions and undefined values, like the request body would.
   const serialized = JSON.stringify(value)
   // advocaat uses null as empty state and does not accept undefined in its public types.
-  return serialized === undefined ? null : JSON.parse(serialized)
+  if (serialized === undefined) return null
+  const entry = JSON.parse(serialized)
+  return hasRuntimeType(entry, "number") || hasRuntimeType(entry, "boolean") ? serialized : entry
 }
 
 function invalidQuestion(name: string) {
@@ -114,14 +111,31 @@ function validateQuestionCriteria(name: string, question: AskQuestion): void {
 }
 
 function toAdvocaatQuestion(name: string, question: AskQuestion): AdvocaatQuestion {
+  validateQuestionCriteria(name, question)
   switch (question.type) {
     case "chance":
-      return { criteria: question.criteria, instructions: question.instructions, type: "noul" }
+      return {
+        criteria: question.criteria == null ? question.criteria : {
+          ...(question.criteria.true === undefined ? {} : { true: toEntry(question.criteria.true) }),
+          ...(question.criteria.false === undefined ? {} : { false: toEntry(question.criteria.false) }),
+        },
+        instructions: toEntry(question.instructions),
+        type: "noul",
+      }
     case "choice":
-    case "score":
-    case "if":
     case "switch":
-      validateQuestionCriteria(name, question)
+      return {
+        ...question,
+        criteria: Object.fromEntries(Object.entries(question.criteria).map(([label, entry]) => [label, toEntry(entry)])),
+        instructions: toEntry(question.instructions),
+      }
+    case "score":
+      return {
+        ...question,
+        criteria: [toEntry(question.criteria[0]), toEntry(question.criteria[1]), ...question.criteria.slice(2).map(toEntry)],
+        instructions: toEntry(question.instructions),
+      }
+    case "if":
       return question
   }
   throw invalidQuestion(name)
@@ -148,6 +162,13 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
   const advocaat = await loadAdvocaat()
   const options = await typesafeOptions(context)
   const answers = await advocaat.ask(toEntry(state), wire, { ...options, signal: context.abortSignal })
-  // SAFETY: advocaat answers under the same keys, with the answer shapes that AskAnswers describes for each question type.
-  return answers as AskAnswers<Q>
+  const result = Object.fromEntries(Object.entries(answers).map(([name, answer]) => {
+    const question = questions[name]
+    if (question?.type === "score" && isRuntimeRecord(answer) && answer.type === "score") {
+      return [name, { ...answer, legend: Object.fromEntries(question.criteria.map((entry, index) => [index, entry])) }]
+    }
+    return [name, answer]
+  }))
+  // SAFETY: The SDK preserves question keys and answer shapes; score legends retain the public criteria values.
+  return result as AskAnswers<Q>
 }
