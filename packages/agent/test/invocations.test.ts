@@ -2648,6 +2648,28 @@ describe("Agent Invocations", () => {
     finally { vi.useRealTimers() }
   })
 
+  it("rejects a superseded memory claim after the newer claim expires", async () => {
+    vi.useFakeTimers()
+    try {
+      const memory = createMemoryAgentInvocationStore()
+      await memory.create({
+        createdAt: "2026-02-02T02:02:02.000Z",
+        id: "superseded-memory-claim",
+        observations: [],
+        status: "pending",
+        traceId: "superseded-memory-claim-trace",
+        updatedAt: "2026-02-02T02:02:02.000Z",
+      })
+
+      expect(await memory.claim("superseded-memory-claim", "first", 1)).toBe(true)
+      expect(await memory.claim("superseded-memory-claim", "second", 1, { expectedClaimIds: ["first"] })).toBe(true)
+      await vi.advanceTimersByTimeAsync(2)
+      expect(await memory.claim("superseded-memory-claim", "first", 30_000)).toBe(false)
+      expect(await memory.claim("superseded-memory-claim", "third", 30_000)).toBe(true)
+    }
+    finally { vi.useRealTimers() }
+  })
+
   it("bounds unresolved claim generations and recovers without stale cleanup", async () => {
     vi.useFakeTimers()
     try {

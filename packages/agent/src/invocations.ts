@@ -1434,12 +1434,14 @@ export function applyAgentInvocationStoreUpdate(
 
 export function createMemoryAgentInvocationStore(): AgentInvocationStore {
   const claims = new Map<string, { claimId: string, expiresAt: number, token: string }>()
+  const supersededClaims = new Map<string, Set<string>>()
   const records = new Map<string, AgentInvocationRecord>()
   let cursor = 0
   return {
     claim(id, claimId, leaseMs, options) {
       const claim = claims.get(id)
       const now = Date.now()
+      if (supersededClaims.get(id)?.has(claimId)) return false
       const replace = options?.replaceExisting
         || (options?.replaceClaimToken !== undefined && claim?.token === options.replaceClaimToken)
       const expected = options?.expectedClaimIds
@@ -1447,6 +1449,11 @@ export function createMemoryAgentInvocationStore(): AgentInvocationStore {
       const fencedConflict = expected !== undefined && claimConflict && !expected.includes(claim.claimId)
       const activeConflict = expected === undefined && claimConflict && claim.expiresAt > now
       if (!records.has(id) || (!replace && (fencedConflict || activeConflict))) return false
+      if (claim && claim.claimId !== claimId) {
+        let superseded = supersededClaims.get(id)
+        if (!superseded) supersededClaims.set(id, superseded = new Set())
+        superseded.add(claim.claimId)
+      }
       claims.set(id, { claimId, expiresAt: now + leaseMs, token: globalThis.crypto.randomUUID() })
       return true
     },
