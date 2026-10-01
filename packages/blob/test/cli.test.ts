@@ -70,6 +70,15 @@ const binary = Uint8Array.from([0, 255, 1, 128, 10, 13, 0xef, 0xbb, 0xbf, 0xc3, 
 const object = { contentType: "image/png", customMetadata: {}, httpEtag: "\"abc\"", httpMetadata: {}, pathname: "images/a.png", size: 1234, uploadedAt: "2026-09-29T10:00:00.000Z" }
 
 describe("vitehub blob", () => {
+  it.each([["head", "--json"], ["list", "--limit", "0", "--json"]])("returns JSON for argument errors: %j", async (...args) => {
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runBlobCli(args, output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toEqual({ error: { message: expect.any(String) } })
+    expect(output.stderr.output()).toBe("")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it.each(["", " "])("rejects an empty output path %j before downloading", async outputPath => {
     const output = context()
     const fetch = vi.fn()
@@ -317,8 +326,14 @@ describe("vitehub blob", () => {
     for (const [args, message] of cases) {
       const invalid = context()
       await expect(runBlobCli(args, invalid.context, { fetch })).resolves.toBe(1)
-      expect(invalid.stderr.output(), args.join(" ")).toContain(message)
-      expect(invalid.stderr.output()).toContain("Usage: vitehub blob")
+      if (args.includes("--json")) {
+        expect(JSON.parse(invalid.stdout.output()).error.message).toContain(message)
+        expect(invalid.stderr.output()).toBe("")
+      }
+      else {
+        expect(invalid.stderr.output(), args.join(" ")).toContain(message)
+        expect(invalid.stderr.output()).toContain("Usage: vitehub blob")
+      }
     }
     const unknown = context()
     await expect(runBlobCli(["sign"], unknown.context, { fetch })).resolves.toBe(1)

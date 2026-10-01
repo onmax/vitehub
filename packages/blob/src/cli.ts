@@ -400,6 +400,8 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
     parsed = parseArgs(command, args, context.env)
   }
   catch (error) {
+    const terminator = args.indexOf("--")
+    if (args.slice(0, terminator < 0 ? args.length : terminator).includes("--json")) return writeFailure({ json: true }, context, { message: error instanceof Error ? error.message : String(error) })
     context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     writeUsage(command, context.stderr)
     return 1
