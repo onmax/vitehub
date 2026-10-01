@@ -549,6 +549,10 @@ async function withWorkspacePathLock<T>(root: string, path: string, operation: (
 
 type LocalWorkspaceStoreLockOptions = Pick<LocalWorkspaceStoreOptions, "ignore" | "locks">
 
+function isGitMetadataName(name: string): boolean {
+  return name === ".git" || (process.platform === "win32" && name.toLowerCase() === ".git")
+}
+
 /** Check whether a path belongs to a Git worktree before classifying Git errors. */
 async function hasGitMetadata(root: string): Promise<boolean> {
   let current = resolve(root)
@@ -603,7 +607,7 @@ async function gitIgnoredWorkspacePathsForPrefix(root: string, current: string, 
     ancestor = `${ancestor}/${segment}`
     prefix = prefix ? `${prefix}/${segment}` : segment
     const dirents = await readdir(ancestor, { withFileTypes: true }).catch(() => [])
-    if (dirents.some(dirent => dirent.name.toLowerCase() === ".git")) {
+    if (dirents.some(dirent => isGitMetadataName(dirent.name))) {
       const nestedExcluded = await gitIgnoredWorkspacePaths(ancestor)
       result.push(...nestedExcluded.map(path => `${prefix}/${path}`))
     }
@@ -716,7 +720,7 @@ async function walk(
   // The outer repository's Git query does not apply ignore rules from a
   // nested repository. Discover those rules before descending into it so
   // ignored dependencies and build output remain hidden at every boundary.
-  if (current !== root && dirents.some(dirent => dirent.name.toLowerCase() === ".git")) {
+  if (current !== root && dirents.some(dirent => isGitMetadataName(dirent.name))) {
     const nestedExcluded = await gitIgnoredWorkspacePaths(current)
     const prefix = normalizeWorkspacePath(relative(root, current))
     currentExcluded = [...excluded, ...nestedExcluded.map(path => prefix ? `${prefix}/${path}` : path)]
@@ -731,7 +735,7 @@ async function walk(
     // Git metadata is private at every depth, including nested repositories.
     // `git ls-files --ignored` only reports ignored paths, so nested `.git`
     // directories need an explicit traversal guard.
-    if (path.split("/").some(component => component.toLowerCase() === ".git")) continue
+    if (path.split("/").some(component => isGitMetadataName(component))) continue
     if (isExcludedWorkspacePath(path, currentExcluded)) continue
     const info = await stat(absolute).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined

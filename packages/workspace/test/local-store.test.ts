@@ -2233,4 +2233,15 @@ describe("local workspace store Git ignore", () => {
     await expect(createLocalWorkspaceStore(root, { ignore: "git" }).list("", { recursive: true }))
       .rejects.toThrow(/not a git repository|gitdir|repository/i)
   })
+
+  it("keeps case-variant directories visible on case-sensitive filesystems", async () => {
+    if (process.platform === "win32") return
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-case-variant-git-"))
+    tempDirs.push(root)
+    await mkdir(join(root, ".GIT"), { recursive: true })
+    await writeFile(join(root, ".GIT", "notes.txt"), "visible")
+
+    const paths = (await createLocalWorkspaceStore(root, { ignore: "git" }).list("", { recursive: true })).map(entry => entry.path)
+    expect(paths).toContain(".GIT/notes.txt")
+  })
 })
