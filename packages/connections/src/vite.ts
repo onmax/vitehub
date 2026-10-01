@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { lstat, mkdir, readFile, rm } from "node:fs/promises"
+import { lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path";
 
 import * as v from "valibot";
@@ -34,6 +34,8 @@ const generatedTypesManifestEntrySchema = v.object({
 });
 const generatedTypesManifestSchema = v.array(generatedTypesManifestEntrySchema);
 const generatedTypesManifestLock = ".vitehub/connections-types.json.lock";
+const generatedTypesManifestLockOwner = "owner.json";
+const staleManifestLockMs = 30_000;
 
 async function removeLegacyDefaultTypes(root: string): Promise<void> {
   const file = resolve(root, generatedTypesPath);
@@ -62,16 +64,51 @@ async function withManifestLock<T>(root: string, action: () => Promise<T>): Prom
   for (;;) {
     try {
       await mkdir(lock, { recursive: false });
-      try {
-        return await action();
-      } finally {
-        await rm(lock, { recursive: true, force: true });
-      }
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+      if (await removeAbandonedManifestLock(lock)) continue;
       await new Promise<void>(resolve => setTimeout(resolve, 5));
+      continue;
+    }
+    try {
+      await writeFile(resolve(lock, generatedTypesManifestLockOwner), JSON.stringify({ pid: process.pid }));
+      return await action();
+    } finally {
+      await rm(lock, { recursive: true, force: true });
     }
   }
+}
+
+async function removeAbandonedManifestLock(lock: string): Promise<boolean> {
+  const owner = await readOptionalFile(resolve(lock, generatedTypesManifestLockOwner));
+  if (owner !== undefined) {
+    try {
+      const pid = JSON.parse(owner).pid;
+      if (Number.isInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid, 0);
+          return false;
+        } catch (error) {
+          if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) return false;
+        }
+        await rm(lock, { recursive: true, force: true });
+        return true;
+      }
+    } catch {
+      // Fall through to age-based recovery for incomplete owner metadata.
+    }
+  }
+  try {
+    const age = Date.now() - (await stat(lock)).mtimeMs;
+    if (age > staleManifestLockMs) {
+      await rm(lock, { recursive: true, force: true });
+      return true;
+    }
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return true;
+    throw error;
+  }
+  return false;
 }
 
 async function removeTrackedTypes(root: string, retainedRoot?: string): Promise<void> {
