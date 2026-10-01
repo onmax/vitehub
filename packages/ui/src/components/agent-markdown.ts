@@ -4,7 +4,7 @@ import attributes from "@comark/vue/plugins/attributes";
 import components from "@comark/vue/plugins/components";
 import frontmatter from "@comark/vue/plugins/frontmatter";
 import taskList from "@comark/vue/plugins/task-list";
-import { defineComponent, h, onServerPrefetch, shallowRef, Suspense, type PropType } from "vue";
+import { defineComponent, h, shallowRef, Suspense, type PropType } from "vue";
 import { markdownMath } from "../internal/markdown-math.ts";
 import { useViteHubUI } from "../config.ts";
 import { ImagePreview } from "../internal/image-preview.ts";
@@ -35,13 +35,9 @@ const AgentMath = defineComponent({
   props: { content: { default: "", type: String }, class: { default: "", type: String } },
   setup(props) {
     const katex = shallowRef<Katex>();
-    const loading = loadKatex().then(module => {
+    void loadKatex().then(module => {
       katex.value = module;
-      return module;
     }).catch(() => undefined);
-    onServerPrefetch(async () => {
-      await loading;
-    });
     return () => {
       const displayMode = props.class.includes("block");
       const html = katex.value ? renderMath(katex.value, props.content, displayMode) : undefined;
