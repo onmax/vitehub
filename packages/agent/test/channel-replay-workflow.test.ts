@@ -189,7 +189,7 @@ it.each(["queued", "unknown", "unavailable-marker"] as const)("reconciles an acc
       return await store.update(...args)
     },
   } })
-  const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {}, run: { annotations: Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`caller-${index}`, index])) } }
+  const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {}, run: { runId: "reconciliation-request", annotations: Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`caller-${index}`, index])) } }
   const channel = defineChannel("mailbox", {
     history: { collection: defineCollection(async () => [{ id: "m1" }], { cursor: item => item.id, cursorSchema: v.string() }), key: item => item.id },
     triggers: { received: defineChannelTrigger({ input: v.object({ id: v.string() }), invoke: () => ({ input: { prompt: "hello" } }) }) },
