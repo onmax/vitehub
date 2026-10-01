@@ -500,9 +500,10 @@ describe("Agent invocation console", () => {
         "/api/_vitehub/console/client.js",
         "/_vitehub/rpc/**",
         "/_vitehub/env/manage",
+        "/_vitehub/channels/replay",
         "/_vitehub/schedules/run",
       ])
-      expect(config.nitro.publicAssets).toEqual([expect.objectContaining({ baseURL: "/_vitehub/assets" })])
+      expect(config.nitro.publicAssets).toEqual([expect.objectContaining({ baseURL: "/_vitehub/assets", maxAge: 31_536_000 })])
       expect(config.nitro.plugins).toEqual([resolve(root, ".vitehub/nitro/console/plugin.mjs")])
       await expect(readFile(config.nitro.plugins[0]!, "utf8")).resolves.toContain(`installConsoleSections(${JSON.stringify(root)}, ["agents","usage","blob","kv"])`)
       await expect(readFile(config.nitro.plugins[0]!, "utf8")).resolves.toContain(`installConsoleProjectName(${JSON.stringify(root)}, "console-host")`)
@@ -556,6 +557,7 @@ describe("Agent invocation console", () => {
         "/api/_vitehub/console/client.js",
         "/_vitehub/rpc/**",
         "/_vitehub/env/manage",
+        "/_vitehub/channels/replay",
         "/_vitehub/schedules/run",
       ])
       const generated = await readFile(config.nitro!.plugins[0]!, "utf8")
@@ -621,7 +623,7 @@ describe("Agent invocation console", () => {
 
       await Reflect.apply(configHandler, {}, [config, { command: "build", mode: "production" }])
 
-      expect(config.nitro?.handlers.map((handler) => handler.route)).toEqual(["/api/_vitehub/console/status", "/_vitehub", "/_vitehub/**", "/api/_vitehub/console/client.js", "/_vitehub/rpc/**", "/_vitehub/env/manage", "/_vitehub/schedules/run"])
+      expect(config.nitro?.handlers.map((handler) => handler.route)).toEqual(["/api/_vitehub/console/status", "/_vitehub", "/_vitehub/**", "/api/_vitehub/console/client.js", "/_vitehub/rpc/**", "/_vitehub/env/manage", "/_vitehub/channels/replay", "/_vitehub/schedules/run"])
       expect(config.nitro?.handlers.find(handler => handler.route === "/_vitehub/env/manage")).toMatchObject({ method: "post" })
       const generated = await readFile(config.nitro!.plugins[0]!, "utf8")
       expect(generated).toContain(`from "vite-hub/console/sections"`)
@@ -827,6 +829,7 @@ describe("Agent invocation console", () => {
         "/api/_vitehub/console/client.js",
         "/_vitehub/rpc/**",
         "/_vitehub/env/manage",
+        "/_vitehub/channels/replay",
         "/_vitehub/schedules/run",
       ])
       const generated = await readFile(config.nitro!.plugins[0]!, "utf8")
@@ -878,6 +881,7 @@ describe("Agent invocation console", () => {
         "/api/_vitehub/console/client.js",
         "/_vitehub/rpc/**",
         "/_vitehub/env/manage",
+        "/_vitehub/channels/replay",
         "/_vitehub/schedules/run",
       ])
       const generated = await readFile(config.nitro!.plugins[0]!, "utf8")
@@ -928,6 +932,7 @@ describe("Agent invocation console", () => {
         "/api/_vitehub/console/client.js",
         "/_vitehub/rpc/**",
         "/_vitehub/env/manage",
+        "/_vitehub/channels/replay",
         "/_vitehub/schedules/run",
       ])
       const generated = await readFile(config.nitro!.plugins[0]!, "utf8")
@@ -1017,6 +1022,7 @@ describe("Agent invocation console", () => {
         "/api/_vitehub/console/client.js",
         "/_vitehub/rpc/**",
         "/_vitehub/env/manage",
+        "/_vitehub/channels/replay",
         "/_vitehub/schedules/run",
       ])
       const generated = await readFile(config.nitro!.plugins[0]!, "utf8")

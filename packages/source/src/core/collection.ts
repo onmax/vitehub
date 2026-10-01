@@ -47,6 +47,8 @@ export interface Collection<
   readonly authorize?: AccessAuthorizeOption
   page(options: CollectionPageOptions<TQuery>): Promise<CollectionPage<TItem>>
   parseQuery(input: CollectionRequestQuery): Promise<TQuery>
+  /** The query schema, when the Collection has one. Tools read it to describe accepted query keys. */
+  readonly querySchema?: StandardSchemaV1<unknown, TQuery>
 }
 
 export type AnyCollection = Collection<any, any, any>
@@ -421,5 +423,6 @@ export function defineCollection<
       // SAFETY: CollectionRequestQuery is the owned default contract when no custom query schema is supplied.
       return input as TQuery
     },
+    ...(definition.querySchema ? { querySchema: definition.querySchema } : {}),
   }
 }

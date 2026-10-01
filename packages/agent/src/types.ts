@@ -2332,12 +2332,37 @@ export type AgentChannelMessageOf<TChannels> =
     ? undefined
     : { [TName in keyof TChannels & string]: AgentChannelMessageFromInput<TName, NonNullable<TChannels[TName]>> }[keyof TChannels & string] | undefined
 
+/** Request query for a Channel history Collection: one string or repeated strings per key. */
+export type AgentChannelHistoryQuery = Record<string, string | readonly string[] | undefined>
+
+/**
+ * The part of a `@vite-hub/source` Collection that Channel replay uses.
+ * A Collection from `defineCollection()` satisfies it.
+ */
+export interface AgentChannelHistoryCollection<TItem = unknown> {
+  page(options: { cursor?: string, limit?: number, query: object, signal?: AbortSignal }): Promise<{ items: TItem[], nextCursor: string | null }>
+  parseQuery(input: AgentChannelHistoryQuery): Promise<object>
+  readonly querySchema?: StandardSchemaV1
+}
+
+/** Past Channel messages that `replayChannel()` sends through a Channel trigger. */
+export interface AgentChannelHistory<TItem = unknown> {
+  /** Collection of past messages. Each item is the input of `trigger`. */
+  collection: AgentChannelHistoryCollection<TItem>
+  /** Returns a stable key for an item, such as the provider message ID. Replay derives the Invocation ID from it. */
+  key(item: TItem): string
+  /** Channel trigger that receives each item. Optional when the Channel has exactly one trigger. */
+  trigger?: string
+}
+
 export interface AgentChannelDefinition<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   /** Internal delivery handlers for built-in Channels. */
   [channelDeliveryHandlers]?: AgentChannelDeliveryEffects<TRuntimeConfig>
   activity?: AgentChannelActivityDefinition<TRuntimeConfig>
   adapter?: AgentChatPlatformResolver<TRuntimeConfig>
   capabilities?: readonly AgentCapabilityDefinition<TRuntimeConfig>[]
+  /** Past messages that `replayChannel()` and `vitehub channels replay` send through a trigger. */
+  history?: AgentChannelHistory
   identity?: IdentityResolver
   kind: string
   listener?: { kind: "telegram-polling" }
