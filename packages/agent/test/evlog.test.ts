@@ -170,7 +170,7 @@ it.each([
   await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil, agentIdentity: { name }, run: { runId: "links" } }, { prompt: "hello" })
   await Promise.allSettled(background.splice(0))
   const terminal = exporter.capture.mock.calls.find(([name]) => name === "$ai_trace")
-  expect(terminal?.[1].session_url).toBe(`https://console.example/inspect/_vitehub/agents/${segment}/invocations/${await agentInvocationId("links", name)}`)
+  expect(terminal?.[1].session_url).toBe(`https://console.example/inspect/_vitehub/agents/${segment}/invocations/${await agentInvocationId("links", "explicit-definition-name")}`)
   await hooks.get("close")!()
   expect(telemetry.status().closed).toBe(true)
 })

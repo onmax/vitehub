@@ -3788,7 +3788,8 @@ async function exportAgentTelemetryTraces<TRuntimeConfig extends AgentRuntimeCon
   const id = runtime.run?.runId || runtime.trace?.id
   const run = (id ? runs.find(candidate => candidate.id === id) : undefined) || (runs.length === 1 ? runs[0] : undefined)
   if (!run || run.status === "running") return
-  const name = runtime.agentIdentity?.name || agent.name
+  const invocationName = agentInvocationName(agent, runtime)
+  const name = runtime.agentIdentity?.name || invocationName
   const configuration = getAgentTelemetryConfiguration(context)
   const model = configuration?.value.driver.model
   const provider = model?.provider || configuration?.value.driver.provider
@@ -3850,7 +3851,7 @@ async function exportAgentTelemetryTraces<TRuntimeConfig extends AgentRuntimeCon
         }))
       : configuredSpans
     try {
-      await registration.exporter({ agent: { ...(name ? { name } : {}), ...(agent.version ? { version: agent.version } : {}) }, run: runtime.run, runtime, signal: "traces", spans })
+      await registration.exporter({ agent: { ...(invocationName ? { name: invocationName } : {}), ...(agent.version ? { version: agent.version } : {}) }, run: runtime.run, runtime, signal: "traces", spans })
     }
     catch (error) {
       throw new AgentTelemetryCapabilityError(capabilityId, error)

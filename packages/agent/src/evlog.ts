@@ -172,14 +172,15 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
     void track(withExportDeadline(timeoutMs, signal => exporter.exception(safe.error, attributes, signal)))
   }
 
-  async function invocationMetadata(runtime: Pick<ResolvedAgentRuntimeContext, "agentIdentity" | "run" | "trace">, run = runtime.run) {
-    const agentName = runtime.agentIdentity?.name
+  async function invocationMetadata(runtime: Pick<ResolvedAgentRuntimeContext, "agentIdentity" | "run" | "trace">, invocationName = runtime.agentIdentity?.name, run = runtime.run) {
+    const agentName = runtime.agentIdentity?.name || invocationName
     const id = run?.runId
+    const invocationId = invocationName && id ? await agentInvocationId(id, invocationName) : undefined
     return {
       agent_name: agentName, run_id: run?.runId, invocation_id: id, thread_id: run?.threadId,
       trace_id: runtime.trace?.id, parent_trace_id: runtime.trace?.parentId,
       $ai_trace_id: runtime.trace?.id || id,
-      session_url: agentName && id ? sessionUrl({ agentName, id: await agentInvocationId(id, agentName) }) : undefined,
+      session_url: agentName && invocationId ? sessionUrl({ agentName, id: invocationId }) : undefined,
     }
   }
 
@@ -197,7 +198,7 @@ export function createAgentEvlog(options: AgentEvlogOptions): AgentEvlog {
         if (!span?.endTime) return
         const summary = summaries.get(context.runtime)
         summaries.delete(context.runtime)
-        const attributes = await invocationMetadata(context.runtime)
+        const attributes = await invocationMetadata(context.runtime, context.agent.name)
         const cancelled = summary?.cancelled === true || span.events?.some(event => event.name === "agent.invocation.cancelled") === true
         const failed = !cancelled && span.status.code === "ERROR"
         if (failed) exception(summary?.error || new Error("Agent invocation failed"), attributes)
