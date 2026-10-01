@@ -1324,7 +1324,12 @@ function channelDeliveryEffectHandlers<TRuntimeConfig extends AgentRuntimeConfig
   const method = channel.message?.methods?.[intent.kind]
   if (method) {
     return [async ({ effect, finish: _finish, ...context }) => {
-      const message = await channelMessageData(channel, context.trigger?.channelId || channel.kind, context.context)
+      const message = await channelMessageData(
+        channel,
+        context.trigger?.channelId || channel.kind,
+        context.context,
+        context.context.get("agent.trigger") !== undefined,
+      )
       await channelMessageMethodHandler(method)({ ...context, message }, channelMessageIntentInput(effect))
     }]
   }
@@ -1338,9 +1343,13 @@ async function channelMessageData<TRuntimeConfig extends AgentRuntimeConfig>(
   channel: AgentChannelDefinition<TRuntimeConfig>,
   channelId: string,
   context: AgentInvocationContextStore,
+  validateMissing = true,
 ): Promise<unknown> {
   const stored = context.get(channelMessageContextKey)
   const schema = channel.message?.data
+  // Direct runAgent() delivery has no inbound Channel message to validate. The
+  // delivery method still handles event.reply(), while event.message remains undefined.
+  if (stored === undefined && !validateMissing) return
   return schema
     ? await parseStandardSchema(schema, stored, `Channel "${channelId}" message data`)
     : stored

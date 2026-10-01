@@ -504,6 +504,30 @@ describe("Channel message handle", () => {
     expect(label).not.toHaveBeenCalled()
   })
 
+  it("delivers direct replies without validating absent Channel message data", async () => {
+    const reply = vi.fn()
+    const agent = defineAgent({
+      channels: {
+        mail: defineChannel("mail", {
+          message: {
+            data: v.object({ id: v.string() }),
+            methods: {
+              reply: (_context, input: string) => reply(input),
+            },
+          },
+          messages: false,
+        }),
+      },
+      driver: { run: () => "ok" },
+      hooks: {
+        "agent:finish": event => event.reply("done"),
+      },
+    })
+
+    await expect(runAgent(agent, { ...runtimeContext(), run: { channelId: "mail", runId: "direct-reply" } }, { prompt: "hello" })).resolves.toBe("ok")
+    expect(reply).toHaveBeenCalledWith("done")
+  })
+
   it("rejects message methods that use reserved names or invalid shapes", () => {
     expect(() => defineChannel("bad", { message: { methods: { data: (() => undefined) as never } } })).toThrow(/reserved name/)
     expect(() => defineChannel("bad", { message: { methods: { then: (() => undefined) as never } } })).toThrow(/reserved name/)
