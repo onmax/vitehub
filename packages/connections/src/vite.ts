@@ -192,13 +192,17 @@ export function hubConnections(options: ConnectionsVitePluginOptions & InternalC
           const handlerFile = resolve(root, ".vitehub", "nitro", "connections", "handler.ts")
           const actorImport = actorModule?.startsWith(".") ? resolve(root, actorModule) : actorModule
           await writeFileIfChanged(handlerFile, [
-            `import { createConnectionsHandler } from ${JSON.stringify(`${options.importBase ?? "@vite-hub/connections"}/server`)}`,
+            `import { createConnectionsHandler } from ${JSON.stringify(`${options.importBase ?? "@vite-hub/connections"}/http`)}`,
+            `import { useConnectionsRuntime } from ${JSON.stringify(`${options.importBase ?? "@vite-hub/connections"}/server`)}`,
             "",
             ...(actorModule ? [`import actor from ${JSON.stringify(actorImport)}`] : []),
             "",
-            actorModule
-              ? "const handle = createConnectionsHandler({ actor })"
-              : 'const handle = createConnectionsHandler({ actor: () => "user:local" })',
+            actorModule ? "const authenticate = async (request: Request, event: unknown) => {" : "const authenticate = async () => {",
+            actorModule ? "  const id = await actor(request, event)" : '  const id = "user:local"',
+            "  return id ? { actor: { id, kind: \"user\" as const }, admin: true } : null",
+            "}",
+            "",
+            "const handle = createConnectionsHandler({ authenticate, runtime: useConnectionsRuntime() })",
             "",
             "export default (event: { req: Request }) => handle(event.req, event)",
             "",

@@ -130,6 +130,19 @@ describe("hubConnections", () => {
     expect((result.nitro as { externals: { inline: boolean } }).externals.inline).toBe(true)
   })
 
+  it("generates a management handler against the public HTTP and server entries", async () => {
+    const root = await createTempProject()
+    const plugin = hubConnections({ management: { actor: "./server/auth.ts" } })
+    const config = plugin.config as unknown as (config: Record<PropertyKey, unknown>, environment?: { command: string }) => Promise<Record<string, unknown>>
+
+    await config({ root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true }, { command: "build" })
+    const handler = await readFile(join(root, ".vitehub/nitro/connections/handler.ts"), "utf8")
+    expect(handler).toContain('from "@vite-hub/connections/http"')
+    expect(handler).toContain('from "@vite-hub/connections/server"')
+    expect(handler).toContain("runtime: useConnectionsRuntime()")
+    expect(handler).toContain("authenticate")
+  })
+
   it("does not configure Nitro outside a Nitro build", async () => {
     const root = await createTempProject()
     const plugin = hubConnections()
