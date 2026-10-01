@@ -2767,6 +2767,49 @@ describe("ViteHub Nuxt integration", () => {
     expect(steps).toEqual(["email", "types"])
   })
 
+  it("prepares Connection declarations before collecting generated types", async () => {
+    const steps: string[] = []
+    const prepareConnections = vi.fn(async () => { steps.push("connections") })
+    mocks.vitehub.mockReturnValue([
+      { name: "@vite-hub/connections/vite", api: { prepareTypes: prepareConnections } },
+      { name: "vite-hub/types", api: { prepareTypes: vi.fn(async () => { steps.push("types") }) } },
+    ])
+    const { nuxt } = createNuxt()
+    await viteHubNuxtModule({ database: true, connections: true, preset: "node" }, nuxt)
+    expect(prepareConnections).toHaveBeenCalledWith({ projectRoot: "/tmp/vitehub-nuxt", serverDirs: ["/tmp/vitehub-nuxt/custom-server"] })
+    expect(steps).toEqual(["connections", "types"])
+  })
+
+  it("includes default Connections declarations from a separate effective Vite root", async () => {
+    const { nuxt } = createNuxt()
+    Object.assign(nuxt.options.vite, { root: "frontend" })
+    await viteHubNuxtModule({ database: true, connections: true, preset: "node" }, nuxt)
+    // SAFETY: Module setup initializes both Nuxt TypeScript include lists before this assertion.
+    const appOptions = nuxt.options as typeof nuxt.options & { typescript: { tsConfig: { include: string[] } } }
+    expect(appOptions.typescript.tsConfig.include).toContain("../frontend/.vitehub/**/*.d.ts")
+    expect(nuxt.options.nitro).toMatchObject({ typescript: { tsConfig: { include: expect.arrayContaining(["../frontend/.vitehub/**/*.d.ts"]) } } })
+  })
+
+  it("prepares Connection types with the effective relative Vite root", async () => {
+    const prepareTypes = vi.fn(async () => {})
+    mocks.vitehub.mockReturnValue([{ name: "@vite-hub/connections/vite", api: { prepareTypes } }])
+    const { nuxt } = createNuxt()
+    Object.assign(nuxt.options.vite, { root: "app" })
+    await viteHubNuxtModule({ database: true, connections: { projectRoot: "packages/api" }, preset: "node" }, nuxt)
+    expect(prepareTypes).toHaveBeenCalledWith({ projectRoot: "/tmp/vitehub-nuxt/app", serverDirs: ["/tmp/vitehub-nuxt/custom-server"] })
+  })
+
+  it("cleans disabled Connection declarations before collecting generated types", async () => {
+    const steps: string[] = []
+    mocks.vitehub.mockReturnValue([
+      { name: "@vite-hub/connections/types-cleanup", api: { prepareTypes: async () => { steps.push("connections-cleanup") } } },
+      { name: "vite-hub/types", api: { prepareTypes: async () => { steps.push("types") } } },
+    ])
+    const { nuxt } = createNuxt()
+    await viteHubNuxtModule({ connections: false, preset: "node" }, nuxt)
+    expect(steps).toEqual(["connections-cleanup", "types"])
+  })
+
   it("registers generated Collection handlers without replacing unrelated handlers", async () => {
     const generated = {
       handler: "/tmp/vitehub-nuxt/.vitehub/source/routes/meals.mjs",
