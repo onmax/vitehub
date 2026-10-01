@@ -10,6 +10,7 @@ export const docsPageRedirects = {
   "/docs/concepts/channels-api": "/docs/agents/channels",
   "/docs/concepts/server-primitives-for-any-host": "/docs/server-primitives",
   "/docs/console/usage": "/docs/development/console",
+  "/docs/agents/evlog": "/docs/agents/observability",
   "/docs/reference/channels": "/docs/server-primitives/channels",
   "/docs/reference/diagnostics": "/docs/reference/errors-diagnostics",
 } as const satisfies Record<string, string>;
