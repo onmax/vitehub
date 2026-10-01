@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path"
 import { createRuntimeEnvRegistry, env } from "@vite-hub/env/vite"
 import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
+import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
 import { createConnectionsCliContributor } from "./cli.ts"
 import { discoverConnectionDefinitions } from "./discovery.ts"
@@ -21,6 +22,8 @@ const resolvedConnectionsRuntimeId = `\0${CONNECTIONS_RUNTIME_ID}`
 const addNoExternal = createNoExternalAddition("@vite-hub/connections")
 
 export interface ConnectionsVitePluginOptions {
+  /** Package import base used by the generated management handler. */
+  importBase?: string
   /** Database that stores grants and activity. Default: `"default"`. */
   database?: string
   /**
@@ -28,6 +31,8 @@ export interface ConnectionsVitePluginOptions {
    * Default: `env({ secret: true, optional: true, source: env.source("VITEHUB_CONNECTIONS_KEY") })`.
    */
   encryptionKey?: EnvVariableDeclaration
+  /** Mount the management API in production with an actor module. */
+  management?: boolean | { actor: string }
   projectRoot?: string
 }
 
@@ -166,7 +171,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions & InternalC
     vitehub: {
       cli: createConnectionsCliContributor,
     },
-    async config(config) {
+    async config(config, environment) {
       // SAFETY: The vite-hub distribution sets VITEHUB_SERVER_DIRS to a string array before this plugin runs.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       const nextConfig: Record<string, unknown> = {
@@ -177,7 +182,33 @@ export function hubConnections(options: ConnectionsVitePluginOptions & InternalC
         nitroRuntimeFile = resolve(root, ".vitehub", "nitro", "connections", "runtime.ts")
         await writeFileIfChanged(nitroRuntimeFile, renderRuntime(discoverConnectionDefinitions({ rootDir: root, serverDirs }), renderOptions))
         // SAFETY: hasNitroConfigContext checked that config is an object with Nitro settings.
-        ;(config as { nitro?: Record<string, unknown> }).nitro = configureNitroConnections(config as Record<string, unknown>, nitroRuntimeFile)
+        const nextNitro = configureNitroConnections(config as Record<string, unknown>, nitroRuntimeFile)
+        const shouldMount = environment?.command === "serve" || options.management !== undefined
+        if (shouldMount) {
+          const actorModule = options.management && options.management !== true ? options.management.actor : undefined
+          if (environment?.command !== "serve" && !actorModule?.trim()) {
+            throw new Error("Connections management in production requires management: { actor: <authentication module> }.")
+          }
+          const handlerFile = resolve(root, ".vitehub", "nitro", "connections", "handler.ts")
+          const actorImport = actorModule?.startsWith(".") ? resolve(root, actorModule) : actorModule
+          await writeFileIfChanged(handlerFile, [
+            `import { createConnectionsHandler } from ${JSON.stringify(`${options.importBase ?? "@vite-hub/connections"}/server`)}`,
+            "",
+            ...(actorModule ? [`import actor from ${JSON.stringify(actorImport)}`] : []),
+            "",
+            actorModule
+              ? "const handle = createConnectionsHandler({ actor })"
+              : 'const handle = createConnectionsHandler({ actor: () => "user:local" })',
+            "",
+            "export default (event: { req: Request }) => handle(event.req, event)",
+            "",
+          ].join("\n"))
+          const kit = createNitroServerKit(nextNitro)
+          kit.addHandler({ handler: handlerFile, route: "/_vitehub/connections" })
+          kit.addHandler({ handler: handlerFile, route: "/_vitehub/connections/**" })
+          Object.assign(nextNitro, kit.config)
+        }
+        ;(config as { nitro?: Record<string, unknown> }).nitro = nextNitro
       }
       return nextConfig
     },
