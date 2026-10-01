@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
+import * as v from "valibot"
 
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
 import { parseConsoleFixture } from "../../packages/vite-hub/src/console/fixture.ts"
@@ -23,6 +24,7 @@ for (const record of fixture.invocations) {
   store.create(input)
 }
 const invocations = defineAgentInvocations({ content: "content", store })
+const deleteActionSchema = v.strictObject({ action: v.literal("delete") })
 const sections = ["env", "connections", "agents", "usage", "database", "kv", "workflows", "queues"] as const
 const definitions = {
   queues: [
@@ -310,6 +312,23 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path.startsWith("/api/_vitehub/console/invocations/")) {
     const id = decodeURIComponent(path.slice("/api/_vitehub/console/invocations/".length))
+    if (request.method === "POST") {
+      let action: unknown
+      try { action = await body(request) }
+      catch {
+        json(response, { error: "Malformed invocation action." }, 400)
+        return true
+      }
+      if (!v.safeParse(deleteActionSchema, action).success) {
+        json(response, { error: "Bad Request" }, 400)
+        return true
+      }
+      const outcome = await invocations.delete(id)
+      if (outcome === "deleted") json(response, { id, outcome })
+      else if (outcome === "not-terminal") json(response, { error: "Only completed, failed, or cancelled invocations can be deleted." }, 409)
+      else json(response, { error: "Invocation not found" }, 404)
+      return true
+    }
     const record = await invocations.get(id)
     const invocation = summary(record)
     if (!record || !invocation) {
