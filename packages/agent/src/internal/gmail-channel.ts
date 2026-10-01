@@ -158,7 +158,7 @@ export interface GmailLabelSettings {
 
 /** One Gmail message: the `received` trigger input, the history item, and `event.message.data`. */
 export interface GmailMessage {
-  attachments: { attachmentId: string, filename: string, mimeType: string, size: number }[]
+  attachments: { attachmentId?: string, filename: string, mimeType: string, size: number }[]
   /** Plain-text body, decoded and capped at the Channel's `bodyLimit`. HTML-only mail is converted to text. */
   body: string
   cc: string[]
@@ -177,7 +177,7 @@ export interface GmailMessage {
 
 export const gmailMessageSchema: v.GenericSchema<GmailMessage> = v.object({
   attachments: v.array(v.object({
-    attachmentId: v.string(),
+    attachmentId: v.optional(v.string()),
     filename: v.string(),
     mimeType: v.string(),
     size: v.number(),
@@ -425,8 +425,8 @@ function toGmailMessage(message: v.InferOutput<typeof apiMessageSchema>, bodyLim
   const parts = flattenParts(message.payload)
   const headers = headerMap(parts)
   return {
-    attachments: parts.flatMap(part => part.filename && part.body?.attachmentId
-      ? [{ attachmentId: part.body.attachmentId, filename: part.filename, mimeType: part.mimeType || "application/octet-stream", size: part.body.size ?? 0 }]
+    attachments: parts.flatMap(part => part.filename
+      ? [{ attachmentId: part.body?.attachmentId, filename: part.filename, mimeType: part.mimeType || "application/octet-stream", size: part.body?.size ?? 0 }]
       : []),
     body: bodyText(parts, bodyLimit),
     cc: splitAddresses(headers.cc),

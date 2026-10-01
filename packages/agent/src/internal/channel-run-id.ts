@@ -4,5 +4,7 @@
  * Dry runs use their own IDs; a dry run never blocks a later live run.
  */
 export function channelMessageRunId(channel: string, key: string, options: { dryRun?: boolean } = {}): string {
-  return `${options.dryRun ? "channel-dry-run" : "channel"}:${channel}:${key}`
+  const encodedChannel = channel.replaceAll("%", "%25").replaceAll(":", "%3A")
+  const encodedKey = key.replaceAll("%", "%25").replaceAll(":", "%3A")
+  return `${options.dryRun ? "channel-dry-run" : "channel"}:${encodedChannel}:${encodedKey}`
 }

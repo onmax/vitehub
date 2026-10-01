@@ -100,6 +100,25 @@ describe("replayChannel()", () => {
     expect(label).not.toHaveBeenCalled()
   })
 
+  it("keeps colon-bearing Channel names and message keys independent", async () => {
+    const invocations = memoryInvocations()
+    const { channel } = mailbox()
+    const run = vi.fn(() => "done")
+    const agent = defineAgent({ channels: { "a:b": channel, a: channel }, driver: { run }, invocations, runtime: false })
+    const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+    const first = await dispatchChannelItems(agent, runtime, "a:b", [{ key: "c", input: emails[0]! }], { trigger: "received" })
+    const second = await dispatchChannelItems(agent, runtime, "a", [{ key: "b:c", input: emails[0]! }], { trigger: "received" })
+    expect(first.processed).toBe(1)
+    expect(second.processed).toBe(1)
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(first.items[0]?.id).not.toBe(second.items[0]?.id)
+    expect(channelMessageRunId("a:b", "c")).not.toBe(channelMessageRunId("a%3Ab", "c"))
+    expect(channelMessageRunId("a", "b:c", { dryRun: true })).not.toBe(channelMessageRunId("a:b", "c", { dryRun: true }))
+    const repeated = await dispatchChannelItems(agent, runtime, "a", [{ key: "b:c", input: emails[0]! }], { trigger: "received" })
+    expect(repeated.skipped).toBe(1)
+    expect(run).toHaveBeenCalledTimes(2)
+  })
+
   it("atomically excludes a webhook dispatch racing history replay", async () => {
     const invocations = memoryInvocations()
     let entered = 0

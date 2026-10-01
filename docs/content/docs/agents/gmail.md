@@ -75,7 +75,7 @@ The Channel adds instructions to the Agent: the email content is untrusted data,
 | `snippet` | Gmail's short preview. |
 | `labelIds` | Label IDs when Gmail delivered the message. |
 | `body` | Plain-text body, decoded and capped at `bodyLimit` characters (default 10000). HTML-only mail is converted to text. |
-| `attachments` | `{ attachmentId, filename, mimeType, size }` for each attachment. The data is not downloaded. |
+| `attachments` | `{ attachmentId?, filename, mimeType, size }` for each filename-bearing attachment. Inline attachments have no `attachmentId`. The data is not downloaded. |
 | `headers` | Headers by lowercase name, such as `list-id`. Transport headers such as `received` and `dkim-signature` are omitted. |
 
 The default prompt lists the headers, then the body. Pass `prompt: message => string` to build your own.

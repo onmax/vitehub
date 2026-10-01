@@ -44,7 +44,7 @@ interface FakeLabel {
   type: string
 }
 
-function apiMessage(id: string, subject: string, options: { html?: boolean } = {}) {
+function apiMessage(id: string, subject: string, options: { html?: boolean, inlineAttachment?: boolean } = {}) {
   const text = options.html ? `<p>Hello&nbsp;<b>${subject}</b></p><script>ignored()</script>` : `Hello\r\n\r\n\r\n${subject} body`
   return {
     id,
@@ -61,7 +61,7 @@ function apiMessage(id: string, subject: string, options: { html?: boolean } = {
       mimeType: "multipart/mixed",
       parts: [
         { body: { data: base64Url(text) }, mimeType: options.html ? "text/html" : "text/plain" },
-        { body: { attachmentId: "att-1", size: 1234 }, filename: "invoice.pdf", mimeType: "application/pdf" },
+        { body: options.inlineAttachment ? { data: base64Url("inline data"), size: 11 } : { attachmentId: "att-1", size: 1234 }, filename: options.inlineAttachment ? "inline.txt" : "invoice.pdf", mimeType: options.inlineAttachment ? "text/plain" : "application/pdf" },
       ],
     },
     snippet: `${subject} snippet`,
@@ -70,7 +70,7 @@ function apiMessage(id: string, subject: string, options: { html?: boolean } = {
 }
 
 /** Google OAuth, certificates, and Gmail REST in one injected `fetch`. */
-async function createGoogle() {
+async function createGoogle(options: { inlineAttachment?: boolean } = {}) {
   const keyPair = await crypto.subtle.generateKey(
     { hash: "SHA-256", modulusLength: 2048, name: "RSASSA-PKCS1-v1_5", publicExponent: new Uint8Array([1, 0, 1]) },
     true,
@@ -90,7 +90,7 @@ async function createGoogle() {
     { color: { backgroundColor: "#000000", textColor: "#ffffff" }, id: "Label_1", labelListVisibility: "labelShow", messageListVisibility: "show", name: "Work", type: "user" },
   ]
   const messages = new Map([
-    ["m1", apiMessage("m1", "Invoice")],
+    ["m1", apiMessage("m1", "Invoice", options)],
     ["m2", apiMessage("m2", "Receipt", { html: true })],
     ["m3", apiMessage("m3", "Offer")],
   ])
@@ -541,6 +541,23 @@ describe("gmail() Channel", () => {
     expect(prompts).toEqual(expired ? ["m1", "m3", "m2"] : ["m1", "m2"])
     expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("startHistoryId"))).toEqual(["100", "100"])
     if (expired) expect(google.calls.filter(call => call.path === "messages").map(call => call.query.get("pageToken"))).toEqual([null, "page-2", null, "page-2"])
+  })
+
+  it("preserves filename metadata for inline Gmail attachments", async () => {
+    stubGmailEnv()
+    const google = await createGoogle({ inlineAttachment: true })
+    const seen: unknown[] = []
+    const agent = defineAgent({
+      channels: { gmail: gmail({ fetch: google.fetch }) },
+      driver: { run: ({ input }) => { seen.push(input.prompt); return "done" } },
+      hooks: { "agent:finish": event => { seen.push(event.message?.data.attachments) } },
+    })
+    const result = await replayChannel(agent, "gmail", { force: true, limit: 1 })
+    expect(result.processed).toBe(1)
+    expect(seen[0]).toContain("inline.txt")
+    expect(seen[1]).toEqual([
+      { attachmentId: undefined, filename: "inline.txt", mimeType: "text/plain", size: 11 },
+    ])
   })
 
   it("gives hooks Gmail message methods that map label names to IDs", async () => {
