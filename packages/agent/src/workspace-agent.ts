@@ -1,3 +1,4 @@
+import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { inheritAgentLayerOptions } from "./agent-layers.ts"
 import { registeredWorkspaceAgentNames } from "./internal/workspace-agent-registration.ts"
 import { agentInstructionSources, resolveAgentInstructions } from "./agent-instructions.ts"
@@ -303,6 +304,7 @@ export function workspaceAgentWithSourceRoot<Agent>(agent: Agent, sourceRootDir:
     ...workspaceDefinitionFromOptions(workspaceOptions as never),
     __vitehubWorkspaceAgentOptions: workspaceOptions,
   }
+  Object.defineProperty(decoratedAgent, agentDefinitionSourceSymbol, { configurable: true, value: workspaceAgent })
   for (const key of [colocatedAgentSkillsSymbol, discoveredSkillsSetter]) {
     const descriptor = Object.getOwnPropertyDescriptor(workspaceAgent, key)
     if (descriptor) Object.defineProperty(decoratedAgent, key, descriptor)
@@ -793,6 +795,7 @@ function providerMetadata(driver: {
   permissions: AgentInspectionProviderMetadata["permissions"]
   provider: string
   providerSettings?: Record<string, unknown>
+  requirements?: readonly string[]
   reasoningEffort?: AgentInspectionProviderMetadata["reasoningEffort"]
   reasoningSummary?: AgentInspectionProviderMetadata["reasoningSummary"]
   sessionStorePath?: string
@@ -810,6 +813,7 @@ function providerMetadata(driver: {
     permissions: driver.permissions,
     provider: driver.provider,
     ...(providerSettings.length ? { providerSettings } : {}),
+    ...(driver.requirements?.length ? { requirements: [...driver.requirements] } : {}),
     ...(driver.reasoningEffort ? { reasoningEffort: driver.reasoningEffort } : {}),
     ...(driver.reasoningSummary ? { reasoningSummary: driver.reasoningSummary } : {}),
     ...(driver.sessionStorePath ? { sessionStore: "sqlite" as const } : {}),

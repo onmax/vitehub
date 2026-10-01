@@ -165,6 +165,8 @@ export default defineAgent({
 })
 ```
 
+When a Channel started the Invocation, both hooks also receive `event.message`. Use its methods to act on the provider message, such as a reply or a label. Set `dryRun: true` in the Invocation input to record write calls in the trace instead of calling the provider. See [Act on the Channel message in hooks](/docs/agents/channels#act-on-the-channel-message-in-hooks).
+
 Error hooks receive the raw `event.error` for protected server diagnostics and a
 sanitized `event.publicError` for logs, HTTP responses, or Channel replies. See
 [Agent public errors](/docs/reference/errors-diagnostics#agent-public-errors) for
@@ -297,7 +299,7 @@ hooks: {
 }
 ```
 
-The journal records pending, running, completed, failed, and cancelled states plus bounded invocation metadata and trace observations. Failed records retain bounded `cause` and `AggregateError.errors` trees, common status and code fields, and public ViteHub error details. Use `invocations.list()` for cursor-based summaries, `invocations.get(id)` for a stored record ID, and `invocations.getByRunId(runId, agentName?)` when starting from the source run ID. Always pass the Agent Definition name for a named Definition; the name is part of its durable invocation identity. Journal failures never change the Agent Invocation result.
+The journal records pending, running, completed, failed, and cancelled states plus bounded invocation metadata and trace observations. Failed records retain bounded `cause` and `AggregateError.errors` trees, common status and code fields, and public ViteHub error details. Use `invocations.list()` for cursor-based summaries, `invocations.get(id)` for a stored record ID, and `invocations.getByRunId(runId, agentName?)` when starting from the source run ID. Always pass the Agent Definition name for a named Definition; the name is part of its durable invocation identity. When the Console is enabled, a discovered Definition without `name` records its discovered name, such as `labeller` for `server/agents/labeller.ts`, also when server code calls `runAgent()` directly. If the same unnamed Definition is discovered under multiple names, direct calls remain unscoped because the Definition cannot identify the imported alias. Host calls still record their selected Agent name. Journal failures never change the Agent Invocation result.
 
 Use `triggeredBy` to filter persisted summaries by the person label recorded in `annotations.triggeredBy`. It matches the trimmed label exactly and composes with Agent, Capability, status, and text filters:
 
