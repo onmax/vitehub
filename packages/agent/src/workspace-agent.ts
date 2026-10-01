@@ -1,3 +1,4 @@
+import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { inheritAgentLayerOptions } from "./agent-layers.ts"
 import { registeredWorkspaceAgentNames } from "./internal/workspace-agent-registration.ts"
 import { agentInstructionSources, resolveAgentInstructions } from "./agent-instructions.ts"
@@ -303,6 +304,7 @@ export function workspaceAgentWithSourceRoot<Agent>(agent: Agent, sourceRootDir:
     ...workspaceDefinitionFromOptions(workspaceOptions as never),
     __vitehubWorkspaceAgentOptions: workspaceOptions,
   }
+  Object.defineProperty(decoratedAgent, agentDefinitionSourceSymbol, { configurable: true, value: workspaceAgent })
   for (const key of [colocatedAgentSkillsSymbol, discoveredSkillsSetter]) {
     const descriptor = Object.getOwnPropertyDescriptor(workspaceAgent, key)
     if (descriptor) Object.defineProperty(decoratedAgent, key, descriptor)
@@ -556,6 +558,18 @@ function capabilityMetadataTool(capability: NormalizedCapability, options: { dri
       description: "Run explicitly allowed executables in an isolated sandbox.",
       icon: "i-lucide-box",
       name: "sandbox",
+      status: "available",
+    }
+  }
+  if (capability.id.startsWith("channel-delivery.")) {
+    const tool = capability.metadata?.tool
+    const name = hasRuntimeType(tool, "string") ? tool : undefined
+    if (!name) return undefined
+    return {
+      category: "capability",
+      description: "Deliver a message through the configured Channel.",
+      icon: "i-lucide-send",
+      name,
       status: "available",
     }
   }
