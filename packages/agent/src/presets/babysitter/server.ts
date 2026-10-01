@@ -244,7 +244,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     // Recover leases that expired while the host was stopped before claiming work.
     await pullRequestInbox.recoverLeases();
     // Delivery IDs deduplicate redeliveries; their payloads only help inspection.
-    if ((((await pullRequestInbox.meta("deliveries-prune-next")) as number | undefined) ?? 0) <= Date.now()) {
+    if (((await pullRequestInbox.metaNumber("deliveries-prune-next")) ?? 0) <= Date.now()) {
       await pullRequestInbox.setMeta("deliveries-prune-next", Date.now() + 60 * 60_000);
       await pullRequestInbox.pruneDeliveries();
     }

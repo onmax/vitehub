@@ -111,7 +111,7 @@ export async function reconcileOneSnapshot(inbox: PullRequestInbox, read: ReadGi
   // No more than one PR per minute, and no PR more often than every 15 minutes.
   // The first probe is delayed because bootstrap/claims already hydrate state.
   const globalKey = 'snapshot-reconcile-next'
-  const globalNext = await inbox.meta(globalKey) as number | undefined
+  const globalNext = await inbox.metaNumber(globalKey)
   if (globalNext === undefined) { await inbox.setMeta(globalKey, now + 15 * 60_000); return }
   if (globalNext > now) return
   await inbox.setMeta(globalKey, now + 60_000)

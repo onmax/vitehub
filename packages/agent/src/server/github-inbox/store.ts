@@ -2,6 +2,8 @@ import { parseProviderBudget, parseProgressBudget, validateBudgets, requireEvide
 
 import { parseWait, type PullRequestWait } from './wait-state.ts'
 import { createHash, randomUUID } from 'node:crypto'
+import * as v from 'valibot'
+import { isRuntimeNumber, isRuntimeString } from '../../internal/runtime-value.ts'
 import { createNodeSqliteInboxStorage, type PullRequestInboxExecutor, type PullRequestInboxRow, type PullRequestInboxStorage } from './storage.ts'
 
 import type { GitHubPullRequestFilter, GitHubPullRequestFilterContext } from '../../channels.ts'
@@ -88,24 +90,38 @@ export function pullRequestFilterContext(repository: string, pr: GitHubPullReque
     base: pr?.base?.ref, head: pr?.head?.ref, title: pr?.title }
 }
 
-const stringValue = (value: unknown): string => typeof value === 'string' ? value : String(value)
+const stringValue = (value: unknown): string => isRuntimeString(value) ? value : String(value)
+const legacyRecordSchema = v.record(v.string(), v.unknown())
+const legacyWaitSchema = v.object({ headSha: v.pipe(v.string(), v.minLength(1)), contextKey: v.pipe(v.string(), v.minLength(1)) })
+const summarySchema = v.object({
+  repository: v.string(), number: v.number(), head: v.optional(v.string()), generation: v.number(), handled: v.number(),
+  status: v.picklist(['ready', 'working', 'waiting', 'terminal']), reasons: v.array(v.string()), wait: v.optional(v.unknown()),
+  dirty: v.boolean(), attempts: v.number(), nextAt: v.number(), lastResult: v.optional(v.string()), progressBudget: v.optional(v.unknown()),
+})
+function parseSummary(value: unknown): GitHubInboxSummary {
+  const { wait, progressBudget, ...summary } = v.parse(summarySchema, value)
+  const parsed: GitHubInboxSummary = summary
+  if (wait !== undefined) parsed.wait = parseWait(wait)
+  if (progressBudget !== undefined) parsed.progressBudget = parseProgressBudget(progressBudget)
+  return parsed
+}
 
 /**
  * Converts a snapshot from an older inbox file. Older hosts used an `attention` status and a
  * `waitForChecks` record; both map to the current states. Invalid records are skipped.
  */
 function legacySnapshot(raw: unknown): Snapshot | undefined {
-  if (raw === null || Object.prototype.toString.call(raw) !== '[object Object]') return undefined
-  // SAFETY: plain object checked above; parseSnapshot validates every owned field below.
-  const value = { ...(raw as Record<string, unknown>) }
-  const legacyWait = value.waitForChecks as { headSha?: unknown; contextKey?: unknown } | undefined
-  if (!value.wait && legacyWait && typeof legacyWait.headSha === 'string' && typeof legacyWait.contextKey === 'string' && legacyWait.headSha && legacyWait.contextKey) {
-    value.wait = { headSha: legacyWait.headSha, reason: 'checks', evidenceKey: legacyWait.contextKey }
+  const record = v.safeParse(legacyRecordSchema, raw)
+  if (!record.success) return undefined
+  const value = { ...record.output }
+  const legacyWait = v.safeParse(legacyWaitSchema, value.waitForChecks)
+  if (!value.wait && legacyWait.success) {
+    value.wait = { headSha: legacyWait.output.headSha, reason: 'checks', evidenceKey: legacyWait.output.contextKey }
   }
   if (value.status === 'attention' || value.status === 'working') value.status = value.wait ? 'waiting' : 'ready'
   value.lease = null
   value.leaseUntil = 0
-  if (typeof value.repository === 'string') value.repository = value.repository.toLowerCase()
+  if (isRuntimeString(value.repository)) value.repository = value.repository.toLowerCase()
   try { return parseSnapshot(value) }
   catch { return undefined }
 }
@@ -222,6 +238,11 @@ export class PullRequestInbox {
   async meta(key: string): Promise<unknown> {
     await this.init()
     return await this.metaIn({ execute: (statement, args) => this.storage.execute(statement, args) }, key)
+  }
+  /** A numeric metadata value, such as a timestamp; anything else reads as undefined. */
+  async metaNumber(key: string): Promise<number | undefined> {
+    const value = await this.meta(key)
+    return isRuntimeNumber(value) ? value : undefined
   }
   async setMeta(key: string, value: unknown): Promise<void> { await this.transaction(tx => this.setMetaIn(tx, key, value)) }
   /** Shared provider scope should identify the credential/account, without including its secret. */
@@ -345,7 +366,7 @@ export class PullRequestInbox {
     const payload = parseDelivery(value)
     return await this.transaction(async tx => {
       const t = this.tables
-      if ((await tx.execute(`SELECT id FROM ${t.deliveries} WHERE scope=? AND id=?`, [this.scope, id])).length) return { accepted: true, duplicate: true, queued: [] as number[], updated: [] as number[] }
+      if ((await tx.execute(`SELECT id FROM ${t.deliveries} WHERE scope=? AND id=?`, [this.scope, id])).length) return { accepted: true, duplicate: true, queued: [], updated: [] }
       const repository = String(payload.repository?.full_name ?? '').toLowerCase()
       const queued: number[] = []
       const updated: number[] = []
@@ -382,7 +403,7 @@ export class PullRequestInbox {
       if (direct) numbers.add(direct)
       for (const pr of check?.pull_requests ?? []) if (pr.number) numbers.add(pr.number)
       // Open PRs whose head matches the commit, or whose base or head branch received the push.
-      const pushedRef = event === 'push' && typeof payload.ref === 'string' && payload.ref.startsWith('refs/heads/') ? payload.ref.slice('refs/heads/'.length) : null
+      const pushedRef = event === 'push' && isRuntimeString(payload.ref) && payload.ref.startsWith('refs/heads/') ? payload.ref.slice('refs/heads/'.length) : null
       const matches = await tx.execute(`SELECT number FROM ${t.pullRequests} WHERE scope=? AND repository=? AND state='open'
         AND ((? IS NOT NULL AND head_sha=?) OR (? IS NOT NULL AND (base_ref=? OR head_ref=?)))`, [this.scope, repository, sha ?? null, sha ?? null, pushedRef, pushedRef, pushedRef])
       for (const row of matches) numbers.add(Number(row.number))
@@ -629,8 +650,7 @@ export class PullRequestInbox {
     if (!this.repositories.length) return []
     const repositories = this.repositoryFilter()
     const rows = await this.read(`SELECT summary FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql} ORDER BY repository, number`, [this.scope, ...repositories.args])
-    // SAFETY: summary JSON is written only by put() from a validated snapshot.
-    return rows.map(row => JSON.parse(stringValue(row.summary)) as GitHubInboxSummary)
+    return rows.map(row => parseSummary(JSON.parse(stringValue(row.summary))))
   }
   /** The open, unleased PR that a reconciliation probe checked longest ago, with that probe time. */
   async nextProbe(): Promise<{ repository: string; number: number; probedAt: number } | undefined> {
