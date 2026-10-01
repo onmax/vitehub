@@ -733,13 +733,14 @@ describe("gmail() Channel", () => {
     expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("labelId"))).toEqual(["INBOX", "INBOX", "INBOX"])
   })
 
-  it("journals recovery messages before listing the next page and retries without duplicate Invocations", async () => {
+  it.each(["history", "recovery"] as const)("journals %s messages before listing the next page and retries without duplicate Invocations", async mode => {
     stubGmailEnv()
     const google = await createGoogle()
-    const agentName = "paged-recovery"
+    const agentName = `paged-${mode}`
     const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
     const prompts: string[] = []
     const pages: Array<string | null> = []
+    const historyCursors: Array<string | null> = []
     let started!: () => void
     let nextPageStarted!: () => void
     let releaseNextPage!: () => void
@@ -749,18 +750,27 @@ describe("gmail() Channel", () => {
     let interrupted = true
     const fetch: typeof globalThis.fetch = async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input))
-      if (url.pathname.endsWith("/messages")) {
+      if (url.pathname.endsWith("/history")) {
+        const cursor = url.searchParams.get("startHistoryId")
+        historyCursors.push(cursor)
+        if (mode === "history" && cursor === "300") return Response.json({ historyId: "300" })
+      }
+      if (url.pathname.endsWith(mode === "history" ? "/history" : "/messages")) {
         const pageToken = url.searchParams.get("pageToken")
         pages.push(pageToken)
-        expect(url.searchParams.get("maxResults")).toBe("100")
-        if (!pageToken) return Response.json({ messages: [{ id: "m1" }], nextPageToken: "page-2" })
+        if (mode === "recovery") expect(url.searchParams.get("maxResults")).toBe("100")
+        else expect(url.searchParams.get("labelId")).toBe("INBOX")
+        const page = (ids: string[], nextPageToken?: string) => mode === "history"
+          ? { history: [{ messagesAdded: ids.map(id => ({ message: { id } })) }], historyId: nextPageToken ? "110" : "300", ...(nextPageToken ? { nextPageToken } : {}) }
+          : { messages: ids.map(id => ({ id })), ...(nextPageToken ? { nextPageToken } : {}) }
+        if (!pageToken) return Response.json(page(mode === "history" ? ["m1", "m1"] : ["m1"], "page-2"))
         if (interrupted) {
           nextPageStarted()
           await laterPageGate
           interrupted = false
-          throw new Error("Recovery interrupted before its next page")
+          throw new Error(`${mode} interrupted before its next page`)
         }
-        return Response.json({ messages: [{ id: "m2" }] })
+        return Response.json(page(mode === "history" ? ["m1", "m2"] : ["m2"]))
       }
       return await google.fetch(input, init)
     }
@@ -782,7 +792,7 @@ describe("gmail() Channel", () => {
       return tasks
     }
     await Promise.all(await push())
-    google.expiredHistory.add("105")
+    if (mode === "recovery") google.expiredHistory.add("105")
     const tasks = await push()
     try {
       expect(await Promise.race([firstDispatch.then(() => "dispatch"), nextPage.then(() => "pagination")])).toBe("dispatch")
@@ -797,10 +807,11 @@ describe("gmail() Channel", () => {
     await Promise.all(await push())
     expect(prompts).toEqual(["m1", "m2"])
     expect(pages).toEqual([null, "page-2", null, "page-2"])
-    expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("startHistoryId"))).toEqual(["105", "105"])
+    expect(historyCursors).toEqual(mode === "history" ? ["105", "105", "105", "105"] : ["105", "105"])
+    expect(google.calls.filter(call => call.path === "messages/m1")).toHaveLength(2)
     await Promise.all(await push())
     expect(prompts).toEqual(["m1", "m2"])
-    expect(google.calls.filter(call => call.path === "history").at(-1)?.query.get("startHistoryId")).toBe("300")
+    expect(historyCursors.at(-1)).toBe("300")
   })
 
   it.each([false, true])("retries unjournaled dispatch failures and recovers every expired-history page: %s", async (expired) => {

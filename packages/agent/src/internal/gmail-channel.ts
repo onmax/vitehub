@@ -740,25 +740,6 @@ function log(event: string, details: Record<string, unknown>): void {
   console.info(JSON.stringify({ event, scope: "vitehub.channel.gmail", ...details }))
 }
 
-async function newInboxMessageIds(client: GmailClient, startHistoryId: string): Promise<{ historyId: string, ids: string[] }> {
-  const ids = new Set<string>()
-  let historyId = startHistoryId
-  let pageToken: string | undefined
-  do {
-    const page = await gmailRequest(client, historyListSchema, {
-      method: "GET",
-      path: "history",
-      query: { historyTypes: "messageAdded", labelId: gmailWatchLabelIds[0], pageToken, startHistoryId },
-    })
-    for (const entry of page.history || []) {
-      for (const { message } of entry.messagesAdded || []) ids.add(message.id)
-    }
-    historyId = page.historyId
-    pageToken = page.nextPageToken
-  } while (pageToken)
-  return { historyId, ids: [...ids] }
-}
-
 export async function listGmailMessageIds(
   client: GmailClient,
   options: { labelIds?: readonly string[], limit: number, pageToken?: string, query?: string },
@@ -809,14 +790,41 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
       }
     }
   }
-  let changes: { historyId: string, ids: string[] }
-  try {
-    changes = await newInboxMessageIds(client, cursor)
-  }
-  catch (error) {
-    if (gmailErrorStatus(error) !== 404) throw error
+  let historyId = cursor
+  let pageToken: string | undefined
+  let expired = false
+  const seen = new Set<string>()
+  do {
+    await renew()
+    // Only an expired history request triggers recovery, not a dispatch failure.
+    const page = await gmailRequest(client, historyListSchema, {
+      method: "GET",
+      path: "history",
+      query: { historyTypes: "messageAdded", labelId: gmailWatchLabelIds[0], pageToken, startHistoryId: cursor },
+    }).catch((error: unknown) => {
+      if (gmailErrorStatus(error) !== 404) throw error
+      return undefined
+    })
+    if (!page) {
+      expired = true
+      break
+    }
+    const ids: string[] = []
+    for (const entry of page.history || []) {
+      for (const { message } of entry.messagesAdded || []) {
+        if (seen.has(message.id)) continue
+        seen.add(message.id)
+        ids.push(message.id)
+      }
+    }
+    await dispatchMessageIds(ids)
+    historyId = page.historyId
+    pageToken = page.nextPageToken
+  } while (pageToken)
+  if (expired) {
     // Gmail keeps about a week of history. Recover recent Inbox mail, then continue from now.
-    const { historyId } = await gmailRequest(client, profileSchema, { method: "GET", path: "profile" })
+    const profile = await gmailRequest(client, profileSchema, { method: "GET", path: "profile" })
+    historyId = profile.historyId
     let recovered = 0
     let pageToken: string | undefined
     do {
@@ -827,13 +835,11 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
       pageToken = recent.nextPageToken
     } while (pageToken)
     log("history.expired", { historyId: cursor, recovered })
-    changes = { historyId, ids: [] }
   }
-  await dispatchMessageIds(changes.ids)
   if (failed) return
   // Advance the cursor only while this worker still owns the mailbox lease.
   await renew()
-  await mutate([{ key: cursorKey, type: "set", value: changes.historyId }])
+  await mutate([{ key: cursorKey, type: "set", value: historyId }])
 }
 
 /**
