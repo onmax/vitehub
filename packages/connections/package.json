@@ -52,13 +52,11 @@
     "@vite-hub/runtime": "workspace:*",
     "nostics": "catalog:runtime",
     "pathe": "catalog:unjs",
-    "proper-lockfile": "catalog:",
     "valibot": "catalog:runtime"
   },
   "devDependencies": {
     "@libsql/client": "catalog:database",
     "@types/node": "catalog:tooling",
-    "@types/proper-lockfile": "catalog:",
     "@vite-hub/internal": "workspace:*",
     "drizzle-orm": "catalog:database",
     "miniflare": "4.20260714.0",

@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
-import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path";
 
-import { lock } from "proper-lockfile";
 import * as v from "valibot";
 
 import {
@@ -29,6 +28,8 @@ const noExternalAddition = createNoExternalAddition("@vite-hub/connections");
 // Keep prior output ownership with the project so cleanup works after a restart.
 const generatedTypesManifest = ".vitehub/connections-types.json";
 const generatedTypesPath = ".vitehub/types/connections.d.ts";
+const generatedTypesManifestLock = ".vitehub/connections-types.json.lock";
+const staleManifestLockMs = 30_000;
 const generatedTypesManifestEntrySchema = v.object({
   root: v.string(),
   hash: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
@@ -62,16 +63,71 @@ async function readOptionalFile(file: string): Promise<string | undefined> {
 
 async function withManifestLock<T>(root: string, action: () => Promise<T>): Promise<T> {
   await mkdir(resolve(root, ".vitehub"), { recursive: true });
-  const release = await lock(resolve(root, generatedTypesManifest), {
-    realpath: false,
-    stale: 10_000,
-    retries: { retries: 100, minTimeout: 10, maxTimeout: 1000 },
-  });
+  const lockPath = resolve(root, generatedTypesManifestLock);
+  const token = randomUUID();
+  for (;;) {
+    try {
+      await mkdir(lockPath);
+      break;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+      if (await removeAbandonedManifestLock(lockPath)) continue;
+      await new Promise<void>(resolve => setTimeout(resolve, 5));
+    }
+  }
+
+  try {
+    await writeFile(resolve(lockPath, "owner.json"), JSON.stringify({ pid: process.pid, token }));
+  } catch (error) {
+    await rm(lockPath, { recursive: true, force: true });
+    throw error;
+  }
+  const lockIdentity = await lstat(lockPath);
+
+  const heartbeat = setInterval(() => {
+    const now = new Date();
+    void utimes(lockPath, now, now).catch(() => undefined);
+  }, staleManifestLockMs / 2);
+  heartbeat.unref?.();
   try {
     return await action();
   } finally {
-    await release();
+    clearInterval(heartbeat);
+    try {
+      const current = await lstat(lockPath);
+      const owner = await readOptionalFile(resolve(lockPath, "owner.json"));
+      if (
+        current.dev === lockIdentity.dev &&
+        current.ino === lockIdentity.ino &&
+        owner === JSON.stringify({ pid: process.pid, token })
+      ) {
+        await rm(lockPath, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
   }
+}
+
+async function removeAbandonedManifestLock(lockPath: string): Promise<boolean> {
+  let lockStat;
+  try {
+    lockStat = await stat(lockPath);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return true;
+    throw error;
+  }
+  if (Date.now() - lockStat.mtimeMs <= staleManifestLockMs) return false;
+
+  const abandonedPath = `${lockPath}.stale-${randomUUID()}`;
+  try {
+    await rename(lockPath, abandonedPath);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return true;
+    throw error;
+  }
+  await rm(abandonedPath, { recursive: true, force: true });
+  return true;
 }
 
 async function readManifest(root: string) {
