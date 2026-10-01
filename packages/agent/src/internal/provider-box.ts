@@ -444,6 +444,7 @@ function relaySource(socketPath: string, token: string) {
 const socket = connect(${JSON.stringify(socketPath)})
 let exitCode = 1
 let buffered = Buffer.alloc(0)
+let forwarding = Promise.resolve()
 socket.on("connect", () => {
   socket.write(JSON.stringify({ token: ${JSON.stringify(token)}, args: process.argv.slice(2), env: process.env }) + "\\n")
   process.stdin.pipe(socket)
@@ -451,7 +452,7 @@ socket.on("connect", () => {
 socket.on("data", (chunk) => {
   socket.pause()
   buffered = Buffer.concat([buffered, chunk])
-  void consumeFrames().then(() => socket.resume(), () => socket.destroy())
+  forwarding = consumeFrames().then(() => socket.resume(), () => socket.destroy())
 })
 async function consumeFrames() {
   while (buffered.length >= 5) {
@@ -474,7 +475,7 @@ socket.on("error", (error) => {
 socket.on("close", () => {
   process.stdin.unpipe(socket)
   process.stdin.destroy()
-  process.exitCode = exitCode
+  void forwarding.then(() => { process.exitCode = exitCode })
 })
 `
 }
