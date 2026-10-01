@@ -2234,7 +2234,14 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
     },
     async cancel(id) {
       assertInvocationId(id)
-      const summary = await store.getSummary(id)
+      let summary: AgentInvocationSummary | undefined
+      try {
+        summary = await store.getSummary(id)
+      }
+      catch (error) {
+        abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
+        throw error
+      }
       if (!summary) return { id, outcome: "not-found" }
       if (terminalStatus(summary.status)) {
         const local = abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))

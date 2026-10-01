@@ -5639,19 +5639,26 @@ function invocationFailureWasCancelled(error: unknown, signal: AbortSignal | und
   if (!signal?.aborted) return false
   if (enforced) return true
   const seen = new Set<unknown>()
-  let current = error
-  while (!seen.has(current)) {
+  const pending: unknown[] = [error]
+  while (pending.length) {
+    const current = pending.pop()
     if (current === signal.reason) return true
+    if (!isRuntimeRecord(current) || seen.has(current)) continue
+    seen.add(current)
     try {
-      if (!isRuntimeRecord(current)) return false
-      seen.add(current)
+      pending.push(Reflect.get(current, "cause"))
+    }
+    catch {}
+    try {
+      const errors: unknown = Reflect.get(current, "errors")
+      if (Array.isArray(errors)) pending.push(...errors)
+    }
+    catch {}
+    try {
       const tag = Object.prototype.toString.call(current)
       if ((tag === "[object Error]" || tag === "[object DOMException]") && Reflect.get(current, "name") === "AbortError") return true
-      current = Reflect.get(current, "cause")
     }
-    catch {
-      return false
-    }
+    catch {}
   }
   return false
 }

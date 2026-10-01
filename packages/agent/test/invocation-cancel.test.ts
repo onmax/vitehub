@@ -127,7 +127,7 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.get(id))?.status).toBe("completed")
   })
 
-  it.each(["unrelated", "foreign-unrelated", "plain-abort-name", "hostile-tag", "reason", "wrapped-reason", "foreign-wrapped-reason", "abort-error", "foreign-abort-error"] as const)("classifies a cancelled custom handler's %s rejection by its actual error", async (failureKind) => {
+  it.each(["unrelated", "foreign-unrelated", "plain-abort-name", "hostile-tag", "reason", "wrapped-reason", "foreign-wrapped-reason", "abort-error", "foreign-abort-error", "aggregate-reason", "foreign-aggregate-reason", "cyclic-aggregate-reason", "aggregate-unrelated"] as const)("classifies a cancelled custom handler's %s rejection by its actual error", async (failureKind) => {
     const release = deferred()
     const started = deferred()
     const failure = new Error("Independent handler failure")
@@ -146,6 +146,14 @@ describe("Agent Invocation cancel", () => {
         if (failureKind === "foreign-wrapped-reason") throw runInNewContext("new Error('Outer stop', { cause: new Error('Inner stop', { cause: reason }) })", { reason: signal?.reason })
         if (failureKind === "foreign-abort-error") throw runInNewContext("Object.assign(new Error('Handler stopped'), { name: 'AbortError' })")
         if (failureKind === "foreign-unrelated") throw runInNewContext("new Error('Independent handler failure')")
+        if (failureKind === "aggregate-reason") throw new AggregateError([signal?.reason, failure], "Handler stopped with cleanup failure")
+        if (failureKind === "foreign-aggregate-reason") throw runInNewContext("new AggregateError([reason, new Error('Cleanup failed')], 'Handler stopped')", { reason: signal?.reason })
+        if (failureKind === "cyclic-aggregate-reason") {
+          const aggregate = new AggregateError([signal?.reason, failure], "Handler stopped")
+          Object.defineProperty(aggregate, "cause", { value: aggregate })
+          throw aggregate
+        }
+        if (failureKind === "aggregate-unrelated") throw new AggregateError([failure, new Error("Cleanup failed")], "Independent failures")
         if (failureKind === "abort-error") throw new DOMException("Handler stopped", "AbortError")
         throw failure
       } },
@@ -159,7 +167,7 @@ describe("Agent Invocation cancel", () => {
     release.resolve()
     await rejected
     const record = await invocations.get(id)
-    const cancelled = !["unrelated", "foreign-unrelated", "plain-abort-name", "hostile-tag"].includes(failureKind)
+    const cancelled = !["unrelated", "foreign-unrelated", "plain-abort-name", "hostile-tag", "aggregate-unrelated"].includes(failureKind)
     expect(record?.status).toBe(cancelled ? "cancelled" : "failed")
     expect(record?.observations.some(entry => entry.name === "agent.invocation.cancelled")).toBe(cancelled)
     if (failureKind === "unrelated" || failureKind === "hostile-tag") expect(record?.error?.message).toBe(failure.message)
@@ -270,6 +278,44 @@ describe("Agent Invocation cancel", () => {
       await backing.release(id, "replacement")
       abortLocalAgentInvocation(store, id, new Error("Cancellation was requested during fixture cleanup"))
       await rejection
+    }
+  })
+
+  it.each([true, false])("aborts local work while propagating a failed initial journal read, enforced=%s", async enforced => {
+    const failure = new Error("Synthetic initial journal read failure")
+    const backing = createMemoryAgentInvocationStore()
+    const getSummary = vi.fn(async (id: string) => await backing.getSummary(id))
+    const store = { ...backing, getSummary }
+    const invocations = defineAgentInvocations({ store })
+    const release = deferred<string>()
+    let signal: AbortSignal | undefined
+    modelGenerate.mockImplementation(async (input: { abortSignal?: AbortSignal }) => {
+      signal = input.abortSignal
+      return await untilAborted(signal)
+    })
+    const custom = { run: async ({ input }: import("../src/types.ts").AgentRunContext) => {
+      signal = input.abortSignal
+      return await release.promise
+    } }
+    const runId = `failed-cancel-read-${enforced}`
+    const run = runAgent(defineAgent({ driver: enforced ? modelDriver : custom, invocations }), runtime(runId), { prompt: "Wait." })
+    const settled = enforced ? expect(run).rejects.toThrow("Cancellation was requested") : expect(run).resolves.toBe("Custom result")
+    const { id } = await recordWithStatus(invocations, runId, "running")
+    await vi.waitFor(() => expect(signal).toBeDefined())
+    getSummary.mockRejectedValueOnce(failure)
+    try {
+      await expect(invocations.cancel(id)).rejects.toBe(failure)
+      expect(signal?.aborted).toBe(true)
+      expect((await backing.get(id))?.cancelRequestedAt).toBeUndefined()
+      if (!enforced) expect((await backing.get(id))?.status).toBe("running")
+      release.resolve("Custom result")
+      await settled
+      expect((await backing.get(id))?.status).toBe(enforced ? "cancelled" : "completed")
+    }
+    finally {
+      abortLocalAgentInvocation(store, id, new Error("Cancellation was requested during fixture cleanup"))
+      release.resolve("Custom result")
+      await settled
     }
   })
 
