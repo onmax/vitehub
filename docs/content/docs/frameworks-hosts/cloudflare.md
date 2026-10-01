@@ -117,14 +117,17 @@ When Sandbox is enabled, ViteHub writes an explicit gradual Container rollout in
 
 With `vitehub({ preset: 'cloudflare', rateLimit: true })`, ViteHub selects the Cloudflare provider and uses the application name as the namespace. Each handler-local `requireRateLimit()` policy contributes one `ratelimits` entry to Nitro's Wrangler config. Do not repeat those bindings in `nitro.cloudflare.wrangler`.
 
-When you compose the owner integration directly, set the namespace yourself. Plain Vite builds without Nitro write the bindings to the generated `wrangler.json`.
+When you compose the owner integration directly, set the Cloudflare provider and namespace yourself. Plain Vite builds without Nitro cannot infer a production provider, so the explicit provider is required before Vite writes bindings to the generated `wrangler.json`.
 
 ```ts [vite.config.ts]
 import { hubRateLimit } from '@vite-hub/rate-limit/vite'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  plugins: [hubRateLimit({ namespace: 'acme-image-service-production' })],
+  plugins: [hubRateLimit({
+    provider: 'cloudflare',
+    namespace: 'acme-image-service-production',
+  })],
 })
 ```
 
