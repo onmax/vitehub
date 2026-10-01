@@ -9140,7 +9140,7 @@ describe("server helpers", () => {
   })
 
   it.each(["foreign abort", "foreign canceled", "dom abort", "plain abort", "tagged abort", "hostile tag", "unrelated", "unrequested foreign abort", "remote abort", "remote canceled", "remote dom abort"] as const)("settles queued webhook cancellation from its journal for %s", async failureKind => {
-    const { defineAgent } = await import("../src/index.ts")
+    const { defineAgent, defineCapability } = await import("../src/index.ts")
     const { github } = await import("../src/channels.ts")
     const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
     const { agentInvocationId, createMemoryAgentInvocationStore, defineAgentInvocations } = await import("../src/invocations.ts")
@@ -9150,11 +9150,38 @@ describe("server helpers", () => {
     const complete = vi.spyOn(state, "completeWebhookDelivery")
     const retry = vi.spyOn(state, "retryWebhookDelivery")
     const backing = createMemoryAgentInvocationStore()
-    const invocations = defineAgentInvocations({ store: backing })
+    let releaseOwner!: () => void
+    let reportWarningCommitted!: () => void
+    const ownerResponses = new Promise<void>(resolve => { releaseOwner = resolve })
+    const warningCommitted = new Promise<void>(resolve => { reportWarningCommitted = resolve })
+    let holdOwner = false
+    const ownerStore = {
+      ...backing,
+      async getSummary(id: string) {
+        const snapshot = await backing.getSummary(id)
+        if (holdOwner) await ownerResponses
+        return snapshot
+      },
+      async update(...args: Parameters<typeof backing.update>) {
+        const snapshot = await backing.update(...args)
+        if (failureKind.startsWith("remote") && args[1].cancelNotEnforcedBy === "run") {
+          holdOwner = true
+          reportWarningCommitted()
+        }
+        if (holdOwner) await ownerResponses
+        return snapshot
+      },
+    }
+    const invocations = defineAgentInvocations({ store: ownerStore })
     const remote = defineAgentInvocations({ store: { ...backing } })
     const id = await agentInvocationId("journal-webhook-invocation", "review")
-    const run = vi.fn(async () => {
-      if (failureKind.startsWith("remote")) await remote.cancel(id)
+    const run = vi.fn(async (context: { input: { abortSignal?: AbortSignal } }) => {
+      if (failureKind.startsWith("remote")) {
+        await warningCommitted
+        await remote.cancel(id)
+        expect((await backing.getSummary(id))?.cancelRequestedAt).toEqual(expect.any(String))
+        expect(context.input.abortSignal?.aborted).toBe(false)
+      }
       else if (failureKind !== "unrequested foreign abort") await invocations.cancel(id)
       if (failureKind === "foreign abort" || failureKind === "unrequested foreign abort" || failureKind === "remote abort") throw runInNewContext("Object.assign(new Error('Provider aborted'), { name: 'AbortError' })")
       if (failureKind === "foreign canceled" || failureKind === "remote canceled") throw runInNewContext("Object.assign(new Error('Provider cancelled'), { name: 'CanceledError' })")
@@ -9171,6 +9198,7 @@ describe("server helpers", () => {
     const agent = defineAgent({
       name: "review",
       invocations,
+      capabilities: [defineCapability({ id: "release-owner-responses", close: () => { releaseOwner() } })],
       channels: { github: github({
         triggers: { webhook: { invoke: () => ({
           input: { prompt: "Review the pull request." },
@@ -9194,6 +9222,7 @@ describe("server helpers", () => {
       expect((await invocations.getSummary(id))?.status).toBe(cancelled ? "cancelled" : "failed")
     }
     finally {
+      releaseOwner()
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
     }

@@ -5689,6 +5689,8 @@ async function finishAgentInvocation<
   const outcomeFailed = outcome.status === "error"
   let failed = outcomeFailed
   let error = outcome.status === "error" ? outcome.error : undefined
+  // Preserve failure classification before teardown can observe a later cancellation request.
+  if (outcomeFailed) invocationFailureWasCancelled(error, context.input.abortSignal)
   let result = outcome.status === "error" ? undefined : outcome.result
   let usage = outcome.status === "error" ? undefined : outcome.usage
   const usageResolved = outcome.status !== "error" && outcome.usageResolved
@@ -7308,7 +7310,7 @@ async function executeAgentInvocation<
           ? { run: { ...context.run, runId: (context as AgentRuntimeContext & { [agentInvocationRunId]: string })[agentInvocationRunId] } }
           : {}),
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      }, { agentName: (definition as AgentDefinition).name || context.agentIdentity?.name })
+      }, { agentName: (definition as AgentDefinition).name || context.agentIdentity?.name, cancellationDriver: invocationCancellationDriver(definition) })
       : undefined
   }
   catch (error) {

@@ -46,6 +46,23 @@ function inspectableToolCapability() {
 }
 
 describe("Agent Invocations", () => {
+  it.each(["memory", "sqlite"] as const)("preserves and clears pending dispatch verification in the %s store", async backend => {
+    const client = backend === "sqlite" ? createClient({ url: ":memory:" }) : undefined
+    const store = client ? createLibsqlAgentInvocationStore({ client }) : createMemoryAgentInvocationStore()
+    const timestamp = new Date().toISOString()
+    const id = `pending-dispatch-${backend}`
+    try {
+      await store.create({ cancelWarningPending: true, createdAt: timestamp, id, observations: [], status: "pending", traceId: id, updatedAt: timestamp })
+      await store.update(id, { cancelRequestedAt: timestamp, timestamp })
+      expect(await store.getSummary(id)).toMatchObject({ cancelRequestedAt: timestamp, cancelWarningPending: true })
+      expect(await store.claim(id, "owner", 30_000)).toBe(true)
+      await store.update(id, { cancelNotEnforcedBy: "run", cancelWarningPending: false, status: "running", timestamp }, "owner")
+      expect(await store.getSummary(id)).toMatchObject({ cancelNotEnforcedBy: "run", status: "running" })
+      expect(await store.getSummary(id)).not.toHaveProperty("cancelWarningPending")
+    }
+    finally { client?.close() }
+  })
+
   it("retains terminal usage totals when raw and call evidence exceeds the byte budget", () => {
     const usage = { inputTokens: 5, outputTokens: 2, totalTokens: 7 }
     const result = byteBoundedObservations([{

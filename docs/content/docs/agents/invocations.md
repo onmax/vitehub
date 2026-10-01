@@ -373,7 +373,7 @@ An observed cancel request aborts the Invocation abort signal. That signal stops
 | `provider` (`claude-code`, `codex`) | Enforced. The provider session receives the abort signal. |
 | `run` | Not enforced. The handler receives `context.input.abortSignal` and can stop on its own. ViteHub cannot stop it. |
 
-Cancellation before Driver dispatch stops startup without a `notEnforcedBy` warning. When a started Driver does not enforce cancel, the result has `notEnforcedBy`, and the record keeps `cancelNotEnforcedBy` and `cancelRequestedAt`. The record stays `running` until the Driver returns. ViteHub does not report the Invocation as cancelled.
+Cancellation before Driver dispatch stops startup without a `notEnforcedBy` warning. Journals set `cancelWarningPending` until custom Driver dispatch can be verified. After dispatch, they retry the warning write for up to one minute. A cancellation caller in another process waits up to five seconds for a pending state to become a durable warning or a terminal record. If it cannot verify that state, `cancel()` throws `AGENT_R0974`; the cancellation request is already recorded. Inspect the journal again to confirm the result. Custom stores must preserve `cancelWarningPending` and clear it when `applyAgentInvocationStoreUpdate()` receives `false`. When a started Driver does not enforce cancel, the result has `notEnforcedBy`, and the record keeps `cancelNotEnforcedBy` and `cancelRequestedAt`. The record stays `running` until the Driver returns. ViteHub does not report the Invocation as cancelled.
 
 ## Inspect invocations in the console
 

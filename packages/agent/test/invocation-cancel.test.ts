@@ -514,6 +514,115 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.get(id))?.status).toBe("cancelled")
   })
 
+  it("waits for a started custom Driver warning before reporting remote cancellation", async () => {
+    const backing = createMemoryAgentInvocationStore()
+    const markerEntered = deferred()
+    const releaseMarker = deferred()
+    const releaseDriver = deferred<string>()
+    const requestRecorded = deferred()
+    const store = { ...backing, async update(...args: Parameters<typeof backing.update>) {
+      if (args[1].cancelNotEnforcedBy === "run") {
+        markerEntered.resolve()
+        await releaseMarker.promise
+      }
+      return await backing.update(...args)
+    } }
+    const remote = defineAgentInvocations({ store: { ...backing, async update(...args: Parameters<typeof backing.update>) {
+      const record = await backing.update(...args)
+      if (args[1].cancelRequestedAt) requestRecorded.resolve()
+      return record
+    } } })
+    const invocations = defineAgentInvocations({ store })
+    const runId = "remote-started-warning-persistence"
+    const id = await agentInvocationId(runId)
+    const driver = vi.fn(() => releaseDriver.promise)
+    const running = runAgent(defineAgent({ invocations, driver: { run: driver } }), runtime(runId), {})
+    const settled = running.then(result => result, error => error)
+    await markerEntered.promise
+    let reported = false
+    const cancellation = remote.cancel(id).then(result => { reported = true; return result })
+    try {
+      await requestRecorded.promise
+      await new Promise<void>(resolve => setImmediate(resolve))
+      expect(driver).toHaveBeenCalledOnce()
+      expect(reported).toBe(false)
+      releaseMarker.resolve()
+      expect(await cancellation).toMatchObject({ delivery: "journal", notEnforcedBy: "run", outcome: "requested", status: "running" })
+    }
+    finally {
+      releaseMarker.resolve()
+      releaseDriver.resolve("Done")
+      await Promise.all([settled, cancellation])
+    }
+  })
+
+  it.each(["failure", "timeout"] as const)("retries a started Driver warning after its first store %s before reporting remote cancellation", async failure => {
+    const backing = createMemoryAgentInvocationStore()
+    const markerEntered = deferred()
+    const releaseMarker = deferred()
+    const releaseDriver = deferred<string>()
+    let attempts = 0
+    const store = { ...backing, async update(...args: Parameters<typeof backing.update>) {
+      if (args[1].cancelNotEnforcedBy === "run" && ++attempts === 1) {
+        markerEntered.resolve()
+        if (failure === "failure") throw new Error("Warning write failed")
+        await releaseMarker.promise
+      }
+      return await backing.update(...args)
+    } }
+    const invocations = defineAgentInvocations({ store })
+    const remote = defineAgentInvocations({ store: { ...backing } })
+    const runId = `remote-warning-retry-${failure}`
+    const id = await agentInvocationId(runId)
+    const driver = vi.fn(() => releaseDriver.promise)
+    const running = runAgent(defineAgent({ invocations, driver: { run: driver } }), runtime(runId), {})
+    const settled = running.then(result => result, error => error)
+    try {
+      await markerEntered.promise
+      expect(driver).toHaveBeenCalledOnce()
+      expect(await remote.cancel(id)).toMatchObject({ delivery: "journal", notEnforcedBy: "run", outcome: "requested", status: "running" })
+      expect(attempts).toBeGreaterThan(1)
+      expect((await backing.getSummary(id))?.cancelNotEnforcedBy).toBe("run")
+    }
+    finally {
+      releaseMarker.resolve()
+      releaseDriver.resolve("Done")
+      await settled
+    }
+  })
+
+  it("reports recorded cancellation with unverified Driver state when warning writes keep failing", async () => {
+    const backing = createMemoryAgentInvocationStore()
+    const markerEntered = deferred()
+    const releaseDriver = deferred<string>()
+    const store = { ...backing, async update(...args: Parameters<typeof backing.update>) {
+      if (args[1].cancelNotEnforcedBy === "run") {
+        markerEntered.resolve()
+        throw new Error("Warning writes unavailable")
+      }
+      return await backing.update(...args)
+    } }
+    const invocations = defineAgentInvocations({ store })
+    const remote = defineAgentInvocations({ store: { ...backing } })
+    const runId = "remote-warning-unverified"
+    const id = await agentInvocationId(runId)
+    let ended = false
+    const driver = vi.fn(async () => { const result = await releaseDriver.promise; ended = true; return result })
+    const running = runAgent(defineAgent({ invocations, driver: { run: driver } }), runtime(runId), {})
+    const settled = running.then(result => result, error => error)
+    try {
+      await markerEntered.promise
+      await expect(remote.cancel(id)).rejects.toMatchObject({ code: "AGENT_R0974", message: expect.stringContaining("Cancellation was recorded") })
+      expect((await backing.getSummary(id))?.cancelRequestedAt).toEqual(expect.any(String))
+      expect((await backing.getSummary(id))?.status).toBe("running")
+      expect(ended).toBe(false)
+    }
+    finally {
+      releaseDriver.resolve("Done")
+      await settled
+    }
+  })
+
   it.each((["run", "stream"] as const).flatMap(kind => [false, true].map(capacity => ({ capacity, kind }))))("does not warn before $kind Driver dispatch when cancellation interrupts running persistence, capacity=$capacity", async ({ capacity, kind }) => {
     const backing = createMemoryAgentInvocationStore()
     const entered = deferred()
