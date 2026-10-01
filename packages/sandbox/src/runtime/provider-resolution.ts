@@ -1,13 +1,13 @@
 import { getCloudflareEnv } from '@vite-hub/internal/runtime/cloudflare-env'
 import { createProviderDetector, isCloudflare, isVercel } from '../internal/shared/provider-detection'
 import { sandboxError } from '../sandbox/errors'
-import { loadSandboxProviderRuntime } from './provider-loader-resolver'
 
 import type {
   SandboxDefinitionOptions,
   SandboxDefinitionProviderOptions,
 } from '../module-types'
 import type { SandboxProvider } from '../module-types'
+import type { SandboxRuntimeProvider } from './provider-loader'
 import { sandboxErrorDiagnostics } from "../error-diagnostics.ts"
 
 type SandboxEvent = {
@@ -15,6 +15,10 @@ type SandboxEvent = {
     cloudflare?: { env?: Record<string, unknown> }
     _platform?: { cloudflare?: { env?: Record<string, unknown> } }
   }
+}
+
+type ProviderLoaderModule = {
+  loadSandboxRuntimeProvider: (provider: SandboxProvider) => Promise<SandboxRuntimeProvider>
 }
 
 const allowedDefinitionKeys = new Set(['timeout', 'env'])
@@ -118,7 +122,11 @@ export async function resolveSandboxBox(
   local: SandboxDefinitionOptions,
   context: { event?: SandboxEvent },
 ) {
-  const runtimeProvider = await loadSandboxProviderRuntime(provider)
+  const providerLoader = await import('vitehub-sandbox-provider-loader').catch(() => {
+    const dynamicImport = new Function('specifier', 'return import(specifier)') as <T>(specifier: string) => Promise<T>
+    return dynamicImport<ProviderLoaderModule>('@vite-hub/sandbox/runtime/provider-loader')
+  }) as ProviderLoaderModule
+  const runtimeProvider = await providerLoader.loadSandboxRuntimeProvider(provider)
   return await runtimeProvider.resolveSandboxBox({
     local,
     provider: providerOptions,
