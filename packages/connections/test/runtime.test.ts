@@ -392,6 +392,26 @@ describe("Connections runtime refresh", () => {
     expect(api.calls.map(call => call.authorization)).toEqual([`Bearer ${accessToken}`, "Bearer refreshed-access-1"])
   })
 
+  it("does not wait for a 401 response body to finish cancelling before retrying", async () => {
+    let first = true
+    const body = new ReadableStream({
+      cancel: () => new Promise<void>(() => undefined),
+    })
+    const api = mockFetch((_url, init) => {
+      if (first) {
+        first = false
+        return new Response(body, { status: 401 })
+      }
+      return Response.json({ id: "1", ok: true }, { headers: { authorization: new Headers(init.headers).get("authorization") ?? "" } })
+    })
+    const { fake, name, runtime, store } = setupRuntime({ fetch: api.fetch })
+    await store.write({ name, provider: "fake", tokens: tokenSet() })
+
+    await expect(runtime.call(name, readOperation, { id: "1" }, { actor: server })).resolves.toEqual({ id: "1", ok: true })
+    expect(fake.refresh).toHaveBeenCalledTimes(1)
+    expect(api.calls).toHaveLength(2)
+  })
+
   it("retries a 401 only once", async () => {
     const api = mockFetch(() => new Response(null, { status: 401 }))
     const { fake, name, runtime, store } = setupRuntime({ fetch: api.fetch })

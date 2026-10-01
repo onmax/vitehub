@@ -311,7 +311,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     // A stream body was read by the first request and cannot be sent again.
     if (response.status !== 401 || !token.refreshToken || init.body instanceof ReadableStream) return response
     // One retry after a forced refresh covers tokens that the provider revoked early.
-    await response.body?.cancel().catch(() => undefined)
+    // Body cleanup is best effort. A custom fetch may return a stream whose
+    // cancellation never settles, and that must not block the forced refresh
+    // or prevent the caller's abort signal from being observed.
+    void response.body?.cancel().catch(() => undefined)
     return authorize(await tokens(name, value, event, actor, true, init.signal))
   }
 
