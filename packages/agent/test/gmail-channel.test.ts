@@ -356,6 +356,55 @@ describe("gmail() Channel", () => {
     }
   })
 
+  it.each(["history", "recovery"] as const)("dispatches earlier batches before later %s body fetches fail", async mode => {
+    const google = await createGoogle()
+    const state = createLibsqlAgentState({ url: ":memory:" })
+    await state.connect()
+    try {
+      await state.set("mail:history-id", "100")
+      const ids = Array.from({ length: 6 }, (_, index) => `m${index + 1}`)
+      google.history.set("100", { historyId: "110", ids })
+      if (mode === "recovery") google.expiredHistory.add("100")
+      const failure = new Error("Later Gmail body fetch interrupted")
+      let failOnce = true
+      const fetch: typeof globalThis.fetch = async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input))
+        if (url.pathname.endsWith("/messages") && mode === "recovery") {
+          return Response.json({ messages: ids.map(id => ({ id })) })
+        }
+        const id = /\/messages\/(m\d+)$/.exec(url.pathname)?.[1]
+        if (id === "m6" && failOnce) {
+          failOnce = false
+          throw failure
+        }
+        if (id) return Response.json(apiMessage(id, `Message ${id}`))
+        return await google.fetch(input, init)
+      }
+      const delivered = new Set<string>()
+      const dispatch = vi.fn(async (messages: readonly { id: string }[]) => {
+        const fresh = messages.filter(message => !delivered.has(message.id))
+        for (const message of fresh) delivered.add(message.id)
+        return { failed: 0, items: [], nextCursor: null, processed: fresh.length, skipped: messages.length - fresh.length }
+      })
+      const sync = {
+        bodyLimit: 1000,
+        client: gmailClientFromSettings({ clientId: "client", clientSecret: "secret", refreshToken: "refresh-token" }, fetch),
+        dispatch,
+        notificationHistoryId: "110",
+        state: { keyPrefix: "mail:", state },
+      }
+      await expect(syncGmailMailbox(sync)).rejects.toBe(failure)
+      expect([...delivered]).toEqual(ids.slice(0, 5))
+      expect(await state.get("mail:history-id")).toBe("100")
+      await syncGmailMailbox(sync)
+      expect([...delivered]).toEqual(ids)
+      expect(await state.get("mail:history-id")).toBe(mode === "history" ? "110" : "300")
+    }
+    finally {
+      await state.disconnect()
+    }
+  })
+
   it.each(["history", "dispatch"] as const)("drains overlapping notifications after a %s exception", async failureKind => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-gmail-pending-error-"))
     const url = `file:${join(root, "state.db")}`

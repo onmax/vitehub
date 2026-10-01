@@ -792,13 +792,16 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
     log("history.expired", { historyId: cursor, recovered: ids.length })
     changes = { historyId, ids }
   }
-  const messages = await getGmailMessages(client, changes.ids, sync.bodyLimit)
   let failed = false
-  for (const message of messages) {
+  for (let start = 0; start < changes.ids.length; start += messageFetchConcurrency) {
     await renew()
-    const result = await sync.dispatch([message])
-    log("messages.dispatched", { failed: result.failed, processed: result.processed, skipped: result.skipped })
-    failed ||= result.failed > 0
+    const messages = await getGmailMessages(client, changes.ids.slice(start, start + messageFetchConcurrency), sync.bodyLimit)
+    for (const message of messages) {
+      await renew()
+      const result = await sync.dispatch([message])
+      log("messages.dispatched", { failed: result.failed, processed: result.processed, skipped: result.skipped })
+      failed ||= result.failed > 0
+    }
   }
   if (failed) return
   // Advance the cursor only while this worker still owns the mailbox lease.
