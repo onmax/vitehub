@@ -107,7 +107,7 @@ describe("Schedule private dev authority", () => {
       await mkdir(join(viteRoot, "node_modules/@vite-hub"), { recursive: true })
       await symlink(resolve(import.meta.dirname, ".."), join(viteRoot, "node_modules/@vite-hub/schedule"), "dir")
       await writeFile(join(viteRoot, "vite.config.mjs"), `import { hubSchedule } from "@vite-hub/schedule/vite"; export default { plugins: [hubSchedule({ projectRoot: ${JSON.stringify(root)} })] };`)
-      const child = spawn(process.execPath, [resolve(import.meta.dirname, "../../cli/src/index.ts"), "schedule", "run", "digest", "--url", url, "--json"], { cwd: viteRoot, stdio: ["ignore", "pipe", "pipe"] })
+      const child = spawn(process.execPath, [resolve(import.meta.dirname, "../../cli/src/index.ts"), "schedule", "run-runtime", "digest", "--url", url, "--json"], { cwd: viteRoot, stdio: ["ignore", "pipe", "pipe"] })
       let stdout = ""
       let stderr = ""
       child.stdout.on("data", chunk => { stdout += String(chunk) })
@@ -123,7 +123,7 @@ describe("Schedule private dev authority", () => {
         for (const operation of ["run", "disable", "enable"]) {
           let stdout = ""
           let stderr = ""
-          expect(await runScheduleCli([operation, "digest", "--url", serverUrl, "--json"], {
+          expect(await runScheduleCli([operation === "run" ? "run-runtime" : operation, "digest", "--url", serverUrl, "--json"], {
             cwd: viteRoot, rootDir: viteRoot, env: {}, stdout: { write: chunk => { stdout += String(chunk); return true } }, stderr: { write: chunk => { stderr += String(chunk); return true } },
           })).toBe(0)
           expect(JSON.parse(stdout)).toHaveProperty(operation === "run" ? "run" : "schedule")
