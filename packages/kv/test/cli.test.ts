@@ -48,6 +48,19 @@ function sentBody(fetch: ReturnType<typeof devServer>): unknown {
 }
 
 describe("KV review regressions", () => {
+  it("reports invalid binary payloads without throwing", async () => {
+    const output = context()
+    await expect(runKVCli(["get", "key", "--json"], output.context, { fetch: devServer({ encoding: "base64", found: true, key: "key", store: "default", value: "invalid!" }) })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message")
+  })
+
+  it.each([false, true])("rejects malformed operation responses with json %s", async (json) => {
+    const output = context()
+    await expect(runKVCli(["list", ...(json ? ["--json"] : [])], output.context, { fetch: devServer({ keys: "invalid", store: "default" }) })).resolves.toBe(1)
+    if (json) expect(JSON.parse(output.stdout.output())).toEqual({ error: { message: "The KV Dev response has an invalid result shape." } })
+    else expect(output.stderr.output()).toContain("invalid result shape")
+  })
+
   it("emits JSON for discovery failures", async () => {
     const output = context()
     await expect(runKVCli(["list", "--json"], output.context, { fetch: vi.fn(async () => { throw new Error("offline") }) })).resolves.toBe(1)
