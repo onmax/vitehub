@@ -166,7 +166,7 @@ it.each([
   const { telemetry, exporter } = setup()
   const hooks = new Map<string, Function>()
   telemetry.plugin({ hooks: { hook(name, callback) { hooks.set(name, callback) } } })
-  const agent = defineAgent({ driver: { run: () => "answer" }, capabilities: [telemetry.capability] })
+  const agent = defineAgent({ name: "explicit-definition-name", driver: { run: () => "answer" }, capabilities: [telemetry.capability] })
   await runAgent(agent, { runtime: "unknown", memo: vi.fn(), waitUntil, agentIdentity: { name }, run: { runId: "links" } }, { prompt: "hello" })
   await Promise.allSettled(background.splice(0))
   const terminal = exporter.capture.mock.calls.find(([name]) => name === "$ai_trace")
