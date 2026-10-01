@@ -18,5 +18,8 @@ export function readDiscoveredAgentName(agent: unknown): string | undefined {
   if (!hasRuntimeType(agent, "object") || agent === null) return
   // SAFETY: The object check above narrows the definition before reading this framework-owned key.
   const name = (agent as DiscoveredAgent)[discoveredAgentName]
-  return hasRuntimeType(name, "string") && name ? name : undefined
+  if (hasRuntimeType(name, "string") && name) return name
+  // SAFETY: The object check above permits reading the framework-owned source link.
+  const source = (agent as Record<symbol, unknown>)[agentDefinitionSourceSymbol]
+  return source && source !== agent ? readDiscoveredAgentName(source) : undefined
 }

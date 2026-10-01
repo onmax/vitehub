@@ -4,6 +4,7 @@ export type { AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-pres
 import { invocationUsageWithAuxiliaryCalls } from "./internal/auxiliary-usage.ts"
 import { agentLayerMetadata, createConfiguredAgentDefinition, rememberAgentLayerOptions, resolveAgentLayerOptions } from "./agent-layers.ts"
 import { readDiscoveredAgentName } from "./internal/discovered-agent-name.ts"
+import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { asUnknownBoundary, hasRuntimeType, isCallableMember, isRuntimeObject, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { Diagnostic } from "nostics"
 import agentRegistry from "#vitehub/agent/registry"
@@ -2872,6 +2873,7 @@ export function agentWithColocatedInstructions<Agent>(agent: Agent, instructions
   Object.setPrototypeOf(definition as object, Object.getPrototypeOf(agent as object))
   // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
   Object.defineProperties(definition as object, decorations)
+  Object.defineProperty(definition, agentDefinitionSourceSymbol, { configurable: true, value: agent })
   return definition
 }
 
