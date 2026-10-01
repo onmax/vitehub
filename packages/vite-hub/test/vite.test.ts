@@ -813,6 +813,27 @@ describe("vitehub", () => {
     })
   })
 
+  it("wires Connections to the ViteHub Database", () => {
+    expect(pluginNames(vitehub({ connections: true, database: true, preset: "node" }))).toContain("@vite-hub/connections/vite")
+    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
+    })
+    expect(pluginNames(vitehub({ database: true, preset: "node" }))).not.toContain("@vite-hub/connections/vite")
+    expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
+  })
+
+  it("mounts the Connections management API only behind Console access", () => {
+    expect(() => vitehub({ connections: { management: true }, database: true, preset: "node" }))
+      .toThrow("connections.management requires Console production access")
+    vitehub({ connections: { management: true }, console: { exposure: "host-managed" }, database: true, preset: "node" })
+    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
+      management: { actor: "#vitehub/console/connections-actor" },
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
+    })
+  })
+
   it("passes configured Email drivers through the canonical integration", () => {
     const email = {
       driver: "resend" as const,

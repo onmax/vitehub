@@ -21,6 +21,8 @@ export type Snapshot = {
   comments: Record<string, GitHubEvidence>; reviews: Record<string, GitHubEvidence>
   reviewComments: Record<string, GitHubEvidence>; checks: Record<string, GitHubEvidence>; statuses: Record<string, GitHubEvidence>
   threads: GitHubReviewThread[]; threadsHydrated?: boolean; reasons: string[]; lastResult?: string
+  /** Persisted before a host-side merge so a crash after GitHub succeeds can recover safely. */
+  mergeIntent?: { head: string; text: string }
 }
 export type SnapshotPatch = Partial<Pick<Snapshot, 'pr' | 'comments' | 'reviews' | 'reviewComments' | 'checks' | 'statuses' | 'threads' | 'hydrated' | 'refresh' | 'feedbackRefresh' | 'threadsHydrated'>>
 export interface GitHubInboxDeliveryResult { accepted: true; duplicate?: boolean; queued: number[]; updated: number[]; ignored?: boolean; reason?: string }
@@ -54,7 +56,12 @@ function parseSnapshot(value: unknown): Snapshot {
     !Array.isArray(input.threads) || !Array.isArray(input.reasons) || input.reasons.some(reason => Object.prototype.toString.call(reason) !== '[object String]') ||
     ('revision' in input && !Number.isFinite(input.revision)) ||
     ('threadsHydrated' in input && input.threadsHydrated !== true && input.threadsHydrated !== false) ||
-    ('lastResult' in input && Object.prototype.toString.call(input.lastResult) !== '[object String]')) {
+    ('lastResult' in input && Object.prototype.toString.call(input.lastResult) !== '[object String]') ||
+    ('mergeIntent' in input && (input.mergeIntent === null || Object.prototype.toString.call(input.mergeIntent) !== '[object Object]'
+      // SAFETY: the preceding tag check establishes a non-null record.
+      || Object.prototype.toString.call((input.mergeIntent as Record<string, unknown>).head) !== '[object String]'
+      // SAFETY: the preceding tag check establishes a non-null record.
+      || Object.prototype.toString.call((input.mergeIntent as Record<string, unknown>).text) !== '[object String]'))) {
     throw new TypeError('Invalid inbox snapshot')
   }
   if (input.wait !== undefined) parseWait(input.wait)
@@ -329,7 +336,8 @@ export class PullRequestInbox {
       return false
     }
     const newHead = previous?.head?.sha !== pr.head?.sha
-    if (newHead || pr.state === 'closed') delete s.wait
+    // A wait on a pushed head survives that head's synchronize event.
+    if (newHead && pr.head?.sha !== s.wait?.headSha || pr.state === 'closed') delete s.wait
     s.pr = { ...previous, ...pr }
     if (newHead) {
       s.checks = Object.fromEntries(Object.entries(s.checks).filter(([, check]) => check.head_sha === pr.head?.sha))
@@ -337,7 +345,7 @@ export class PullRequestInbox {
       s.hydrated = false; s.feedbackRefresh = true
     }
     s.refresh = false
-    if (pr.state === 'closed') s.status = 'terminal'
+    if (pr.state === 'closed') { s.status = 'terminal'; delete s.mergeIntent }
     else if (s.status === 'terminal') {
       delete s.wait
       s.status = s.lease ? 'working' : 'ready'
@@ -546,6 +554,7 @@ export class PullRequestInbox {
         const s = await this.getIn(tx, repository, number)
         if (!s) continue
         if (s.pr && !this.eligible(s.repository, s.pr)) continue
+        if (s.mergeIntent) { s.refresh = true; s.hydrated = false }
         s.lease = randomUUID(); s.leaseUntil = now + 2 * 60 * 60_000; s.status = 'working'
         await this.put(tx, s); claims.push({ token: s.lease, generation: s.generation, snapshot: structuredClone(s) })
       }
@@ -560,6 +569,13 @@ export class PullRequestInbox {
         const pr = normalizePullRequest(patch.pr)
         if (s.pr && stamp(pr) < stamp(s.pr)) return false
         patch = { ...patch, pr }
+        // Only a closed PR proves that an interrupted merge completed. Keep
+        // the fence for stale or inconclusive open reads so another claim
+        // cannot issue a second merge request.
+        if (pr.state === 'closed') {
+          delete s.mergeIntent
+          delete claim.snapshot.mergeIntent
+        }
       }
       Object.assign(s, patch)
       if (s.pr && !this.eligible(s.repository, s.pr)) s.status = 'terminal'
@@ -585,6 +601,7 @@ export class PullRequestInbox {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token) return false
       s.lease = null; s.leaseUntil = 0
+      if (s.mergeIntent) { s.refresh = true; s.hydrated = false }
       if (s.status !== 'terminal') s.status = 'ready'
       await this.put(tx, s); return true
     })
@@ -598,14 +615,89 @@ export class PullRequestInbox {
       return true
     })
   }
-  async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> }): Promise<boolean> {
+  async isCurrentClaim(claim: Claim): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
+      return Boolean(s && s.lease === claim.token && s.generation === claim.generation
+        && (s.revision ?? 0) === (claim.snapshot.revision ?? 0))
+    })
+  }
+  async hasMergeIntent(claim: Claim): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
+      // An outstanding intent fences the whole lease, including evidence that
+      // arrived after the claim was taken. Requiring the old generation here
+      // would let a recovered merge fall through into a repair pass.
+      return Boolean(s && s.lease === claim.token && s.mergeIntent)
+    })
+  }
+  /** Whether an unresolved host-side merge is persisted for this pull request. */
+  async hasPersistedMergeIntent(repository: string, number: number): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, repository, number)
+      return Boolean(s?.mergeIntent)
+    })
+  }
+  /** Reserve a claim, run an external side effect, then persist its terminal result. */
+  async merge(claim: Claim, action: () => Promise<boolean>, text: string): Promise<boolean> {
+    const reserved = await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
+      if (!s || s.lease !== claim.token || s.generation !== claim.generation
+        || (s.revision ?? 0) !== (claim.snapshot.revision ?? 0) || s.mergeIntent) return false
+      s.mergeIntent = { head: claim.snapshot.pr?.head?.sha ?? '', text }
+      await this.put(tx, s)
+      return true
+    })
+    if (!reserved) return false
+    if (!await action()) {
+      await this.release(claim)
+      return false
+    }
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token) return false
+      s.lease = null; s.leaseUntil = 0; s.lastResult = text
+      if (s.generation === claim.generation && (s.revision ?? 0) === (claim.snapshot.revision ?? 0)) {
+        delete s.mergeIntent
+        s.status = 'terminal'; s.handled = s.generation
+      } else {
+        s.status = 'ready'; s.nextAt = 0; s.handled = Math.max(s.handled, claim.generation)
+        s.refresh = true; s.hydrated = false
+      }
+      await this.put(tx, s)
+      return true
+    })
+  }
+  /**
+   * Finishes a claimed pass. A `wait` without `headSha` binds to the claimed head and requires
+   * unchanged evidence. A wait with `headSha`, such as the head of a repair push, keeps later events
+   * unhandled, so `waitsToEvaluate()` returns the PR and the host decides whether they need work.
+   */
+  async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> & { headSha?: string } }): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
+      if (!s || s.lease !== claim.token) return false
+      const pinnedHead = result.wait?.headSha
+      if (result.wait && pinnedHead) {
+        if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
+        // The synchronize event for the pinned head may arrive before or after this finish.
+        if (s.status === 'terminal' || (s.pr?.head?.sha !== pinnedHead && s.pr?.head?.sha !== claim.snapshot.pr?.head?.sha)) {
+          s.lease = null; s.leaseUntil = 0
+          if (s.status !== 'terminal') { s.status = 'ready'; s.nextAt = 0 }
+          await this.put(tx, s)
+          return false
+        }
+        s.wait = parseWait({ ...result.wait, headSha: pinnedHead })
+        s.lease = null; s.leaseUntil = 0; s.lastResult = result.text
+        this.recordProgress(s, claim, result.progress)
+        s.status = 'waiting'; s.handled = Math.max(s.handled, claim.generation); s.reasons = s.generation > claim.generation ? s.reasons : []
+        s.revision = (s.revision ?? 0) + 1
+        await this.put(tx, s); return true
+      }
       if (result.wait) {
         if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
         if (s.status === 'terminal' || !s.pr?.head?.sha || s.pr.head.sha !== claim.snapshot.pr?.head?.sha
-          || s.generation !== claim.generation || (s.revision ?? 0) !== (claim.snapshot.revision ?? 0)) {
+          || s.generation !== claim.generation) {
           s.lease = null; s.leaseUntil = 0
           if (s.status !== 'terminal') { s.status = 'ready'; s.nextAt = 0 }
           await this.put(tx, s)
@@ -615,19 +707,7 @@ export class PullRequestInbox {
         s.revision = (s.revision ?? 0) + 1
       }
       const head = s.pr?.head?.sha
-      const progress = result.progress
-      if (progress?.kind === 'verified') requireEvidence(progress.evidence)
-      const previous = s.progressBudget?.head === head ? s.progressBudget : undefined
-      const limit = previous?.limit ?? this.budgets.noProgress
-      if (progress && head && head === claim.snapshot.pr?.head?.sha && limit !== undefined) {
-        const creditedEvidence = previous?.creditedEvidence ?? []
-        const verified = progress.kind === 'verified' && !creditedEvidence.includes(progress.evidence)
-        const count = verified ? 0 : (previous?.count ?? 0) + 1
-        s.progressBudget = { head, limit, count, exhausted: count >= limit,
-          evidence: verified ? progress.evidence : previous?.evidence,
-          creditedEvidence: verified ? [...creditedEvidence, progress.evidence] : creditedEvidence,
-          resetReason: previous?.resetReason }
-      }
+      this.recordProgress(s, claim, result.progress)
       s.lease = null; s.leaseUntil = 0; s.lastResult = result.text
       if (s.status === 'terminal' || result.terminal && s.generation === claim.generation) { s.status = 'terminal'; s.handled = s.generation }
       else if (s.generation !== claim.generation) { s.status = 'ready'; s.handled = Math.max(s.handled, claim.generation); s.nextAt = 0 }
@@ -642,6 +722,40 @@ export class PullRequestInbox {
         s.status = 'waiting'; s.nextAt = 0; s.reasons = ['no-progress-budget-exhausted']
       }
       await this.put(tx, s); return true
+    })
+  }
+  private recordProgress(s: Snapshot, claim: Claim, progress: ProgressOutcome | undefined): void {
+    const head = s.pr?.head?.sha
+    if (progress?.kind === 'verified') requireEvidence(progress.evidence)
+    const previous = s.progressBudget?.head === head ? s.progressBudget : undefined
+    const limit = previous?.limit ?? this.budgets.noProgress
+    if (progress && head && head === claim.snapshot.pr?.head?.sha && limit !== undefined) {
+      const creditedEvidence = previous?.creditedEvidence ?? []
+      const verified = progress.kind === 'verified' && !creditedEvidence.includes(progress.evidence)
+      const count = verified ? 0 : (previous?.count ?? 0) + 1
+      s.progressBudget = { head, limit, count, exhausted: count >= limit,
+        evidence: verified ? progress.evidence : previous?.evidence,
+        creditedEvidence: verified ? [...creditedEvidence, progress.evidence] : creditedEvidence,
+        resetReason: previous?.resetReason }
+    }
+  }
+  /** Waiting PRs that received events since the host last evaluated their wait. */
+  async waitsToEvaluate(): Promise<Snapshot[]> {
+    if (!this.repositories.length) return []
+    const repositories = this.repositoryFilter()
+    const rows = await this.read(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql}
+      AND waiting=1 AND status<>'terminal' AND lease IS NULL AND generation>handled ORDER BY dirty_at, number`, [this.scope, ...repositories.args])
+    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value))))
+  }
+  /** Records that the host evaluated a wait's new events and the wait still holds. */
+  async acknowledgeWait(observed: Snapshot): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, observed.repository, observed.number)
+      if (!s?.wait || s.lease || s.status === 'terminal' || s.generation !== observed.generation
+        || (s.revision ?? 0) !== (observed.revision ?? 0)) return false
+      s.handled = s.generation; s.reasons = []
+      await this.put(tx, s)
+      return true
     })
   }
   /** Re-evaluate structured evidence outside an Agent invocation before calling this method. */
@@ -667,6 +781,7 @@ export class PullRequestInbox {
         const s = await this.getIn(tx, stringValue(row.repository), Number(row.number))
         if (!s?.lease || s.leaseUntil > now) continue
         s.lease = null; s.leaseUntil = 0
+        if (s.mergeIntent) { s.refresh = true; s.hydrated = false }
         if (s.status !== 'terminal') s.status = 'ready'
         await this.put(tx, s)
       }

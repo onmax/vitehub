@@ -1,3 +1,9 @@
+import type { ConsoleSectionId } from "./sections.ts"
+
+export const consoleDefinitionSectionIds: readonly ["databases", "rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"] = ["databases", "rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"] as const satisfies readonly ConsoleSectionId[]
+
+export type ConsoleDefinitionSectionId = (typeof consoleDefinitionSectionIds)[number]
+
 // These types mirror `@vite-hub/internal/console`. Console runtime files ship as source, so they cannot import the
 // private internal package. `console/contributions.ts` checks that owner contributions stay assignable to them.
 

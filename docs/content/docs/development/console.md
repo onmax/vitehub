@@ -10,7 +10,7 @@ The ViteHub Console inspects the primitives enabled in the same ViteHub configur
 
 ViteHub renders the Console UI and serves its static assets. One embedded Devframe instance carries Console operations over SSE, so the same interface works in development and production hosts without exposing separate resource routes.
 
-The Console currently exposes Env, Agents, Blob, Database, KV, Rate Limit, Sandbox, Workspace, Workflow, Queue, and Schedule. The home shows only configured primitives in a grid and places the last opened primitive first, with that preference stored in the browser. Opening a section replaces the sidebar items with that section's navigation, and **All sections** returns to the Console home. **Search console** opens a command palette with the active primitive pages plus Agents and retained sessions when Agents is enabled. Blob lists configured stores and bounded pages of object metadata without downloading contents or exposing provider URLs. Database lists discovered Definitions, their source metadata, definition mode, and statically discovered table names without connecting to a database. KV lists configured stores and keys, then fetches a value only after the key is selected. Rate Limit lists statically discovered policies and source locations without reading live counters. Sandbox lists discovered Definitions without starting runtime resources. Workspace lists discovered Definitions and source roots without initializing workspace stores, Sources, files, or processes. Workflow, Queue, and Schedule list discovered Definitions and their source metadata without loading the Definition modules. Static Schedule Definitions also show their cron expression and UTC time zone; runtime targets show whether runtime Schedules are allowed.
+The Console currently exposes Env, Connections, Agents, Blob, Database, KV, Rate Limit, Sandbox, Workspace, Workflow, Queue, and Schedule. The home shows only configured primitives in a grid and places the last opened primitive first, with that preference stored in the browser. Opening a section replaces the sidebar items with that section's navigation, and **All sections** returns to the Console home. **Search console** opens a command palette with the active primitive pages plus Agents and retained sessions when Agents is enabled. Blob lists configured stores and bounded pages of object metadata without downloading contents or exposing provider URLs. Database lists discovered Definitions, their source metadata, definition mode, and statically discovered table names without connecting to a database. KV lists configured stores and keys, then fetches a value only after the key is selected. Rate Limit lists statically discovered policies and source locations without reading live counters. Sandbox lists discovered Definitions without starting runtime resources. Workspace lists discovered Definitions and source roots without initializing workspace stores, Sources, files, or processes. Workflow, Queue, and Schedule list discovered Definitions and their source metadata without loading the Definition modules. Static Schedule Definitions also show their cron expression and UTC time zone; runtime targets show whether runtime Schedules are allowed.
 
 Console data can contain user prompts, model output, tool activity, Blob metadata, provider metadata, and stored KV values. Protect the Console before making it reachable on a production URL.
 
@@ -83,6 +83,18 @@ If `console` is omitted or set to `false`, ViteHub does not register a Console p
 Open Env to search declared Server Env variables and filter by source. Select a variable to inspect its provider, secret flag, requirement, and whether a default is configured. Host environment includes process environment variables and host runtime bindings.
 
 This view does not read secret values, call external providers, or check credential validity. It does not enumerate undeclared host variables. Values and defaults remain hidden. Update host values through the deployment configuration and provider values in their connected store. Set `env: false` in ViteHub options to disable Env and its Console section.
+
+## Manage Connections
+
+Open Connections to list each [Connection](/docs/server-primitives/connections) with its provider, status, account email, missing scopes, and number of pending approvals. Select a Connection to see its inspect data, recent activity, and approvals.
+
+- **Connect** or **Reconnect** opens `/_vitehub/connections/connect/<name>` in a new tab. Finish the provider flow there. The detail view reloads when you return.
+- **Revoke** asks you to type the Connection name before it revokes the grant.
+- **Approvals** lists pending calls with the method id, the actor, and the request time. **Approve** runs the call once and shows its status, `executed` or `failed`. **Deny** closes the request.
+
+Activity shows the actor, action, outcome, and time. Call inputs are not shown. When Console auth is active, management actions record the signed-in Console user as `user:<id>`. Without a Console session, for example in development or with `exposure: 'host-managed'`, they record `user:local`.
+
+The section appears when `vitehub({ connections })` is enabled. It uses the Connections management API on `/_vitehub/connections`. Production builds need `connections: { management: true }`.
 
 ## Develop against a fixture
 
@@ -261,7 +273,11 @@ console: { exposure: 'host-managed', invoke: true }
 console: { access: 'auth', invoke: true }
 ```
 
-For `host-managed`, your middleware must authenticate and authorize all `/_vitehub/**` routes, including the RPC transport, before it allows a request through. The build cannot verify this policy. Setting `invoke: false` keeps inspection available and disables Agent Invocation creation. The development shorthand `console: true` enables invocation; fixture mode always disables it.
+For `host-managed`, your middleware must authenticate and authorize all `/_vitehub/**` and `/api/_vitehub/console/**` routes, including the RPC transport, before it allows a request through. The build cannot verify this policy. Setting `invoke: false` keeps inspection available and disables Agent Invocation creation. The development shorthand `console: true` enables invocation; fixture mode always disables it.
+
+Console RPC requests must come from the same origin. The transport rejects opaque origins and browser requests marked `same-site` or `cross-site`. Browser Fetch Metadata permits same-origin requests through reverse proxies. When that metadata is absent, the transport compares the `Origin` header with the request URL. Hosts must reconstruct the public request origin for older browsers that send `Origin` without Fetch Metadata.
+
+Browsers can omit both headers on HTTP origins. Requests with neither same-origin Fetch Metadata nor an `Origin` header must send `x-vitehub-console: 1`. A foreign browser page cannot add this header without a CORS preflight, which the transport rejects. The built-in Console client adds it to SSE requests automatically. Server clients must add it when opening a stream or sending RPC calls without origin headers. Connection discovery at `/_vitehub/rpc/__connection.json` does not require the marker. The marker is not a credential. All requests still require the configured authentication and authorization.
 
 The `vitehub:console:agent-invocations` RPC operation accepts an Agent name, `method: 'POST'`, and a body typed as `ConsoleAgentInvocationInput` from `vite-hub/console`. The body requires a non-empty `prompt` and can include a configured `invokerProfileId` and prior `messages`.
 
@@ -279,10 +295,6 @@ const body = {
 ```
 
 History must contain valid ViteHub Messages with `user` or `assistant` roles and unique IDs. Parts must be `text`, `file`, `image`, or `audio`. The Console preserves message metadata and appends the new prompt as a user Message. It rejects malformed Messages, `system` or `tool` roles, and other parts before starting the Agent. This includes tool calls, tool results, and approval parts nested in user or assistant Messages. Omit `messages` for a prompt-only invocation. Each request creates a new invocation; history does not resume a previous runtime session.
-
-### Replay Channel history
-
-The same `invoke` setting enables `POST /_vitehub/channels/replay`. [`vitehub channels replay --url`](/docs/development/cli#replay-channel-history) uses it to send past Channel messages through an Agent. The route is under `/_vitehub/**`, so the Console access policy protects it. It accepts only `application/json` requests, rejects a cross-origin `Origin` header, and replays at most 100 messages per request. With `invoke: false`, the route returns `404`.
 
 
 Nuxt does not need an SEO module for the `X-Robots-Tag` default. If the app already uses `@nuxtjs/robots` or `@nuxtjs/seo`, add route metadata so its robots and sitemap modules also know that Console pages are not indexable:

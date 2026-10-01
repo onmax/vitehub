@@ -194,6 +194,11 @@ export default defineConfig({
       { from: "src/console/runtime/components/console-env-managed.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/components/console-env-activity.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/components/console-env-access.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/pages/connections.vue", to: "dist/console/runtime/pages" },
+      { from: "src/console/runtime/components/console-connections.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/components/console-connections-details.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/components/console-connections-activity.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/components/console-connections-approvals.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/pages/kv.vue", to: "dist/console/runtime/pages" },
       { from: "src/console/runtime/pages/section.vue", to: "dist/console/runtime/pages" },
       { from: "../ui/styles.css", to: "dist/ui" },
@@ -237,6 +242,7 @@ export default defineConfig({
       "src/console/runtime/client/invocation-deletion.ts",
       "src/console/runtime/client/request.ts",
       "src/console/runtime/client/env-management.ts",
+      "src/console/runtime/client/connections-management.ts",
       "src/console/runtime/client/env-status.ts",
       "src/console/runtime/client/schedule-run.ts",
       "src/console/runtime/client/time.ts",
@@ -274,6 +280,7 @@ export default defineConfig({
         delete exports["./console/runtime/client/invocation-deletion"];
         delete exports["./console/runtime/client/request"];
         delete exports["./console/runtime/client/env-management"];
+        delete exports["./console/runtime/client/connections-management"];
         delete exports["./console/runtime/client/env-status"];
         delete exports["./console/runtime/client/schedule-run"];
         delete exports["./console/runtime/client/time"];

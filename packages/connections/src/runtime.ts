@@ -10,6 +10,7 @@ import type { ConnectionState, ConnectionStore } from "./store.ts"
 import type {
   ConnectionApiCatalog,
   ConnectionApproval,
+  ConnectionApprovalPage,
   ConnectionApprovalStatus,
   ConnectionDefinition,
   ConnectionFetchInit,
@@ -77,7 +78,7 @@ export interface ConnectionRuntimeClient {
 
 export interface ConnectionsRuntime {
   activity: (input: { before?: string, name: string }) => Promise<readonly EnvActivity[]>
-  approvals: (input?: { name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApproval[]>
+  approvals: (input?: { before?: string, name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApprovalPage>
   /** Approve a pending write and run it under the actor that requested it. */
   approve: (input: { actor?: string, id: string }) => Promise<{ approval: ConnectionApproval, result?: unknown }>
   /** Start an authorization code flow with PKCE. Returns the provider URL. */
@@ -890,7 +891,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return await (await getStore()).bridge.activity(envContext("connections"), tokenKey(input.name), input.before)
   }
 
-  async function approvals(input: { name?: string, status?: ConnectionApprovalStatus } = {}): Promise<ConnectionApproval[]> {
+  async function approvals(input: { before?: string, name?: string, status?: ConnectionApprovalStatus } = {}): Promise<ConnectionApprovalPage> {
     const connections = await getStore()
     await connections.approvals.recover(new Date(now()).toISOString())
     return await connections.approvals.list(input)

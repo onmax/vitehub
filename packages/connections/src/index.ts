@@ -11,6 +11,7 @@ export type {
   ConnectionApiCatalog,
   ConnectionApiSelection,
   ConnectionApproval,
+  ConnectionApprovalPage,
   ConnectionApprovalStatus,
   ConnectionCallOptions,
   ConnectionClient,

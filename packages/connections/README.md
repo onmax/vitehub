@@ -77,6 +77,7 @@ A custom Connections store must supply the token revision as the second `bridge.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
+| `actor` | none | Module whose default export receives the server event and returns `user:<id>`. Management actions record this actor. Without it, they record `user:local`. `vite-hub` sets it to the signed-in Console user. |
 | `database` | `false` | Module that exports the SQLite Drizzle database as `db`. |
 | `management` | `false` | Use `{ actor: "./server/connections-auth.ts" }` to mount the production API with an authentication module. `true` is supported only in development. |
 | `projectRoot` | Vite root | Project root for discovery. |

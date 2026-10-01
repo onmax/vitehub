@@ -60,6 +60,7 @@ export const consoleIcons: readonly string[] = [
   "lucide:panel-left-open",
   "lucide:panel-right",
   "lucide:panel-right-close",
+  "lucide:plug-zap",
   "lucide:plus",
   "lucide:refresh-cw",
   "lucide:rotate-ccw",

@@ -432,7 +432,7 @@ D1 batches make creation and retention atomic. Conditional updates retry when an
 
 The adapter targets D1. It does not provide transactions for other Database providers. The database binding stays owned by the host; the store does not open or close it. Use [`redact`](#redact-stored-evidence) to remove sensitive values before they reach D1. Route authorization remains application policy.
 
-On the Cloudflare preset, the Console journal uses this store with the D1 Database binding when no Agent Definition configures `invocations`. See [Cloudflare journal](/docs/development/console#cloudflare-journal). Local D1 tests cover the SQL and concurrency contract; they do not measure production D1 limits or latency.
+On the Cloudflare preset, the Console journal uses this store with the D1 Database binding when no Agent Definition configures `invocations`. See [Cloudflare journal](/docs/development/console#know-what-the-console-stores). Local D1 tests cover the SQL and concurrency contract; they do not measure production D1 limits or latency.
 
 ## Append delivery evidence
 
