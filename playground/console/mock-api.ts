@@ -340,13 +340,17 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
         json(response, { error: "Invalid invocation action" }, 400)
         return true
       }
-      if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== 1 || (input as { action?: unknown }).action !== "delete") {
+      if (!(input instanceof Object) || Array.isArray(input) || Object.keys(input).length !== 1 || Reflect.get(input, "action") !== "delete") {
         json(response, { error: "Invalid invocation action" }, 400)
         return true
       }
       const outcome = await invocations.delete(id)
       if (outcome === "not-found") {
         json(response, { error: "Invocation not found" }, 404)
+        return true
+      }
+      if (outcome === "not-terminal") {
+        json(response, { error: "Only completed, failed, or cancelled invocations can be deleted." }, 409)
         return true
       }
       json(response, { id, outcome: "deleted" })
