@@ -68,6 +68,17 @@ Available namespaces:
 | `vitehub provision run` | Available | ViteHub CLI plus package Provision Steps | Create missing provider resources idempotently. |
 | `vitehub provision status` | Available | ViteHub CLI plus package Provision Steps | Inspect the latest provider provisioning result. |
 
+## Inspect Server Env
+
+The Env integration contributes commands that report the status of declared Server Env values without printing their values.
+
+```bash [Terminal]
+pnpm vitehub env inspect [--stage <name>] [--json]
+pnpm vitehub env check [--stage <name>] [--json]
+```
+
+Both commands load the Vite config in the selected stage mode, including `.env.<stage>` files, with process environment values taking precedence. They list each declared variable with its status, source, required, and secret flags. `env check` exits with status `1` when loading Server Env would fail, so it can gate CI or deployment steps.
+
 ## Inspect Definitions and Provider Output
 
 `vitehub inspect` reads the same package-owned summaries that the Console shows. It does not start a server or call a provider. Each active package contributes its own kind: `agent`, `auth`, `browser`, `channel`, `database`, `queue`, `rate-limit`, `realtime`, `sandbox`, `schedule`, `workflow`, and `workspace`.
