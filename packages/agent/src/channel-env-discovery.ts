@@ -34,7 +34,7 @@ function closingDelimiter(tokens: string[], start: number): number {
 // Visit the top-level properties of the object literal that opens at `start`.
 // `value` is the index of the first value token, or undefined for a method.
 // Returns false when a spread or computed key makes the property list unknown.
-function visitObjectProperties(tokens: string[], start: number, visit: (key: string, value: number | undefined) => void): boolean {
+function visitObjectProperties(tokens: string[], start: number, visit: (key: string, value: number | undefined, method: boolean) => void): boolean {
   let depth = 0
   let expectKey = true
   let unknown = false
@@ -55,7 +55,7 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
           const key = isStringToken(token) ? token.slice(1, -1) : token
           // A shorthand property `{ telegram }` is its own value.
           const shorthand = !isStringToken(token) && [",", "}"].includes(tokens[i + 1]!)
-          visit(key, tokens[i + 1] === ":" ? i + 2 : shorthand ? i : undefined)
+          visit(key, tokens[i + 1] === ":" ? i + 2 : shorthand ? i : undefined, tokens[i + 1] === "(" && !["get", "set"].includes(tokens[i - 1]!))
           expectKey = false
         }
       }
@@ -67,21 +67,23 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
 }
 
 // Keys set to `undefined` or `void 0` count as omitted, as they do at runtime.
-function staticOptionKeys(tokens: string[], start: number, empty: string): ReadonlySet<string> | undefined {
+function staticOptionKeys(tokens: string[], start: number, empty: string, typescript: boolean): ReadonlySet<string> | undefined {
+  start = skipOptionAssertions(tokens, start, typescript)
   if (isUndefinedValue(tokens, start, new Set([",", ")", "}"]))) return new Set()
   while (tokens[start] === "(") {
     const close = closingDelimiter(tokens, start)
-    const valueEnd = ["{", "("].includes(tokens[start + 1]!) ? closingDelimiter(tokens, start + 1) : start + 1
+    const value = skipOptionAssertions(tokens, start + 1, typescript)
+    const valueEnd = ["{", "("].includes(tokens[value]!) ? closingDelimiter(tokens, value) : value
     // Only unwrap a single expression, not a comma expression or an operation on a literal.
     if (valueEnd !== close - 1) return undefined
-    start++
+    start = value
   }
   if (tokens[start] === empty) return new Set()
   if (tokens[start] !== "{") return undefined
   const keys = new Set<string>()
-  return visitObjectProperties(tokens, start, (key, value) => {
+  return visitObjectProperties(tokens, start, (key, value, method) => {
     const omitted = value !== undefined && isUndefinedValue(tokens, value, new Set([",", "}"]))
-    if (!omitted && (key !== "adapter" || (value !== undefined && isStaticAdapter(tokens, value)))) keys.add(key)
+    if (!omitted && (key !== "adapter" || (method || (value !== undefined && isStaticAdapter(tokens, value))))) keys.add(key)
   }) ? keys : undefined
 }
 
@@ -123,7 +125,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i - 1] === "." || tokens[i - 1] === "as") continue
     const factory = !isShadowedAt(tokens, i, tokens[i]!, shadowBindings, lineBreaks) && factoryCall(tokens, i, bindings, namespaces, known, lineBreaks, typescript)
-    if (factory) uses.push({ index: i, kind: factory.name, optionKeys: staticOptionKeys(tokens, factory.open + 1, ")") })
+    if (factory) uses.push({ index: i, kind: factory.name, optionKeys: staticOptionKeys(tokens, factory.open + 1, ")", typescript) })
     // Shorthands count only in the top-level `channels` option of defineAgent(), not in types or other objects.
     const agent = !isShadowedAt(tokens, i, tokens[i]!, agentShadowBindings, lineBreaks) && factoryCall(tokens, i, agentBindings, agentNamespaces, agentNames, lineBreaks, typescript)
     if (!agent || tokens[agent.open + 1] !== "{") continue
@@ -143,7 +145,7 @@ export function discoverBuiltInChannelUses(source: string, kinds: Iterable<strin
         }
         if (!known.has(key)) return
         const options = localObject(tokens, value, declarations) ?? value
-        const optionKeys = staticOptionKeys(tokens, options, "}")
+        const optionKeys = staticOptionKeys(tokens, options, "}", typescript)
         // An object with `kind` is a complete Channel definition, not built-in Channel options.
         let complete = false
         if (tokens[options] === "{") visitObjectProperties(tokens, options, (key, value) => {
@@ -258,7 +260,17 @@ function isUndefinedValue(tokens: string[], start: number, terminators: Readonly
     return terminators.has(tokens[close + 1]!) && isUndefinedValue(tokens, start + 1, new Set([")"]))
   }
   if (tokens[start] === "undefined") return isValueEnd(tokens, start + 1, terminators)
-  return tokens[start] === "void" && tokens[start + 1] === "0" && isValueEnd(tokens, start + 2, terminators)
+  if (tokens[start] !== "void") return false
+  let operand = start + 1
+  const wrappers: number[] = []
+  while (tokens[operand] === "(") wrappers.push(closingDelimiter(tokens, operand++))
+  if (tokens[operand] !== "0") return false
+  let after = operand + 1
+  for (const close of wrappers.reverse()) {
+    if (after !== close) return false
+    after++
+  }
+  return isValueEnd(tokens, after, terminators)
 }
 
 // Unknown adapter expressions can resolve to undefined and select the built-in
@@ -630,6 +642,7 @@ function factoryCall(
   lineBreaks: ReadonlySet<number>,
   typescript: boolean,
 ): { name: string, open: number } | undefined {
+  if (tokens[index - 1] === "#") return undefined
   let name = bindings.get(tokens[index]!)
   let next = index + 1
   let member = tokens[next] === "?" && tokens[next + 1] === "." ? next + 1 : next
@@ -659,6 +672,12 @@ function factoryCall(
   // require the key to follow a property boundary or a method modifier.
   if (["{", ":"].includes(after!) && (afterType || ["{", "}", ",", ";", "async", "get", "set", "*", "static", "public", "private", "protected", "abstract", "declare"].includes(previous)) && isMethodContainer(tokens, index)) return undefined
   return { name, open: next }
+}
+
+// Angle-bracket assertions are TypeScript syntax, not JavaScript comparisons.
+function skipOptionAssertions(tokens: string[], start: number, typescript: boolean): number {
+  while (typescript && tokens[start] === "<") start = skipTypeArguments(tokens, start)
+  return start
 }
 
 function skipTypeArguments(tokens: string[], start: number): number {

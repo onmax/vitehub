@@ -116,6 +116,9 @@ describe("built-in Channel discovery", () => {
       }
       class ToolsImpl {
         telegram() {}
+        #telegram() {}
+        async #telegramAsync() {}
+        runPrivate() { this.#telegram() }
         static telegram<T>(): void {}
         run() { telegram() }
       }
@@ -361,14 +364,33 @@ describe("built-in Channel discovery", () => {
       telegram({ botToken: ((void 0)) })
       telegram(void 0)
       telegram((void 0))
+      telegram(void(0))
+      telegram({ botToken: void((0)) })
+      defineAgent({ channels: { telegram: { botToken: void(0) } } })
       defineAgent({ channels: { telegram: { botToken: void 0 } } })
       defineAgent({ channels: { telegram: void 0 } })
       telegram({ botToken: void 0 ?? token })
       telegram({ botToken: (void 0, token) })
     `)).toEqual([
-      ...Array.from({ length: 6 }, () => ({ kind: "telegram", keys: [] })),
+      ...Array.from({ length: 9 }, () => ({ kind: "telegram", keys: [] })),
       { kind: "telegram", keys: ["botToken"] },
       { kind: "telegram", keys: ["botToken"] },
+    ])
+  })
+
+  it("unwraps TypeScript angle assertions on Channel options", () => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { telegram } from "vite-hub/agent/channels"
+      telegram(<TelegramOptions>{})
+      telegram((<TelegramOptions>{}))
+      telegram(<Options<Runtime>><TelegramOptions>{ botToken: token })
+      defineAgent({ channels: { telegram: <TelegramOptions>{} } })
+    `)).toEqual([
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: [] },
+      { kind: "telegram", keys: ["botToken"] },
+      { kind: "telegram", keys: [] },
     ])
   })
 
@@ -702,6 +724,29 @@ describe("built-in Channel discovery", () => {
 })
 
 describe("Telegram adapter Env requirements", () => {
+  it.each([
+    ["adapter() { return customAdapter }", false],
+    ["async adapter() { return customAdapter }", false],
+    ["*adapter() { yield customAdapter }", false],
+    ["get adapter() { return undefined }", true],
+  ])("classifies adapter methods: %s", async (property, required) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-channel-env-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      for (const channel of [`telegram({ ${property} })`, `{ ${property} }`]) {
+        await writeFile(join(root, "server", "agents", "support.ts"), `
+          import { defineAgent } from "vite-hub/agent"
+          import { telegram } from "vite-hub/agent/channels"
+          export default defineAgent({ channels: { telegram: ${channel} } })
+        `)
+        expect(discoverAgentChannelEnv({ rootDir: root }).telegram?.botToken?.required).toBe(required)
+      }
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
   it.each([
     ["enabled ? customAdapter : undefined", true],
     ["customAdapter", true],
