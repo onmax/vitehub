@@ -396,23 +396,34 @@ function headerMap(parts: GmailApiPart[]): Record<string, string> {
   return headers
 }
 
-/** Splits an address list header at commas outside quotes and angle brackets. */
+/** Splits an address list header at commas outside quotes, comments, and angle brackets. */
 export function splitAddresses(value: string | undefined): string[] {
   if (!value) return []
   const addresses: string[] = []
   let current = ""
   let quoted = false
   let escaped = false
+  let comments = 0
   let angle = 0
   for (const character of value) {
-    if (quoted && escaped) {
+    if ((quoted || comments > 0) && escaped) {
       current += character
       escaped = false
       continue
     }
-    if (quoted && character === "\\") {
+    if ((quoted || comments > 0) && character === "\\") {
       current += character
       escaped = true
+      continue
+    }
+    if (!quoted && character === "(") {
+      comments++
+      current += character
+      continue
+    }
+    if (comments > 0) {
+      if (character === ")") comments--
+      current += character
       continue
     }
     if (character === "\"") quoted = !quoted

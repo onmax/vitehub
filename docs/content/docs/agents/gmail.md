@@ -10,6 +10,8 @@ icon: i-lucide-mail
 
 The Channel owns the Gmail plumbing: push authentication, the history cursor, the watch renewal, label names, and history replay. Your application writes the Agent and its hooks.
 
+On hosts that supply `waitUntil`, the Channel acknowledges an authenticated notification before Gmail API work. Without `waitUntil`, the webhook drains its background work before returning. The first notification verifies the OAuth mailbox in background work before changing the history cursor or handling messages. Later notifications reuse that identity while the credentials are unchanged. An authenticated notification for another mailbox is discarded before state or message changes; if the mailbox is already cached, the webhook rejects it with HTTP 400.
+
 The Channel calls the Gmail REST API with `fetch` and a Google OAuth refresh token. It runs on Node.js, Cloudflare Workers, and Vercel. It is separate from the [`gmail()` Capability](/docs/capabilities/gmail) from `vite-hub/agent/capabilities`, which gives an Agent search and draft tools through the `gog` CLI.
 
 ## Label new email

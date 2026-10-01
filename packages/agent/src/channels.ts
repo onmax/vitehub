@@ -3343,6 +3343,7 @@ export function gmail<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeCo
   assertGmailOptions(options)
   const bodyLimit = options.bodyLimit ?? gmailDefaultBodyLimit
   const labels = options.labels || {}
+  let verifiedMailbox: { address: string, client?: GmailClient, clientId?: string, clientSecret?: string, refreshToken?: string } | undefined
   const resolveClient = async (context?: AgentCallbackContext<TRuntimeConfig>): Promise<GmailClient> =>
     options.client ?? gmailClientFromSettings(await gmailChannelSettings(context), options.fetch)
   const modify = async (context: AgentCallbackContext<TRuntimeConfig>, id: string, input: GmailModifyInput) =>
@@ -3388,26 +3389,36 @@ export function gmail<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeCo
           let client: GmailClient
           try {
             client = options.client ?? gmailClientFromSettings(settings, options.fetch)
-            const mailbox = await gmailMailboxAddress(client)
-            if (push.emailAddress.trim().toLowerCase() !== mailbox.trim().toLowerCase()) {
-              return Response.json({ accepted: false, reason: "Gmail notification belongs to another mailbox." }, { status: 400 })
-            }
           }
           catch (error) {
             return Response.json({ accepted: false, reason: error instanceof Error ? error.message : String(error) }, { status: 503 })
           }
+          const cachedMailbox = verifiedMailbox && (options.client
+            ? verifiedMailbox.client === options.client
+            : !verifiedMailbox.client && verifiedMailbox.clientId === settings.clientId
+              && verifiedMailbox.clientSecret === settings.clientSecret && verifiedMailbox.refreshToken === settings.refreshToken)
+            ? verifiedMailbox.address : undefined
+          const notifiedMailbox = push.emailAddress.trim().toLowerCase()
+          if (cachedMailbox && notifiedMailbox !== cachedMailbox.trim().toLowerCase()) {
+            return Response.json({ accepted: false, reason: "Gmail notification belongs to another mailbox." }, { status: 400 })
+          }
           // Acknowledge Pub/Sub first. The stored history cursor lets a later notification retry failed work.
-          context.waitUntil(syncGmailMailbox({
-            bodyLimit,
-            client,
-            dispatch: async messages => await context.dispatch(
-              messages.map(message => ({ input: message, key: message.id })),
-              { trigger: "received", ...(options.dryRun ? { dryRun: true } : {}) },
-            ),
-            notificationHistoryId: push.historyId,
-            state,
-            ...(settings.pubsubTopic ? { topic: settings.pubsubTopic } : {}),
-          }).catch((error: unknown) => {
+          context.waitUntil((async () => {
+            const mailbox = cachedMailbox ?? await gmailMailboxAddress(client)
+            verifiedMailbox = { address: mailbox, client: options.client, clientId: settings.clientId, clientSecret: settings.clientSecret, refreshToken: settings.refreshToken }
+            if (notifiedMailbox !== mailbox.trim().toLowerCase()) throw new Error("Gmail notification belongs to another mailbox.")
+            await syncGmailMailbox({
+              bodyLimit,
+              client,
+              dispatch: async messages => await context.dispatch(
+                messages.map(message => ({ input: message, key: message.id })),
+                { trigger: "received", ...(options.dryRun ? { dryRun: true } : {}) },
+              ),
+              notificationHistoryId: push.historyId,
+              state,
+              ...(settings.pubsubTopic ? { topic: settings.pubsubTopic } : {}),
+            })
+          })().catch((error: unknown) => {
             console.error(JSON.stringify({
               error: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
               event: "sync.failed",
