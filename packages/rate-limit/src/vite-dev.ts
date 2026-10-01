@@ -40,7 +40,6 @@ export function registerRateLimitDevEndpoint(server: ViteHubNitroDevServer, opti
           res.end("Rate Limit Dev requests require a loopback peer.")
           return
         }
-        if (isViteHubDevRoute(req, rateLimitDevRoute)) req.headers[rateLimitDevRuntimeTokenHeader] = options.runtimeToken
         handler(req, res, next)
       }),
     },
@@ -52,6 +51,7 @@ export function registerRateLimitDevEndpoint(server: ViteHubNitroDevServer, opti
     nitroBaseURL: options.nitroBaseURL,
     route: rateLimitDevRoute,
     runtimeRoute: rateLimitDevRuntimeRoute,
+    runtimeHeaders: { [rateLimitDevRuntimeTokenHeader]: options.runtimeToken },
     unavailable: { code: "RATE_LIMIT_DEV_RUNTIME_UNAVAILABLE", message: rateLimitDevRuntimeUnavailableMessage },
   })
 }
