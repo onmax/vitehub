@@ -109,6 +109,12 @@ describe("redactInspectionText", () => {
     expect(output).not.toContain("deadbeef")
   })
 
+  it.each(["proxy_authorization", "X-Authorization", "authorization_header", "ProxyAuthorization"])("redacts compound normalized authorization key %s", key => {
+    expect(redactInspectionText(`${key}=Basic dXNlcjpwYXNz`)).toBe(`${key}=[redacted]`)
+    expect(redactInspectionText(`${key}: Digest username="u", response="deadbeef"`)).toBe(`${key}: [redacted]`)
+    expect(redactInspectionText(`${key}=Basic dXNlcjpwYXNz rejected; token=other`)).toBe(`${key}=[redacted] rejected; token=[redacted]`)
+  })
+
   it("redacts escaped quotes inside secret assignments", () => {
     expect(redactInspectionText(String.raw`password="hunter\" 2" failed`)).toBe("password=[redacted] failed")
   })

@@ -597,8 +597,8 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
     name: SCHEDULE_VITE_PLUGIN_NAME,
     enforce: "pre",
     async config(config, env) {
-      if (Reflect.get(config, "vitehubCliDiscovery") === true) return
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
+      if (Reflect.get(config, "vitehubCliDiscovery") === true) return
       const roots = resolveSchedulePluginRoots(config.root || process.cwd(), options)
       const definitions = discoverScheduleDefinitions({
         rootDir: roots.viteRoot,
