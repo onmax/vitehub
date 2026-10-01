@@ -662,6 +662,15 @@ async function walk(
     if (error.code === "ENOENT" || error.code === "ENOTDIR") return []
     throw error
   })
+  let currentExcluded = excluded
+  // The outer repository's Git query does not apply ignore rules from a
+  // nested repository. Discover those rules before descending into it so
+  // ignored dependencies and build output remain hidden at every boundary.
+  if (current !== root && dirents.some(dirent => dirent.name.toLowerCase() === ".git")) {
+    const nestedExcluded = await gitIgnoredWorkspacePaths(current)
+    const prefix = normalizeWorkspacePath(relative(root, current))
+    currentExcluded = [...excluded, ...nestedExcluded.map(path => prefix ? `${prefix}/${path}` : path)]
+  }
 
   for (const dirent of dirents) {
     if (dirent.isSymbolicLink()) continue
@@ -673,7 +682,7 @@ async function walk(
     // `git ls-files --ignored` only reports ignored paths, so nested `.git`
     // directories need an explicit traversal guard.
     if (path.split("/").some(component => component.toLowerCase() === ".git")) continue
-    if (isExcludedWorkspacePath(path, excluded)) continue
+    if (isExcludedWorkspacePath(path, currentExcluded)) continue
     const info = await stat(absolute).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined
       throw error
@@ -681,7 +690,7 @@ async function walk(
     if (!info) continue
     if (dirent.isDirectory()) {
       entries.push({ path, type: "directory", mtime: info.mtimeMs })
-      if (recursive) entries.push(...await walk(root, absolute, privatePaths, excluded, true))
+      if (recursive) entries.push(...await walk(root, absolute, privatePaths, currentExcluded, true))
       continue
     }
     if (dirent.isFile()) {

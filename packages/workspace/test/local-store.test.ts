@@ -2182,9 +2182,12 @@ describe("local workspace store Git ignore", () => {
     await writeFile(join(root, "dist/out.js"), "ignored")
     await mkdir(join(root, "src"), { recursive: true })
     await writeFile(join(root, "src/index.ts"), "tracked")
-    await mkdir(join(root, "vendor/repo/.git"), { recursive: true })
-    await writeFile(join(root, "vendor/repo/.git/config"), "private")
-    await writeFile(join(root, "vendor/repo/.gitignore"), "nested")
+    const nestedRoot = join(root, "vendor/repo")
+    await mkdir(nestedRoot, { recursive: true })
+    await new Promise<void>((resolve, reject) => execFile("git", ["init", "-q", nestedRoot], error => error ? reject(error) : resolve()))
+    await writeFile(join(nestedRoot, ".gitignore"), "node_modules/\n")
+    await mkdir(join(nestedRoot, "node_modules/pkg"), { recursive: true })
+    await writeFile(join(nestedRoot, "node_modules/pkg/index.js"), "nested ignored")
     return root
   }
 
@@ -2197,6 +2200,7 @@ describe("local workspace store Git ignore", () => {
     expect(paths.some(path => path === ".git" || path.startsWith(".git/"))).toBe(false)
     expect(paths.some(path => path.split("/").some(component => component.toLowerCase() === ".git"))).toBe(false)
     expect(paths.some(path => path.startsWith("node_modules") || path.startsWith("dist"))).toBe(false)
+    expect(paths.some(path => path.startsWith("vendor/repo/node_modules"))).toBe(false)
 
     const snapshot = await store.snapshot({ name: "baseline" })
     await writeFile(join(root, "dist/out.js"), "changed build output")
