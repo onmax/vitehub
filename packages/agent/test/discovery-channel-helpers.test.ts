@@ -784,6 +784,10 @@ it.each([
   'options.pullRequest.workspace++',
   'delete (options.pullRequest.workspace)',
   'let alias; alias = options; alias.pullRequest = true',
+  'let alias; alias ??= options; alias.pullRequest = true',
+  'let alias; alias ||= options; alias.pullRequest = true',
+  'let alias = {}; alias &&= options; alias.pullRequest = true',
+  'let alias; alias ??= getOptions(); alias.pullRequest = true',
   'let alias; alias = options; alias.pullRequest.workspace = true',
   'const pullRequest = options.pullRequest; pullRequest.workspace = true',
   'const { pullRequest: alias } = options; alias.workspace = true',
@@ -841,6 +845,16 @@ it.each([
   await expect(discover(source)).rejects.toThrow("opaque Channel")
   const definition = await discover(source.replace("defineAgent({ channels", "defineAgent({ workspace: {}, channels"))
   expect(definition?.workspace).toBe("review")
+})
+
+it.each(["github", "{ helper: github }", "[github]"])("rejects catch bindings that shadow imported Channel helpers: %s", async binding => {
+  const source = `${imports} export default defineAgent({ options: {}, configure: () => { try { throw foreign } catch (${binding}) { return defineAgent({ channels: { custom: github({ pullRequest: false }) } }) } } })`
+  await expect(discover(source)).rejects.toThrow("opaque Channel")
+})
+
+it("keeps catch shadowing local to its block", async () => {
+  const source = `${imports} try { throw foreign } catch (github) { github() } export default defineAgent({ channels: { custom: github({ pullRequest: true }) } })`
+  expect((await discover(source))?.workspace).toBe("review")
 })
 
 it("rejects a reassigned relative Channel export", async () => {

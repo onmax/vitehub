@@ -429,6 +429,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return operators.some(operator => operator.every((token, offset) => tokens[index + offset] === token))
   }
 
+  function assignmentInitializer(index: number): number | undefined {
+    if (tokens[index] === "=" && !["=", ">"].includes(tokens[index + 1]!)) return index + 1
+    if (["?", "|", "&"].includes(tokens[index]!) && tokens[index + 1] === tokens[index]
+      && tokens[index + 2] === "=") return index + 3
+  }
+
   const declaratorInitializers = new Map<number, number>()
   const declarationTypeTokens = new Set<number>()
   for (let keyword = 0; keyword < tokens.length; keyword++) {
@@ -622,6 +628,17 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     return false
   }
 
+  for (let index = 0; index < tokens.length; index++) {
+    if (tokens[index] !== "catch" || tokens[index + 1] !== "(") continue
+    const close = [...openingDelimiters].find(([, opening]) => opening === index + 1)?.[0]
+    if (close === undefined) continue
+    const body = close + 1
+    const end = [...openingDelimiters].find(([, opening]) => opening === body)?.[0]
+    if (end !== undefined && tokens[body] === "{") {
+      callbackParameters.push({ start: body, end, names: callbackBindingNames(index + 1, close) })
+    }
+  }
+
   function patternOpening(close: number): number | undefined {
     let depth = 0
     for (let index = close; index >= 0; index--) {
@@ -773,7 +790,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if ((propertyAssignment || directAssignment || prefixUpdate || postfixUpdate || deletion)
       && !isFunctionParameter(i)) mutatedBindings.add(name)
 
-    const initializer = declaratorInitializers.get(i) ?? (tokens[i + 1] === "=" ? i + 2 : undefined)
+    const initializer = declaratorInitializers.get(i) ?? assignmentInitializer(i + 1)
     if (initializer !== undefined) {
       const targets = containerAliasTargets(initializer)
       const aliases = assignedAliases.get(name) ?? new Set<string>()
@@ -1054,7 +1071,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   for (let binding = 0; binding < tokens.length; binding++) {
     if (tokens[binding - 1] === "." || (!destructuredBindings.has(binding) && visibleDeclaration(binding) === undefined)) continue
     let initializer = declaratorInitializers.get(binding)
-      ?? (tokens[binding + 1] === "=" && !["=", ">"].includes(tokens[binding + 2]!) ? binding + 2 : undefined)
+      ?? assignmentInitializer(binding + 1)
     if (initializer === undefined && destructuredBindings.has(binding)) {
       let cursor = binding + 1
       let nesting = 0
