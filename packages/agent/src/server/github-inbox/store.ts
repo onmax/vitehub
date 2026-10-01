@@ -727,16 +727,19 @@ export class PullRequestInbox {
     const source = new DatabaseSync(path, { readOnly: true })
     try {
       const tables = new Set(source.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => stringValue(row.name)))
-      const rows = (table: string, sql: string) => tables.has(table) ? source.prepare(sql).all() : []
-      const snapshots = rows('pr_snapshots', 'SELECT value FROM pr_snapshots')
-      const meta = rows('inbox_meta', 'SELECT key, value FROM inbox_meta')
-      const deliveries = rows('deliveries', `SELECT id, event, received FROM deliveries WHERE received >= ${this.clock() - 30 * 24 * 60 * 60_000}`)
+      const requiredTables = ['pr_snapshots', 'deliveries', 'inbox_meta']
+      if (!requiredTables.every(table => tables.has(table))) return { imported: false, snapshots: 0, skipped: 0, deliveries: 0 }
+      const snapshots = source.prepare('SELECT value FROM pr_snapshots').all()
+      const meta = source.prepare('SELECT key, value FROM inbox_meta').all()
+      const deliveries = source.prepare(`SELECT id, event, received FROM deliveries WHERE received >= ${this.clock() - 30 * 24 * 60 * 60_000}`).all()
       return await this.transaction(async tx => {
         if (await this.metaIn(tx, 'legacy-import:v1') !== undefined) return { imported: false, snapshots: 0, skipped: 0, deliveries: 0 }
         let imported = 0, skipped = 0
         for (const row of snapshots) {
           const snapshot = legacySnapshot(JSON.parse(stringValue(row.value)))
           if (!snapshot || !this.repositories.includes(snapshot.repository)) { skipped++; continue }
+          const existing = await this.getIn(tx, snapshot.repository, snapshot.number)
+          if (existing && (existing.lease !== null || existing.generation >= snapshot.generation)) { skipped++; continue }
           await this.put(tx, snapshot); imported++
         }
         for (const row of meta) {

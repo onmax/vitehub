@@ -96,7 +96,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   // unverified names must never suppress activity feedback.
   const activityAuthors = verifiedHostIdentity ? [verifiedHostIdentity] : [];
   const pullRequestInbox = new PullRequestInbox({
-    ...(options.inboxStorage ? { storage: options.inboxStorage, scope: options.inboxScope ?? options.agentName ?? baseAgent.name ?? "" } : { path: options.inboxPath }),
+    ...(options.inboxStorage ? { storage: options.inboxStorage, scope: options.inboxScope ?? options.agentName ?? baseAgent.name ?? "babysitter" } : { path: options.inboxPath }),
     repositories: options.repositories,
     filter: presetOptions.filter,
     activityAuthors,
