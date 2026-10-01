@@ -33,6 +33,13 @@ describe("built-in Channel discovery", () => {
     `)).toEqual([])
   })
 
+  it("keeps conditional types in assertions", () => {
+    expect(uses(`
+      import { telegram } from "vite-hub/agent/channels"
+      telegram(({} as T extends U ? A : B))
+    `)).toEqual([{ kind: "telegram", keys: [] }])
+  })
+
   it("finds factory calls imported from the Channels module", () => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"

@@ -394,10 +394,14 @@ function isValueEnd(tokens: string[], after: number, terminators: ReadonlySet<st
   if (terminators.has(tokens[after]!) || statementEnd?.(after)) return true
   if (!["as", "satisfies"].includes(tokens[after]!)) return false
   let depth = 0
+  let conditionalType = false
   for (let i = after + 1; i < tokens.length; i++) {
     const token = tokens[i]!
     if (depth === 0 && token === "," && !terminators.has(token)) return false
-    if (depth === 0 && token === "?") return false
+    if (depth === 0 && token === "?") {
+      if (!conditionalType) return false
+    }
+    if (depth === 0 && token === "extends") conditionalType = true
     if (["+", "*", "/", "%"].includes(token) || (["|", "&", "?"].includes(token) && tokens[i + 1] === token)) return false
     if (token === "<") { i = skipTypeArguments(tokens, i) - 1; continue }
     if (["(", "[", "{"].includes(token)) depth++
