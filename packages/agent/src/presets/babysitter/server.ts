@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
-import { resolveRuntimeValue } from "@vite-hub/runtime";
+import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
 import { hasRuntimeType } from "../../internal/runtime-type.ts";
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
 import { createMessage, defineAgent, runAgent } from "../../index.ts";
@@ -30,6 +30,8 @@ import { repairCapability, repairEnvironment } from "./repair.ts";
 
 export interface BabysitterRuntimeOptions {
   agent: AgentInput;
+  /** Discovered Agent name for per-Agent public URLs. Defaults to the definition name. */
+  agentName?: string;
   github: GitHubHost;
   inboxPath: string;
   repositories: string[];
@@ -406,9 +408,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 kind: "codex";
               };
               const activityEnabled = !!verifiedHostIdentity;
+              const workerName = "babysitter-worker";
               const agent = defineAgent({
                 extends: baseAgent,
-                name: "babysitter-worker",
+                name: workerName,
                 channels: {
                   github: github.channel({
                     activity: activityEnabled,
@@ -456,9 +459,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 format: "xml",
               });
               const githubRun = await createGitHubPullRequestRun(repository, pullRequest, {
-                agentName: "babysitter",
+                agentName: workerName,
                 runId,
-                publicUrl,
+                publicUrl: publicUrl ?? resolvePublicUrl({ agentName: options.agentName ?? baseAgent.name }),
               });
               // The GitHub run helper uses a stable PR thread id. Scope the
               // provider session to this pass so a new checkout never

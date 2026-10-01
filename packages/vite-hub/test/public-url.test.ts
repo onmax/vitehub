@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { Plugin } from "vite"
+import { mergeConfig, type Plugin } from "vite"
 import { describe, expect, it } from "vitest"
 import { vitehub } from "../src/index.ts"
 
@@ -45,8 +45,12 @@ describe("vitehub({ publicUrl })", () => {
   it("keeps an existing noExternal: true for server environments", () => {
     // SAFETY: The hook reads only the environment consumer and resolve options, which this fixture supplies.
     const hook = publicUrlPlugin(undefined).configEnvironment as (name: string, config: { consumer: string, resolve?: { noExternal?: true | string[] } }) => { resolve: { noExternal: unknown } } | undefined
-    expect(hook("nitro", { consumer: "server", resolve: { noExternal: true } })?.resolve.noExternal).toBe(true)
-    expect(hook("nitro", { consumer: "server", resolve: { noExternal: ["vite-hub"] } })?.resolve.noExternal).toEqual(["vite-hub", "@vite-hub/runtime"])
+    expect(hook("nitro", { consumer: "server", resolve: { noExternal: true } })).toBeUndefined()
+    expect(hook("nitro", { consumer: "server", resolve: { noExternal: ["vite-hub"] } })?.resolve.noExternal).toEqual(["@vite-hub/runtime"])
+    const existing = { consumer: "server", resolve: { noExternal: ["vite-hub", "@vite-hub/runtime"] } }
+    expect(hook("nitro", existing)).toBeUndefined()
+    const config = { consumer: "server", resolve: { noExternal: ["vite-hub"] } }
+    expect(mergeConfig(config, hook("nitro", config) ?? {}).resolve.noExternal).toEqual(["vite-hub", "@vite-hub/runtime"])
     expect(hook("client", { consumer: "client" })).toBeUndefined()
   })
 })

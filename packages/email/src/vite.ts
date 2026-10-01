@@ -4,7 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { createRuntimeEnvRegistry } from "@vite-hub/env/vite"
-import { bundleEsmEntry } from "@vite-hub/internal/build/esbuild"
+import { resolveViteHubBundleDefines, bundleEsmEntry } from "@vite-hub/internal/build/esbuild"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { createNoExternalAddition, isServerEnvironment, resolveViteHubGeneratedRoot, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
@@ -427,6 +427,7 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
       await writeFileIfChanged(entry, renderConfiguredEmailDefinitionModule(definition, driverImport, runtimeEnvImport, cloudflare, cloudflare && cloudflareEmail))
       try {
         await bundleEsmEntry(entry, definition.handler, {
+          define: resolveViteHubBundleDefines(config),
           external: cloudflare ? ["node:*", "cloudflare:workers", ...(cloudflareEmail ? ["cloudflare:email"] : [])] : undefined,
           format: "esm",
           minifyWhitespace: true,

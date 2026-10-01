@@ -13,9 +13,11 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({
   resolveInstalledProviderExecutable: () => "/bin/true",
 }));
 
-import { agentWithColocatedInstructions, defineAgent } from "../src/index.ts";
+import { agentWithColocatedInstructions, defineAgent, getAgentFromRegistry } from "../src/index.ts";
 import { babysitter } from "../src/presets/babysitter.ts";
 import { createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
+import * as githubRuns from "../src/server/github-pull-requests.ts";
+import { agentInvocationId } from "../src/invocations.ts";
 import type { GitHubHost } from "../src/server/github.ts";
 
 const roots: string[] = [];
@@ -24,7 +26,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false) {
+async function fixture(autoMerge = false, discovered = false) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -176,13 +178,15 @@ async function fixture(autoMerge = false) {
   };
   const errors = vi.fn();
   const agent = agentWithColocatedInstructions(defineAgent({
+    ...(discovered ? {} : { name: "babysitter" }),
     preset: "babysitter",
     presets: { babysitter },
     options: { filter: { labels: { allow: ["repair"] } }, autoMerge },
     driver: { env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
   }), "Preserve the documented API contract.");
   const runtime = createBabysitterRuntime({
-    agent,
+    agent: discovered ? await getAgentFromRegistry("babysitter", { babysitter: async () => ({ default: agent }) }) : agent,
+    ...(discovered ? { agentName: "babysitter" } : {}),
     github,
     inboxPath: join(root, "inbox.sqlite"),
     repositories: ["acme/app"],
@@ -290,6 +294,31 @@ async function fixture(autoMerge = false) {
 }
 
 describe("Babysitter preset runtime", () => {
+  it.each([
+    { config: { url: "https://agents.example.test" }, discovered: false },
+    { config: { agents: { babysitter: "https://agents.example.test" } }, discovered: false },
+    { config: { agents: { babysitter: "https://agents.example.test" } }, discovered: true },
+  ])("links the session to the worker Agent invocation with %j", async ({ config, discovered }) => {
+    vi.stubGlobal("__VITEHUB_PUBLIC_URL__", config);
+    const createRun = vi.spyOn(githubRuns, "createGitHubPullRequestRun");
+    const f = await fixture(false, discovered);
+    try {
+      await f.reconcile();
+      expect(createRun).toHaveBeenCalledOnce();
+      const options = createRun.mock.calls[0]![2];
+      expect(options.agentName).toBe("babysitter-worker");
+      const run = await createRun.mock.results[0]!.value;
+      expect(run.activity?.links).toEqual([{
+        label: "Current session",
+        url: `https://agents.example.test/_vitehub/agents/babysitter-worker/invocations/${await agentInvocationId(options.runId, "babysitter-worker")}`,
+      }]);
+    } finally {
+      f.runtime.inbox.close();
+      vi.unstubAllGlobals();
+      createRun.mockRestore();
+    }
+  });
+
   it("allows the metadata tool to clear the pull request body", async () => {
     const f = await fixture();
     f.choose("updatePullRequest", { body: "" });

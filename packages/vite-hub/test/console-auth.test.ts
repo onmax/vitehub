@@ -481,6 +481,43 @@ describe("independent Console Auth", () => {
     expect(await denied.text()).toContain("Choose a different account with your sign-in provider")
   })
 
+  it.each([
+    { publicUrl: { url: "https://public.example.com" }, expected: "https://public.example.com" },
+    { publicUrl: { agents: { worker: "https://internal.example.com" } }, expected: "https://internal.example.com" },
+    { publicUrl: {}, expected: "http://internal.example.com" },
+    { publicUrl: { url: "https://public.example.com" }, environment: "https://env.example.com", expected: "https://env.example.com" },
+    { publicUrl: { url: "https://public.example.com" }, environment: "https://env.example.com", baseURL: "https://explicit.example.com", expected: "https://explicit.example.com" },
+  ])("uses $expected for inline organization Auth behind a TLS proxy", async ({ publicUrl, environment, baseURL, expected }) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-auth-public-url-"))
+    vi.stubEnv("GITHUB_CLIENT_ID", "client-id")
+    vi.stubEnv("GITHUB_CLIENT_SECRET", "client-secret")
+    vi.stubEnv("BETTER_AUTH_SECRET", "test-secret-at-least-32-bytes-long")
+    vi.stubEnv("CONSOLE_AUTH_BASE_URL", environment ?? "")
+    vi.stubGlobal("__VITEHUB_PUBLIC_URL__", publicUrl)
+    let database: DatabaseSync | undefined
+    try {
+      const input = createInlineConsoleAuth({ provider: "github", org: "acme", baseURL, databasePath: join(root, "auth.sqlite") })
+      const definition = createConsoleAuthDefinition(input, "/portal/")
+      const request = new Request("http://internal.example.com/portal/_vitehub?auth_start=1", { headers: { accept: "text/html" } })
+      if (typeof definition.options !== "function") throw new TypeError("Expected resolved Console Auth options.")
+      const options = definition.options({ env: {}, requestOrigin: "http://internal.example.com", request })
+      if (!(options.database instanceof DatabaseSync)) throw new TypeError("Expected a SQLite database.")
+      database = options.database
+      await prepareConsoleAuth(input, definition, request)
+      const response = await requireAuthAccessRoutes(request, [0], definition, [0])
+      expect(response?.status).toBe(302)
+      const redirect = new URL(response!.headers.get("location")!)
+      expect(redirect.searchParams.get("redirect_uri")).toBe(`${expected}/portal/api/_vitehub/console/auth/callback/github`)
+      expect(redirect.searchParams.get("scope")).toContain("read:org")
+    }
+    finally {
+      database?.close()
+      vi.unstubAllEnvs()
+      vi.unstubAllGlobals()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it("admits only active GitHub organization members with a verified email", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-auth-org-"))
     vi.stubEnv("GITHUB_CLIENT_ID", "client-id")
