@@ -27,6 +27,32 @@ describe("Rate Limit core", () => {
     await expect(limiter.reset({ key: "user" })).rejects.toThrow("must return [null] or [Error]")
   })
 
+  it("rejects spoofed Error brands for peek and reset", async () => {
+    const cause = { name: "Error", message: "spoofed", [Symbol.toStringTag]: "Error" }
+    const driver = memoryRateLimitDriver()
+    Object.assign(driver, { peek: () => [cause, undefined], reset: () => [cause] })
+    const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })
+    await expect(limiter.peek({ key: "user" })).rejects.toThrow("must return [null, value] or [Error, undefined]")
+    await expect(limiter.reset({ key: "user" })).rejects.toThrow("must return [null] or [Error]")
+  })
+
+  it("accepts genuine Errors with a custom display tag", async () => {
+    const cause = Object.assign(new Error("offline"), { [Symbol.toStringTag]: "ProviderError" })
+    const driver = memoryRateLimitDriver()
+    Object.assign(driver, { peek: () => [cause, undefined], reset: () => [cause] })
+    const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })
+    await expect(limiter.peek({ key: "user" })).resolves.toMatchObject({ cause, status: "unavailable" })
+    await expect(limiter.reset({ key: "user" })).resolves.toEqual({ cause, status: "unavailable" })
+  })
+
+  it("accepts driver peek errors from another JavaScript realm", async () => {
+    const cause: unknown = runInNewContext("new Error('cross-realm offline')")
+    const driver = memoryRateLimitDriver()
+    Object.assign(driver, { peek: () => [cause, undefined] })
+    const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })
+    await expect(limiter.peek({ key: "user" })).resolves.toMatchObject({ cause, status: "unavailable" })
+  })
+
   it("accepts driver reset errors from another JavaScript realm", async () => {
     const cause: unknown = runInNewContext("new Error('cross-realm offline')")
     const driver = memoryRateLimitDriver()

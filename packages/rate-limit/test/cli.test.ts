@@ -77,12 +77,13 @@ describe("Rate Limit review regressions", () => {
     expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({ key })
   })
 
-  it.each(["http://user:secret@localhost:5173", "http://user:sec/ret@localhost"])("redacts URL credentials in JSON discovery errors: %s", async url => {
+  it.each(["http://user:secret@localhost:5173", "http://user:sec/ret@localhost", "http://user:sec@ret@host:invalid"])("redacts URL credentials in JSON discovery errors: %s", async url => {
     const output = context()
     await expect(runRateLimitCli(["peek", "login", "key", "--json", "--url", url], output.context, { fetch: vi.fn(async () => { throw new Error("offline") }) })).resolves.toBe(1)
     expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message")
     expect(output.stdout.output()).not.toContain("secret")
     expect(output.stdout.output()).not.toContain("sec/ret")
+    expect(output.stdout.output()).not.toContain("ret@host")
     expect(output.stderr.output()).toBe("")
   })
 

@@ -14,7 +14,12 @@ import type {
 } from "./types.ts"
 import { rateLimitErrorDiagnostics } from "./error-diagnostics.ts"
 
-const driverErrorSchema = v.custom<Error>(value => Object.prototype.toString.call(value) === "[object Error]" && v.is(v.object({ message: v.string(), name: v.string() }), value))
+const driverErrorSchema = v.custom<Error>((value) => {
+  const nativeError = "isError" in Error && v.is(v.function(), Error.isError)
+    ? Error.isError(value) === true
+    : v.is(v.object({}), value) && !(Symbol.toStringTag in value) && Object.prototype.toString.call(value) === "[object Error]"
+  return nativeError && v.is(v.object({ message: v.string(), name: v.string() }), value)
+})
 
 function resolveDriverCapabilities(options: CreateRateLimiterOptions): RateLimitDriverCapabilities {
   const capabilities = options.driver.capabilities
