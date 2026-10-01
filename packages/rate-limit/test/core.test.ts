@@ -12,6 +12,22 @@ const strictCapabilities = {
 } satisfies RateLimitDriverCapabilities
 
 describe("Rate Limit core", () => {
+  it.each([[], [undefined], [null, "extra"], ["error"]].map(outcome => ({ outcome })))("rejects malformed custom reset outcomes: %j", async ({ outcome }) => {
+    const driver = memoryRateLimitDriver()
+    Object.assign(driver, { reset: () => outcome })
+    const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })
+    await expect(limiter.reset({ key: "user" })).rejects.toThrow("must return [null] or [Error]")
+  })
+
+  it("accepts reset success and driver errors", async () => {
+    const driver = memoryRateLimitDriver()
+    const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })
+    await expect(limiter.reset({ key: "user" })).resolves.toEqual({ status: "reset" })
+    const cause = new Error("offline")
+    Object.assign(driver, { reset: () => [cause] })
+    await expect(limiter.reset({ key: "user" })).resolves.toEqual({ cause, status: "unavailable" })
+  })
+
   it("validates and normalizes policies", () => {
     const limiter = createRateLimiter({ driver: memoryRateLimitDriver(), limit: 10, window: "1m" })
     expect(limiter.policy).toEqual({
