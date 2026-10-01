@@ -186,6 +186,8 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
   const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month]
   // Date.parse normalizes overflow days, so validate the provider's calendar date first.
   if (daysInMonth === undefined || day < 1 || day > daysInMonth) return
+  const offset = resetText.match(/[+-](\d{2}):?(\d{2})$/)
+  if (offset && (Number(offset[1]) > 23 || Number(offset[2]) > 59)) return
   const time = Date.parse(resetText
     .replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, "$1")
     .replace(/\b([ap])\.m\.?/gi, "$1m"))

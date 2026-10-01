@@ -113,6 +113,8 @@ describe("chat error fallback", () => {
     "2026-99-15T01:23:00Z",
     "2026-02-31T01:23:00Z",
     "2026-04-31T01:23:00-07:00",
+    "Sep 15, 2026 1:23 PM +14:99",
+    "Sep 15, 2026 1:23 PM -2400",
     "2100-02-29T01:23:00Z",
     "Feb 29, 2026 1:23 AM",
     "Feb 30, 2026 1:23 AM UTC",
@@ -138,6 +140,7 @@ describe("chat error fallback", () => {
     ["2000-02-29T01:23:00Z", "2000-02-29T01:23:00.000Z"],
     ["2028-02-29T23:23:00-07:00", "2028-03-01T06:23:00.000Z"],
     ["Feb. 29th, 2028 1:23 p.m. UTC", "2028-02-29T13:23:00.000Z"],
+    ["Sep 15, 2026 1:23 PM +14:00", "2026-09-14T23:23:00.000Z"],
   ])("preserves valid leap dates and time zones: %s", (resetText, resetAt) => {
     const message = `Quota exhausted. Try again at ${resetText}.`
     for (const error of [
