@@ -319,7 +319,9 @@ function exitCode(operation: KVDevOperation, result: Record<string, unknown>): n
 }
 
 async function readFailure(response: Response): Promise<KVCliFailure> {
-  const text = await response.text()
+  let text: string
+  try { text = await response.text() }
+  catch (error) { return { message: `Could not read the KV error response: ${error instanceof Error ? error.message : String(error)}` } }
   try {
     const body: unknown = JSON.parse(text)
     const parsed = v.safeParse(v.object({ error: v.object({ code: v.optional(v.string()), message: v.string() }) }), body)
