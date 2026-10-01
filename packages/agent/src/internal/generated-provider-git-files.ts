@@ -36,8 +36,15 @@ export async function protectGeneratedProviderGitFiles(root: string, paths: read
     }
     finally {
       if (excluded) {
-        if (originalExclude === undefined) await rm(excludePath, { force: true })
-        else await writeFile(excludePath, originalExclude)
+        const currentExclude = await readFile(excludePath, "utf8").catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return undefined
+          throw error
+        })
+        if (currentExclude !== undefined) {
+          const withoutBlock = currentExclude.replace(block, "")
+          if (withoutBlock.length) await writeFile(excludePath, withoutBlock)
+          else await rm(excludePath, { force: true })
+        }
         excluded = false
       }
     }
