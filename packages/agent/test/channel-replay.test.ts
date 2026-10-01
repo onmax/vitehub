@@ -218,7 +218,7 @@ describe("replayChannel()", () => {
     } finally { release(); await initial; vi.useRealTimers() }
   })
 
-  it("claims before an asynchronous trigger write and retries failed trigger preparation", async () => {
+  it.each([false, undefined] as const)("claims before an asynchronous trigger write and retries failed trigger preparation with runtime %s", async runtime => {
     const invocations = memoryInvocations()
     let entered!: () => void
     let release!: () => void
@@ -236,7 +236,7 @@ describe("replayChannel()", () => {
       triggers: { received: defineChannelTrigger({ input: v.object({ folder: v.string(), id: v.string(), subject: v.string() }), invoke }) },
     })
     const run = vi.fn(() => "done")
-    const agent = defineAgent({ channels: { mailbox: channel }, driver: { run }, invocations, runtime: false })
+    const agent = defineAgent({ channels: { mailbox: channel }, driver: { run }, invocations, runtime })
     const first = replayChannel(agent, "mailbox", { limit: 1 })
     try {
       await Promise.race([running, first])

@@ -1064,7 +1064,7 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
     throw new Error("Could not acquire the Invocation execution claim.")
   }
   const binding = resolveAgentWorkflowRuntimeBinding<TRuntimeConfig>(agent)
-  if (binding && !journal.createdNew) {
+  if (binding && !("discoveryDefault" in binding && !context.agentIdentity) && !journal.createdNew) {
     try {
       const workflowName = resolveAgentWorkflowName(agent, binding, context)
       const handle = await getAgentWorkflowHandle<TRuntimeConfig, unknown, unknown>(agent, workflowName, Boolean(context.agentIdentity))
@@ -7848,6 +7848,7 @@ async function executeAgentInvocation<
       if (invocationJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
       throw new Error("Could not acquire the Invocation execution claim.")
     }
+    // SAFETY: Workflow execution installs this private binding on the runtime context before handing off the claimed Invocation.
     if (inheritedClaim && !await invocationJournal?.confirmWorkflowDispatch((context as AgentRuntimeContext & { [agentInvocationWorkflowBinding]?: AgentInvocationWorkflowBinding })[agentInvocationWorkflowBinding])) {
       await invocationJournal?.releaseClaim()
       throw new Error("Could not confirm the Workflow Invocation handoff.")

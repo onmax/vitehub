@@ -65,6 +65,14 @@ describe("vitehub channels replay", () => {
     expect(channelReplayQuery(parseChannelReplayArgs(["--filter", `${name}=value`]), { properties: { [name]: { type: "string" } } })).toEqual({ [name]: "value" })
   })
 
+  it.each([["--label", "work"], ["--filter", "label=work"], ["--label", "work", "--filter", "label=personal"]])("sends array query values as arrays for %j", async (...args) => {
+    const stderr = output()
+    const { fetcher, requests } = replayFetch([{ failed: 0, items: [], nextCursor: null, processed: 0, skipped: 0 }])
+    expect(await runAgentChannelReplayCli(["--agent", "labeller", "--channel", "mailbox", ...args], { env: {}, stderr, stdout: output() }, { fetch: fetcher as typeof fetch })).toBe(0)
+    expect(requests[1]?.body).toMatchObject({ replay: { query: { label: args.length === 2 ? ["work"] : ["work", "personal"] } } })
+    expect(stderr.chunks).toEqual([])
+  })
+
   it("lists history query flags from the JSON Schema in --help", async () => {
     const stdout = output()
     const { fetcher } = replayFetch([])
