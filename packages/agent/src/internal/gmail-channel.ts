@@ -769,81 +769,144 @@ export async function gmailMailboxAddress(client: GmailClient): Promise<string> 
   return (await gmailRequest(client, profileSchema, { method: "GET", path: "profile" })).emailAddress
 }
 
-async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew: () => Promise<void>, mutate: (mutations: readonly AgentStateCacheMutation[]) => Promise<void>): Promise<void> {
+interface GmailSyncProgress {
+  startHistoryId: string
+  historyId: string
+  mode: "history" | "recovery"
+  query?: string
+  pageToken?: string
+  nextPageToken?: string
+  pageLoaded: boolean
+  done: boolean
+  pendingIds: string[]
+  retryIds: string[]
+}
+
+async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew: () => Promise<void>, mutate: (mutations: readonly AgentStateCacheMutation[]) => Promise<void>): Promise<boolean> {
   const { client, state } = sync
+  const progressKey = `${state.keyPrefix}sync-progress`
+  // Keep the growing deduplication snapshot separate from per-message checkpoints.
+  const seenKey = `${state.keyPrefix}sync-seen-ids`
   const cursor = await state.state.get<string>(cursorKey)
   if (!cursor) {
     await renew()
-    await mutate([{ key: cursorKey, type: "set", value: sync.notificationHistoryId }])
+    await mutate([
+      { key: cursorKey, type: "set", value: sync.notificationHistoryId },
+      { key: progressKey, type: "delete" },
+      { key: seenKey, type: "delete" },
+    ])
     log("cursor.initialized", { historyId: sync.notificationHistoryId })
-    return
+    return false
   }
-  let failed = false
-  const dispatchMessageIds = async (ids: readonly string[], inboxOnly = false): Promise<void> => {
+  const stored = await state.state.get<GmailSyncProgress>(progressKey)
+  const resumable = stored?.startHistoryId === cursor
+  let progress: GmailSyncProgress = resumable ? stored : {
+    startHistoryId: cursor, historyId: cursor, mode: "history", pageLoaded: false, done: false, pendingIds: [], retryIds: [],
+  }
+  const seen = new Set(resumable ? await state.state.get<string[]>(seenKey) ?? [] : [])
+  const save = async (next: GmailSyncProgress, saveSeen = false): Promise<void> => {
+    await renew()
+    await mutate([
+      { key: progressKey, type: "set", value: next },
+      ...(saveSeen ? [{ key: seenKey, type: "set" as const, value: [...seen] }] : []),
+    ])
+    progress = next
+  }
+  if (!resumable) await save(progress, true)
+  let restartedPageToken = false
+  const restartExpiredPageToken = async (error: unknown): Promise<boolean> => {
+    if (gmailErrorStatus(error) !== 400 || !progress.pageToken || restartedPageToken) return false
+    restartedPageToken = true
+    await save({ ...progress, pageToken: undefined, nextPageToken: undefined })
+    return true
+  }
+
+  const dispatchMessageIds = async (ids: readonly string[], retrying = false): Promise<void> => {
     for (let start = 0; start < ids.length; start += messageFetchConcurrency) {
       await renew()
-      const messages = await getGmailMessages(client, ids.slice(start, start + messageFetchConcurrency), sync.bodyLimit)
-      for (const message of messages) {
-        if (inboxOnly && !message.labelIds.includes("INBOX")) continue
-        await renew()
-        const result = await sync.dispatch([message])
-        log("messages.dispatched", { failed: result.failed, processed: result.processed, skipped: result.skipped })
-        failed ||= result.failed > 0
+      const batch = ids.slice(start, start + messageFetchConcurrency)
+      const messages = new Map((await getGmailMessages(client, batch, sync.bodyLimit)).map(message => [message.id, message]))
+      for (const id of batch) {
+        const message = messages.get(id)
+        let failed = false
+        if (message && (retrying || progress.mode !== "recovery" || message.labelIds.includes("INBOX"))) {
+          await renew()
+          const result = await sync.dispatch([message])
+          log("messages.dispatched", { failed: result.failed, processed: result.processed, skipped: result.skipped })
+          failed = result.failed > 0
+        }
+        await save({
+          ...progress,
+          pendingIds: progress.pendingIds.filter(pending => pending !== id),
+          retryIds: failed ? [...new Set([...progress.retryIds, id])] : progress.retryIds.filter(retry => retry !== id),
+        })
       }
     }
   }
-  let historyId = cursor
-  let pageToken: string | undefined
-  let expired = false
-  const seen = new Set<string>()
-  do {
-    await renew()
-    // Only an expired history request triggers recovery, not a dispatch failure.
-    const page = await gmailRequest(client, historyListSchema, {
-      method: "GET",
-      path: "history",
-      query: { historyTypes: "messageAdded", labelId: gmailWatchLabelIds[0], pageToken, startHistoryId: cursor },
-    }).catch((error: unknown) => {
-      if (gmailErrorStatus(error) !== 404) throw error
-      return undefined
-    })
-    if (!page) {
-      expired = true
-      break
-    }
-    const ids: string[] = []
-    for (const entry of page.history || []) {
-      for (const { message } of entry.messagesAdded || []) {
-        if (seen.has(message.id)) continue
-        seen.add(message.id)
-        ids.push(message.id)
-      }
-    }
-    await dispatchMessageIds(ids)
-    historyId = page.historyId
-    pageToken = page.nextPageToken
-  } while (pageToken)
-  if (expired) {
-    // Gmail keeps about a week of history. Recover recent Inbox mail, then continue from now.
-    const profile = await gmailRequest(client, profileSchema, { method: "GET", path: "profile" })
-    historyId = profile.historyId
-    // Handler label changes must not remove messages from the paginated search.
-    const query = `after:${Math.floor((Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000)}`
-    let recovered = 0
-    let pageToken: string | undefined
-    do {
+  // Only failures from an earlier attempt are retried in this pass.
+  await dispatchMessageIds(progress.retryIds, true)
+  while (!progress.done) {
+    if (!progress.pageLoaded) {
       await renew()
-      const recent = await listGmailMessageIds(client, { includeSpamTrash: true, limit: 100, query, ...(pageToken ? { pageToken } : {}) })
-      await dispatchMessageIds(recent.ids, true)
-      recovered += recent.ids.length
-      pageToken = recent.nextPageToken
-    } while (pageToken)
-    log("history.expired", { historyId: cursor, recovered })
+      let ids: string[]
+      let nextPageToken: string | undefined
+      let historyId = progress.historyId
+      if (progress.mode === "history") {
+        // Only an expired history request triggers recovery, not a dispatch failure.
+        const page = await gmailRequest(client, historyListSchema, {
+          method: "GET", path: "history",
+          query: { historyTypes: "messageAdded", labelId: gmailWatchLabelIds[0], pageToken: progress.pageToken, startHistoryId: cursor },
+        }).catch(async (error: unknown) => {
+          if (await restartExpiredPageToken(error)) return null
+          if (gmailErrorStatus(error) !== 404) throw error
+          return undefined
+        })
+        if (page === null) continue
+        if (!page) {
+          const profile = await gmailRequest(client, profileSchema, { method: "GET", path: "profile" })
+          // Handler label changes must not remove messages from the paginated search.
+          await save({
+            ...progress, mode: "recovery", historyId: profile.historyId,
+            query: `after:${Math.floor((Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000)}`,
+            pageToken: undefined, nextPageToken: undefined,
+          })
+          continue
+        }
+        ids = (page.history || []).flatMap(entry => (entry.messagesAdded || []).map(({ message }) => message.id))
+        nextPageToken = page.nextPageToken
+        historyId = page.historyId
+      } else {
+        const page = await listGmailMessageIds(client, {
+          includeSpamTrash: true, limit: 100, query: progress.query, pageToken: progress.pageToken,
+        }).catch(async (error: unknown) => {
+          if (await restartExpiredPageToken(error)) return undefined
+          throw error
+        })
+        if (!page) continue
+        ids = page.ids
+        nextPageToken = page.nextPageToken
+      }
+      const pendingIds = ids.filter(id => {
+        if (seen.has(id)) return false
+        seen.add(id)
+        return true
+      })
+      // Save enumeration before body fetches, which can exceed one worker's time window.
+      await save({ ...progress, historyId, nextPageToken, pendingIds, pageLoaded: true }, true)
+    }
+    await dispatchMessageIds(progress.pendingIds)
+    await save({ ...progress, pageToken: progress.nextPageToken, nextPageToken: undefined, pageLoaded: false, done: !progress.nextPageToken })
   }
-  if (failed) return
-  // Advance the cursor only while this worker still owns the mailbox lease.
+  if (progress.retryIds.length) return false
+  if (progress.mode === "recovery") log("history.expired", { historyId: cursor, recovered: seen.size })
+  // Completion and checkpoint cleanup commit only while this worker owns the mailbox lease.
   await renew()
-  await mutate([{ key: cursorKey, type: "set", value: historyId }])
+  await mutate([
+    { key: cursorKey, type: "set", value: progress.historyId },
+    { key: progressKey, type: "delete" },
+    { key: seenKey, type: "delete" },
+  ])
+  return resumable
 }
 
 /**
@@ -887,11 +950,12 @@ export async function syncGmailMailbox(sync: GmailMailboxSync): Promise<void> {
       renewalTask = renewalTask.then(renew).catch(() => { ownershipLost = true })
     }, syncLockTtlMs / 3)
     try {
+      let resumedSnapshot = false
       do {
         await renew()
         await mutate([{ key: pendingKey, type: "delete" }])
-        await syncMailboxOnce(sync, cursorKey, renew, mutate)
-      } while (await state.get(pendingKey) !== null)
+        resumedSnapshot = await syncMailboxOnce(sync, cursorKey, renew, mutate)
+      } while (resumedSnapshot || await state.get(pendingKey) !== null)
     }
     catch (error) {
       failures.push(error)

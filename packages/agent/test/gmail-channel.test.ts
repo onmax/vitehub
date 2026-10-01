@@ -403,7 +403,9 @@ describe("gmail() Channel", () => {
     }
   })
 
-  it.each(["history", "recovery"] as const)("dispatches earlier batches before later %s body fetches fail", async mode => {
+  it.each((["history", "recovery"] as const).flatMap(mode =>
+    (["body", "dispatch"] as const).map(failureKind => ({ mode, failureKind })),
+  ))("resumes earlier $mode message checkpoints after a $failureKind failure", async ({ mode, failureKind }) => {
     const google = await createGoogle()
     const state = createLibsqlAgentState({ url: ":memory:" })
     await state.connect()
@@ -411,8 +413,10 @@ describe("gmail() Channel", () => {
       await state.set("mail:history-id", "100")
       const ids = Array.from({ length: 6 }, (_, index) => `m${index + 1}`)
       google.history.set("100", { historyId: "110", ids })
+      google.history.set("110", { historyId: "110", ids: [] })
       if (mode === "recovery") google.expiredHistory.add("100")
       const failure = new Error("Later Gmail body fetch interrupted")
+      const bodyFetches: string[] = []
       let failOnce = true
       const fetch: typeof globalThis.fetch = async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : String(input))
@@ -420,7 +424,8 @@ describe("gmail() Channel", () => {
           return Response.json({ messages: ids.map(id => ({ id })) })
         }
         const id = /\/messages\/(m\d+)$/.exec(url.pathname)?.[1]
-        if (id === "m6" && failOnce) {
+        if (id) bodyFetches.push(id)
+        if (failureKind === "body" && id === "m6" && failOnce) {
           failOnce = false
           throw failure
         }
@@ -429,6 +434,10 @@ describe("gmail() Channel", () => {
       }
       const delivered = new Set<string>()
       const dispatch = vi.fn(async (messages: readonly { id: string }[]) => {
+        if (failureKind === "dispatch" && messages[0]?.id === "m3" && failOnce) {
+          failOnce = false
+          throw failure
+        }
         const fresh = messages.filter(message => !delivered.has(message.id))
         for (const message of fresh) delivered.add(message.id)
         return { failed: 0, items: [], nextCursor: null, processed: fresh.length, skipped: messages.length - fresh.length }
@@ -441,15 +450,104 @@ describe("gmail() Channel", () => {
         state: { keyPrefix: "mail:", state },
       }
       await expect(syncGmailMailbox(sync)).rejects.toBe(failure)
-      expect([...delivered]).toEqual(ids.slice(0, 5))
+      expect([...delivered]).toEqual(ids.slice(0, failureKind === "body" ? 5 : 2))
       expect(await state.get("mail:history-id")).toBe("100")
       await syncGmailMailbox(sync)
       expect([...delivered]).toEqual(ids)
+      expect(bodyFetches).toEqual(failureKind === "body" ? [...ids, "m6"] : [...ids.slice(0, 5), ...ids.slice(2)])
       expect(await state.get("mail:history-id")).toBe(mode === "history" ? "110" : "300")
+      expect(await state.get("mail:sync-progress")).toBeNull()
     }
     finally {
       await state.disconnect()
     }
+  })
+
+  it.each(["history-token", "recovery-token", "expired-history"] as const)("resumes completed messages after %s expires", async mode => {
+    const state = createLibsqlAgentState({ url: ":memory:" })
+    await state.connect()
+    try {
+      await state.set("mail:history-id", "100")
+      let retrying = false
+      const delivered: string[] = []
+      const bodies: string[] = []
+      const queries: string[] = []
+      let profileReads = 0
+      const client: GmailClient = async request => {
+        if (request.path === "profile") { profileReads += 1; return { emailAddress: "max@example.com", historyId: "300" } }
+        if (request.path === "history" && request.query?.startHistoryId === "300") return { historyId: "300" }
+        if (request.path === "history" && mode === "recovery-token") throw Object.assign(new Error("History expired"), { status: 404 })
+        if (request.path === "history" || request.path === "messages") {
+          if (request.path === "messages") queries.push(String(request.query?.q))
+          const token = request.query?.pageToken
+          if (token === "old" && !retrying) throw new Error("Worker interrupted")
+          if (token === "old") throw Object.assign(new Error("Token expired"), { status: mode === "expired-history" ? 404 : 400 })
+          const ids = token === "new" ? ["m1", "m2"] : ["m1"]
+          const nextPageToken = token ? undefined : retrying ? "new" : "old"
+          return request.path === "history"
+            ? { historyId: "300", history: [{ messagesAdded: ids.map(id => ({ message: { id } })) }], nextPageToken }
+            : { messages: ids.map(id => ({ id })), nextPageToken }
+        }
+        const id = request.path.slice("messages/".length)
+        bodies.push(id)
+        return apiMessage(id, id)
+      }
+      const sync = { bodyLimit: 1000, client, notificationHistoryId: "300", state: { keyPrefix: "mail:", state },
+        dispatch: async (messages: readonly { id: string }[]) => {
+          delivered.push(...messages.map(message => message.id))
+          return { failed: 0, items: [], nextCursor: null, processed: messages.length, skipped: 0 }
+        } }
+      await expect(syncGmailMailbox(sync)).rejects.toThrow("Worker interrupted")
+      expect(delivered).toEqual(["m1"])
+      retrying = true
+      await syncGmailMailbox(sync)
+      expect(delivered).toEqual(["m1", "m2"])
+      expect(bodies).toEqual(["m1", "m2"])
+      expect(await state.get("mail:history-id")).toBe("300")
+      expect(await state.get("mail:sync-progress")).toBeNull()
+      expect(await state.get("mail:sync-seen-ids")).toBeNull()
+      if (mode !== "history-token") {
+        expect(profileReads).toBe(1)
+        expect(queries.every(query => query === queries[0] && /^after:\d+$/.test(query))).toBe(true)
+      }
+    }
+    finally { await state.disconnect() }
+  })
+
+  it("discards progress from another cursor and retries archived recovery failures", async () => {
+    const state = createLibsqlAgentState({ url: ":memory:" })
+    await state.connect()
+    try {
+      await state.set("mail:history-id", "100")
+      await state.set("mail:sync-progress", { startHistoryId: "old", pendingIds: ["wrong-message"] })
+      await state.set("mail:sync-seen-ids", ["m1"])
+      const message = apiMessage("m1", "First")
+      const client: GmailClient = async request => {
+        if (request.path === "history" && request.query?.startHistoryId === "300") return { historyId: "300" }
+        if (request.path === "history") throw Object.assign(new Error("History expired"), { status: 404 })
+        if (request.path === "profile") return { emailAddress: "max@example.com", historyId: "300" }
+        if (request.path === "messages") return { messages: [{ id: "m1" }] }
+        if (request.path === "messages/m1") return message
+        throw new Error(`Unexpected request: ${request.path}`)
+      }
+      let failed = true
+      const dispatch = vi.fn(async () => {
+        message.labelIds = []
+        return { failed: failed ? 1 : 0, items: [], nextCursor: null, processed: failed ? 0 : 1, skipped: 0 }
+      })
+      const sync = { bodyLimit: 1000, client, dispatch, notificationHistoryId: "300", state: { keyPrefix: "mail:", state } }
+      await syncGmailMailbox(sync)
+      expect(dispatch).toHaveBeenCalledOnce()
+      expect(await state.get("mail:history-id")).toBe("100")
+      expect(await state.get("mail:sync-progress")).toMatchObject({ startHistoryId: "100", retryIds: ["m1"] })
+      failed = false
+      await syncGmailMailbox(sync)
+      expect(dispatch).toHaveBeenCalledTimes(2)
+      expect(await state.get("mail:history-id")).toBe("300")
+      expect(await state.get("mail:sync-progress")).toBeNull()
+      expect(await state.get("mail:sync-seen-ids")).toBeNull()
+    }
+    finally { await state.disconnect() }
   })
 
   it.each(["history", "dispatch"] as const)("drains overlapping notifications after a %s exception", async failureKind => {
@@ -497,6 +595,7 @@ describe("gmail() Channel", () => {
       await syncGmailMailbox({ ...options, notificationHistoryId: "110", state: { keyPrefix: "mail:", state: second } })
       expect(await second.get("mail:sync-pending")).not.toBeNull()
       google.history.set("100", { historyId: "110", ids: ["m1", "m2"] })
+      google.history.set("105", { historyId: "110", ids: ["m2"] })
       release()
       expect(await settled).toBe(failure)
       expect(delivered).toContain("m2")
@@ -879,9 +978,9 @@ describe("gmail() Channel", () => {
     }
     await Promise.all(await push())
     expect(prompts).toEqual(["m1", "m2"])
-    expect(pages).toEqual([null, "page-2", null, "page-2"])
-    expect(historyCursors).toEqual(mode === "history" ? ["105", "105", "105", "105"] : ["105", "105"])
-    expect(google.calls.filter(call => call.path === "messages/m1")).toHaveLength(2)
+    expect(pages).toEqual([null, "page-2", "page-2"])
+    expect(historyCursors).toEqual(mode === "history" ? ["105", "105", "105", "300"] : ["105", "300"])
+    expect(google.calls.filter(call => call.path === "messages/m1")).toHaveLength(1)
     await Promise.all(await push())
     expect(prompts).toEqual(["m1", "m2"])
     expect(historyCursors.at(-1)).toBe("300")
@@ -922,8 +1021,10 @@ describe("gmail() Channel", () => {
     fail = false
     await push("105")
     expect(prompts).toEqual(expired ? ["m1", "m3", "m2"] : ["m1", "m2"])
-    expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("startHistoryId"))).toEqual(["100", "100"])
-    if (expired) expect(google.calls.filter(call => call.path === "messages").map(call => call.query.get("pageToken"))).toEqual([null, "page-2", null, "page-2"])
+    expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("startHistoryId"))).toEqual(["100", expired ? "300" : "105"])
+    expect(google.calls.filter(call => call.path === "messages/m1")).toHaveLength(1)
+    expect(google.calls.filter(call => call.path === "messages/m2")).toHaveLength(2)
+    if (expired) expect(google.calls.filter(call => call.path === "messages").map(call => call.query.get("pageToken"))).toEqual([null, "page-2"])
   })
 
   it.each(["text/plain", "text/html"])("loads an attachment-backed %s body before applying its limit", async mimeType => {
