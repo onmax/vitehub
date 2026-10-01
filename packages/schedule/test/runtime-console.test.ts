@@ -135,14 +135,17 @@ describe("Runtime Schedule inspection", () => {
     expect(runs[0]?.error?.message).not.toContain("hunter2")
   })
 
-  it("redacts normalized authorization credentials in run failures", async () => {
+  it.each([
+    ["proxy_authorization=Basic dXNlcjpwYXNz", "proxy_authorization=[redacted]"],
+    ["request_cookie=theme=dark; sessionid=abc123", "request_cookie=[redacted]"],
+  ])("redacts classified compound credentials in run failures: %s", async (message, redacted) => {
     installTargets(() => {
-      throw new Error("proxy_authorization=Basic dXNlcjpwYXNz")
+      throw new Error(message)
     })
     await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
     await schedules.run("digest").catch(() => {})
     const runs = await listRuntimeScheduleRuns("digest")
-    expect(runs[0]?.error?.message).toBe("proxy_authorization=[redacted]")
+    expect(runs[0]?.error?.message).toBe(redacted)
   })
 
   it("queries only visible Console records with the history limit", async () => {

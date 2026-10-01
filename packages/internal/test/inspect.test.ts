@@ -109,6 +109,15 @@ describe("redactInspectionText", () => {
     expect(output).not.toContain("deadbeef")
   })
 
+  it.each(["cookie", "request_cookie", "cookie_header"])("redacts complete cookie assignments for %s", key => {
+    expect(redactInspectionText(`${key}=theme=dark; sessionid=abc123`)).toBe(`${key}=[redacted]`)
+    expect(redactInspectionText(`${key}: theme=dark; sessionid=abc123`)).toBe(`${key}: [redacted]`)
+    expect(redactInspectionText(`${key}="theme=dark; sessionid=abc123"; retry`)).toBe(`${key}=[redacted]; retry`)
+    expect(redactInspectionText(`${key}="theme=dark"; sessionid=abc123`)).toBe(`${key}=[redacted]`)
+    expect(redactInspectionText(`{"${key}":"theme=dark; sessionid=abc123"}`)).toBe(`{"${key}":[redacted]}`)
+    expect(redactInspectionText(`${key}=theme=dark; sessionid=abc123\nRequest failed`)).toBe(`${key}=[redacted]\nRequest failed`)
+  })
+
   it.each(["proxy_authorization", "X-Authorization", "authorization_header", "ProxyAuthorization"])("redacts compound normalized authorization key %s", key => {
     expect(redactInspectionText(`${key}=Basic dXNlcjpwYXNz`)).toBe(`${key}=[redacted]`)
     expect(redactInspectionText(`${key}: Digest username="u", response="deadbeef"`)).toBe(`${key}: [redacted]`)
