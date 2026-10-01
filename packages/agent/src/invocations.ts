@@ -954,7 +954,7 @@ export type AgentInvocationRerunUnavailableReason =
   | "input-has-data"
   /** The Invocation received call options, which the journal does not replay. */
   | "input-has-options"
-  /** The journal redactor changed the captured prompt. */
+  /** The journal redactor changed the captured input or replay metadata. */
   | "input-redacted"
   /** The journal bounded the captured prompt or selected Invoker Profile. */
   | "input-truncated"
@@ -1804,14 +1804,15 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const redacted = options.redact(cloneObservation(observation))
       const identity = observationIdentity(observation)
       if (!redacted) return
-      const promptRedacted = observation.name === "agent.invocation.start"
-        && observation.attributes?.["input.prompt"] !== redacted.attributes?.["input.prompt"]
+      const inputRedacted = observation.name === "agent.invocation.start"
+        && ["input.prompt", "agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt"]
+          .some(key => observation.attributes?.[key] !== redacted.attributes?.[key])
       return {
         ...redacted,
         attributes: {
           ...redacted.attributes,
           ...(identity !== undefined ? { [AGENT_INVOCATION_OBSERVATION_ID_ATTRIBUTE]: identity } : {}),
-          ...(promptRedacted || observation.attributes?.[AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE] === true ? { [AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE]: true } : {}),
+          ...(inputRedacted || observation.attributes?.[AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE] === true ? { [AGENT_INVOCATION_INPUT_PROMPT_REDACTED_ATTRIBUTE]: true } : {}),
         },
       }
     }

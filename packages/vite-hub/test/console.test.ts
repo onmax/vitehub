@@ -2127,7 +2127,7 @@ describe("Agent invocation console", () => {
         await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "running" })
       })
       await expect(invocationHandler(detailEvent(running.id))).resolves.toMatchObject({
-        invocation: { actions: { delete: { available: false } } },
+        invocation: { actions: { delete: { available: false }, rerun: { available: false, reason: "invocation-active" } } },
       })
       await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 409 })
       release("done")

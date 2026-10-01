@@ -28,7 +28,8 @@ const confirmOpen = ref(false);
 const rerunUnavailable: Record<string, string> = {
   "input-has-options": "Rerun is unavailable: this session received call options",
   "input-has-data": "Rerun is unavailable: this session received structured input",
-  "input-redacted": "Rerun is unavailable: the recorded prompt was redacted",
+  "input-redacted": "Rerun is unavailable: the recorded input was redacted",
+  "invocation-active": "Rerun is unavailable: this session is still active",
   "input-has-messages": "Rerun is unavailable: this session received messages or attachments",
   "input-not-captured": "Rerun is unavailable: the prompt was not recorded",
   "input-truncated": "Rerun is unavailable: the recorded input is incomplete",

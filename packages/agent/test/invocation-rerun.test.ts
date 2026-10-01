@@ -97,6 +97,32 @@ describe("agentInvocationRerunInput", () => {
     expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
   })
 
+  it.each(["agent.invoker.profile.id", "input.hasData", "input.hasOptions", "input.hasMessages", "input.hasPrompt"])("rejects replay when redaction changes %s", async (key) => {
+    for (const replacement of [undefined, key === "agent.invoker.profile.id" ? "other-profile" : key !== "input.hasPrompt"]) {
+      const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Original prompt" }, {
+        redact: observation => observation.name === "agent.invocation.start"
+          ? { ...observation, attributes: { ...observation.attributes, [key]: replacement } }
+          : observation,
+      })
+      expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
+    }
+  })
+
+  it("rejects replay when redaction hides additional input", async () => {
+    for (const input of [
+      { data: { subject: "Release notes" }, prompt: "Summarize this." },
+      { options: { temperature: 0.2 }, prompt: "Summarize this." },
+      { messages: [createMessage({ role: "user", text: "Earlier turn" })], prompt: "Continue." },
+    ]) {
+      const record = await journaled(input, {
+        redact: observation => observation.name === "agent.invocation.start"
+          ? { ...observation, attributes: { ...observation.attributes, "input.hasData": false, "input.hasOptions": false, "input.hasMessages": false } }
+          : observation,
+      })
+      expect(agentInvocationRerunInput(record)).toEqual({ available: false, reason: "input-redacted" })
+    }
+  })
+
   it("reports input that the journal does not keep for replay", async () => {
     const withData = await journaled({ data: { subject: "Release notes" }, prompt: "Summarize this." })
     expect(withData.observations.find(observation => observation.name === "agent.invocation.start")?.attributes?.["input.hasData"]).toBe(true)
