@@ -224,7 +224,7 @@ async function readValue(parsed: ParsedKVArgs, cwd: string): Promise<unknown> {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return v.is(v.record(v.string(), v.unknown()), value)
+  return !Array.isArray(value) && v.is(v.record(v.string(), v.unknown()), value)
 }
 
 function formatValue(result: KVDevGetResult): string | Uint8Array {
