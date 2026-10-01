@@ -40,11 +40,16 @@ export async function protectGeneratedProviderGitFiles(root: string, paths: read
           if (error.code === "ENOENT") return undefined
           throw error
         })
-        if (currentExclude !== undefined) {
+        if (currentExclude === undefined) {
+          if (originalExclude !== undefined) await writeFile(excludePath, originalExclude)
+        }
+        else if (currentExclude.includes(block)) {
           const withoutBlock = currentExclude.replace(block, "")
           if (withoutBlock.length) await writeFile(excludePath, withoutBlock)
           else await rm(excludePath, { force: true })
         }
+        else if (originalExclude !== undefined) await writeFile(excludePath, originalExclude)
+        else await rm(excludePath, { force: true })
         excluded = false
       }
     }
