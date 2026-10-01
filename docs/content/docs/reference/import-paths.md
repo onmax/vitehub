@@ -24,11 +24,9 @@ composition and explicit feature subpaths for application APIs.
 | `vite-hub/agent/presets/workspace` | Opt-in workspace source-provenance citation preset. |
 | `vite-hub/agent/capabilities` | Official Capability factories. |
 | `vite-hub/agent/channels` | Official Channel Kind helpers. |
-| `vite-hub/agent/evlog` | Host-level evlog integration for Agent lifecycle events and diagnostics. |
-| `vite-hub/agent/evlog/posthog` | Optional Node.js PostHog event, Error Tracking and log exporter. |
 | `vite-hub/agent/eval` | Agent Eval authoring helpers; install Evalite and the test runner explicitly. |
+| `vite-hub/agent/observability` | `useObservability()` for the instance configured by `vitehub({ observability })`. |
 | `vite-hub/agent/presets/babysitter` | Composable Babysitter repair-loop preset. |
-| `vite-hub/agent/presets/babysitter/server` | Babysitter host runtime integration. |
 | `vite-hub/agent/cloudflare` | Cloudflare Agent state configuration helpers. |
 | `vite-hub/agent/vue` | Vue Agent client handle and AI SDK chat composable. |
 | `vite-hub/agent/server` and `vite-hub/agent/state/sqlite` | Manual server integration and libSQL-compatible durable Agent state. |
@@ -47,7 +45,6 @@ composition and explicit feature subpaths for application APIs.
 | `vite-hub/console/auth/cloudflare-access` | Verify Cloudflare Access tokens for the Console guard. |
 | `vite-hub/console/auth/inline` | Build the Node-only inline GitHub Console Auth Definition. |
 | `vite-hub/console/blob` | Read-only Blob inspection registration for framework server integrations. |
-| `vite-hub/console/connections` | Connections management and OAuth route registration for framework server integrations. |
 | `vite-hub/console/database` | Read-only Database inspection registration for framework server integrations. |
 | `vite-hub/console/definitions` | Read-only Definition inspection registration for framework server integrations. |
 | `vite-hub/console/env` | Server Env declaration inventory registration for framework server integrations. |
@@ -126,8 +123,9 @@ for libraries, focused integrations, and advanced composition.
 | `@vite-hub/agent/presets/workspace` | Agent Package | Opt-in workspace source-provenance citation preset. |
 | `@vite-hub/agent/capabilities` | Agent Package | Official Capability factories such as `access()`, `browser()`, `workspaceShell()`, and `inputCommands()`. |
 | `@vite-hub/agent/channels` | Agent Package | Official Channel Kind helpers such as `github()`, `teams()`, `telegram()`, `webChat()`, and `defineChannel()`. |
-| `@vite-hub/agent/evlog` | Agent Package | Host-level evlog integration. |
-| `@vite-hub/agent/evlog/posthog` | Agent Package | Optional PostHog exporter. |
+| `@vite-hub/agent/observability` | Agent Package | `useObservability()` and observability types. |
+| `@vite-hub/agent/observability/host` | Agent Package | `installObservability()` for hosts without `vitehub()`. |
+| `@vite-hub/agent/observability/posthog` | Agent Package | Optional PostHog exporter. |
 | `@vite-hub/agent/eval` | Agent Package | Agent Eval authoring helpers. |
 | `@vite-hub/agent/runtime/process` | Agent Package | Adaptive process-local Agent capacity for self-hosted Node applications. |
 | `@vite-hub/agent/test` | Agent Package | Agent test runner helpers for local and CI Agent Invocation checks. |

@@ -33,8 +33,10 @@ import { createNoExternalAddition, isServerEnvironment, resolveViteHubProjectRoo
 import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 
 import { viteHubTypesPlugin } from "./internal/types.ts"
+import { consoleConnectionsActorId } from "./console/auth-build.ts"
 import { agentChannelEnvPlugin } from "./agent-channel-env.ts"
 import { consoleInvocationRootPlugin, consoleVitePlugin, type ConsoleOptions } from "./console/vite.ts"
+import { observabilityVitePlugin, type ObservabilityOptions } from "./observability-vite.ts"
 import { resolveConsoleSectionIds } from "./console/runtime/sections.ts"
 
 import type { AgentModuleOptions } from "@vite-hub/agent"
@@ -62,6 +64,7 @@ import type { Plugin, PluginOption, ResolvedConfig, UserConfig } from "vite"
 import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
 
 export type { ConsoleOptions } from "./console/vite.ts"
+export type { ObservabilityEvlogOptions, ObservabilityOptions } from "./observability-vite.ts"
 
 type FrameworkDependencyName = Extract<keyof typeof frameworkPackageManifest.dependencies, `@vite-hub/${string}`>
 type DeploymentServicesManifest = Record<DeploymentService, object>
@@ -273,6 +276,8 @@ export interface ViteHubOptions {
   email?: true | EmailVitePluginOptions
   env?: false | EnvIntegrationOptions
   kv?: boolean | KVModuleOptions
+  /** Agent telemetry, request logs, and papercut reports through evlog. Read it at runtime with `useObservability()`. */
+  observability?: ObservabilityOptions
   queue?: boolean
   rateLimit?: boolean | RateLimitModuleOptions
   realtime?: boolean | RealtimeModuleOptions
@@ -857,6 +862,16 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
 
   plugins.push(frameworkDependencyResolver(options, envPlugin, providerImportAliases, blobEnabled, presetKVOptions || undefined))
 
+  if (options.observability) {
+    if (options.observability.posthog && !envPlugin) {
+      throw viteHubErrorDiagnostics.VITE_HUB_R0126({ message: "[vitehub] observability.posthog reads its API key from Server Env. Remove env: false." })
+    }
+    if (options.observability.papercuts && !(options.console && options.agent)) {
+      throw viteHubErrorDiagnostics.VITE_HUB_R0127({ message: "[vitehub] observability.papercuts stores reports in the Console invocation journal. Enable agent and console." })
+    }
+    // Before Env, so Env reads the PostHog key declaration.
+    plugins.push(observabilityVitePlugin(options.observability, { agent: options.agent, hosting: plan.nitroPreset }))
+  }
   if (envPlugin) plugins.push(envPlugin)
 
   if (options.console) {
@@ -953,6 +968,9 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     }
     plugins.push(hubConnections({
       ...(options.connections === true ? {} : options.connections),
+      ...(options.connections !== true && options.connections.management === true && options.console && consoleSections.includes("connections")
+        ? { management: { actor: consoleConnectionsActorId } }
+        : {}),
       database: "vite-hub/database/drizzle",
       importBase: "vite-hub/connections",
     }))

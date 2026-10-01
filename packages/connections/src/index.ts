@@ -1,36 +1,33 @@
-export { decideConnectionAccess, matchesConnectionPattern } from "./access.ts"
 export { defineConnection } from "./definition.ts"
-export { isConnectionError } from "./errors.ts"
-export { oauth2 } from "./providers/oauth2.ts"
-export { useConnection } from "./runtime/state.ts"
+export { ConnectionError, isConnectionError } from "./errors.ts"
 
-export type { ConnectionErrorCode, ConnectionErrorDetails } from "./errors.ts"
-export type { OAuth2ProviderOptions } from "./providers/oauth2.ts"
-export type { ConnectionName } from "./registry-types.ts"
+export type { ConnectionErrorCode, ConnectionErrorDetails, ConnectionErrorReason } from "./errors.ts"
+export type { ConnectionDefinitionName } from "./registry-types.ts"
 export type {
-  ConnectionAccess,
-  ConnectionAccessDecision,
   ConnectionAccessRule,
-  ConnectionActivity,
-  ConnectionActivityAction,
-  ConnectionActivityOutcome,
-  ConnectionActor,
-  ConnectionAuthorizationInput,
-  ConnectionCallResult,
+  ConnectionAccount,
+  ConnectionActionInfo,
+  ConnectionActionPattern,
+  ConnectionApiCatalog,
+  ConnectionApiSelection,
+  ConnectionApproval,
+  ConnectionApprovalPage,
+  ConnectionApprovalStatus,
+  ConnectionCallOptions,
   ConnectionClient,
+  ConnectionClientTree,
   ConnectionDefinition,
+  ConnectionDefinitionRegistry,
   ConnectionEffect,
-  ConnectionExchangeInput,
-  ConnectionOAuthClient,
-  ConnectionOperation,
+  ConnectionFetchInit,
+  ConnectionInspection,
+  ConnectionMethod,
+  ConnectionMethodPattern,
+  ConnectionMethodSignature,
   ConnectionProvider,
-  ConnectionProviderContext,
-  ConnectionRequest,
-  ConnectionSecret,
-  ConnectionSkipped,
   ConnectionStatus,
-  ConnectionSummary,
-  ConnectionTokenSet,
-  ConnectionTrace,
+  ConnectionTokenResponse,
+  ConnectionValue,
+  DiscoveredConnectionDefinition,
   UseConnectionOptions,
 } from "./types.ts"

@@ -1,7 +1,7 @@
 import * as v from 'valibot'
 import { parseEvidence, parsePullRequest, parseThread, type GitHubReviewThread, type GitHubEvidence, type GitHubDelivery, type GitHubPullRequestRecord } from './types.ts'
 import { createHash } from 'node:crypto'
-import { isFeedback, type Claim, type PullRequestInbox } from './store.ts'
+import { type Claim, type PullRequestInbox } from './store.ts'
 
 export type ReadGitHubSnapshot = (path: string, projection?: string) => Promise<unknown[]>
 export type ReadThreads = (repository: string, number: number) => Promise<GitHubReviewThread[]>

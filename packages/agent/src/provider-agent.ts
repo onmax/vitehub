@@ -2544,7 +2544,7 @@ async function* runProvider<
     if (configuredRoot === undefined) providerRoot = await mkdtemp(join(tmpdir(), "vitehub-provider-"))
     else {
       if (!hasRuntimeType(configuredRoot, "string") || !configuredRoot.trim() || !(await lstat(resolve(configuredRoot)).catch(() => undefined))?.isDirectory()) {
-        throw agentDiagnostics.AGENT_R0939({ message: "[vitehub] Provider Agent Driver cwd must resolve to an existing directory." })
+        throw agentDiagnostics.AGENT_R0938({ message: "[vitehub] Provider Agent Driver cwd must resolve to an existing directory." })
       }
       providerRoot = resolve(configuredRoot)
       ownsRoot = false

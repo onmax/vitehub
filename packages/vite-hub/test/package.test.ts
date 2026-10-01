@@ -102,6 +102,8 @@ const lowLevelOwnerExports = new Set([
 ]);
 
 const generatedRuntimeOwnerExports = new Set([
+  "@vite-hub/agent/observability/host",
+  "@vite-hub/agent/observability/posthog",
   "@vite-hub/agent/runtime/empty-registry",
   "@vite-hub/agent/runtime/workflow",
   "@vite-hub/blob/runtime/cloudflare-vite",
@@ -246,7 +248,6 @@ describe("framework package contract", () => {
       "./console/auth/cloudflare-access",
       "./console/auth/inline",
       "./console/blob",
-      "./console/connections",
       "./console/database",
       "./console/definitions",
       "./console/env",

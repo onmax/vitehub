@@ -77,6 +77,8 @@ jobs:
         env:
           VITE_DOCTOR_SINCE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before || 'HEAD^' }}
       - run: vp run typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
       - name: Docs links
         run: vp run --filter vitehub-docs test:links
 

@@ -16,7 +16,12 @@ export interface ConsoleSectionDetails {
 /** Details of built-in sections. Contributed sections get their details from the navigation response. */
 export const consoleSectionDetails: Readonly<Record<ConsoleBuiltinSectionId, ConsoleSectionDetails>> = {
   env: { description: "Inspect Server Env declarations and their providers.", icon: "i-ph-key-light", label: "Env", routeName: "vitehub-console-env" },
-  connections: { description: "Connect provider accounts and review how routes and Agents use them.", icon: "i-ph-plugs-connected-light", label: "Connections", routeName: "vitehub-console-connections" },
+  connections: {
+    description: "Connect OAuth accounts, review activity, and decide pending approvals.",
+    icon: "i-lucide-plug-zap",
+    label: "Connections",
+    routeName: "vitehub-console-connections",
+  },
   agents: {
     description: "Inspect Agent sessions and invocation details.",
     icon: "i-ph-robot-light",

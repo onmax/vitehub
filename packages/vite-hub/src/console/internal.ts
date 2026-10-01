@@ -34,9 +34,6 @@ export const consoleEnvRootKey: unique symbol = Symbol.for("vitehub.console.env.
 export const consoleSchedulesKey: unique symbol = Symbol.for("vitehub.console.schedules")
 export const consoleSchedulesRegistryKey: unique symbol = Symbol.for("vitehub.console.schedules.registry")
 export const consoleSchedulesRootKey: unique symbol = Symbol.for("vitehub.console.schedules.root")
-export const consoleConnectionsKey: unique symbol = Symbol.for("vitehub.console.connections")
-export const consoleConnectionsRegistryKey: unique symbol = Symbol.for("vitehub.console.connections.registry")
-export const consoleConnectionsRootKey: unique symbol = Symbol.for("vitehub.console.connections.root")
 export const consoleInvocationsRootIdentityRegistryKey: unique symbol = Symbol.for("vitehub.console.invocations.root-identities")
 export const consoleInvocationsRevisionRegistryKey: unique symbol = Symbol.for("vitehub.console.invocations.revisions")
 export const consoleProjectRootKey: typeof consoleInvocationsRootKey = consoleInvocationsRootKey
@@ -105,16 +102,6 @@ type ConsoleSchedulesByRoot = {
   readonly size: number
 }
 
-export interface ConsoleConnectionsInspection {
-  handle: (request: Request, event?: unknown) => Promise<Response>
-}
-
-type ConsoleConnectionsByRoot = {
-  get(key: string): ConsoleConnectionsInspection | undefined
-  set(key: string, value: ConsoleConnectionsInspection): unknown
-  readonly size: number
-}
-
 type ConsoleDatabaseByRoot = {
   get(key: string): ConsoleDatabaseInspection | undefined
   set(key: string, value: ConsoleDatabaseInspection): unknown
@@ -123,7 +110,7 @@ type ConsoleDatabaseByRoot = {
 
 type ConsoleInvocationRegistry = Record<
   symbol,
-  AgentInvocations | boolean | ConsoleBlobByRoot | ConsoleBlobInspection | ConsoleDatabaseByRoot | ConsoleDatabaseInspection | ConsoleSectionCatalog | ConsoleDefinitionsByRoot | string | readonly ConsoleSectionId[] | ConsoleInvocationsByRoot | ConsoleInvocationIdentitiesByRoot | ConsoleKVByRoot | ConsoleKVInspection | ConsoleEnvByRoot | ConsoleEnvInspection | ConsoleSchedulesByRoot | ScheduleDefinitionRegistry | ConsoleConnectionsByRoot | ConsoleConnectionsInspection | ConsoleSectionsByRoot | undefined
+  AgentInvocations | boolean | ConsoleBlobByRoot | ConsoleBlobInspection | ConsoleDatabaseByRoot | ConsoleDatabaseInspection | ConsoleSectionCatalog | ConsoleDefinitionsByRoot | string | readonly ConsoleSectionId[] | ConsoleInvocationsByRoot | ConsoleInvocationIdentitiesByRoot | ConsoleKVByRoot | ConsoleKVInspection | ConsoleEnvByRoot | ConsoleEnvInspection | ConsoleSchedulesByRoot | ScheduleDefinitionRegistry | ConsoleSectionsByRoot | undefined
 >
 
 type ConsoleInvocationIdentitiesByRoot = {
@@ -176,9 +163,6 @@ export type ConsoleInvocationScope = {
   [consoleSchedulesKey]?: ScheduleDefinitionRegistry
   [consoleSchedulesRegistryKey]?: ConsoleSchedulesByRoot
   [consoleSchedulesRootKey]?: string
-  [consoleConnectionsKey]?: ConsoleConnectionsInspection
-  [consoleConnectionsRegistryKey]?: ConsoleConnectionsByRoot
-  [consoleConnectionsRootKey]?: string
   [consoleProjectRootKey]?: string
   [consoleInvocationsRootIdentityRegistryKey]?: ConsoleInvocationIdentitiesByRoot
   [consoleSectionsKey]?: readonly ConsoleSectionId[]
@@ -282,13 +266,6 @@ function schedulesByRoot(value: unknown): ConsoleSchedulesByRoot | undefined {
   if (typeof registry.get !== "function" || typeof registry.set !== "function" || !Number.isInteger(registry.size)) return
   // SAFETY: The preceding checks validate every ConsoleSchedulesByRoot member.
   return registry as ConsoleSchedulesByRoot
-}
-
-function connectionsByRoot(value: unknown): ConsoleConnectionsByRoot | undefined {
-  if (!value || (typeof value !== "object" && typeof value !== "function")) return
-  const registry = value as Partial<ConsoleConnectionsByRoot>
-  if (typeof registry.get !== "function" || typeof registry.set !== "function" || !Number.isInteger(registry.size)) return
-  return registry as ConsoleConnectionsByRoot
 }
 
 function envByRoot(value: unknown): ConsoleEnvByRoot | undefined {
@@ -615,31 +592,6 @@ export function resolveConsoleSchedules(scope: ConsoleInvocationScope = defaultC
   if (registered && registered.size > 1) return scope[consoleSchedulesKey]
   // SAFETY: installConsoleSchedulesScope is the only writer for this process registry key.
   return (processRegistry(scope)?.[consoleSchedulesKey] as ScheduleDefinitionRegistry | undefined) ?? scope[consoleSchedulesKey]
-}
-
-export function installConsoleConnectionsScope(
-  projectRoot: string,
-  inspection: ConsoleConnectionsInspection,
-  scope: ConsoleInvocationScope = defaultConsoleInvocationScope(),
-): ConsoleConnectionsInspection {
-  scope[consoleConnectionsRootKey] = projectRoot
-  scope[consoleConnectionsKey] = inspection
-  const registry = processRegistry(scope)
-  if (registry) {
-    const inspections = connectionsByRoot(registry[consoleConnectionsRegistryKey]) ?? new Map<string, ConsoleConnectionsInspection>()
-    inspections.set(projectRoot, inspection)
-    registry[consoleConnectionsRegistryKey] = inspections
-    registry[consoleConnectionsKey] = inspection
-  }
-  return inspection
-}
-
-export function resolveConsoleConnections(scope: ConsoleInvocationScope = defaultConsoleInvocationScope()): ConsoleConnectionsInspection | undefined {
-  const root = scope[consoleConnectionsRootKey]
-  const registered = connectionsByRoot(processRegistry(scope)?.[consoleConnectionsRegistryKey])
-  if (root) return registered?.get(root) ?? scope[consoleConnectionsKey]
-  if (registered && registered.size > 1) return scope[consoleConnectionsKey]
-  return (processRegistry(scope)?.[consoleConnectionsKey] as ConsoleConnectionsInspection | undefined) ?? scope[consoleConnectionsKey]
 }
 
 export function installConsoleDatabaseScope(

@@ -40,10 +40,11 @@ describe("Console playground Invocation actions", () => {
     expect(await invoke("", "ainv_capabilities_mcp_title", "GET")).toMatchObject({ status: 404 })
   })
 
-  it("includes action metadata in invocation details", async () => {
-    expect(await invoke("", "ainv_release_job", "GET")).toMatchObject({
-      status: 200,
-      body: { invocation: { actions: { delete: { available: true }, rerun: { available: false } } } },
+  it.each(["ainv_queue_visibility", "ainv_console_navigation"])("keeps %s while it is not terminal", async (id) => {
+    expect(await invoke('{"action":"delete"}', id)).toEqual({
+      status: 409,
+      body: { error: "Only completed, failed, or cancelled invocations can be deleted." },
     })
+    expect(await invoke("", id, "GET")).toMatchObject({ status: 200 })
   })
 })

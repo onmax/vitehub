@@ -458,6 +458,9 @@ describe("defineChannel({ history })", () => {
       runtime: false,
     })
 
-    await expect(replayChannel(agent, "raw", { dryRun: true })).rejects.toMatchObject({ code: "AGENT_R0930" })
+    await expect(replayChannel(agent, "raw", { dryRun: true })).rejects.toMatchObject({
+      code: "AGENT_R0930",
+      message: expect.stringContaining('Channel "raw" history trigger must name one of the Channel triggers: first.'),
+    })
   })
 })
