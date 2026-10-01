@@ -605,6 +605,19 @@ export class PullRequestInbox {
         && (s.revision ?? 0) === (claim.snapshot.revision ?? 0))
     })
   }
+  /** Run an external side effect while the claim is serialized against inbox deliveries. */
+  async merge(claim: Claim, action: () => Promise<boolean>, text: string): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
+      if (!s || s.lease !== claim.token || s.generation !== claim.generation
+        || (s.revision ?? 0) !== (claim.snapshot.revision ?? 0)) return false
+      if (!await action()) return false
+      s.lease = null; s.leaseUntil = 0; s.lastResult = text
+      s.status = 'terminal'; s.handled = s.generation
+      await this.put(tx, s)
+      return true
+    })
+  }
   async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> }): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
