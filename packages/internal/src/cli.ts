@@ -153,6 +153,7 @@ export interface ViteHubDevServerDiscoveryOptions {
   isCompatibleRoot?: (rootDir: string, serverRoot: string) => boolean
   rootDir: string
   serverUrl: string
+  signal?: AbortSignal | null
   stderr: ViteHubCliStreams["stderr"]
 }
 
@@ -242,7 +243,7 @@ export async function fetchViteHubDevEndpoint(
  * valid, the server does not answer, or the server root does not match.
  */
 export async function discoverViteHubDevServer<TDiscovery extends { root?: unknown }>(
-  options: ViteHubDevServerDiscoveryOptions,
+  options: ViteHubDevServerDiscoveryOptions & { parseDiscovery?: (value: unknown) => TDiscovery },
 ): Promise<ViteHubDevServerTarget<TDiscovery> | undefined> {
   let url: string
   try {
@@ -256,6 +257,7 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   try {
     response = await fetchViteHubDevEndpoint(options.fetch, url, options.endpoint, {
       headers: { accept: "application/json" },
+      signal: options.signal,
     })
   }
   catch {
@@ -267,8 +269,16 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
     return
   }
   // SAFETY: the owner endpoint defines the discovery shape. Callers check each field before use.
-  const discovery = await response.json().catch(() => ({})) as TDiscovery
+  const discovery = options.parseDiscovery
+    ? options.parseDiscovery(await response.json().catch(() => undefined))
+    // SAFETY: Existing callers validate discovery fields; typed callers can supply the owner parser above.
+    : await response.json().catch(() => ({})) as TDiscovery
+  if (options.signal?.aborted) {
+    options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
+    return
+  }
   const isCompatibleRoot = options.isCompatibleRoot ?? ((rootDir: string, serverRoot: string) => serverRoot === rootDir)
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate the untrusted discovery root before comparing it with the local project.
   if (typeof discovery.root === "string" && !isCompatibleRoot(options.rootDir, discovery.root)) {
     options.stderr.write(`Compatible Vite Development Server root mismatch: ${discovery.root}\n`)
     return

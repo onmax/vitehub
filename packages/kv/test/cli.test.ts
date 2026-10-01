@@ -48,9 +48,22 @@ function sentBody(fetch: ReturnType<typeof devServer>): unknown {
 }
 
 describe("KV review regressions", () => {
+  it("applies the request timeout to discovery", async () => {
+    const output = context()
+    const fetch = vi.fn((_url: string | URL | Request, request?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      request?.signal?.addEventListener("abort", () => reject(request.signal?.reason), { once: true })
+    }))
+    await expect(runKVCli(["list", "--timeout", "10", "--json"], output.context, { fetch })).resolves.toBe(1)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message")
+    expect(output.stderr.output()).toBe("")
+  })
+
   it.each([
     ["set", "a", "b", "--ttl", "0", "--json"],
     ["set", "a", "@/missing-kv-input-file", "--json"],
+    ["set", "a", "1e400", "--json-value", "--json"],
+    ["set", "a", '{"nested":1e400}', "--json-value", "--json"],
     ["list", "--cursor=", "--json"],
     ["list", "--cursor", "", "--json"],
   ])("returns JSON for validation and file failures: %j", async (...args) => {

@@ -46,7 +46,7 @@ async function run(body: unknown): Promise<{ body: Record<string, unknown>, stat
 }
 
 describe("KV dev runtime handler", () => {
-  it.each([new Map([["role", "admin"]]), Number.NaN, Number.POSITIVE_INFINITY, { nested: undefined }, [undefined], new Date("2026-01-01")])("rejects native values that JSON would change: %j", async value => {
+  it.each([new Map([["role", "admin"]]), Number.NaN, Number.POSITIVE_INFINITY, { nested: undefined }, [undefined], new Date("2026-01-01"), Object.assign(["entry"], { extra: "lost" }), Object.assign(["entry"], { [Symbol("extra")]: "lost" }), Object.defineProperty({}, "hidden", { value: "lost" })])("rejects native values that JSON would change: %j", async value => {
     const get = vi.spyOn(kv, "get").mockResolvedValue([null, value])
     try {
       expect(await run({ key: "native", operation: "get" })).toMatchObject({ status: 422, body: { error: { code: "KV_VALUE_UNSUPPORTED" } } })
