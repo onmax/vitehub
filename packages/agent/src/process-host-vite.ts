@@ -60,7 +60,9 @@ export function installProcessHostStop(
           console.error("[vitehub]", error);
         }
         const closeServer = Promise.all(
-          serverListeners.filter(([name]) => name === signal).map(([, listener]) => listener(signal)),
+          serverListeners
+            .filter(([name]) => name === signal)
+            .map(([, listener]) => Promise.resolve().then(() => listener(signal))),
         );
         await Promise.race([
           closeServer.catch((error: unknown) => console.error("[vitehub]", error)),

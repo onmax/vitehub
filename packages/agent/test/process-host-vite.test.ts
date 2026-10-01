@@ -105,3 +105,31 @@ it('drains the host before the server closes HTTP on a stop signal', async () =>
     expect(exit).toHaveBeenCalledOnce()
   } finally { info.mockRestore() }
 })
+
+it('exits when a server shutdown listener throws synchronously', async () => {
+  const install: typeof installProcessHostStop = new Function(`return ${installProcessHostStop.toString()}`)()
+  const emitter = new EventEmitter()
+  const exit = vi.fn<(code: number) => void>()
+  const runtime: ProcessHostStopRuntime = {
+    exit,
+    listeners: signal => emitter.listeners(signal),
+    off: (signal, listener) => emitter.off(signal, listener),
+    on: (signal, listener) => emitter.on(signal, listener),
+  }
+  const host = { close: vi.fn(async () => {}), start: vi.fn() }
+  const app = { hooks: { hook: vi.fn() } }
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    install(host, app, runtime)
+    emitter.on('SIGTERM', () => { throw new Error('server close failed') })
+    await new Promise(resolve => setImmediate(resolve))
+
+    emitter.emit('SIGTERM', 'SIGTERM')
+    await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0))
+    expect(error).toHaveBeenCalled()
+  } finally {
+    info.mockRestore()
+    error.mockRestore()
+  }
+})
