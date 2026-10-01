@@ -102,6 +102,10 @@ describe("agentInvocationRerunInput", () => {
     expect(withData.observations.find(observation => observation.name === "agent.invocation.start")?.attributes?.["input.hasData"]).toBe(true)
     expect(agentInvocationRerunInput(withData)).toEqual({ available: false, reason: "input-has-data" })
 
+    const withOptions = await journaled({ options: { temperature: 0.2 }, prompt: "Use the configured model." })
+    expect(withOptions.observations.find(observation => observation.name === "agent.invocation.start")?.attributes?.["input.hasOptions"]).toBe(true)
+    expect(agentInvocationRerunInput(withOptions)).toEqual({ available: false, reason: "input-has-options" })
+
     const withMessages = await journaled({ messages: [createMessage({ role: "user", text: "Earlier turn" })], prompt: "Continue." })
     expect(agentInvocationRerunInput(withMessages)).toEqual({ available: false, reason: "input-has-messages" })
 

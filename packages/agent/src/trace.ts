@@ -98,6 +98,7 @@ function invocationAttributes(
     "channel.delivery.source.id": context.runtime.channelDelivery?.sourceId,
     "input.hasData": context.input.data !== undefined,
     "input.hasMessages": Boolean(context.input.messages?.length),
+    "input.hasOptions": context.input.options !== undefined,
     "input.hasPrompt": Boolean(context.input.prompt),
     ...(includeInput && context.input.data !== undefined ? { "input.data": context.input.data } : {}),
     ...(includeInput && context.input.messages?.length ? { "input.messages": traceMessages(context.input.messages) } : {}),
