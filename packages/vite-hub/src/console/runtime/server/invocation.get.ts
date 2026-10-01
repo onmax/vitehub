@@ -61,8 +61,8 @@ function invocationActions(invocation: AgentInvocationRecord): ConsoleInvocation
   const agent = invocation.agentName ? getConsoleAgentDefinition(invocation.agentName) : undefined
   if (!agent) return
   const input = agentInvocationRerunInput(invocation)
-  const profile = input.available && input.invokerId
-    ? consoleAgentInvokerProfiles(agent).find(candidate => candidate.id === input.invokerId)
+  const profile = input.available && input.invokerProfileId
+    ? consoleAgentInvokerProfiles(agent).find(candidate => candidate.id === input.invokerProfileId)
     : undefined
   return {
     delete: { available: terminalStatuses.has(invocation.status) },

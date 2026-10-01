@@ -248,6 +248,18 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
   if (path.startsWith("/api/_vitehub/console/invocations/")) {
     const id = decodeURIComponent(path.slice("/api/_vitehub/console/invocations/".length))
     if (request.method === "POST") {
+      let action: unknown
+      try {
+        action = await body(request)
+      }
+      catch {
+        json(response, { error: "Bad Request" }, 400)
+        return true
+      }
+      if (!action || typeof action !== "object" || Array.isArray(action) || (action as { action?: unknown }).action !== "delete" || Object.keys(action).length !== 1) {
+        json(response, { error: "Bad Request" }, 400)
+        return true
+      }
       const outcome = await invocations.delete(id)
       if (outcome === "deleted") json(response, { id, outcome })
       else if (outcome === "not-terminal") json(response, { error: "Only completed, failed, or cancelled invocations can be deleted." }, 409)

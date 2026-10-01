@@ -17,12 +17,12 @@ function runtime(runId: string) {
   }
 }
 
-async function journaled(input: Parameters<typeof runAgent>[2], options: Partial<AgentInvocationsOptions> = {}) {
+async function journaled(input: Parameters<typeof runAgent>[2], options: Partial<AgentInvocationsOptions> = {}, resolvedInvokerId?: string) {
   const invocations = defineAgentInvocations({ metadataContent: ["input.messages", "input.prompt"], ...options, store: createMemoryAgentInvocationStore() })
   const agent = defineAgent({
     driver: { run: async () => "done" },
     invocations,
-    invoker: { profiles: [{ id: "reviewer", kind: "user", label: "Reviewer" }] },
+    invoker: { profiles: [{ id: "reviewer", kind: "user", label: "Reviewer" }], ...(resolvedInvokerId ? { resolve: () => ({ id: resolvedInvokerId }) } : {}) },
     runtime: false,
   })
   const runId = `rerun-${Math.random().toString(36).slice(2)}`
@@ -44,7 +44,24 @@ const start = (attributes: Record<string, unknown>): TraceEventLogEntry => ({
 describe("agentInvocationRerunInput", () => {
   it("returns the captured prompt and selected Invoker Profile", async () => {
     const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Summarize the release notes." })
-    expect(agentInvocationRerunInput(record)).toEqual({ available: true, invokerId: "reviewer", prompt: "Summarize the release notes." })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: true, invokerProfileId: "reviewer", prompt: "Summarize the release notes." })
+  })
+
+  it("preserves the profile selection when the resolver changes the invoker identity", async () => {
+    const record = await journaled({ context: { invokerProfileId: "reviewer" }, prompt: "Hi" }, {}, "resolved-user")
+    expect(record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes?.["agent.invoker.id"]).toBe("resolved-user")
+    expect(agentInvocationRerunInput(record)).toEqual({ available: true, invokerProfileId: "reviewer", prompt: "Hi" })
+  })
+
+  it("does not reinterpret a non-profile invoker as a configured profile", async () => {
+    const record = await journaled({ context: { invoker: { id: "reviewer" } }, prompt: "Hi" })
+    expect(agentInvocationRerunInput(record)).toEqual({ available: true, prompt: "Hi" })
+  })
+
+  it("keeps the prompt available when unrelated metadata is bounded", async () => {
+    const record = await journaled({ context: { invoker: { id: "identity", label: "x".repeat(2_000) } }, prompt: "Hi" })
+    expect(record.observations.find(observation => observation.name === "agent.invocation.start")?.attributes?.[AGENT_INVOCATION_OBSERVATION_TRUNCATED_ATTRIBUTE]).toBe(true)
+    expect(agentInvocationRerunInput(record)).toEqual({ available: true, prompt: "Hi" })
   })
 
   it("reports input that the journal does not keep for replay", async () => {

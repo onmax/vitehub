@@ -4,7 +4,7 @@ import { emitTraceEvent } from "@vite-hub/runtime"
 import { redactCredentialText } from "./internal/credential-redaction.ts"
 
 import { agentErrorDetails } from "./agent-error.ts"
-import { agentInvokerLabel } from "./invoker.ts"
+import { agentInvokerLabel, agentInvokerProfileContextKey } from "./invoker.ts"
 import { isAttachmentPart, type AgentActivity, type Message, type StreamEvent } from "./messages.ts"
 import type {
   AgentDriverContribution,
@@ -88,6 +88,7 @@ function invocationAttributes(
 ) {
   return {
     "agent.invoker.id": context.invoker.id,
+    "agent.invoker.profile.id": context.context.get(agentInvokerProfileContextKey),
     "agent.invoker.kind": context.invoker.kind,
     "agent.invoker.label": agentInvokerLabel(context.invoker),
     "agent.run.id": context.run?.runId,

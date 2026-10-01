@@ -14,6 +14,7 @@ import type {
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 
 export const agentInvokerContextKey = "invoker"
+export const agentInvokerProfileContextKey = "agent.invoker.profile.id"
 const agentActorContextKey = "actor"
 const resolvedAgentInvokerInputKey = Symbol.for("vitehub.resolvedAgentInvokerInput")
 
@@ -253,13 +254,14 @@ export async function resolveAgentInvoker<
 ): Promise<AgentInvoker> {
   const normalizedOptions = normalizeAgentInvokerOptions(options)
   const profiles = normalizedOptions?.profiles || []
+  const selectedProfile = selectAgentInvokerProfile(profiles, input.context)
+  if (selectedProfile) invocationContext.set(agentInvokerProfileContextKey, selectedProfile.id, { overwrite: true })
   const requestedInvoker = resolveInputAgentInvoker(input.context)
   if (requestedInvoker && hasResolvedAgentInvokerInput(input)) {
     ensureAgentInvokerContext(invocationContext, requestedInvoker)
     return requestedInvoker
   }
   const defaultInvoker = requestedInvoker || createFallbackAgentInvoker(run)
-  const selectedProfile = selectAgentInvokerProfile(profiles, input.context)
   const selectedEmail = selectedProfile?.email || defaultInvoker.email
   let selectedInvoker: AgentInvoker | undefined
   if (selectedProfile) {
