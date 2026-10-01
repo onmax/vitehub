@@ -144,6 +144,14 @@ describe("KV review regressions", () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it.each(["1.0000000000000001", "9007199254740991.1", "0.10000000000000001", "{\"rate\":1.0000000000000001}", "[9007199254740991.1]"])("rejects rounded normal JSON numbers before discovery: %s", async value => {
+    const output = context()
+    const fetch = vi.fn()
+    await expect(runKVCli(["set", "--json-value", "--json", "--", "rate", value], output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output()).error.message).toContain("change magnitude")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it.each(["4e-324", "-4e-324", '{"rate":4e-324}', '[-4e-324]', "9e-324"])("rejects rounded JSON subnormals before discovery: %s", async value => {
     const output = context()
     const fetch = vi.fn()
@@ -159,7 +167,7 @@ describe("KV review regressions", () => {
     expect(output.stderr.output()).toBe("")
   })
 
-  it.each(["0", "0e-400", "0.000e400", "0.25", "5e-324", "-5e-324", "50e-325", "1e-323", "1e-308"])("preserves representable JSON numbers: %s", async value => {
+  it.each(["0", "0e-400", "0.000e400", "0.25", "0.1", "0.1000", "1.0", "100e-2", "-1.50e0", "5e-324", "-5e-324", "50e-325", "1e-323", "1e-308"])("preserves representable JSON numbers: %s", async value => {
     const output = context()
     const fetch = devServer({ created: true, key: "a", store: "default", type: "number" })
     await expect(runKVCli(["set", "--json-value", "--json", "--", "a", value], output.context, { fetch })).resolves.toBe(0)

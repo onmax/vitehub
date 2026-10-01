@@ -236,9 +236,10 @@ async function readValue(parsed: ParsedKVArgs, cwd: string): Promise<unknown> {
   try {
     const value: unknown = JSON.parse(text, (_key, value: unknown, context?: { source?: string }) => {
       if (value === 0 && context?.source && /[1-9]/.test(context.source.split(/[eE]/, 1)[0]!)) throw kvErrorDiagnostics.KV_R0019({ message: "JSON numbers cannot underflow to zero. Use a string to preserve the supplied value." })
-      if (context?.source && v.is(v.number(), value) && value !== 0 && Math.abs(value) <= 2 ** -1022
+      if (v.is(v.number(), value)) validateJSONNumbers(value)
+      if (context?.source && v.is(v.number(), value) && value !== 0
         && normalizedDecimal(context.source) !== normalizedDecimal(JSON.stringify(value))) {
-        throw kvErrorDiagnostics.KV_R0019({ message: "JSON subnormal numbers cannot change magnitude when parsed. Use a string to preserve the supplied value." })
+        throw kvErrorDiagnostics.KV_R0019({ message: `${Math.abs(value) <= 2 ** -1022 ? "JSON subnormal numbers" : "JSON numbers"} cannot change magnitude when parsed. Use a string to preserve the supplied value.` })
       }
       return value
     })
