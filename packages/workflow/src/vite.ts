@@ -119,6 +119,13 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     const direct = scheduleBuildConfigs.get(config)
     if (direct) return direct
     const candidates = scheduledBuildConfigsByRoot.get(config.root) ?? []
+    // Vite's environment configs retain the resolved build options even when
+    // private fields are omitted. Prefer this association over equal URL values.
+    const sharedBuild = config.build && candidates.find(candidate => candidate.config.build === config.build)
+    if (sharedBuild) {
+      scheduleBuildConfigs.set(config, sharedBuild)
+      return sharedBuild
+    }
     if (candidates.length === 1) return candidates[0]
     const publicDefine = JSON.stringify({ publicUrl: config.define?.__VITEHUB_PUBLIC_URL__, base: config.define?.__VITEHUB_APP_BASE_URL__ })
     return candidates.find(candidate => candidate.config.build.outDir === config.build.outDir
@@ -142,7 +149,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
 
   async function prepareScheduleRuntime(artifactDir?: string, config = resolved) {
     if (!config) throw workflowErrorDiagnostics.WORKFLOW_B0001({ message: "[vitehub] Workflow runtime preparation requires resolved Vite config." })
-    const build = scheduleBuildConfigs.get(config)
+    const build = scheduledBuildConfig(config)
     const workflowOptions = config.workflow ?? build?.workflow ?? defaultWorkflow
     if (normalizeWorkflowOptions(workflowOptions, { hosting: internalOptions?.hosting ?? "vercel" })?.provider !== "vercel") return
     const rootDir = resolveViteHubProjectRoot(config.root)

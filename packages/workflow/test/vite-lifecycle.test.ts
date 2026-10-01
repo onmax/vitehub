@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const lifecycle = vi.hoisted(() => ({
-  capture: vi.fn(),
+  capture: vi.fn((_context: unknown, _catalog: unknown) => undefined),
   contribute: vi.fn(),
   finalize: vi.fn(async () => undefined),
   get: vi.fn(() => undefined),
   removeArtifactDir: vi.fn(async () => undefined),
   reset: vi.fn(async () => undefined),
   retainSources: vi.fn(async () => ({ resolve: (path: string) => path })),
+  useCatalog: vi.fn((_config: object) => ({})),
   writeProviderEntries: vi.fn(async () => ({})),
 }))
 
@@ -15,7 +16,8 @@ vi.mock("@vite-hub/internal/build/mode", () => ({
   getViteMode: () => undefined,
 }))
 
-vi.mock("@vite-hub/internal/build/esbuild", () => ({
+vi.mock("@vite-hub/internal/build/esbuild", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@vite-hub/internal/build/esbuild")>(),
   encodeProviderOutputAliases: () => ({}),
 }))
 
@@ -29,7 +31,7 @@ vi.mock("@vite-hub/internal/build/deployment-output", () => ({
   finalizeProviderDeploymentOutputs: lifecycle.finalize,
   getProviderRuntimeModule: () => undefined,
   shouldSkipViteProviderBuild: () => false,
-  useProviderOutputCatalog: () => ({}),
+  useProviderOutputCatalog: lifecycle.useCatalog,
 }))
 
 vi.mock("@vite-hub/internal/build/provider-output-sources", () => ({
@@ -120,6 +122,43 @@ beforeEach(() => {
 })
 
 describe("Workflow Provider Output lifecycle", () => {
+  it("keeps same-root config clones with their owning Workflow options and catalogs", async () => {
+    const plugin = hubWorkflow()
+    const configs = ["first", "second"].map(name => ({
+      build: { outDir: "dist" },
+      command: "build",
+      define: { __VITEHUB_PUBLIC_URL__: JSON.stringify("https://shared.example.com") },
+      plugins: [],
+      resolve: { alias: [] },
+      root: "/project",
+      workflow: { provider: "vercel", name },
+      __vitehubServerDirs: [`/project/${name}`],
+    }))
+    for (const config of configs) functionHook(plugin.configResolved, "configResolved")(config)
+    const catalogs = lifecycle.useCatalog.mock.results.map(result => result.value)
+    const contexts = configs.map(config => {
+      const clone = { ...config }
+      Reflect.deleteProperty(clone, "__vitehubServerDirs")
+      return { environment: { config: clone } }
+    })
+    for (const context of contexts) functionHook(plugin.buildStart, "buildStart").call(context)
+    for (const [index, context] of contexts.entries()) {
+      await functionHook(plugin.buildEnd, "buildEnd").call(context)
+      expect(lifecycle.writeProviderEntries).toHaveBeenLastCalledWith(
+        "/project", configs[index]!.workflow, expect.anything(), configs[index]!.__vitehubServerDirs,
+        undefined, undefined, "/project", expect.any(String), expect.any(Map),
+      )
+      expect(lifecycle.contribute).toHaveBeenLastCalledWith(catalogs[index], expect.anything(), undefined)
+      await closeBundleHook(plugin).call(context)
+      expect(lifecycle.finalize).toHaveBeenLastCalledWith(catalogs[index])
+      const error = new Error("render failed")
+      await functionHook(plugin.renderError, "renderError").call(context, error)
+      expect(lifecycle.reset).toHaveBeenLastCalledWith(context, catalogs[index], error)
+    }
+    expect(lifecycle.useCatalog).toHaveBeenCalledTimes(2)
+    expect(lifecycle.capture.mock.calls.map(call => call[1])).toEqual(catalogs)
+  })
+
   it("keeps Provider Output work in the Nuxt 4 SSR environment", async () => {
     const plugin = createPlugin({ nitroPlugin: true, viteHubNitroContext: true })
     await runSuccessfulProviderLifecycle(plugin, "client")
