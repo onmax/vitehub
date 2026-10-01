@@ -307,6 +307,16 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
       if (projectRoot !== defaultProjectRoot) await removeUntrackedDefaultTypes(defaultProjectRoot);
       await withOwnersLock(projectRoot, async () => {
         let owners = await readOwners(projectRoot);
+        const hadTypes = await readOptionalFile(resolve(projectRoot, generatedTypesPath)) !== undefined;
+        if (owners === undefined && hadTypes) {
+          const types = renderRegistryTypes(definitions);
+          await Promise.all([
+            writeFileIfChanged(resolve(projectRoot, generatedTypesPath), types),
+            ...(nitroRegistryFile ? [writeFileIfChanged(nitroRegistryFile, renderRegistry(definitions, database))] : []),
+          ]);
+          await recordGeneratedTypes(defaultProjectRoot, projectRoot, typeHash(types), generationSession);
+          return;
+        }
         if (!owners) {
           const tracked = await readManifest(defaultProjectRoot);
           owners = (tracked ?? [])
