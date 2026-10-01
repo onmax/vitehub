@@ -222,6 +222,71 @@ describe("local workspace store", () => {
     }
   })
 
+  it("gives a queued writer priority before reacquiring a listing batch", async () => {
+    const store = await createStore()
+    const root = tempDirs.at(-1)!
+    await mkdir(`${root}/docs`)
+    const paths = Array.from({ length: 12 }, (_, index) => `${root}/docs/${String(index).padStart(2, "0")}.txt`)
+    await Promise.all(paths.map(path => writeFile(path, "entry")))
+    const actualStat = vi.mocked(stat).getMockImplementation()!
+    const actualMkdir = vi.mocked(mkdir).getMockImplementation()!
+    const parentGate = `${root}/.vitehub/locks/${createHash("sha256").update("docs").digest("hex")}.gate`
+    let release!: () => void, observed!: () => void, queued!: () => void
+    const paused = new Promise<void>(resolve => { release = resolve })
+    const reached = new Promise<void>(resolve => { observed = resolve })
+    const parentQueued = new Promise<void>(resolve => { queued = resolve })
+    let now = Date.now()
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now)
+    const reads = new Map<string, number>()
+    let removed = false, externalGateHeld = false
+    vi.mocked(stat).mockImplementation(async (...args) => {
+      const path = String(args[0])
+      if (paths.includes(path)) {
+        const count = (reads.get(path) ?? 0) + 1
+        reads.set(path, count)
+        if (count === 2) {
+          now += 1_001 // Each entry exhausts a batch; twelve batches exceed the writer budget.
+          if (path === paths[0]) {
+            observed()
+            await paused
+          }
+          else if (!removed) throw new Error("Listing reacquired ahead of the queued writer")
+        }
+      }
+      return await actualStat(...args)
+    })
+    const listing = store.list("docs", { recursive: true })
+    let removing: Promise<void> | undefined
+    try {
+      await reached
+      // Make the writer enter its polling delay while the first batch is held.
+      await actualMkdir(parentGate)
+      externalGateHeld = true
+      vi.mocked(mkdir).mockImplementation(async (...args) => {
+        try { return await actualMkdir(...args) }
+        catch (error) {
+          if (String(args[0]) === parentGate) queued()
+          throw error
+        }
+      })
+      removing = store.rm("docs", { recursive: true }).then(() => { removed = true })
+      await parentQueued
+      await rm(parentGate, { recursive: true, force: true })
+      externalGateHeld = false
+      release()
+      await Promise.all([listing, removing])
+      expect(removed).toBe(true)
+    }
+    finally {
+      release()
+      if (externalGateHeld) await rm(parentGate, { recursive: true, force: true })
+      await Promise.allSettled([listing, removing])
+      clock.mockRestore()
+      vi.mocked(stat).mockImplementation(actualStat)
+      vi.mocked(mkdir).mockImplementation(actualMkdir)
+    }
+  })
+
   it.each(["", "docs"])("finishes listing %j while a parent removal waits", async (prefix) => {
     const store = await createStore()
     const root = tempDirs.at(-1)!
