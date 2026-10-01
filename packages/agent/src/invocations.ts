@@ -1820,6 +1820,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           }
         }
         if (ownsRecord && finished) {
+          stopWatchingCancellation()
           await boundedStoreOperation(() => store.release(recordId, claimId))
           ownsRecord = false
           stopHeartbeat()

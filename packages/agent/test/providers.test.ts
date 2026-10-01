@@ -1674,6 +1674,20 @@ describe("agent Vite plugin", () => {
     ]) } })
   })
 
+  it.each(["webhook alias", "readiness"] as const)("reserves the dev invocation route against %s collisions", async (kind) => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const route = "/_vitehub/agent/invocations/dev"
+    const plugin = hubAgent(kind === "webhook alias"
+      ? { routes: { aliases: { [route]: { agent: "support", webhook: "github" } } } }
+      : { preparation: { route, workspace: "docs" } })
+    const configHook = plugin.config
+    if (!isRuntimeFunction(configHook)) throw new Error("Expected an Agent config hook")
+    // SAFETY: This fixture supplies the private Nitro config context read by the hook.
+    const config = { [VITEHUB_NITRO_CONFIG_CONTEXT]: true, root: hostedAgentRoot } as never
+    expect(() => configHook.call({} as never, config, { command: "serve", mode: "development" })).toThrow(`${kind} route conflicts`)
+    expect(() => configHook.call({} as never, config, { command: "build", mode: "production" })).not.toThrow()
+  })
+
   it.each([
     { runtime: "deno", message: "require a Nitro host" },
     { nitro: { preset: "netlify" }, message: "require a Nitro host" },
@@ -9025,19 +9039,21 @@ describe("server helpers", () => {
     }
   })
 
-  it("completes a cancelled queued webhook invocation without a retry", async () => {
+  it.each(["own", "child", "wrapped child"] as const)("scopes queued webhook cancellation to its %s invocation", async cancellationScope => {
     const { defineAgent } = await import("../src/index.ts")
     const { github } = await import("../src/channels.ts")
     const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { agentInvocationId } = await import("../src/invocations.ts")
     const { createAgentInvocationCancellationError } = await import("../src/internal/invocation-cancellation.ts")
     const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
     const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-cancel-"))
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
     const complete = vi.spyOn(state, "completeWebhookDelivery")
     const retry = vi.spyOn(state, "retryWebhookDelivery")
-    // A custom run handler stops itself when it reads the cancel request from its abort signal.
+    const cancelledId = await agentInvocationId(cancellationScope === "own" ? "queued-webhook-invocation" : "child-invocation", cancellationScope === "own" ? "review" : "child")
     const run = vi.fn(() => {
-      throw createAgentInvocationCancellationError("queued-webhook-invocation")
+      const cancelled = createAgentInvocationCancellationError(cancelledId)
+      throw cancellationScope === "wrapped child" ? new Error("Child invocation failed", { cause: cancelled }) : cancelled
     })
     const agent = defineAgent({
       channels: {
@@ -9046,6 +9062,7 @@ describe("server helpers", () => {
             webhook: {
               invoke: () => ({
                 input: { prompt: "Review the pull request." },
+                run: { runId: "queued-webhook-invocation" },
                 webhook: { concurrencyLimit: 1, deliveryId: "delivery-cancel" },
               }),
             },
@@ -9073,9 +9090,10 @@ describe("server helpers", () => {
       )
 
       expect(response.status).toBe(200)
-      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce(), { timeout: 10_000 })
+      const settled = cancellationScope === "own" ? complete : retry
+      await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce(), { timeout: 1_000 })
       expect(run).toHaveBeenCalledOnce()
-      expect(retry).not.toHaveBeenCalled()
+      expect(cancellationScope === "own" ? retry : complete).not.toHaveBeenCalled()
     } finally {
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })

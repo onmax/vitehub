@@ -1376,10 +1376,12 @@ async function queuedWebhookInvocationCancelled(
   runId: string | undefined,
   error: unknown,
 ): Promise<boolean> {
-  if (isAgentInvocationCancellationError(error)) return true
-  if (!runId || !isRuntimeRecord(agent) || !isAgentInvocations(agent.invocations)) return false
-  const agentName = (hasRuntimeType(agent.name, "string") && agent.name) || routeAgentIdentity(handlerOptions)?.name
-  const summary = await agent.invocations.getSummary(await agentInvocationId(runId, agentName)).catch(() => undefined)
+  if (!runId) return false
+  const agentName = (isRuntimeRecord(agent) && hasRuntimeType(agent.name, "string") && agent.name) || routeAgentIdentity(handlerOptions)?.name
+  const id = await agentInvocationId(runId, agentName)
+  if (isAgentInvocationCancellationError(error, id)) return true
+  if (!isRuntimeRecord(agent) || !isAgentInvocations(agent.invocations)) return false
+  const summary = await agent.invocations.getSummary(id).catch(() => undefined)
   return Boolean(summary?.cancelRequestedAt && error instanceof Error && (error.name === "AbortError" || error.name === "CanceledError"))
 }
 

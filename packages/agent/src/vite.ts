@@ -3074,7 +3074,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           if (!hasRuntimeType(target?.agent, "string") || !target.agent.trim() || !hasRuntimeType(target?.webhook, "string") || !target.webhook.trim()) {
             throw agentDiagnostics.AGENT_B0006({ message: "[vitehub] Webhook aliases require an Agent name and webhook name." })
           }
-          const route = validateAgentStaticRoute(path, [...routes, ...nitroHandlers], "webhook alias")
+          const route = validateAgentStaticRoute(path, [...routes, ...nitroHandlers, ...devNitroHandlers], "webhook alias")
           nitroHandlers.push({ handler: join(generatedRoot, generatedAgentWebhookRouteHandler), route })
         }
       }
@@ -3085,6 +3085,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         preparationHandler.route = validateAgentStaticRoute(preparationHandler.route, [
           ...routes,
           ...nitroHandlers.filter(handler => handler.handler !== join(generatedRoot, generatedAgentPreparationHandler)),
+          ...devNitroHandlers,
         ])
       }
       const mergedAgentNitro = (nitroContext ? mergeAgentNitroExternals : cloneNitroConfig)(mergeNitroPlugins(

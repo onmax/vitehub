@@ -27,6 +27,7 @@ export interface LocalAgentInvocationCancellation {
 const cancellationHandlesKey = Symbol.for("vitehub.agentInvocationCancellations")
 
 export const agentInvocationCancellationCode = "AGENT_R0970"
+const cancellationInvocationId = Symbol.for("vitehub.agentInvocationCancellationId")
 
 function handles(owner: AgentInvocationStore): Map<string, Set<AgentInvocationCancellationHandle>> {
   // SAFETY: The registry uses a module-owned global symbol; unknown values are checked before use.
@@ -75,16 +76,19 @@ export function agentInvocationCancellationDriver(driver: { kind: "model" | "pro
 }
 
 export function createAgentInvocationCancellationError(id: string): Error {
-  return agentDiagnostics.AGENT_R0970({ message: `[vitehub] Cancellation was requested for Agent Invocation ${JSON.stringify(id)}.` })
+  const error = agentDiagnostics.AGENT_R0970({ message: `[vitehub] Cancellation was requested for Agent Invocation ${JSON.stringify(id)}.` })
+  Object.defineProperty(error, cancellationInvocationId, { value: id })
+  return error
 }
 
-/** True when the error or one of its causes is the cancellation request reason. */
-export function isAgentInvocationCancellationError(error: unknown): boolean {
+/** True when the error or one of its causes is a cancellation request reason for the selected Invocation. */
+export function isAgentInvocationCancellationError(error: unknown, id?: string): boolean {
   const seen = new Set<unknown>()
   let current = error
   while (current instanceof Error && !seen.has(current)) {
     seen.add(current)
-    if (current instanceof Diagnostic && current.code === agentInvocationCancellationCode) return true
+    if (current instanceof Diagnostic && current.code === agentInvocationCancellationCode
+      && (id === undefined || Reflect.get(current, cancellationInvocationId) === id)) return true
     current = current.cause
   }
   return false

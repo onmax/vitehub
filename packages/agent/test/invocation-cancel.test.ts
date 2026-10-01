@@ -17,6 +17,7 @@ vi.mock("../src/internal/ai-sdk-runtime.ts", () => ({
 import { agentInvocationId, defineAgent, runAgent, startAgentInvocation } from "../src/index.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
 import { bindAgentInvocations } from "../src/invocations.ts"
+import { abortLocalAgentInvocation } from "../src/internal/invocation-cancellation.ts"
 
 import type { AgentInvocationRecordStatus, AgentInvocations } from "../src/index.ts"
 
@@ -295,6 +296,21 @@ describe("Agent Invocation cancel", () => {
     release.resolve("Done.")
     await expect(run).resolves.toBe("Done.")
     expect((await invocations.get(id))?.status).toBe("completed")
+  })
+
+  it("removes the local cancellation handle when renewal observes a terminal record", async () => {
+    const store = createMemoryAgentInvocationStore()
+    const invocations = defineAgentInvocations({ store })
+    const runId = "terminal-renewal-handle"
+    const journal = await bindAgentInvocations(invocations, runtime(runId))
+    if (!journal) throw new Error("Expected invocation journal")
+    journal.watchCancellation({ enforced: true, name: "model" })
+    await journal.running()
+    const id = await agentInvocationId(runId)
+    await store.update(id, { status: "completed", timestamp: new Date().toISOString() })
+    await journal.setAnnotations({ source: "renewal" })
+    await journal.finish("completed")
+    expect(abortLocalAgentInvocation(store, id, new Error("obsolete owner"))).toEqual({ aborted: false })
   })
 
   it("keeps local cancellation observable while terminal persistence waits", async () => {
