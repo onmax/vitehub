@@ -32,6 +32,7 @@ export interface GitHubInboxSummary {
 export type Claim = { token: string; generation: number; snapshot: Snapshot }
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const stamp = (value: GitHubEvidence) => Date.parse(value.updated_at ?? value.updatedAt ?? value.submitted_at ?? value.completed_at ?? value.started_at ?? value.created_at ?? '') || 0
+class DeliveryValidationError extends Error {}
 /** Normalize REST and discovery records once, before they enter the inbox. */
 export const normalizePullRequest: typeof parsePullRequest = parsePullRequest
 
@@ -363,7 +364,9 @@ export class PullRequestInbox {
     })
   }
   private async ingestIn(tx: PullRequestInboxExecutor, id: string, event: string, value: unknown): Promise<GitHubInboxDeliveryResult> {
-    const payload = parseDelivery(value)
+    let payload: ReturnType<typeof parseDelivery>
+    try { payload = parseDelivery(value) }
+    catch (error) { throw new DeliveryValidationError('Invalid GitHub inbox delivery', { cause: error }) }
       const t = this.tables
       if ((await tx.execute(`SELECT id FROM ${t.deliveries} WHERE scope=? AND id=?`, [this.scope, id])).length) return { accepted: true, duplicate: true, queued: [], updated: [] }
       const repository = String(payload.repository?.full_name ?? '').toLowerCase()
@@ -515,7 +518,8 @@ export class PullRequestInbox {
         try {
           results.push(await this.ingestIn(tx, item.id, item.event, item.value))
           await tx.execute(`RELEASE SAVEPOINT ${savepoint}`)
-        } catch {
+        } catch (error) {
+          if (!(error instanceof DeliveryValidationError)) throw error
           await tx.execute(`ROLLBACK TO SAVEPOINT ${savepoint}`)
           await tx.execute(`RELEASE SAVEPOINT ${savepoint}`)
         }

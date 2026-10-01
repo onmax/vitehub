@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { PullRequestInbox } from '../src/server/github-inbox.ts'
+import { createNodeSqliteInboxStorage, type PullRequestInboxStorage } from '../src/server/github-inbox/storage.ts'
 import { createLibsqlAgentState } from '../src/state/sqlite.ts'
 
 const repository = 'vite-hub/vitehub'
@@ -83,6 +84,30 @@ it('keeps valid deliveries when a later batched delivery is malformed', async ()
   ])
   expect(results).toHaveLength(1)
   expect((await inbox.get(repository, 7))?.comments).toMatchObject({ '1': { body: 'Keep this' } })
+  await inbox.close()
+})
+
+it('propagates storage failures from batched deliveries', async () => {
+  const base = createNodeSqliteInboxStorage(':memory:')
+  let fail = false
+  const storage: PullRequestInboxStorage = {
+    tablePrefix: base.tablePrefix,
+    execute: base.execute,
+    transaction: async run => base.transaction(tx => run({
+      execute: async (sql, args) => {
+        if (fail && sql.includes('INSERT INTO') && sql.includes('deliveries')) throw new Error('storage unavailable')
+        return await tx.execute(sql, args)
+      },
+    })),
+    close: base.close,
+  }
+  const inbox = new PullRequestInbox({ storage, repositories: [repository] })
+  await inbox.seed(repository, pr(7))
+  fail = true
+  await expect(inbox.ingestMany([{ id: 'storage-failure', event: 'issue_comment', value: {
+    repository: { full_name: repository }, action: 'created', issue: { number: 7, pull_request: {} },
+    comment: { id: 1, body: 'Keep this', user: { login: 'human' } },
+  } }])).rejects.toThrow('storage unavailable')
   await inbox.close()
 })
 
