@@ -383,6 +383,15 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
 
   const store = options.kvStore
 
+  async function indexRun(run: ScheduleRunRecord): Promise<void> {
+    try {
+      await store.set(joinKey(prefix, "schedule-run-index", run.id, run.scheduleId, run.scheduledAt.toISOString()), true)
+    }
+    catch {
+      // The run remains authoritative when its derived metadata index is unavailable.
+    }
+  }
+
   return {
     async createAttempt(attempt) {
       const key = scheduleRunAttemptKey(prefix, attempt.id)
@@ -401,12 +410,7 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
           throw scheduleErrorDiagnostics.SCHEDULE_R0033({ message: `Schedule Run already exists: ${run.id}` })
         }
         await store.set(key, serializeScheduleRun(run))
-        try {
-          await store.set(joinKey(prefix, "schedule-run-index", run.id, run.scheduleId, run.scheduledAt.toISOString()), true)
-        }
-        catch {
-          // The run is authoritative. An unavailable index leaves it on the legacy read path.
-        }
+        await indexRun(run)
         return cloneScheduleRun(run)
       })
     },
@@ -454,9 +458,16 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
       const selectedKeys = options.scheduleId === undefined && options.limit === undefined && !options.runtimeOnly
         ? keys
         : [...unknown, ...known.slice(0, options.limit).map(entry => entry.key)]
+      const unknownKeys = new Set(unknown)
       for (let index = 0; index < selectedKeys.length; index += 16) {
-        const batch = await Promise.all(selectedKeys.slice(index, index + 16).map(key => store.get<StoredScheduleRunRecord>(key)))
-        records.push(...batch.flatMap(run => run ? [deserializeScheduleRun(run)] : []))
+        const batch = await Promise.all(selectedKeys.slice(index, index + 16).map(async (key) => {
+          const stored = await store.get<StoredScheduleRunRecord>(key)
+          if (!stored) return
+          const run = deserializeScheduleRun(stored)
+          if (unknownKeys.has(key)) await indexRun(run)
+          return run
+        }))
+        records.push(...batch.flatMap(run => run ? [run] : []))
       }
       return selectRuns(records, options)
     },

@@ -182,7 +182,7 @@ pnpm vitehub schedule list
 pnpm vitehub schedule list --json
 pnpm vitehub schedule get digest
 pnpm vitehub schedule runs digest --limit 5
-pnpm vitehub schedule attempts srun_runtime_digest_2026-05-22T09:00:00.000Z
+pnpm vitehub schedule attempts srun_runtime_digest_2026-05-22T07:00:00.000Z
 pnpm vitehub schedule run digest
 pnpm vitehub schedule disable digest
 pnpm vitehub schedule enable digest
@@ -190,7 +190,7 @@ pnpm vitehub schedule enable digest
 
 ```txt [Output]
 ID      TARGET  CRON                           ENABLED  NEXT RUN                  LAST RUN
-digest  report  0 9 * * * (Europe/Copenhagen)  yes      2026-05-23T09:00:00.000Z  succeeded 2026-05-22T09:00:00.000Z
+digest  report  0 9 * * * (Europe/Copenhagen)  yes      2026-05-23T07:00:00.000Z  succeeded 2026-05-22T07:00:00.000Z
 Automatic runs: off. No wake driver is installed, so due times do not start runs in this runtime.
 ```
 

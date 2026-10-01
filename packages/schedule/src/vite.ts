@@ -1,6 +1,7 @@
 import { writeScheduleTypes } from "./registry-types.ts"
 import { randomUUID } from "node:crypto"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, normalize } from "node:path"
 
 import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
@@ -220,7 +221,8 @@ function mergeNitroScheduleConfig(value: unknown, options: { crons: string[], mo
 async function addNitroScheduleDevHandler(value: unknown, root: string, importBase?: string): Promise<NitroConfig> {
   const handler = resolve(root, generatedNitroDevHandler)
   await mkdir(dirname(handler), { recursive: true })
-  await writeFile(handler, renderViteHubNitroDevHandler({ export: "handleScheduleDevRequest", module: `${importBase ?? schedulePackageName}/runtime/console` }), "utf8")
+  const contents = renderViteHubNitroDevHandler({ export: "handleScheduleDevRequest", module: `${importBase ?? schedulePackageName}/runtime/console` })
+  if (!existsSync(handler) || await readFile(handler, "utf8") !== contents) await writeFile(handler, contents, "utf8")
   const kit = createNitroServerKit(cloneNitroConfig(value))
   kit.addHandler({ handler, route: scheduleDevRuntimeRoute })
   // SAFETY: The kit preserves the Nitro config object shape while adding only one Nitro handler.
@@ -595,6 +597,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
     name: SCHEDULE_VITE_PLUGIN_NAME,
     enforce: "pre",
     async config(config, env) {
+      if (Reflect.get(config, "vitehubCliDiscovery") === true) return
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       const roots = resolveSchedulePluginRoots(config.root || process.cwd(), options)
       const definitions = discoverScheduleDefinitions({

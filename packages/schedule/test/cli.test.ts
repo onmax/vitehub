@@ -40,8 +40,8 @@ const digest = {
   enabled: true,
   id: "digest",
   input: { token: "[redacted]" },
-  lastRun: { attemptCount: 1, id: "srun_runtime_digest_2026-05-22T09:00:00.000Z", scheduleId: "digest", scheduledAt: "2026-05-22T09:00:00.000Z", status: "succeeded", target: "report" },
-  nextRunAt: "2026-05-23T09:00:00.000Z",
+  lastRun: { attemptCount: 1, id: "srun_runtime_digest_2026-05-22T07:00:00.000Z", scheduleId: "digest", scheduledAt: "2026-05-22T07:00:00.000Z", status: "succeeded", target: "report" },
+  nextRunAt: "2026-05-23T07:00:00.000Z",
   target: "report",
   timeZone: "Europe/Copenhagen",
   updatedAt: "2026-05-01T00:00:00.000Z",
@@ -120,7 +120,7 @@ describe("vitehub schedule", () => {
 
     expect(human.stdout.output()).toBe([
       "ID      TARGET  CRON                           ENABLED  NEXT RUN                  LAST RUN",
-      "digest  report  0 9 * * * (Europe/Copenhagen)  yes      2026-05-23T09:00:00.000Z  succeeded 2026-05-22T09:00:00.000Z",
+      "digest  report  0 9 * * * (Europe/Copenhagen)  yes      2026-05-23T07:00:00.000Z  succeeded 2026-05-22T07:00:00.000Z",
       "Automatic runs: off. No wake driver is installed, so due times do not start runs in this runtime.",
       "",
     ].join("\n"))
@@ -148,7 +148,7 @@ describe("vitehub schedule", () => {
     const fetch = devServer({ runs: [{ ...digest.lastRun, error: { message: "Timed out" }, status: "failed" }] })
     await expect(runScheduleCli(["runs", "digest", "--limit=5"], runs.context, { fetch })).resolves.toBe(0)
     expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ id: "digest", limit: 5, operation: "runs" }))
-    expect(runs.stdout.output()).toContain("srun_runtime_digest_2026-05-22T09:00:00.000Z  failed  2026-05-22T09:00:00.000Z  1         Timed out")
+    expect(runs.stdout.output()).toContain("srun_runtime_digest_2026-05-22T07:00:00.000Z  failed  2026-05-22T07:00:00.000Z  1         Timed out")
 
     const attempts = context()
     await expect(runScheduleCli(["attempts", digest.lastRun.id], attempts.context, {
@@ -166,7 +166,7 @@ describe("vitehub schedule", () => {
 
     const enable = context()
     await expect(runScheduleCli(["enable", "digest"], enable.context, { fetch: devServer({ schedule: digest }) })).resolves.toBe(0)
-    expect(enable.stdout.output()).toBe("Enabled Schedule digest. Next run: 2026-05-23T09:00:00.000Z.\n")
+    expect(enable.stdout.output()).toBe("Enabled Schedule digest. Next run: 2026-05-23T07:00:00.000Z.\n")
 
     const disable = context()
     await expect(runScheduleCli(["disable", "digest"], disable.context, {

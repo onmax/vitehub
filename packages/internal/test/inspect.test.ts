@@ -72,6 +72,13 @@ describe("redactInspectionValue", () => {
     })
   })
 
+  it("redacts URL user info through the final raw at sign", () => {
+    const url = "postgres://user@example.com:db-password@host/db"
+    expect(redactInspectionValue({ url })).toEqual({ url: "[redacted]" })
+    expect(redactInspectionText(`Connection ${url} failed`)).toBe("Connection postgres://[redacted]@host/db failed")
+    expect(redactInspectionText("https://public.test/path?contact=user@example.test")).toBe("https://public.test/path?contact=user@example.test")
+  })
+
   it("keeps non-secret primitives unchanged", () => {
     expect(redactInspectionValue(3)).toBe(3)
     expect(redactInspectionValue(null)).toBe(null)

@@ -97,9 +97,9 @@ export function summarizeDefinitions(
 export const redactedInspectionValue = "[redacted]"
 
 const secretKeyPattern = /secret|token|passw(?:or)?d|credential|api[-_\s]?key|private[-_\s]?key|authorization|cookie|signature|dsn|connection[-_\s]?string/i
-const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@|bearer\s)/i
+const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s:?#]+:[^/\s?#]+@|bearer\s)/i
 
-const embeddedUrlCredentialPattern = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi
+const embeddedUrlCredentialPattern = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:?#]+:[^/\s?#]+@/gi
 const embeddedBearerPattern = /\bbearer\s+[^\s,;]+/gi
 const embeddedAuthorizationPattern = /\b(authorization\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[a-z]+\s+[^\s,;]+|[^\s,;]+)/gi
 const embeddedSecretAssignmentPattern = new RegExp(

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -629,6 +629,21 @@ describe("Vite schedule integration", () => {
     })
     const source = await readFile(join(root, ".vitehub", "nitro", "schedule", "dev-handler.ts"), "utf8")
     expect(source).toContain("import { handleScheduleDevRequest as handleViteHubDevRequest } from \"@vite-hub/schedule/runtime/console\"")
+
+    const handler = join(root, ".vitehub", "nitro", "schedule", "dev-handler.ts")
+    const unchangedTime = new Date("2026-01-01T00:00:00.000Z")
+    await utimes(handler, unchangedTime, unchangedTime)
+    for (const vitehubCliDiscovery of [false, true]) {
+      await (hubSchedule({ projectRoot: root }).config as (config: Record<string, unknown>, env: { command: "build" | "serve", mode: string }) => unknown)(
+        { root, vitehubCliDiscovery }, { command: "serve", mode: "development" },
+      )
+      expect((await stat(handler)).mtimeMs).toBe(unchangedTime.getTime())
+    }
+    const discoveryRoot = await mkdtemp(join(tmpdir(), "vitehub-schedule-discovery-handler-"))
+    await (hubSchedule({ projectRoot: discoveryRoot }).config as (config: Record<string, unknown>, env: { command: "build" | "serve", mode: string }) => unknown)(
+      { root: discoveryRoot, vitehubCliDiscovery: true }, { command: "serve", mode: "development" },
+    )
+    expect(existsSync(join(discoveryRoot, ".vitehub", "nitro", "schedule", "dev-handler.ts"))).toBe(false)
 
     const buildConfig: Record<string, unknown> = { root }
     await (hubSchedule({ projectRoot: root }).config as (config: Record<string, unknown>, env: { command: "build" | "serve", mode: string }) => unknown)(

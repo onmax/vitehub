@@ -859,6 +859,36 @@ describe("KV Schedule Run Store", () => {
     expect(runs.every(run => run.scheduleId === "digest_with_underscore")).toBe(true)
   })
 
+  it.each([true, false])("preserves newest opaque fallback history when index writes are available: %s", async (indexAvailable) => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    for (let index = 0; index < 30; index++) {
+      const scheduledAt = new Date(Date.UTC(2026, 0, 1, 0, index))
+      for (const scheduleId of ["actual", "other"]) {
+        await store.createRun({ id: `srun_runtime_${scheduleId}_opaque%_${index}`, scheduleId, target: "report", scheduledAt,
+          createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+      }
+    }
+    for (const key of await kvStore.keys("vitehub:schedule/schedule-run-index")) await kvStore.del(key)
+    if (!indexAvailable) {
+      const set = kvStore.set.bind(kvStore)
+      vi.spyOn(kvStore, "set").mockImplementation(async (key, value) => {
+        if (key.includes("/schedule-run-index/")) throw new Error("index unavailable")
+        return set(key, value)
+      })
+    }
+    const get = vi.spyOn(kvStore, "get")
+    const latest = await store.listRuns({ scheduleId: "actual", limit: 1 })
+    expect(latest[0]?.id).toBe("srun_runtime_actual_opaque%_29")
+    expect(get).toHaveBeenCalledTimes(60)
+    get.mockClear()
+    const other = await store.listRuns({ scheduleId: "other", runtimeOnly: true, limit: 10 })
+    expect(other).toHaveLength(10)
+    expect(other[0]?.id).toBe("srun_runtime_other_opaque%_29")
+    expect(get).toHaveBeenCalledTimes(indexAvailable ? 10 : 60)
+    expect(await store.getRun("srun_runtime_actual_opaque%_29")).toEqual(latest[0])
+  })
+
   it("keeps all indexed matches when a filter has no limit", async () => {
     const store = createKVScheduleRunStore({ kvStore: createTestKVStore() })
     const scheduledAt = new Date("2026-05-23T09:00:00.000Z")
