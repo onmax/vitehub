@@ -27,6 +27,8 @@ const frameStderr = 2
 const frameExit = 3
 
 export interface ProviderBoxSession {
+  /** Home files and persisted state can contain credentials unknown to the relay. */
+  readonly omitDiagnosticOutput?: boolean
   /** Actual Box environment values, retained only for diagnostic redaction. */
   readonly environment?: Readonly<Record<string, string | undefined>>
   /** Absolute Home path inside the Box. */
@@ -85,7 +87,8 @@ export async function openProviderBox<Context>(options: {
     if (!home.ok || !home.stdout.startsWith("/")) {
       throw agentDiagnostics.AGENT_R0952({ message: "[vitehub] Agent Box did not report an absolute HOME path." })
     }
-    return { environment, home: home.stdout, session, spawn: spawn.bind(session) }
+    const omitDiagnosticOutput = Object.keys(declared).length > 0 || Object.keys(options.definition.home?.state ?? {}).length > 0
+    return { environment, omitDiagnosticOutput, home: home.stdout, session, spawn: spawn.bind(session) }
   }
   catch (error) {
     await session.close().catch(() => undefined)
@@ -162,7 +165,7 @@ async function handleRelayConnection(
   processes: Set<BoxProcess>,
 ) {
   const { args, env, input } = await readRelayHeader(socket, token)
-  const redact = (text: string) => Object.values(options.box.environment ?? {}).filter((value): value is string => Boolean(value)).toSorted((left, right) => right.length - left.length)
+  const redact = (text: string) => options.box.omitDiagnosticOutput ? "[Box Home diagnostic output omitted]" : Object.values(options.box.environment ?? {}).filter((value): value is string => Boolean(value)).toSorted((left, right) => right.length - left.length)
     .reduce((safe, value) => safe.replaceAll(value, "[REDACTED]"), text)
   const boxCwd = options.box.session.cwd
   const mapPath = (value: string) => value === options.localRoot

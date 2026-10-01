@@ -198,6 +198,8 @@ ViteHub rejects these inputs when an invocation starts:
 
 The invocation fails when the Box session cannot close. For example, a Crabbox Box with an authoritative `cwd` copies provider changes back when it closes, so a failed copy is reported.
 
+Launch diagnostics redact resolved `box.env` values. When `box.home.files` or `box.home.state` has entries, ViteHub omits saved provider stderr and spawn-error details because Home files and persisted state can contain credentials. Provider output still reaches the provider runtime.
+
 ## Keep execution boundaries separate
 
 | Primitive | Owns |

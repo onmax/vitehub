@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, relative } from "node:path"
 import { promisify } from "node:util"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -465,7 +465,7 @@ describe("Agent Box provider execution", () => {
     })
 
     await expect(createProviderAgentAdapter<PullRequestOptions>({
-      box: testBox(repository),
+      box: { ...testBox(repository), home: undefined },
       provider: "codex",
       providerSettings: { binaryPath: process.execPath },
       // SAFETY: The fixture provides the provider invocation fields read by the adapter.
@@ -474,6 +474,41 @@ describe("Agent Box provider execution", () => {
       details: { exitCode: 7, stderr: "[REDACTED]" },
     })
     expect(launched).toMatchObject({ code: 7, stderr: "token\n" })
+  })
+
+  it.each(["contents", "from", "seed"] as const)("omits launch diagnostics containing Box Home %s credentials", async (source) => {
+    const root = await temporaryRoot()
+    const { first, repository } = await gitRepository(root)
+    const secret = "private-home-credential"
+    const sourceRoot = await mkdtemp(join(process.cwd(), ".box-home-test-"))
+    roots.push(sourceRoot)
+    const sourcePath = join(sourceRoot, "credentials")
+    await writeFile(sourcePath, secret)
+    const file = source === "from" ? { from: relative(process.cwd(), sourcePath) } : { contents: async () => secret }
+    const home: NonNullable<TestBox["home"]> = source === "seed"
+      ? { state: { ".config": { key: crypto.randomUUID(), seed: { credentials: file } } } }
+      : { files: { ".config/credentials": file } }
+    const threadId = `box-home-failure-${source}`
+    let launched: LauncherResult | undefined
+    providerRuntime(threadId, async ({ cwd }) => {
+      const options = createProviderRuntime.mock.lastCall?.[0]
+      launched = await runLauncher(String(options?.settings?.binaryPath), ["-e", "process.stderr.write(require('node:fs').readFileSync(process.env.HOME + '/.config/credentials')); process.exit(7)"], {
+        cwd,
+        env: { ...options?.environment },
+        stdin: "",
+      })
+      throw new Error("Codex App Server process exited with code 7")
+    })
+    await expect(createProviderAgentAdapter<PullRequestOptions>({
+      box: { ...testBox(repository), home, runtime: { kind: "trusted-host", stateRoot: join(root, "state") } },
+      provider: "codex",
+      providerSettings: { binaryPath: process.execPath },
+      // SAFETY: The fixture provides the provider invocation fields read by the adapter.
+    }).generate(invocationContext(threadId, { prompt: "review", options: { ref: "refs/heads/first", sha: first, token: "token" } }) as never)).rejects.toMatchObject({
+      code: "PROVIDER_LAUNCH_FAILED",
+      details: { exitCode: 7, stderr: "[Box Home diagnostic output omitted]" },
+    })
+    expect(launched).toMatchObject({ code: 7, stderr: secret })
   })
 
   it("checks Box requirements before the provider starts", async () => {
