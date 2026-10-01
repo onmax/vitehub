@@ -206,4 +206,27 @@ describe("hubConnections", () => {
 
     await expect(readFile(join(projectRoot, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("removes declarations from a custom root after the generating process restarts", async () => {
+    const root = await createTempProject();
+    const projectRoot = join(root, "packages/api");
+    await hubConnections({ projectRoot: "packages/api" }).api.prepareTypes({ projectRoot: root });
+
+    vi.resetModules();
+    const { hubConnectionsTypesCleanup: freshCleanup } = await import("../src/vite.ts");
+    await freshCleanup().api!.prepareTypes({ projectRoot: root });
+
+    await expect(readFile(join(projectRoot, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps declarations for another project during cleanup", async () => {
+    const firstRoot = await createTempProject();
+    const secondRoot = await createTempProject();
+    await hubConnections({ projectRoot: "packages/api" }).api.prepareTypes({ projectRoot: firstRoot });
+    await hubConnections({ projectRoot: "packages/api" }).api.prepareTypes({ projectRoot: secondRoot });
+
+    await hubConnectionsTypesCleanup().api!.prepareTypes({ projectRoot: firstRoot });
+
+    await expect(readFile(join(secondRoot, "packages/api/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+  });
 });
