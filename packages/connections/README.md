@@ -44,7 +44,7 @@ const gmail = useConnection("google", { actor: "schedule:gmail" }).gmail;
 const { labels = [] } = await gmail.users.labels.list({ userId: "me" });
 ```
 
-The client exposes only the methods selected in `api`. GET methods are reads and other methods are writes. Denied calls throw `ConnectionError` with code `CONNECTION_DENIED`. Dry-run clients keep GET responses non-optional; only skipped writes add `undefined` to the result. Custom typed catalogs can include a `method` field in each method signature to preserve this distinction. Writes that need approval throw `CONNECTION_APPROVAL_REQUIRED` and create an approval.
+The client exposes only the methods selected in `api`. GET, HEAD, and OPTIONS methods are reads and other methods are writes. Denied calls throw `ConnectionError` with code `CONNECTION_DENIED`. Dry-run clients keep read responses non-optional; only skipped writes add `undefined` to the result. Custom typed catalogs can include a `method` field in each method signature to preserve this distinction. Writes that need approval throw `CONNECTION_APPROVAL_REQUIRED` and create an approval.
 
 `useConnection().fetch()` calls provider catalog origins with the Connection token. `ConnectionFetchInit` accepts `method`, `headers`, `redirect`, `signal`, and a string `body` for approval replay. Encode form parameters with `URLSearchParams.toString()` and set the form content type.
 
@@ -98,3 +98,7 @@ Development uses `user:local` when no actor module is configured. A directly mou
 See the [Connections documentation](https://vitehub.dev/docs/server-primitives/connections).
 
 Connection stores must implement `state.putForToken(state, revision)` as an atomic write that succeeds only while the encrypted token has that revision. A `null` revision requires the token to be absent. OAuth, refresh, and revocation use this check so older work cannot replace newer Connection metadata.
+
+An approved write that was sent to the provider can have an uncertain outcome after a lost response, a provider server error, or a local persistence failure. The runtime reports `CONNECTION_EXECUTION_UNKNOWN` and never replays that approval. Check the provider before requesting another approval. The management HTTP handler returns status 409 for this error.
+
+After confirmed provider revocation, local recovery reads the current token revision. A persisted revoked marker restores `revoked` state. If the original token remains, recovery marks it `reauth_required` and retains its mutation fence. A newer replacement token is not changed.

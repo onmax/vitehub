@@ -89,8 +89,8 @@ describe("Connection types", () => {
     type Head = ConnectionMethod<Signature & { method: "HEAD" }, true>
     type Options = ConnectionMethod<Signature & { method: "OPTIONS" }, true>
     expectTypeOf<Awaited<ReturnType<Read>>>().toEqualTypeOf<{ id: string }>()
-    expectTypeOf<Awaited<ReturnType<Head>>>().toEqualTypeOf<{ id: string } | undefined>()
-    expectTypeOf<Awaited<ReturnType<Options>>>().toEqualTypeOf<{ id: string } | undefined>()
+    expectTypeOf<Awaited<ReturnType<Head>>>().toEqualTypeOf<{ id: string }>()
+    expectTypeOf<Awaited<ReturnType<Options>>>().toEqualTypeOf<{ id: string }>()
   })
 
   it("checks access patterns", () => {

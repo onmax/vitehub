@@ -12,6 +12,12 @@ export interface ConnectionMethodSignature {
   response: unknown
 }
 
+export type ConnectionReadMethod = "GET" | "HEAD" | "OPTIONS"
+
+export function isConnectionReadMethod(method: string): method is ConnectionReadMethod {
+  return method === "GET" || method === "HEAD" || method === "OPTIONS"
+}
+
 /** Runtime description of one provider API. */
 export interface ConnectionApiCatalog {
   /** Base URL that method paths are relative to. */
@@ -140,7 +146,7 @@ type MethodInput<TSignature> = TSignature extends { body: infer TBody, params: i
 
 type MethodResponse<TSignature> = TSignature extends { response: infer TResponse } ? TResponse : never
 type MethodDryRunResult<TSignature, TDryRun extends boolean> = TSignature extends { method: infer TMethod }
-  ? TMethod extends "GET" ? never : true extends TDryRun ? undefined : never
+  ? TMethod extends ConnectionReadMethod ? never : true extends TDryRun ? undefined : never
   : true extends TDryRun ? undefined : never
 
 /** A typed provider method. In dry run, a skipped write resolves to `undefined`. */

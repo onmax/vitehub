@@ -105,8 +105,27 @@ function sameOrigin(request: Request, url: URL): boolean {
 }
 
 async function readBody(request: Request): Promise<unknown> {
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) return undefined;
+  if (!request.body) return undefined
+  const reader = request.body.getReader()
+  const decoder = new TextDecoder()
+  let size = 0
+  let text = ""
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      size += chunk.value.byteLength
+      if (size > MAX_BODY_BYTES) {
+        await reader.cancel()
+        return undefined
+      }
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+    text += decoder.decode()
+  }
+  finally {
+    reader.releaseLock()
+  }
   try {
     return JSON.parse(text);
   } catch {

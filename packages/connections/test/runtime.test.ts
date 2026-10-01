@@ -586,7 +586,7 @@ describe("calls", () => {
     expect(test.provider.calls.at(-1)?.method).toBe(method.toUpperCase())
   })
 
-  it.each(["HEAD", "OPTIONS"])("skips catalog %s writes in dry run", async method => {
+  it.each(["HEAD", "OPTIONS"])("executes catalog %s reads in dry run", async method => {
     const definition = mailConnection({ server: { read: true, write: ["mail.messages.modify"] } })
     const provider = testProvider()
     const test = createTestRuntime(async () => ({ default: {
@@ -594,9 +594,9 @@ describe("calls", () => {
       provider: { ...provider, apis: { mail: { ...provider.apis.mail, methods: { ...provider.apis.mail.methods, "messages.modify": [method, "mail/v1/users/{userId}/messages/{id}", false] } } } },
     } }))
     await connect(test)
-    const count = test.provider.calls.length
-    expect(await test.runtime.client("mail", { dryRun: true }).call("mail.messages.modify", { id: "m1", userId: "me" })).toBeUndefined()
-    expect(test.provider.calls).toHaveLength(count)
+    const result = await test.runtime.client("mail", { dryRun: true }).call("mail.messages.modify", { id: "m1", userId: "me" })
+    expect(result).toEqual({ id: "message-1" })
+    expect(test.provider.calls.at(-1)?.method).toBe(method)
   })
 
   it("sends fetch only to catalog origins", async () => {

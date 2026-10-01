@@ -1,5 +1,6 @@
 import { expect, it } from "vitest"
 
+import { createConnectionsHandler } from "../src/http.ts"
 import { createConnectionsRuntime } from "../src/runtime.ts"
 import { connect, createTestRuntime, mailConnection } from "./helpers.ts"
 
@@ -46,7 +47,13 @@ it.each([
       return await transition(...args)
     }
   }
-  await expect(runtime.approve({ id })).rejects.toMatchObject({ code: "CONNECTION_EXECUTION_UNKNOWN", requestId: id })
+  if (kind === "fetch" && stage === "network") {
+    const handler = createConnectionsHandler({ actor: () => "user:owner", runtime: () => runtime })
+    const response = await handler(new Request("http://localhost/_vitehub/connections", { body: JSON.stringify({ action: "approve", id }), headers: { origin: "http://localhost", "content-type": "application/json" }, method: "POST" }))
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: { code: "CONNECTION_EXECUTION_UNKNOWN", requestId: id } })
+  }
+  else await expect(runtime.approve({ id })).rejects.toMatchObject({ code: "CONNECTION_EXECUTION_UNKNOWN", requestId: id })
   expect(effects).toBe(1)
   expect(await test.store.approvals.get(id)).toMatchObject({ error: "CONNECTION_EXECUTION_UNKNOWN", status: "failed" })
   await expect(runtime.approve({ id })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })

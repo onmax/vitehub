@@ -645,7 +645,7 @@ export interface GmailMethods {
       /** Page token to retrieve a specific page of results in the list. */
       pageToken?: string
       /** Required. */
-      startHistoryId?: string
+      startHistoryId: string
       /** The user's email address. */
       userId: string
       /** History types to be returned by the function */

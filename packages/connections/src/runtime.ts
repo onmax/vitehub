@@ -1,7 +1,7 @@
 import * as v from "valibot"
 
 import { ConnectionError, isConnectionError, isEnvBridgeError } from "./errors.ts"
-import { CONNECTION_NAME_MAX_LENGTH } from "./types.ts"
+import { CONNECTION_NAME_MAX_LENGTH, isConnectionReadMethod } from "./types.ts"
 import { connectionActions, decide, envActor, providerApis } from "./policy.ts"
 
 import type { EnvAccessContext, EnvActivity } from "@vite-hub/env/bridge"
@@ -92,6 +92,11 @@ export interface ConnectionsRuntime {
 }
 
 const connectionValue = v.union([v.string(), v.function()])
+const accessRuleSchema = v.object({
+  read: v.optional(v.boolean()),
+  write: v.optional(v.union([v.boolean(), v.literal("approve"), v.array(v.string())])),
+  approve: v.optional(v.boolean()),
+})
 const definitionSchema = v.looseObject({
   provider: v.looseObject({
     id: v.string(),
@@ -107,6 +112,8 @@ const definitionSchema = v.looseObject({
     })),
   }),
   scopes: v.array(v.string()),
+  api: v.optional(v.record(v.string(), v.array(v.string()))),
+  access: v.optional(v.record(v.string(), accessRuleSchema)),
 })
 const storedTokenSchema = v.object({
   grantId: v.optional(v.string()),
@@ -634,7 +641,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   async function callFetch(context: CallContext, input: string | URL, init: ConnectionFetchInit = {}): Promise<Response | undefined> {
     const url = new URL(input)
     const method = new Request(url, { method: init.method ?? "GET" }).method
-    const write = method !== "GET" && method !== "HEAD"
+    const write = !isConnectionReadMethod(method)
     const allowed = Object.values(providerApis(context.definition)).some(catalog => url.origin === new URL(catalog.rootUrl).origin)
     if (!allowed) throw new ConnectionError("invalid", `Connection "${context.name}" does not send its token to ${url.origin}.`, { details: { connection: context.name } })
     if (init.body !== undefined && init.body !== null && !v.is(v.string(), init.body)) {
@@ -862,6 +869,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
               method: "POST",
               signal: AbortSignal.timeout(REFRESH_WAIT_MS),
             })
+            if (response.ok) providerRevoked = true
             await response.arrayBuffer()
             if (!response.ok) {
               providerFailure = new ConnectionError("provider", `Provider rejected revoke with ${response.status}.`, {
@@ -869,7 +877,6 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
               })
               throw providerFailure
             }
-            providerRevoked = true
             releaseLease = true
           }
           // Keep the mutation lease until the revoked marker and metadata are durable.
@@ -886,7 +893,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       if (providerRevoked) {
         await (async () => {
           const current = await connections.secrets.read(key)
-          if (!current) return
+          if (!current?.revision) return
           const value: unknown = JSON.parse(current.value)
           const revoked = v.is(v.object({ revoked: v.literal(true) }), value)
           if (!revoked && current.revision !== leasedRevision) return
