@@ -84,7 +84,7 @@ With the `vite-hub` package, use `vitehub({ preset, queue: true })` and import f
 | `hubQueue`, `createCloudflareQueueConfig` from `@vite-hub/queue/vite` | Register the Vite Integration and emit Cloudflare queue config. |
 | `@vite-hub/queue/nuxt` | Compose Queue into a Nuxt app. |
 
-All Queue option, client, job, provider, registry, and result types are exported from `@vite-hub/queue`. `@vite-hub/queue/internal/*` exists for generated output. Do not import it from application code.
+Queue option, client, job, provider, registry, and result types are exported from `@vite-hub/queue`. Generated output uses the specific `@vite-hub/queue/internal/runtime/*` subpaths listed in the package exports; do not import those runtime modules from application code.
 
 ## Configure the Vite Integration
 
@@ -197,7 +197,7 @@ Providers can retry failed delivery, so a handler must tolerate another run afte
 | Provider | Default | Override |
 | --- | --- | --- |
 | Cloudflare | A successful handler acknowledges the message. A failed handler retries, except for non-retryable built-in Queue errors. | Return `'ack'`, `'retry'`, or `{ retry: { delaySeconds } }` from `onError`. Return `void` to keep the default. |
-| Vercel | Provider behavior. | Return a directive from `callbackOptions.retry`. Return `void` to keep provider behavior. |
+| Vercel | Provider behavior. ViteHub acknowledges errors classified as non-retryable built-in Queue errors when the callback returns `undefined`; other `undefined` results keep Vercel's retry behavior. | Return a directive from `callbackOptions.retry`. Return `void` to keep the default. |
 
 Throw `ViteHubError` when the Queue Definition needs a stable application failure code. Application error codes do not choose retry policy. Use `onError` or `callbackOptions.retry` for that.
 
@@ -385,6 +385,7 @@ Queue has no in-memory Queue Provider for local delivery. Use a build to check t
 
 ```bash [Terminal]
 pnpm vite build
+pnpm add vite-hub
 pnpm vitehub inspect definitions --kind queue
 ```
 

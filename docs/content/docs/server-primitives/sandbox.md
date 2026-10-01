@@ -181,7 +181,9 @@ The entrypoint gets normal JavaScript, package imports, top-level await, `proces
 import { runSandbox } from '@vite-hub/sandbox'
 
 export default defineEventHandler(async () => {
-  const response = await runSandbox('release-notes', { notes: 'ship it' })
+  const response = await runSandbox('release-notes', { notes: 'ship it' }, {
+    context: { requestId: 'release-notes-42' },
+  })
   if (!response.ok)
     throw new Error(await response.text())
   return await response.json()

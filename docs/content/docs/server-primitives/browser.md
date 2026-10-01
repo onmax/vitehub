@@ -238,10 +238,18 @@ finally {
   await control.release()
 }
 
-const ref = await session.handoff({
-  audience: 'review-agent-run-42',
-  mode: 'live',
-})
+const ref = await (async () => {
+  try {
+    return await session.handoff({
+      audience: 'review-agent-run-42',
+      mode: 'live',
+    })
+  }
+  catch (error) {
+    await session.close()
+    throw error
+  }
+})()
 ```
 
 The receiver calls `browser.claim(ref, { audience })` on the same Browser Client. Refs are one-time and do not cross clients or processes. Use the CDP controller when live preservation matters. A Playwright attachment is lifecycle-scoped and cannot be handed off after release.
