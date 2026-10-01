@@ -57,6 +57,7 @@ Capabilities attach through the Agent Definition, so the Schedule extends the Ag
 - The tool counts each send attempt before it sends. After `maxCalls` attempts, the tool returns `CHANNEL_DELIVERY_LIMIT` before validation or formatting. A failed send also counts, because it can still reach the recipient.
 - With `required: true`, the Invocation fails with `CHANNEL_DELIVERY_REQUIRED` when the Agent finishes without a successful send. Streams and `Response` bodies are checked when they finish normally. Cancelling output does not require delivery.
 - Counters are per Invocation. One definition can serve many Invocations.
+- The delivery tool name must be unique among Capability tools. A collision fails setup with `CHANNEL_DELIVERY_TOOL_CONFLICT` before the Driver runs.
 
 ## Options
 

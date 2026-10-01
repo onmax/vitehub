@@ -2,7 +2,7 @@ import { supportsSkillPersistence } from "./internal/skill-persistence.ts"
 import { markCapabilityInspection } from "./internal/capability-inspection.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
-import { resolveRuntimeValue } from "@vite-hub/runtime"
+import { resolveRuntimeValue, ViteHubError } from "@vite-hub/runtime"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 
 import { applyWorkspaceAccessWrapper, hasTrustedWorkspaceAccessScope, hasTrustedWorkspaceSourceResolutionDefinition, isTrustedSourceFreeInspection, workspaceOverrideSymbol } from "./access-runtime.ts"
@@ -1155,6 +1155,16 @@ export async function resolveAgentCapabilities<
     })
   }
 
+  function addCapabilityTools(value: AgentToolSet, capabilityId: string) {
+    for (const name of Object.keys(value)) {
+      if (tools?.[name] && (tools[name].metadata?.vitehubChannelDelivery === true || value[name]?.metadata?.vitehubChannelDelivery === true)) {
+        throw new ViteHubError("CHANNEL_DELIVERY_TOOL_CONFLICT", `[vitehub] Channel delivery tool "${name}" conflicts with an existing Capability tool.`, { details: { tool: name } })
+      }
+    }
+    recordDriverContribution("Capability tools", capabilityId, Object.keys(value))
+    tools = { ...tools, ...value }
+  }
+
   function addFinishExtensionProvider(capabilityId: string, value: unknown | AgentFinishExtensionProvider, eager?: boolean) {
     registries.finishExtensionProviders.push({
       ...(eager ? { eager: true } : {}),
@@ -1396,8 +1406,7 @@ export async function resolveAgentCapabilities<
         tools: {
           add(value) {
             if (!value) return
-            recordDriverContribution("Capability tools", capability.id, Object.keys(value))
-            tools = { ...tools, ...value }
+            addCapabilityTools(value, capability.id)
           },
           transform(transform) {
             toolTransforms.push(transform)
@@ -1496,8 +1505,7 @@ export async function resolveAgentCapabilities<
           if (tools?.[cli.name]) {
             throw agentDiagnostics.AGENT_R0338({ message: `[vitehub] Capability CLI "${cli.name}" conflicts with an existing Agent tool.` })
           }
-          recordDriverContribution("Capability tools", capability.id, Object.keys(resolved))
-          tools = { ...tools, ...resolved }
+          addCapabilityTools(resolved, capability.id)
         }
       }
       if (invocationOptions.resolveTools !== false && capability.tools) {
@@ -1509,8 +1517,7 @@ export async function resolveAgentCapabilities<
               throw agentDiagnostics.AGENT_R0339({ message: `[vitehub] Capability tool "${name}" conflicts with an existing Capability CLI.` })
             }
           }
-          recordDriverContribution("Capability tools", capability.id, Object.keys(resolved))
-          tools = { ...tools, ...resolved }
+          addCapabilityTools(resolved, capability.id)
         }
       }
     }

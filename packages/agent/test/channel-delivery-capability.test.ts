@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 
 import { channelDelivery } from "../src/capabilities.ts"
-import { createAgentInspectionMetadata, defineAgent, resolveAgentInspectionMetadata, runAgent } from "../src/index.ts"
+import { createAgentInspectionMetadata, defineAgent, defineCapability, resolveAgentInspectionMetadata, runAgent } from "../src/index.ts"
 
 import type { AgentToolSet } from "../src/index.ts"
 
@@ -32,6 +32,33 @@ function agentCalling(calls: (tools: AgentToolSet) => Promise<unknown>) {
 }
 
 describe("channelDelivery()", () => {
+  it.each([
+    ["before", "static"], ["after", "static"],
+    ["before", "resolved"], ["after", "resolved"],
+    ["before", "dynamic"], ["after", "dynamic"],
+  ] as const)("rejects a collision when delivery is %s a %s Capability tool", async (order, registration) => {
+    const channel = createChannel()
+    const execute = vi.fn()
+    const run = vi.fn()
+    const delivery = channelDelivery({ channel, name: "email_send", options: { recipient: "user:1" }, required: true })
+    const tools = { email_send: { name: "email_send", execute } }
+    const other = defineCapability(registration === "dynamic"
+      ? { id: "other", resolve: context => context.tools.add(tools) }
+      : { id: "other", tools: registration === "resolved" ? () => tools : tools })
+    const agent = defineAgent({
+      runtime: false,
+      driver: { run },
+      capabilities: order === "before" ? [delivery, other] : [other, delivery],
+    })
+
+    const [error, result] = await runAgent(agent, { prompt: "Write" })
+    expect(error).toMatchObject({ code: "CHANNEL_DELIVERY_TOOL_CONFLICT" })
+    expect(result).toBeNull()
+    expect(run).not.toHaveBeenCalled()
+    expect(execute).not.toHaveBeenCalled()
+    expect(channel.send).not.toHaveBeenCalled()
+  })
+
   it("sends through the Channel to the configured recipient once", async () => {
     const channel = createChannel()
     const base = agentCalling(async (tools) => {

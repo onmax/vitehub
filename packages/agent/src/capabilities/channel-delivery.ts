@@ -75,6 +75,7 @@ export function channelDelivery<TOptions>(options: ChannelDeliveryOptions<TOptio
       context.tools.add({
         [name]: defineInternalTool({
           description,
+          metadata: { vitehubChannelDelivery: true },
           async execute(input) {
             checkLimit()
             const message = isRuntimeRecord(input) && hasRuntimeType(input.message, "string") ? input.message.trim() : ""
