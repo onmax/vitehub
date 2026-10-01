@@ -84,6 +84,12 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     : options
   let workflow = defaultWorkflow
   const scheduleBuildConfigs = new WeakMap<ResolvedConfig, { workflow: WorkflowModuleOptions | undefined, serverDirs: string[] | undefined }>()
+  const buildConfigs = new WeakMap<object, {
+    config: ResolvedConfig
+    providerOutput: ProviderOutputCatalog | undefined
+    serverDirs: string[] | undefined
+    workflow: WorkflowModuleOptions | undefined
+  }>()
   let serverDirs: string[] | undefined
   const stagedArtifactDirs = new WeakMap<object, string>()
   const fallbackEnvironment = {}
@@ -96,8 +102,8 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     return Boolean(environmentName && environmentName !== ownerEnvironment && viteHubNitroContext)
   }
 
-  function providerRuntimeImportAliases(provider: "cloudflare" | "vercel", generation?: ProviderDeploymentOutputGeneration): Record<string, string> {
-    const database = getProviderRuntimeModule(providerOutput, "database", provider, generation)
+  function providerRuntimeImportAliases(provider: "cloudflare" | "vercel", generation?: ProviderDeploymentOutputGeneration, catalog = providerOutput): Record<string, string> {
+    const database = getProviderRuntimeModule(catalog, "database", provider, generation)
     return database ? { "@vite-hub/database/drizzle": database } : {}
   }
 
@@ -223,34 +229,40 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     },
     buildStart() {
       if (shouldSkipProviderOutputEnvironment(this)) return
+      const context = buildEnvironment(this)
+      if (resolved) {
+        buildConfigs.set(context, { config: resolved, providerOutput, serverDirs, workflow })
+      }
       providerOutputGenerations.capture(this, providerOutput)
     },
     async buildEnd(error) {
       if (shouldSkipProviderOutputEnvironment(this)) return
+      const build = buildConfigs.get(buildEnvironment(this))
       if (error) {
-        await providerOutputGenerations.reset(this, providerOutput, error)
+        await providerOutputGenerations.reset(this, build?.providerOutput ?? providerOutput, error)
         return
       }
-      if (!resolved || shouldSkipViteProviderBuild(resolved.command, getViteMode())) {
+      const config = build?.config ?? resolved
+      const buildProviderOutput = build?.providerOutput ?? providerOutput
+      if (!config || shouldSkipViteProviderBuild(config.command, getViteMode())) {
         return
       }
-      const config = resolved
       const rootDir = resolveViteHubProjectRoot(config.root)
       // SAFETY: Vite plugin objects may expose ViteHub's optional agent extension, which the predicate reads defensively.
       const plugins = config.plugins as AgentWorkflowRegistryPlugin[]
       const generation = providerOutputGenerations.get(this)
       const environment = generation ?? buildEnvironment(this)
       const artifactDir = resolve(rootDir, ".vitehub/workflow-generations", randomUUID())
-      const workflowOptions = workflow
-      const workflowServerDirs = serverDirs
+      const workflowOptions = build?.workflow ?? workflow
+      const workflowServerDirs = build?.serverDirs ?? serverDirs
       const transformRegistry = plugins
         .find(plugin => plugin.vitehub?.agent?.transformWorkflowRegistry)
         ?.vitehub?.agent?.transformWorkflowRegistry
       try {
-        const importAliases = await providerImportAliases()
+        const importAliases = await providerImportAliases(config)
         const runtimeImportAliases = {
-          cloudflare: providerRuntimeImportAliases("cloudflare", generation),
-          vercel: providerRuntimeImportAliases("vercel", generation),
+          cloudflare: providerRuntimeImportAliases("cloudflare", generation, buildProviderOutput),
+          vercel: providerRuntimeImportAliases("vercel", generation, buildProviderOutput),
         }
         const providerSources = discoverWorkflowProviderSources(config.root, workflowServerDirs)
         const retainedSources = await retainProviderOutputSources({
@@ -282,7 +294,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
           workspaceDependencies: internalOptions?.workspaceDependencyRuntimeImports,
         }, retainedServerDirs, internalOptions?.includeUserAppEntry, transformRegistry, retainedDefinitionRoot, resolve(artifactDir, "output"), retainedAgentInstructions)
         stagedArtifactDirs.set(environment, artifactDir)
-        contributeProviderDeploymentOutput(providerOutput, {
+        contributeProviderDeploymentOutput(buildProviderOutput, {
           discard: async () => {
             await removeProviderOutputArtifactDir(artifactDir)
             if (stagedArtifactDirs.get(environment) === artifactDir) stagedArtifactDirs.delete(environment)
@@ -316,14 +328,15 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       catch (error) {
         await removeProviderOutputArtifactDir(artifactDir)
         if (stagedArtifactDirs.get(environment) === artifactDir) stagedArtifactDirs.delete(environment)
-        await providerOutputGenerations.reset(this, providerOutput, error)
+        await providerOutputGenerations.reset(this, buildProviderOutput, error)
         throw error
       }
     },
     async renderError(error) {
       if (shouldSkipProviderOutputEnvironment(this)) return
       const environment = providerOutputGenerations.get(this) ?? buildEnvironment(this)
-      await providerOutputGenerations.reset(this, providerOutput, error)
+      const build = buildConfigs.get(buildEnvironment(this))
+      await providerOutputGenerations.reset(this, build?.providerOutput ?? providerOutput, error)
       const artifactDir = stagedArtifactDirs.get(environment)
       if (artifactDir) {
         await removeProviderOutputArtifactDir(artifactDir)
@@ -335,8 +348,10 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       sequential: true,
       async handler() {
         if (shouldSkipProviderOutputEnvironment(this)) return
-        if (!resolved || shouldSkipViteProviderBuild(resolved.command, getViteMode())) return
-        await finalizeProviderDeploymentOutputs(providerOutput)
+        const build = buildConfigs.get(buildEnvironment(this))
+        const config = build?.config ?? resolved
+        if (!config || shouldSkipViteProviderBuild(config.command, getViteMode())) return
+        await finalizeProviderDeploymentOutputs(build?.providerOutput ?? providerOutput)
       },
     },
   }
