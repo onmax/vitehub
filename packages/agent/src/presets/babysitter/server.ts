@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
-import { hasRuntimeType } from "../../internal/runtime-type.ts";
+import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
 import { createMessage, defineAgent, runAgent } from "../../index.ts";
 import type { AgentInput, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
@@ -290,7 +290,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       } catch {
         response = undefined;
       }
-      if (!response || typeof response !== "object" || (response as Record<string, unknown>).merged !== true) {
+      if (!isRuntimeRecord(response) || response.merged !== true) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "GitHub did not confirm the pull request was merged" });
         return "blocked";
       }
