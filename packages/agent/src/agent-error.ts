@@ -242,6 +242,22 @@ function quotaResetDetails(message: unknown): AgentPublicErrorDetails | undefine
       || parsed.getMinutes() !== minute
       || parsed.getSeconds() !== second
       || parsed.getMilliseconds() !== millisecond) return
+    // During a DST fall-back transition, the same local wall time occurs twice.
+    // Date.parse chooses one occurrence, but an unzoned provider timestamp does
+    // not identify which instant it means, so omit the reset details.
+    const localPartsMatch = (candidate: Date) => candidate.getFullYear() === year
+      && candidate.getMonth() === month
+      && candidate.getDate() === day
+      && candidate.getHours() === hour
+      && candidate.getMinutes() === minute
+      && candidate.getSeconds() === second
+      && candidate.getMilliseconds() === millisecond
+    const offset = parsed.getTimezoneOffset()
+    for (const sampleDays of [-2, -1, 1, 2]) {
+      const sampledOffset = new Date(time + sampleDays * 24 * 60 * 60 * 1000).getTimezoneOffset()
+      const alternateDelta = (sampledOffset - offset) * 60 * 1000
+      if (alternateDelta !== 0 && localPartsMatch(new Date(time + alternateDelta))) return
+    }
   }
   return { resetText, resetAt: new Date(time).toISOString() }
 }
