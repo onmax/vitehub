@@ -177,7 +177,7 @@ describe("Vite schedule integration", () => {
     expect(moduleSource).not.toContain(": Nitro")
     expect(moduleSource).not.toContain(": void")
     expect(moduleSource).not.toContain("cron is string")
-    await expect(readFile(join(root, ".vitehub", "nitro", "schedule", "provider-registry.js"), "utf8")).resolves.toContain("\"mirror\": async () => import(")
+    await expect(readFile(join(root, ".vitehub", "nitro", "schedule", "provider-registry.js"), "utf8")).resolves.toContain("[\"mirror\"]: async () => import(")
     await expect(readFile(join(root, ".vitehub", "nitro", "schedule", "provider-registry.d.ts"), "utf8")).resolves.toContain("ScheduleRegistryDefinition")
   })
 
@@ -446,6 +446,10 @@ describe("Vite schedule integration", () => {
     await mkdir(join(root, "dist", "client"), { recursive: true })
     await writeFile(scheduleFile, "export default defineSchedule({ cron: '0 0 * * *', handler: () => {} })\n", "utf8")
 
+    const prepareSources = async (sources: { resolve: (path: string) => string }) => {
+      const retainedFile = sources.resolve(scheduleFile)
+      await writeFile(retainedFile, `${await readFile(retainedFile, "utf8")}\n// Owner decoration.\n`)
+    }
     const plugin = hubSchedule({ providerOutput: "standalone" })
     await (plugin.config as (config: Record<string, unknown>, env: { command: "build" | "serve", mode: string }) => unknown)(
       { root },
@@ -454,11 +458,13 @@ describe("Vite schedule integration", () => {
     await (plugin.configResolved as (config: Record<string, unknown>) => Promise<void>)({
       build: { outDir: "dist/client" },
       command: "build",
+      plugins: [{ vitehub: { providerOutput: { prepareSources } } }],
       resolve: { alias: [] },
       root,
     })
     await (plugin.buildEnd as (this: never) => Promise<void>).call({} as never)
 
+    await expect(readFile(scheduleFile, "utf8")).resolves.not.toContain("Owner decoration.")
     await writeFile(scheduleFile, "export default defineSchedule({ cron: '5 0 * * *', handler: () => {} })\n", "utf8")
     await (plugin.closeBundle as { handler: (this: never) => Promise<void> }).handler.call({} as never)
 
@@ -478,6 +484,13 @@ describe("Vite schedule integration", () => {
     const retainedScheduleSpecifier = registry.match(/import\("(\.\/sources\/[^"]+\/cleanup\.schedule\.ts)"\)/)?.[1]
     expect(retainedScheduleSpecifier).toBeDefined()
     const retainedSchedulePath = retainedScheduleSpecifier!.slice(2)
+    for (const directory of [
+      join(root, ".vitehub", "schedule"),
+      join(createDefaultCloudflareOutputRoot(root), ".vitehub", "schedule"),
+      join(createDefaultVercelOutputRoot(root), "functions", "api", "vitehub", "schedules", "vercel", "cleanup.func", ".vitehub", "schedule"),
+    ]) {
+      await expect(readFile(join(directory, retainedSchedulePath), "utf8")).resolves.toContain("Owner decoration.")
+    }
     await expect(readFile(join(root, ".vitehub", "schedule", retainedSchedulePath), "utf8"))
       .resolves.toContain("cron: '0 0 * * *'")
     await expect(readFile(join(createDefaultCloudflareOutputRoot(root), ".vitehub", "schedule", retainedSchedulePath), "utf8"))
@@ -736,8 +749,8 @@ describe("Vite schedule integration", () => {
     await expect(readFile(join(root, ".vitehub", "nitro", "schedule", "module.mjs"), "utf8")).resolves.toContain("\"0 4 * * *\"")
     await expect(readFile(join(root, ".vitehub", "nitro", "schedule", "module.mjs"), "utf8")).resolves.not.toContain("\"0 0 * * *\"")
     await expect(readFile(join(appRoot, ".vitehub", "nitro", "schedule", "plugin.ts"), "utf8")).rejects.toThrow()
-    expect(registry).toContain("\"cleanup\": async () => import(")
-    expect(registry).toContain("\"sync\": async () => import(")
+    expect(registry).toContain("[\"cleanup\"]: async () => import(")
+    expect(registry).toContain("[\"sync\"]: async () => import(")
     expect(registry).toContain("../../app/src/cleanup.schedule.ts")
     expect(registry).toContain("../../server/schedules/sync.ts")
   })
@@ -1031,8 +1044,8 @@ describe("Vite schedule integration", () => {
     const registry = await loadScheduleRegistry(plugin)
 
     expect(resolveScheduleRegistry(plugin)).toBe("\0#vitehub/schedule/registry")
-    expect(registry).toContain("\"cleanup\": async () => import(")
-    expect(registry).toContain("\"reports\": async () => import(")
+    expect(registry).toContain("[\"cleanup\"]: async () => import(")
+    expect(registry).toContain("[\"reports\"]: async () => import(")
     expect(registry).toContain("../../src/cleanup.schedule.ts")
   })
 
@@ -1045,7 +1058,7 @@ describe("Vite schedule integration", () => {
     await resolvePluginConfig(plugin, root)
     const registry = await loadScheduleRegistry(plugin)
 
-    expect(registry).toContain("\"sync\": async () => import(")
+    expect(registry).toContain("[\"sync\"]: async () => import(")
     expect(registry).toContain("../../server/schedules/sync.ts")
   })
 

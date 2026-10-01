@@ -1,6 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
-
-import { isRuntimeRecord } from "../../packages/agent/src/internal/runtime-type.ts"
+import * as v from "valibot"
 
 import { agentInvocationRerunInput, createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
 import { parseConsoleFixture } from "../../packages/vite-hub/src/console/fixture.ts"
@@ -24,6 +23,7 @@ for (const record of fixture.invocations) {
   store.create(input)
 }
 const invocations = defineAgentInvocations({ content: "content", store })
+const deleteActionSchema = v.strictObject({ action: v.literal("delete") })
 const sections = ["env", "agents", "usage", "database", "kv", "workflows", "queues"] as const
 const definitions = {
   queues: [
@@ -181,11 +181,14 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path === "/api/_vitehub/console/env") {
     json(response, { entries: [
-      { path: "env.server.github.token", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false },
-      { path: "env.server.openai.apiKey", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false },
-      { path: "env.server.codex.auth", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false },
-      { path: "env.server.webhookSecret", source: "env", secret: true, required: true, hasDefault: false },
-      { path: "env.server.logLevel", source: "env", secret: false, required: false, hasDefault: true },
+      { path: "env.server.github.token", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false, type: "string" },
+      { path: "env.server.openai.apiKey", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false, type: "string" },
+      { path: "env.server.codex.auth", source: "provider", provider: "personal-vault", secret: true, required: true, hasDefault: false, type: "string" },
+      { path: "env.server.webhookSecret", source: "env", secret: true, required: true, hasDefault: false, type: "string" },
+      { path: "env.server.logLevel", source: "env", secret: false, required: false, hasDefault: true, type: '"debug" | "info" | "warn"' },
+      { path: "env.server.labeller.dryRun", source: "env", secret: false, required: true, hasDefault: true, type: "boolean" },
+      { path: "env.server.labeller.minConfidence", source: "env", secret: false, required: true, hasDefault: true, type: "number" },
+      { path: "env.server.appName", source: "literal", secret: false, required: false, hasDefault: false },
     ] })
     return true
   }
@@ -256,8 +259,8 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
         json(response, { error: "Malformed invocation action." }, 400)
         return true
       }
-      if (!isRuntimeRecord(action) || Object.keys(action).length !== 1 || !("action" in action) || action.action !== "delete") {
-        json(response, { error: "Unsupported invocation action." }, 400)
+      if (!v.safeParse(deleteActionSchema, action).success) {
+        json(response, { error: "Bad Request" }, 400)
         return true
       }
       const outcome = await invocations.delete(id)

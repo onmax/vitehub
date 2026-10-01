@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import { resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 import type { AgentInvocationListResult, AgentInvocationRecord, AgentInvocationStore } from "../invocations.ts"
 import type { AgentInvocationDetailResult } from "../invocations-vue.ts"
@@ -88,6 +89,24 @@ function duration(value: string, flag: string): number {
   return result
 }
 
+function redactCliArgument(argument: string): string {
+  const separator = argument.startsWith("-") ? argument.indexOf("=") : -1
+  const prefix = separator === -1 ? "" : argument.slice(0, separator + 1)
+  const value = separator === -1 ? argument : argument.slice(separator + 1)
+  if (!/^[a-z][a-z\d+.-]*:/i.test(value)) return argument
+  try {
+    const url = new URL(value)
+    url.username = ""
+    url.password = ""
+    url.search = ""
+    url.hash = ""
+    return `${prefix}${url.href}`
+  }
+  catch {
+    return `${prefix}[redacted]`
+  }
+}
+
 function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
   const parsed: ParsedArgs = {
     dryRun: false,
@@ -136,13 +155,14 @@ function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
       index += 1
     }
     else if (argument.startsWith("--interval=")) parsed.interval = positiveInteger(argument.slice(11), "--interval")
-    else if (argument.startsWith("-")) throw agentDiagnostics.AGENT_R0504({ message: `Unknown option: ${argument}.` })
+    else if (argument.startsWith("-")) throw agentDiagnostics.AGENT_R0504({ message: `Unknown option: ${redactCliArgument(argument)}.` })
     else if (!parsed.action && isAction(argument)) parsed.action = argument
     else if (!parsed.id && parsed.action !== "list" && parsed.action !== "prune") parsed.id = argument
-    else throw agentDiagnostics.AGENT_R0505({ message: `Unexpected argument: ${argument}.` })
+    else throw agentDiagnostics.AGENT_R0505({ message: `Unexpected argument: ${redactCliArgument(argument)}.` })
   }
   if (!parsed.help && !parsed.action) throw agentDiagnostics.AGENT_R0506({ message: "Choose list, show, tail, delete, or prune." })
   if (!parsed.help && parsed.action !== "list" && parsed.action !== "prune" && !parsed.id) throw agentDiagnostics.AGENT_R0507({ message: `${parsed.action} requires an invocation id.` })
+  if (!parsed.help && parsed.dryRun && parsed.action !== "prune") throw agentDiagnostics.AGENT_R0505({ message: "--dry-run is only supported for prune." })
   return parsed
 }
 
@@ -237,10 +257,12 @@ function safeDecode(value: string): string {
 }
 
 function journalDatabase(parsed: ParsedArgs, context: AgentInvocationsCliContext): JournalDatabase {
-  const root = context.rootDir ?? process.cwd()
+  const root = resolveViteHubProjectRoot(context.rootDir ?? process.cwd())
   const explicit = parsed.database?.trim() || context.env.VITEHUB_AGENT_INVOCATIONS_DATABASE_URL?.trim()
   const configured = explicit || context.env.VITEHUB_CONSOLE_DATABASE_URL?.trim()
-  const authToken = explicit ? context.env.VITEHUB_AGENT_INVOCATIONS_DATABASE_AUTH_TOKEN : context.env.VITEHUB_CONSOLE_DATABASE_AUTH_TOKEN
+  const authToken = explicit
+    ? context.env.VITEHUB_AGENT_INVOCATIONS_DATABASE_AUTH_TOKEN
+    : context.env.VITEHUB_CONSOLE_DATABASE_AUTH_TOKEN
   const token = authToken ? { authToken } : {}
   const secrets = authToken ? [authToken] : []
   if (configured && !/^file:/i.test(configured) && /^[a-z][a-z\d+.-]+:/i.test(configured)) {
@@ -330,7 +352,11 @@ async function deleteInvocation(parsed: ParsedArgs, context: AgentInvocationsCli
 
 async function pruneInvocations(parsed: ParsedArgs, context: AgentInvocationsCliContext): Promise<number> {
   const olderThanMs = parsed.olderThanMs ?? defaultPruneAgeMs
-  const updatedBefore = new Date(Date.now() - olderThanMs).toISOString()
+  const cutoff = new Date(Date.now() - olderThanMs)
+  if (Number.isNaN(cutoff.getTime())) {
+    throw agentDiagnostics.AGENT_R0930({ message: "--older-than must produce a cutoff within JavaScript's Date range." })
+  }
+  const updatedBefore = cutoff.toISOString()
   const result = await withJournalStore(parsed, context, async store => await store.prune!({ ...(parsed.dryRun ? { dryRun: true } : {}), updatedBefore }))
   if (parsed.json) {
     context.stdout.write(`${JSON.stringify({ dryRun: result.dryRun, ids: result.ids, olderThanMs, updatedBefore }, null, 2)}\n`)

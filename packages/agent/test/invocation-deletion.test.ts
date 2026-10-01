@@ -2,13 +2,18 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createClient } from "@libsql/client"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { runAgentInvocationsCli } from "../src/internal/agent-invocations-cli.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/invocations.ts"
 import { createLibsqlAgentInvocationStore } from "../src/invocations/sqlite.ts"
 
 import type { AgentInvocationStore, AgentInvocationStoreCreateInput } from "../src/invocations.ts"
+
+vi.mock("@libsql/client", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@libsql/client")>()
+  return { ...original, createClient: vi.fn(original.createClient) }
+})
 
 const day = 24 * 60 * 60 * 1000
 const ago = (milliseconds: number) => new Date(Date.now() - milliseconds).toISOString()
@@ -23,6 +28,7 @@ const invocation = (id: string, status: AgentInvocationStoreCreateInput["status"
 
 const directories: string[] = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(directories.splice(0).map(directory => rm(directory, { force: true, recursive: true })))
 })
 
@@ -81,10 +87,25 @@ describe.each(Object.entries(stores))("%s Agent Invocation deletion", (_name, cr
     const invocations = defineAgentInvocations({ store: await createStore() })
     await expect(invocations.prune({ olderThanMs: -1 })).rejects.toThrow("olderThanMs must be a non-negative safe integer")
     await expect(invocations.prune({ olderThanMs: 1.5 })).rejects.toThrow("olderThanMs must be a non-negative safe integer")
+    await expect(invocations.prune({ olderThanMs: 8_700_000_000_000_000 })).rejects.toMatchObject({ code: "AGENT_R0929" })
   })
 })
 
 describe("Agent Invocation retention", () => {
+  it("accepts the earliest representable cutoff and rejects ages beyond it without pruning", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(0)
+    const store = createMemoryAgentInvocationStore()
+    const prune = vi.spyOn(store, "prune")
+    const invocations = defineAgentInvocations({ store })
+
+    await expect(invocations.prune({ olderThanMs: 8_640_000_000_000_000 })).resolves.toEqual({ dryRun: false, ids: [] })
+    expect(prune).toHaveBeenCalledWith({ updatedBefore: "-271821-04-20T00:00:00.000Z" })
+    prune.mockClear()
+
+    await expect(invocations.prune({ olderThanMs: 8_640_000_000_000_001 })).rejects.toMatchObject({ code: "AGENT_R0929" })
+    expect(prune).not.toHaveBeenCalled()
+  })
+
   it("keeps every record when the memory store prunes without a cutoff", async () => {
     const store = createMemoryAgentInvocationStore()
     await seed(store)
@@ -126,7 +147,9 @@ describe("Agent Invocation retention", () => {
   it("reports a store without delete or prune support", async () => {
     const { delete: _delete, prune: _prune, ...store } = createMemoryAgentInvocationStore()
     const invocations = defineAgentInvocations({ store })
+    await expect(invocations.delete("missing")).rejects.toMatchObject({ code: "AGENT_R0932" })
     await expect(invocations.delete("missing")).rejects.toThrow("does not support deletion")
+    await expect(invocations.prune()).rejects.toMatchObject({ code: "AGENT_R0932" })
     await expect(invocations.prune()).rejects.toThrow("does not support pruning")
   })
 })
@@ -196,6 +219,20 @@ describe("vitehub agent invocations delete and prune", () => {
     expect(missing.chunks.stderr).toContain(`No Agent Invocation journal exists at ${join(elsewhere, ".vitehub/data/console.sqlite")}`)
   })
 
+  it("resolves the default journal from the ViteHub project root", async () => {
+    const projectRoot = await temporaryDirectory()
+    const appRoot = join(projectRoot, "app")
+    await mkdir(join(projectRoot, "server", "agents"), { recursive: true })
+    await mkdir(appRoot)
+    await mkdir(join(projectRoot, ".vitehub/data"), { recursive: true })
+    const url = `file:${join(projectRoot, ".vitehub/data/console.sqlite")}`
+    await seed(createLibsqlAgentInvocationStore({ maxAgeMs: false, maxRecords: false, url }))
+    const io = output()
+
+    await expect(runAgentInvocationsCli(["delete", "old-completed"], { env: {}, rootDir: appRoot, ...io })).resolves.toBe(0)
+    expect(io.chunks.stdout).toBe("Deleted old-completed.\n")
+  })
+
   it("rejects invalid durations and extra arguments", async () => {
     const duration = output()
     await expect(runAgentInvocationsCli(["prune", "--older-than", "soon"], { env: {}, ...duration })).resolves.toBe(1)
@@ -208,6 +245,91 @@ describe("vitehub agent invocations delete and prune", () => {
     const id = output()
     await expect(runAgentInvocationsCli(["delete"], { env: {}, ...id })).resolves.toBe(1)
     expect(id.chunks.stderr).toContain("delete requires an invocation id.")
+  })
+
+  it("rejects dry-run for delete without opening the journal", async () => {
+    const { read, rootDir } = await consoleJournal()
+    const io = output()
+    vi.mocked(createClient).mockClear()
+
+    await expect(runAgentInvocationsCli(["delete", "old-completed", "--dry-run"], { env: {}, rootDir, ...io })).resolves.toBe(1)
+    expect(io.chunks.stderr).toContain("--dry-run is only supported for prune.")
+    expect(io.chunks.stdout).toContain("Usage: vitehub agent invocations")
+    expect(createClient).not.toHaveBeenCalled()
+    await expect(read.get("old-completed")).resolves.toMatchObject({ status: "completed" })
+  })
+
+  it("rejects prune durations outside the Date range without changing the journal", async () => {
+    const { read, rootDir } = await consoleJournal()
+    const io = output()
+
+    await expect(runAgentInvocationsCli(["prune", "--older-than", "8700000000000000ms"], { env: {}, rootDir, ...io })).resolves.toBe(1)
+    expect(io.chunks.stderr).toContain("--older-than must produce a cutoff within JavaScript's Date range.")
+    expect(io.chunks.stderr).not.toContain("Invalid time value")
+    expect(io.chunks.stdout).toBe("")
+    expect((await read.list()).invocations).toHaveLength(4)
+  })
+
+  it("redacts credentialed URLs in parse errors", async () => {
+    const io = output()
+    await expect(runAgentInvocationsCli(["prune", "--database-url=libsql://user:password@host/db?authToken=secret"], { env: {}, ...io })).resolves.toBe(1)
+    expect(io.chunks.stderr).toContain("Unknown option: --database-url=libsql://host/db.")
+    expect(io.chunks.stderr).not.toMatch(/password|secret/)
+  })
+
+  it.each([
+    ["file:./journal.sqlite?authToken=secret", "file:///journal.sqlite"],
+    ["file:./journal.sqlite?authToken=secret#fragment-secret", "file:///journal.sqlite"],
+    ["custom+store.v1:journal?authToken=secret#fragment-secret", "custom+store.v1:journal"],
+  ])("redacts %s in misspelled options and unexpected positional arguments", async (url, redactedUrl) => {
+    const option = output()
+    await expect(runAgentInvocationsCli(["prune", `--databse=${url}`], { env: {}, ...option })).resolves.toBe(1)
+    expect(option.chunks.stderr).toContain(`Unknown option: --databse=${redactedUrl}.`)
+    expect(`${option.chunks.stdout}${option.chunks.stderr}`).not.toContain("secret")
+
+    const positional = output()
+    await expect(runAgentInvocationsCli(["prune", url], { env: {}, ...positional })).resolves.toBe(1)
+    expect(positional.chunks.stderr).toContain(`Unexpected argument: ${redactedUrl}.`)
+    expect(`${positional.chunks.stdout}${positional.chunks.stderr}`).not.toContain("secret")
+  })
+
+  it.each([
+    { source: "explicit", agentToken: "agent-secret", consoleToken: "console-secret", expectedToken: "agent-secret" },
+    { source: "explicit", agentToken: undefined, consoleToken: "console-secret", expectedToken: undefined },
+    { source: "agent", agentToken: "agent-secret", consoleToken: "console-secret", expectedToken: "agent-secret" },
+    { source: "agent", agentToken: undefined, consoleToken: "console-secret", expectedToken: undefined },
+    { source: "console", agentToken: "agent-secret", consoleToken: "console-secret", expectedToken: "console-secret" },
+    { source: "console", agentToken: "agent-secret", consoleToken: undefined, expectedToken: undefined },
+    { source: "local", agentToken: "agent-secret", consoleToken: "console-secret", expectedToken: "console-secret" },
+    { source: "local", agentToken: "agent-secret", consoleToken: undefined, expectedToken: undefined },
+  ])("binds $source journal credentials with Agent token $agentToken and Console token $consoleToken", async ({ source, agentToken, consoleToken, expectedToken }) => {
+    const rootDir = await temporaryDirectory()
+    const localDirectory = join(rootDir, ".vitehub/data")
+    await mkdir(localDirectory, { recursive: true })
+    const localPath = join(localDirectory, "console.sqlite")
+    const localClient = createClient({ url: `file:${localPath}` })
+    await localClient.execute("SELECT 1")
+    localClient.close()
+
+    const explicitUrl = "https://explicit.example.com"
+    const agentUrl = "https://agent.example.com"
+    const consoleUrl = "https://console.example.com"
+    const expectedUrl = source === "explicit" ? explicitUrl : source === "agent" ? agentUrl : source === "console" ? consoleUrl : `file://${localPath}`
+    vi.mocked(createClient).mockImplementationOnce(() => { throw new Error("Database client creation intercepted") })
+    const io = output()
+    const code = await runAgentInvocationsCli(["prune", ...(source === "explicit" ? ["--database", explicitUrl] : [])], {
+      env: {
+        ...(source === "explicit" || source === "agent" ? { VITEHUB_AGENT_INVOCATIONS_DATABASE_URL: agentUrl } : {}),
+        ...(source !== "local" ? { VITEHUB_CONSOLE_DATABASE_URL: consoleUrl } : {}),
+        ...(agentToken ? { VITEHUB_AGENT_INVOCATIONS_DATABASE_AUTH_TOKEN: agentToken } : {}),
+        ...(consoleToken ? { VITEHUB_CONSOLE_DATABASE_AUTH_TOKEN: consoleToken } : {}),
+      },
+      rootDir,
+      ...io,
+    })
+    expect(code).toBe(1)
+    expect(io.chunks.stderr).toContain("Database client creation intercepted")
+    expect(createClient).toHaveBeenLastCalledWith({ url: expectedUrl, ...(expectedToken ? { authToken: expectedToken } : {}) })
   })
 
   it("does not print the remote database credentials", async () => {
