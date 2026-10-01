@@ -750,9 +750,13 @@ export default defineAgent({
   preset: "babysitter",
   presets: { babysitter },
   options: {
-    filter: { labels: { allow: ["repair"], deny: ["do-not-touch"] } },
+    filter: {
+      repository: { allow: ["acme/app"] },
+      labels: { allow: ["repair"], deny: ["do-not-touch"] },
+    },
     driver: "codex",
     merge: false,
+    concurrency: 2,
   },
   driver: { model: "your-codex-model" },
 })
@@ -796,20 +800,27 @@ Colocated `instructions.md` fills the preset's instruction slot without adding
 headings. Explicit `driver.instructions` replaces that slot. Use
 `{ mode: "replace", value: "..." }` to replace the complete instruction document.
 
-`createBabysitterRuntime` from `@vite-hub/agent/presets/babysitter/server` owns a
-SQLite inbox, bounded GitHub discovery, claims, checkout preparation, repair
-passes and wake handling. Provide a configured Agent, GitHub host, inbox path,
-repositories and concurrency. In a ViteHub application, obtain the Agent through
-`getAgentFromRegistry("babysitter")` so discovery applies its colocated files. The Vite plugin binds `#vitehub/agent/registry` in Vite and Nitro to generated lazy loaders. Build output embeds colocated instructions and skills, so lookup works before any webhook handler loads and does not read Markdown from the deployed filesystem. Outside a ViteHub build, pass an explicit registry to `getAgentFromRegistry(name, registry)`.
-Pass `agentName: "babysitter"` to `createBabysitterRuntime` when the discovered
-definition has no explicit `name`. This selects its configured origin when
-`vitehub({ publicUrl })` uses the per-Agent function form. The runtime defaults
-to the definition's `name`; an explicit `publicUrl` takes precedence.
-Connect `reconcile` to a Process Agent Host, `inbox.ingest` to the signed GitHub
-webhook receiver, and `workload` to health inspection. Keep credentials, provider
-settings, host capacity, telemetry and deployment resources in the application.
-Configure the GitHub host identity with a login and email for repair commits.
-Only its author and committer identity fields pass to the worker; credentials do not.
+A discovered Agent that imports the preset runs without more wiring on the Node
+server preset. ViteHub generates a Nitro plugin that starts a process host for
+it: a SQLite PR inbox in Agent State, bounded GitHub discovery of
+`filter.repository.allow`, claims, repair passes, and wake handling. Signed
+GitHub deliveries to `/api/_vitehub/agents/<name>/webhooks/github` feed the
+inbox; they never start the Agent directly. `GET /api/_vitehub/host/drain`
+reports drain status, and `GET /api/_vitehub/host/health` reports each host's
+health and queue. SIGUSR2 starts a drain. The build fails with `AGENT_B0022` on
+hosts that cannot keep a process running, and with `AGENT_B0023` without SQL
+Agent State. Hosts start in production builds, or in development only with
+`VITEHUB_AGENT_PROCESS_HOSTS=1`, so a development server does not repair real
+PRs by accident.
+
+The host reads the GitHub App from `env.server.github` or `GITHUB_APP_ID`,
+`GITHUB_APP_PRIVATE_KEY` (or `GITHUB_APP_PRIVATE_KEY_PATH`), and
+`GITHUB_WEBHOOK_SECRET`. It resolves the App installation of each repository and
+commits as the App's bot. `GITHUB_APP_INSTALLATION_ID` pins one installation.
+A delivery without a configured webhook secret is rejected. Only the commit
+author and committer identity pass to the worker; credentials do not. On its
+first start, the host imports `.vitehub/pull-request-inbox.sqlite` from an
+earlier hand-wired Babysitter once.
 
 Each pass uses a disposable provider workspace with edit permission. GitHub tokens
 stay on the host. Tools provide PR-bound log reads, repair pushes, comments,

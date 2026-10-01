@@ -10,6 +10,10 @@ import type { GitHubPullRequestFilter } from "../channels.ts";
 import type { BuiltInAgentDriverName } from "../types.ts";
 import { babysitterInstructions } from "./babysitter/instructions.ts";
 import { resolveBabysitterMerge, type BabysitterMerge } from "./babysitter/merge.ts";
+import { defineChannel, defineChannelTrigger } from "../channels.ts";
+import { channelEnvValue } from "../channel-env.ts";
+import { agentProcessHostIntake, withAgentProcessHost, type AgentProcessHostContribution } from "../agent-process-host.ts";
+import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts";
 
 export type { BabysitterMerge, BabysitterMergeMethod, BabysitterMergeReadinessInput, BabysitterMergeReady } from "./babysitter/merge.ts";
 
@@ -28,6 +32,8 @@ export interface BabysitterOptions {
    * A parked PR keeps waiting while one runs. Defaults to none.
    */
   reviewChecks: string[];
+  /** PRs repaired at the same time. Defaults to 1. */
+  concurrency: number;
   /** @deprecated Use `merge: "auto"`. */
   autoMerge: boolean;
 }
@@ -69,6 +75,48 @@ export const babysitterPassResultSchema = {
   },
 };
 
+const babysitterHost: AgentProcessHostContribution = {
+  async create(context) {
+    const { createBabysitterProcessHost } = await import("./babysitter/host.ts");
+    return await createBabysitterProcessHost(context);
+  },
+};
+
+function plainSecret(value: unknown): string | undefined {
+  const plain = isRuntimeRecord(value) && hasRuntimeType(value.unseal, "function") ? value.unseal() : value;
+  return hasRuntimeType(plain, "string") && plain.trim() ? plain.trim() : undefined;
+}
+
+const babysitterIntake = defineChannel("babysitter-github", {
+  messages: false,
+  triggers: {
+    delivery: defineChannelTrigger({
+      webhooks: [{
+        id: "github",
+        provider: "github",
+        signature: "github-sha256",
+        secretHeader: "x-hub-signature-256",
+        // A missing secret fails closed: unsigned deliveries must never reach the inbox.
+        secretToken: async (context) => {
+          const secret = plainSecret(await channelEnvValue("github", "webhookSecret", context));
+          if (!secret) throw new Error("[vitehub] The Babysitter webhook needs GITHUB_WEBHOOK_SECRET.");
+          return secret;
+        },
+      }],
+      invoke: async (context, input: unknown) => {
+        const github = isRuntimeRecord(input) && isRuntimeRecord(input.github) ? input.github : undefined;
+        const deliveryId = github?.deliveryId, event = github?.event;
+        if (!hasRuntimeType(deliveryId, "string") || !hasRuntimeType(event, "string") || !isRuntimeRecord(input)) {
+          return Response.json({ accepted: false, reason: "missing GitHub delivery headers" }, { status: 400 });
+        }
+        const intake = agentProcessHostIntake(context.agentIdentity?.name ?? "");
+        if (!intake) return Response.json({ accepted: false, reason: "Babysitter host is not running" }, { status: 503 });
+        return await intake({ deliveryId, event, payload: input.payload });
+      },
+    }),
+  },
+});
+
 /** A repair workflow. Connections, provider settings and host resources stay in the application. */
 type BabysitterDefinition = AgentDefinition<
   AgentRuntimeConfig,
@@ -89,9 +137,13 @@ export const babysitter: BabysitterAgent = defineAgent({
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The default widens to the documented merge union.
     merge: false as BabysitterMerge,
     reviewChecks: [] as string[],
+    concurrency: 1,
     autoMerge: false,
   },
-  configure: ({ filter, driver, merge, reviewChecks, autoMerge }) => {
+  configure: ({ driver, merge, reviewChecks, autoMerge, concurrency }) => {
+    if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+      throw new TypeError("[vitehub] Babysitter concurrency must be a positive integer.");
+    }
     if (driver !== "codex" && driver !== "claude-code") {
       throw new TypeError('[vitehub] Babysitter driver must be "codex" or "claude-code".');
     }
@@ -99,7 +151,8 @@ export const babysitter: BabysitterAgent = defineAgent({
     resolveBabysitterMerge(merge, autoMerge);
     const definition = defineAgent({
       description: "Repair selected pull requests and wait for their checks and reviews.",
-      channels: { github: { pullRequest: { filter } } },
+      // Signed GitHub deliveries feed the PR inbox. They never start the Agent directly.
+      channels: { github: babysitterIntake },
       driver: {
         kind: driver,
         permissions: "allow-edits",
@@ -109,9 +162,6 @@ export const babysitter: BabysitterAgent = defineAgent({
         output: { schema: babysitterPassResultSchema },
       },
     });
-    // Keep preset-only policy on the configured definition so runtime hosts
-    // can read it alongside the other Babysitter options.
-    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- Object.assign preserves the configured AgentDefinition and adds the preset-owned reviewChecks policy.
-    return Object.assign(definition, { reviewChecks }) as BabysitterDefinition;
+    return withAgentProcessHost(Object.assign(definition, { reviewChecks }), babysitterHost);
   },
 });

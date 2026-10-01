@@ -5081,20 +5081,13 @@ cli_auth_credentials_store = "keyring"
   })
 
   it("makes canonical and legacy Skill directories mutually readable without overwriting collisions", async () => {
-    const { gmail } = await import("../src/capabilities/gmail.ts")
-    const capability = gmail()
-    if (typeof capability.workspace !== "function") throw new Error("expected workspace resolver")
-    const contribution = await capability.workspace({} as never)
-    if (!contribution) throw new Error("expected Gmail workspace contribution")
-    const gmailSource = contribution.sources?.["skill.gmail"]
-    if (!gmailSource || typeof gmailSource !== "object" || !("content" in gmailSource) || typeof gmailSource.content !== "string") throw new Error("expected Gmail Skill content")
-    const gmailPath = capability.metadata!.skillPath as string
+    const managedSkill = { content: "# Managed\n", path: ".agents/skills/managed/SKILL.md" }
     const threadId = "thread-workspace-provider-skill-compatibility"
     let root = ""
     runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
       async onStartSession() {
         for (const provider of [".agents", ".codex", ".claude"]) {
-          await expect(readFile(`${root}/${provider}/skills/gmail/SKILL.md`, "utf8")).resolves.toBe(gmailSource.content)
+          await expect(readFile(`${root}/${provider}/skills/managed/SKILL.md`, "utf8")).resolves.toBe(managedSkill.content)
         }
         await expect(readFile(`${root}/.codex/skills/canonical/SKILL.md`, "utf8")).resolves.toBe("# Canonical\n")
         await expect(readFile(`${root}/.claude/skills/canonical/SKILL.md`, "utf8")).resolves.toBe("# Canonical\n")
@@ -5124,8 +5117,8 @@ cli_auth_credentials_store = "keyring"
       fs: {},
       startSession: vi.fn(async (options: { target: string }) => {
         root = options.target
-        await mkdir(join(root, gmailPath, ".."), { recursive: true })
-        await writeFile(join(root, gmailPath), gmailSource.content)
+        await mkdir(join(root, managedSkill.path, ".."), { recursive: true })
+        await writeFile(join(root, managedSkill.path), managedSkill.content)
         await mkdir(`${root}/.agents/skills/canonical`, { recursive: true })
         await mkdir(`${root}/.agents/skills/collision`, { recursive: true })
         await mkdir(`${root}/.claude/skills/legacy`, { recursive: true })

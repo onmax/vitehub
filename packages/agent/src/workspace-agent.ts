@@ -550,14 +550,12 @@ function capabilityMetadataTool(capability: NormalizedCapability, options: { dri
     }
   }
   if (capability.id === "gmail") {
-    // SAFETY: Workspace definition normalization establishes the asserted owned Workspace contract.
-    const mode = (capability.metadata as { mode?: unknown } | undefined)?.mode
+    // SAFETY: gmail() sets this metadata.
+    const { connection, tools } = (capability.metadata ?? {}) as { connection?: string, tools?: string[] }
     return {
       category: "capability",
-      commands: ["gmail_auth", "gmail_search", ...(mode === "draft" ? ["gmail_draft"] : [])],
-      description: mode === "draft"
-        ? "Authorize Gmail, search threads, and create unsent drafts."
-        : "Authorize Gmail and search threads.",
+      commands: (tools ?? []).map(tool => `gmail_${tool}`),
+      description: `Use Gmail through the ${connection ?? "Google"} Connection.`,
       icon: "i-lucide-mail-search",
       name: "gmail",
       status: "available",
