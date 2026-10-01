@@ -8,7 +8,7 @@ import * as v from "valibot"
 
 import { createTraceEventLog } from "@vite-hub/runtime"
 import { gmail, syncGmailChannel } from "../src/channels.ts"
-import { defineAgent, runAgentTrigger } from "../src/index.ts"
+import { defineAgent, runAgentTrigger, workflow } from "../src/index.ts"
 import { inspectMessageChannelInstructions } from "../src/internal/channels.ts"
 import { getAgentChannelSyncDefinition } from "../src/internal/channel-sync.ts"
 import { runAgentChannelSyncCli } from "../src/internal/channel-sync-cli.ts"
@@ -267,6 +267,32 @@ describe("gmail() Channel", () => {
       expect(driver).not.toHaveBeenCalled()
       expect(google.calls.some(call => call.path === "profile")).toBe(false)
     } finally { await state.disconnect() }
+  })
+
+  it.each([false, true])("checks the selected webhook State under Workflow custody, durable=%s", async durable => {
+    stubGmailEnv()
+    const google = await createGoogle()
+    const directory = await mkdtemp(join(tmpdir(), "vitehub-gmail-workflow-state-"))
+    const chatState = createLibsqlAgentState({ url: `file:${join(directory, "chat.db")}` })
+    const webhookState = createLibsqlAgentState({ url: durable ? `file:${join(directory, "webhook.db")}` : ":memory:" })
+    durableWebhookFixtures.push({ directory, state: chatState }, { directory, state: webhookState })
+    const chatSet = vi.spyOn(chatState, "set")
+    const webhookSet = vi.spyOn(webhookState, "set")
+    const driver = vi.fn(() => "ok")
+    const agent = defineAgent({ channels: { gmail: gmail({ fetch: google.fetch }) }, driver: { run: driver }, name: "gmail-workflow-state", runtime: workflow("gmail-workflow-state") })
+    const tasks: Promise<unknown>[] = []
+    const response = await createChannelWebhookRouteHandler(agent)(new Request(audience, {
+      body: JSON.stringify({ message: { data: base64Url(JSON.stringify({ emailAddress: "max@example.com", historyId: 100 })), messageId: "workflow-state" }, subscription }),
+      headers: { authorization: `Bearer ${await google.token()}`, "content-type": "application/json" }, method: "POST",
+    }), "gmail", { agentName: "gmail-workflow-state", state: () => chatState, webhookState: () => webhookState, waitUntil: task => void tasks.push(task) })
+    await Promise.all(tasks)
+    expect(response.status).toBe(durable ? 204 : 503)
+    expect(driver).not.toHaveBeenCalled()
+    expect(google.calls.some(call => call.path === "profile")).toBe(durable)
+    if (!durable) {
+      expect(chatSet).not.toHaveBeenCalled()
+      expect(webhookSet).not.toHaveBeenCalled()
+    }
   })
 
   it("resumes the stored Gmail cursor through a recreated webhook handler and SQLite connection", async () => {
