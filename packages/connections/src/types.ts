@@ -5,8 +5,8 @@ export const CONNECTION_NAME_MAX_LENGTH = 501
 
 /** Type shape of one provider API method. Generated catalogs describe each method with it. */
 export interface ConnectionMethodSignature {
-  /** Catalog HTTP method. GET reads always execute during dry run. */
-  method?: string
+  /** Catalog HTTP method. Only GET reads execute during dry run. */
+  method: string
   body: unknown
   params: object
   response: unknown
