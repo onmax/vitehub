@@ -74,7 +74,7 @@ function visitObjectProperties(tokens: string[], start: number, visit: (key: str
   return false
 }
 
-// Keys set to `undefined` or `void 0` count as omitted, as they do at runtime.
+// Keys set to `undefined` or a `void` expression count as omitted, as they do at runtime.
 function staticOptionKeys(tokens: string[], start: number, empty: string, typescript: boolean): ReadonlySet<string> | undefined {
   start = skipOptionAssertions(tokens, start, typescript)
   if (isUndefinedValue(tokens, start, new Set([",", ")", "}"]))) return new Set()
@@ -269,16 +269,22 @@ function isUndefinedValue(tokens: string[], start: number, terminators: Readonly
   }
   if (tokens[start] === "undefined") return isValueEnd(tokens, start + 1, terminators)
   if (tokens[start] !== "void") return false
-  let operand = start + 1
-  const wrappers: number[] = []
-  while (tokens[operand] === "(") wrappers.push(closingDelimiter(tokens, operand++))
-  if (tokens[operand] !== "0") return false
-  let after = operand + 1
-  for (const close of wrappers.reverse()) {
-    if (after !== close) return false
-    after++
+  return isValueEnd(tokens, unaryOperandEnd(tokens, start + 1), terminators)
+}
+
+// A unary operand includes its calls and member accesses, but excludes binary
+// operations outside it. `void value + suffix` therefore stays a defined value.
+function unaryOperandEnd(tokens: string[], start: number): number {
+  while (["void", "typeof", "delete", "await", "+", "-", "!", "~"].includes(tokens[start]!)) start++
+  let after = ["(", "[", "{"].includes(tokens[start]!) ? closingDelimiter(tokens, start) + 1 : start + 1
+  for (;;) {
+    if (tokens[after] === "?" && tokens[after + 1] === ".") after += 2
+    else if (tokens[after] === ".") { after += 2; continue }
+    else if (tokens[after] === "!" && tokens[after + 1] !== "=") { after++; continue }
+    else if (!["(", "["].includes(tokens[after]!)) return after
+    if (["(", "["].includes(tokens[after]!)) after = closingDelimiter(tokens, after) + 1
+    else after++
   }
-  return isValueEnd(tokens, after, terminators)
 }
 
 // Conditional branches and optional access can fall back to Server Env at runtime.
@@ -312,7 +318,8 @@ function canResolveUndefined(tokens: string[], start: number, end?: number): boo
     if (["as", "satisfies"].includes(tokens[index]!)) break
     if (tokens[index] === "?" && tokens[index + 1] === ".") return true
     // Arguments do not describe a call's return value. Grouped expressions do.
-    if (tokens[index] === "(" && (index === start || ["&", "|", "!"].includes(tokens[index - 1]!))
+    if (tokens[index] === "(" && index === start
+      && isValueEnd(tokens, closingDelimiter(tokens, index) + 1, new Set([tokens[end]!]))
       && canResolveUndefined(tokens, index + 1, closingDelimiter(tokens, index))) return true
   }
   return false

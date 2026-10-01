@@ -170,6 +170,12 @@ describe("built-in Channel discovery", () => {
     "(enabled ? configuredToken : undefined)",
     "enabled ? configuredToken ?? fallback : undefined",
     "enabled && undefined",
+    "void configuredToken",
+    "void getToken()",
+    "void config?.token",
+    "void (configuredToken + suffix)",
+    "(void configuredToken)",
+    "void +configuredToken",
   ])("requires Env when botToken can be undefined: %s", (token) => {
     expect(uses(`
       import { defineAgent } from "vite-hub/agent"
@@ -187,6 +193,15 @@ describe("built-in Channel discovery", () => {
       telegram({ botToken: config?.token ? configuredToken : fallback })
       telegram({ botToken: config?.token || configuredToken })
     `)).toEqual(Array.from({ length: 4 }, () => ({ kind: "telegram", keys: ["botToken"] })))
+  })
+
+  it.each(["(undefined) + 'suffix'", "(config?.token) + '-suffix'", "(undefined) * 2", "!(config?.token)", "void configuredToken + 'suffix'"])("preserves defined values around grouped or void operands: %s", (token) => {
+    expect(uses(`
+      import { defineAgent } from "vite-hub/agent"
+      import { telegram } from "vite-hub/agent/channels"
+      telegram({ botToken: ${token} })
+      defineAgent({ channels: { telegram: { botToken: ${token} } } })
+    `)).toEqual([{ kind: "telegram", keys: ["botToken"] }, { kind: "telegram", keys: ["botToken"] }])
   })
 
   it("treats method and constructor parameters as shadowing imports", () => {
