@@ -1071,6 +1071,16 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
     throw new Error("Could not acquire the Invocation execution claim.")
   }
   const binding = resolveAgentWorkflowRuntimeBinding<TRuntimeConfig>(agent)
+  // A discovery-default Workflow cannot be reconciled without the discovered
+  // Agent identity. Never let an existing pending reservation fall through to
+  // inline execution while its provider run may still start after lease expiry.
+  if (binding && !canDispatchAgentWorkflow(binding, context) && !journal.createdNew) {
+    const stored = await agent.invocations.getByRunId(context.run?.runId || "", agentInvocationName(agent, context))
+    if (stored?.workflow) {
+      await journal.releaseClaim()
+      throw new AgentInvocationClaimConflict()
+    }
+  }
   if (canDispatchAgentWorkflow(binding, context) && !journal.createdNew) {
     try {
       const workflowName = resolveAgentWorkflowName(agent, binding, context)
