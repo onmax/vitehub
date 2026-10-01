@@ -250,11 +250,15 @@ describe("Console Connections", () => {
         installConsoleSections(root, ["connections"])
         const connections = runtime()
         installConsoleConnections(root, { baseURL: "/portal/", manage: true, runtime: () => connections })
-        const dispatch = (request: Request) => {
+        const dispatch = async (request: Request) => {
           const match = nitro.routing.routes.match(request.method, new URL(request.url).pathname)
           const matched = Array.isArray(match) ? match : match ? [match] : []
-          expect(matched.some(handler => handler.handler?.endsWith("/connections-route.js"))).toBe(true)
-          return connectionsRoute({ req: request })
+          const route = matched.find(handler => handler.handler?.endsWith("/connections-route.js"))
+          expect(route).toBeDefined()
+          if (!route?.handler) throw new TypeError("Expected a registered Connections handler.")
+          const { default: handler } = await import(route.handler) as { default: typeof connectionsRoute }
+          const app = new H3().all("/**", handler)
+          return app.fetch(request)
         }
         const start = await dispatch(manage({ action: "start", name: "example" }, "/portal"))
         const { url } = await start.json() as { url: string }
