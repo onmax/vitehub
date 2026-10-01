@@ -53,7 +53,10 @@ it.each([
   }
   for (const config of configs) await (plugin.configResolved as (config: ResolvedConfig) => Promise<void>)(config)
   for (const config of configs) {
-    const clone = retainMetadata ? { ...config } : Object.fromEntries(Object.entries(config))
+    const clone = { ...config }
+    if (!retainMetadata) {
+      for (const key of Object.getOwnPropertySymbols(clone)) Reflect.deleteProperty(clone, key)
+    }
     const context = { environment: { config: clone } }
     ;(plugin.buildStart as (this: typeof context) => void).call(context)
     await (plugin.buildEnd as (this: typeof context) => Promise<void>).call(context)
