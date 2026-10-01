@@ -23,24 +23,28 @@
 ```ts
 // server/agents/review.ts
 import { defineAgent } from "vite-hub/agent";
-import { browser, skills } from "vite-hub/agent/capabilities";
+import { browser } from "vite-hub/agent/capabilities";
 import { github } from "vite-hub/agent/channels";
 
 export default defineAgent({
   description: "Reviews pull requests.",
-  channels: { github: github({ pullRequest: true }) },
+  channels: {
+    github: github({
+      pullRequest: { reconcile: { events: ["opened"] } },
+    }),
+  },
   driver: "codex",
   workspace: { mode: "write" },
-  capabilities: [browser(), skills({ path: "./skills" })],
+  capabilities: [browser()],
 });
 ```
 
-When a pull request opens, this Agent runs Codex in a persistent Workspace. It can use the browser and its Skills. It gets no other tools.
+When a pull request opens, this Agent runs Codex in a persistent Workspace. It can use the browser Capability and the Skills it provides. Codex also has its native coding-agent tools, including shell access; Capabilities add the tools listed in the definition.
 
 - **Channels** start the Agent from GitHub, Slack, HTTP, or web chat.
 - **Driver** selects the runner: Codex, Claude Code, an AI SDK model, or your own function.
 - **Workspace** gives the Agent a file tree that persists between runs.
-- **Capabilities** grant the tools the Agent can use, and nothing more.
+- **Capabilities** grant additional tools the Agent can use. The Driver also has its own native tools and permissions.
 
 ViteHub finds the file, connects it to your server, and prepares the output for your host.
 
