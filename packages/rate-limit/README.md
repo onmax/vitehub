@@ -106,7 +106,7 @@ The limiter exposes its resolved `policy` and the driver's declared `capabilitie
 
 ## Read or reset a counter
 
-`limiter.peek({ key })` reads the counter of a key without consuming a token. `limiter.reset({ key })` deletes the counter. A driver supports them through optional `peek(input)` and `reset(input)` methods that return `[null, value]` or `[error, undefined]`, like `consume()`. When the driver omits a method, the result has `status: "unsupported"` and a `reason`.
+`limiter.peek({ key })` reads the counter of a key without consuming a token. `limiter.reset({ key })` deletes the counter. A driver supports them through optional `peek(input)` and `reset(input)` methods. Like `consume()`, `peek()` returns `[null, value]` or `[error, undefined]`. The `reset()` method returns a one-element tuple, `[null]` or `[error]`. When the driver omits a method, the result has `status: "unsupported"` and a `reason`.
 
 | Driver     | `peek()`                                                                  | `reset()`             |
 | ---------- | ------------------------------------------------------------------------- | --------------------- |
