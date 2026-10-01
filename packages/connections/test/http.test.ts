@@ -136,6 +136,44 @@ describe("createConnectionsHandler", () => {
     }
   });
 
+  it("dispatches and completes OAuth under an application base", async () => {
+    const test = createTestRuntime()
+    const handler = createConnectionsHandler({ basePath: "/portal/_vitehub/connections", runtime: () => test.runtime })
+    const response = await handler(new Request(`${origin}/portal/_vitehub/connections`, {
+      body: JSON.stringify({ action: "list" }), headers: { "content-type": "application/json", origin }, method: "POST",
+    }))
+    expect(response.status).toBe(200)
+    const start = await handler(new Request(`${origin}/portal/_vitehub/connections/connect/mail`))
+    expect(start.status).toBe(302)
+    const location = new URL(start.headers.get("location")!)
+    expect(location.searchParams.get("redirect_uri")).toBe(`${origin}/portal/_vitehub/connections/callback`)
+    expect(start.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections;")
+    const state = location.searchParams.get("state")!
+    test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, id_token: "account-1", refresh_token: REFRESH_TOKEN } })
+    const callback = await handler(new Request(`${origin}/portal/_vitehub/connections/callback?code=code-1&state=${state}`, {
+      headers: { cookie: `vitehub_connection_state=${state}` },
+    }))
+    expect(callback.status).toBe(200)
+    expect(callback.headers.get("set-cookie")).toContain("Path=/portal/_vitehub/connections;")
+  })
+
+  it("exposes all pending approvals above the history limit", async () => {
+    const test = createTestRuntime()
+    for (let index = 0; index < 101; index++) {
+      await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:mail", createdAt: new Date().toISOString(), id: `approval-${index}`, input: {}, name: "mail", status: "pending" })
+    }
+    const handler = createConnectionsHandler({ runtime: () => test.runtime })
+    const response = await handler(post({ action: "approvals", name: "mail", status: "pending" }))
+    // SAFETY: The local handler serializes the approval list from the real test store.
+    const result = await response.json() as { approvals: Array<{ id: string }> }
+    expect(result.approvals).toHaveLength(101)
+    expect(result.approvals.some(approval => approval.id === "approval-0")).toBe(true)
+    const denied = await handler(post({ action: "deny", id: "approval-0" }))
+    expect(denied.status).toBe(200)
+    expect(await test.store.approvals.get("approval-0")).toMatchObject({ status: "denied" })
+    expect(await test.runtime.approvals({})).toHaveLength(100)
+  })
+
   it("rejects cross-origin, non-JSON, and invalid requests", async () => {
     const test = createTestRuntime();
     const handler = createConnectionsHandler({

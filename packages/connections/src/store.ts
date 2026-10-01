@@ -38,6 +38,7 @@ export interface ConnectionStore {
     renew: (id: string, expiresAt: string) => Promise<boolean>
     create: (approval: ConnectionApproval) => Promise<void>
     get: (id: string) => Promise<ConnectionApproval | undefined>
+    /** Pending queries return every actionable approval. Other queries return the newest 100. */
     list: (input: { name?: string, status?: ConnectionApprovalStatus }) => Promise<ConnectionApproval[]>
     /** Move an approval from one status to another. Returns `undefined` when the status was not `from`. */
     transition: (id: string, from: ConnectionApprovalStatus, to: ConnectionApprovalStatus, patch?: { decidedAt?: string, decidedBy?: string, error?: string, executionExpiresAt?: string }) => Promise<ConnectionApproval | undefined>
@@ -272,7 +273,7 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
       },
       async list({ name, status }) {
         await initialize()
-        const rows = await db.all(sql`SELECT ${approvalColumns} FROM vitehub_connection_approvals WHERE 1 = 1 ${name ? sql`AND name = ${name}` : sql``} ${status ? sql`AND status = ${status}` : sql``} ORDER BY sequence DESC LIMIT 100`)
+        const rows = await db.all(sql`SELECT ${approvalColumns} FROM vitehub_connection_approvals WHERE 1 = 1 ${name ? sql`AND name = ${name}` : sql``} ${status ? sql`AND status = ${status}` : sql``} ORDER BY sequence DESC ${status === "pending" ? sql`` : sql`LIMIT 100`}`)
         return rows.map(toApproval)
       },
       async transition(id, from, to, patch = {}) {

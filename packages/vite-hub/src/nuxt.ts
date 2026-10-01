@@ -647,6 +647,7 @@ async function applyNitroConfig(
   }
   restoreReplayOwnership()
   config.build ??= {}
+  config.base = nuxt.options.app?.baseURL ?? "/"
   config.nitro = nitroConfig
   config.server ??= {}
   const transformWorkflowRegistry = plugins.map(agentWorkflowRegistryTransform).find(Boolean)
@@ -1167,6 +1168,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         const actorSource = options.console !== true && options.console.access === "auth" && options.console.auth
           ? "console-auth"
           : authAccess && (nuxt.options.vite?.auth ?? options.auth) ? "app-auth" : "none"
+        // SAFETY: Nitro aliases map virtual module names to generated module paths.
         const consoleAlias = (config.alias ??= {}) as Record<string, string>
         consoleAlias[consoleConnectionsActorId] = await writeConsoleConnectionsActor(viteRoot, actorSource)
       }

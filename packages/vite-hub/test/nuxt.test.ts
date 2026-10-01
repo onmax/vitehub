@@ -1981,6 +1981,14 @@ describe("ViteHub Nuxt integration", () => {
     expect(result.outputFiles?.[0]?.text).toContain("auth resolver reached")
   })
 
+  it("passes the Nuxt app base to owner management handler generation", async () => {
+    const { nuxt, runNitroConfigHook } = createNuxt(false)
+    Object.assign(nuxt.options, { app: { baseURL: "/portal/" } })
+    await viteHubNuxtModule({ connections: { management: true }, database: true, console: { exposure: "host-managed" }, preset: "node" }, nuxt)
+    await runNitroConfigHook({})
+    expect(mocks.objectHook).toHaveBeenCalledWith(expect.objectContaining({ base: "/portal/" }), expect.anything())
+  })
+
   it("attributes Connections actions to Auth supplied in the Nuxt Vite config", async () => {
     const authDefinition = "/tmp/vitehub-nuxt/custom-server/auth.ts"
     await mkdir(resolve(authDefinition, ".."), { recursive: true })
