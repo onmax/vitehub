@@ -4,7 +4,7 @@ import attributes from "@comark/vue/plugins/attributes";
 import components from "@comark/vue/plugins/components";
 import frontmatter from "@comark/vue/plugins/frontmatter";
 import taskList from "@comark/vue/plugins/task-list";
-import { defineComponent, h, shallowRef, Suspense, type PropType } from "vue";
+import { defineComponent, h, shallowRef, type PropType } from "vue";
 import { markdownMath } from "../internal/markdown-math.ts";
 import { useViteHubUI } from "../config.ts";
 import { ImagePreview } from "../internal/image-preview.ts";
@@ -78,16 +78,14 @@ export const AgentMarkdown = defineComponent({
         else plugins.push(plugin);
       }
       const safePlugins = plugins.filter(plugin => plugin.name !== "html");
-      return h(Suspense, null, {
-        default: () => h(Markdown, {
-          ...attrs,
-          class: [defaults.markdown.class, attrs.class],
-          components: { img: ImagePreview, math: AgentMath, ...props.components },
-          plugins: safePlugins,
-          options: { ...parserOptions, registerDefaultPlugins: false },
-          streaming: props.streaming,
-          value: props.value,
-        }),
+      return h(Markdown, {
+        ...attrs,
+        class: [defaults.markdown.class, attrs.class],
+        components: { img: ImagePreview, math: AgentMath, ...props.components },
+        plugins: safePlugins,
+        options: { ...parserOptions, registerDefaultPlugins: false },
+        streaming: props.streaming,
+        value: props.value,
       });
     };
   },
