@@ -1282,7 +1282,9 @@ async function runAgentAsWorkflow<
     }
     throw error
   }
-  await replayJournal?.confirmWorkflowDispatch()
+  if (replayJournal && !await replayJournal.confirmWorkflowDispatch()) {
+    throw new Error("Could not confirm the Workflow Invocation dispatch.")
+  }
   if (run.status === "cancelled" || run.status === "completed" || run.status === "failed") {
     await activity?.update(
       run.status,
@@ -7519,7 +7521,9 @@ async function executeAgentInvocation<
       if (invocationJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
       throw new Error("Could not acquire the Invocation execution claim.")
     }
-    if (inheritedClaim && !await invocationJournal?.confirmWorkflowDispatch()) {
+    // SAFETY: Only a trusted Workflow worker installs this private execution marker.
+    const workflowExecution = (context as AgentRuntimeContext & { [agentWorkflowExecutionContextKey]?: boolean })[agentWorkflowExecutionContextKey] === true
+    if (inheritedClaim && workflowExecution && !await invocationJournal?.confirmWorkflowDispatch()) {
       await invocationJournal?.releaseClaim()
       throw new Error("Could not confirm the Workflow Invocation handoff.")
     }

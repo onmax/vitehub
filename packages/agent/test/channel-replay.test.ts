@@ -5,6 +5,7 @@ import { defineCollection } from "../../source/src/index.ts"
 import { defineChannel, defineChannelTrigger } from "../src/channels.ts"
 import { dispatchChannelItems } from "../src/channel-replay.ts"
 import { defineAgent } from "../src/index.ts"
+import { bindAgentInvocations, pendingAgentInvocationAnnotation } from "../src/invocations.ts"
 import { channelMessageRunId, createMemoryAgentInvocationStore, defineAgentInvocations, describeChannelHistory, replayChannel } from "../src/server.ts"
 
 interface Email {
@@ -178,6 +179,43 @@ describe("replayChannel()", () => {
       expect(label).toHaveBeenCalledOnce()
       expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).skipped).toBe(1)
     } finally { release(); await initial; vi.useRealTimers() }
+  })
+
+  it("keeps inline execution recoverable while its claim excludes concurrent replay", async () => {
+    const invocations = memoryInvocations()
+    const { channel } = mailbox()
+    let entered!: () => void
+    let release!: () => void
+    const running = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const agent = defineAgent({ channels: { mailbox: channel }, invocations, runtime: false, driver: { run: async () => { entered(); await gate; return "done" } } })
+    const execution = replayChannel(agent, "mailbox", { limit: 1 })
+    try {
+      await Promise.race([running, execution])
+      expect(await invocations.getByRunId(channelMessageRunId("mailbox", "m1"))).toMatchObject({ status: "running", annotations: { [pendingAgentInvocationAnnotation]: true } })
+      expect((await replayChannel(agent, "mailbox", { limit: 1 })).skipped).toBe(1)
+      release()
+      expect((await execution).processed).toBe(1)
+      expect((await replayChannel(agent, "mailbox", { limit: 1 })).skipped).toBe(1)
+    } finally { release(); await execution }
+  })
+
+  it.each(["pending", "running"] as const)("recovers an inline %s reservation after its process and lease are lost", async status => {
+    const invocations = memoryInvocations()
+    const { agent, run } = labeller({ invocations })
+    const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+    vi.useFakeTimers()
+    try {
+      const journal = await bindAgentInvocations(invocations, { ...runtime, run: { runId: channelMessageRunId("mailbox", "m1"), annotations: { [pendingAgentInvocationAnnotation]: true } } }, { recoverPending: true })
+      expect(journal?.claimStatus).toBe("owned")
+      if (status === "running") await journal?.running()
+      await journal?.handoffClaim()
+      expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).skipped).toBe(1)
+      await vi.advanceTimersByTimeAsync(30_001)
+      expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).processed).toBe(1)
+      expect(run).toHaveBeenCalledOnce()
+      expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).skipped).toBe(1)
+    } finally { vi.useRealTimers() }
   })
 
   it("claims before an asynchronous trigger write and retries failed trigger preparation", async () => {

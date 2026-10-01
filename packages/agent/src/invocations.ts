@@ -1750,7 +1750,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               invocationCapabilityIds(result.record).forEach(capabilityId => observedCapabilityIds.add(capabilityId))
               finished = terminalStatus(result.record.status)
               boundToTerminalRecord = finished
-              workflowDispatchAllowed = result.created || (result.record.status === "pending" && result.record.annotations?.[pendingAgentInvocationAnnotation] === true)
+              workflowDispatchAllowed = result.created || ((result.record.status === "pending" || result.record.status === "running") && result.record.annotations?.[pendingAgentInvocationAnnotation] === true)
               createdNew = result.created
               created = true
             }
@@ -2003,6 +2003,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           await write(async () => {
             const record = await boundedStoreOperation(() => store.get(recordId))
             if (!record || record === storeOperationTimedOut) return
+            if (record.annotations?.[pendingAgentInvocationAnnotation] === false) { confirmed = true; return }
             const updated = await boundedStoreOperation(() => store.update(recordId, {
               annotations: { ...record.annotations, [pendingAgentInvocationAnnotation]: false },
               timestamp: new Date().toISOString(),

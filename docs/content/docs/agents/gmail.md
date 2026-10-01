@@ -205,14 +205,14 @@ export default defineSchedule({
 1. Pub/Sub sends a push request with a Google-signed OIDC token. The Channel verifies the signature with Google's public keys, the issuer, the audience, the expiry, and the verified service account email. It then checks the subscription name. A failed check returns `401` or `400`.
 2. The Channel acknowledges the push with `204` and continues in the background.
 3. It reads `history.list` from the stored history cursor and fetches each new Inbox message.
-4. It starts one Invocation per message through the `received` trigger. The Invocation run ID is `channel:<channel>:<message id>`. A message that already has an Invocation is skipped.
+4. It starts one Invocation per message through the `received` trigger. The Invocation run ID is `channel:<channel>:<message id>`. A terminal Invocation or confirmed Workflow dispatch is skipped. An active claim prevents concurrent execution.
 5. It stores the new cursor in the Channel's State Adapter after every message has an Invocation, so a failure retries the same history with the next push.
 
 Mailbox synchronization requires a State Adapter with `mutateWithLock(lock, mutations)`. The operation must check the stored lock token and expiry and apply cache writes or deletions in one transaction. ViteHub's memory, SQLite/libsql, and Cloudflare Durable Object adapters implement this contract. Custom adapters must implement `AtomicAgentStateLockAdapter`; a separate lease check followed by `set()` or `delete()` is insufficient. Cloudflare mailbox locks use the existing cache actor, preserving stored cursors and watch state even when other thread locks are sharded.
 
 The first push only stores the cursor. Earlier mail belongs to [replay](#replay-past-mail). When Gmail no longer has the stored history, about a week later, the Channel reads Inbox mail from the last two days and continues from the current history.
 
-One process at a time reads the mailbox. A push that arrives during a sync marks it pending, and the running sync reads once more. Overlapping and repeated pushes do not run a message twice. Skipping handled messages needs an Invocation journal: configure `invocations` or enable the [Console](/docs/development/console).
+One process at a time reads the mailbox. A push that arrives during a sync marks it pending, and the running sync reads once more. Completed messages are skipped on repeated pushes. Inline runs remain eligible for retry until their terminal status is stored; after process loss, the retry can start when the claim expires. Skipping handled messages needs an Invocation journal: configure `invocations` or enable the [Console](/docs/development/console).
 
 The background work runs in the host's `waitUntil`. Cloudflare Workers stop it 30 seconds after the response. For large bursts on Workers, use a [Workflow runtime](/docs/agents/invocations) so each message starts a durable run.
 

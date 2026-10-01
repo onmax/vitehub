@@ -163,7 +163,7 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
 ): Promise<ReplayChannelItem> {
   const stableId = channelMessageRunId(run.channel, key, run)
   const existing = !run.force ? await run.invocations?.getByRunId(stableId, run.agentName) : undefined
-  if (existing && !(existing.status === "pending" && existing.annotations?.[pendingAgentInvocationAnnotation] === true)) {
+  if (existing && !((existing.status === "pending" || existing.status === "running") && existing.annotations?.[pendingAgentInvocationAnnotation] === true)) {
     return { id: stableId, key, reason: "existing", status: "skipped" }
   }
   // A forced run needs a new ID because the stable one already has an Invocation.

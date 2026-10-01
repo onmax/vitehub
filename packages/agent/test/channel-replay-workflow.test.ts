@@ -40,6 +40,7 @@ it("reserves concurrent Workflow replays before activity and hands the journal t
   const providerRun = vi.fn(async (payload: { invocationClaimToken?: string }, options: { id: string }) => {
     const workerJournal = await bindAgentInvocations(invocations, { ...runtime, run: { runId: options.id } }, { agentName: "replay-workflow", replaceClaimToken: payload.invocationClaimToken })
     expect(workerJournal?.claimStatus).toBe("owned")
+    expect(await workerJournal?.confirmWorkflowDispatch()).toBe(true)
     await workerJournal?.running()
     const duplicateWorker = await bindAgentInvocations(invocations, { ...runtime, run: { runId: options.id } }, { agentName: "replay-workflow", replaceClaimToken: payload.invocationClaimToken })
     expect(duplicateWorker?.claimStatus).toBe("conflict")
@@ -153,7 +154,9 @@ it("reconciles an accepted provider run when dispatch confirmation times out", a
   const agent = defineAgent({ channels: { mailbox: channel }, driver: { run: () => "unused" }, invocations, name: "confirm-workflow", runtime: workflow("confirm-workflow") })
   vi.useFakeTimers()
   try {
-    expect((await replayChannel(agent, "mailbox", { runtime })).processed).toBe(1)
+    const dispatch = await replayChannel(agent, "mailbox", { runtime })
+    expect(dispatch.failed).toBe(1)
+    expect(dispatch.items[0]?.error).toContain("Could not confirm the Workflow Invocation dispatch")
     expect((await invocations.getByRunId(channelMessageRunId("mailbox", "m1"), "confirm-workflow"))?.annotations?.[pendingAgentInvocationAnnotation]).toBe(true)
     await vi.advanceTimersByTimeAsync(30_001)
     failConfirmation = false
