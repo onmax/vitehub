@@ -70,6 +70,7 @@ import {
 } from "./channels.ts"
 import { registerMessageChannelDeferredReplyTrace, setChatFinalReplyText, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
 import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, createAgentInvocationContextStore } from "./invocation-context.ts"
+import { agentInvocationCallerAbortSignal, markAgentInvocationCallerAbortSignal } from "./internal/invocation-input.ts"
 import { bindAgentRunEvents, type AgentRunEventPublisher } from "./run-events.ts"
 import { bindAgentInvocations, type AgentInvocationJournal } from "./invocations.ts"
 import { isAttachmentPart, materializeMessageAttachmentData, type AgentMessagePhase, type Message } from "./messages.ts"
@@ -764,6 +765,7 @@ interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
   journalAgentName?: string
   capabilities?: Record<string, boolean>
   input?: AgentRunInput<CALL_OPTIONS>
+  callerAbortSignal?: boolean
   parsedInputData?: boolean
   invocationRecovery?: {
     agentName?: string
@@ -1170,6 +1172,7 @@ async function runAgentAsWorkflow<
     ...(Object.keys(workflowCapabilities).length ? { capabilities: workflowCapabilities } : {}),
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     input: cloneWorkflowJsonValue(workflowInput) as AgentRunInput<CALL_OPTIONS>,
+    ...(input.abortSignal !== undefined ? { callerAbortSignal: true } : {}),
     // Headers and bodies may contain webhook credentials and remain process-local by design.
     ...(context.request ? { requestUrl: context.request.url } : {}),
     ...(parsedMessageMeta !== undefined ? { parsedMessageMeta } : {}),
@@ -4157,8 +4160,6 @@ async function parseAgentInputData<TInput extends AgentRunInput<unknown>>(
 }
 
 // Controller cancellation is internal unless the caller supplied its own signal.
-const agentInvocationCallerAbortSignals = new WeakMap<object, boolean>()
-
 async function createAgentInvocationContext<
   TRuntimeConfig extends AgentRuntimeConfig,
   CALL_OPTIONS,
@@ -4175,7 +4176,7 @@ async function createAgentInvocationContext<
   // Preparation can replace or mutate input. Replay must retain the caller's input metadata.
   const replayInput = {
     ...input,
-    ...(agentInvocationCallerAbortSignals.get(input) === false ? { abortSignal: undefined } : {}),
+    ...(agentInvocationCallerAbortSignal(input) === false ? { abortSignal: undefined } : {}),
     ...(input.context ? { context: { ...input.context } } : {}),
     ...(input.messages ? { messages: [...input.messages] } : {}),
     ...(Array.isArray(input.prompt) ? { prompt: [...input.prompt] } : {}),
@@ -4720,7 +4721,7 @@ async function createAgentInvocationContext<
     capabilityPreparationPending = false
     await invocationContext.get(agentInvocationConfigurationUpdatedContextKey)?.()
     await traceAgentInvocationStart(toTraceContext(invocation), replayInput, replayHasContext,
-      replayInput.abortSignal !== undefined || capabilities.input.abortSignal !== input.abortSignal)
+      replayInput.abortSignal !== undefined || capabilities.input.abortSignal !== input.abortSignal || agentInvocationCallerAbortSignal(input) === true)
     try {
       await applyChannelDeliveryEffectIntents(invocation, invocation.deliveryEffectIntents)
     }
@@ -7937,7 +7938,7 @@ function createInlineAgentInvocationController<
     sendInput: (id, nextInput, options) => sendAgentInvocationInput(id, nextInput, options),
     start: ({ abortSignal, id, onFinish }) => {
       const invocationInput = { ...input, abortSignal }
-      agentInvocationCallerAbortSignals.set(invocationInput, input.abortSignal !== undefined)
+      markAgentInvocationCallerAbortSignal(invocationInput, input.abortSignal !== undefined)
       return executeAgentInvocation(agent, {
         ...withAgentInvocationResponseOwner(context, id),
         run: { ...context.run, runId: runId || id },

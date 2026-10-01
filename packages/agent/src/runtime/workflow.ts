@@ -7,6 +7,7 @@ import { workspaceAgentWithSourceRoot } from "../workspace-agent.ts"
 import { decodeColocatedAgentSkills, withColocatedAgentSkills } from "../internal/colocated-agent-skills.ts"
 import { loadAgentWorkflowModule, loadAgentWorkflowRuntimeStateModule, loadConfiguredAgentWorkflowCapabilities } from "../internal/workflow-runtime-loaders.ts"
 import { agentInvocationRunId } from "../invocation-context.ts"
+import { markAgentInvocationCallerAbortSignal } from "../internal/invocation-input.ts"
 import { agentInvocationRecoveryTasks } from "../internal/invocation-recovery.ts"
 import { bindAgentInvocations } from "../invocations.ts"
 import { cloneWorkflowJsonValue, workflowBytesToBase64 } from "../internal/workflow-portability.ts"
@@ -54,6 +55,7 @@ export interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
   agentIdentity?: AgentHostIdentity
   capabilities?: Record<string, boolean>
   input?: AgentRunInput<CALL_OPTIONS>
+  callerAbortSignal?: boolean
   invocationRecovery?: {
     agentName?: string
     runId: string
@@ -368,6 +370,7 @@ export async function runAgentWorkflowDefinition<TRuntimeConfig extends AgentRun
         abortSignal: payload.input?.abortSignal ? AbortSignal.any([payload.input.abortSignal, channelOwnership.abortSignal]) : channelOwnership.abortSignal,
       }
     : { ...payload.input }
+  if (payload.callerAbortSignal) markAgentInvocationCallerAbortSignal(workflowInput, true)
 
   let channelDeliveryStatus: "completed" | "failed" = "failed"
   let channelDeliveryJournaled = !channelDelivery
