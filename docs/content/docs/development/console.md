@@ -334,7 +334,7 @@ Browsers can omit both headers on HTTP origins. Requests with neither same-origi
 
 Reverse proxies must not add the marker to incoming requests or permit CORS preflights from foreign origins. Otherwise, foreign pages could bypass the transport's origin checks.
 
-The `vitehub:console:agent-invocations` RPC operation accepts an Agent name, `method: 'POST'`, and a body typed as `ConsoleAgentInvocationInput` from `vite-hub/console`. The body requires a non-empty `prompt` and can include a configured `invokerProfileId` and prior `messages`.
+The `vitehub:console:agent-invocations` RPC operation accepts an Agent name, `method: 'POST'`, and a body typed as `ConsoleAgentInvocationInput` from `vite-hub/console`. The body requires a non-empty `prompt` unless it includes an image attachment. It can include a configured `invokerProfileId` and prior `messages`.
 
 ```ts
 import { createMessage } from 'vite-hub/agent'

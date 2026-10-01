@@ -142,7 +142,7 @@ function isConsoleRpcCallPath(pathname: string): boolean {
 
 function invocationEnvelopePrefix(body: string): string | undefined {
   // Large invocation calls put the method first so it can be classified within 64 KiB.
-  const prefix = /^[ \t\r\n]*\{[ \t\r\n]*"method"[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\]|\\.)*")[ \t\r\n]*,/.exec(body)
+  const prefix = /^[ \t\r\n]*\{[ \t\r\n]*"method"[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\]|\\.)*")[ \t\r\n]*(?:,|(?=\}))/.exec(body)
   if (!prefix) return undefined
   return JSON.parse(prefix[1]!) === consoleRpcMethods.agentInvocations ? prefix[0] : undefined
 }
