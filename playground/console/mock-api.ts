@@ -10,6 +10,10 @@ import {
 } from "../../packages/vite-hub/src/console/runtime/server/usage.ts"
 import { consoleSearchExcerpt } from "../../packages/vite-hub/src/console/runtime/server/search.ts"
 
+import { consoleDefinitionSectionIds } from "../../packages/vite-hub/src/console/runtime/definitions.ts"
+import type { ConsoleDefinitionCatalog, ConsoleDefinitionSectionId } from "../../packages/vite-hub/src/console/runtime/definitions.ts"
+import type { ConsoleSectionId } from "../../packages/vite-hub/src/console/runtime/sections.ts"
+
 import type { Plugin } from "vite"
 import databaseFixture from "./database.fixture.json" with { type: "json" }
 import fixtureDocument from "./console.fixture.json" with { type: "json" }
@@ -22,8 +26,89 @@ for (const record of fixture.invocations) {
   store.create(input)
 }
 const invocations = defineAgentInvocations({ content: "content", store })
-const sections = ["env", "agents", "usage", "database", "kv", "workflows", "queues", "schedules"] as const
+const sections = [
+  "env",
+  "agents",
+  "usage",
+  "blob",
+  "databases",
+  "kv",
+  "rate-limits",
+  "sandboxes",
+  "workspaces",
+  "workflows",
+  "queues",
+  "schedules",
+] as const satisfies readonly ConsoleSectionId[]
 const definitions = {
+  databases: [
+    {
+      fields: [
+        { label: "Mode", value: "Named" },
+        { label: "Tables", value: databaseFixture.tables.map(table => table.name).join(", ") },
+      ],
+      file: "server/database/auth.ts",
+      name: databaseFixture.schema,
+      source: "database",
+    },
+  ],
+  "rate-limits": [
+    {
+      fields: [
+        { label: "Limit", value: "20" },
+        { label: "Window", value: "1m" },
+        { label: "Enforcement", value: "Strict" },
+        { label: "Provider failure", value: "Deny" },
+        { label: "Source location", value: "12:9" },
+      ],
+      file: "server/api/agents/[agent]/invoke.post.ts",
+      name: "agent-invoke",
+      source: "require-rate-limit",
+    },
+    {
+      fields: [
+        { label: "Limit", value: "120" },
+        { label: "Window", value: "1h" },
+        { label: "Enforcement", value: "Best effort" },
+        { label: "Provider failure", value: "Allow" },
+        { label: "Source location", value: "8:3" },
+      ],
+      file: "server/api/search.get.ts",
+      name: "console-search",
+      source: "require-rate-limit",
+    },
+  ],
+  sandboxes: [
+    {
+      fields: [{ label: "Kind", value: "Definition" }],
+      file: "server/sandboxes/release-check.ts",
+      name: "release-check",
+      source: "server-sandboxes",
+    },
+    {
+      fields: [{ label: "Kind", value: "Package entry" }],
+      file: "server/sandboxes/docs-preview.sandbox.ts",
+      name: "docs-preview",
+      source: "vite-suffix",
+    },
+  ],
+  workspaces: [
+    {
+      fields: [
+        { label: "Kind", value: "Workspace Definition" },
+        { label: "Source root", value: "docs/content" },
+      ],
+      file: "server/workspaces/docs.ts",
+      name: "docs",
+      source: "workspace",
+    },
+    {
+      fields: [{ label: "Kind", value: "Agent workspace" }],
+      file: "server/agents/release-engineer/workspace.ts",
+      name: "release-engineer",
+      source: "server-agent-workspaces",
+    },
+  ],
   queues: [
     {
       fields: [],
@@ -39,6 +124,27 @@ const definitions = {
     },
   ],
   schedules: [
+    {
+      fields: [
+        { label: "Kind", value: "Static schedule" },
+        { label: "Cron", value: "0 3 * * *" },
+        { label: "Time zone", value: "UTC" },
+        { label: "Manual", value: "Enabled" },
+      ],
+      file: "server/schedules/nightly-release-notes.ts",
+      name: "nightly-release-notes",
+      runnable: true,
+      source: "server-schedules",
+    },
+    {
+      fields: [
+        { label: "Kind", value: "Runtime target" },
+        { label: "Runtime schedules", value: "Allowed" },
+      ],
+      file: "server/schedules/invocation-reminder.ts",
+      name: "invocation-reminder",
+      source: "server-schedules",
+    },
     {
       fields: [
         { label: "Kind", value: "Static schedule" },
@@ -83,6 +189,18 @@ const definitions = {
       name: "rebuild-console-index",
       source: "workflow",
     },
+  ],
+} as const satisfies Required<ConsoleDefinitionCatalog>
+const blobStores = {
+  default: [
+    { contentType: "image/png", customMetadata: { agent: "interface-engineer" }, httpEtag: "\"5f1c2a\"", httpMetadata: { cacheControl: "private, max-age=3600" }, pathname: "attachments/ainv_console_navigation/landscape.png", size: 482_311, uploadedAt: "2026-08-30T17:42:10.000Z" },
+    { contentType: "image/png", customMetadata: { agent: "interface-engineer" }, httpEtag: "\"8a04d7\"", httpMetadata: { cacheControl: "private, max-age=3600" }, pathname: "attachments/ainv_console_navigation/portrait.png", size: 301_876, uploadedAt: "2026-08-30T17:42:12.000Z" },
+    { contentType: "application/json", customMetadata: {}, httpEtag: "\"c93e11\"", httpMetadata: {}, pathname: "exports/usage/2026-08.json", size: 18_204, uploadedAt: "2026-08-31T00:05:00.000Z" },
+    { contentType: "text/markdown; charset=utf-8", customMetadata: { release: "0.0.1" }, httpEtag: "\"1b77f0\"", httpMetadata: { contentLanguage: "en" }, pathname: "releases/0.0.1/notes.md", size: 6_912, uploadedAt: "2026-08-29T12:30:00.000Z" },
+  ],
+  public: [
+    { contentType: "image/svg+xml", customMetadata: {}, httpEtag: "\"44d2b9\"", httpMetadata: { cacheControl: "public, max-age=31536000, immutable" }, pathname: "brand/vitehub-mark.svg", size: 1_284, uploadedAt: "2026-08-12T09:00:00.000Z", urlAvailable: true },
+    { contentType: "image/png", customMetadata: {}, httpEtag: "\"e0a613\"", httpMetadata: { cacheControl: "public, max-age=86400" }, pathname: "docs/console-home.png", size: 214_540, uploadedAt: "2026-08-28T15:20:00.000Z", urlAvailable: true },
   ],
 } as const
 const kvStores = {
@@ -136,6 +254,31 @@ function formattedKVValue(key: string, name: keyof typeof kvStores, value: unkno
     type: Array.isArray(value) ? "array" : value === null ? "null" : typeof value,
     value: text,
   }
+}
+
+function blobPage(url: URL): Record<string, unknown> | undefined {
+  const requested = url.searchParams.get("store") || "default"
+  if (requested !== "default" && requested !== "public") return
+  const prefix = url.searchParams.get("prefix") || ""
+  const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 100, 1), 1_000)
+  const offset = Math.max(Number(url.searchParams.get("cursor")) || 0, 0)
+  const matches = blobStores[requested]
+    .filter(blob => blob.pathname.startsWith(prefix))
+    .toSorted((left, right) => left.pathname.localeCompare(right.pathname))
+  const hasMore = offset + limit < matches.length
+  return {
+    blobs: matches.slice(offset, offset + limit),
+    ...(hasMore ? { cursor: String(offset + limit) } : {}),
+    hasMore,
+    limit,
+    prefix,
+    store: requested,
+    stores: Object.keys(blobStores),
+  }
+}
+
+function definitionSection(value: string | null): ConsoleDefinitionSectionId | undefined {
+  return consoleDefinitionSectionIds.find(section => section === value)
 }
 
 function databaseCell(value: unknown): { kind: string, value: string } {
@@ -306,6 +449,16 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
     return true
   }
 
+  if (path === "/api/_vitehub/console/blob") {
+    const page = blobPage(url)
+    if (!page) {
+      json(response, { error: "Blob store not found" }, 404)
+      return true
+    }
+    json(response, page)
+    return true
+  }
+
   if (path === "/api/_vitehub/console/database") {
     json(response, databaseInspection(url))
     return true
@@ -334,8 +487,8 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
   }
 
   if (path === "/api/_vitehub/console/definitions") {
-    const section = url.searchParams.get("section")
-    if (section !== "queues" && section !== "schedules" && section !== "workflows") {
+    const section = definitionSection(url.searchParams.get("section"))
+    if (!section) {
       json(response, { error: "A valid definition section is required" }, 400)
       return true
     }
