@@ -339,7 +339,9 @@ function decodeBase64Url(data: string): string {
 }
 
 function flattenParts(part: GmailApiPart | undefined, excludeAttachments = false, parts: GmailApiPart[] = []): GmailApiPart[] {
-  if (!part || (excludeAttachments && part.filename)) return parts
+  if (!part) return parts
+  const disposition = part.headers?.find(header => header.name.toLowerCase() === "content-disposition")?.value
+  if (excludeAttachments && (part.filename || /^\s*attachment(?:\s*;|\s*$)/i.test(disposition ?? ""))) return parts
   parts.push(part)
   for (const child of part.parts || []) flattenParts(child, excludeAttachments, parts)
   return parts
@@ -361,12 +363,32 @@ function messageBodyPart(parts: GmailApiPart[]): GmailApiPart | undefined {
   return candidates.find(part => part.mimeType === "text/plain") ?? candidates.find(part => part.mimeType === "text/html")
 }
 
+const latin1Charsets = new Set(["iso-8859-1", "iso_8859-1", "iso_8859-1:1987", "iso-ir-100", "latin1", "l1", "ibm819", "cp819", "csisolatin1"])
+
+function decodeMimeBody(data: string, charset: string | undefined): string {
+  const bytes = decodeBase64UrlBytes(data)
+  // MIME ISO-8859-1 keeps C1 bytes; TextDecoder aliases it to Windows-1252.
+  if (charset && latin1Charsets.has(charset.trim().toLowerCase())) {
+    let text = ""
+    for (let start = 0; start < bytes.length; start += 8192) text += String.fromCharCode(...bytes.subarray(start, start + 8192))
+    return text
+  }
+  let decoder = new TextDecoder()
+  try {
+    if (charset) decoder = new TextDecoder(charset)
+  }
+  catch {
+    // Untrusted MIME labels outside this host's Encoding Standard support keep UTF-8 replacement decoding.
+  }
+  return decoder.decode(bytes)
+}
+
 function bodyText(parts: GmailApiPart[], limit: number): string {
   const part = messageBodyPart(parts)
   const data = part?.body?.data
   const contentType = part?.headers?.find(header => header.name.toLowerCase() === "content-type")?.value
   const charset = contentType?.match(/;\s*charset\s*=\s*(?:"([^"\r\n]+)"|([^;\s]+))/i)
-  const decoded = data ? new TextDecoder(charset?.[1] || charset?.[2] || "utf-8").decode(decodeBase64UrlBytes(data)) : ""
+  const decoded = data ? decodeMimeBody(data, charset?.[1] || charset?.[2]) : ""
   return (part?.mimeType === "text/html" ? htmlToText(decoded) : decoded)
     .replace(/\r\n?/g, "\n")
     .replace(/[ \t\f\v]+/g, " ")
@@ -491,6 +513,21 @@ export async function getGmailMessage(client: GmailClient, id: string, bodyLimit
     throw error
   }
   return await toGmailMessage(client, message, bodyLimit)
+}
+
+/** History labels can be stale. Read current labels without downloading a non-Inbox body. */
+async function getGmailInboxMessage(client: GmailClient, id: string, bodyLimit: number): Promise<GmailMessage | undefined> {
+  let metadata: { labelIds?: string[] }
+  try {
+    metadata = await gmailRequest(client, v.object({ labelIds: v.optional(v.array(v.string())) }), {
+      method: "GET", path: `messages/${encodeURIComponent(id)}`, query: { format: "minimal" },
+    })
+  }
+  catch (error) {
+    if (gmailErrorStatus(error) === 404) return undefined
+    throw error
+  }
+  return metadata.labelIds?.includes("INBOX") ? await getGmailMessage(client, id, bodyLimit) : undefined
 }
 
 /** Reads messages in order with bounded concurrency. Deleted messages are skipped. */
@@ -831,7 +868,10 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
     for (let start = 0; start < ids.length; start += messageFetchConcurrency) {
       await renew()
       const batch = ids.slice(start, start + messageFetchConcurrency)
-      const messages = new Map((await getGmailMessages(client, batch, sync.bodyLimit)).map(message => [message.id, message]))
+      const fetched = retrying
+        ? await getGmailMessages(client, batch, sync.bodyLimit)
+        : (await Promise.all(batch.map(id => getGmailInboxMessage(client, id, sync.bodyLimit)))).filter(message => message !== undefined)
+      const messages = new Map(fetched.map(message => [message.id, message]))
       for (const id of batch) {
         const message = messages.get(id)
         let failed = false
@@ -878,7 +918,7 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
           })
           continue
         }
-        ids = (page.history || []).flatMap(entry => (entry.messagesAdded || []).flatMap(({ message }) => message.labelIds && !message.labelIds.includes("INBOX") ? [] : [message.id]))
+        ids = (page.history || []).flatMap(entry => (entry.messagesAdded || []).map(({ message }) => message.id))
         nextPageToken = page.nextPageToken
         historyId = page.historyId
       } else {

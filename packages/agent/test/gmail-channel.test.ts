@@ -165,7 +165,7 @@ async function createGoogle(options: { emailAddress?: string, inlineAttachment?:
     if (messageMatch) {
       const message = messages.get(decodeURIComponent(messageMatch[1]!))
       if (!message) return Response.json({ error: { code: 404, message: "Not Found" } }, { status: 404 })
-      return Response.json(messageMatch[2] ? { id: message.id, labelIds: message.labelIds, threadId: message.threadId } : message)
+      return Response.json(messageMatch[2] || url.searchParams.get("format") === "minimal" ? { id: message.id, labelIds: message.labelIds, threadId: message.threadId } : message)
     }
     const threadMatch = /^threads\/([^/]+)$/.exec(path)
     if (threadMatch) return Response.json({ id: threadMatch[1], messages: [...messages.values()].filter(message => message.threadId === threadMatch[1]) })
@@ -474,22 +474,26 @@ describe("gmail() Channel", () => {
     }
   })
 
-  it("skips known non-Inbox history bodies while checking entries without labels", async () => {
+  it("checks current labels before reading bodies, including archived and restored history entries", async () => {
     const state = createLibsqlAgentState({ url: ":memory:" })
     await state.connect()
     try {
       await state.set("mail:history-id", "100")
-      const messages = [apiMessage("inbox", "Inbox"), apiMessage("unknown", "Unknown"), apiMessage("archived", "Archived")]
-      messages[2]!.labelIds = []
+      const messages = [apiMessage("sent", "Sent"), apiMessage("empty", "Empty"), apiMessage("inbox", "Inbox"), apiMessage("unknown", "Unknown"), apiMessage("archived", "Archived"), apiMessage("restored", "Restored")]
+      messages[0]!.labelIds = ["SENT"]
+      messages[1]!.labelIds = []
+      messages[4]!.labelIds = []
       const delivered: string[] = []
       const client = vi.fn<GmailClient>(async request => {
         if (request.path === "history") return { historyId: "200", history: [{ messagesAdded: [
           { message: { id: "sent", labelIds: ["SENT"] } },
           { message: { id: "empty", labelIds: [] } },
           { message: { id: "inbox", labelIds: ["INBOX"] } },
-          { message: { id: "unknown" } }, { message: { id: "archived" } },
+          { message: { id: "unknown" } }, { message: { id: "archived", labelIds: ["INBOX"] } },
+          { message: { id: "restored", labelIds: [] } },
         ] }] }
         const message = messages.find(candidate => request.path === `messages/${candidate.id}`)
+        if (message && request.query?.format === "minimal") return { id: message.id, labelIds: message.labelIds }
         if (message) return message
         throw new Error(`Unexpected request: ${request.path}`)
       })
@@ -499,14 +503,85 @@ describe("gmail() Channel", () => {
           return { failed: 0, items: [], nextCursor: null, processed: batch.length, skipped: 0 }
         },
       })
-      expect(delivered).toEqual(["inbox", "unknown"])
-      expect(client.mock.calls.filter(([request]) => request.path.startsWith("messages/")).map(([request]) => request.path)).toEqual([
-        "messages/inbox", "messages/unknown", "messages/archived",
+      expect(delivered).toEqual(["inbox", "unknown", "restored"])
+      expect(client.mock.calls.filter(([request]) => request.query?.format === "minimal").map(([request]) => request.path)).toEqual(messages.map(message => `messages/${message.id}`))
+      expect(client.mock.calls.filter(([request]) => request.query?.format === "full").map(([request]) => request.path)).toEqual([
+        "messages/inbox", "messages/unknown", "messages/restored",
       ])
       expect(await state.get("mail:history-id")).toBe("200")
     } finally {
       await state.disconnect()
     }
+  })
+
+  it("rechecks Inbox after a label change between metadata and body fetch", async () => {
+    const state = createLibsqlAgentState({ url: ":memory:" })
+    await state.connect()
+    try {
+      await state.set("mail:history-id", "100")
+      const dispatch = vi.fn()
+      const client: GmailClient = async request => {
+        if (request.path === "history") return { historyId: "200", history: [{ messagesAdded: [{ message: { id: "archived" } }] }] }
+        if (request.query?.format === "minimal") return { labelIds: ["INBOX"] }
+        return { ...apiMessage("archived", "Archived after metadata"), labelIds: [] }
+      }
+      await syncGmailMailbox({ bodyLimit: 1000, client, dispatch, notificationHistoryId: "200", state: { keyPrefix: "mail:", state } })
+      expect(dispatch).not.toHaveBeenCalled()
+      expect(await state.get("mail:history-id")).toBe("200")
+    } finally { await state.disconnect() }
+  })
+
+  it("keeps the cursor and pending IDs until a failed metadata request succeeds", async () => {
+    const state = createLibsqlAgentState({ url: ":memory:" })
+    await state.connect()
+    try {
+      await state.set("mail:history-id", "100")
+      let fail = true
+      const error = Object.assign(new Error("Metadata temporarily unavailable"), { status: 503 })
+      const client = vi.fn<GmailClient>(async request => {
+        if (request.path === "history" && request.query?.startHistoryId === "200") return { historyId: "200" }
+        if (request.path === "history") return { historyId: "200", history: [{ messagesAdded: [{ message: { id: "restored", labelIds: [] } }] }] }
+        if (request.query?.format === "minimal" && fail) throw error
+        if (request.query?.format === "minimal") return { labelIds: ["INBOX"] }
+        return apiMessage("restored", "Restored")
+      })
+      const dispatch = vi.fn(async (messages: readonly { id: string }[]) => ({ failed: 0, items: [], nextCursor: null, processed: messages.length, skipped: 0 }))
+      const sync = { bodyLimit: 1000, client, dispatch, notificationHistoryId: "200", state: { keyPrefix: "mail:", state } }
+      await expect(syncGmailMailbox(sync)).rejects.toBe(error)
+      expect(await state.get("mail:history-id")).toBe("100")
+      expect(dispatch).not.toHaveBeenCalled()
+      fail = false
+      await syncGmailMailbox(sync)
+      expect(dispatch).toHaveBeenCalledTimes(1)
+      expect(await state.get("mail:history-id")).toBe("200")
+      expect(client.mock.calls.filter(([request]) => request.path === "history").map(([request]) => request.query?.startHistoryId)).toEqual(["100", "200"])
+    } finally { await state.disconnect() }
+  })
+
+  it.each(["UTF-32", "UTF-7", "ISO-2022-KR"])("continues mailbox sync after an unsupported %s MIME charset", async charset => {
+    const state = createLibsqlAgentState({ url: ":memory:" })
+    await state.connect()
+    try {
+      await state.set("mail:history-id", "100")
+      const unsupported = { id: "unsupported", threadId: "thread-unsupported", labelIds: ["INBOX"], payload: {
+        mimeType: "text/plain", headers: [{ name: "Content-Type", value: `text/plain; charset=${charset}` }], body: { data: base64Url("Fallback café") },
+      } }
+      const delivered: string[] = []
+      const client: GmailClient = async request => {
+        if (request.path === "history") return { historyId: "200", history: [{ messagesAdded: ["unsupported", "next"].map(id => ({ message: { id } })) }] }
+        if (request.path === "messages/unsupported") return unsupported
+        if (request.path === "messages/next") return apiMessage("next", "Next message")
+        throw new Error(`Unexpected request: ${request.path}`)
+      }
+      await syncGmailMailbox({ bodyLimit: 1000, client, notificationHistoryId: "200", state: { keyPrefix: "mail:", state }, dispatch: async batch => {
+        delivered.push(...batch.map(message => message.id))
+        if (batch[0]?.id === "unsupported") expect(batch[0].body).toBe("Fallback café")
+        return { failed: 0, items: [], nextCursor: null, processed: batch.length, skipped: 0 }
+      } })
+      expect(delivered).toEqual(["unsupported", "next"])
+      expect(await state.get("mail:history-id")).toBe("200")
+      expect(await state.get("mail:sync-progress")).toBeNull()
+    } finally { await state.disconnect() }
   })
 
   it.each((["history", "recovery"] as const).flatMap(mode =>
@@ -584,8 +659,8 @@ describe("gmail() Channel", () => {
           return Response.json({ messages: ids.map(id => ({ id })) })
         }
         const id = /\/messages\/(m\d+)$/.exec(url.pathname)?.[1]
-        if (id) bodyFetches.push(id)
-        if (failureKind === "body" && id === "m6" && failOnce) {
+        if (id && url.searchParams.get("format") === "full") bodyFetches.push(id)
+        if (failureKind === "body" && id === "m6" && url.searchParams.get("format") === "full" && failOnce) {
           failOnce = false
           throw failure
         }
@@ -649,7 +724,7 @@ describe("gmail() Channel", () => {
             : { messages: ids.map(id => ({ id })), nextPageToken }
         }
         const id = request.path.slice("messages/".length)
-        bodies.push(id)
+        if (request.query?.format === "full") bodies.push(id)
         return apiMessage(id, id)
       }
       const sync = { bodyLimit: 1000, client, notificationHistoryId: "300", state: { keyPrefix: "mail:", state },
@@ -1140,7 +1215,7 @@ describe("gmail() Channel", () => {
     expect(prompts).toEqual(["m1", "m2"])
     expect(pages).toEqual([null, "page-2", "page-2"])
     expect(historyCursors).toEqual(mode === "history" ? ["105", "105", "105", "300"] : ["105", "300"])
-    expect(google.calls.filter(call => call.path === "messages/m1")).toHaveLength(1)
+    expect(google.calls.filter(call => call.path === "messages/m1" && call.query.get("format") === "full")).toHaveLength(1)
     await Promise.all(await push())
     expect(prompts).toEqual(["m1", "m2"])
     expect(historyCursors.at(-1)).toBe("300")
@@ -1182,8 +1257,8 @@ describe("gmail() Channel", () => {
     await push("105")
     expect(prompts).toEqual(expired ? ["m1", "m3", "m2"] : ["m1", "m2"])
     expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("startHistoryId"))).toEqual(["100", expired ? "300" : "105"])
-    expect(google.calls.filter(call => call.path === "messages/m1")).toHaveLength(1)
-    expect(google.calls.filter(call => call.path === "messages/m2")).toHaveLength(2)
+    expect(google.calls.filter(call => call.path === "messages/m1" && call.query.get("format") === "full")).toHaveLength(1)
+    expect(google.calls.filter(call => call.path === "messages/m2" && call.query.get("format") === "full")).toHaveLength(2)
     if (expired) expect(google.calls.filter(call => call.path === "messages").map(call => call.query.get("pageToken"))).toEqual([null, "page-2"])
   })
 
@@ -1199,6 +1274,20 @@ describe("gmail() Channel", () => {
     const message = await getGmailMessage(client, "m1", 9)
     expect(message?.body).toBe("Café résu")
     expect(gmailMessagePrompt(message!)).toContain("Café résu")
+  })
+
+  it.each(["ISO-8859-1", "iso-ir-100", "latin1", "windows-1252"])("keeps the MIME %s byte semantics", async charset => {
+    const client: GmailClient = async () => ({ id: "m1", threadId: "thread-1", payload: {
+      mimeType: "text/plain", headers: [{ name: "Content-Type", value: `text/plain; charset=${charset}` }], body: { data: base64Url(Uint8Array.of(0x41, 0x80, 0xe9)) },
+    } })
+    expect((await getGmailMessage(client, "m1", 100))?.body).toBe(charset === "windows-1252" ? "A€é" : "A\u0080é")
+  })
+
+  it("falls back to UTF-8 for an unsupported attachment-backed body charset", async () => {
+    const client: GmailClient = async request => request.path.includes("/attachments/")
+      ? { data: base64Url("Fallback café") }
+      : { id: "m1", threadId: "thread-1", payload: { mimeType: "text/plain", headers: [{ name: "Content-Type", value: 'text/plain; charset="UTF-7"' }], body: { attachmentId: "body" } } }
+    expect((await getGmailMessage(client, "m1", 100))?.body).toBe("Fallback café")
   })
 
   it.each(["text/plain", "text/html"])("loads an attachment-backed %s body before applying its limit", async mimeType => {
@@ -1224,9 +1313,9 @@ describe("gmail() Channel", () => {
     ])
   })
 
-  it.each([false, true])("excludes attached-message descendants from the primary body with attachment-backed child %s", async (attachmentBacked) => {
+  it.each([false, true].flatMap(attachmentBacked => [false, true].map(dispositionOnly => ({ attachmentBacked, dispositionOnly }))))("excludes attached-message descendants with attachment-backed child $attachmentBacked and disposition-only parent $dispositionOnly", async ({ attachmentBacked, dispositionOnly }) => {
     const message = { id: "m1", threadId: "thread-1", payload: { mimeType: "multipart/mixed", parts: [
-      { mimeType: "message/rfc822", filename: "forwarded.eml", body: { attachmentId: "forwarded", size: 200 }, parts: [
+      { mimeType: "message/rfc822", filename: dispositionOnly ? "" : "forwarded.eml", headers: [{ name: "cOnTeNt-DiSpOsItIoN", value: "  AtTaChMeNt ; creation-date=now" }], body: { attachmentId: "forwarded", size: 200 }, parts: [
         { mimeType: "multipart/alternative", parts: [
           { mimeType: "text/plain", body: attachmentBacked ? { attachmentId: "forwarded-text" } : { data: base64Url("Attached message secret") } },
           { mimeType: "text/plain", filename: "nested.txt", body: { attachmentId: "nested", size: 20 } },
@@ -1244,7 +1333,7 @@ describe("gmail() Channel", () => {
     const loaded = await getGmailMessage(client, "m1", 12)
     expect(loaded?.body).toBe("Main message")
     expect(loaded?.attachments).toEqual([
-      { attachmentId: "forwarded", filename: "forwarded.eml", mimeType: "message/rfc822", size: 200 },
+      ...(dispositionOnly ? [] : [{ attachmentId: "forwarded", filename: "forwarded.eml", mimeType: "message/rfc822", size: 200 }]),
       { attachmentId: "nested", filename: "nested.txt", mimeType: "text/plain", size: 20 },
     ])
     expect((await getGmailThread(client, "thread-1", 12))[0]?.body).toBe("Main message")

@@ -76,9 +76,11 @@ The Channel adds instructions to the Agent: the email content is untrusted data,
 | `date` | ISO 8601 time when Gmail received the message. |
 | `snippet` | Gmail's short preview. |
 | `labelIds` | Label IDs when Gmail delivered the message. |
-| `body` | Plain-text body, decoded with its MIME charset (UTF-8 when absent) and capped at `bodyLimit` characters (default 10000). HTML-only mail is converted to text. Attachment-backed MIME bodies are fetched before decoding and limiting the text. |
+| `body` | Plain-text body, decoded with its MIME charset and capped at `bodyLimit` characters (default 10000). HTML-only mail is converted to text. Attachment-backed MIME bodies are fetched before decoding and limiting the text. Filename-bearing and attachment-disposition subtrees are excluded. |
 | `attachments` | `{ attachmentId?, filename, mimeType, size }` for each filename-bearing attachment. Inline attachments have no `attachmentId`. The data is not downloaded. |
 | `headers` | Headers by lowercase name, such as `list-id`, capped at 1000 characters per value. Transport headers such as `received` and `dkim-signature` are omitted. |
+
+Body decoding supports ISO-8859-1 and the host’s `TextDecoder` encodings. Missing or unsupported charsets use UTF-8 with replacement characters for invalid bytes, so one unsupported charset does not stop mailbox sync. ISO-8859-1 bytes retain their Latin-1 values; Windows-1252 uses its own character mapping.
 
 The default prompt lists the headers, then the body. Pass `prompt: message => string` to build your own.
 
@@ -208,7 +210,7 @@ export default defineSchedule({
 
 1. Pub/Sub sends a push request with a Google-signed OIDC token. The Channel verifies the signature with Google's public keys, the issuer, the audience, the expiry, and the verified service account email. It then checks the subscription name. A failed check returns `401` or `400`.
 2. The Channel acknowledges the push with `204` and continues in the background.
-3. It reads `history.list` from the stored history cursor and fetches each new Inbox message.
+3. It reads `history.list` from the stored history cursor, checks each message’s current labels with a metadata-only request, and fetches bodies for messages still in Inbox. Historical labels do not exclude a message restored to Inbox before that check. Failed dispatches remain eligible for retry after a hook removes Inbox.
 4. It starts one Invocation per message through the `received` trigger. The Invocation run ID is `channel:<channel>:<message id>`. A terminal Invocation or confirmed Workflow dispatch is skipped. An active claim prevents concurrent execution. A claim for an unconfirmed pending Invocation remains retryable and does not allow the history cursor to advance.
 5. It saves page tokens and remaining message IDs in the Channel's State Adapter as synchronization proceeds. The next push resumes unfinished work without fetching completed message bodies again. After every message has an Invocation, it stores the new history cursor and clears the saved progress in one transaction.
 
