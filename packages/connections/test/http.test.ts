@@ -38,7 +38,7 @@ describe("createConnectionsHandler", () => {
     expect(getRuntime).not.toHaveBeenCalled();
   });
 
-  it.each(["team/mail", "n".repeat(129)])("manages discovered names through JSON and web authorization (%s)", async (name) => {
+  it.each(["team/mail", "n".repeat(129), "sales+ops", "team/客户 inbox"])("manages discovered names through JSON and web authorization (%s)", async (name) => {
     const test = createTestRuntime();
     const runtime = createConnectionsRuntime({
       definitions: { [name]: mailConnection() },

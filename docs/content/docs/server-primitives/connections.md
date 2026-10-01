@@ -104,7 +104,7 @@ for (const message of messages) {
 
 Method inputs and responses come from the provider API description. Only methods selected in `api` exist on the client. Path parameters and query parameters are fields of the input. The JSON body is `requestBody`.
 
-`fetch()` calls a URL on a catalog origin with the Connection token. Use it for endpoints that the catalog does not describe. The token is never sent to another origin.
+`fetch()` calls a URL on a catalog origin with the Connection token. Use it for endpoints that the catalog does not describe. The token is never sent to another origin. `ConnectionFetchInit` accepts a string body, so a write can be stored and replayed after approval. Encode form parameters with `URLSearchParams.toString()` and set `content-type` to `application/x-www-form-urlencoded`.
 
 ```ts
 const response = await useConnection('google').fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile')

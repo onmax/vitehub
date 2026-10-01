@@ -448,6 +448,16 @@ describe("calls", () => {
     expect(await rejection(client.fetch("https://mail.example.com/mail/v1/x", { body: "{}", method: "POST" }))).toMatchObject({ code: "CONNECTION_DENIED" })
   })
 
+  it.each([new URLSearchParams("label=INBOX"), new FormData()])("rejects unsupported bodies from untyped callers before dispatch (%s)", async (body) => {
+    const test = createTestRuntime(mailConnection({ server: { read: true, write: ["fetch"] } }))
+    await connect(test)
+    const calls = test.provider.calls.length
+    const client = test.runtime.client("mail", {})
+    const result = Reflect.apply(client.fetch, client, ["https://mail.example.com/mail/v1/users/me/messages/m1/modify", { body, method: "POST" }])
+    expect(await rejection(result)).toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(test.provider.calls).toHaveLength(calls)
+  })
+
   it("applies the JSON content type only to typed method bodies", async () => {
     const test = createTestRuntime(mailConnection({ server: { read: true, write: ["fetch", "mail.messages.modify"] } }))
     await connect(test)

@@ -38,6 +38,14 @@ describe("discoverConnectionDefinitions", () => {
     ])
   })
 
+  it("preserves filesystem-valid punctuation, spaces, and Unicode in names", async () => {
+    const root = await createTempProject()
+    await touch(root, "server/connections/sales+ops.ts")
+    await touch(root, "server/connections/team/客户 inbox.ts")
+    expect(discoverConnectionDefinitions({ rootDir: root }).map(definition => definition.name).sort())
+      .toEqual(["sales+ops", "team/客户 inbox"])
+  })
+
   it("preserves discovered names longer than the old management limit", async () => {
     const root = await createTempProject()
     await touch(root, `server/connections/${"n".repeat(129)}.ts`)

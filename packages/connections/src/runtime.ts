@@ -600,6 +600,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const write = method !== "GET" && method !== "HEAD"
     const allowed = Object.values(providerApis(context.definition)).some(catalog => url.origin === new URL(catalog.rootUrl).origin)
     if (!allowed) throw new ConnectionError("invalid", `Connection "${context.name}" does not send its token to ${url.origin}.`, { details: { connection: context.name } })
+    if (init.body !== undefined && init.body !== null && !v.is(v.string(), init.body)) {
+      throw new ConnectionError("invalid", "Connection fetch accepts only a string body.")
+    }
     const body = init.body ?? undefined
     const headers: Record<string, string> = {}
     for (const [key, value] of new Headers(init.headers)) {

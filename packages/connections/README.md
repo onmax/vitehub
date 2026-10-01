@@ -44,6 +44,8 @@ const { labels = [] } = await gmail.users.labels.list({ userId: "me" });
 
 The client exposes only the methods selected in `api`. GET methods are reads and other methods are writes. Denied calls throw `ConnectionError` with code `CONNECTION_DENIED`. Writes that need approval throw `CONNECTION_APPROVAL_REQUIRED` and create an approval.
 
+`useConnection().fetch()` calls provider catalog origins with the Connection token. Its `ConnectionFetchInit` body accepts a string for approval replay. Encode form parameters with `URLSearchParams.toString()` and set the form content type.
+
 ## Use a custom store
 
 `useConnection()` uses the ViteHub Database and `VITEHUB_CONNECTIONS_KEY` by default. Call `setConnectionsRuntime()` to use another database or key:

@@ -5,7 +5,7 @@ import { google } from "../src/google.ts"
 import { useConnection } from "../src/runtime/state.ts"
 
 import type { GmailClassificationLabelFieldValue, GmailClassificationLabelValue, GmailLabel } from "../src/google.ts"
-import type { ConnectionClient, ConnectionDefinition } from "../src/types.ts"
+import type { ConnectionClient, ConnectionDefinition, ConnectionFetchInit } from "../src/types.ts"
 
 const connection = defineConnection({
   access: {
@@ -27,6 +27,18 @@ declare global {
 }
 
 describe("Connection types", () => {
+  it("declares only serializable fetch bodies", () => {
+    expectTypeOf<Parameters<Client["fetch"]>[1]>().toEqualTypeOf<ConnectionFetchInit | undefined>()
+    const text: ConnectionFetchInit = { body: "label=INBOX", method: "POST" }
+    expectTypeOf(text.body).toEqualTypeOf<string | undefined>()
+    // @ts-expect-error Encode form parameters to a string before dispatch.
+    const form: ConnectionFetchInit = { body: new URLSearchParams() }
+    // @ts-expect-error Multipart bodies cannot be persisted for approval replay.
+    const multipart: ConnectionFetchInit = { body: new FormData() }
+    expectTypeOf(form).toEqualTypeOf<ConnectionFetchInit>()
+    expectTypeOf(multipart).toEqualTypeOf<ConnectionFetchInit>()
+  })
+
   it("requires Gmail classification label identifiers in request bodies", () => {
     expectTypeOf<GmailClassificationLabelFieldValue>().toEqualTypeOf<{ fieldId: string, selection?: string }>()
     expectTypeOf<GmailClassificationLabelValue>().toEqualTypeOf<{ fields?: GmailClassificationLabelFieldValue[], labelId: string }>()
