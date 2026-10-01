@@ -42,9 +42,12 @@ export function installProcessHostStop(
     const serverListeners: [ProcessHostStopSignal, (signal: ProcessHostStopSignal) => unknown][] = [];
     for (const signal of signals) {
       for (const listener of runtime.listeners(signal)) {
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Signal listeners come from the Node process and are untyped at this boundary.
         if (typeof listener !== "function" || existing.get(signal)?.has(listener)) continue;
-        runtime.off(signal, listener as (signal: ProcessHostStopSignal) => void);
-        serverListeners.push([signal, listener as (signal: ProcessHostStopSignal) => unknown]);
+        // SAFETY: the check above proves the listener is callable, and Node calls signal listeners with the signal name.
+        const handler = listener as (signal: ProcessHostStopSignal) => void;
+        runtime.off(signal, handler);
+        serverListeners.push([signal, handler]);
       }
     }
     let stopping: Promise<void> | undefined;
