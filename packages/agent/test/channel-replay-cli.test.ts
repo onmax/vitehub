@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { describe, expect, it, vi } from "vitest"
 
 import { channelReplayQuery, channelReplayQueryHelp, parseChannelReplayArgs, runAgentChannelReplayCli } from "../src/internal/channel-replay-cli.ts"
@@ -36,6 +37,41 @@ describe("vitehub channels replay", () => {
     ])
     expect(parsed).toMatchObject({ agent: "labeller", channel: "mailbox", cursor: "abc", dryRun: true, force: true, limit: 25 })
     expect(channelReplayQuery(parsed, querySchema)).toEqual({ folder: "inbox", label: ["work", "home"] })
+  })
+
+  it.each([
+    ["typed", ["--label", "work"]],
+    ["filter", ["--filter", "label=work"]],
+  ] as const)("sends a single %s array value as an array", (_mode, args) => {
+    expect(channelReplayQuery(parseChannelReplayArgs([...args, "--folder", "inbox"]), querySchema)).toEqual({ folder: "inbox", label: ["work"] })
+  })
+
+  it("preserves scalar, repeated scalar, and schema-free filter values", () => {
+    expect(channelReplayQuery(parseChannelReplayArgs(["--folder", "inbox"]), querySchema)).toEqual({ folder: "inbox" })
+    expect(channelReplayQuery(parseChannelReplayArgs(["--folder", "inbox", "--filter", "folder=archive"]), querySchema)).toEqual({ folder: ["inbox", "archive"] })
+    expect(channelReplayQuery(parseChannelReplayArgs(["--filter", "label=work"]), undefined)).toEqual({ label: "work" })
+  })
+
+  it.each([
+    { args: ["--label", "work"], label: ["work"], code: 0 },
+    { args: ["--filter", "label=work"], label: ["work"], code: 0 },
+    { args: ["--label", "work", "--filter", "label=home"], label: ["work", "home"], code: 0 },
+    { args: ["--label", "work", "--filter", "folder=archive"], label: ["work"], code: 1 },
+    { args: ["--filter", "label=work"], label: "work", code: 0, noSchema: true },
+  ])("validates posted query $args with the Collection schema", async ({ args, label, code, noSchema }) => {
+    const requests: unknown[] = []
+    const schema = v.object({ folder: v.string(), label: noSchema ? v.string() : v.array(v.string()) })
+    const stderr = output()
+    const fetcher: typeof fetch = async (_url, init) => {
+      const { replay } = v.parse(v.object({ replay: v.object({ describe: v.optional(v.boolean()), query: v.optional(v.unknown()) }) }), JSON.parse(String(init?.body)))
+      if (replay.describe) return Response.json({ channel: "mailbox", query: noSchema ? undefined : querySchema, trigger: "received" })
+      requests.push(replay.query)
+      if (!v.safeParse(schema, replay.query).success) return Response.json({ message: "Invalid Collection query" }, { status: 400 })
+      return Response.json({ failed: 0, items: [], nextCursor: null, processed: 0, skipped: 0 })
+    }
+    expect(await runAgentChannelReplayCli(["--agent", "labeller", "--channel", "mailbox", "--filter", "folder=inbox", ...args], { env: {}, stderr, stdout: output() }, { fetch: fetcher })).toBe(code)
+    expect(requests).toEqual([{ folder: code === 1 ? ["inbox", "archive"] : "inbox", label }])
+    if (code === 1) expect(stderr.chunks.join("")).toContain("Invalid Collection query")
   })
 
   it("rejects malformed options and query keys outside the schema", () => {
