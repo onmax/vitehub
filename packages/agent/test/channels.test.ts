@@ -1648,6 +1648,32 @@ describe("agent channels", () => {
     }
   })
 
+  it.each(["Reviewer", "team/reviewer"])("uses the discovered public origin for an explicitly named Agent %j", async (agentName) => {
+    const { github } = await import("../src/channels.ts")
+    vi.stubGlobal("__VITEHUB_PUBLIC_URL__", { agents: { support: "https://agents.example.test", [agentName]: "https://other.example.test" } })
+    try {
+      const channel = github({ activity: true, pullRequest: { reconcile: { prompt: "Review this pull request." }, reply: false } })
+      const agent = defineAgent({ name: agentName, channels: { github: channel }, driver: { run: () => "done" }, runtime: false })
+      const triggers = await resolveAgentTriggers(agent, {
+        agentIdentity: { name: "support" }, capabilities: {}, memo: vi.fn(), runtime: "unknown", runtimeConfig: {}, waitUntil: vi.fn(),
+      })
+      const trigger = triggers["github.webhook"]
+      if (!trigger) throw new Error("Missing GitHub webhook trigger.")
+      const result = await trigger.invoke({
+        github: { deliveryId: "delivery-explicit-name", event: "pull_request", installationId: 123 },
+        payload: githubPullRequestPayload("reopened"),
+      })
+      if (result instanceof Response || !result.run) throw new Error("Expected GitHub invocation.")
+      expect(result.run.activity?.links).toEqual([{
+        label: "Current session",
+        url: `https://agents.example.test/_vitehub/agents/${encodeRouteSegment(agentName)}/invocations/${await agentInvocationId(result.run.runId, agentName)}`,
+      }])
+    }
+    finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it("fetches public pull request head metadata without a token", async () => {
     const { github } = await import("../src/channels.ts")
     const tokenKeys = ["VITEHUB_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"] as const

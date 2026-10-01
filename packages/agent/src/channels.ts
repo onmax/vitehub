@@ -2911,7 +2911,8 @@ async function githubActivitySessionLink<TRuntimeConfig extends AgentRuntimeConf
   const agentName = context.agentName || context.agentIdentity?.name
   if (!options.publicUrl && !agentName) return
   if (!agentName) throw new Error("GitHub activity session links require an Agent identity.")
-  const publicUrl = options.publicUrl ? await resolveRuntimeValue(options.publicUrl, context) : resolvePublicUrl({ agentName })
+  // The public URL callback uses the discovered name, while an explicit name identifies the invocation.
+  const publicUrl = options.publicUrl ? await resolveRuntimeValue(options.publicUrl, context) : resolvePublicUrl({ agentName: context.agentIdentity?.name || agentName })
   if (!publicUrl) return
   const { agentInvocationId } = await import("./invocations.ts")
   return { label: "Current session", url: consoleInvocationUrl(publicUrl, agentName, await agentInvocationId(runId, agentName)) }

@@ -69,7 +69,7 @@ vitehub({
 })
 ```
 
-Use a function when one build serves Agents from different origins. ViteHub calls it once per discovered Agent at build time:
+Use a function when one build serves Agents from different origins. ViteHub calls it once per discovered Agent at build time, using the file-derived name. An explicit Definition name does not change this origin lookup:
 
 ```ts
 vitehub({

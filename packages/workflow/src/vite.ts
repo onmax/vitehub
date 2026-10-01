@@ -177,6 +177,9 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     config(config) {
       workflow = config.workflow ?? defaultWorkflow
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
+      // Keep the fallback on each input config so reused plugins do not share forwarded directories.
+      const buildConfig = config as typeof config & { __vitehubWorkflowServerDirs?: string[] }
+      buildConfig.__vitehubWorkflowServerDirs = serverDirs
     },
     configResolved(config) {
       resolved = config
@@ -184,7 +187,9 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       providerOutput = useProviderOutputCatalog(config)
       workflow = config.workflow ?? defaultWorkflow
       // SAFETY: The framework adds optional forwarded server directories to resolved Vite configuration.
-      const buildServerDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
+      const buildConfig = config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[], __vitehubWorkflowServerDirs?: string[] }
+      const buildServerDirs = buildConfig[VITEHUB_SERVER_DIRS] ?? buildConfig.__vitehubWorkflowServerDirs
+      serverDirs = buildServerDirs
       scheduleBuildConfigs.set(config, { workflow, serverDirs: buildServerDirs })
     },
     configEnvironment(name, config) {
