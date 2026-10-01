@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createAgentCliContributor } from "@vite-hub/agent/cli";
 import { runViteHubCli } from "@vite-hub/cli";
 import { createDbCliContributor } from "@vite-hub/database/cli";
+import { hubEnv } from "@vite-hub/env/vite";
 import { hubSchedule } from "@vite-hub/schedule/vite";
 import { hubWorkspace } from "@vite-hub/workspace/vite";
 import { describe, expect, it } from "vitest";
@@ -40,6 +41,13 @@ function documentedCommands(): string[] {
     .sort();
 }
 
+function documentedNamespaces(): string[] {
+  const source = readFileSync(cliReference, "utf8");
+  const sample = source.split("Available namespaces:\n", 2)[1]?.split("```", 1)[0];
+  if (sample === undefined) throw new TypeError("Missing sample CLI help output.");
+  return helpNames(`Available namespaces:\n${sample}`, "Available namespaces:").sort();
+}
+
 describe("CLI documentation contract", () => {
   it("indexes every command from the live package contributors", async () => {
     const agent = createAgentCliContributor({ rootDir: evalFixtureRoot });
@@ -52,6 +60,7 @@ describe("CLI documentation contract", () => {
       { vitehub: { cli: agent } },
       { vitehub: { cli: database } },
       { vitehub: { cli: { namespaces: [createConsoleCliNamespace()] } } },
+      hubEnv(),
       schedulePlugin,
       workspacePlugin,
       typesPlugin,
@@ -81,6 +90,7 @@ describe("CLI documentation contract", () => {
       }
     }
 
+    expect(documentedNamespaces()).toEqual([...namespaces].sort());
     expect(documentedCommands()).toEqual(commands.sort());
   });
 });

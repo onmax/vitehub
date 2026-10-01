@@ -10,6 +10,7 @@ import { promisify } from "node:util"
 import { Chat, Message } from "chat"
 import { removeProviderOutputArtifactDir } from "@vite-hub/internal/build/provider-output-sources"
 import { VITEHUB_GENERATED_ROOT, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
 import { mergeConfig, build as viteBuild } from "vite"
 import type { ConfigEnv, UserConfig } from "vite"
 import { describe, expect, it, vi } from "vitest"
@@ -514,10 +515,10 @@ describe("agent Vite plugin", () => {
     expect(config({ define: { __VITEHUB_AGENT_APP_ROOT__: "configured" }, root: "/repo/apps/web" }).define?.__VITEHUB_AGENT_APP_ROOT__).toBe("configured")
   })
 
-  it("merges server noExternal", async () => {
+  it.each([{ noExternal: undefined }, { noExternal: "existing" }, { noExternal: [] }, { noExternal: ["existing"] }, { noExternal: ["existing", "@vite-hub/agent"] }, { noExternal: true }])("merges server noExternal %j", async ({ noExternal }) => {
     const { hubAgent } = await import("../src/vite.ts")
     const plugin = hubAgent()
-    const environment = { consumer: "server", resolve: { noExternal: ["existing", "@vite-hub/agent"] } }
+    const environment = { consumer: "server", resolve: { noExternal } }
 
     const hook = plugin.configEnvironment
     const result = isRuntimeFunction(hook)
@@ -532,7 +533,9 @@ describe("agent Vite plugin", () => {
         )
       : undefined
 
-    expect(result ? mergeConfig(environment, result).resolve.noExternal : undefined).toEqual(["existing", "@vite-hub/agent", "@t3tools/provider-runtime"])
+    expect(result ? mergeConfig(environment, result).resolve.noExternal : undefined).toEqual(
+      noExternal === true ? true : [...new Set([...(noExternal === undefined ? [] : Array.isArray(noExternal) ? noExternal : [noExternal]), "@vite-hub/agent", "@t3tools/provider-runtime"])],
+    )
   })
 
   it("bundles the provider runtime into hosted Vite server output", async () => {
@@ -647,7 +650,7 @@ describe("agent Vite plugin", () => {
       await configResolved({
         command: "serve",
         createResolver: () => async (id) => `/app/node_modules/${id}`,
-        plugins: [{ name: "@vite-hub/blob/vite" }, { name: "@vite-hub/database/vite" }, { name: "@vite-hub/email/vite" }, { name: "@vite-hub/kv/vite" }],
+        plugins: [{ name: "@vite-hub/blob/vite" }, { name: "@vite-hub/connections/vite" }, { name: "@vite-hub/database/vite" }, { name: "@vite-hub/email/vite" }, { name: "@vite-hub/kv/vite" }],
         root,
       })
 
@@ -656,12 +659,13 @@ describe("agent Vite plugin", () => {
 
       expect(registry).toContain("defineScheduledAgentTarget")
       expect(registry).toContain('import { blob as vitehubBlob } from "@vite-hub/blob"')
+      expect(registry).toContain('import { connections as vitehubConnections } from "@vite-hub/connections/agent"')
       expect(registry).toContain('import { agentDb as vitehubDb } from "@vite-hub/database/drizzle"')
       expect(registry).toContain('import { email as vitehubEmail } from "@vite-hub/email/server"')
       expect(registry).toContain('import { kv as vitehubKv } from "@vite-hub/kv"')
       expect(registry).toContain('import { schedules as vitehubSchedules } from "@vite-hub/schedule/runtime"')
       expect(registry).toContain(
-        '{ agentIdentity: {"name":"digest"}, capabilities: { blob: vitehubBlob, db: vitehubDb, email: vitehubEmail, kv: vitehubKv, schedule: { schedules: vitehubSchedules } } }',
+        '{ agentIdentity: {"name":"digest"}, capabilities: { blob: vitehubBlob, connections: vitehubConnections, db: vitehubDb, email: vitehubEmail, kv: vitehubKv, schedule: { schedules: vitehubSchedules } } }',
       )
       expect(registry).toContain('registry["agent/digest"]')
       expect(registry).toContain('vitehubAgentWithColocatedInstructions(vitehubResolveScheduledAgentModule(module), "Use digest instructions.\\n")')
@@ -1741,7 +1745,7 @@ describe("agent Vite plugin", () => {
           {
             // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
             command: "build",
-            plugins: [schedulePlugin],
+            plugins: [schedulePlugin, { name: "@vite-hub/connections/vite" }],
             root,
           } as never,
         )
@@ -1754,7 +1758,8 @@ describe("agent Vite plugin", () => {
         expect(route).toContain('import vitehubAgentScheduleRegistry from "#vitehub/schedule/registry"')
         expect(route).toContain('setScheduleRuntimeRegistry as vitehubSetScheduleRuntimeRegistry } from "@vite-hub/schedule/runtime"')
         expect(route).toContain("vitehubSetScheduleRuntimeRegistry(vitehubAgentScheduleRegistry)")
-        expect(route).toContain("const vitehubAgentRouteCapabilities = { schedule: { schedules: vitehubSchedules } }")
+        expect(route).toContain('import { connections as vitehubConnections } from "@vite-hub/connections/agent"')
+        expect(route).toContain("const vitehubAgentRouteCapabilities = { connections: vitehubConnections, schedule: { schedules: vitehubSchedules } }")
         expect(route).toContain("capabilities: vitehubAgentRouteCapabilities")
       }
 
@@ -2847,10 +2852,15 @@ export default defineAgent({
       const plugin = hubAgent({ runtime: "deno" })
       if (isRuntimeFunction(plugin.configResolved)) {
         // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
-        await plugin.configResolved.call({} as never, { root } as never)
+        await plugin.configResolved.call({} as never, { root, nitro: { preset: "netlify" } } as never)
       }
 
       const denoServer = await readFile(join(root, ".vitehub/agent/deno-server.ts"), "utf8")
+      expect(await collectViteHubProviderOutputEntries([plugin])).toEqual([{
+        description: "Generated Deno Agent server",
+        owner: "agent",
+        path: join(root, ".vitehub/agent/deno-server.ts"),
+      }])
 
       expect(denoServer).toContain(
         'createChannelChatRouteHandler, createChannelWebhookRouteHandler, hasChannelChatRoute } from "@vite-hub/agent/server/internal"',
@@ -18929,6 +18939,43 @@ describe("server helpers", () => {
     expect(adapter.postMessage).toHaveBeenCalledTimes(2)
     expect(adapter.postMessage).toHaveBeenNthCalledWith(1, "telegram:456", { markdown: "Final answer" })
     expect(adapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "Follow-up" })
+  })
+
+  it("appends the MCP unavailable notice to the final chat reply", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { mcp } = await import("../src/capabilities.ts")
+    const { telegram } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const unavailable = () => { throw Object.assign(new Error("fetch failed"), { statusCode: 503 }) }
+    const loadingAdapter = createTestChatAdapter()
+    const streamingAdapter = createTestChatAdapter()
+    const agent = (adapter: ReturnType<typeof createTestChatAdapter>, messages: Record<string, unknown>) => defineAgent({
+      capabilities: [mcp({ servers: { posthog: unavailable }, unavailableNotice: servers => `${servers.join(", ")} was unavailable.` })],
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          adapter: () => adapter as never,
+          messages,
+        }),
+      },
+      driver: { run: () => "Final answer" },
+      hooks: { "agent:finish": event => event.reply(event.text!) },
+    })
+
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const loading = createChannelWebhookRouteHandler(agent(loadingAdapter, { loading: { text: "Loading…" } }) as never)
+    expect((await loading(chatWebhookRequest(91_222), "telegram")).status).toBe(200)
+    expect(loadingAdapter.postMessage).toHaveBeenCalledTimes(2)
+    expect(loadingAdapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", {
+      markdown: "Final answer\n\nposthog was unavailable.",
+    })
+
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const streaming = createChannelWebhookRouteHandler(agent(streamingAdapter, { stream: false }) as never)
+    expect((await streaming(chatWebhookRequest(91_221), "telegram")).status).toBe(200)
+    expect(streamingAdapter.postMessage).toHaveBeenCalledTimes(2)
+    expect(streamingAdapter.postMessage).toHaveBeenNthCalledWith(1, "telegram:456", { markdown: "Final answer" })
+    expect(streamingAdapter.postMessage).toHaveBeenNthCalledWith(2, "telegram:456", { markdown: "posthog was unavailable." })
   })
 
   it("keeps the posted final reply when loading-message deletion fails", async () => {

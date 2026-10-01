@@ -1,3 +1,4 @@
+import { copyAgentInvocationCallerAbortSignal } from "./internal/invocation-input.ts"
 import { supportsSkillPersistence } from "./internal/skill-persistence.ts"
 import { markCapabilityInspection } from "./internal/capability-inspection.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
@@ -124,7 +125,6 @@ const defaultCapabilityRuntimePhases = ["configure", "prepare", "bind", "input",
 export const channelDeliveryEffectsContextKey = "channel.delivery.effects"
 export const channelDeliveryFinishEffectsContextKey = "channel.delivery.finishEffects"
 type AgentCapabilityRuntimePhase = typeof defaultCapabilityRuntimePhases[number]
-export const optionalWorkspaceCapabilitySymbol: unique symbol = Symbol("vitehub.agent.optionalWorkspaceCapability")
 
 export interface ResolvedAgentFinishExtensionProvider {
   eager?: boolean
@@ -369,10 +369,6 @@ function validateSandboxCommands(commands: unknown): void {
 
 function capabilityRequiresWorkspace(capability: AgentCapabilityDefinition): boolean {
   const metadata = capability.metadata
-  const optionalWorkspace = hasRuntimeType(metadata, "object")
-    && metadata !== null
-    // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-    && (metadata as { [optionalWorkspaceCapabilitySymbol]?: unknown })[optionalWorkspaceCapabilitySymbol] === true
   const accessWorkspace = capability.id === "access"
     && hasRuntimeType(metadata, "object")
     && metadata !== null
@@ -381,7 +377,7 @@ function capabilityRequiresWorkspace(capability: AgentCapabilityDefinition): boo
   const sandboxCommands = capability.id === "sandbox"
     // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
     && Array.isArray((metadata as { commands?: unknown } | undefined)?.commands)
-  return capability.workspace && !optionalWorkspace
+  return Boolean(capability.workspace)
     || capability.id === "workspace-shell"
     || sandboxCommands
     || accessWorkspace
@@ -449,13 +445,13 @@ function getRunMessages(input: AgentRunInput): Message[] {
 function normalizeRunInput(input: AgentRunInput): AgentRunInput {
   if (input.messages || Array.isArray(input.prompt) || input.message === undefined) return input
   const { message: _message, ...next } = input
-  return { ...next, messages: getRunMessages(input) }
+  return copyAgentInvocationCallerAbortSignal(input, { ...next, messages: getRunMessages(input) })
 }
 
 function withMessages(input: AgentRunInput, messages: Message[]): AgentRunInput {
-  if (input.messages) return { ...input, messages }
-  if (Array.isArray(input.prompt)) return { ...input, prompt: messages }
-  return { ...input, messages }
+  if (input.messages) return copyAgentInvocationCallerAbortSignal(input, { ...input, messages })
+  if (Array.isArray(input.prompt)) return copyAgentInvocationCallerAbortSignal(input, { ...input, prompt: messages })
+  return copyAgentInvocationCallerAbortSignal(input, { ...input, messages })
 }
 
 async function callHooks<

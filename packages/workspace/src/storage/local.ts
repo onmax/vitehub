@@ -354,18 +354,26 @@ async function openSharedReadLease(lock: string, permissions: Pick<import("node:
 
 // Readers that arrive together share one gate acquisition. The gate protects
 // the count update as well as the filesystem registration from external writers.
-const readAdmissions = new Map<string, { count: number, deadline: number, admitted: Promise<SharedReadLease | undefined> }>()
+interface ReadAdmissionTicket {
+  deadline: number
+  charged: boolean
+}
+
+const readAdmissions = new Map<string, { tickets: Set<ReadAdmissionTicket>, admitted: Promise<SharedReadLease | undefined> }>()
 
 async function admitSharedReader(lock: string, permissions: Pick<import("node:fs").Stats, "mode" | "gid">, description: string, deadline: number): Promise<SharedReadLease | undefined> {
+  const ticket: ReadAdmissionTicket = { deadline, charged: false }
   let admission = readAdmissions.get(lock)
   if (!admission) {
-    admission = { count: 0, deadline, admitted: Promise.resolve(undefined) }
+    admission = { tickets: new Set(), admitted: Promise.resolve(undefined) }
     const batch = admission
     readAdmissions.set(lock, batch)
     let chargedLease: SharedReadLease | undefined
+    let chargedCount = 0
+    const liveTickets = () => [...batch.tickets].filter(reader => Date.now() < reader.deadline)
     batch.admitted = withFilesystemLock(`${lock}.gate`, permissions, description, async () => {
       readAdmissions.delete(lock)
-      if (Date.now() >= batch.deadline) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
+      if (!liveTickets().length) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
       if (pendingWriters.has(lock) || await lstat(`${lock}.writers`).then(() => true).catch((error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT") return false
         throw error
@@ -375,12 +383,19 @@ async function admitSharedReader(lock: string, permissions: Pick<import("node:fs
         lease = await openSharedReadLease(lock, permissions, description)
         sharedReadLeases.set(lock, lease)
       }
-      lease.readers += batch.count
+      const tickets = liveTickets()
+      chargedCount = tickets.length
+      if (!chargedCount) {
+        await releaseSharedReaders(lock, lease, 0)
+        throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
+      }
+      lease.readers += chargedCount
       chargedLease = lease
+      for (const reader of tickets) reader.charged = true
       return lease
-    }, () => batch.deadline).catch(async (error: unknown) => {
+    }, () => Math.max(...[...batch.tickets].map(reader => reader.deadline))).catch(async (error: unknown) => {
       if (chargedLease) {
-        try { await releaseSharedReaders(lock, chargedLease, batch.count) }
+        try { await releaseSharedReaders(lock, chargedLease, chargedCount) }
         catch (cleanupError) { throw new AggregateError([error, cleanupError], "Workspace reader admission and cleanup failed", { cause: error }) }
       }
       throw error
@@ -388,11 +403,36 @@ async function admitSharedReader(lock: string, permissions: Pick<import("node:fs
       if (readAdmissions.get(lock) === batch) readAdmissions.delete(lock)
     })
   }
-  // A reader can join after spending part of its deadline behind another writer.
-  // Keep the batch bounded by its earliest reader rather than restarting a wait.
-  admission.deadline = Math.min(admission.deadline, deadline)
-  admission.count++
-  return await admission.admitted
+  // The gate acquisition lasts for the remaining callers. Each expired caller
+  // detaches without reducing another caller's own admission budget.
+  admission.tickets.add(ticket)
+  const batch = admission
+  let timedOut = false
+  let timeout!: ReturnType<typeof setInterval>
+  const expired = new Promise<never>((_, reject) => {
+    timeout = setInterval(() => {
+      if (Date.now() < deadline) return
+      timedOut = true
+      batch.tickets.delete(ticket)
+      reject(workspaceError(`[vitehub] Timed out waiting to ${description}.`))
+    }, 25)
+  })
+  try {
+    const lease = await Promise.race([batch.admitted, expired])
+    if (lease && !ticket.charged) throw workspaceError(`[vitehub] Timed out waiting to ${description}.`)
+    return lease
+  }
+  catch (error) {
+    if (timedOut && ticket.charged) {
+      try { await batch.admitted.then(lease => lease ? releaseSharedReaders(lock, lease) : undefined, () => undefined) }
+      catch (cleanupError) { throw new AggregateError([error, cleanupError], "Workspace reader timeout and cleanup failed", { cause: error }) }
+    }
+    throw error
+  }
+  finally {
+    clearInterval(timeout)
+    batch.tickets.delete(ticket)
+  }
 }
 
 async function releaseSharedReaders(lock: string, lease: SharedReadLease, count = 1): Promise<void> {
@@ -473,7 +513,7 @@ async function withPendingWriter<T>(lock: string, operation: () => Promise<T>): 
   }
 }
 
-async function withWorkspacePathLock<T>(root: string, path: string, operation: () => Promise<T>, readOnly = false): Promise<T> {
+async function withWorkspacePathLock<T>(root: string, path: string, operation: () => Promise<T>, readOnly = false, heldReadPrefix?: string): Promise<T> {
   const normalized = normalizeWorkspacePath(path)
   const parts = normalized.split("/").filter(Boolean)
   const paths = parts.map((_, index) => parts.slice(0, index + 1).join("/"))
@@ -491,6 +531,9 @@ async function withWorkspacePathLock<T>(root: string, path: string, operation: (
   const lock = async (index: number): Promise<T> => {
     if (index === paths.length) return await operation()
     const lockedPath = paths[index]!
+    // A listing batch already holds these ancestors in this lexical scope.
+    // Descendants still need their own leases to exclude same-path writers.
+    if (readOnly && heldReadPrefix && (heldReadPrefix === lockedPath || heldReadPrefix.startsWith(`${lockedPath}/`))) return await lock(index + 1)
     const key = createHash("sha256").update(lockedPath).digest("hex")
     const lockPath = `${root}/.vitehub/locks/${key}`
     const next = () => lock(index + 1)
@@ -920,8 +963,10 @@ class LocalWorkspaceStore implements WorkspaceStore {
         return options.recursive || !entry.path.slice(normalizedPrefix.length + 1).includes("/")
       })
     const entries: WorkspaceEntry[] = []
-    // Entries under one top-level path share reader gates. Visit each group
-    // sequentially, while independent groups can still read concurrently.
+    // Keep common ancestors leased for short batches. Yield between entries
+    // before accumulated reads consume a queued writer's ten-second deadline.
+    // Individual entries retain their own leases until their I/O settles.
+    const readBatchDurationMs = 1_000
     const groups = new Map<string, WorkspaceEntry[]>()
     for (const entry of filtered) {
       const key = entry.path.split("/")[0]!
@@ -932,9 +977,17 @@ class LocalWorkspaceStore implements WorkspaceStore {
     const independent = [...groups.values()]
     for (let index = 0; index < independent.length; index += 64) {
       await Promise.all(independent.slice(index, index + 64).map(async (group) => {
-        for (const entry of group) {
-          const info = await withWorkspacePathLock(this.root, entry.path, () => this.#stat(entry.path, includeDigest), true)
-          if (info) entries.push(info)
+        const heldReadPrefix = normalizedPrefix || group[0]!.path.split("/")[0]!
+        let offset = 0
+        while (offset < group.length) {
+          await withWorkspacePathLock(this.root, heldReadPrefix, async () => {
+            const startedAt = Date.now()
+            do {
+              const entry = group[offset++]!
+              const info = await withWorkspacePathLock(this.root, entry.path, () => this.#stat(entry.path, includeDigest), true, heldReadPrefix)
+              if (info) entries.push(info)
+            } while (offset < group.length && Date.now() - startedAt < readBatchDurationMs)
+          }, true)
         }
       }))
     }

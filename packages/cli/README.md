@@ -1,6 +1,6 @@
 # @vite-hub/cli
 
-`@vite-hub/cli` runs the development commands contributed by a ViteHub project's active Vite plugins. It loads the local Vite or Nuxt config, combines their command namespaces, and adds the built-in `provision` command.
+`@vite-hub/cli` runs the development commands contributed by a ViteHub project's active Vite plugins. It loads the local Vite or Nuxt config, combines their command namespaces, and adds the built-in `inspect` and `provision` namespaces.
 
 ## Choose the package
 
@@ -36,14 +36,28 @@ Run help from the project root. The CLI loads the project config before it print
 pnpm vitehub --help
 ```
 
-Every project includes `provision`. Other namespaces appear when their Vite integrations are active. A host can pass `runtimeNamespaces` to `runViteHubCli()`; these run without loading the project config. The `vite-hub` distribution uses this for `vitehub box`.
+Every project includes `inspect` and `provision`. Other namespaces appear when their Vite integrations are active.
+The CLI owns the `inspect` namespace. Plugin command contributions with that name are ignored.
 
 ```txt
 Usage: vitehub <namespace> <feature> [args...]
 
 Available namespaces:
+  inspect      Inspect discovered Definitions and generated Provider Output.
   provision    Idempotently create missing provider resources.
 ```
+
+## Inspect the project
+
+`inspect definitions` lists the Definitions that each active package discovered. The Console reads the same package-owned summaries. `inspect provider-output` lists generated Provider Output files and shows which exist. It resolves Vite configuration for build with production mode and loads Nuxt with development disabled, so production-only contributors are included. Other commands use development configuration.
+
+```sh
+pnpm vitehub inspect definitions --kind queue
+pnpm vitehub inspect definitions --json
+pnpm vitehub inspect provider-output --json
+```
+
+Human output is the default. `--json` prints a stable object. Both forms redact secret-like keys, Worker `vars` values, and URLs with embedded credentials.
 
 Open namespace help to see the commands contributed by one integration. Open feature help for its current arguments and defaults.
 
@@ -52,7 +66,7 @@ pnpm vitehub agent --help
 pnpm vitehub agent invocations --help
 ```
 
-The Agent integration contributes `info`, `dev`, and `invocations`, plus `channels history` and `channels sync`. It adds `eval` only when the project contains an Agent Eval file. Database contributes `generate` and `migrate`, Schedule contributes `schedule run`, and Workspace contributes `dev`. The Agent and Database integrations can disable their commands through their integration options.
+The Agent integration contributes `info`, `dev`, and `invocations`, plus `channels history` and `channels sync`. It adds `eval` only when the project contains an Agent Eval file. Database contributes `generate` and `migrate`, and Workspace contributes `dev`. The Agent and Database integrations can disable their commands through their integration options.
 
 See the [complete command index](https://vitehub.dev/docs/development/cli#commands) for command availability and the task each command performs.
 
@@ -83,7 +97,7 @@ print their message. Error output is bounded by Runtime's diagnostic limits.
 
 CLI-owned argument and execution defects use stable `CLI_R####` Nostics codes. Contributing packages keep their own diagnostic codes.
 
-- Root and namespace help is human-readable text, not a structured output contract.
+- Root and namespace help is human-readable text, not a structured output contract. Use `inspect ... --json` for machine-readable output.
 - Help loads and executes the local Vite or Nuxt config. A missing dependency or config error can stop help before it prints.
 - Command effects come from the package that contributes the command. Review command-specific help before applying Database migrations, Channel registration changes, or Provider provisioning.
 - `provision run` creates missing resources but does not delete or replace existing resources. Start with `--dry-run` and pass a provider explicitly.

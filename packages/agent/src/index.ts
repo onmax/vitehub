@@ -33,7 +33,7 @@ import {
   createStatusDeliveryEffectIntent,
 } from "./delivery-effects.ts"
 import { createExecutionContext, createRuntimeContext, createTraceEventLog, deriveTraceRuns, getViteHubErrorShape, isTraceContentAttributeKey, normalizeRuntimeDiagnosticError, traceEventsToOpenTelemetryLogRecords, traceEventsToOpenTelemetrySpans } from "@vite-hub/runtime"
-import { agentTelemetryTask } from "./internal/telemetry-task.ts"
+import { isAmbiguousAgentWorkflowStartFailure } from "./internal/workflow-start.ts"
 import { agentTelemetryWorkspaceSources, getAgentTelemetryConfiguration, safeAgentTelemetryMetadata, setAgentTelemetryConfiguration } from "./internal/agent-telemetry.ts"
 import { getCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { getAgentInvocationRecoveryWorkflowName } from "@vite-hub/internal/agent-workflow"
@@ -70,11 +70,13 @@ import {
 } from "./channels.ts"
 import { registerMessageChannelDeferredReplyTrace, setChatFinalReplyText, setChatFinishDirectReplyTrace, setChatFinishPrimaryReplyTrace } from "./internal/chat-finish-delivery.ts"
 import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, createAgentInvocationContextStore } from "./invocation-context.ts"
+import { agentInvocationCallerAbortSignal, copyAgentInvocationCallerAbortSignal, markAgentInvocationCallerAbortSignal } from "./internal/invocation-input.ts"
 import { bindAgentRunEvents, type AgentRunEventPublisher } from "./run-events.ts"
 import { bindAgentInvocations, type AgentInvocationJournal } from "./invocations.ts"
 import { isAttachmentPart, materializeMessageAttachmentData, type AgentMessagePhase, type Message } from "./messages.ts"
 import {
   createFallbackAgentInvoker,
+  hasUnreplayableAgentInputContext,
   hasResolvedAgentInvokerInput,
   normalizeAgentInvokerOptions,
   portableResolvedAgentInvokerInput,
@@ -249,7 +251,7 @@ import type {
 import type { WorkflowHandle } from "@vite-hub/workflow"
 import type { OpenTelemetryLogRecordView, OpenTelemetrySpanView, TraceActivityContext, TraceEventLogEntry } from "@vite-hub/runtime"
 
-export { agentInvocationId } from "./invocations.ts"
+export { agentInvocationId, agentInvocationRerunInput } from "./invocations.ts"
 
 export type {
   AgentInvocationAnnotationValue,
@@ -261,6 +263,8 @@ export type {
   AgentInvocationPruneResult,
   AgentInvocationRecord,
   AgentInvocationRecordStatus,
+  AgentInvocationRerunInput,
+  AgentInvocationRerunUnavailableReason,
   AgentInvocationRetentionOptions,
   AgentInvocationSummary,
   AgentInvocations,
@@ -402,6 +406,9 @@ export type {
   AgentInspectionModelMetadata,
   AgentInspectionToolDefinition,
   AgentInspectionValue,
+  AgentAskDriver,
+  AgentAskQuestions,
+  AgentAskQuestionsResolver,
   AgentDriver,
   AgentDriverAdaptiveCapacityOptions,
   AgentDriverCapacityOptions,
@@ -761,6 +768,7 @@ interface AgentWorkflowInvocationPayload<CALL_OPTIONS = unknown> {
   journalAgentName?: string
   capabilities?: Record<string, boolean>
   input?: AgentRunInput<CALL_OPTIONS>
+  callerAbortSignal?: boolean
   parsedInputData?: boolean
   invocationRecovery?: {
     agentName?: string
@@ -977,25 +985,6 @@ async function portableAgentWorkflowRunId(runId: string): Promise<string> {
   return `${generatedPrefix}${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")}`
 }
 
-function isAmbiguousWorkflowStartFailure(error: unknown): boolean {
-  if (!error || !hasRuntimeType(error, "object") || !("code" in error) || !("details" in error)) return false
-  // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-  const details = (error as { details?: unknown }).details
-  // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-  return (error as { code?: unknown }).code === "WORKFLOW_PROVIDER_OPERATION_FAILED"
-    && Boolean(details && hasRuntimeType(details, "object")
-      // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      && (details as { acknowledgement?: unknown }).acknowledgement === "unknown"
-      // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      && (((details as { provider?: unknown }).provider === "cloudflare"
-        // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-        && (details as { operation?: unknown }).operation === "create")
-      // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      || ((details as { provider?: unknown }).provider === "openworkflow"
-        // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-        && (details as { operation?: unknown }).operation === "run")))
-}
-
 async function portableWorkflowMessages(messages: Message[]): Promise<Message[]> {
   const materialized = await materializeMessageAttachmentData(messages)
   return await Promise.all(materialized.map(async message => ({
@@ -1167,6 +1156,7 @@ async function runAgentAsWorkflow<
     ...(Object.keys(workflowCapabilities).length ? { capabilities: workflowCapabilities } : {}),
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     input: cloneWorkflowJsonValue(workflowInput) as AgentRunInput<CALL_OPTIONS>,
+    callerAbortSignal: agentInvocationCallerAbortSignal(input),
     // Headers and bodies may contain webhook credentials and remain process-local by design.
     ...(context.request ? { requestUrl: context.request.url } : {}),
     ...(parsedMessageMeta !== undefined ? { parsedMessageMeta } : {}),
@@ -1247,7 +1237,7 @@ async function runAgentAsWorkflow<
   }
   catch (error) {
     await activity?.update(input.abortSignal?.aborted ? "cancelled" : "failed", error)
-    const ambiguous = isAmbiguousWorkflowStartFailure(error)
+    const ambiguous = isAmbiguousAgentWorkflowStartFailure(error)
     const failedRunId = !options.fresh && context.run?.runId
       ? context.run.runId
       : workflowRunId || (ambiguous ? undefined : createTraceId())
@@ -1894,6 +1884,27 @@ export { agentWithSkills } from "./internal/colocated-agent-skills.ts"
 export { isResolvedAgentTriggerHandledInvocation, verifyAgentWebhookRequest } from "./trigger-runtime.ts"
 export type { AgentWebhookVerificationResult, ResolvedAgentTriggerHandledInvocation, ResolvedAgentTriggerInvocation, ResolvedAgentTriggerInvocationResult } from "./trigger-runtime.ts"
 export * from "./messages.ts"
+export { ask } from "./ask.ts"
+export type {
+  AskAnswer,
+  AskAnswers,
+  AskChanceAnswer,
+  AskChanceCriteria,
+  AskChanceQuestion,
+  AskChoiceAnswer,
+  AskChoiceCriteria,
+  AskChoiceLabels,
+  AskChoiceQuestion,
+  AskEntry,
+  AskIfQuestion,
+  AskJson,
+  AskQuestion,
+  AskQuestions,
+  AskScoreAnswer,
+  AskScoreCriteria,
+  AskScoreQuestion,
+  AskSwitchQuestion,
+} from "./ask.ts"
 export {
   agentInvocationStreamRoute,
   createAgentInvocationStreamResponse,
@@ -2023,7 +2034,7 @@ function defineBaseAgent<
   const { box, capabilities, cli, description, hooks, invocations, messages, name, runtime = defaultAgentWorkflowRuntime(), runEvents, uiMessageStream, version, workspace } = options
   const channels = normalizeAgentChannels(options.channels)
   const github = options.github ?? githubChannelIdentity(channels)
-  const run = driver.kind === "run" ? driver.run : undefined
+  const run = driver.kind === "run" || driver.kind === "ask" ? driver.run : undefined
   const capabilitiesResolver = hasRuntimeType(capabilities, "function")
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     ? capabilities as AgentCapabilitiesResolver<TRuntimeConfig, WorkspaceName, CALL_OPTIONS>
@@ -3053,7 +3064,7 @@ export function agentWithColocatedInstructions<Agent>(agent: Agent, instructions
   const settings = (agent as AgentDefinition & { __vitehubAgentSettings?: AgentSettings }).__vitehubAgentSettings
   if (!settings) return agent
   const driver = normalizeAgentDriver(settings)
-  if (driver.kind === "run") return agent
+  if (driver.kind === "run" || driver.kind === "ask") return agent
   const configured = driver.instructions
   const template = configured && hasRuntimeType(configured, "object") && !Array.isArray(configured)
     && "template" in configured && !("mode" in configured)
@@ -3788,7 +3799,7 @@ async function exportAgentTelemetryTraces<TRuntimeConfig extends AgentRuntimeCon
   const id = runtime.run?.runId || runtime.trace?.id
   const run = (id ? runs.find(candidate => candidate.id === id) : undefined) || (runs.length === 1 ? runs[0] : undefined)
   if (!run || run.status === "running") return
-  const name = runtime.agentIdentity?.name || agent.name
+  const name = agentInvocationName(agent, runtime)
   const configuration = getAgentTelemetryConfiguration(context)
   const model = configuration?.value.driver.model
   const provider = model?.provider || configuration?.value.driver.provider
@@ -3872,7 +3883,7 @@ async function exportAgentTelemetryLogs<TRuntimeConfig extends AgentRuntimeConfi
   includeConfiguration = false,
 ): Promise<void> {
   if (!telemetry.length || !runtime.traceLog) return
-  const name = runtime.agentIdentity?.name || agent.name
+  const name = agentInvocationName(agent, runtime)
   const invocationEvents = agentTelemetryTraceEvents(runtime.traceLog).filter(event => event.sequence <= throughSequence
     && event.attributes?.["agent.invocation.id"] === invocationId)
   const exports = await Promise.allSettled(telemetry.map(async (item) => {
@@ -3951,7 +3962,7 @@ async function exportAgentTelemetryConfiguration<TRuntimeConfig extends AgentRun
   configurationDelivered: Set<AgentCapabilityRegistries["telemetry"][number]>,
 ): Promise<void> {
   if (!telemetry.length || !runtime.traceLog) return
-  const name = runtime.agentIdentity?.name || agent.name
+  const name = agentInvocationName(agent, runtime)
   const events = runtime.traceLog.entries().filter(event => event.attributes?.["agent.invocation.id"] === invocationId)
   const terminalSequence = events.at(-1)?.sequence
   if (terminalSequence === undefined) return
@@ -4007,7 +4018,7 @@ function reportAgentTelemetryFailure<TRuntimeConfig extends AgentRuntimeConfig>(
   phase: "live" | "terminal",
 ): void {
   const failure = error instanceof AgentTelemetryCapabilityError ? error.cause : error
-  const name = runtime.agentIdentity?.name || agent.name
+  const name = agentInvocationName(agent, runtime)
   const capabilityIds = error instanceof AggregateError
     ? error.errors.flatMap(item => item instanceof AgentTelemetryCapabilityError ? [item.capabilityId] : [])
     : []
@@ -4037,7 +4048,6 @@ function scheduleAgentTelemetry<TRuntimeConfig extends AgentRuntimeConfig>(
   const task = Promise.resolve()
     .then(() => exportAgentTelemetryTraces(telemetry, runtime, context, agent, invocationId))
     .catch(error => reportAgentTelemetryFailure(error, runtime, agent, invocationId, "terminal"))
-  Object.defineProperty(task, agentTelemetryTask, { value: true })
   registerAgentBackgroundTask(runtime, task)
   return task
 }
@@ -4071,7 +4081,6 @@ function createAgentTelemetryScheduler<TRuntimeConfig extends AgentRuntimeConfig
     exports = exports
       .then(task)
       .catch(error => reportAgentTelemetryFailure(error, runtime, agent, invocationId, phase))
-    Object.defineProperty(exports, agentTelemetryTask, { value: true })
     registerAgentBackgroundTask(runtime, exports)
   }
   const flushLogs = () => {
@@ -4150,9 +4159,10 @@ async function parseAgentInputData<TInput extends AgentRunInput<unknown>>(
 ): Promise<TInput> {
   const schema = definition?.[baseAgentData]
   if (!schema) return input
-  return { ...input, data: await parseStandardSchema(schema, input.data, "Agent input data") }
+  return copyAgentInvocationCallerAbortSignal(input, { ...input, data: await parseStandardSchema(schema, input.data, "Agent input data") })
 }
 
+// Controller cancellation is internal unless the caller supplied its own signal.
 async function createAgentInvocationContext<
   TRuntimeConfig extends AgentRuntimeConfig,
   CALL_OPTIONS,
@@ -4165,11 +4175,21 @@ async function createAgentInvocationContext<
   invocationTools?: AgentToolSet,
 ): Promise<AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS>> {
   const startedAt = Date.now()
+  const replayHasContext = hasUnreplayableAgentInputContext(input.context)
+  const replayCallerAbortSignal = agentInvocationCallerAbortSignal(input)
+  // Preparation can replace or mutate input. Replay must retain the caller's input metadata.
+  const replayInput = {
+    ...input,
+    ...(replayCallerAbortSignal === false ? { abortSignal: undefined } : {}),
+    ...(input.context ? { context: { ...input.context } } : {}),
+    ...(input.messages ? { messages: [...input.messages] } : {}),
+    ...(Array.isArray(input.prompt) ? { prompt: [...input.prompt] } : {}),
+  }
   const inputDataParsed = consumeParsedAgentWorkflowInput(input, definition)
   const resolvedContext = createResolvedRuntimeContext(context)
   const invocationContext = createAgentInvocationContextStore(input.context)
   await parseAgentMessageMeta(definition, invocationContext, context.run)
-  input = { ...input, context: { ...input.context, ...invocationContext.toJSON() } }
+  input = copyAgentInvocationCallerAbortSignal(input, { ...input, context: { ...input.context, ...invocationContext.toJSON() } })
   const telemetryInvocationId = createTraceId()
   let telemetryScheduler: AgentTelemetryScheduler | undefined
   const telemetryChanged = (entry: TraceEventLogEntry) => telemetryScheduler?.changed(entry)
@@ -4704,7 +4724,8 @@ async function createAgentInvocationContext<
     invocationContext.set("agent.finishHook", Boolean(invocation.finishHook), { overwrite: true })
     capabilityPreparationPending = false
     await invocationContext.get(agentInvocationConfigurationUpdatedContextKey)?.()
-    await traceAgentInvocationStart(toTraceContext(invocation))
+    await traceAgentInvocationStart(toTraceContext(invocation), replayInput, replayHasContext,
+      capabilities.input.abortSignal !== input.abortSignal ? true : replayCallerAbortSignal)
     try {
       await applyChannelDeliveryEffectIntents(invocation, invocation.deliveryEffectIntents)
     }
@@ -7919,21 +7940,25 @@ function createInlineAgentInvocationController<
   return startLiveAgentInvocation<TOutput | Response, CALL_OPTIONS>({
     parentAbortSignal: input.abortSignal,
     sendInput: (id, nextInput, options) => sendAgentInvocationInput(id, nextInput, options),
-    start: ({ abortSignal, id, onFinish }) => executeAgentInvocation(agent, {
-      ...withAgentInvocationResponseOwner(context, id),
-      run: { ...context.run, runId: runId || id },
-    }, { ...input, abortSignal }, {
-      kind: "run",
-      onFinish(outcome) {
-        onFinish(outcome.status === "cancelled"
-          ? { status: "cancelled" }
-          : outcome.status === "success"
-          // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-            ? { ...(outcome.result !== undefined ? { output: outcome.result as TOutput | Response } : {}), status: "completed" }
-            : { error: outcome.error, status: "failed" })
-      },
-      renderOutput: true,
-    }),
+    start: ({ abortSignal, id, onFinish }) => {
+      const invocationInput = { ...input, abortSignal }
+      markAgentInvocationCallerAbortSignal(invocationInput, agentInvocationCallerAbortSignal(input))
+      return executeAgentInvocation(agent, {
+        ...withAgentInvocationResponseOwner(context, id),
+        run: { ...context.run, runId: runId || id },
+      }, invocationInput, {
+        kind: "run",
+        onFinish(outcome) {
+          onFinish(outcome.status === "cancelled"
+            ? { status: "cancelled" }
+            : outcome.status === "success"
+            // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
+              ? { ...(outcome.result !== undefined ? { output: outcome.result as TOutput | Response } : {}), status: "completed" }
+              : { error: outcome.error, status: "failed" })
+        },
+        renderOutput: true,
+      })
+    },
     support: id => agentInvocationInputSupport(id),
   })
 }
@@ -8153,7 +8178,7 @@ async function runAgentWithContext<
     const turn = schedule.input && hasRuntimeType(schedule.input, "object") && (schedule.input as { kind?: unknown }).kind === "agent-turn"
       ? parseScheduledAgentTurnInput(schedule.input)
       : undefined
-    const forwardedInput = { ...input }
+    const forwardedInput = copyAgentInvocationCallerAbortSignal(input, { ...input })
     if (turn) {
       delete forwardedInput.message
       delete forwardedInput.messages
@@ -8170,7 +8195,7 @@ async function runAgentWithContext<
       run: { ...context.run, ...turn?.delivery, runId },
       waitUntil: context.waitUntil ?? schedule.waitUntil ?? (() => {}),
     }
-    input = {
+    input = copyAgentInvocationCallerAbortSignal(input, {
       ...forwardedInput,
       context: {
         ...input.context,
@@ -8185,7 +8210,7 @@ async function runAgentWithContext<
         },
       },
       ...(turn ? { prompt: turn.prompt } : {}),
-    }
+    })
   }
   const invocationContext = withAgentIdentityOwner(agent, context)
   const binding = resolveAgentWorkflowRuntimeBinding(agent)

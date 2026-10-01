@@ -12,6 +12,7 @@ import {
   VITEHUB_PROJECT_ROOT,
   VITEHUB_SERVER_DIRS,
 } from "@vite-hub/internal/build/vite"
+import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
 import { env, hubEnv } from "@vite-hub/env/vite"
 import type { KVModuleOptions } from "@vite-hub/kv"
 import { resolveKVViteConfig } from "@vite-hub/kv/vite"
@@ -317,6 +318,17 @@ describe("ViteHub Nuxt integration", () => {
     ])
   })
 
+  it.each(["cloudflare", "vercel"] as const)("retains %s deployment inspection metadata without installing the writer", async (preset) => {
+    const { nuxt } = createNuxt()
+    nuxt.options.vitehubCliDiscovery = true
+    nuxt.options.nitro = { rootDir: "/tmp/nuxt-nitro-root", output: { dir: "custom-output" } }
+    await viteHubNuxtModule({ preset }, nuxt)
+    const entries = await collectViteHubProviderOutputEntries(nuxt.options.vite.plugins ?? [])
+    expect(entries).toContainEqual(expect.objectContaining({ owner: "vite-hub", path: "/tmp/nuxt-nitro-root/custom-output/deployment.json" }))
+    expect(entries).toContainEqual(expect.objectContaining({ owner: "vite-hub", path: preset === "cloudflare" ? "/tmp/nuxt-nitro-root/custom-output/server/wrangler.json" : "/tmp/nuxt-nitro-root/custom-output/config.json" }))
+    expect(nuxt.options.vite.plugins).not.toContainEqual(expect.objectContaining({ name: "vite-hub/deployment-output" }))
+  })
+
   it("keeps ViteHub discovery rooted at the Nuxt project", async () => {
     const { nuxt } = createNuxt()
     delete nuxt.options.vite.root
@@ -448,6 +460,14 @@ describe("ViteHub Nuxt integration", () => {
       tag: "shared-v1",
       new_sqlite_classes: ["Sandbox", "LaterObject"],
     }])
+  })
+
+  it("replays Env configuration with the selected CLI stage", async () => {
+    const development = createNuxt(true)
+    development.nuxt.options.vite = { mode: "staging" }
+    await viteHubNuxtModule({ preset: "node" }, development.nuxt)
+    await development.runNitroConfigHook({})
+    expect(mocks.envHook).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ command: "serve", mode: "staging" }))
   })
 
   it("enables Agent invocation in Nuxt development and keeps production read-only by default", async () => {
@@ -3436,6 +3456,34 @@ describe("ViteHub Nuxt integration", () => {
       preset: "cloudflare",
     })
   })
+
+  it.each([undefined, "custom-output"])(
+    "exposes Nuxt deployment inspection during CLI discovery with output %s",
+    async (outputDir) => {
+      const { nuxt } = createNuxt();
+      nuxt.options.vitehubCliDiscovery = true;
+      nuxt.options.nitro = {
+        rootDir: "/tmp/nuxt-nitro-root",
+        ...(outputDir ? { output: { dir: outputDir } } : {}),
+      };
+      await viteHubNuxtModule({ preset: "cloudflare" }, nuxt);
+      // SAFETY: The module installs flattened Vite plugins into this array.
+      const plugins = nuxt.options.vite.plugins as unknown[]
+      const entries = await collectViteHubProviderOutputEntries(plugins);
+      expect(entries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            owner: "vite-hub",
+            path: `/tmp/nuxt-nitro-root/${outputDir ?? ".output"}/deployment.json`,
+          }),
+          expect.objectContaining({
+            owner: "vite-hub",
+            path: `/tmp/nuxt-nitro-root/${outputDir ?? ".output"}/server/wrangler.json`,
+          }),
+        ]),
+      );
+    },
+  );
 
   it("exposes Nuxt module metadata for vitehub configuration", () => {
     expect(viteHubNuxtModule.getMeta()).toEqual({

@@ -235,7 +235,7 @@ it("times out readers behind an open local writer and recovers after release", a
   await expect(store.stat(path)).resolves.toMatchObject({ path })
 }, 20_000)
 
-it.each([false, true])("preserves the read deadline during admission, joining an existing batch: %s", async (joinBatch) => {
+it.each(["alone", "younger succeeds", "younger expires"])("preserves each reader admission deadline: %s", async (scenario) => {
   const { gate, paths, store } = await storeWithFiles(1)
   const writerGate = gate("docs")
   const started = Date.now()
@@ -258,7 +258,9 @@ it.each([false, true])("preserves the read deadline during admission, joining an
   try {
     const older = await pausedReader()
     clock.mockReturnValue(started + 9_000)
-    const younger = joinBatch ? await pausedReader() : undefined
+    const younger = scenario !== "alone" ? await pausedReader() : undefined
+    let youngerSettled = false
+    void younger?.result.then(() => { youngerSettled = true })
     await mkdir(writerGate)
     gateAttempts.clear()
     younger?.resume()
@@ -270,15 +272,25 @@ it.each([false, true])("preserves the read deadline during admission, joining an
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(gateAttempts.get(writerGate)).toBeGreaterThan(0)
     clock.mockReturnValue(started + 10_001)
-    const results = await Promise.race([
-      Promise.all(readers),
+    const result = await Promise.race([
+      older.result,
       new Promise<never>((_, reject) => {
         watchdog = setTimeout(() => reject(new Error("Reader admission restarted the lock deadline")), 1_000)
       }),
     ])
-    for (const result of results) {
-      expect(result).toBeInstanceOf(Error)
-      expect((result as Error).message).toContain("Timed out waiting to read Workspace path: docs.")
+    expect(result).toBeInstanceOf(Error)
+    expect((result as Error).message).toContain("Timed out waiting to read Workspace path: docs.")
+    if (younger) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(youngerSettled).toBe(false)
+      if (scenario === "younger expires") {
+        clock.mockReturnValue(started + 19_001)
+        expect(await younger.result).toMatchObject({ message: expect.stringContaining("Timed out waiting to read Workspace path: docs.") })
+      }
+      else {
+        await rm(writerGate, { recursive: true, force: true })
+        expect(await younger.result).toMatchObject({ path: paths[0] })
+      }
     }
   }
   finally {
@@ -425,3 +437,41 @@ it("lets a writer pass continuous shared reads in the same process", async () =>
   }
   await expect(store.readFile(paths[0]!)).resolves.toBeUndefined()
 }, 60_000)
+
+
+it("keeps the original read deadline when a writer races admission", async () => {
+  const { gate, paths, store } = await storeWithFiles(1)
+  const writerGate = gate("docs")
+  let probed!: () => void
+  let continueProbe!: () => void
+  const probe = new Promise<void>((resolve) => { probed = resolve })
+  const continued = new Promise<void>((resolve) => { continueProbe = resolve })
+  pausedProbes.set(writerGate, { entered: probed, resume: continued })
+  const started = Date.now()
+  const reading = store.readFile(paths[0]!).then(() => undefined, error => error as Error)
+  await probe
+  // The reader has spent nearly its full budget before a second writer wins
+  // the gate between the absence probe and the serialized admission attempt.
+  const now = vi.spyOn(Date, "now").mockImplementation(() => Date.prototype.getTime.call(new Date()) + 9_900)
+  await mkdir(writerGate)
+  let watchdog!: ReturnType<typeof setTimeout>
+  try {
+    continueProbe()
+    const error = await Promise.race([
+      reading,
+      new Promise<never>((_, reject) => {
+        watchdog = setTimeout(() => reject(new Error("Admission restarted the read deadline")), 1_500)
+      }),
+    ])
+    expect(error?.message).toContain("Timed out waiting to read Workspace path: docs.")
+    expect(Date.now() - started).toBeGreaterThanOrEqual(10_000)
+  }
+  finally {
+    clearTimeout(watchdog)
+    continueProbe()
+    await rm(writerGate, { recursive: true, force: true })
+    await reading
+    now.mockRestore()
+  }
+  await expect(store.readFile(paths[0]!)).resolves.toMatchObject({ path: paths[0] })
+}, 20_000)

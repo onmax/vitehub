@@ -249,6 +249,23 @@ await invocations.prune() // applies the store's maxAgeMs and maxRecords now
 
 `delete(id)` keeps a pending or running record and returns `'not-terminal'`. `prune()` deletes completed, failed, and cancelled records last updated before `olderThanMs`. The age must be a non-negative safe integer that produces a cutoff within JavaScript's Date range. Invalid ages fail with `AGENT_R0929`. Without `olderThanMs`, it applies the store's configured retention. Both return the affected IDs, and `dryRun: true` lists them without deleting. The SQLite and D1 adapters and the memory store implement both operations. A custom store must implement `store.delete()` and `store.prune()` to support them. Deletion removes the journal record and its claim. Artifacts that a Capability wrote to Blob storage are not keyed by the journal record, so the application owns their retention.
 
+Read the recorded prompt of a finished record to start it again:
+
+```ts
+import { agentInvocationRerunInput } from 'vite-hub/agent'
+
+const record = await invocations.get(invocationId)
+const input = record ? agentInvocationRerunInput(record) : undefined
+if (input?.available) {
+  await runAgent(agent, context, {
+    prompt: input.prompt,
+    ...(input.invokerProfileId ? { context: { invokerProfileId: input.invokerProfileId } } : {}),
+  })
+}
+```
+
+The result has `available: false` and a `reason` when the record cannot reproduce its input. Pending and running records return `invocation-not-terminal`; terminal records can return: `input-not-captured` for a missing prompt, `replay-metadata-unavailable` for legacy or incomplete replay metadata, `input-has-invoker` for a direct invoker or actor identity, `input-has-data` for structured input, `input-has-options` for call options, `input-has-messages` for singular or prior Messages, `input-redacted` for changed input or Invoker Profile replay metadata, or `input-truncated` for a bounded prompt. Direct invoker identities, structured input, and call options are not replayed. A resolver-derived Invoker without a selected Invoker Profile returns `input-has-invoker`; a selected profile is resolved again when the new Invocation starts. The journal keeps `input.prompt` only when `metadataContent` or `content: 'content'` includes it. When the start observation recorded an Invoker Profile, `invokerProfileId` holds the selected profile ID, even when an invoker resolver changes the identity. Direct invocation context beyond an Invoker Profile selection, runtime run metadata beyond the run ID, and timeouts are unavailable for rerun because Console cannot reproduce them. Calls in dry-run mode are unavailable for rerun and return `input-has-dry-run`. Calls with a caller-provided cancellation signal are unavailable for rerun and return `input-has-abort-signal`. A prompt changed by a Capability or input hook is unavailable for rerun and returns `input-prompt-changed`. These cases return `input-has-context`, `input-has-run-metadata`, and `input-has-timeout`.
+
 Use `configuration: 'content'` to retain resolved instructions and tool descriptions/schemas independently of other trace content. The default is `configuration: 'metadata'`. Console journals enable configuration retention for inspection; existing records cannot recover contracts that were not saved. Recorded configuration still uses the journal's observation limits and marks truncated values.
 
 Invocation journals are metadata-only by default. Set `content: 'content'` only when the application must persist prompts, messages, reasoning, tool inputs and outputs, and result text. That opt-in stores sensitive model content in the configured durable store; apply the same access controls, retention policy, and encryption requirements as the source data.

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
 import { createServer } from "node:http"
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -14,6 +14,7 @@ import { collectViteHubCliNamespaces } from "@vite-hub/internal/cli"
 import { defineSchedule } from "../src/definition.ts"
 import { runScheduleRunCli } from "../src/cli.ts"
 import { resetScheduleRuntime } from "../src/runtime/state.ts"
+import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
 import { createScheduleNitroConfig, hubSchedule } from "../src/vite.ts"
 
 import type { IncomingMessage, ServerResponse } from "node:http"
@@ -48,6 +49,70 @@ async function resolvePluginConfig(plugin: ReturnType<typeof hubSchedule>, root:
 }
 
 describe("Vite schedule integration", () => {
+  it("keeps public URL defines and output roots separate when a plugin is reused across builds", async () => {
+    const plugin = hubSchedule()
+    const prepareScheduleRuntime = vi.fn(async () => undefined)
+    const workflowPlugin = { name: "workflow", vitehub: { workflow: { prepareScheduleRuntime } } }
+    const projects = []
+    const buildStart = plugin.buildStart
+    if (typeof buildStart !== "function") throw new TypeError("Expected buildStart hook")
+    try {
+      for (const name of ["first", "second"]) {
+        const root = await mkdtemp(join(tmpdir(), "vitehub-schedule-shared-build-"))
+        const config = {
+          root,
+          command: "build",
+          build: { outDir: "dist/client" },
+          plugins: [workflowPlugin],
+          resolve: { alias: [] },
+          define: {
+            __VITEHUB_PUBLIC_URL__: JSON.stringify({ url: `https://${name}.example` }),
+            __VITEHUB_APP_BASE_URL__: JSON.stringify(`/${name}/`),
+          },
+        }
+        const context = { environment: { config } }
+        projects.push({ root, name, context })
+        await mkdir(join(root, "dist/client"), { recursive: true })
+        await symlink(
+          join(import.meta.dirname, "../../../node_modules"),
+          join(root, "node_modules"),
+          "dir",
+        )
+        await writeFile(
+          join(root, "cleanup.schedule.ts"),
+          "import { defineSchedule } from '@vite-hub/schedule'; export default defineSchedule({ cron: '0 0 * * *', handler: () => console.log(__VITEHUB_PUBLIC_URL__, __VITEHUB_APP_BASE_URL__) })\n",
+        )
+        await (plugin.configResolved as (config: unknown) => Promise<void>)(config)
+        await buildStart.call(context as never, {} as never)
+      }
+      // Both configurations resolve before either build reaches provider generation.
+      await Promise.all(
+        projects.map(({ context }) =>
+          (plugin.buildEnd as (this: never) => Promise<void>).call(context as never),
+        ),
+      )
+      await Promise.all(
+        projects.map(({ context }) =>
+          (plugin.closeBundle as { handler: (this: never) => Promise<void> }).handler.call(
+            context as never,
+          ),
+        ),
+      )
+      for (const { root, name, context } of projects) {
+        expect(prepareScheduleRuntime).toHaveBeenCalledWith(expect.any(String), context.environment.config)
+        const artifact = await readFile(
+          join(createDefaultCloudflareOutputRoot(root), "index.js"),
+          "utf8",
+        )
+        expect(artifact).toContain(`https://${name}.example`)
+        expect(artifact).toContain(`/${name}/`)
+        expect(artifact).not.toContain(`https://${name === "first" ? "second" : "first"}.example`)
+      }
+    } finally {
+      await Promise.all(projects.map(({ root }) => rm(root, { recursive: true, force: true })))
+    }
+  })
+
   it("serializes shared Provider Output finalization", () => {
     expect(hubSchedule().closeBundle).toMatchObject({ order: "post", sequential: true })
   })
@@ -395,6 +460,7 @@ describe("Vite schedule integration", () => {
       root,
     })
     await runProviderOutputHooks(plugin)
+    expect(await collectViteHubProviderOutputEntries([plugin])).toEqual([])
     expect(existsSync(join(createDefaultCloudflareOutputRoot(root), "wrangler.json"))).toBe(false)
     await expect(readFile(join(createDefaultNetlifyOutputRoot(root), "functions", "vitehub-schedule-cleanup.mjs"), "utf8")).rejects.toThrow()
   })
@@ -443,6 +509,9 @@ describe("Vite schedule integration", () => {
     await runProviderOutputHooks(plugin)
 
     await expect(readFile(join(root, ".vitehub", "nitro", "schedule", "plugin.ts"), "utf8")).resolves.not.toContain("cloudflare:scheduled")
+    const inspected = await collectViteHubProviderOutputEntries([plugin])
+    expect(inspected).toHaveLength(4)
+    expect(inspected.every(entry => existsSync(entry.path))).toBe(true)
     await expect(readFile(join(root, ".vitehub", "nitro", "schedule", "static-registry.js"), "utf8")).resolves.not.toContain("src/cleanup.schedule.ts")
     await expect(readFile(join(createDefaultCloudflareOutputRoot(root), "wrangler.json"), "utf8")).resolves.toContain("\"0 0 * * *\"")
     await expect(readFile(join(createDefaultNetlifyOutputRoot(root), "functions", "vitehub-schedule-cleanup.mjs"), "utf8")).resolves.toContain("schedule: \"0 0 * * *\"")
@@ -489,7 +558,7 @@ describe("Vite schedule integration", () => {
       readFile(join(createDefaultVercelOutputRoot(root), "functions", "api", "vitehub", "schedules", "vercel", "cleanup.func", "index.mjs"), "utf8"),
     ])
     expect(providerOutputs.join("\n")).not.toContain("schedule-generations")
-    expect(providerOutputs.join("\n")).toContain("./.vitehub/schedule/sources/")
+    expect(providerOutputs.join("\n")).toContain(".vitehub/schedule/sources/")
     const retainedScheduleSpecifier = registry.match(/import\("(\.\/sources\/[^"]+\/cleanup\.schedule\.ts)"\)/)?.[1]
     expect(retainedScheduleSpecifier).toBeDefined()
     const retainedSchedulePath = retainedScheduleSpecifier!.slice(2)
@@ -969,6 +1038,7 @@ describe("Vite schedule integration", () => {
     expect(existsSync(join(root, ".vitehub", "schedule-generations"))).toBe(false)
     await (plugin.closeBundle as { handler: (this: never) => Promise<void> }).handler.call({} as never)
 
+    expect(await collectViteHubProviderOutputEntries([plugin])).toEqual([])
     expect(existsSync(join(createDefaultCloudflareOutputRoot(root), "wrangler.json"))).toBe(false)
     await expect(readFile(join(root, ".vitehub", "nitro", "schedule", "provider-registry.js"), "utf8")).resolves.toContain("server/schedules/sync.ts")
   })

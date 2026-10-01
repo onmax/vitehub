@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { isRuntimeRecord } from "./runtime-type.ts"
 import type { AgentChatMessage, AgentChannelDeliveryEffectContext, AgentInvocationContextStore, AgentRuntimeConfig } from "../types.ts"
 
@@ -84,6 +85,18 @@ export function chatFinalReplyMode(input: { context?: unknown } | undefined): Ch
   if (!isRuntimeRecord(context)) return
   const mode = context[chatFinalReplyContextKey]
   return mode === "pending" || mode === "posted" ? mode : undefined
+}
+
+/** Input context key where Capabilities add notices for the final chat reply. */
+export const chatFinalReplyNoticesContextKey = "vitehub.chat.final-reply.notices"
+
+const chatFinalReplyNoticeSchema = v.pipe(v.string(), v.trim(), v.nonEmpty())
+
+export function chatFinalReplyNotices(input: { context?: unknown } | undefined): string[] {
+  const context = input?.context
+  if (!isRuntimeRecord(context)) return []
+  const notices = context[chatFinalReplyNoticesContextKey]
+  return Array.isArray(notices) ? notices.filter((notice): notice is string => v.safeParse(chatFinalReplyNoticeSchema, notice).success) : []
 }
 
 const chatFinalReplyTexts = new WeakMap<AgentInvocationContextStore, string>()
