@@ -192,6 +192,19 @@ describe("hubAuth", () => {
     expect(resolved.environments.ssr?.resolve.noExternal).toEqual(["existing", "@vite-hub/auth"])
   })
 
+  it("composes the Nuxt Nitro helper without duplicating existing arrays or mutating its input", async () => {
+    const root = await createTempProject()
+    await writeAuth(root)
+    const middleware = { handler: "/app/middleware.ts", middleware: true, route: "/**" }
+    const nitro = { handlers: [middleware], plugins: ["/app/plugin.ts"] }
+    const composed = createAuthNitroConfig(hubAuth(), { nitro, projectRoot: root })
+    expect(composed).toMatchObject({ handlers: [middleware, { handler: resolve(root, ".vitehub/auth/route.ts"), route: "/api/auth/**" }], plugins: ["/app/plugin.ts"] })
+    expect(nitro).toEqual({ handlers: [middleware], plugins: ["/app/plugin.ts"] })
+    const repeated = createAuthNitroConfig(hubAuth(), { nitro: composed, projectRoot: root })
+    expect(repeated).toEqual(composed)
+  })
+
+
   it("registers the discovered Auth route with Nitro", async () => {
     const root = await createTempProject()
     await writeAuth(root)

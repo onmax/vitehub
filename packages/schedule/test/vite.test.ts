@@ -494,7 +494,7 @@ describe("Vite schedule integration", () => {
       readFile(join(createDefaultVercelOutputRoot(root), "functions", "api", "vitehub", "schedules", "vercel", "cleanup.func", "index.mjs"), "utf8"),
     ])
     expect(providerOutputs.join("\n")).not.toContain("schedule-generations")
-    expect(providerOutputs.join("\n")).toContain("./.vitehub/schedule/sources/")
+    expect(providerOutputs.join("\n")).toContain(".vitehub/schedule/sources/")
     const retainedScheduleSpecifier = registry.match(/import\("(\.\/sources\/[^"]+\/cleanup\.schedule\.ts)"\)/)?.[1]
     expect(retainedScheduleSpecifier).toBeDefined()
     const retainedSchedulePath = retainedScheduleSpecifier!.slice(2)

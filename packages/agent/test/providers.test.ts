@@ -515,7 +515,7 @@ describe("agent Vite plugin", () => {
     expect(config({ define: { __VITEHUB_AGENT_APP_ROOT__: "configured" }, root: "/repo/apps/web" }).define?.__VITEHUB_AGENT_APP_ROOT__).toBe("configured")
   })
 
-  it.each([{ noExternal: [] }, { noExternal: ["existing"] }, { noExternal: ["existing", "@vite-hub/agent"] }])("merges server noExternal %j", async ({ noExternal }) => {
+  it.each([{ noExternal: undefined }, { noExternal: "existing" }, { noExternal: [] }, { noExternal: ["existing"] }, { noExternal: ["existing", "@vite-hub/agent"] }, { noExternal: true }])("merges server noExternal %j", async ({ noExternal }) => {
     const { hubAgent } = await import("../src/vite.ts")
     const plugin = hubAgent()
     const environment = { consumer: "server", resolve: { noExternal } }
@@ -533,7 +533,9 @@ describe("agent Vite plugin", () => {
         )
       : undefined
 
-    expect(result ? mergeConfig(environment, result).resolve.noExternal : undefined).toEqual([...new Set([...noExternal, "@vite-hub/agent", "@t3tools/provider-runtime"])])
+    expect(result ? mergeConfig(environment, result).resolve.noExternal : undefined).toEqual(
+      noExternal === true ? true : [...new Set([...(noExternal === undefined ? [] : Array.isArray(noExternal) ? noExternal : [noExternal]), "@vite-hub/agent", "@t3tools/provider-runtime"])],
+    )
   })
 
   it("bundles the provider runtime into hosted Vite server output", async () => {
