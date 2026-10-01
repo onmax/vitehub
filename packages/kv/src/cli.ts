@@ -224,7 +224,10 @@ async function readValue(parsed: ParsedKVArgs, cwd: string): Promise<unknown> {
   const text = raw.startsWith("@") ? await readFile(resolve(cwd, raw.slice(1)), "utf8") : raw
   if (!parsed.jsonValue) return text
   try {
-    const value: unknown = JSON.parse(text)
+    const value: unknown = JSON.parse(text, (_key, value: unknown, context?: { source?: string }) => {
+      if (value === 0 && context?.source && /[1-9]/.test(context.source.split(/[eE]/, 1)[0]!)) throw kvErrorDiagnostics.KV_R0019({ message: "JSON numbers cannot underflow to zero. Use a string to preserve the supplied value." })
+      return value
+    })
     validateJSONNumbers(value)
     return value
   }
