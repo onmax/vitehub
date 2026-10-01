@@ -796,6 +796,19 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
     log("cursor.initialized", { historyId: sync.notificationHistoryId })
     return
   }
+  let failed = false
+  const dispatchMessageIds = async (ids: readonly string[]): Promise<void> => {
+    for (let start = 0; start < ids.length; start += messageFetchConcurrency) {
+      await renew()
+      const messages = await getGmailMessages(client, ids.slice(start, start + messageFetchConcurrency), sync.bodyLimit)
+      for (const message of messages) {
+        await renew()
+        const result = await sync.dispatch([message])
+        log("messages.dispatched", { failed: result.failed, processed: result.processed, skipped: result.skipped })
+        failed ||= result.failed > 0
+      }
+    }
+  }
   let changes: { historyId: string, ids: string[] }
   try {
     changes = await newInboxMessageIds(client, cursor)
@@ -804,27 +817,19 @@ async function syncMailboxOnce(sync: GmailMailboxSync, cursorKey: string, renew:
     if (gmailErrorStatus(error) !== 404) throw error
     // Gmail keeps about a week of history. Recover recent Inbox mail, then continue from now.
     const { historyId } = await gmailRequest(client, profileSchema, { method: "GET", path: "profile" })
-    const ids: string[] = []
+    let recovered = 0
     let pageToken: string | undefined
     do {
+      await renew()
       const recent = await listGmailMessageIds(client, { limit: 100, query: "in:inbox newer_than:2d", ...(pageToken ? { pageToken } : {}) })
-      ids.push(...recent.ids)
+      await dispatchMessageIds(recent.ids)
+      recovered += recent.ids.length
       pageToken = recent.nextPageToken
     } while (pageToken)
-    log("history.expired", { historyId: cursor, recovered: ids.length })
-    changes = { historyId, ids }
+    log("history.expired", { historyId: cursor, recovered })
+    changes = { historyId, ids: [] }
   }
-  let failed = false
-  for (let start = 0; start < changes.ids.length; start += messageFetchConcurrency) {
-    await renew()
-    const messages = await getGmailMessages(client, changes.ids.slice(start, start + messageFetchConcurrency), sync.bodyLimit)
-    for (const message of messages) {
-      await renew()
-      const result = await sync.dispatch([message])
-      log("messages.dispatched", { failed: result.failed, processed: result.processed, skipped: result.skipped })
-      failed ||= result.failed > 0
-    }
-  }
+  await dispatchMessageIds(changes.ids)
   if (failed) return
   // Advance the cursor only while this worker still owns the mailbox lease.
   await renew()

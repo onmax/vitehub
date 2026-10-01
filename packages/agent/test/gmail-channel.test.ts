@@ -693,6 +693,76 @@ describe("gmail() Channel", () => {
     expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("labelId"))).toEqual(["INBOX", "INBOX", "INBOX"])
   })
 
+  it("journals recovery messages before listing the next page and retries without duplicate Invocations", async () => {
+    stubGmailEnv()
+    const google = await createGoogle()
+    const agentName = "paged-recovery"
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const prompts: string[] = []
+    const pages: Array<string | null> = []
+    let started!: () => void
+    let nextPageStarted!: () => void
+    let releaseNextPage!: () => void
+    const firstDispatch = new Promise<void>(resolve => { started = resolve })
+    const nextPage = new Promise<void>(resolve => { nextPageStarted = resolve })
+    const laterPageGate = new Promise<void>(resolve => { releaseNextPage = resolve })
+    let interrupted = true
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input))
+      if (url.pathname.endsWith("/messages")) {
+        const pageToken = url.searchParams.get("pageToken")
+        pages.push(pageToken)
+        expect(url.searchParams.get("maxResults")).toBe("100")
+        if (!pageToken) return Response.json({ messages: [{ id: "m1" }], nextPageToken: "page-2" })
+        if (interrupted) {
+          nextPageStarted()
+          await laterPageGate
+          interrupted = false
+          throw new Error("Recovery interrupted before its next page")
+        }
+        return Response.json({ messages: [{ id: "m2" }] })
+      }
+      return await google.fetch(input, init)
+    }
+    const agent = defineAgent({
+      channels: { gmail: gmail({ fetch, prompt: message => message.id }) },
+      driver: { run: ({ input }) => { prompts.push(String(input.prompt)); started(); return "ok" } },
+      invocations,
+      name: agentName,
+    })
+    const handler = createChannelWebhookRouteHandler(agent)
+    const push = async () => {
+      const tasks: Promise<unknown>[] = []
+      const response = await handler(new Request(audience, {
+        body: JSON.stringify({ message: { data: base64Url(JSON.stringify({ emailAddress: "max@example.com", historyId: "105" })), messageId: "paged-recovery" }, subscription }),
+        headers: { authorization: `Bearer ${await google.token()}`, "content-type": "application/json" },
+        method: "POST",
+      }), "gmail", { agentName, waitUntil: task => void tasks.push(task) })
+      expect(response.status).toBe(204)
+      return tasks
+    }
+    await Promise.all(await push())
+    google.expiredHistory.add("105")
+    const tasks = await push()
+    try {
+      expect(await Promise.race([firstDispatch.then(() => "dispatch"), nextPage.then(() => "pagination")])).toBe("dispatch")
+      await nextPage
+      await expect(invocations.getByRunId(channelMessageRunId("gmail", "m1"), agentName)).resolves.toMatchObject({ status: "completed" })
+      expect(prompts).toEqual(["m1"])
+    }
+    finally {
+      releaseNextPage()
+      await Promise.all(tasks)
+    }
+    await Promise.all(await push())
+    expect(prompts).toEqual(["m1", "m2"])
+    expect(pages).toEqual([null, "page-2", null, "page-2"])
+    expect(google.calls.filter(call => call.path === "history").map(call => call.query.get("startHistoryId"))).toEqual(["105", "105"])
+    await Promise.all(await push())
+    expect(prompts).toEqual(["m1", "m2"])
+    expect(google.calls.filter(call => call.path === "history").at(-1)?.query.get("startHistoryId")).toBe("300")
+  })
+
   it.each([false, true])("retries unjournaled dispatch failures and recovers every expired-history page: %s", async (expired) => {
     stubGmailEnv()
     const google = await createGoogle()
