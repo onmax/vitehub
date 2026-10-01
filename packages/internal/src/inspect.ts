@@ -100,8 +100,13 @@ const secretKeyPattern = /secret|token|passw(?:or)?d|credential|api[-_\s]?key|pr
 const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s:?#]+:[^/\s?#]+@|bearer\s)/i
 
 const embeddedUrlCredentialPattern = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:?#]+:[^/\s?#]+@/gi
+const embeddedCookiePattern = /(?<![\w-])cookie\s*:\s*[^\r\n]+/gi
 const embeddedBearerPattern = /\bbearer\s+[^\s,;]+/gi
-const embeddedAuthorizationPattern = /\b(authorization\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[a-z]+\s+[^\s,;]+|[^\s,;]+)/gi
+const embeddedAuthorizationPattern = new RegExp(
+  String.raw`\b(authorization\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]+?(?=\s*(?:[,;])?\s*(?:${secretKeyPattern.source})[\w-]*\s*[:=]|\s+rejected\b|$))`,
+  "gi",
+)
+
 const embeddedSecretAssignmentPattern = new RegExp(
   String.raw`\b([\w-]*(?:${secretKeyPattern.source})[\w-]*["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;&]+)`,
   "gi",
@@ -115,6 +120,7 @@ export function redactInspectionText(value: string): string {
   return value
     .replace(embeddedUrlCredentialPattern, `$1${redactedInspectionValue}@`)
     .replace(embeddedAuthorizationPattern, `$1${redactedInspectionValue}`)
+    .replace(embeddedCookiePattern, `Cookie: ${redactedInspectionValue}`)
     .replace(embeddedBearerPattern, `Bearer ${redactedInspectionValue}`)
     .replace(embeddedSecretAssignmentPattern, `$1${redactedInspectionValue}`)
 }

@@ -79,6 +79,11 @@ describe("redactInspectionValue", () => {
     expect(redactInspectionText("https://public.test/path?contact=user@example.test")).toBe("https://public.test/path?contact=user@example.test")
   })
 
+  it("redacts complete compound classified credentials", () => {
+    expect(redactInspectionText('Authorization: Digest username="u", response="deadbeef"')).toBe('Authorization: [redacted]')
+    expect(redactInspectionText('Cookie: theme=dark; sessionid=abc123')).toBe('Cookie: [redacted]')
+  })
+
   it("keeps non-secret primitives unchanged", () => {
     expect(redactInspectionValue(3)).toBe(3)
     expect(redactInspectionValue(null)).toBe(null)
