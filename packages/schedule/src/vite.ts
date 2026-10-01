@@ -19,7 +19,7 @@ import { createScheduleTargetsContents, SCHEDULE_TARGETS_ID } from "./targets-mo
 
 import type { Plugin, ResolvedConfig, UserConfig } from "vite"
 import type { ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
-import type { ViteHubCliContributingPlugin } from "@vite-hub/internal/cli"
+import type { ViteHubCliContributingPlugin, ViteHubCliPluginMetadata } from "@vite-hub/internal/cli"
 import type { ScheduleWorkflowRuntime } from "./internal/provider-output.ts"
 import type { ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
 import type { ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
@@ -781,6 +781,6 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
           ]
         : [],
     }),
-  } satisfies ViteHubInspectionPluginMetadata
+  } satisfies ViteHubInspectionPluginMetadata & ViteHubCliPluginMetadata
   return inspectable
 }
