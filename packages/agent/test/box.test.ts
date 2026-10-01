@@ -6,6 +6,17 @@ import { promisify } from "node:util"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+const relayServers = vi.hoisted(() => [] as import("node:net").Server[])
+vi.mock("node:net", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:net")>()
+  const createServer = (...args: Parameters<typeof actual.createServer>) => {
+    const server = actual.createServer(...args)
+    relayServers.push(server)
+    return server
+  }
+  return { ...actual, createServer }
+})
+
 const providerRuntimes = vi.hoisted(() => [] as Array<Record<string, unknown>>)
 const createProviderRuntime = vi.hoisted(() => vi.fn(async (_options: { environment?: Record<string, string>, settings?: Record<string, unknown> }) => providerRuntimes.shift()))
 const createSqliteProviderRuntimeSessionStore = vi.hoisted(() => vi.fn(async (path: string) => ({
@@ -52,6 +63,7 @@ const execFileAsync = promisify(execFile)
 const roots: string[] = []
 
 afterEach(async () => {
+  await Promise.all(relayServers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))))
   providerRuntimes.splice(0)
   createProviderRuntime.mockClear()
   vi.unstubAllEnvs()
@@ -283,6 +295,21 @@ describe("Agent Box environment", () => {
 })
 
 describe("Agent Box relay", () => {
+  it.each(["relay.mjs", "provider"])("closes the listening server when writing %s fails", async (blockedFile) => {
+    const root = await temporaryRoot()
+    await mkdir(join(root, blockedFile))
+    await expect(startProviderBoxRelay({
+      // SAFETY: Setup fails before this fixture needs a Box process.
+      box: { session: { cwd: "/box/work" } } as unknown as ProviderBoxSession,
+      command: "provider",
+      diagnosticPath: join(root, "diagnostic.json"),
+      environment: () => ({}),
+      launchRoot: root,
+      localRoot: join(root, "local"),
+    })).rejects.toMatchObject({ code: "EISDIR" })
+    await vi.waitFor(() => expect(relayServers.at(-1)?.listening).toBe(false))
+  })
+
   it("stops pulling Box output while the runtime consumer is paused", async () => {
     const root = await temporaryRoot()
     const totalChunks = 256
