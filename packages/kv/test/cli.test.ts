@@ -123,6 +123,18 @@ describe("KV review regressions", () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it.each(["line\nbreak", "line\rbreak", "line\u2028break", "line\u2029break"])("requires JSON to preserve line-breaking keys: %j", async key => {
+    const result = { keys: ["ordinary", key], limit: 100, prefix: "", store: "default", stores: ["default"] }
+    const human = context()
+    await expect(runKVCli(["list"], human.context, { fetch: devServer(result) })).resolves.toBe(1)
+    expect(human.stdout.output()).toBe("")
+    expect(human.stderr.output()).toContain("Use --json")
+    const json = context()
+    await expect(runKVCli(["list", "--json"], json.context, { fetch: devServer(result) })).resolves.toBe(0)
+    expect(JSON.parse(json.stdout.output()).keys).toEqual(result.keys)
+    expect(json.stderr.output()).toBe("")
+  })
+
   it("reports invalid binary payloads without throwing", async () => {
     const output = context()
     await expect(runKVCli(["get", "key", "--json"], output.context, { fetch: devServer({ encoding: "base64", found: true, key: "key", store: "default", value: "invalid!" }) })).resolves.toBe(1)

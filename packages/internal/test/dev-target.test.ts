@@ -59,8 +59,15 @@ describe("dev target options", () => {
   it("uses the owner error factories", () => {
     expect(() => parseTarget(["--url"])).toThrow(expect.objectContaining({ code: "missing", message: "Missing value for --url." }))
     expect(() => parseTarget(["--server", "--timeout"])).toThrow(expect.objectContaining({ code: "missing", message: "Missing value for --server." }))
-    expect(() => parseTarget(["--timeout", "0"])).toThrow(expect.objectContaining({ code: "separate", message: "--timeout must be a positive number." }))
-    expect(() => parseTarget(["--timeout=abc"])).toThrow(expect.objectContaining({ code: "inline", message: "--timeout must be a positive number." }))
+    expect(() => parseTarget(["--timeout", "0"])).toThrow(expect.objectContaining({ code: "separate", message: "--timeout must be a positive integer." }))
+    expect(() => parseTarget(["--timeout=abc"])).toThrow(expect.objectContaining({ code: "inline", message: "--timeout must be a positive integer." }))
+  })
+
+  it.each([
+    { args: ["--timeout", "2147483648"], code: "separate" },
+    { args: ["--timeout=2147483648"], code: "inline" },
+  ])("rejects timer overflow with the owner $code factory", ({ args, code }) => {
+    expect(() => parseTarget(args)).toThrow(expect.objectContaining({ code, message: "--timeout must be at most 2147483647 milliseconds." }))
   })
 
   it("resolves endpoint routes with and without a trailing slash", () => {

@@ -274,6 +274,7 @@ function writeResult(result: KVCommandResult, context: KVCliContext): number {
   switch (result.operation) {
     case "list": {
       const page = result.value
+      if (page.keys.some(key => /[\r\n\u2028\u2029]/.test(key))) return writeFailure({ json: false }, context, { message: "The KV list contains line-breaking keys. Use --json to preserve the complete keys." })
       // Some drivers scan a fixed number of entries per page, so a page can be empty while more keys exist.
       if (page.keys.length === 0 && page.cursor) context.stderr.write("No keys on this page.\n")
       else if (page.keys.length === 0) context.stderr.write(`No keys${page.prefix ? ` with prefix ${page.prefix}` : ""} in store ${page.store}.\n`)
