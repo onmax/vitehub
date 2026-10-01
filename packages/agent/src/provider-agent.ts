@@ -3388,10 +3388,20 @@ async function* runProvider<
     finally {
       cleanup.dispose()
     }
-    const deferredResourceCleanup = forcedRootCleanup || invocationCleanupDeferred || (cleanupTimedOut ? cleanupTask : deferredRuntimeCleanup || deferredWorkspaceCleanup)
-    const deferredCleanup = deferredSessionConsume && deferredResourceCleanup
-      ? Promise.allSettled([deferredSessionConsume, deferredResourceCleanup]).then(() => undefined)
-      : deferredSessionConsume || deferredResourceCleanup
+    // Keep the checkout lock held until every cleanup path that can still touch
+    // the provider root has settled. A forced root cleanup may finish while a
+    // deferred runtime shutdown is still stopping provider code in that root.
+    const deferredResourceCleanups = [
+      forcedRootCleanup,
+      invocationCleanupDeferred,
+      cleanupTimedOut ? cleanupTask : undefined,
+      deferredRuntimeCleanup,
+      deferredWorkspaceCleanup,
+    ].filter((cleanup): cleanup is Promise<void> => cleanup !== undefined)
+    if (deferredSessionConsume) deferredResourceCleanups.push(deferredSessionConsume)
+    const deferredCleanup = deferredResourceCleanups.length
+      ? Promise.allSettled(deferredResourceCleanups).then(() => undefined)
+      : undefined
     if (preservesProviderSession && sessionKey) {
       if (completed && caught === undefined && cleanupErrors.length === 0 && !deferredCleanup && pendingResumeCursor !== undefined) {
         try {
