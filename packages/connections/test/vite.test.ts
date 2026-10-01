@@ -404,6 +404,23 @@ describe("hubConnections", () => {
     await expect(readFile(join(root, "api/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
   });
 
+  it("recovers type preparation after shared ownership metadata is corrupted", async () => {
+    const root = await createTempProject();
+    await hubConnections().api.prepareTypes({ projectRoot: root });
+    await writeFile(join(root, ".vitehub/connections-types-owners.json"), "{");
+    await expect(hubConnections().api.prepareTypes({ projectRoot: root })).resolves.toBeUndefined();
+    await expect(readFile(join(root, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+  });
+
+  it("retires the default declaration when moving to a custom root", async () => {
+    const root = await createTempProject();
+    await hubConnections().api.prepareTypes({ projectRoot: root });
+    await expect(readFile(join(root, ".vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+    await hubConnections({ projectRoot: "packages/api" }).api.prepareTypes({ projectRoot: root });
+    await expect(readFile(join(root, ".vitehub/types/connections.d.ts"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(root, "packages/api/.vitehub/types/connections.d.ts"))).resolves.toBeTruthy();
+  });
+
   it("retains previous custom output until cleanup when changing the configured root", async () => {
     const root = await createTempProject();
     await hubConnections({ projectRoot: "packages/old" }).api.prepareTypes({ projectRoot: root });

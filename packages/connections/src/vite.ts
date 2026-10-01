@@ -113,9 +113,32 @@ async function writeTypesManifest<T>(root: string, path: string, entries: T[]): 
 }
 
 async function removeUntrackedDefaultTypes(root: string): Promise<void> {
-  await withOwnersLock(root, async () => {
-    const owners = await readOwners(root);
-    if (owners?.length === 0) await removeLegacyDefaultTypes(root);
+  await removeGeneratedOwner(root, root);
+}
+
+async function removeGeneratedOwner(target: string, origin: string): Promise<void> {
+  await withOwnersLock(target, async () => {
+    const owners = await readOwners(target);
+    if (!owners) return;
+    const remaining = owners.filter(entry => resolve(target, entry.origin) !== resolve(target, origin));
+    const removed = owners.filter(entry => !remaining.includes(entry));
+    const file = resolve(target, generatedTypesPath);
+    const previous = await readOptionalFile(file);
+    if (remaining.length) {
+      await writeTypesManifest(target, generatedTypesOwnersManifest, remaining);
+    } else {
+      if (owners.length === 0) await removeLegacyDefaultTypes(target);
+      if (previous !== undefined && removed.some(entry => typeHash(previous) === entry.hash) && (await lstat(file)).isFile()) {
+        await rm(file, { force: true });
+      }
+      await rm(resolve(target, generatedTypesOwnersManifest), { force: true });
+    }
+    const tracked = await readManifest(target);
+    if (tracked) {
+      const retained = tracked.filter(entry => resolve(target, entry.root) !== resolve(target, origin));
+      if (retained.length) await writeTypesManifest(target, generatedTypesManifest, retained);
+      else await rm(resolve(target, generatedTypesManifest), { force: true });
+    }
   });
 }
 
@@ -283,8 +306,17 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
     await withManifestLock(defaultProjectRoot, async () => {
       if (projectRoot !== defaultProjectRoot) await removeUntrackedDefaultTypes(defaultProjectRoot);
       await withOwnersLock(projectRoot, async () => {
-        const owners = await readOwners(projectRoot);
-        if (!owners) throw new Error(`Invalid Connection type ownership metadata at ${projectRoot}.`);
+        let owners = await readOwners(projectRoot);
+        if (!owners) {
+          const tracked = await readManifest(defaultProjectRoot);
+          owners = (tracked ?? [])
+            .filter(entry => resolve(defaultProjectRoot, entry.root) === projectRoot && entry.owner)
+            .map(entry => ({
+              origin: storedTypesRoot(projectRoot, defaultProjectRoot),
+              hash: entry.hash,
+              owner: entry.owner!,
+            }));
+        }
         const types = renderRegistryTypes(definitions);
         await Promise.all([
           writeFileIfChanged(resolve(projectRoot, generatedTypesPath), types),
