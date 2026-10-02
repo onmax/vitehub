@@ -4,6 +4,8 @@ export const blobDevRoute = "/__vitehub/blob/dev"
 export const blobDevRuntimeRoute = "/_vitehub/blob/dev"
 export const blobDevHeader = "x-vitehub-blob-dev"
 export const blobDevHeaderValue = "1"
+export const blobDevTokenNamespace = "blob"
+export const blobDevTokenServerHeader = "x-vitehub-blob-dev-server"
 /**
  * Response header of a successful `get`. The body is the raw file, and this header holds the URI-encoded JSON of
  * {@link BlobDevFileHeader}.

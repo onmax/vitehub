@@ -12,6 +12,8 @@ export type BlobDevServer = ViteHubNitroDevServer
 export interface BlobDevEndpointOptions {
   /** Nitro `baseURL`. Nitro routes use this prefix. */
   nitroBaseURL?: () => string | undefined
+  discovery?: () => Record<string, unknown>
+  forwardHeaders?: readonly string[]
 }
 
 /**
@@ -26,6 +28,8 @@ export function registerBlobDevEndpoint(server: BlobDevServer, options: BlobDevE
     header: blobDevHeader,
     headerValue: blobDevHeaderValue,
     label: "Blob Dev",
+    discovery: options.discovery?.(),
+    forwardHeaders: options.forwardHeaders,
     nitroBaseURL: options.nitroBaseURL,
     route: blobDevRoute,
     runtimeRoute: blobDevRuntimeRoute,

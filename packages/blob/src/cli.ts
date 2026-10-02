@@ -1,5 +1,6 @@
 import { readFile, stat, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
+import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 
 import * as v from "valibot"
 
@@ -18,6 +19,8 @@ import {
   blobDevMaximumListLimit,
   blobDevMaximumUploadBytes,
   blobDevRoute,
+  blobDevTokenNamespace,
+  blobDevTokenServerHeader,
 } from "./dev.ts"
 import { blobErrorDiagnostics } from "./error-diagnostics.ts"
 
@@ -60,6 +63,7 @@ interface BlobDevDiscovery {
   message?: unknown
   root?: unknown
   runtime?: unknown
+  blobDevTokenServerId?: unknown
 }
 
 interface BlobCliFailure {
@@ -439,6 +443,9 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
         : "This Vite Development Server cannot reach the Blob runtime.",
     })
   }
+  const serverId = v.is(v.string(), server.discovery.blobDevTokenServerId) ? server.discovery.blobDevTokenServerId : undefined
+  const token = serverId ? await readViteHubDevToken(context.rootDir, { namespace: blobDevTokenNamespace, serverId }) : undefined
+  if (!serverId || !token) return writeFailure(parsed, context, { message: "No private Blob Dev token found. Restart the Compatible Vite Development Server." })
   const body: BlobDevRequestBody = { operation: command.name }
   if (parsed.contentType !== undefined) body.contentType = parsed.contentType
   if (parsed.cursor !== undefined) body.cursor = parsed.cursor
@@ -451,7 +458,7 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
   try {
     response = await fetchViteHubDevEndpoint(fetchImpl, server.url, blobDevEndpoint, {
       body: JSON.stringify(body),
-      headers: { accept: command.name === "get" ? "application/octet-stream" : "application/json", "content-type": "application/json" },
+      headers: { accept: command.name === "get" ? "application/octet-stream" : "application/json", "content-type": "application/json", [viteHubDevTokenHeader]: token, [blobDevTokenServerHeader]: serverId },
       method: "POST",
       ...withTimeout(parsed.timeout),
     })

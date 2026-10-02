@@ -77,6 +77,7 @@ interface InternalScheduleVitePluginOptions extends ScheduleVitePluginOptions {
 export interface ScheduleVitePlugin {
   name: string
   [hook: string]: unknown
+  vitehub?: { cli?: () => Promise<import("@vite-hub/internal/cli").ViteHubCliContributor> }
 }
 
 type NitroConfig = Record<string, unknown> & {
@@ -748,5 +749,12 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
   }
 
   // SAFETY: The implementation above supplies Vite's plugin hooks plus ViteHub's intentionally loose public hook index.
-  return plugin as ScheduleVitePlugin
+  const inspectable = plugin as ScheduleVitePlugin
+  inspectable.vitehub = {
+    cli: async () => {
+      const { createScheduleCliContributor } = await import(/* @vite-ignore */ "./cli.js")
+      return createScheduleCliContributor()
+    },
+  }
+  return inspectable
 }

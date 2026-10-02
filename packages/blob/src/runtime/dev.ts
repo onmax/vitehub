@@ -1,5 +1,6 @@
 import * as v from "valibot"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
+import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 import { redactInspectionText, redactInspectionValue } from "@vite-hub/internal/inspect"
 // The package imports keep the Nitro module graph on the storage and runtime config that the generated Nitro plugin
 // sets. Relative imports would load a second copy of the runtime state.
@@ -11,6 +12,8 @@ import {
   blobDevFileHeader,
   blobDevHeader,
   blobDevHeaderValue,
+  blobDevTokenNamespace,
+  blobDevTokenServerHeader,
   blobDevMaximumListLimit,
   blobDevMaximumUploadBytes,
   isBlobDevOperation,
@@ -293,9 +296,21 @@ async function runOperation(body: BlobDevRequestBody, stores: readonly BlobDevSt
  * The request must carry the Blob dev header, must not come from another origin, and must use JSON. A successful
  * `get` returns the raw file bytes. Every other response is JSON.
  */
-export async function handleBlobDevRequest(request: Request, stores?: readonly BlobDevStore[]): Promise<Response> {
+export async function handleBlobDevRequest(request: Request, storesOrRoot?: readonly BlobDevStore[] | string, rootDir = process.cwd(), serverId?: string): Promise<Response> {
+  const stores = typeof storesOrRoot === "string" ? undefined : storesOrRoot
+  if (typeof storesOrRoot === "string") {
+    serverId = rootDir
+    rootDir = storesOrRoot
+  }
   const rejection = validateViteHubNitroDevRequest(request, { header: blobDevHeader, headerValue: blobDevHeaderValue, label: "Blob Dev" })
   if (rejection) return rejection
+  if (serverId) {
+    const requestedServerId = request.headers.get(blobDevTokenServerHeader)
+    const token = request.headers.get(viteHubDevTokenHeader)
+    if (requestedServerId !== serverId || !token || token !== await readViteHubDevToken(rootDir, { namespace: blobDevTokenNamespace, serverId })) {
+      return new Response("Forbidden Blob Dev token.", { status: 403 })
+    }
+  }
   try {
     return await runOperation(await readBody(request), stores ?? await listBlobDevStores())
   }

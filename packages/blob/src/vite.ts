@@ -1,18 +1,24 @@
 import * as v from "valibot"
 import { randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
+import { readFile } from "node:fs/promises"
 
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir } from "@vite-hub/internal/build/provider-output-sources"
-import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { renderViteHubNitroDevHandler } from "@vite-hub/internal/dev-endpoint"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { isPlainObject } from "@vite-hub/internal/object"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
+import { createViteHubDevToken } from "@vite-hub/internal/dev-token"
+import { findExportNames, hasCJSSyntax } from "mlly"
+import { transform } from "esbuild"
+import { init as initCommonJS, parse as parseCommonJS } from "cjs-module-lexer"
 import { resolve } from "pathe"
 
-import { blobDevRuntimeRoute } from "./dev.ts"
+import { blobDevRuntimeRoute, blobDevTokenNamespace, blobDevTokenServerHeader } from "./dev.ts"
 import { createCloudflareR2Bindings, generateProviderOutputs, prepareProviderOutputs, registerSupportedProviderRuntimeModules, renderBlobRuntimeModule, blobPackageName } from "./internal/vite-build.ts"
 import { createBlobCloudflareProvisionStep, createBlobVercelProvisionStep } from "./provision.ts"
 import {
@@ -25,6 +31,7 @@ import { registerBlobDevEndpoint } from "./vite-dev.ts"
 import type { BlobViteRuntimeConfig } from "./vite-config.ts"
 import type { BlobModuleOptions, BlobServeConfig } from "./types.ts"
 import type { ViteHubCliContributor } from "@vite-hub/internal/cli"
+import { blobErrorDiagnostics } from "./error-diagnostics.ts"
 import type { ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import type { Plugin, ResolvedConfig } from "vite"
 
@@ -34,6 +41,9 @@ const generatedNitroBlobRuntime = ".vitehub/nitro/blob/runtime.mjs"
 const generatedNitroBlobMiddleware = ".vitehub/nitro/blob/middleware.ts"
 const generatedBlobServeRouteHandler = ".vitehub/blob/serve-route.ts"
 const generatedNitroBlobDevHandler = ".vitehub/nitro/blob/dev-handler.ts"
+const blobServeModuleExtensions = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"]
+const AUTH_SERVER_ID = "#vitehub/auth/server"
+const AUTH_VITE_PLUGIN_NAME = "@vite-hub/auth/vite"
 
 export { BLOB_VIRTUAL_CONFIG_ID, BLOB_VITE_PLUGIN_NAME, resolveBlobViteConfig }
 export type { BlobViteRuntimeConfig } from "./vite-config.ts"
@@ -201,18 +211,22 @@ function renderNitroBlobMiddleware(importBase = blobPackageName): string {
   ].join("\n")
 }
 
-function renderBlobServeRouteHandler(serve: BlobServeConfig, importBase = blobPackageName): string {
+function renderBlobServeRouteHandler(serve: BlobServeConfig, importBase = blobPackageName, authorizeModule?: string): string {
   const headers = serve.headers && Object.keys(serve.headers).length > 0 ? serve.headers : undefined
+  // Authorized objects belong to one user, so shared caches must not store them unless the app sets its own policy.
   const cacheControl = Object.entries(headers ?? {}).findLast(([name]) => name.toLowerCase() === "cache-control")?.[1]
+    ?? (serve.authorize ? "private, no-cache" : undefined)
   return [
     `import { blob } from '${importBase}'`,
-    `import { createError, getRouterParam${cacheControl !== undefined ? ", handleCacheHeaders, setResponseHeader" : ""}${headers ? ", removeResponseHeader, setResponseHeaders" : ""} } from 'h3'`,
+    ...(serve.authorize ? [`import { authorizeRequest } from ${JSON.stringify(AUTH_SERVER_ID)}`] : []),
+    ...(authorizeModule ? [`import { authorize } from ${JSON.stringify(authorizeModule)}`] : []),
+    `import { createError, ${serve.authorize ? "defineHandler, " : ""}getRouterParam${cacheControl !== undefined ? ", handleCacheHeaders, setResponseHeader" : ""}${headers ? ", removeResponseHeader, setResponseHeaders" : ""} } from 'h3'`,
     "import { defineCachedHandler } from 'nitro/cache'",
     "",
     `const storeName = ${JSON.stringify(serve.store)}`,
     ...(headers ? [`const responseHeaders = ${JSON.stringify(headers)}`] : []),
     "",
-    "export default defineCachedHandler(async (event) => {",
+    `${serve.authorize ? "const serveBlob =" : "export default"} defineCachedHandler(async (event) => {`,
     "  const pathname = getRouterParam(event, '_', { decode: false }) || ''",
     "  if (!pathname) throw createError({ statusCode: 404, statusMessage: 'Blob not found' })",
     ...(headers ? ["  setResponseHeaders(event, responseHeaders)"] : []),
@@ -249,8 +263,63 @@ function renderBlobServeRouteHandler(serve: BlobServeConfig, importBase = blobPa
           "})",
         ]
       : ["}, { headersOnly: true, maxAge: 0 })"]),
+    ...(serve.authorize
+      ? [
+          "",
+          "// Authorize before the store read and before conditional request handling.",
+          "export default defineHandler(async (event) => {",
+          `  const rejection = await authorizeRequest(event, ${authorizeModule ? "authorize" : "true"})`,
+          "  if (rejection) return rejection",
+          "  return serveBlob(event)",
+          "})",
+        ]
+      : []),
     "",
   ].join("\n")
+}
+
+function hasAuthDefinition(plugins: readonly unknown[]): boolean {
+  return plugins.flat(Infinity).some((plugin) => {
+    if (Object(plugin) !== plugin || Reflect.get(Object(plugin), "name") !== AUTH_VITE_PLUGIN_NAME) return false
+    const getConfig: unknown = Reflect.get(Object(Reflect.get(Object(plugin), "api")), "getConfig")
+    return getConfig instanceof Function && getConfig() !== undefined
+  })
+}
+
+async function discoverBlobAuthorizeModule(rootDir: string, serverDirs: string[] | undefined): Promise<string | undefined> {
+  const directories = (serverDirs === undefined ? ["server"] : serverDirs).map(directory => resolve(rootDir, directory))
+  const files = directories
+    .flatMap(directory => blobServeModuleExtensions.map(extension => resolve(directory, `blob${extension}`)))
+    .filter(file => existsSync(file))
+  if (files.length > 1) {
+    throw blobErrorDiagnostics.BLOB_B0003({ message: `[vitehub] Only one Blob serve module is allowed. Found:\n${files.map(file => `  - ${file}`).join("\n")}` })
+  }
+  const file = files[0]
+  if (!file) return
+  const source = await readFile(file, "utf8")
+  if (findExportNames(source).includes("authorize")) return file
+  if (!file.endsWith(".cts") && !file.endsWith(".cjs") && !hasCJSSyntax(source)) return
+  const commonJS = file.endsWith(".cts") ? (await transform(source, { loader: "ts" })).code : source
+  await initCommonJS()
+  return parseCommonJS(commonJS, file).exports.includes("authorize") ? file : undefined
+}
+
+async function resolveBlobServeAuthorizeModule(
+  config: ResolvedConfig,
+  rootDir: string,
+  serve: BlobServeConfig | undefined,
+): Promise<string | undefined> {
+  if (!serve) return
+  // SAFETY: ViteHub hosts add the shared server directory symbol to the resolved Vite config.
+  const serverDirs = (config as ResolvedConfig & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
+  const authorizeModule = await discoverBlobAuthorizeModule(rootDir, serverDirs)
+  if (authorizeModule && !serve.authorize) {
+    throw blobErrorDiagnostics.BLOB_B0001({ message: `[vitehub] ${JSON.stringify(authorizeModule)} exports \`authorize\`, but \`blob.serve.authorize\` is not true. Set \`blob.serve.authorize: true\` so the serve route uses it.` })
+  }
+  if (serve.authorize && !hasAuthDefinition(config.plugins)) {
+    throw blobErrorDiagnostics.BLOB_B0002({ message: "[vitehub] `blob.serve.authorize` requires an Auth Definition. Enable Auth and add `server/auth.ts`." })
+  }
+  return authorizeModule
 }
 
 function resolveBlobDevHandler(root: string): string {
@@ -258,8 +327,8 @@ function resolveBlobDevHandler(root: string): string {
 }
 
 /** Writes the Nitro route that `vitehub blob` commands reach. The Vite dev endpoint guards every request to it. */
-async function writeBlobDevHandler(file: string, importBase: string): Promise<void> {
-  await writeFileIfChanged(file, renderViteHubNitroDevHandler({ export: "handleBlobDevRequest", module: `${importBase}/runtime/dev` }))
+async function writeBlobDevHandler(file: string, importBase: string, rootDir: string, serverId: string): Promise<void> {
+  await writeFileIfChanged(file, renderViteHubNitroDevHandler({ arguments: [rootDir, serverId], export: "handleBlobDevRequest", module: `${importBase}/runtime/dev` }))
 }
 
 function readNitroBaseURL(config: ResolvedConfig | undefined): string | undefined {
@@ -268,7 +337,7 @@ function readNitroBaseURL(config: ResolvedConfig | undefined): string | undefine
   return v.is(v.string(), baseURL) ? baseURL : process.env.NITRO_APP_BASE_URL
 }
 
-async function refreshBlobGeneratedFiles(root: string, blob: BlobViteRuntimeConfig["blob"], cloudflare: boolean, importBase = blobPackageName, provider?: "cloudflare" | "vercel"): Promise<void> {
+async function refreshBlobGeneratedFiles(root: string, blob: BlobViteRuntimeConfig["blob"], cloudflare: boolean, importBase = blobPackageName, provider?: "cloudflare" | "vercel", authorizeModule?: string): Promise<void> {
   const runtimeFile = resolve(root, generatedNitroBlobRuntime)
   await Promise.all([
     writeFileIfChanged(runtimeFile, renderBlobRuntimeModule(runtimeFile, blob, provider)),
@@ -278,7 +347,7 @@ async function refreshBlobGeneratedFiles(root: string, blob: BlobViteRuntimeConf
   const serve = blob ? blob.serve : undefined
   if (!serve) return
   const file = resolve(root, generatedBlobServeRouteHandler)
-  await writeFileIfChanged(file, renderBlobServeRouteHandler(serve, importBase))
+  await writeFileIfChanged(file, renderBlobServeRouteHandler(serve, importBase, authorizeModule))
 }
 
 export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBlobModuleOptions = {}): BlobVitePlugin {
@@ -292,6 +361,7 @@ export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBl
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   let rootDir = process.cwd()
   let runtimeConfig: BlobViteRuntimeConfig | undefined
+  let devTokenServerId: string | undefined
   let resolved: ResolvedConfig | undefined
   const stagedArtifactDirs = new WeakMap<object, string>()
   const fallbackEnvironment = {}
@@ -356,11 +426,19 @@ export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBl
         cloudflareOwnedByNitro,
         importBase,
         hosting === "cloudflare" || hosting === "vercel" ? hosting : undefined,
+        await resolveBlobServeAuthorizeModule(config, rootDir, runtimeConfig.blob ? runtimeConfig.blob.serve : undefined),
       )
-      if (devHandler) await writeBlobDevHandler(devHandler, importBase)
+      if (devHandler) {
+        devTokenServerId = (await createViteHubDevToken(rootDir, blobDevTokenNamespace)).serverId
+        await writeBlobDevHandler(devHandler, importBase, rootDir, devTokenServerId)
+      }
     },
     configureServer(server) {
-      registerBlobDevEndpoint(server, { nitroBaseURL: () => readNitroBaseURL(resolved) })
+      registerBlobDevEndpoint(server, {
+        discovery: () => devTokenServerId ? { blobDevTokenServerId: devTokenServerId } : {},
+        forwardHeaders: ["x-vitehub-dev-token", blobDevTokenServerHeader],
+        nitroBaseURL: () => readNitroBaseURL(resolved),
+      })
     },
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) {
