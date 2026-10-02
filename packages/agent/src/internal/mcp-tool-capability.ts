@@ -60,6 +60,7 @@ export interface McpToolCapabilityOptions<
   integrityLabel: string
   invalidServerMessage: string
   metadata?: Record<string, unknown>
+  unavailableNotice?: boolean | ((servers: string[]) => string)
   requires?: AgentCapabilityRequirement[]
   servers: McpToolServerDefinition<TRuntimeConfig, Name>[]
   toolName: (serverName: string, toolName: string) => string
@@ -191,7 +192,16 @@ function recordMcpAvailabilityWarning(
   })
 }
 
-async function resolveMcpToolServer(
+/** Send initialize first unless a config opts in to protocol discovery. */
+export function withMcpInitializationCompatibility(connection: McpClient | McpClientConfig): McpClient | McpClientConfig {
+  if (isMcpClient(connection) || !isMcpClientConfig(connection)) return connection
+  return {
+    ...connection,
+    protocolVersionDiscovery: connection.protocolVersionDiscovery ?? false,
+  }
+}
+
+export async function resolveMcpToolServer(
   resolved: ResolvedMcpToolServer,
   invalidServerMessage: string,
   createMcpClient?: (config: McpClientConfig) => Promise<McpClient>,
@@ -230,6 +240,7 @@ export function defineMcpToolCapability<
     async resolve(context) {
       const tools: AgentToolSet = {}
       const clients: McpClient[] = []
+      const unavailableServers = new Set<string>()
       const servers: Array<Record<string, AgentInspectionValue>> = options.servers.map(server => ({ name: server.name, status: "Not resolved" }))
       const publishInspection = async () => {
         if (options.inspection) await context.inspection.set({ servers, empty: servers.length ? "" : "No MCP servers configured." })
@@ -249,6 +260,7 @@ export function defineMcpToolCapability<
         if (definition.status !== "rejected") continue
         if (options.degradeUnavailable && isMcpAvailabilityFailure(definition.reason)) {
           servers[index]!.status = "Unavailable"
+          unavailableServers.add(options.servers[index]!.name)
           recordMcpAvailabilityWarning(context, options.servers[index]!.name, "resolve", definition.reason)
         }
         else {
@@ -284,6 +296,7 @@ export function defineMcpToolCapability<
         if (result.status === "rejected") {
           if (options.degradeUnavailable && isMcpAvailabilityFailure(result.reason)) {
             servers[index]!.status = "Unavailable"
+            unavailableServers.add(options.servers[index]!.name)
             recordMcpAvailabilityWarning(context, options.servers[index]!.name, "discovery", result.reason)
           }
           else {
@@ -295,6 +308,27 @@ export function defineMcpToolCapability<
       }
       await publishInspection()
       if (hardFailure) throw hardFailure.reason
+      if (options.unavailableNotice && unavailableServers.size) {
+        const unavailable = [...unavailableServers]
+        const notice = options.unavailableNotice === true
+          ? `> ⚠️ ${unavailable.join(", ")} tools were temporarily unavailable. I answered with the remaining context.`
+          : options.unavailableNotice(unavailable)
+        if (notice.trim()) {
+          const input = context.input.get()
+          // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Agent input context is an untrusted runtime boundary.
+          const inputContext = input.context && typeof input.context === "object" && !Array.isArray(input.context)
+            // SAFETY: The object guard above establishes a record-shaped input context.
+            ? input.context as Record<string, unknown>
+            : {}
+          const notices = Array.isArray(inputContext["vitehub.chat.final-reply.notices"])
+            ? inputContext["vitehub.chat.final-reply.notices"]
+            : []
+          context.input.set({
+            ...input,
+            context: { ...inputContext, "vitehub.chat.final-reply.notices": [...notices, notice] },
+          })
+        }
+      }
       for (const result of results) {
         if (result.status !== "fulfilled" || !result.value) continue
         const { binding, metadata, server, serverTools } = result.value
