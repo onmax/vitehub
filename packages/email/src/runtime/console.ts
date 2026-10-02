@@ -175,7 +175,8 @@ const devHeaders = { header: emailDevHeader, headerValue: emailDevHeaderValue, l
  *
  * The request must carry the Email dev header, must not come from another origin, and must use JSON.
  */
-export async function handleEmailDevRequest(request: Request, runtimeId?: string): Promise<Response> {
+export async function handleEmailDevRequest(request: Request, runtimeContext?: string | { runtimeId?: string }): Promise<Response> {
+  const runtimeId = typeof runtimeContext === "string" ? runtimeContext : runtimeContext?.runtimeId
   const rejection = validateViteHubNitroDevRequest(request, devHeaders)
   if (rejection) return rejection
   const body = await readBody(request)

@@ -318,7 +318,7 @@ async function runOutboxCommand(command: OutboxCommand, args: string[], context:
     fetch: fetchImpl,
     rootDir: context.rootDir,
     serverUrl: parsed.url,
-    ...withTimeout(parsed.timeout),
+    signal: withTimeout(parsed.timeout).signal ?? undefined,
     stderr: parsed.json ? { write: (chunk) => { discoveryError += chunk; return true } } : context.stderr,
   })
   if (!server) {

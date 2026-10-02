@@ -191,9 +191,9 @@ async function addNitroEmailDevHandler(value: unknown, root: string, importBase:
   const handler = resolve(root, generatedNitroDevHandler)
   await mkdir(dirname(handler), { recursive: true })
   await writeFile(handler, renderViteHubNitroDevHandler({
-    arguments: outbox ? [runtimeId] : [],
     export: outbox ? "handleEmailDevRequest" : "handleDisabledEmailDevRequest",
     module: `${importBase}/runtime/console`,
+    context: outbox ? { runtimeId } : undefined,
   }), "utf8")
   const kit = createNitroServerKit(isRecord(value) ? { ...value } : {})
   kit.addHandler({ handler, route: emailDevRuntimeRoute })
