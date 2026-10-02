@@ -1,9 +1,10 @@
 import agentRegistry from "#vitehub/agent/registry"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { redactInspectionText } from "@vite-hub/internal/inspect"
+import { readWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
 
 import { getAgentFromRegistry } from "../index.ts"
-import { agentInvocationsDevGuard } from "../invocations-dev.ts"
+import { agentInvocationsDevGuard, agentInvocationsDevTokenServerHeader } from "../invocations-dev.ts"
 import { isAgentInvocations } from "../invocations.ts"
 
 import type { AgentInvocationsDevRequestBody } from "../invocations-dev.ts"
@@ -56,9 +57,16 @@ async function cancelInJournals(journals: readonly AgentInvocations[], id: strin
  * The Vite endpoint forwards the request here, so the cancel reaches the application's own journals and abort
  * registry. The handler exists only in `vite dev`.
  */
-export async function handleAgentInvocationsDevRequest(request: Request): Promise<Response> {
+export async function handleAgentInvocationsDevRequest(request: Request, options: { rootDir?: string, serverId?: string } = {}): Promise<Response> {
   const rejection = validateViteHubNitroDevRequest(request, agentInvocationsDevGuard)
   if (rejection) return rejection
+  if (options.serverId) {
+    const serverId = request.headers.get(agentInvocationsDevTokenServerHeader)
+    const token = request.headers.get(workspaceDevTokenHeader)
+    if (serverId !== options.serverId || !token || token !== await readWorkspaceDevToken(options.rootDir ?? process.cwd(), { serverId })) {
+      return new Response("Forbidden Agent Invocations Dev token.", { status: 403 })
+    }
+  }
   const body = await readBody(request)
   if (!body) return failure("The Agent Invocations Dev request body is invalid.", 400)
   try {

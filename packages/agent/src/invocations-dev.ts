@@ -4,6 +4,7 @@ export const agentInvocationsDevRoute = "/__vitehub/agent/invocations/dev"
 export const agentInvocationsDevRuntimeRoute = "/_vitehub/agent/invocations/dev"
 export const agentInvocationsDevHeader = "x-vitehub-agent-invocations-dev"
 export const agentInvocationsDevHeaderValue = "1"
+export const agentInvocationsDevTokenServerHeader = "x-vitehub-agent-invocations-dev-server"
 
 /** Guard that the Vite endpoint and the Nitro handler check on each request. */
 export const agentInvocationsDevGuard: { header: string, headerValue: string, label: string } = {

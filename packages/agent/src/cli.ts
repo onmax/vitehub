@@ -1281,7 +1281,7 @@ export function createAgentCliContributor(options?: false | AgentCliContributorO
       description: "Inspect an application's durable Agent Invocation journal.",
       name: "invocations",
       run: async (args, context) => await runAgentInvocationsCli(args, context),
-      usage: "vitehub agent invocations <list|show|tail> [id] [--url <url>] [--json]",
+      usage: "vitehub agent invocations <list|show|tail|cancel> [id] [--url <url>] [--json]",
     },
   ]
   if (evalFiles.length) {
