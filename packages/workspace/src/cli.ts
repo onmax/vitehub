@@ -258,7 +258,9 @@ async function readWorkspaceDiscovery(parsed: ParsedWorkspaceDevArgs, context: W
   })
   if (!server) return
   const { discovery, url } = server
-  const workspaces = (discovery.workspaces || []).flatMap(workspace => typeof workspace.name === "string" ? [workspace.name] : [])
+  const workspaces = Array.isArray(discovery.workspaces)
+    ? discovery.workspaces.flatMap(workspace => isPlainObject(workspace) && typeof workspace.name === "string" ? [workspace.name] : [])
+    : []
   if (!workspaces.includes(parsed.workspace)) {
     context.stderr.write(`Unknown Workspace Dev target: ${parsed.workspace}\n`)
     return
