@@ -392,6 +392,32 @@ describe("kv runtime", () => {
     await expect(driver.setItemRaw?.("greeting", Buffer.from("hello"), {})).resolves.toBeUndefined()
   })
 
+  it("preserves stored undefined from Deno through the public KV client", async () => {
+    const { data, openKv } = createDenoOpenKvMock()
+    data.set("native-undefined", undefined)
+    // SAFETY: This test provides the only Deno API used by the runtime adapter.
+    ;(globalThis as typeof globalThis & { Deno?: unknown }).Deno = { openKv }
+    const { createHostedKVStorage } = await import("../src/runtime/hosted-storage.ts")
+    const storage = createHostedKVStorage({ store: { driver: "deno-kv" } })
+    expect(await storage.hasItem("native-undefined")).toBe(true)
+    expect(await storage.getItem("native-undefined")).toBeUndefined()
+    expect(await storage.getItem("missing")).toBeNull()
+  })
+
+  it("preserves empty keys through the Deno KV adapter", async () => {
+    const { data, openKv } = createDenoOpenKvMock()
+    // SAFETY: This test provides the only Deno API used by the runtime adapter.
+    ;(globalThis as typeof globalThis & { Deno?: unknown }).Deno = { openKv }
+    const { createHostedKVStorage } = await import("../src/runtime/hosted-storage.ts")
+    const storage = createHostedKVStorage({ store: { driver: "deno-kv" } })
+    await storage.setItem("", "empty key")
+    expect(data.get("")).toBe("empty key")
+    expect(await storage.getItem("")).toBe("empty key")
+    expect(await storage.hasItem("")).toBe(true)
+    await storage.removeItem("")
+    expect(await storage.hasItem("")).toBe(false)
+  })
+
   it("loads Deno KV through the lazy KV Store driver", async () => {
     const { openKv } = createDenoOpenKvMock()
     // SAFETY: This test provides the only Deno API used by the runtime adapter.

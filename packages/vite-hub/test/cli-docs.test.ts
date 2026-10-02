@@ -2,15 +2,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createAgentCliContributor } from "@vite-hub/agent/cli";
 import { hubBlob } from "@vite-hub/blob/vite";
+import { createAgentCliContributor } from "@vite-hub/agent/cli";
 import { runViteHubCli } from "@vite-hub/cli";
 import { createDbCliContributor } from "@vite-hub/database/cli";
+import { hubEnv } from "@vite-hub/env/vite";
+import { hubKv } from "@vite-hub/kv/vite";
 import { hubWorkflow } from "@vite-hub/workflow/vite";
 import { hubSchedule } from "@vite-hub/schedule/vite";
 import { hubWorkspace } from "@vite-hub/workspace/vite";
 import { describe, expect, it } from "vitest";
 
+import { createBoxCliNamespace } from "../src/box-cli.ts";
 import { createConsoleCliNamespace } from "../src/console/cli.ts";
 import { viteHubTypesPlugin } from "../src/internal/types.ts";
 
@@ -36,26 +39,35 @@ function helpNames(output: string, heading: string): string[] {
 
 function documentedCommands(): string[] {
   const source = readFileSync(cliReference, "utf8");
-  return [...source.matchAll(/^\| `vitehub ([a-z0-9-]+) ([a-z0-9-]+)` \|/gm)]
+  return [...source.matchAll(/^\| `vitehub ([a-z0-9-]+) ([a-z0-9-]+)`\s+\|/gm)]
     .map((match) => `${match[1]} ${match[2]}`)
     .sort();
 }
 
+function documentedNamespaces(): string[] {
+  const source = readFileSync(cliReference, "utf8");
+  const sample = source.split("Available namespaces:\n", 2)[1]?.split("```", 1)[0];
+  if (sample === undefined) throw new TypeError("Missing sample CLI help output.");
+  return helpNames(`Available namespaces:\n${sample}`, "Available namespaces:").sort();
+}
+
 describe("CLI documentation contract", () => {
   it("indexes every command from the live package contributors", async () => {
+    const blobPlugin: unknown = hubBlob();
     const agent = createAgentCliContributor({ rootDir: evalFixtureRoot });
     const database = createDbCliContributor();
     if (!agent || !database) throw new TypeError("Expected the default CLI contributors.");
-    const blobPlugin: unknown = hubBlob();
+    const workspacePlugin: unknown = hubWorkspace();
     const schedulePlugin: unknown = hubSchedule();
     const workflowPlugin: unknown = hubWorkflow();
-    const workspacePlugin: unknown = hubWorkspace();
     const typesPlugin: unknown = viteHubTypesPlugin();
     const plugins: unknown[] = [
+      blobPlugin,
       { vitehub: { cli: agent } },
       { vitehub: { cli: database } },
       { vitehub: { cli: { namespaces: [createConsoleCliNamespace()] } } },
-      blobPlugin,
+      hubEnv(),
+      hubKv(),
       schedulePlugin,
       workflowPlugin,
       workspacePlugin,
@@ -63,23 +75,30 @@ describe("CLI documentation contract", () => {
     ];
     const loadConfig = async () => ({ plugins, root: repoRoot });
     const rootHelp = stream();
+    const runtimeNamespaces = [createBoxCliNamespace()];
 
-    await expect(runViteHubCli({ args: ["--help"], loadConfig, stdout: rootHelp })).resolves.toBe(
-      0,
-    );
+    await expect(
+      runViteHubCli({ args: ["--help"], loadConfig, runtimeNamespaces, stdout: rootHelp }),
+    ).resolves.toBe(0);
     const namespaces = helpNames(rootHelp.output(), "Available namespaces:");
     const commands: string[] = [];
 
     for (const namespace of namespaces) {
       const namespaceHelp = stream();
       await expect(
-        runViteHubCli({ args: [namespace, "--help"], loadConfig, stdout: namespaceHelp }),
+        runViteHubCli({
+          args: [namespace, "--help"],
+          loadConfig,
+          runtimeNamespaces,
+          stdout: namespaceHelp,
+        }),
       ).resolves.toBe(0);
       for (const feature of helpNames(namespaceHelp.output(), "Available features:")) {
         commands.push(`${namespace} ${feature}`);
       }
     }
 
+    expect(documentedNamespaces()).toEqual([...namespaces].sort());
     expect(documentedCommands()).toEqual(commands.sort());
   });
 });

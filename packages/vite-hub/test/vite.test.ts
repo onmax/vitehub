@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -27,8 +27,6 @@ const integrationMocks = vi.hoisted(() => ({
   })),
   hubBrowser: vi.fn(() => ({ name: "@vite-hub/browser/vite" })),
   hubChannels: vi.fn(() => ({ name: "@vite-hub/channels/vite" })),
-  hubConnections: vi.fn(() => ({ name: "@vite-hub/connections/vite" })),
-  hubConnectionsTypesCleanup: vi.fn(() => ({ name: "@vite-hub/connections/types-cleanup" })),
   hubDb: vi.fn(() => ({ name: "@vite-hub/database/vite" })),
   hubEmail: vi.fn(() => ({ name: "@vite-hub/email/vite" })),
   hubEmailOptionalPeerResolver: vi.fn(() => ({ name: "@vite-hub/email/optional-peer-resolver" })),
@@ -72,8 +70,7 @@ vi.mock("@vite-hub/agent/vite", () => ({
 vi.mock("@vite-hub/internal/build/deno-runtime-packages", () => ({
   finalizeDenoDeploymentOutput: integrationMocks.finalizeDenoDeploymentOutput,
 }))
-vi.mock("@vite-hub/internal/build/deployment-plan-output", async importOriginal => ({
-  ...await importOriginal<typeof import("@vite-hub/internal/build/deployment-plan-output")>(),
+vi.mock("@vite-hub/internal/build/deployment-plan-output", () => ({
   finalizeDeploymentPlanOutput: integrationMocks.finalizeDeploymentPlanOutput,
 }))
 vi.mock("@vite-hub/auth/vite", () => ({
@@ -86,10 +83,6 @@ vi.mock("@vite-hub/blob/vite", () => ({
 }))
 vi.mock("@vite-hub/browser/vite", () => ({ hubBrowser: integrationMocks.hubBrowser }))
 vi.mock("@vite-hub/channels/vite", () => ({ hubChannels: integrationMocks.hubChannels }))
-vi.mock("@vite-hub/connections/vite", () => ({
-  hubConnections: integrationMocks.hubConnections,
-  hubConnectionsTypesCleanup: integrationMocks.hubConnectionsTypesCleanup,
-}))
 vi.mock("@vite-hub/database/vite", () => ({ hubDb: integrationMocks.hubDb }))
 vi.mock("@vite-hub/email/vite", () => ({
   hubEmail: integrationMocks.hubEmail,
@@ -117,7 +110,6 @@ vi.mock("@vite-hub/workspace/vite", () => ({ hubWorkspace: integrationMocks.hubW
 
 import type { KVModuleOptions } from "@vite-hub/kv"
 import { resolveConfig, type Plugin, type PluginOption } from "vite"
-import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
 import { contributeProviderDeploymentOutput, useProviderOutputCatalog } from "../../internal/src/build/deployment-output.ts"
 import frameworkPackageManifest from "../package.json" with { type: "json" }
 import { vitehub } from "../src/index.ts"
@@ -259,19 +251,6 @@ describe("vitehub", () => {
     const output = dependencyPluginByName(vitehub({ preset: "node" }), "vite-hub/deployment-output")
 
     expect(output.closeBundle).toMatchObject({ order: "post", sequential: true })
-  })
-
-  it.each([{ configuredRoot: "/app/nitro", directory: undefined }, { configuredRoot: "/app/nitro", directory: "custom-output" }, { configuredRoot: "relative-nitro", directory: "custom-output" }])("inspects deployment paths from Nitro root $configuredRoot and output $directory", async ({ configuredRoot, directory }) => {
-    const root = "/app/vite"
-    const nitroRoot = resolve(configuredRoot)
-    const plugin = dependencyPluginByName(vitehub({ preset: "cloudflare" }), "vite-hub/deployment-output")
-    const config = await resolveConfig({ root, configFile: false }, "build")
-    Object.assign(config, { nitro: { preset: "cloudflare-module", rootDir: configuredRoot, ...(directory ? { output: { dir: directory } } : {}) } })
-    await callHook(plugin.configResolved, [config])
-    expect((await collectViteHubProviderOutputEntries([plugin])).map(entry => entry.path)).toEqual([
-      join(nitroRoot, directory ?? ".output", "deployment.json"),
-      join(nitroRoot, directory ?? ".output", "server/wrangler.json"),
-    ])
   })
 
   it("discards Provider Output after an output-phase build failure", async () => {
@@ -458,7 +437,7 @@ describe("vitehub", () => {
     }
   })
 
-  it("keeps an application KV route beside the Console RPC route", async () => {
+  it("keeps an application KV route beside the Console Devframe", async () => {
     const plugin = dependencyPluginByName(
       vitehub({ console: true, kv: true, preset: "node" }),
       "vite-hub/console",
@@ -617,7 +596,6 @@ describe("vitehub", () => {
       database: true,
       email: { driver: "resend" },
       channels: true,
-      connections: true,
       kv: true,
       preset: "cloudflare",
       rateLimit: true,
@@ -637,7 +615,7 @@ describe("vitehub", () => {
       "@vite-hub/sandbox/vite",
       "@vite-hub/agent/vite",
       "@vite-hub/channels/vite",
-      "@vite-hub/connections/vite",
+      "@vite-hub/connections/types-cleanup",
       "@vite-hub/database/vite",
       "@vite-hub/blob/vite",
       "@vite-hub/email/vite",
@@ -704,25 +682,7 @@ describe("vitehub", () => {
       runtimeEnvImport: "vite-hub/env/server",
     })
     expect(integrationMocks.hubChannels).toHaveBeenLastCalledWith(undefined)
-    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
-      database: "vite-hub/database/drizzle",
-      importBase: "vite-hub/connections",
-    })
-    vitehub({
-      connections: { management: { actor: "./server/connections-auth.ts" }, projectRoot: "/app", database: false, importBase: "consumer/connections" },
-      console: { exposure: "host-managed" },
-      database: true,
-      preset: "node",
-    })
-    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
-      database: "vite-hub/database/drizzle",
-      importBase: "vite-hub/connections",
-      management: { actor: "./server/connections-auth.ts" },
-      projectRoot: "/app",
-    })
-    expect(() => vitehub({ connections: true, preset: "node" })).toThrowError(expect.objectContaining({ code: "VITE_HUB_R0124" }))
-    expect(() => vitehub({ connections: { management: { actor: "./server/connections-auth.ts" } }, database: true, preset: "node" })).toThrowError(expect.objectContaining({ code: "VITE_HUB_R0126" }))
-    expect(integrationMocks.hubKv).toHaveBeenLastCalledWith({ driver: "cloudflare-kv-binding" })
+    expect(integrationMocks.hubKv).toHaveBeenLastCalledWith({ driver: "cloudflare-kv-binding" }, { importBase: "vite-hub/_internal/kv" })
     expect(integrationMocks.hubSandbox).toHaveBeenLastCalledWith({
       provider: "cloudflare",
       providerImportAliases: expect.any(Object),
@@ -825,27 +785,6 @@ describe("vitehub", () => {
       projectRoot: "packages/policies",
       provider: "cloudflare",
       scanDirs: ["rules"],
-    })
-  })
-
-  it("wires Connections to the ViteHub Database", () => {
-    expect(pluginNames(vitehub({ connections: true, database: true, preset: "node" }))).toContain("@vite-hub/connections/vite")
-    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
-      database: "vite-hub/database/drizzle",
-      importBase: "vite-hub/connections",
-    })
-    expect(pluginNames(vitehub({ database: true, preset: "node" }))).not.toContain("@vite-hub/connections/vite")
-    expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
-  })
-
-  it("mounts the Connections management API only behind Console access", () => {
-    expect(() => vitehub({ connections: { management: true }, database: true, preset: "node" }))
-      .toThrow("connections.management requires Console production access")
-    vitehub({ connections: { management: true }, console: { exposure: "host-managed" }, database: true, preset: "node" })
-    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
-      management: { actor: "#vitehub/console/connections-actor" },
-      database: "vite-hub/database/drizzle",
-      importBase: "vite-hub/connections",
     })
   })
 
@@ -1235,7 +1174,7 @@ describe("vitehub", () => {
     // SAFETY: The preset config hook populated Nitro commands and modules above.
     const nitroConfig = config.nitro as { commands: Record<string, unknown>, modules: unknown[] }
     nitroConfig.commands.deploy = "npx wrangler --cwd ./ deploy"
-    callHook(output.configResolved, [{ command: "build", root: "/app", nitro: nitroConfig }])
+    callHook(output.configResolved, [{ command: "build", nitro: nitroConfig }])
     const nitro = {
       hooks: { hook: vi.fn() },
       options: {
@@ -1395,7 +1334,6 @@ describe("vitehub", () => {
     const customResolver = { resolveId: vi.fn() }
 
     expect(() => callHook(plugin.configResolved, [{
-      root: "/app",
       command: "build",
       nitro: { preset: "deno-deploy" },
       plugins: [],

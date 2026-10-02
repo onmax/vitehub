@@ -31,6 +31,7 @@ function identifier(value: unknown): value is string {
     typeof value === "string" &&
     value.length > 0 &&
     value.length <= 512 &&
+    // eslint-disable-next-line no-control-regex
     !/[\u0000-\u001f]/.test(value)
   );
 }

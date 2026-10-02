@@ -25,21 +25,27 @@ Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Blob contributes `blob` when `hubBlob()` is active, Database contributes `db` when `hubDb()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
+The CLI owns the `inspect` namespace. Plugin command contributions with that name are ignored.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Blob contributes `blob` when `hubBlob()` is active, Database contributes `db` when `hubDb()` is active, Env contributes `env` when `hubEnv()` is active, KV contributes `kv` when `hubKv()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workflow contributes `workflow` when `hubWorkflow()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, and the Console integration contributes `console` when `console` is enabled. The framework contributes `types` and `box`, and the CLI includes the built-in `inspect` and `provision` namespaces. `box` does not load the project config, so it also runs in a deployed container without Vite.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
+
 Available namespaces:
+  workspace   Workspace development workflows.
+  console     Console development workflows.
   agent       Agent development workflows.
   blob        Read and write blobs of the Blob stores in a running Vite + Nitro Development Server.
   channels    External Channel registration workflows.
-  workflow    Start and inspect Workflow runs in development.
   db          Database development workflows.
-  schedule    Inspect and control Runtime Schedules in a running Vite + Nitro Development Server.
-  workspace   Workspace development workflows.
+  kv          Read and write keys of the KV stores in a running Vite + Nitro Development Server.
+  env         Server Env inspection workflows.
+  schedule    Run Static Schedule Definitions and inspect or control Runtime Schedules.
+  workflow    Start and inspect Workflow runs in development.
   types       Generate ViteHub TypeScript declarations.
   inspect     Inspect discovered Definitions and generated Provider Output.
   provision   Idempotently create missing provider resources.
+  box         Serve and check an SSH Box runner. Does not load the project config.
 ```
 
 ## Commands
@@ -57,16 +63,28 @@ Available namespaces:
 | `vitehub blob del` | Available | Blob Package | Delete one blob and print what changed. |
 | `vitehub channels history` | Available | Agent Package | Download one deployed conversation and its attachments. |
 | `vitehub channels sync` | Available | Agent Package | Inspect or apply provider-owned webhook registrations for a deployed stage. |
+| `vitehub channels replay` | Available | Agent Package | Replay stored Channel history through an Agent from a development server. |
 | `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
+| `vitehub connections` | Available | Connections Package | Connect OAuth accounts, set API keys, list Connections, read activity, and approve or deny writes. |
+| `vitehub env inspect` | Available | Env Package | List declared Server Env variables and their status without values. |
+| `vitehub env check` | Available | Env Package | Fail CI or a deploy step when Server Env would not load for a stage. |
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
 | `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
+| `vitehub kv list` | Available | KV Package | List the keys of one KV store, one page at a time. |
+| `vitehub kv get` | Available | KV Package | Print the value of one key. |
+| `vitehub kv has` | Available | KV Package | Check if a key exists. The exit status is 0 or 1. |
+| `vitehub kv set` | Available | KV Package | Write the value of one key and print what changed. |
+| `vitehub kv del` | Available | KV Package | Delete one key and print what changed. |
 | `vitehub schedule list` | Available | Schedule Package | List Runtime Schedules with enabled state, next due time, and last run. |
 | `vitehub schedule get` | Available | Schedule Package | Show one Runtime Schedule. |
 | `vitehub schedule runs` | Available | Schedule Package | List the recorded runs of one Schedule, newest first. |
 | `vitehub schedule attempts` | Available | Schedule Package | List the attempts of one Schedule Run. |
-| `vitehub schedule run` | Available | Schedule Package | Run one Runtime Schedule now in the development runtime. |
+| `vitehub schedule run` | Available | Schedule Package | Run a manual Static Schedule Definition locally or through the deployed Console. |
+| `vitehub schedule run-runtime` | Available | Schedule Package | Run one Runtime Schedule now in the development runtime. |
 | `vitehub schedule enable` | Available | Schedule Package | Enable one Runtime Schedule. |
 | `vitehub schedule disable` | Available | Schedule Package | Disable one Runtime Schedule. |
+| `vitehub box check` | Available | Box Package | Start the provider Driver through the SSH runner and report readiness. |
+| `vitehub box serve` | Available | Box Package | Serve authenticated SSH commands from this machine. |
 | `vitehub workflow start` | Available | Workflow Package | Start a discovered Workflow in the local development runtime. |
 | `vitehub workflow get` | Available | Workflow Package | Read a Workflow run. |
 | `vitehub workflow cancel` | Available | Workflow Package | Cancel a run when the provider supports it. |
@@ -76,6 +94,52 @@ Available namespaces:
 | `vitehub inspect definitions` | Available | ViteHub CLI plus package inspection contributors | List the Definitions that each active package discovered. |
 | `vitehub inspect provider-output` | Available | ViteHub CLI plus package inspection contributors | List generated Provider Output files with secrets redacted. |
 | `vitehub provision run` | Available | ViteHub CLI plus package Provision Steps | Create missing provider resources idempotently. |
+| `vitehub provision status` | Available | ViteHub CLI plus package Provision Steps | Inspect the latest provider provisioning result. |
+
+## Read and write blobs
+
+Start the app's Vite Development Server, then run `vitehub blob` from another terminal. The commands call the same Blob storage as the running app, so they read and write the blobs that the app uses.
+
+```bash [Terminal]
+pnpm vitehub blob list --prefix avatars/ --limit 20
+pnpm vitehub blob head avatars/ada.png
+pnpm vitehub blob get avatars/ada.png --output ./ada.png
+pnpm vitehub blob get reports/2026.csv > report.csv
+pnpm vitehub blob put avatars/ada.png ./ada.png --content-type image/png
+pnpm vitehub blob del avatars/ada.png
+```
+
+Each write command prints what it changed:
+
+```txt [Output]
+Created blob avatars/ada.png in store default (48213 B, image/png).
+Deleted blob avatars/ada.png from store default.
+```
+
+Every command accepts `--store <name>`, `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>`. The commands use the Default Blob Store. Pass `--store` to select a named store from `blob.stores`. An unknown store fails and lists the configured stores, with `default` first, as the Console does.
+
+- `list` prints a table of pathname, size, content type, and upload time. `--limit` defaults to 100 and has a maximum of 250. When more blobs exist, stderr shows the `--cursor` value for the next page.
+- `head` prints the metadata of one blob. A missing blob exits with status 1.
+- `get` writes the file bytes unchanged. Without `--output`, the bytes go to stdout, so redirect them to a file or a pipe. With `--output <file>`, the command writes the file and prints a summary. `--json` needs `--output`, because stdout carries the file bytes otherwise.
+- `put` uploads a file relative to the current directory. Without `--content-type`, the Blob storage detects the type from the pathname. The output says if the blob was created or replaced. The created/replaced label is best-effort because it is based on a metadata read immediately before the write; eventual consistency and concurrent writers can make it stale.
+- `del` says if the blob existed. Deleting a missing blob changes nothing and exits with status 0. The existed/missing label is best-effort for the same reason, and a concurrent writer can change the object between the metadata read and delete.
+
+The Vite dev endpoint forwards a JSON request body, so `put` sends the file as base64 and accepts files up to 8 MiB. The CLI checks the size before it reads the file. `get` returns the raw bytes, but the dev endpoint holds the whole file in memory. Use the application or the provider tools for larger files. There is no `sign` command.
+
+Errors go to stderr, or into `{ "error": { "code", "message" } }` on stdout with `--json`. The commands do not print blob URLs, because a signed URL can carry credentials. Metadata values under secret names, such as `token`, are redacted, as the Console Blob page does.
+
+The commands use a guarded dev endpoint that `hubBlob()` registers only on the Development Server. The endpoint forwards each operation into the Nitro dev environment, which owns the Blob storage. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 and the CLI prints that the host is not supported. Deployed runtimes do not expose the endpoint.
+
+## Inspect Server Env
+
+The Env integration contributes commands that report the status of declared Server Env values without printing their values.
+
+```bash [Terminal]
+pnpm vitehub env inspect [--stage <name>] [--json]
+pnpm vitehub env check [--stage <name>] [--json]
+```
+
+Both commands load the Vite config in the selected stage mode, including `.env.<stage>` files, with process environment values taking precedence. They list each declared variable with its status, source, required, and secret flags. `env check` exits with status `1` when loading Server Env would fail, so it can gate CI or deployment steps.
 
 ## Inspect Definitions and Provider Output
 
@@ -184,39 +248,69 @@ pnpm vitehub db migrate
 
 `db generate` forwards Drizzle Kit arguments, supports `--name <name>` for a migration name, and uses `--custom` to create an empty custom migration. `db migrate` accepts forwarded Drizzle Kit migration arguments.
 
-## Read and write blobs
+## Read and write KV keys
 
-Start the app's Vite Development Server, then run `vitehub blob` from another terminal. The commands call the same Blob storage as the running app, so they read and write the blobs that the app uses.
+Start the app's Vite Development Server, then run `vitehub kv` from another terminal. The commands call the same KV storage as the running app, so they read and write the keys that the app uses.
 
 ```bash [Terminal]
-pnpm vitehub blob list --prefix avatars/ --limit 20
-pnpm vitehub blob head avatars/ada.png
-pnpm vitehub blob get avatars/ada.png --output ./ada.png
-pnpm vitehub blob get reports/2026.csv > report.csv
-pnpm vitehub blob put avatars/ada.png ./ada.png --content-type image/png
-pnpm vitehub blob del avatars/ada.png
+pnpm vitehub kv list --prefix users: --limit 20
+pnpm vitehub kv get settings
+pnpm vitehub kv has settings
+pnpm vitehub kv set settings '{"theme":"dark"}' --json-value
+pnpm vitehub kv set session:42 active --ttl 3600
+pnpm vitehub kv set template @./fixtures/template.txt
+pnpm vitehub kv del settings
 ```
 
 Each write command prints what it changed:
 
 ```txt [Output]
-Created blob avatars/ada.png in store default (48213 B, image/png).
-Deleted blob avatars/ada.png from store default.
+Created key settings in store default (object).
+Created key session:42 in store default (string, TTL 3600 s).
+Deleted key settings from store default.
 ```
 
-Every command accepts `--store <name>`, `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>`. The commands use the Default Blob Store. Pass `--store` to select a named store from `blob.stores`. An unknown store fails and lists the configured stores, with `default` first, as the Console does.
+Every command accepts `--store <name>`, `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>`. The commands use the Default KV Store. Pass `--store` to select a named store from `kv.stores`. An unknown store fails and lists the configured stores, with `default` first, as the Console does.
 
-- `list` prints a table of pathname, size, content type, and upload time. `--limit` defaults to 100 and has a maximum of 250. When more blobs exist, stderr shows the `--cursor` value for the next page.
-- `head` prints the metadata of one blob. A missing blob exits with status 1.
-- `get` writes the file bytes unchanged. Without `--output`, the bytes go to stdout, so redirect them to a file or a pipe. With `--output <file>`, the command writes the file and prints a summary. `--json` needs `--output`, because stdout carries the file bytes otherwise.
-- `put` uploads a file relative to the current directory. Without `--content-type`, the Blob storage detects the type from the pathname. The output says if the blob was created or replaced. The created/replaced label is best-effort because it is based on a metadata read immediately before the write; eventual consistency and concurrent writers can make it stale.
-- `del` says if the blob existed. Deleting a missing blob changes nothing and exits with status 0. The existed/missing label is best-effort for the same reason, and a concurrent writer can change the object between the metadata read and delete.
+- `list` prints one key per line. Pages with line breaks inside keys require `--json` to preserve each key. `--limit` defaults to 100 and has a maximum of 1000. When more keys exist, stderr shows the `--cursor` value for the next page. Some drivers count scanned entries toward the limit, so a page can hold fewer keys than the limit, or none, and still have a next cursor.
+- `get` writes a string value unchanged, without adding a newline, and prints other JSON values as formatted JSON. Binary values are written to stdout as bytes, or as base64 with `"encoding": "base64"` in `--json` output. A missing key exits with status 1.
+- `has` exits with status 0 when the key exists and 1 when it does not.
+- `set` writes a string. Add `--json-value` to parse the value as JSON. Use strings for integers outside JavaScript's safe integer range. JSON input rejects values that underflow to zero or whose decimal magnitude changes during parsing. Use a string to preserve those values. A value that starts with `@` reads a UTF-8 file relative to the current directory. The output says if the key was created or updated. `--ttl <seconds>` sets an expiry and accepts positive fractional seconds. The `fs-lite` driver ignores TTL and Cloudflare KV rounds up to whole seconds with a minimum of 60 seconds, and Upstash requires at least one second and rounds accepted fractional TTLs up to whole seconds. The output reports the effective TTL and prints a notice when the driver ignores or changes the requested expiry.
+- `del` says if the key was found. Deleting a missing key changes nothing and exits with status 0.
 
-The Vite dev endpoint forwards a JSON request body, so `put` sends the file as base64 and accepts files up to 8 MiB. The CLI checks the size before it reads the file. `get` returns the raw bytes, but the dev endpoint holds the whole file in memory. Use the application or the provider tools for larger files. There is no `sign` command.
+The KV storage deserializes stored strings that look like JSON, so a string such as `"2026"` can read back as the number `2026`. There is no `clear` command. Delete keys one at a time so that each change is explicit.
 
-Errors go to stderr, or into `{ "error": { "code", "message" } }` on stdout with `--json`. The commands do not print blob URLs, because a signed URL can carry credentials. Metadata values under secret names, such as `token`, are redacted, as the Console Blob page does.
+Errors go to stderr, or into `{ "error": { "code", "message" } }` on stdout with `--json`. The commands print values as they are stored and do not redact them, as the Console KV page does. Do not store credentials in keys that you inspect in shared logs.
 
-The commands use a guarded dev endpoint that `hubBlob()` registers only on the Development Server. The endpoint forwards each operation into the Nitro dev environment, which owns the Blob storage. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 and the CLI prints that the host is not supported. Deployed runtimes do not expose the endpoint.
+The commands use a guarded dev endpoint that `hubKv()` registers only on the Development Server. The endpoint forwards each operation into the Nitro dev environment, which owns the KV storage. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 and the CLI prints that the host is not supported. Deployed runtimes do not expose the endpoint.
+
+
+## Run a Schedule on demand
+
+`schedule run` starts a Static Schedule Definition that sets `manual: true`. It prints the run status, duration, and run id, and exits with `1` when the run fails. Add `--json` to print the run record.
+
+```bash [Terminal]
+pnpm vitehub schedule run sync
+```
+
+Without `--url`, the command posts to the running Vite Development Server at `VITEHUB_DEV_SERVER_URL` or `http://localhost:5173`. Use `--server <url>` to select another local server.
+
+With `--url`, the command posts to `/_vitehub/schedules/run` on the deployment. That route runs only when the deployment enables the [Console](/docs/development/cli#run-a-schedule-on-demand) with `invoke: true`, and the Console access policy protects it like every other `/_vitehub/**` route. Set the credentials for that policy in the environment:
+
+| Variable                        | Value                                                                                                                                           |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITEHUB_CONSOLE_AUTHORIZATION` | An `Authorization` header value that the Console access policy accepts, for example the Basic or Bearer credential that host middleware checks. |
+| `VITEHUB_CONSOLE_COOKIE`        | A `Cookie` header value from a signed-in Console session.                                                                                       |
+| `CF_ACCESS_CLIENT_ID`           | Cloudflare Access service-token client ID. Forwarded as `CF-Access-Client-Id`.                                                                 |
+| `CF_ACCESS_CLIENT_SECRET`       | Cloudflare Access service-token client secret. Forwarded as `CF-Access-Client-Secret`.                                                         |
+
+```bash [Terminal]
+VITEHUB_CONSOLE_AUTHORIZATION="Basic $(printf 'admin:%s' "$ADMIN_TOKEN" | base64)" \
+  pnpm vitehub schedule run sync --url https://app.example.com
+```
+
+The command requires HTTPS for remote URLs and does not follow redirects. A `401`, `403`, or redirect response reports a Console authentication failure. The command never sends the credential to the local Development Server.
+
 
 ## Inspect and control Runtime Schedules
 
@@ -227,19 +321,21 @@ pnpm vitehub schedule list
 pnpm vitehub schedule list --json
 pnpm vitehub schedule get digest
 pnpm vitehub schedule runs digest --limit 5
-pnpm vitehub schedule attempts srun_runtime_digest_2026-05-22T09:00:00.000Z
-pnpm vitehub schedule run digest
+pnpm vitehub schedule attempts srun_runtime_digest_2026-05-22T07:00:00.000Z
+pnpm vitehub schedule run-runtime digest
 pnpm vitehub schedule disable digest
 pnpm vitehub schedule enable digest
 ```
 
 ```txt [Output]
 ID      TARGET  CRON                           ENABLED  NEXT RUN                  LAST RUN
-digest  report  0 9 * * * (Europe/Copenhagen)  yes      2026-05-23T09:00:00.000Z  succeeded 2026-05-22T09:00:00.000Z
+digest  report  0 9 * * * (Europe/Copenhagen)  yes      2026-05-23T07:00:00.000Z  succeeded 2026-05-22T07:00:00.000Z
 Automatic runs: off. No wake driver is installed, so due times do not start runs in this runtime.
 ```
 
-Every command accepts `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>`. `runs` accepts `--limit <n>`. A failed run makes `schedule run` exit with status 1 and prints the stored run. Errors go to stderr, or into the JSON body with `--json`.
+Every command accepts `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>` (whole milliseconds from 1 to 2147483647). `runs` accepts `--limit <n>`. A failed run makes `schedule run-runtime` exit with status 1 and prints the stored run. Errors go to stderr, or into the JSON body with `--json`.
+
+Schedule operations require a private token scoped to the local project and server instance. The dev server stores it with user-only permissions outside the served project tree, and the CLI reads it locally. Discovery exposes only the server ID. Vite and Nitro both reject operations without the token, including requests to a server exposed with `--host`. Shutdown removes the credential.
 
 The output redacts credentials: values under secret-named keys in Schedule input, URLs with embedded credentials, bearer tokens, and secret assignments in error messages.
 
@@ -407,10 +503,8 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 | Agent eval times out | The eval case, model call, or provider run exceeds `agent.eval.testTimeout`. | Increase `agent.eval.testTimeout` in `vite.config.ts` or narrow the eval case. |
 | Vite config fails while loading a ViteHub plugin import | A fresh npm project is loading `vite.config.ts` as CommonJS, but ViteHub packages are ESM-only. | Set `"type": "module"` in `package.json` or rename the config to `vite.config.mts`. |
 | `No Compatible Vite Development Server found` | The app dev server is not running or `--url` points at the wrong port. | Start Vite separately, then pass the dev server URL. |
-| `vitehub blob` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
-| `vitehub blob put` fails with `BLOB_DEV_UPLOAD_TOO_LARGE` | The file is larger than 8 MiB, the limit of the dev endpoint. | Upload the file through the application or the provider tools. |
 | `vitehub schedule` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
-| `vitehub schedule run` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
+| `vitehub schedule run-runtime` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
 | `Unknown Workspace Dev target` | The named Workspace is not discovered by the running Vite dev server. | Check the Workspace Definition name and make sure `hubWorkspace()` is active. |
 | `Agent Dev Loop command requires workspace.mode: "write"` | A `!` command targeted an Agent without writable Workspace access. | Configure the selected Agent with `workspace: { mode: 'write' }`, or send a normal Agent message instead. |
 | Agent Dev Loop request times out | A streamed invocation emitted no events before the inactivity timeout, or a Capability CLI/Workspace command exceeded its wall-clock deadline. | Pass `--timeout <ms>` for the dev-loop operation or inspect the stalled work. |
