@@ -1328,7 +1328,8 @@ async function runAgentAsWorkflow<
   catch (error) {
     const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
     await activity?.update(status, error)
-    const ambiguous = isAmbiguousAgentWorkflowStartFailure(error)
+    const ambiguous = Boolean(replayJournal && (workflowConfig && workflowConfig.provider) === "vercel" && inputHandedOff)
+      || isAmbiguousAgentWorkflowStartFailure(error)
     const failedRunId = !options.fresh && context.run?.runId
       ? context.run.runId
       : workflowRunId || (ambiguous ? undefined : createTraceId())
@@ -7938,7 +7939,11 @@ async function executeAgentInvocation<
           ? { run: { ...context.run, runId: (context as AgentRuntimeContext & { [agentInvocationRunId]: string })[agentInvocationRunId] } }
           : {}),
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      }, { agentName: agentInvocationName(definition as AgentDefinition, context), cancellationDriver: invocationCancellationDriver(definition) })
+      }, {
+        agentName: agentInvocationName(definition as AgentDefinition, context),
+        cancellationDriver: invocationCancellationDriver(definition),
+        ...(inheritedClaim ? { replaceClaimToken: inheritedClaim } : {}),
+      })
       : undefined
     if ((exclusive || inheritedClaim) && invocationJournal?.claimStatus !== "owned") {
       if (invocationJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()

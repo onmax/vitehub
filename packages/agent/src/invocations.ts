@@ -2460,7 +2460,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           if (options.workflowDispatch) {
             const current = await boundedStoreOperation(() => store.get(recordId))
             if (!current || current === storeOperationTimedOut || terminalStatus(current.status)) return undefined
-            const annotations = { [workflowDispatchAttemptedAnnotation]: true, ...current.annotations }
+            const annotations = { ...current.annotations, [workflowDispatchAttemptedAnnotation]: true }
             const updated = await boundedStoreOperation(() => store.update(recordId, { annotations, timestamp: new Date().toISOString() }, claimId))
             if (!updated || updated === storeOperationTimedOut || updated.annotations?.[workflowDispatchAttemptedAnnotation] !== true) return undefined
           }
