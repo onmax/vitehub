@@ -13,6 +13,8 @@ export interface MemoryRateLimitDriverOptions {
 
 export interface MemoryRateLimitDriver extends RateLimitDriver {
   clear: () => void
+  peek: NonNullable<RateLimitDriver["peek"]>
+  reset: NonNullable<RateLimitDriver["reset"]>
   size: () => number
 }
 
@@ -75,7 +77,19 @@ export function memoryRateLimitDriver(options: MemoryRateLimitDriverOptions = {}
         used: entry.count,
       }]
     },
+    peek(input) {
+      const timestamp = now()
+      prune(timestamp)
+      const key = `${input.name ?? "default"}\0${input.key}`
+      const entry = entries.get(key)
+      return [null, { resetAt: entry && entry.resetAt > timestamp ? entry.resetAt : undefined, used: entry && entry.resetAt > timestamp ? entry.count : 0 }]
+    },
     name: "memory",
+    reset(input) {
+      const key = `${input.name ?? "default"}\0${input.key}`
+      entries.delete(key)
+      return [null]
+    },
     size() {
       return entries.size
     },
