@@ -7,13 +7,32 @@ import { connectionNameSchema, useAgentConnection } from "./connection.ts"
 import type {
   AgentCapabilityContext,
   AgentCapabilityDefinition,
+  AgentRunInput,
   AgentRuntimeConfig,
 } from "../types.ts"
 import type { McpToolServerConnection } from "../internal/mcp-tool-capability.ts"
 import type { AgentConnectionFetchOptions } from "./connection.ts"
-import type { McpCapabilityOptions, McpClient, McpClientConfig } from "../mcp/types.ts"
+import type { McpAvailabilityWarning, McpCapabilityOptions, McpClient, McpClientConfig } from "../mcp/types.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
+
+const mcpWarningSchema = v.object({
+  phase: v.picklist(["discovery", "resolve"]),
+  server: v.string(),
+  statusCode: v.optional(v.pipe(v.number(), v.integer(), v.minValue(400), v.maxValue(599))),
+})
+
+/** Return valid MCP availability warnings recorded in an Agent run input. */
+export function getMcpWarnings(input: AgentRunInput): McpAvailabilityWarning[] {
+  const context = input.context
+  if (!context || typeof context !== "object" || Array.isArray(context)) return []
+  const warnings = (context as Record<string, unknown>)["vitehub.mcp.warnings"]
+  if (!Array.isArray(warnings)) return []
+  return warnings.flatMap((warning) => {
+    const parsed = v.safeParse(mcpWarningSchema, warning)
+    return parsed.success ? [parsed.output] : []
+  })
+}
 
 function normalizeMcpToolName(serverName: string, toolName: string) {
   return `mcp_${serverName}_${toolName}`.replace(/[^a-zA-Z0-9_]/g, "_")
@@ -177,6 +196,7 @@ export function mcp<
     integrityLabel: "mcp({ integrity })",
     invalidServerMessage: "[vitehub] mcp({ servers }) entries must resolve to an MCP client or MCP client config.",
     metadata: { servers: sanitizeMcpMetadata(options.servers) as Record<string, unknown> },
+    ...(options.unavailableNotice !== undefined ? { unavailableNotice: options.unavailableNotice } : {}),
     ...(usesConnections ? { requires: [{ primitive: "connections" }] } : {}),
     servers: Object.entries(options.servers).map(([name, server]) => ({
       name,
