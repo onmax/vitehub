@@ -46,6 +46,7 @@ function deploymentRuntimeModules(): Map<string, string> {
     ["@vite-hub/agent/server/internal", [
       `export { decodeColocatedAgentSkills, withColocatedAgentSkills } from ${JSON.stringify(join(import.meta.dirname, "../src/internal/colocated-agent-skills.ts"))}`,
       `export { inheritAgentLayerOptions } from ${JSON.stringify(join(import.meta.dirname, "../src/agent-layers.ts"))}`,
+      `export { markDiscoveredAgentName, resetPublicUrlAgentNames } from ${JSON.stringify(join(import.meta.dirname, "../src/internal/discovered-agent-name.ts"))}`,
       "import { defineAgent } from '@vite-hub/agent'",
       `const capture = () => globalThis.${runtimeCaptureKey}`,
       "function assetText(agent, key) {",

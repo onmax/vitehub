@@ -396,7 +396,7 @@ async function cancelInvocation(parsed: ParsedArgs, context: AgentInvocationsCli
     signal: AbortSignal.timeout(timeout),
   })
   const result: unknown = await response.json().catch(() => undefined)
-  if (!response.ok) throw new Error(typeof result === "object" && result !== null && "error" in result ? String(Reflect.get(result, "error")) : `Agent Invocation cancel failed (${response.status}).`)
+  if (!response.ok) throw new Error(isRuntimeRecord(result) && "error" in result ? String(Reflect.get(result, "error")) : `Agent Invocation cancel failed (${response.status}).`)
   if (parsed.json) context.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
   else context.stdout.write(`Cancellation requested for ${parsed.id}.\n`)
   return 0

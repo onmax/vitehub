@@ -1815,6 +1815,7 @@ describe("agent chat capability discovery", () => {
         command: "serve",
         plugins: [{ name: "@vite-hub/database/vite" }, { name: "@vite-hub/schedule/vite" }],
         root,
+        server: { port: 3000 },
       } as never)
     }
     await configurePluginServer(plugin, server)

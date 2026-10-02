@@ -103,6 +103,8 @@ const generatedAgentWebhookRouteHandler = "agent/chat-webhook-route.ts"
 const generatedAgentPreparationPlugin = "agent/preparation-plugin.ts"
 const generatedAgentPreparationHandler = "agent/preparation-route.ts"
 const generatedAgentWebhookQueuePlugin = "agent/webhook-queue-plugin.ts"
+const agentProcessHostDrainRoute = "/api/_vitehub/host/drain"
+const agentProcessHostHealthRoute = "/api/_vitehub/host/health"
 const generatedAgentProcessHosts = "agent/process-hosts.ts"
 const generatedAgentProcessHostsPlugin = "agent/process-hosts-plugin.ts"
 const generatedAgentProcessHostsDrain = "agent/process-hosts-drain.ts"
@@ -2893,7 +2895,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       const handler = join(generatedRoot, generatedAgentInvocationsDevHandler)
       await mkdir(dirname(handler), { recursive: true })
       await writeFile(handler, renderViteHubNitroDevHandler({
-        arguments: [config.root, workspaceDevTokenServerId(config.server.port)],
+        arguments: [config.root, workspaceDevTokenServerId(config.server?.port)],
         export: "handleAgentInvocationsDevRequest",
         module: `${getAgentImportBase(agent, frameworkOptions)}/runtime/invocations-dev`,
       }), "utf8")
@@ -3025,6 +3027,11 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       server.watcher?.on("add", refreshDiscovery)
       server.watcher?.on("unlink", refreshDiscovery)
       if (agent !== false) {
+        await registerAgentInvocationStreamEndpoint(server, {
+          runtimeCapabilities,
+          schedule: hasScheduleVitePlugin(resolved ?? server.config),
+          scheduleRuntimeImport: getScheduleRuntimeImport(agent, frameworkOptions),
+        })
         // Cancel runs in the Nitro dev environment, which owns the application's journals and abort handles.
         registerViteHubNitroDevEndpoint(server, {
           ...agentInvocationsDevGuard,
@@ -3040,11 +3047,6 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
             : undefined,
           forwardHeaders: [workspaceDevTokenHeader, agentInvocationsDevTokenServerHeader],
           unavailable: { code: agentInvocationsDevRuntimeUnavailableCode, message: agentInvocationsDevRuntimeUnavailableMessage },
-        })
-        await registerAgentInvocationStreamEndpoint(server, {
-          runtimeCapabilities,
-          schedule: hasScheduleVitePlugin(resolved ?? server.config),
-          scheduleRuntimeImport: getScheduleRuntimeImport(agent, frameworkOptions),
         })
       }
     },
@@ -3202,6 +3204,10 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       },
       inspect: () => {
         if (agent === false) return
+        const rootDir = resolve(resolved?.root ?? process.cwd())
+        const normalized = normalizeAgentOptions(agent)
+        const hostedAgents = Boolean(normalized && hasHostedAgentDefinitions(rootDir, serverDirs))
+        const denoHostedAgents = hostedAgents && normalized !== false && normalized?.runtime === "deno"
         return {
           definitions: [{
             kind: "agent",
@@ -3211,6 +3217,18 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
               return inspectAgentDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
             },
           }],
+          providerOutput: [
+            ...(denoHostedAgents ? [{
+              description: "Generated Deno Agent server",
+              owner: "agent",
+              path: resolve(resolveViteHubGeneratedRoot(resolved ?? { root: rootDir }), generatedAgentDenoServer),
+            }] : []),
+            ...(hostedAgents && !denoHostedAgents && resolveAgentHosting(resolved) === "netlify" ? [{
+                description: "Generated Netlify Agent function",
+                owner: "agent",
+                path: resolve(createDefaultNetlifyOutputRoot(rootDir), "functions", `${netlifyAgentFunctionName}.mjs`),
+            }] : []),
+          ],
         }
       },
     },

@@ -1,3 +1,4 @@
+import { safeParse, object, literal, pipe, string, trim, nonEmpty } from "valibot"
 import agentRegistry from "#vitehub/agent/registry"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { redactInspectionText } from "@vite-hub/internal/inspect"
@@ -14,13 +15,11 @@ function failure(message: string, status: number): Response {
   return Response.json({ error: { message: redactInspectionText(message) } }, { status })
 }
 
+const requestBodySchema = object({ id: pipe(string(), trim(), nonEmpty()), operation: literal("cancel") })
+
 async function readBody(request: Request): Promise<AgentInvocationsDevRequestBody | undefined> {
-  const value: unknown = await request.json().catch(() => undefined)
-  if (typeof value !== "object" || value === null) return
-  const operation: unknown = Reflect.get(value, "operation")
-  const id: unknown = Reflect.get(value, "id")
-  if (operation !== "cancel" || typeof id !== "string" || !id.trim()) return
-  return { id: id.trim(), operation }
+  const result = safeParse(requestBodySchema, await request.json().catch(() => undefined))
+  return result.success ? result.output : undefined
 }
 
 /**

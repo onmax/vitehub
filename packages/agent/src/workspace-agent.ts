@@ -1,3 +1,4 @@
+import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { inheritAgentLayerOptions } from "./agent-layers.ts"
 import { registeredWorkspaceAgentNames } from "./internal/workspace-agent-registration.ts"
 import { agentInstructionSources, resolveAgentInstructions } from "./agent-instructions.ts"
@@ -134,7 +135,10 @@ export type WorkspaceAgentOptions<
   TCapabilities extends AgentCapabilitiesInput<TRuntimeConfig, _Name, CALL_OPTIONS> | undefined = AgentCapabilitiesInput<TRuntimeConfig, _Name, CALL_OPTIONS> | undefined,
   TOutput = unknown,
   TDriver extends AgentDriver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput> = AgentDriver<TRuntimeConfig, CALL_OPTIONS, TContextValues, TOutput>,
-> = AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TCapabilities, TOutput, TDriver> & {
+  TData = unknown,
+  TIntercept = never,
+  TDataInput = TData,
+> = AgentSettings<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TCapabilities, TOutput, TDriver, TData, TIntercept, TDataInput> & {
   name?: string
   workspace: WorkspaceAgentWorkspaceConfig<_Name>
 }
@@ -147,7 +151,11 @@ export type WorkspaceAgentDefinition<
   TContextValues extends object = AgentInvocationContextValues,
   TCapabilities extends AgentCapabilitiesInput<TRuntimeConfig, Name, CALL_OPTIONS> | undefined = AgentCapabilitiesInput<TRuntimeConfig, Name, CALL_OPTIONS> | undefined,
   TOutput = unknown,
-> = AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput> & WorkspaceAgentWorkspaceOptions & {
+  TDataInput = unknown,
+  TData = unknown,
+  TDriverOutput = TOutput,
+  TInterceptOutput = TOutput,
+> = AgentDefinition<TRuntimeConfig, CALL_OPTIONS, TInvokerProfile, TContextValues, TOutput, TDataInput, TDriverOutput, TData, TInterceptOutput> & WorkspaceAgentWorkspaceOptions & {
   __vitehubWorkspaceAgent: true
   __vitehubWorkspaceAgentOptions: WorkspaceAgentOptions<TRuntimeConfig, Name, CALL_OPTIONS, TInvokerProfile, TContextValues, TCapabilities, TOutput>
 }
@@ -310,6 +318,7 @@ export function workspaceAgentWithSourceRoot<Agent>(agent: Agent, sourceRootDir:
     const descriptor = Object.getOwnPropertyDescriptor(workspaceAgent, key)
     if (descriptor) Object.defineProperty(decoratedAgent, key, descriptor)
   }
+  Object.defineProperty(decoratedAgent, agentDefinitionSourceSymbol, { configurable: true, value: workspaceAgent })
   inheritAgentCapacity(workspaceAgent, decoratedAgent)
   inheritAgentLayerOptions(workspaceAgent, decoratedAgent, {
     workspace: decoratedWorkspace,
@@ -538,14 +547,12 @@ function capabilityMetadataTool(capability: NormalizedCapability, options: { dri
     }
   }
   if (capability.id === "gmail") {
-    // SAFETY: Workspace definition normalization establishes the asserted owned Workspace contract.
-    const mode = (capability.metadata as { mode?: unknown } | undefined)?.mode
+    // SAFETY: gmail() writes the Connection name and the enabled tool names into its metadata.
+    const metadata = capability.metadata as { connection?: string, operations?: string[] } | undefined
     return {
       category: "capability",
-      commands: ["gmail_auth", "gmail_search", ...(mode === "draft" ? ["gmail_draft"] : [])],
-      description: mode === "draft"
-        ? "Authorize Gmail, search threads, and create unsent drafts."
-        : "Authorize Gmail and search threads.",
+      commands: (metadata?.operations ?? []).map(operation => `gmail_${operation}`),
+      description: `Search, read, or draft Gmail messages through the "${metadata?.connection ?? "google"}" Connection.`,
       icon: "i-lucide-mail-search",
       name: "gmail",
       status: "available",
@@ -559,6 +566,18 @@ function capabilityMetadataTool(capability: NormalizedCapability, options: { dri
       description: "Run explicitly allowed executables in an isolated sandbox.",
       icon: "i-lucide-box",
       name: "sandbox",
+      status: "available",
+    }
+  }
+  if (capability.id.startsWith("channel-delivery.")) {
+    const tool = capability.metadata?.tool
+    const name = hasRuntimeType(tool, "string") ? tool : undefined
+    if (!name) return undefined
+    return {
+      category: "capability",
+      description: "Deliver a message through the configured Channel.",
+      icon: "i-lucide-send",
+      name,
       status: "available",
     }
   }
@@ -605,7 +624,7 @@ function resolvedDriverExecutionAuthority<
   driver: ReturnType<typeof normalizeAgentDriver<TRuntimeConfig, CALL_OPTIONS>>,
   runtime?: AgentRuntimeName,
 ): ExecutionAuthority {
-  if (driver.kind === "model") return noExecutionAuthority
+  if (driver.kind === "model" || driver.kind === "ask") return noExecutionAuthority
   if (driver.kind === "provider" && (runtime === "cloudflare-agents" || runtime === "deno")) return noExecutionAuthority
   return driver.kind === "provider" ? staticDriverExecutionAuthority(driver) : unknownExecutionAuthority
 }
@@ -779,6 +798,8 @@ function providerMetadata(driver: {
   credentialProfile?: string
   credentials?: unknown
   env?: unknown
+  cwd?: unknown
+  requirements?: readonly string[]
   launch?: unknown
   model?: string
   permissions: AgentInspectionProviderMetadata["permissions"]
@@ -795,6 +816,8 @@ function providerMetadata(driver: {
   return {
     ...(driver.credentialProfile ? { credentialProfile: driver.credentialProfile } : {}),
     ...(driver.credentials !== undefined ? { credentials: true } : {}),
+    ...(driver.cwd !== undefined ? { cwd: providerResolverKind(driver.cwd) } : {}),
+    ...(driver.requirements?.length ? { requirements: driver.requirements } : {}),
     ...(driver.env !== undefined ? { environment: providerResolverKind(driver.env) } : {}),
     ...(driver.launch !== undefined ? { launch: providerResolverKind(driver.launch) } : {}),
     ...(driver.model ? { model: driver.model } : {}),
@@ -831,6 +854,7 @@ function staticDriverMetadata<
       provider: providerMetadata(driver),
     }
   }
+  if (driver.kind === "ask") return { executionAuthority: noExecutionAuthority, kind: "ask" }
   return { executionAuthority: unknownExecutionAuthority, kind: "run" }
 }
 
@@ -867,6 +891,7 @@ async function resolvedDriverMetadata<
       provider: providerMetadata(driver),
     }
   }
+  if (driver.kind === "ask") return { executionAuthority: noExecutionAuthority, kind: "ask" }
   return { executionAuthority: unknownExecutionAuthority, kind: "run" }
 }
 
