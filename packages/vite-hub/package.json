@@ -185,7 +185,15 @@
     "./console/sections": "./dist/console/runtime/server/sections.js",
     "./ui/styles.css": "./dist/ui/styles.css",
     "./tsconfig": "./tsconfig.json",
-    "./_internal/agent/runtime/invocations-dev": "./dist/_internal/agent/runtime/invocations-dev.js"
+    "./_internal/agent/runtime/invocations-dev": "./dist/_internal/agent/runtime/invocations-dev.js",
+    "./_internal/agent/runtime/process": "./dist/_internal/agent/runtime/process.js",
+    "./agent/observability": "./dist/agent/observability.js",
+    "./box/ssh": "./dist/box/ssh.js",
+    "./connections": "./dist/connections.js",
+    "./connections/agent": "./dist/connections/agent.js",
+    "./connections/google": "./dist/connections/google.js",
+    "./connections/http": "./dist/connections/http.js",
+    "./connections/server": "./dist/connections/server.js"
   },
   "scripts": {
     "build": "vp build --config console.vite.config.ts && vp pack",
@@ -217,6 +225,7 @@
     "@vite-hub/browser": "workspace:*",
     "@vite-hub/channels": "workspace:*",
     "@vite-hub/cli": "workspace:*",
+    "@vite-hub/connections": "workspace:*",
     "@vite-hub/content": "workspace:*",
     "@vite-hub/database": "workspace:*",
     "@vite-hub/email": "workspace:*",
@@ -253,7 +262,8 @@
     "shiki": "^4.4.3",
     "uploadthing": "catalog:storage",
     "valibot": "catalog:runtime",
-    "workflow": "catalog:workflow"
+    "workflow": "catalog:workflow",
+    "ssh2": "^1.17.0"
   },
   "devDependencies": {
     "@iconify-json/lucide": "catalog:ui",
