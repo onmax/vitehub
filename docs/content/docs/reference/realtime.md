@@ -118,7 +118,9 @@ checkpoint.snapshot
 
 `history.pending` remains `true` until every overlapping checkpoint request
 settles. Checkpoints require a Workspace Store with conditional writes. A
-durable Realtime authority also requires a durable Workspace Store.
+durable Realtime authority also requires a durable Workspace Store. A checkpoint
+retry stays bound to its original document and rejects if that document is
+disconnected or replaced before the next attempt.
 
 A checkpoint succeeds only when its snapshot contains the canonical document
 digest. If Workspace changed during publication, Realtime rebases onto the

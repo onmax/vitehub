@@ -116,9 +116,11 @@ export function useRealtimeTiptap(definition: string, documentId: MaybeRefOrGett
       const id = toValue(documentId)
       if (!id) throw realtimeErrorDiagnostics.REALTIME_R0010({ message: "A realtime document is required before creating a checkpoint." })
       const room = id.split("/").map(encodeURIComponent).join("/")
+      const current = document.value
       for (let attempt = 0; ; attempt++) {
-        const current = document.value
-        if (!current) throw realtimeErrorDiagnostics.REALTIME_R0011({ message: "The realtime document is not connected." })
+        if (!current || document.value !== current || toValue(documentId) !== id || !enabled()) {
+          throw realtimeErrorDiagnostics.REALTIME_R0011({ message: "The realtime document is no longer connected to this checkpoint." })
+        }
         const response = await fetch(resolveRealtimeApplicationPath(`/api/_vitehub/realtime/${encodeURIComponent(definition)}/${room}?history=checkpoint`), {
           body: Uint8Array.from(Y.encodeStateAsUpdate(current)).buffer,
           method: "POST",

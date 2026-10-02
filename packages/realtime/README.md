@@ -104,7 +104,7 @@ console.log(checkpoint.snapshot.id)
 - Durable rooms do not make Workspace files durable. Production checkpoints need a durable Workspace Store with conditional writes; memory Workspace Stores are rejected for durable checkpoints.
 - Realtime Definitions are public by default. Set `auth: true` only after configuring ViteHub Auth; this verifies the session and replaces client-supplied presence identity. Presence in a public definition is untrusted and must not authorize application actions.
 - One WebSocket message is limited to 1 MiB. Document state and awareness state are each limited to 8 MiB per room, and one peer can own at most 1,024 awareness clients.
-- Changing or disabling the document, or disposing its Vue scope, destroys the document provider. The application still owns editor disposal, checkpoint error handling, and reconnect UX.
+- Changing or disabling the document, or disposing its Vue scope, destroys the document provider. Pending checkpoint retries reject when their original document is disconnected or replaced. The application still owns editor disposal, checkpoint error handling, and reconnect UX.
 
 ## Public imports
 
