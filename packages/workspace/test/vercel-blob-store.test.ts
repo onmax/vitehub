@@ -6,6 +6,7 @@ declare global {
 
 const blobMock = vi.hoisted(() => {
   const store = new Map<string, { body: Uint8Array, uploadedAt: Date }>()
+  const cache = new Map<string, { body: Uint8Array, uploadedAt: Date }>()
   const pathnameFromUrl = (input: string) => input.startsWith("https://blob.example/")
     ? input.slice("https://blob.example/".length)
     : input
@@ -13,12 +14,15 @@ const blobMock = vi.hoisted(() => {
   return {
     clear() {
       store.clear()
+      cache.clear()
     },
     del: vi.fn(async (input: string | string[]) => {
       for (const item of Array.isArray(input) ? input : [input]) store.delete(pathnameFromUrl(item))
     }),
-    get: vi.fn(async (input: string) => {
-      const current = store.get(pathnameFromUrl(input))
+    get: vi.fn(async (input: string, options: { useCache?: boolean } = {}) => {
+      const pathname = pathnameFromUrl(input)
+      const current = options.useCache === false ? store.get(pathname) : cache.get(pathname) || store.get(pathname)
+      if (current && options.useCache !== false) cache.set(pathname, current)
       return current
         ? { blob: { contentType: "application/octet-stream", size: current.body.byteLength }, statusCode: 200, stream: new Response(current.body).body }
         : { statusCode: 404, stream: null }
@@ -107,6 +111,7 @@ describe("Vercel Blob workspace store", () => {
     expect(blobMock.get).toHaveBeenCalledWith("workspace/e2e/docs/files/docs/readme.md", expect.objectContaining({
       access: "private",
       token: "token",
+      useCache: false,
     }))
     blobMock.get.mockClear()
     expect(await store.glob("**/*.{md,mdx}")).toEqual([

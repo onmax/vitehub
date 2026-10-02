@@ -35,7 +35,7 @@ type BlobListResult = {
 
 type VercelBlobModule = {
   del(key: string, options?: { token?: string }): Promise<void>
-  get(key: string, options: { access: "private" | "public", token?: string }): Promise<{
+  get(key: string, options: { access: "private" | "public", token?: string, useCache?: boolean }): Promise<{
     blob: { contentType: string, size: number }
     statusCode: 200
     stream: ReadableStream<Uint8Array>
@@ -76,7 +76,7 @@ async function createVercelBlobClient(options: VercelBlobWorkspaceStoreOptions) 
       await blob.del(key, auth(options))
     },
     async download(key: string): Promise<Blob> {
-      const result = await blob.get(key, { access, ...auth(options) })
+      const result = await blob.get(key, { access, useCache: false, ...auth(options) })
       if (!result || result.statusCode !== 200 || !result.stream) throw Object.assign(workspaceErrorDiagnostics.WORKSPACE_R0033({ message: "not found" }), { code: "NotFound" })
       return await new Response(result.stream, {
         headers: result.blob.contentType ? { "content-type": result.blob.contentType } : undefined,
