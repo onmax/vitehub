@@ -508,7 +508,7 @@ function mergeExcludedHostState(
     .filter(([path]) => !occupiedRoots.some(root => path === root || path.startsWith(`${root}/`))))
   const contents = new Map(materialized.contents)
   for (const root of occupiedRoots) {
-    for (const path of [...contents.keys()]) {
+    for (const path of contents.keys()) {
       if (path === root || path.startsWith(`${root}/`)) contents.delete(path)
     }
   }

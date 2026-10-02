@@ -393,7 +393,7 @@ onBeforeUnmount(() => request?.abort());
                   <dt class="text-[10px] font-semibold uppercase tracking-[.1em] text-muted">
                     {{ field.label }}
                   </dt>
-                  <dd class="break-words font-mono text-xs text-highlighted">{{ field.value }}</dd>
+                  <dd class="whitespace-pre-wrap break-words font-mono text-xs text-highlighted">{{ field.value }}</dd>
                 </div>
               </dl>
             </section>

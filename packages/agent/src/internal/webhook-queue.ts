@@ -295,7 +295,7 @@ export function createAgentWebhookQueue<Options>(
     scheduled.clear()
     pending.clear()
     for (const { controller } of active.values()) controller.abort(agentDiagnostics.AGENT_R0594({ message: webhookQueueStopMessage }))
-    await Promise.allSettled([...discoveries])
+    await Promise.allSettled(discoveries)
     await idle()
   }
 

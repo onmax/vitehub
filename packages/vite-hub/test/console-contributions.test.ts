@@ -10,7 +10,7 @@ import { consoleBuiltinSectionIds, consoleSectionRouteName, isConsoleBuiltinSect
 
 describe("Console section contributions", () => {
   it("registers the owner sections with valid ids that do not replace built-in sections", () => {
-    expect([...consoleContributedSections.keys()]).toEqual(["rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"])
+    expect([...consoleContributedSections.keys()]).toEqual(["email", "rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"])
     for (const [id, section] of consoleContributedSections) {
       expect(section.descriptor.id).toBe(id)
       expect(isConsoleSectionId(id)).toBe(true)
@@ -41,7 +41,8 @@ describe("Console section contributions", () => {
     const manifest: { exports: Record<string, unknown> } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
 
     expect(consoleRuntimeReaderModule("@vite-hub/schedule/runtime/console")).toBe("vite-hub/_internal/schedule/runtime/console")
-    expect(describeConsoleRuntimeReaders(["agents", "queues", "schedules"])).toEqual([
+    expect(describeConsoleRuntimeReaders(["agents", "email", "queues", "schedules"])).toEqual([
+      { export: "readEmailOutboxConsoleRecords", module: "vite-hub/_internal/email/runtime/console", section: "email" },
       { export: "readScheduleConsoleRecords", module: "vite-hub/_internal/schedule/runtime/console", section: "schedules" },
     ])
     for (const reader of describeConsoleRuntimeReaders([...consoleContributedSections.keys()])) {
