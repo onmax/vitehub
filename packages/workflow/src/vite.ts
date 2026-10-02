@@ -211,6 +211,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         // SAFETY: Vite config permits the shared server-directory symbol added by ViteHub discovery.
         serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
         if (env.command !== "serve") return
+        // SAFETY: ViteHub attaches this symbol to its extended config; the intersection reflects that optional property.
         const rootDir = resolve(((config as typeof config & { [VITEHUB_PROJECT_ROOT]?: string })[VITEHUB_PROJECT_ROOT] ?? config.root) || process.cwd())
         const state = devGeneratedState()
         // SAFETY: Nitro extends Vite config with an opaque nitro value that the server kit validates.
@@ -238,6 +239,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       }
       const rootDir = devRegistryRootDir
       if (!rootDir) return
+      server.watcher.add([rootDir, ...(serverDirs ?? [resolve(rootDir, "server")])])
       // Vite does not call `handleHotUpdate` for new or deleted files, so watch them directly.
       const refresh = async (path: string) => {
         const file = path.replace(/\\/g, "/")
@@ -266,6 +268,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       // SAFETY: ViteHub attaches this symbol to its extended config; the intersection reflects that optional property.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       if (devRegistryRootDir) {
+        // SAFETY: ViteHub attaches this symbol to its extended config; the intersection reflects that optional property.
         devRegistryRootDir = resolve((config as typeof config & { [VITEHUB_PROJECT_ROOT]?: string })[VITEHUB_PROJECT_ROOT] ?? config.root)
         await writeDevRegistry(devRegistryRootDir)
       }
