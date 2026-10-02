@@ -35,8 +35,9 @@ function harness(provider: ConnectionApiKeyProvider = apiKey({ origins: ["https:
     return Response.json({ items: ["a"] })
   }
   const definition = defineConnection({ provider, ...(access ? { access } : {}) })
-  const runtime = createConnectionsRuntime({ definitions: { executor: definition }, fetch: fetcher, store: createStore() })
-  return { calls, routes, runtime }
+  const store = createStore()
+  const runtime = createConnectionsRuntime({ definitions: { executor: definition }, fetch: fetcher, store })
+  return { calls, routes, runtime, store }
 }
 
 describe("apiKey()", () => {
@@ -54,6 +55,7 @@ describe("apiKey()", () => {
     { header: "bad header", origins: ["https://api.example.com"] },
     { origins: ["https://api.example.com"], scheme: "Bad Scheme" },
     { id: "has space", origins: ["https://api.example.com"] },
+    { origins: ["https://api.example.com"], apis: { items: { methods: {}, rootUrl: "http://api.example.com" } } },
   ])("rejects an unsafe provider (%o)", (options) => {
     expect(() => apiKey(options)).toThrow(expect.objectContaining({ code: "CONNECTION_INVALID" }))
   })
@@ -82,6 +84,18 @@ describe("API key Connections", () => {
     const activity = await test.runtime.activity({ name: "executor" })
     expect(activity.map(entry => entry.action)).toEqual(expect.arrayContaining(["replace", "use"]))
     expect(JSON.stringify(activity)).not.toContain(KEY)
+  })
+
+  it("quarantines a key when its state cannot be persisted", async () => {
+    const test = harness()
+    const putForToken = test.store.state.putForToken
+    let failures = 1
+    test.store.state.putForToken = async (...args) => {
+      if (failures--) throw new Error("state unavailable")
+      return putForToken(...args)
+    }
+    await expect(test.runtime.setKey({ key: KEY, name: "executor" })).rejects.toThrow("state unavailable")
+    expect(await test.runtime.inspect("executor")).toMatchObject({ status: "reauth_required" })
   })
 
   it("calls typed catalog methods with the scheme and key", async () => {

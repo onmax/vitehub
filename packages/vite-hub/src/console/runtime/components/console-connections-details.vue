@@ -83,7 +83,7 @@ function setKey() {
     const result = await requestConnectionsManagement(props.endpoint, "set-key", connectionResultSchema, {
       key: value,
       name: props.connection.name,
-    });
+    }, { redirect: "error" });
     current.value = result.connection;
     settingKey.value = false;
     key.value = "";
