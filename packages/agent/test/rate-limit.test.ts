@@ -33,6 +33,17 @@ function limiter(limit = 1, window: "1s" | "1m" = "1m") {
 }
 
 describe("rateLimit capability", () => {
+  it("preserves peek and reset on callback limiters", async () => {
+    const { defineAgent, runAgent } = await import("../src/index.ts")
+    const onAllowed = vi.fn(async (event: import("../src/capabilities/rate-limit.ts").RateLimitEvent) => {
+      expect(await event.limiter.peek({ key: event.decision.key })).toMatchObject({ status: "known", used: 1 })
+      expect(await event.limiter.reset({ key: event.decision.key })).toEqual({ status: "reset" })
+    })
+    const agent = defineAgent({ capabilities: [rateLimit({ identity: () => "user", limiter: limiter(), onAllowed })], driver: { run: () => "ok" } })
+    await expect(runAgent(agent, runtime(), {})).resolves.toBe("ok")
+    expect(onAllowed).toHaveBeenCalledOnce()
+  })
+
   it("rejects before the Agent Invocation when an identity exhausts its limiter", async () => {
     const { defineAgent, runAgent } = await import("../src/index.ts")
     const run = vi.fn((context: { context: { get: (id: string) => unknown } }) => context.context.get("rate-limit"))

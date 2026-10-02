@@ -10,9 +10,11 @@ export default defineConfig({
     },
     entry: [
       "src/index.ts",
+      "src/cli.ts",
       "src/drivers/cloudflare.ts",
       "src/drivers/memory.ts",
       "src/runtime.ts",
+      "src/runtime/console.ts",
       "src/vite.ts",
     ],
     exports: {
