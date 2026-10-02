@@ -3197,6 +3197,8 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       },
       inspect: () => {
         if (agent === false) return
+        const options = normalizeAgentOptions(agent)
+        const rootDir = resolve(resolved?.root ?? process.cwd())
         return {
           definitions: [{
             kind: "agent",
@@ -3206,6 +3208,9 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
               return inspectAgentDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
             },
           }],
+          providerOutput: options?.runtime === "deno"
+            ? [{ description: "Generated Deno Agent server", owner: "agent", path: join(rootDir, ".vitehub", "agent", "deno-server.ts") }]
+            : [],
         }
       },
     },
