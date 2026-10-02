@@ -63,7 +63,7 @@ Use your deployment platform's secret store in production. Do not use a `VITE_` 
 
 ### Send from server code
 
-Replace both addresses with values accepted by Resend. The request performs a real delivery.
+Replace both addresses with values accepted by Resend. The request performs a real delivery. In `vite dev`, the [development outbox](#development-outbox) also records the message.
 
 ```ts [server/api/welcome.post.ts]
 import { defineEventHandler } from 'h3'
@@ -101,6 +101,7 @@ Resend supplies `id`. Confirm delivery in the recipient inbox or the provider's 
 | `email.send(message)` | A Vite app configures one built-in provider through `vitehub({ email: { driver, options } })`. |
 | `createEmail({ driver })` | Low-level integrations that do not use Vite create and own a client explicitly. |
 | `createTestEmail()` | A test needs deterministic in-memory capture without delivery. |
+| Development outbox | You want to inspect the messages that `email.send()` sends in `vite dev`. |
 
 ## Public imports
 
@@ -115,7 +116,8 @@ Use the `vite-hub` paths for framework APIs. Select `resend` or `cloudflare-emai
 | `vite-hub/email/markdown` | `renderEmailMarkdown` | `RenderEmailMarkdownOptions`, `RenderedEmailMarkdown` |
 | `@vite-hub/email/drivers/*` | Programmatic provider drivers | Built-in Resend and Cloudflare Email drivers. |
 | `@vite-hub/email/test` | `createTestEmail`, `createMemoryEmailDriver` | `TestEmailClient`, `MemoryEmailDriver` |
-| `@vite-hub/email/vite` | `hubEmail` | `EmailVitePluginOptions`, `EmailVitePlugin`, `EmailVitePluginAPI` |
+| `@vite-hub/email/vite` | `hubEmail`, `emailConsoleSection` | `EmailVitePluginOptions`, `EmailOutboxOptions`, `EmailVitePlugin`, `EmailVitePluginAPI` |
+| `@vite-hub/email/runtime/console` | `listEmailOutbox`, `getEmailOutboxMessage`, `clearEmailOutbox`, `readEmailOutboxConsoleRecords` | `EmailOutboxMessage`, `EmailOutboxList`, `EmailOutboxDelivery`, `EmailOutboxAttachment` |
 
 The direct `@vite-hub/email`, `@vite-hub/email/server`, and `@vite-hub/email/markdown` paths remain stable for focused libraries and applications that install the owner package without the framework distribution.
 
@@ -257,6 +259,55 @@ Each test client owns an isolated mailbox. Captured messages are cloned before s
 
 Use `createMemoryEmailDriver()` when another client or test harness needs to manage the in-memory driver directly.
 
+## Development outbox
+
+In `vite dev`, `hubEmail()` wraps the provider driver with a development outbox. Each `email.send()` call records one message in the memory of the server runtime. Build output never contains the outbox: `vite build` generates the provider driver only.
+
+The outbox records:
+
+- the sender, recipients, `cc`, `bcc`, and `replyTo`
+- the subject, preheader, text body, and HTML body
+- the headers after ViteHub adds unsubscribe headers
+- attachment names, content types, and sizes, but not attachment content
+- tags, metadata, the provider driver name, and the delivery result
+
+The outbox stores the effective recipients and subject of a single personalization. Messages appear as Sending while the provider is pending, in submission order.
+
+By default the outbox records the message and then sends it through the provider, because development sends are real deliveries. Set `deliver: false` to record messages without a provider request. In this mode `email.send()` returns an `outbox-<n>` id with `driver: 'outbox'`, and ViteHub does not resolve the provider options.
+
+```ts [vite.config.ts]
+import { vitehub } from 'vite-hub'
+import { env } from 'vite-hub/env'
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [vitehub({
+    email: {
+      driver: 'resend',
+      options: { apiKey: env({ secret: true, source: env.source('RESEND_API_KEY') }) },
+      outbox: { deliver: false, limit: 100 },
+    },
+  })],
+})
+```
+
+| Option | Type | Default | Behavior |
+| --- | --- | --- | --- |
+| `outbox.deliver` | `boolean` | `true` | `true` sends each message through the provider after it records the message. `false` records messages only. |
+| `outbox.limit` | `number` | `50` | Number of messages to keep, from 1 to 1000. The outbox removes the oldest message first. |
+
+Set `outbox: false` to disable the outbox. Each Development Server has a separate outbox identity. A restart creates a fresh outbox. The outbox redacts header and metadata values with secret names, and credentials in delivery errors. It keeps message bodies as the application rendered them.
+
+Inspect the outbox with the [CLI](/docs/development/cli#inspect-the-email-development-outbox) or in the [Console](/docs/development/console) **Email** section:
+
+```bash [Terminal]
+pnpm vitehub email outbox list
+pnpm vitehub email outbox show outbox-1 --html > message.html
+pnpm vitehub email preview welcome --data '{"user":{"name":"Ada"}}'
+```
+
+`vitehub email outbox` reads the outbox through the Nitro runtime, so it needs a Vite + Nitro Development Server. With Nuxt or plain Vite, the command reports that the host is not supported. `vitehub email preview` does not need a server. The Console never renders captured HTML. It shows the HTML source as text.
+
 ## Handle delivery errors
 
 Use the `EMAIL_*` code for control flow and `details.driver` to identify the failing adapter. ViteHub keeps the original provider error in `cause` while exposing a safe public message.
@@ -322,6 +373,7 @@ export default defineConfig({
 | --- | --- | --- | --- |
 | `driver` | `'resend' \| 'cloudflare-email'` | Required | Selects a built-in ViteHub Email driver. |
 | `options` | `EnvRuntimeConfigOptions` | `{}` | Supplies serializable non-secret literals and runtime Env declarations. Env source values resolve in the server runtime for every send; literals and non-secret defaults are included in build output, while defaults on secret declarations are rejected. |
+| `outbox` | `false \| { deliver?: boolean, limit?: number }` | `{ deliver: true, limit: 50 }` | Configures the [development outbox](#development-outbox) in `vite dev`. Build output never contains it. |
 
 `email: true` selects the `cloudflare-email` driver. The `cloudflare-email` driver requires Cloudflare hosting and generates an `EMAIL` `send_email` Worker binding. With other presets, set `driver: 'resend'`.
 
@@ -336,6 +388,10 @@ Configure `vitehub({ email: { driver, options } })`. Applications using the owne
 ### `Email delivery failed through <driver>.`
 
 Read the `EMAIL_*` code first. For `EMAIL_AUTHENTICATION`, verify the provider credentials and sender authorization. For `EMAIL_NETWORK` or `EMAIL_TIMEOUT`, verify DNS and outbound connectivity from the deployed server. Inspect `cause` and provider logs only on the server.
+
+### The development outbox is empty
+
+The outbox exists only in `vite dev` and keeps messages in memory, so a restart clears it. Send a message after the Development Server starts, then run `vitehub email outbox list`. `EMAIL_OUTBOX_DISABLED` means that the app sets `outbox: false`.
 
 ## Requirements
 

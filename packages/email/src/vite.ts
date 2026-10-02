@@ -1,4 +1,6 @@
-import { mkdir, readdir, rename, rm, stat } from "node:fs/promises"
+import * as v from "valibot"
+import { randomUUID } from "node:crypto"
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { dirname, isAbsolute, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -8,11 +10,22 @@ import { resolveViteHubBundleDefines, bundleEsmEntry } from "@vite-hub/internal/
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { createNoExternalAddition, isServerEnvironment, resolveViteHubGeneratedRoot, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
+import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
+import { renderViteHubNitroDevHandler } from "@vite-hub/internal/dev-endpoint"
 
 import type { EnvRuntimeConfigOptions, EnvRuntimeRegistry } from "@vite-hub/env"
 import type { ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
-import type { Plugin } from "vite"
+import type { ViteHubCliPluginMetadata } from "@vite-hub/internal/cli"
+import type { Plugin, ResolvedConfig } from "vite"
+import { emailDevRuntimeRoute } from "./dev.ts"
 import { emailErrorDiagnostics } from "./error-diagnostics.ts"
+import { discoverEmailTemplates } from "./templates.ts"
+import { disposeEmailOutbox } from "./runtime/outbox.ts"
+import { registerEmailDevEndpoint } from "./vite-dev.ts"
+
+import type { EmailTemplate } from "./templates.ts"
+
+export { emailConsoleSection } from "./console.ts"
 
 export const EMAIL_DEFINITION_ID = "#vitehub/email/definition"
 export const EMAIL_VITE_PLUGIN_NAME = "@vite-hub/email/vite"
@@ -41,9 +54,31 @@ interface GeneratedEmailDefinition {
   options: EnvRuntimeRegistry
 }
 
+/** Development outbox options. The outbox is active only in `vite dev`. */
+export interface EmailOutboxOptions {
+  /**
+   * `true` sends each captured message through the configured provider. `false` only captures the message and
+   * returns an `outbox-<n>` id with `driver: "outbox"`.
+   * @default true
+   */
+  deliver?: boolean
+  /**
+   * Number of messages to keep in memory. The oldest message is removed first. The value must be an integer from 1
+   * to 1000.
+   * @default 50
+   */
+  limit?: number
+}
+
 export interface EmailVitePluginOptions {
   driver: EmailProvider
   options?: EnvRuntimeConfigOptions
+  /**
+   * Development outbox. In `vite dev`, `email.send()` records each message. `false` disables the outbox. Build output
+   * never contains the outbox.
+   * @default { deliver: true, limit: 50 }
+   */
+  outbox?: false | EmailOutboxOptions
 }
 
 export interface EmailVitePluginAPI {
@@ -51,7 +86,10 @@ export interface EmailVitePluginAPI {
   prepareTypes: (options: { materialize?: boolean, projectRoot: string, serverDirs?: string[] }) => Promise<Record<string, string>>
 }
 
-export type EmailVitePlugin = Plugin & ViteHubProviderImportContributor & { api: EmailVitePluginAPI }
+export type EmailVitePlugin = Plugin & {
+  api: EmailVitePluginAPI
+  vitehub: NonNullable<ViteHubProviderImportContributor["vitehub"]> & ViteHubCliPluginMetadata
+}
 
 export function hubEmailOptionalPeerResolver(): Plugin & { api: { prepareTypes: (projectRoot: string) => Promise<void> } } {
   const prepareTypes = async (projectRoot: string) => {
@@ -70,6 +108,8 @@ export function hubEmailOptionalPeerResolver(): Plugin & { api: { prepareTypes: 
 
 interface InternalEmailVitePluginOptions {
   hosting?: string
+  /** Import path prefix for generated runtime imports, for example `vite-hub/_internal/email`. */
+  importBase?: string
   runtimeEnvImport?: string
   workflowProvider?: string
 }
@@ -114,6 +154,52 @@ function resolveDriverImport(driver: string): string {
   return fileURLToPath(new URL(`./drivers/${driver}.${extension}`, import.meta.url))
 }
 
+function resolveOutboxImport(): string {
+  const extension = import.meta.url.endsWith(".ts") ? "ts" : "js"
+  return fileURLToPath(new URL(`./runtime/outbox.${extension}`, import.meta.url))
+}
+
+/** Checked development outbox options. `undefined` means the outbox is disabled. */
+interface ResolvedEmailOutboxOptions {
+  deliver: boolean
+  limit: number
+}
+
+function resolveOutboxOptions(value: unknown): ResolvedEmailOutboxOptions | undefined {
+  if (value === false) return
+  if (value !== undefined && !isRecord(value)) {
+    throw emailErrorDiagnostics.EMAIL_B0008({ message: "[vitehub] email.outbox must be false or an object." })
+  }
+  const deliver = value?.deliver ?? true
+  const limit = value?.limit ?? 50
+  if (!v.is(v.boolean(), deliver)) {
+    throw emailErrorDiagnostics.EMAIL_B0008({ message: "[vitehub] email.outbox.deliver must be a boolean." })
+  }
+  if (!v.is(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(1000)), limit)) {
+    throw emailErrorDiagnostics.EMAIL_B0008({ message: "[vitehub] email.outbox.limit must be an integer from 1 to 1000." })
+  }
+  return { deliver, limit }
+}
+
+const generatedNitroDevHandler = ".vitehub/nitro/email/dev-handler.ts"
+
+/**
+ * Adds the development-only Nitro handler that runs `vitehub email outbox` operations in the Nitro runtime.
+ * Build output never contains this handler.
+ */
+async function addNitroEmailDevHandler(value: unknown, root: string, importBase: string, outbox: boolean, runtimeId: string): Promise<Record<string, unknown>> {
+  const handler = resolve(root, generatedNitroDevHandler)
+  await mkdir(dirname(handler), { recursive: true })
+  await writeFile(handler, renderViteHubNitroDevHandler({
+    export: outbox ? "handleEmailDevRequest" : "handleDisabledEmailDevRequest",
+    module: `${importBase}/runtime/console`,
+    context: outbox ? { runtimeId } : undefined,
+  }), "utf8")
+  const kit = createNitroServerKit(isRecord(value) ? { ...value } : {})
+  kit.addHandler({ handler, route: emailDevRuntimeRoute })
+  return kit.config
+}
+
 function configuredDefinition(options: EmailVitePluginOptions): Omit<GeneratedEmailDefinition, "handler"> {
   const runtimeOptions = createRuntimeEnvRegistry(options.options, { path: "email.options" })
   validateEmailRuntimeOptions(runtimeOptions)
@@ -130,9 +216,16 @@ function renderEmailDefinitionModule(
   return [
     `import definition from ${JSON.stringify(definition.handler)}`,
     "export { definition }",
+    `export { outboxRuntimeId } from ${JSON.stringify(definition.handler)}`,
     "export default definition",
     "",
   ].join("\n")
+}
+
+/** Development outbox that wraps the provider driver. Only `vite dev` passes it. */
+interface GeneratedEmailOutbox extends ResolvedEmailOutboxOptions {
+  import: string
+  runtimeId: string
 }
 
 function renderConfiguredEmailDefinitionModule(
@@ -141,21 +234,27 @@ function renderConfiguredEmailDefinitionModule(
   runtimeEnvImport: string,
   cloudflare: boolean,
   cloudflareEmail: boolean,
+  outbox?: GeneratedEmailOutbox,
 ): string {
   return [
     `import createDriver from ${JSON.stringify(driverImport)}`,
     `import { resolveServerEnv } from ${JSON.stringify(runtimeEnvImport)}`,
+    ...(outbox ? [`import { createEmailDevOutboxDriver } from ${JSON.stringify(outbox.import)}`] : []),
     ...(cloudflare ? ["import { env as vitehubEmailEnv } from \"cloudflare:workers\""] : []),
     ...(cloudflareEmail ? ["import { EmailMessage } from \"cloudflare:email\""] : []),
     "",
     `const registry = JSON.parse(${JSON.stringify(JSON.stringify(definition.options))})`,
-    "export const definition = {",
-    "  driver: () => {",
-    `    const options = resolveServerEnv(registry${cloudflare ? ", { env: vitehubEmailEnv }" : ""})`,
-    `    return createDriver(${cloudflareEmail
+    "const createProviderDriver = () => {",
+    `  const options = resolveServerEnv(registry${cloudflare ? ", { env: vitehubEmailEnv }" : ""})`,
+    `  return createDriver(${cloudflareEmail
       ? `{ ...${renderResolvedOptions(definition.options, "options")}, binding: vitehubEmailEnv.EMAIL, EmailMessage }`
       : renderResolvedOptions(definition.options, "options")})`,
-    "  },",
+    "}",
+    `export const outboxRuntimeId = ${JSON.stringify(outbox?.runtimeId ?? "disabled")}`,
+    "export const definition = {",
+    outbox
+      ? `  driver: () => createEmailDevOutboxDriver({ deliver: ${outbox.deliver}, driver: createProviderDriver, limit: ${outbox.limit}, provider: ${JSON.stringify(definition.driver)}, runtimeId: ${JSON.stringify(outbox.runtimeId)} }),`
+      : "  driver: createProviderDriver,",
     "}",
     "export default definition",
     "",
@@ -225,29 +324,6 @@ function exactIdPattern(id: string): RegExp {
   return new RegExp(`^${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`)
 }
 
-async function listEmailTemplates(root: string, directory = root): Promise<string[]> {
-  let entries
-  try {
-    entries = await readdir(directory, { withFileTypes: true })
-  }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
-    throw error
-  }
-
-  const files: string[] = []
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const path = resolve(directory, entry.name)
-    if (entry.isDirectory() && !entry.isSymbolicLink()) files.push(...await listEmailTemplates(root, path))
-    else if (entry.isFile() && entry.name.endsWith(".md")) files.push(path)
-  }
-  return files
-}
-
-function templateName(root: string, file: string): string {
-  return relative(root, file).replace(/\\/g, "/").replace(/\.md$/, "")
-}
-
 function isInside(directory: string, file: string): boolean {
   const path = relative(directory, file)
   return path === "" || (!path.startsWith("..") && !isAbsolute(path))
@@ -260,24 +336,6 @@ function renderEmailTemplateTypes(names: string[]): string {
     "  export default render",
     "}",
   ].join("\n")).join("\n\n") + (names.length ? "\n" : "")
-}
-
-interface EmailTemplate {
-  file: string
-  name: string
-}
-
-async function discoverEmailTemplates(templatesRoots: string[]): Promise<EmailTemplate[]> {
-  const templates = new Map<string, string>()
-  for (const root of templatesRoots) {
-    for (const file of await listEmailTemplates(root)) {
-      const name = templateName(root, file)
-      const existing = templates.get(name)
-      if (existing) throw emailErrorDiagnostics.EMAIL_B0005({ message: `[vitehub] Duplicate Email template ${JSON.stringify(name)} in ${JSON.stringify(existing)} and ${JSON.stringify(file)}.` })
-      templates.set(name, file)
-    }
-  }
-  return [...templates].map(([name, file]) => ({ file, name }))
 }
 
 async function materializeEmailTemplates(templates: EmailTemplate[], outputRoot: string, rootDir: string): Promise<void> {
@@ -322,6 +380,11 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
   const internalOptions = options as EmailVitePluginOptions & InternalEmailVitePluginOptions
   const configured = configuredDefinition(options)
   const driverImport = resolveDriverImport(configured.driver)
+  const outbox = resolveOutboxOptions(options.outbox)
+  const outboxRuntimeId = randomUUID()
+  const importBase = internalOptions.importBase ?? "@vite-hub/email"
+  let command: "build" | "serve" | undefined
+  let resolvedConfig: ResolvedConfig | undefined
   const runtimeEnvImport = internalOptions.runtimeEnvImport
     ?? resolve(dirname(resolvePackageImport("@vite-hub/env/package.json")), "dist/server.js")
   let cloudflare = false
@@ -375,6 +438,10 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
       prepareTypes,
     },
     vitehub: {
+      cli: async () => {
+        const { createEmailCliContributor } = await import(/* @vite-ignore */ "./cli.js")
+        return createEmailCliContributor({ templateRoots: () => templatesRoots })
+      },
       providerOutput: {
         getImportAliases(): Promise<Record<string, string>> {
           providerImportAliases ??= prepareTypes({ materialize: true, projectRoot, serverDirs }).then(templates => ({
@@ -387,7 +454,9 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
         },
       },
     },
-    async config(config) {
+    async config(config, env) {
+      // Nuxt replays this hook with the host command. Tests and older callers can omit `env`, which means build.
+      command = env?.command
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       const configRecord = config as Record<string, unknown>
       const hosting = getHostingProvider(resolveHosting(internalOptions, configRecord))
@@ -400,6 +469,9 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
         || (isRecord(configRecord.workflow) && configRecord.workflow.provider === "vercel")
       updateTemplateRoots(resolveViteHubProjectRoot(config.root ?? process.cwd()))
       if (cloudflare) configureNitroCloudflareWorkers(config as Record<string, unknown>, cloudflareEmail)
+      if (command === "serve") {
+        configRecord.nitro = await addNitroEmailDevHandler(configRecord.nitro, projectRoot, importBase, outbox !== undefined, outboxRuntimeId)
+      }
       const emailTemplatePaths = cloudflare || vercel
         ? await prepareTypes({ materialize: true, projectRoot, serverDirs })
         : {}
@@ -417,6 +489,7 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
       }
     },
     async configResolved(config) {
+      resolvedConfig = config
       updateTemplateRoots(resolveViteHubProjectRoot(config.root))
       await prepareTypesOnce()
       definition = {
@@ -424,7 +497,9 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
         handler: resolve(resolveViteHubGeneratedRoot(config), "email/definition.mjs"),
       }
       const entry = definition.handler.replace(/\.mjs$/, ".entry.mjs")
-      await writeFileIfChanged(entry, renderConfiguredEmailDefinitionModule(definition, driverImport, runtimeEnvImport, cloudflare, cloudflare && cloudflareEmail))
+      // The outbox is added only for `vite dev`. A build never imports the outbox module.
+      const devOutbox = command === "serve" && outbox ? { ...outbox, import: resolveOutboxImport(), runtimeId: outboxRuntimeId } : undefined
+      await writeFileIfChanged(entry, renderConfiguredEmailDefinitionModule(definition, driverImport, runtimeEnvImport, cloudflare, cloudflare && cloudflareEmail, devOutbox))
       try {
         await bundleEsmEntry(entry, definition.handler, {
           define: resolveViteHubBundleDefines(config),
@@ -445,7 +520,17 @@ export function hubEmail(options: EmailVitePluginOptions): EmailVitePlugin {
       for (const templatesRoot of templatesRoots) this.addWatchFile(templatesRoot)
       for (const file of watchFiles) this.addWatchFile(file)
     },
+    closeBundle() {
+      disposeEmailOutbox(outboxRuntimeId)
+    },
     configureServer(server) {
+      registerEmailDevEndpoint(server, {
+        nitroBaseURL: () => {
+          // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
+          const baseURL = (resolvedConfig as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
+          return v.is(v.string(), baseURL) ? baseURL : process.env.NITRO_APP_BASE_URL
+        },
+      })
       server.watcher.add(templatesRoots)
       server.watcher.add([...watchFiles])
       let refreshPending = false

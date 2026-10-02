@@ -106,11 +106,12 @@ describe("dev server discovery", () => {
     expect(output.text()).toBe("")
   })
 
-  it("reports invalid URLs, missing servers, failed responses and root mismatches", async () => {
+  it("reports invalid URLs, missing servers, malformed roots and root mismatches", async () => {
     const cases: Array<{ fetch: typeof fetch, isCompatibleRoot?: (rootDir: string, serverRoot: string) => boolean, message: string, serverUrl: string }> = [
       { fetch: async () => new Response(), message: "Invalid Vite Development Server URL: not a url\n", serverUrl: "not a url" },
       { fetch: async () => { throw new TypeError("fetch failed") }, message: "No Compatible Vite Development Server found at http://localhost:1.\n", serverUrl: "http://localhost:1" },
       { fetch: async () => new Response("no", { status: 404 }), message: "No Compatible Vite Development Server found at http://localhost:2.\n", serverUrl: "http://localhost:2" },
+      { fetch: async () => Response.json({ root: 123 }), message: "Invalid Vite Development Server discovery root.\n", serverUrl: "http://localhost:4" },
       { fetch: async () => Response.json({ root: "/other" }), message: "Compatible Vite Development Server root mismatch: /other\n", serverUrl: "http://localhost:3" },
       { fetch: async () => Response.json({ root: "https://host/project?token=hidden" }), message: "Compatible Vite Development Server root mismatch: https://host/project?token=[redacted]\n", serverUrl: "http://localhost:4" },
       { fetch: async () => Response.json({ root: "https://user:pass@example.test/project/token=hidden#api_key=secret" }), message: "Compatible Vite Development Server root mismatch: https://[redacted]@example.test/project/token=[redacted]#api_key=[redacted]\n", serverUrl: "http://localhost:5" },

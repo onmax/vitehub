@@ -25,7 +25,7 @@ export function agentRouteUsesParam(route: false | string | undefined, param: st
 /** Generated static endpoints must not shadow application handlers. */
 export function validateAgentStaticRoute(route: string, handlers: readonly { route: string, middleware?: boolean }[], label = "readiness"): string {
   const normalized = normalizeAgentRoute(route).replace(/\/$/, "") || "/"
-  if (!route.trim() || /[:*?#\[\]]/.test(normalized)) {
+  if (!route.trim() || /[:*?#\x5B\x5D]/.test(normalized)) {
     throw agentDiagnostics.AGENT_B0006({ message: `[vitehub] Agent ${label} requires a static route path.` })
   }
   const target = normalized.split("/")

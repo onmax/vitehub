@@ -9,6 +9,10 @@ import {
   parseConsoleUsageWindow,
 } from "../../packages/vite-hub/src/console/runtime/server/usage.ts"
 import { consoleSearchExcerpt } from "../../packages/vite-hub/src/console/runtime/server/search.ts"
+import { createEmail } from "../../packages/email/src/client.ts"
+import { readEmailOutboxConsoleRecords } from "../../packages/email/src/runtime/console.ts"
+import { createEmailDevOutboxDriver } from "../../packages/email/src/runtime/outbox.ts"
+import { emailProviderError } from "../../packages/email/src/provider.ts"
 
 import type { Plugin } from "vite"
 import databaseFixture from "./database.fixture.json" with { type: "json" }
@@ -62,6 +66,45 @@ const definitions = {
     },
   ],
 } as const
+// Synthetic Email outbox. The real outbox driver captures the messages and the real Console reader maps them.
+let emailOutbox: Promise<void> | undefined
+
+async function captureEmailOutbox(): Promise<void> {
+  const capture = createEmail({ driver: () => createEmailDevOutboxDriver({ deliver: false, driver: () => {
+    throw new Error("The playground never creates a provider driver.")
+  }, provider: "resend" }) })
+  const failing = createEmail({ driver: () => createEmailDevOutboxDriver({ deliver: true, driver: {
+    name: "resend",
+    send: () => ({ data: null, error: emailProviderError("resend", "AUTH", "Resend rejected the API key.") }),
+  }, provider: "resend" }) })
+  await capture.send({
+    attachments: [{ content: "date,amount\n2026-09-01,42.00\n", contentType: "text/csv", filename: "usage-september.csv" }],
+    from: { email: "billing@acme.test", name: "Acme Billing" },
+    headers: { "X-Entity-Ref-ID": "inv_2026_09" },
+    html: "<h1>Your September invoice</h1>\n<p>Total: <strong>$42.00</strong></p>",
+    subject: "Your September invoice",
+    text: "Your September invoice\n\nTotal: $42.00",
+    to: "ada@example.test",
+  })
+  await failing.send({
+    from: "hello@acme.test",
+    html: "<p>Reset your password.</p>",
+    subject: "Reset your password",
+    text: "Reset your password.",
+    to: "grace@example.test",
+  }).catch(() => undefined)
+  await capture.send({
+    from: "hello@acme.test",
+    headers: { "Authorization": "Bearer re_playground_secret" },
+    html: "<p onclick=\"steal()\">Welcome, Linus <img src=x onerror=alert(1)></p>\n<script>alert(\"xss\")</script>",
+    preheader: "Start here",
+    subject: "Welcome to Acme",
+    text: "Welcome, Linus.",
+    to: ["linus@example.test"],
+    unsubscribe: { url: "https://acme.test/unsubscribe?token=playground-token" },
+  })
+}
+
 const kvStores = {
   cache: new Map<string, unknown>([
     ["console:sections", sections],
@@ -434,6 +477,12 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path === "/api/_vitehub/console/definitions") {
     const section = url.searchParams.get("section")
+    if (section === "email") {
+      emailOutbox ??= captureEmailOutbox()
+      await emailOutbox
+      json(response, { kind: "record-table", records: readEmailOutboxConsoleRecords(), section })
+      return true
+    }
     if (section !== "queues" && section !== "workflows") {
       json(response, { error: "A valid definition section is required" }, 400)
       return true

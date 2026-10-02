@@ -35,6 +35,7 @@
     "./drivers/cloudflare-email": "./dist/drivers/cloudflare-email.js",
     "./drivers/resend": "./dist/drivers/resend.js",
     "./markdown": "./dist/markdown.js",
+    "./runtime/console": "./dist/runtime/console.js",
     "./server": "./dist/server.js",
     "./test": "./dist/test.js",
     "./vite": "./dist/vite.js",
@@ -52,7 +53,8 @@
     "@vite-hub/markdown-template": "workspace:*",
     "@vite-hub/runtime": "workspace:*",
     "esbuild": "catalog:tooling",
-    "nostics": "catalog:runtime"
+    "nostics": "catalog:runtime",
+    "valibot": "catalog:runtime"
   },
   "devDependencies": {
     "@types/node": "catalog:tooling",

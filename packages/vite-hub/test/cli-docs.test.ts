@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createAgentCliContributor } from "@vite-hub/agent/cli";
 import { runViteHubCli } from "@vite-hub/cli";
 import { createDbCliContributor } from "@vite-hub/database/cli";
+import { hubEmail } from "@vite-hub/email/vite";
 import { hubEnv } from "@vite-hub/env/vite";
 import { hubKv } from "@vite-hub/kv/vite";
 import { hubWorkflow } from "@vite-hub/workflow/vite";
@@ -55,8 +56,9 @@ describe("CLI documentation contract", () => {
     const agent = createAgentCliContributor({ rootDir: evalFixtureRoot });
     const database = createDbCliContributor();
     if (!agent || !database) throw new TypeError("Expected the default CLI contributors.");
-    const workspacePlugin: unknown = hubWorkspace();
+    const emailPlugin: unknown = hubEmail({ driver: "resend" });
     const schedulePlugin: unknown = hubSchedule();
+    const workspacePlugin: unknown = hubWorkspace();
     const workflowPlugin: unknown = hubWorkflow();
     const typesPlugin: unknown = viteHubTypesPlugin();
     const plugins: unknown[] = [
@@ -64,6 +66,7 @@ describe("CLI documentation contract", () => {
       { vitehub: { cli: database } },
       { vitehub: { cli: { namespaces: [createConsoleCliNamespace()] } } },
       hubEnv(),
+      emailPlugin,
       hubKv(),
       schedulePlugin,
       workflowPlugin,
