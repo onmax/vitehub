@@ -255,7 +255,7 @@ function redactInspectionUrlPart(value: string): string {
     try {
       // SAFETY: URLSearchParams.next().value is a string tuple for a non-empty parameter pair.
       const entry = new URLSearchParams(pair).entries().next().value as [string, string] | undefined
-      if (entry && redactInspectionValue(entry[1], entry[0]) === "[redacted]") return `${rawKey}=[redacted]`
+      if (entry && redactInspectionValue(entry[1], entry[0]) !== entry[1]) return `${rawKey}=[redacted]`
     }
     catch {
       // Keep malformed components for the text redactor below.
