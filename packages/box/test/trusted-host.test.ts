@@ -563,7 +563,7 @@ describe("createTrustedHostRuntime", () => {
         command: "node -e \"setInterval(() => {}, 1000)\"",
       });
       controller.abort(new Error("cancelled"));
-      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setTimeout(resolve, 100));
       expect(unhandled).toEqual([]);
       await expect(child.wait()).rejects.toThrow("cancelled");
     } finally {
