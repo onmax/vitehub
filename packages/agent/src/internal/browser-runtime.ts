@@ -404,7 +404,6 @@ async function provisionLocked(root: string, npmCommand: string, platform: NodeJ
     await mkdir(staging, { recursive: true, mode: 0o700 })
     const stagingPackage = join(staging, "package")
     const stagingBin = join(stagingPackage, "node_modules", ".bin")
-    const stagingCommand = join(stagingBin, process.platform === "win32" ? "agent-browser.cmd" : "agent-browser")
     const stagingBrowsersCommand = join(stagingBin, process.platform === "win32" ? "browsers.cmd" : "browsers")
     const stagingBrowserCache = join(staging, "chromium")
     const installEnv = {
