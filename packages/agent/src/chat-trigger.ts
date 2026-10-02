@@ -3,7 +3,7 @@ import { defineCapability } from "./capability-runtime.ts"
 import { createChatMessageTriggerInput } from "./chat-message-input.ts"
 import { readAgentErrorProperty, toAgentPublicError } from "./agent-error.ts"
 import { createReplyDeliveryEffectIntent, defineFinishEffect } from "./delivery-effects.ts"
-import { chatFinalReplyIntent, chatFinalReplyMode, chatFinalReplyNotices } from "./internal/chat-finish-delivery.ts"
+import { chatFinalReplyIntent, chatFinalReplyMode, chatFinalReplyNotices, setChatFinalReplyText } from "./internal/chat-finish-delivery.ts"
 import { agentWorkflowExecutionContextKey } from "./internal/workflow-execution.ts"
 import { agentInvokerLabel } from "./invoker.ts"
 
@@ -226,10 +226,13 @@ function durableChatErrorFallback<TRuntimeConfig extends AgentRuntimeConfig>(
 function chatFinalReply<TRuntimeConfig extends AgentRuntimeConfig>() {
   const effect = defineFinishEffect<TRuntimeConfig>((context) => {
     const text = context.text?.trim()
+    const mode = chatFinalReplyMode(context.input)
+    const notices = chatFinalReplyNotices(context.input)
     // Notices follow the final text. When the route already posted that text, they post alone.
-    const reply = [chatFinalReplyMode(context.input) === "pending" ? text : undefined, ...chatFinalReplyNotices(context.input)]
+    const reply = [mode === "pending" ? text : undefined, ...notices]
       .filter(Boolean)
       .join("\n\n")
+    if (text && notices.length) setChatFinalReplyText(context.context, text)
     if (!reply) return
     return context.reply(reply, { intent: chatFinalReplyIntent })
   })

@@ -114,7 +114,7 @@ The Process Runtime requires exactly one long-lived process or replica. The KV r
 | --- | --- | --- |
 | Cloudflare | Cron trigger output and Cloudflare schedule runtime entry wiring. | Runtime Schedules still need Provider Wake output or a long-running runner. |
 | Vercel | Vercel cron-compatible output for static schedules. | Runtime Schedules still need Provider Wake output or a long-running runner. |
-| Deno | `Deno.cron` output loaded by generated Deno Agent server output. | Runtime Schedules still need Provider Wake output or a long-running runner. |
+| Deno | `Deno.cron` output loaded by generated Deno Agent server output. | Runtime Schedules still need Provider Wake output or a long-running runner. `vitehub({ preset: 'deno' })` rejects `schedule` because the cron output is not part of the deployed Nitro entrypoint. |
 
 ::warning
 Provider Wake output requires a static five-field UTC cron string compatible with generated provider output. Runtime Schedules still need an existing Provider Wake or a long-running host to execute due schedules.
@@ -175,7 +175,7 @@ pnpm vitehub schedule run sync
 pnpm vitehub schedule run sync --url https://app.example.com
 ```
 
-With `--url`, the command posts to the deployed [Console](/docs/development/console#run-schedules-on-demand), so the deployment needs `console.invoke` and a Console credential. Read [CLI](/docs/development/cli#run-a-schedule-on-demand) for the credential variables. The Console Schedules page shows a **Run now** button for the same definitions.
+With `--url`, the command posts to the deployed [Console](/docs/development/console#start-agent-invocations), so the deployment needs `console.invoke` and a Console credential. Read [CLI](/docs/development/cli#run-a-schedule-on-demand) for the credential variables. The Console Schedules page shows a **Run now** button for the same definitions.
 
 Server code can use the Runtime Helper. In Vite server code, pass the generated registry:
 
@@ -338,7 +338,7 @@ Static Schedule Definitions and Provider Wake output remain UTC. Runtime Schedul
 
 - Use [Queue](/docs/server-primitives/queue) when a provider-supported enqueue delay is enough.
 - Use [Workflows](/docs/server-primitives/workflows) for durable orchestration.
-- Learn trigger language in [Channels API](/docs/concepts/channels-api).
+- Learn trigger language in [Channels](/docs/agents/channels).
 
 
 ## Definition-owned target inputs

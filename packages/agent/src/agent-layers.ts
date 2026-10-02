@@ -161,7 +161,10 @@ export function resolveAgentLayerOptions(input: unknown, ownsWorkspace: (setting
     // SAFETY: resolved is the freshly merged Agent definition settings object.
     copyDefinitionDecorations(asMetadataTarget(definition), asMetadataTarget(resolved))
     const skills = Object.getOwnPropertyDescriptor(definition, colocatedSkills)
-    if (skills) Object.defineProperty(resolved, colocatedSkills, skills)
+    const inheritedSkills = Object.getOwnPropertyDescriptor(parent, colocatedSkills)
+    // Preserve discovered Skill source identity when configuration only copied the decoration.
+    if (skills && inheritedSkills && "value" in skills && "value" in inheritedSkills) Object.defineProperty(resolved, colocatedSkills, inheritedSkills)
+    else if (skills) Object.defineProperty(resolved, colocatedSkills, skills)
     else inheritColocatedSkills(asMetadataTarget(parent), asMetadataTarget(resolved))
     return resolved
   }

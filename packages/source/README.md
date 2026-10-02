@@ -175,6 +175,8 @@ export const articles = defineCollection(async ({ cursor, limit, query }) => {
 
 `cursorSchema` and `querySchema` accept any Standard Schema validator. Their
 output types flow into the loader, so the loader needs no manual generic types.
+The Collection exposes `querySchema` so tools such as `vitehub channels replay`
+can describe the accepted query keys.
 
 ```ts
 // app/composables/articles.ts

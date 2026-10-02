@@ -13,7 +13,7 @@ import type { ConsoleJournal } from "../storage-config.ts"
 import { consoleFixtureRevision, readConsoleFixture } from "./fixture.ts"
 import { createConsoleInvocationsIdentity } from "./internal.ts"
 import { resolveConsoleProjectNameFromRoot } from "./project.ts"
-import { consoleDefinitionSectionIds } from "./runtime/definitions.ts"
+import { describeConsoleContributedSections } from "./contributions.ts"
 import { installConsoleFixtureInvocations } from "./runtime/server/invocations.ts"
 
 // The Console journal on Cloudflare reads the D1 binding from the Worker env. The store creates its table on first use.
@@ -60,7 +60,8 @@ function renderConsoleNitroPlugin(
   const blobEnabled = sections.includes("blob")
   const databaseEnabled = sections.includes("databases")
   const kvEnabled = sections.includes("kv")
-  const definitionsEnabled = consoleDefinitionSectionIds.some(section => sections.includes(section))
+  const contributedSections = describeConsoleContributedSections(sections)
+  const definitionsEnabled = databaseEnabled || contributedSections.length > 0
   const schedulesEnabled = sections.includes("schedules")
   // Console invocation also allows manual Schedule runs. Without it, the installed registry stays empty.
   const runnableSchedules = (invoke ? catalog.manualSchedules ?? [] : [])
@@ -101,10 +102,10 @@ function renderConsoleNitroPlugin(
       : []),
     ...(sections.includes("env") ? [`installConsoleEnv(${JSON.stringify(projectRoot)}, describeServerEnv(), async request => { try { return await (await import("#vitehub/env/server")).manageServerEnv(request) } catch { return Response.json({ message: "Env management is unavailable." }, { status: 503, headers: { "cache-control": "no-store" } }) } }, async event => (await import("#vitehub/env/server")).inspectServerEnv(event))`] : []),
     `installConsoleProjectName(${JSON.stringify(projectRoot)}, ${JSON.stringify(resolveConsoleProjectNameFromRoot(projectRoot))})`,
-    ...(definitionsEnabled ? [`installConsoleDefinitions(${JSON.stringify(projectRoot)}, ${JSON.stringify(catalog.definitions)})`] : []),
+    ...(definitionsEnabled ? [`installConsoleDefinitions(${JSON.stringify(projectRoot)}, ${JSON.stringify(catalog.content)}, ${JSON.stringify(contributedSections)})`] : []),
     ...(schedulesEnabled ? [`installConsoleSchedules(${JSON.stringify(projectRoot)}, {${runnableSchedules}})`] : []),
     ...(databaseEnabled
-      ? [`installConsoleDatabase(${JSON.stringify(projectRoot)}, vitehubConsoleDatabases, ${JSON.stringify(catalog.definitions.databases?.map(definition => definition.name) ?? [])})`]
+      ? [`installConsoleDatabase(${JSON.stringify(projectRoot)}, vitehubConsoleDatabases, ${JSON.stringify(catalog.content.databases?.kind === "definition-catalog" ? catalog.content.databases.definitions.map(definition => definition.name) : [])})`]
       : []),
     ...(agentsEnabled
       ? fixture

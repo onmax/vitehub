@@ -27,7 +27,7 @@ Start with [Your first server primitive](/docs/getting-started/first-server-prim
   title: Server model
   description: Learn how generated imports and host configuration keep application code independent from providers.
   icon: i-lucide-map
-  to: /docs/concepts/server-primitives-for-any-host
+  to: /docs/server-primitives
   ---
   :::
   :::u-page-card
@@ -49,7 +49,7 @@ Start with [Your first server primitive](/docs/getting-started/first-server-prim
 ::
 
 :::note
-Server code calls runtime helpers directly. Agents receive only the abilities added through Capabilities. Read [Runtime helpers and stable imports](/docs/concepts/runtime-helpers-and-stable-imports) and [Capabilities API](/docs/concepts/capabilities-api) when you need those contracts.
+Server code calls runtime helpers directly. Agents receive only the abilities added through Capabilities. Read [Runtime helpers and stable imports](/docs/concepts/runtime-helpers-and-stable-imports) and [Capabilities API](/docs/capabilities) when you need those contracts.
 :::
 
 ## Pick the right primitive
@@ -58,7 +58,7 @@ Server code calls runtime helpers directly. Agents receive only the abilities ad
 | --- | --- |
 | Public, server, build-time, runtime, or secret environment values | [Env](/docs/server-primitives/env) |
 | Application users, sessions, Better Auth routing, or guarded app routes | [Auth](/docs/server-primitives/auth) |
-| OAuth accounts such as Gmail, called with typed methods, access rules, approvals, and activity | [Connections](/docs/server-primitives/connections) |
+| Provider accounts that the app owns, with OAuth refresh, access rules, and call activity | [Connections](/docs/server-primitives/connections) |
 | Request budgets that must be consumed before expensive server work starts | [Rate Limit](/docs/server-primitives/rate-limit) |
 | Outbound transactional messages with provider-neutral delivery | [Email](/docs/server-primitives/email) |
 | Small key-addressed values, settings, flags, cursors, or lightweight state | [KV](/docs/server-primitives/kv) |
@@ -134,4 +134,4 @@ Don't expose a server API to a model just because the app uses it. Add the relev
 
 - [Build the first primitive](/docs/getting-started/first-server-primitive)
 - [Build the first Agent](/docs/getting-started/first-agent)
-- [Read the shared primitive pattern](/docs/concepts/server-primitives-for-any-host)
+- [Read the shared primitive pattern](/docs/server-primitives)

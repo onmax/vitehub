@@ -35,6 +35,19 @@ export function withColocatedAgentSkills<Agent>(agent: Agent, skills: ColocatedA
     setDiscoveredSkills(skills)
     return agent
   }
+  const existing = Object.getOwnPropertyDescriptor(agent, colocatedAgentSkillsSymbol)
+  if (skills && existing?.get) {
+    const previous = Reflect.get(agent, colocatedAgentSkillsSymbol)
+    Object.defineProperty(agent, colocatedAgentSkillsSymbol, {
+      configurable: true,
+      enumerable: true,
+      value: {
+        ...(hasRuntimeType(previous, "object") ? previous : {}),
+        ...skills,
+      },
+    })
+    return agent
+  }
   if (!skills || !Object.keys(skills).length) {
     // Keep inherited Skills getters installed by Agent layers. Only clear a
     // concrete decoration owned by this definition.

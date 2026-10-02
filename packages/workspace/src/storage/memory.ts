@@ -1,4 +1,4 @@
-import { assertWorkspaceDigest, workspaceError } from "../core/errors.ts"
+import { assertWorkspaceDigest, workspaceConflictError, workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata } from "../core/file-metadata.ts"
 import { isExcludedWorkspacePath, matchesAny, normalizeWorkspacePath, sha256 } from "../core/path.ts"
 import { workspaceStoreTarget } from "./target.ts"
@@ -100,9 +100,15 @@ class MemoryWorkspaceStore implements WorkspaceStore {
   }
 
   async rm(path: string, options: RmOptions = {}): Promise<void> {
-    await this.#mutate(() => {
+    await this.#mutate(async () => {
       const normalized = normalizeWorkspacePath(path)
       const node = this.#nodes.get(normalized)
+      if (options.ifDigest !== undefined) {
+        const actual = node?.type === "file" ? (await this.#entry(normalized, node)).digest : undefined
+        if (options.ifDigest === null ? node !== undefined : actual !== options.ifDigest) {
+          throw workspaceConflictError(path, options.ifDigest, actual)
+        }
+      }
       if (!node) {
         if (options.force) return
         throw workspaceError(`[vitehub] Workspace path does not exist: ${path}.`)

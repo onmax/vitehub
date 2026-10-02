@@ -110,7 +110,7 @@ Each key is a Skill name, and each value is its `SKILL.md` content. The result k
 Export ordinary `defineAgent()` definitions from a preset package. Consumers import them and select a local name:
 
 ```ts
-import { defineAgent } from "@vite-hub/agent"
+import { defineAgent } from "vite-hub/agent"
 import { notetaker } from "@example/agents"
 
 export default defineAgent({
@@ -269,6 +269,7 @@ With the implicit discovery-default Workflow binding, direct `runAgent()` calls 
 | `driver` | Required unless inherited. Selects one built-in provider, model-backed, or custom-run execution path. |
 | `capabilities` | Attaches a static list or invocation-time Capability resolver. |
 | `workspace` | Declares or reuses scoped files, Sources, bindings, and access policy. |
+| `box` | Runs a built-in provider Driver inside a [Box](/docs/agents/boxes) with a checkout, private Home, environment, and boot checks. Cannot be combined with `workspace`. |
 | `driver.instructions` | Configures instructions on the selected Driver; see [Instructions](/docs/agents/instructions). |
 | `driver.output` | Validates structured Agent output. |
 | `data` | Validates structured Invocation input and types `data` at call sites and in hooks. |
