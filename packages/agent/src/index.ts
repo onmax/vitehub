@@ -1330,6 +1330,9 @@ async function runAgentAsWorkflow<
     }
   }
   try {
+    // Storage handoff can yield after cancellation was requested. Check the
+    // journal signal at the last possible point before accepting the run.
+    replayJournal?.abortSignal.throwIfAborted()
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     run = await workflowRuntimeState.runWithWorkflowRuntimeEvent(workflowEvent, () => handle.run(
       payload,
