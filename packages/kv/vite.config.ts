@@ -4,7 +4,7 @@ export default defineConfig({
   pack: {
     tsconfig: "tsconfig.build.json",
     deps: {
-      neverBundle: ["vite", "#vitehub/kv/config", "@cloudflare/workers-types", "@vite-hub/kv/runtime/cloudflare-kv", "@vite-hub/kv/runtime/upstash-driver", /^unstorage\//],
+      neverBundle: ["vite", "#vitehub/kv/config", "@vite-hub/kv", "@cloudflare/workers-types", "@vite-hub/kv/runtime/cloudflare-kv", "@vite-hub/kv/runtime/upstash-driver", /^unstorage\//],
       alwaysBundle: [/^@vite-hub\/internal/, "unstorage"],
       onlyBundle: false,
     },
@@ -18,7 +18,7 @@ export default defineConfig({
         }
       },
     }],
-    entry: ["src/cli.ts", "src/runtime/dev.ts", "src/errors.ts", "src/index.ts", "src/runtime/cloudflare-kv.ts", "src/runtime/upstash-driver.ts", "src/vite.ts", "src/virtual.ts"],
+    entry: ["src/cli.ts", "src/errors.ts", "src/index.ts", "src/runtime/cloudflare-kv.ts", "src/runtime/dev.ts", "src/runtime/upstash-driver.ts", "src/vite.ts", "src/virtual.ts"],
     exports: {
       inlinedDependencies: false,
     },

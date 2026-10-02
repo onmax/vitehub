@@ -970,7 +970,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
 
   async #writeFile(path: string, file: WorkspaceFile): Promise<void> {
     file = { ...file, metadata: assertFileMetadata(path, file.metadata) }
-    const { dirname, relative } = await import("node:path")
+    const { dirname } = await import("node:path")
     const absolute = resolveInside(this.root, path)
     const tempRoot = `${this.root}/.vitehub/tmp`
     const temp = `${tempRoot}/${randomUUID()}.tmp`

@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
+import * as v from "valibot"
+
 import {
   discoverViteHubDevServer,
   fetchViteHubDevEndpoint,
@@ -130,6 +132,12 @@ function parsePositiveInteger(name: string, value: string | undefined): number {
   return number
 }
 
+function parseTTL(value: string): number {
+  const ttl = Number(value)
+  if (!value || !Number.isFinite(ttl) || ttl <= 0) throw kvErrorDiagnostics.KV_R0019({ message: "--ttl must be a positive number." })
+  return ttl
+}
+
 function readOptionValue(args: readonly string[], index: number, name: string): { consumed: number, value: string } | undefined {
   const arg = args[index]!
   if (arg === `--${name}`) {
@@ -168,6 +176,7 @@ function parseArgs(command: KVCommand, args: readonly string[], env: NodeJS.Proc
     }
     const store = readOptionValue(args, index, "store")
     if (store) {
+      if (!store.value.trim()) throw kvErrorDiagnostics.KV_R0019({ message: "--store needs a nonempty name." })
       parsed.store = store.value
       index += store.consumed
       continue
@@ -177,7 +186,9 @@ function parseArgs(command: KVCommand, args: readonly string[], env: NodeJS.Proc
       if (!command.options.includes(option)) continue
       const read = readOptionValue(args, index, option)
       if (!read) continue
-      if (option === "limit" || option === "ttl") parsed[option] = parsePositiveInteger(option, read.value)
+      if (option === "cursor" && !read.value.trim()) throw kvErrorDiagnostics.KV_R0019({ message: "--cursor needs a nonempty value." })
+      if (option === "ttl") parsed.ttl = parseTTL(read.value)
+      else if (option === "limit") parsed.limit = parsePositiveInteger(option, read.value)
       else parsed[option] = read.value
       index += read.consumed
       matched = true
@@ -191,7 +202,7 @@ function parseArgs(command: KVCommand, args: readonly string[], env: NodeJS.Proc
   if (positionals.length > expected) throw kvErrorDiagnostics.KV_R0019({ message: `Unexpected argument: ${positionals[expected]}.` })
   if (command.key) parsed.key = positionals[0]
   if (command.value) parsed.value = positionals[1]
-  if (!parsed.help && command.key && !parsed.key) throw kvErrorDiagnostics.KV_R0019({ message: "Missing key." })
+  if (!parsed.help && command.key && parsed.key === undefined) throw kvErrorDiagnostics.KV_R0019({ message: "Missing key." })
   if (!parsed.help && command.value && parsed.value === undefined) throw kvErrorDiagnostics.KV_R0019({ message: "Missing value." })
   if (parsed.limit !== undefined && parsed.limit > kvDevMaximumListLimit) {
     throw kvErrorDiagnostics.KV_R0019({ message: `--limit must be at most ${kvDevMaximumListLimit}.` })
@@ -199,12 +210,41 @@ function parseArgs(command: KVCommand, args: readonly string[], env: NodeJS.Proc
   return parsed
 }
 
+function validateJSONNumbers(value: unknown): void {
+  if (v.is(v.number(), value)) {
+    if (!Number.isFinite(value) || Object.is(value, -0)) throw kvErrorDiagnostics.KV_R0019({ message: "JSON numbers must be finite and cannot be negative zero." })
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) throw kvErrorDiagnostics.KV_R0019({ message: "JSON integers must be within the safe integer range. Use a string for larger integers." })
+  }
+  if (Array.isArray(value)) value.forEach(validateJSONNumbers)
+  else if (v.is(v.record(v.string(), v.unknown()), value)) Object.values(value).forEach(validateJSONNumbers)
+}
+
+function normalizedDecimal(source: string): string {
+  const negative = source.startsWith("-")
+  const [mantissa = "", exponent = "0"] = source.replace(/^-/, "").split(/[eE]/)
+  const [whole = "", fraction = ""] = mantissa.split(".")
+  const digits = `${whole}${fraction}`.replace(/^0+/, "")
+  const significant = digits.replace(/0+$/, "")
+  const scale = BigInt(exponent) - BigInt(fraction.length) + BigInt(digits.length - significant.length)
+  return `${negative ? "-" : ""}${significant}e${scale}`
+}
+
 async function readValue(parsed: ParsedKVArgs, cwd: string): Promise<unknown> {
   const raw = parsed.value!
   const text = raw.startsWith("@") ? await readFile(resolve(cwd, raw.slice(1)), "utf8") : raw
   if (!parsed.jsonValue) return text
   try {
-    return JSON.parse(text) as unknown
+    const value: unknown = JSON.parse(text, (_key, value: unknown, context?: { source?: string }) => {
+      if (value === 0 && context?.source && /[1-9]/.test(context.source.split(/[eE]/, 1)[0]!)) throw kvErrorDiagnostics.KV_R0019({ message: "JSON numbers cannot underflow to zero. Use a string to preserve the supplied value." })
+      if (v.is(v.number(), value)) validateJSONNumbers(value)
+      if (context?.source && v.is(v.number(), value) && value !== 0
+        && normalizedDecimal(context.source) !== normalizedDecimal(JSON.stringify(value))) {
+        throw kvErrorDiagnostics.KV_R0019({ message: `${Math.abs(value) <= 2 ** -1022 ? "JSON subnormal numbers" : "JSON numbers"} cannot change magnitude when parsed. Use a string to preserve the supplied value.` })
+      }
+      return value
+    })
+    validateJSONNumbers(value)
+    return value
   }
   catch (error) {
     throw kvErrorDiagnostics.KV_R0019({ message: `The value is not valid JSON: ${error instanceof Error ? error.message : String(error)}` })
@@ -212,69 +252,57 @@ async function readValue(parsed: ParsedKVArgs, cwd: string): Promise<unknown> {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function isKVDevListResult(value: unknown): value is KVDevListResult {
-  return isRecord(value)
-    && Array.isArray(value.keys) && value.keys.every(key => typeof key === "string")
-    && typeof value.limit === "number" && Number.isSafeInteger(value.limit)
-    && typeof value.prefix === "string"
-    && typeof value.store === "string"
-    && Array.isArray(value.stores) && value.stores.every(store => typeof store === "string")
-    && (value.cursor === undefined || typeof value.cursor === "string")
-}
-
-function isKVDevGetResult(value: unknown): value is KVDevGetResult {
-  if (!isRecord(value) || typeof value.found !== "boolean" || typeof value.key !== "string" || typeof value.store !== "string") return false
-  if (!value.found) return true
-  if (!("value" in value)) return false
-  if (value.encoding !== undefined && value.encoding !== "base64") return false
-  if (value.encoding === "base64") {
-    if (typeof value.value !== "string" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.value)) return false
-  }
-  return true
-}
-
-function isKVDevResult(operation: KVDevOperation, value: unknown): boolean {
-  if (operation === "list") return isKVDevListResult(value)
-  if (operation === "get") return isKVDevGetResult(value)
-  return isRecord(value)
+  return !Array.isArray(value) && v.is(v.record(v.string(), v.unknown()), value)
 }
 
 function formatValue(result: KVDevGetResult): string | Uint8Array {
-  if (result.encoding === "base64" && typeof result.value === "string") return Uint8Array.from(atob(result.value), character => character.charCodeAt(0))
-  if (typeof result.value === "string") return `${result.value}\n`
+  if (result.encoding === "base64" && v.is(v.string(), result.value)) return Uint8Array.from(atob(result.value), character => character.charCodeAt(0))
+  if (v.is(v.string(), result.value)) return result.value
   return `${JSON.stringify(result.value, null, 2)}\n`
 }
 
-function writeResult(operation: KVDevOperation, result: unknown, context: KVCliContext): number {
-  if (!isRecord(result)) {
-    context.stderr.write("The KV Dev response has an invalid shape.\n")
-    return 1
-  }
-  // SAFETY: the KV dev handler of the same package version writes these shapes.
+type KVCommandResult =
+  | { operation: "list", value: KVDevListResult }
+  | { operation: "get", value: KVDevGetResult }
+  | { operation: "has", value: KVDevHasResult }
+  | { operation: "set", value: KVDevSetResult }
+  | { operation: "del", value: KVDevDeleteResult }
+
+const targetFields = { key: v.string(), store: v.string() }
+const positiveNumber = v.pipe(v.number(), v.finite(), v.gtValue(0))
+const resultSchemas = {
+  list: v.object({ cursor: v.optional(v.string()), keys: v.array(v.string()), limit: v.pipe(positiveNumber, v.integer()), prefix: v.string(), store: v.string(), stores: v.array(v.string()) }),
+  get: v.pipe(v.object({ ...targetFields, encoding: v.optional(v.literal("base64")), found: v.boolean(), type: v.optional(v.string()), value: v.optional(v.unknown()) }), v.check(result => result.encoding !== "base64" || v.is(v.pipe(v.string(), v.regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)), result.value))),
+  has: v.object({ ...targetFields, exists: v.boolean() }),
+  set: v.object({ ...targetFields, created: v.boolean(), notice: v.optional(v.string()), ttl: v.optional(positiveNumber), type: v.string() }),
+  del: v.object({ ...targetFields, deleted: v.boolean() }),
+}
+
+function parseResult(operation: KVDevOperation, result: unknown): KVCommandResult | undefined {
   switch (operation) {
+    case "list": { const parsed = v.safeParse(resultSchemas.list, result); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "get": { const parsed = v.safeParse(resultSchemas.get, result); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "has": { const parsed = v.safeParse(resultSchemas.has, result); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "set": { const parsed = v.safeParse(resultSchemas.set, result); return parsed.success ? { operation, value: parsed.output } : undefined }
+    case "del": { const parsed = v.safeParse(resultSchemas.del, result); return parsed.success ? { operation, value: parsed.output } : undefined }
+  }
+}
+
+function writeResult(result: KVCommandResult, context: KVCliContext): number {
+  switch (result.operation) {
     case "list": {
-      if (!isKVDevListResult(result)) {
-        context.stderr.write("The KV Dev list response has an invalid shape.\n")
-        return 1
-      }
-      const page = result
+      const page = result.value
+      if (page.keys.some(key => /[\r\n\u2028\u2029]/.test(key))) return writeFailure({ json: false }, context, { message: "The KV list contains line-breaking keys. Use --json to preserve the complete keys." })
       // Some drivers scan a fixed number of entries per page, so a page can be empty while more keys exist.
-      if (page.keys.length === 0 && page.cursor) context.stdout.write("No keys on this page.\n")
-      else if (page.keys.length === 0) context.stdout.write(`No keys${page.prefix ? ` with prefix ${page.prefix}` : ""} in store ${page.store}.\n`)
+      if (page.keys.length === 0 && page.cursor) context.stderr.write("No keys on this page.\n")
+      else if (page.keys.length === 0) context.stderr.write(`No keys${page.prefix ? ` with prefix ${page.prefix}` : ""} in store ${page.store}.\n`)
       else context.stdout.write(`${page.keys.join("\n")}\n`)
       // The cursor hint goes to stderr, so stdout stays a plain key list for scripts.
       if (page.cursor) context.stderr.write(`More keys exist. Next page: --cursor ${page.cursor}\n`)
       return 0
     }
     case "get": {
-      if (!isKVDevGetResult(result)) {
-        context.stderr.write("The KV Dev get response has an invalid shape.\n")
-        return 1
-      }
-      const value = result
+      const value = result.value
       if (!value.found) {
         context.stderr.write(`Key ${value.key} was not found in store ${value.store}.\n`)
         return 1
@@ -283,12 +311,12 @@ function writeResult(operation: KVDevOperation, result: unknown, context: KVCliC
       return 0
     }
     case "has": {
-      const value = result as unknown as KVDevHasResult
+      const value = result.value
       context.stdout.write(`Key ${value.key} ${value.exists ? "exists" : "does not exist"} in store ${value.store}.\n`)
       return value.exists ? 0 : 1
     }
     case "set": {
-      const value = result as unknown as KVDevSetResult
+      const value = result.value
       context.stdout.write([
         `${value.created ? "Created" : "Updated"} key ${value.key} in store ${value.store} (${value.type}${value.ttl ? `, TTL ${value.ttl} s` : ""}).`,
         ...(value.notice ? [value.notice] : []),
@@ -297,10 +325,10 @@ function writeResult(operation: KVDevOperation, result: unknown, context: KVCliC
       return 0
     }
     case "del": {
-      const value = result as unknown as KVDevDeleteResult
+      const value = result.value
       context.stdout.write(value.deleted
         ? `Deleted key ${value.key} from store ${value.store}.\n`
-        : `Key ${value.key} did not exist in store ${value.store}. Nothing changed.\n`)
+        : `Key ${value.key} was not found in store ${value.store}. Deletion completed.\n`)
       return 0
     }
   }
@@ -313,12 +341,13 @@ function exitCode(operation: KVDevOperation, result: Record<string, unknown>): n
 }
 
 async function readFailure(response: Response): Promise<KVCliFailure> {
-  const text = await response.text()
+  let text: string
+  try { text = await response.text() }
+  catch (error) { return { message: `Could not read the KV error response: ${error instanceof Error ? error.message : String(error)}` } }
   try {
-    const parsed: unknown = JSON.parse(text)
-    if (isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.message === "string") {
-      return { ...(typeof parsed.error.code === "string" ? { code: parsed.error.code } : {}), message: parsed.error.message }
-    }
+    const body: unknown = JSON.parse(text)
+    const parsed = v.safeParse(v.object({ error: v.object({ code: v.optional(v.string()), message: v.string() }) }), body)
+    if (parsed.success) return parsed.output.error
   }
   catch {
     // Guard rejections use plain text.
@@ -344,6 +373,8 @@ async function runKVCommand(command: KVCommand, args: string[], context: KVCliCo
     if (command.value && !parsed.help) value = await readValue(parsed, context.cwd)
   }
   catch (error) {
+    const terminator = args.indexOf("--")
+    if (args.slice(0, terminator < 0 ? args.length : terminator).includes("--json")) return writeFailure({ json: true }, context, { message: error instanceof Error ? error.message : String(error) })
     context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     writeUsage(command, context.stderr)
     return 1
@@ -353,35 +384,40 @@ async function runKVCommand(command: KVCommand, args: string[], context: KVCliCo
     return 0
   }
   const fetchImpl = options.fetch ?? globalThis.fetch
+  let discoveryError = ""
   const server = await discoverViteHubDevServer<KVDevDiscovery>({
     endpoint: kvDevEndpoint,
     fetch: fetchImpl,
+    parseDiscovery: (value) => {
+      const parsed = v.safeParse(v.object({ message: v.optional(v.string()), root: v.optional(v.string()), runtime: v.optional(v.string()) }), value)
+      return parsed.success ? parsed.output : {}
+    },
     rootDir: context.rootDir,
+    ...withTimeout(parsed.timeout),
     serverUrl: parsed.url,
-    stderr: context.stderr,
+    stderr: parsed.json ? { write: (chunk) => { discoveryError += chunk; return true } } : context.stderr,
   })
   if (!server) {
+    if (parsed.json) return writeFailure(parsed, context, { message: `${discoveryError.trim()} ${kvDevServerHint}` })
     context.stderr.write(`${kvDevServerHint}\n`)
     return 1
   }
   if (server.discovery.runtime !== "nitro") {
     return writeFailure(parsed, context, {
       code: "KV_DEV_RUNTIME_UNAVAILABLE",
-      message: typeof server.discovery.message === "string"
+      message: v.is(v.string(), server.discovery.message)
         ? server.discovery.message
         : "This Vite Development Server cannot reach the KV runtime.",
     })
   }
-  const body: KVDevRequestBody = {
-    ...(parsed.cursor !== undefined ? { cursor: parsed.cursor } : {}),
-    ...(parsed.key !== undefined ? { key: parsed.key } : {}),
-    ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
-    operation: command.name,
-    ...(parsed.prefix !== undefined ? { prefix: parsed.prefix } : {}),
-    ...(parsed.store !== undefined ? { store: parsed.store } : {}),
-    ...(parsed.ttl !== undefined ? { ttl: parsed.ttl } : {}),
-    ...(command.value ? { value } : {}),
-  }
+  const body: KVDevRequestBody = { operation: command.name }
+  if (parsed.cursor !== undefined) body.cursor = parsed.cursor
+  if (parsed.key !== undefined) body.key = parsed.key
+  if (parsed.limit !== undefined) body.limit = parsed.limit
+  if (parsed.prefix !== undefined) body.prefix = parsed.prefix
+  if (parsed.store !== undefined) body.store = parsed.store
+  if (parsed.ttl !== undefined) body.ttl = parsed.ttl
+  if (command.value) body.value = value
   let response: Response
   try {
     response = await fetchViteHubDevEndpoint(fetchImpl, server.url, kvDevEndpoint, {
@@ -397,10 +433,9 @@ async function runKVCommand(command: KVCommand, args: string[], context: KVCliCo
   if (!response.ok) return writeFailure(parsed, context, await readFailure(response))
   const result: unknown = await response.json().catch(() => undefined)
   if (!isRecord(result)) return writeFailure(parsed, context, { message: "The KV Dev response is not valid JSON." })
-  if (!isKVDevResult(command.name, result)) {
-    return writeFailure(parsed, context, { message: `The KV Dev ${command.name} response has an invalid shape.` })
-  }
-  if (!parsed.json) return writeResult(command.name, result, context)
+  const commandResult = parseResult(command.name, result)
+  if (!commandResult) return writeFailure(parsed, context, { message: "The KV Dev response has an invalid result shape." })
+  if (!parsed.json) return writeResult(commandResult, context)
   context.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
   return exitCode(command.name, result)
 }

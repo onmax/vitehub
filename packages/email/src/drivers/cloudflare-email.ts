@@ -51,6 +51,7 @@ async function sendWithCancellation(
 }
 
 function safeHeader(value: string): string {
+  // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u0008\u000A-\u001F\u007F]/.test(value)) {
     throw emailProviderError(
       "cloudflare-email",

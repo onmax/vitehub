@@ -18,7 +18,7 @@ export function emailProviderError(
   message: string,
   options: { cause?: unknown, retryable?: boolean, status?: number } = {},
 ): EmailProviderError {
-  return Object.assign(emailErrorDiagnostics.EMAIL_R0007({ message: message, ...{ cause: options.cause } }), {
+  return Object.assign(emailErrorDiagnostics.EMAIL_R0007({ message, cause: options.cause }), {
     code,
     driver,
     name: "EmailProviderError",

@@ -94,6 +94,7 @@ export interface EnvBridge extends EnvProvider {
 }
 
 function identifier(value: string): void {
+  // eslint-disable-next-line no-control-regex
   if (!value || value.length > 512 || /[\u0000-\u001f]/.test(value))
     throw envBridgeError("invalid");
 }
@@ -240,7 +241,7 @@ export function createEnvBridge(options: EnvBridgeOptions): EnvBridge {
     preview: (context, key) =>
       audited(context, key, "preview", "preview", async () => {
         const value = await options.secrets.inspect(key);
-        return value ? { ...(value.preview ? { preview: value.preview } : {}) } : undefined;
+        return value?.preview ? { preview: value.preview } : undefined;
       }),
     replace: (context, input) => {
       let revision: string | undefined;

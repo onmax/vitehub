@@ -75,7 +75,7 @@ export default defineConfig({
 | --- | --- |
 | `kv: false` | Disables KV runtime configuration. |
 | `kv: { driver: 'fs-lite', base?: string }` | Uses local filesystem-backed KV. Default `base`: `.vitehub/data/kv`. |
-| `kv: { driver: 'cloudflare-kv-binding', binding?: string, namespaceId?: string, namespaceName?: string }` | Uses Cloudflare KV. Default `binding`: `KV`. `namespaceId` can come from `KV_NAMESPACE_ID`. Without `namespaceId`, the build reads the id that `vitehub provision run` recorded for the store. `namespaceName` is the namespace title that Provision finds or creates. |
+| `kv: { driver: 'cloudflare-kv-binding', binding?: string, namespaceId?: string }` | Uses Cloudflare KV. Default `binding`: `KV`. `namespaceId` can come from `KV_NAMESPACE_ID`. |
 | `kv: { driver: 'deno-kv', path?: string }` | Uses native Deno KV through `Deno.openKv()`. |
 | `kv: { driver: 'upstash', url?: string, token?: string }` | Uses Upstash REST KV. Values can come from `KV_REST_API_URL` and `KV_REST_API_TOKEN`. |
 | `kv: { stores: Record<string, KVStoreConfig> }` | Defines named KV Stores. `stores.default` is required. |
@@ -85,7 +85,7 @@ export default defineConfig({
 | Provider | Driver | Default resolution |
 | --- | --- | --- |
 | Local filesystem | `fs-lite` | Used for local/non-hosted development when no hosted env is detected. |
-| Cloudflare KV | `cloudflare-kv-binding` | Used on Cloudflare hosting when Upstash env vars are absent. |
+| Cloudflare KV | `cloudflare-kv-binding` | Used on Cloudflare hosting. |
 | Deno KV | `deno-kv` | Used on Deno hosting. |
 | Upstash | `upstash` | Used when Upstash env vars are present or when Vercel hosting is detected. |
 
@@ -151,7 +151,6 @@ if (incrementError) throw incrementError
 | `kv.increment(key, ttl)` | Atomically increments a counter on Upstash. |
 | `kv.del(key)` | Deletes one key. |
 | `kv.keys(base?)` | Lists keys under an optional base prefix. |
-| `kv.list({ limit, prefix?, cursor? })` | Lists one page of keys. Returns `{ keys, cursor? }`; an omitted `cursor` means the listing is complete. |
 | `kv.clear(base?)` | Deletes keys under an optional base prefix. |
 | `kv.store(name)` | Selects a named KV Store. |
 
@@ -163,28 +162,18 @@ The KV package selects the default or named store and generates store-name types
 
 Application code keeps importing `kv` from `@vite-hub/kv` when you switch between local, Cloudflare, Deno, Vercel-compatible, or other drivers.
 
-### Provision Cloudflare KV namespaces
+## Read and write keys during development
 
-Set `namespaceName` on a Cloudflare KV store to let [Provision](/docs/development/provisioning) find or create the namespace.
-
-```ts [vite.config.ts]
-export default defineConfig({
-  plugins: [hubKv()],
-  kv: {
-    driver: 'cloudflare-kv-binding',
-    binding: 'KV',
-    namespaceName: 'app-cache',
-  },
-})
-```
+`hubKv()` contributes the `vitehub kv` CLI namespace. Start the Vite Development Server, then read and write keys from another terminal.
 
 ```bash [Terminal]
-CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm vitehub provision run --provider cloudflare
+pnpm vitehub kv list --prefix users:
+pnpm vitehub kv get settings --json
+pnpm vitehub kv set settings '{"theme":"dark"}' --json-value
+pnpm vitehub kv del settings
 ```
 
-Provision lists the account namespaces and creates `app-cache` only when no namespace has that title. It records the namespace id under `cloudflare.kv.<store>` in `.vitehub/provision.json`. The next build writes that id into the `kv_namespaces` binding in `wrangler.json`. A configured `namespaceId` or `KV_NAMESPACE_ID` always wins, and Provision skips that store. Stores that share one `namespaceName` share one namespace.
-
-Without a `namespaceId` or a recorded id, the build writes an id-less binding. Wrangler 4.45 and later can then create the namespace at deploy time.
+The commands call the same KV storage as the running app. Pass `--store <name>` for a named store. Each write command prints what it changed. There is no `clear` command. The commands call a guarded endpoint that exists only on the Vite Development Server. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 there. Read [CLI](/docs/development/cli#read-and-write-kv-keys) for every command and option.
 
 ## Connect KV to Agents
 
@@ -211,3 +200,5 @@ Do not build coordination locks on top of basic `kv.get()` and `kv.set()`. The a
 - Use [Database](/docs/server-primitives/database) for relational data.
 - Use [Blob](/docs/server-primitives/blob) for object storage.
 - Expose scoped model access through [Official capabilities](/docs/capabilities/official-capabilities).
+
+KV inspection represents `bigint` values, including nested values, as decimal strings. Values that cannot be serialized return `KV_VALUE_UNSUPPORTED`. Cloudflare write results report the effective TTL after rounding.
