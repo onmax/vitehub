@@ -990,7 +990,7 @@ function processHandle(
     stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     wait: () => wait,
     async kill(signal?: string) {
-      signalProcessTree(child, (signal ?? "SIGTERM") as NodeJS.Signals);
+      signalProcessTree(child, normalizeSignal(signal));
       const settled = wait.catch(() => undefined);
       if (signal !== undefined) {
         await settled;
@@ -1010,6 +1010,11 @@ function processHandle(
       }
     },
   };
+}
+
+function normalizeSignal(signal = "TERM"): NodeJS.Signals {
+  const normalized = signal.toUpperCase();
+  return (normalized.startsWith("SIG") ? normalized : `SIG${normalized}`) as NodeJS.Signals;
 }
 
 function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals) {

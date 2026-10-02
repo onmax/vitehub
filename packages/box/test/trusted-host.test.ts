@@ -491,7 +491,7 @@ describe("createTrustedHostRuntime", () => {
     await session.destroy?.();
   });
 
-  it.each(["SIGKILL", undefined])("terminates a SIGTERM-ignoring process with %s", async (signal) => {
+  it.each(["SIGKILL", "KILL", undefined])("terminates a SIGTERM-ignoring process with %s", async (signal) => {
     if (process.platform === "win32") return;
     const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
     const session = await box.open();
@@ -506,6 +506,24 @@ describe("createTrustedHostRuntime", () => {
         child.kill(signal).then(() => "killed"),
         new Promise(resolve => setTimeout(resolve, 1_500, "still running")),
       ])).resolves.toBe("killed");
+      await expect(child.wait()).resolves.toMatchObject({ code: 1 });
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("normalizes portable signal names before forwarding them to Node", async () => {
+    if (process.platform === "win32") return;
+    const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
+    const session = await box.open();
+    try {
+      const child = await session.spawn!(process.execPath, ["-e",
+        "console.log('ready'); setInterval(() => {}, 1000)",
+      ]);
+      const reader = child.stdout.getReader();
+      await reader.read();
+      reader.releaseLock();
+      await child.kill("TERM");
       await expect(child.wait()).resolves.toMatchObject({ code: 1 });
     } finally {
       await session.close();
