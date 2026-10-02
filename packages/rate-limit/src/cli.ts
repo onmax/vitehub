@@ -43,10 +43,6 @@ interface RateLimitDevDiscovery {
   runtime?: unknown
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
 const rateLimitDevEndpoint = {
   header: rateLimitDevHeader,
   headerValue: rateLimitDevHeaderValue,
@@ -235,11 +231,6 @@ async function runRateLimitCommand(
   const server = await discoverViteHubDevServer<RateLimitDevDiscovery>({
     endpoint: rateLimitDevEndpoint,
     fetch: fetchImpl,
-    parseDiscovery(value: unknown) {
-      // Discovery is an untrusted dev-server response. Normalize malformed
-      // successful payloads so the command reports a normal runtime error.
-      return isRecord(value) ? value : {}
-    },
     rootDir: context.rootDir,
     serverUrl: parsed.url,
     ...withTimeout(parsed.timeout),

@@ -53,7 +53,6 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
 }
 
-const fileOrExtensionProtocol = /^(?:file|.+-extension):/i
 
 const ipv4Octet = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)"
 const ipv4Literal = new RegExp(`^${ipv4Octet}(?:\\.${ipv4Octet}){3}$`)
@@ -78,18 +77,20 @@ function isIPv6Literal(value: string): boolean {
 }
 
 function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boolean {
-  if (fileOrExtensionProtocol.test(host)) return true
   const trimmed = host.trim()
   if (trimmed.startsWith("[")) {
     const end = trimmed.indexOf("]")
     return end > 0 && isIPv6Literal(trimmed.slice(1, end))
   }
   const colon = trimmed.indexOf(":")
-  const hostname = colon === -1 ? trimmed : trimmed.slice(0, colon)
+  const hostname = (colon === -1 ? trimmed : trimmed.slice(0, colon)).toLowerCase()
   if (isIPv4Literal(hostname)) return true
   if (hostname === "localhost" || hostname.endsWith(".localhost")) return true
-  return allowedHosts.some(allowed => allowed === hostname
-    || (allowed.startsWith(".") && (allowed.slice(1) === hostname || hostname.endsWith(allowed))))
+  return allowedHosts.some(allowed => {
+    const normalized = allowed.toLowerCase()
+    return normalized === hostname
+      || (normalized.startsWith(".") && (normalized.slice(1) === hostname || hostname.endsWith(normalized)))
+  })
 }
 
 /**
@@ -108,6 +109,7 @@ export function isViteHubDevHostAllowed(server: Pick<ViteHubDevEndpointServer, "
   if (host === undefined) return true
   const { allowedHosts = [], host: listenHost, https } = server.config.server
   if (allowedHosts === true || https) return true
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vite server.host is a boolean or hostname; only a configured hostname authorizes requests.
   return hostHeaderAllowed(host, typeof listenHost === "string" ? [...allowedHosts, listenHost] : allowedHosts)
 }
 

@@ -1,6 +1,8 @@
 import { redactInspectionText, redactInspectionValue } from "./inspect.ts"
 import type { ProvisionStep } from "./provision.ts"
 
+import { isPlainObject } from "./object.ts"
+
 export interface ViteHubCliStreams {
   stderr: { write: (chunk: string | Uint8Array) => unknown }
   stdout: { write: (chunk: string | Uint8Array) => unknown }
@@ -171,9 +173,11 @@ export function resolveViteHubDevServerUrl(env: NodeJS.ProcessEnv): string {
 }
 
 function parseViteHubDevTimeout(value: string, error: (message: string) => Error): number {
-  const timeout = Number.parseInt(value, 10)
-  if (!Number.isFinite(timeout) || timeout <= 0) throw error("--timeout must be a positive number.")
+  const timeout = Number(value)
   if (timeout > 2_147_483_647) throw error("--timeout must be at most 2147483647 milliseconds.")
+  if (!Number.isInteger(timeout) || timeout < 1) {
+    throw error("--timeout must be an integer from 1 to 2147483647 milliseconds.")
+  }
   return timeout
 }
 
@@ -270,7 +274,7 @@ function devServerDisplayUrl(value: string): string {
  * Writes the reason to `stderr` and returns `undefined` when the URL is not
  * valid, the server does not answer, or the server root does not match.
  */
-export async function discoverViteHubDevServer<TDiscovery extends { root?: unknown }>(
+export async function discoverViteHubDevServer<TDiscovery extends { root?: unknown } = Record<string, unknown>>(
   options: ViteHubDevServerDiscoveryOptions & { parseDiscovery?: (value: unknown) => TDiscovery },
 ): Promise<ViteHubDevServerTarget<TDiscovery> | undefined> {
   let url: string
@@ -296,10 +300,11 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
     options.stderr.write(`No Compatible Vite Development Server found at ${devServerDisplayUrl(options.serverUrl)}.\n`)
     return
   }
-  // SAFETY: the owner endpoint defines the discovery shape. Callers check each field before use.
   const payload: unknown = await response.json().catch(() => ({}))
-  const discovery = (options.parseDiscovery ? options.parseDiscovery(payload) : payload) as TDiscovery
+  // SAFETY: owner parsers establish their discovery shape; unparsed responses are normalized to plain records.
+  const discovery = (options.parseDiscovery ? options.parseDiscovery(payload) : isPlainObject(payload) ? payload : {}) as TDiscovery
   const isCompatibleRoot = options.isCompatibleRoot ?? ((rootDir: string, serverRoot: string) => serverRoot === rootDir)
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Check the untrusted discovery root before comparing it with the local project.
   if (typeof discovery.root === "string" && !isCompatibleRoot(options.rootDir, discovery.root)) {
     options.stderr.write(`Compatible Vite Development Server root mismatch: ${devServerDisplayUrl(discovery.root)}\n`)
     return
