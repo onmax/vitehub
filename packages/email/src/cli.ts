@@ -334,7 +334,8 @@ async function runOutboxCommand(command: OutboxCommand, args: string[], context:
         : "This Vite Development Server cannot reach the Email outbox.",
     })
   }
-  const body: EmailDevRequestBody = { ...(parsed.id !== undefined ? { id: parsed.id } : {}), operation: command.operation }
+  const body: EmailDevRequestBody = { operation: command.operation }
+  if (parsed.id !== undefined) body.id = parsed.id
   let response: Response
   try {
     response = await fetchViteHubDevEndpoint(fetchImpl, server.url, emailDevEndpoint, {

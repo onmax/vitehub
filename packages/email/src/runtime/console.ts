@@ -142,7 +142,9 @@ function json(value: unknown, status = 200): Response {
 }
 
 function failure(message: string, status: number, code?: string): Response {
-  return json({ error: { ...(code ? { code } : {}), message } }, status)
+  const error: { code?: string, message: string } = { message }
+  if (code) error.code = code
+  return json({ error }, status)
 }
 
 async function readBody(request: Request): Promise<EmailDevRequestBody | undefined> {
@@ -176,7 +178,7 @@ const devHeaders = { header: emailDevHeader, headerValue: emailDevHeaderValue, l
  * The request must carry the Email dev header, must not come from another origin, and must use JSON.
  */
 export async function handleEmailDevRequest(request: Request, runtimeContext?: string | { runtimeId?: string }): Promise<Response> {
-  const runtimeId = typeof runtimeContext === "string" ? runtimeContext : runtimeContext?.runtimeId
+  const runtimeId = v.is(v.string(), runtimeContext) ? runtimeContext : runtimeContext?.runtimeId
   const rejection = validateViteHubNitroDevRequest(request, devHeaders)
   if (rejection) return rejection
   const body = await readBody(request)

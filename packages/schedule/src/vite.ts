@@ -642,8 +642,8 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
       registerScheduleDevEndpoint(server, {
         nitroBaseURL: () => {
           // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
-          const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
-          return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
+          const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: string } }) | undefined)?.nitro?.baseURL
+          return baseURL ?? process.env.NITRO_APP_BASE_URL
         },
       })
     },
