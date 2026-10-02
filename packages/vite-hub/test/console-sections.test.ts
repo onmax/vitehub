@@ -97,5 +97,6 @@ describe("Console section routes", () => {
     expect([...routedSections].sort()).toEqual([...consoleBuiltinSectionIds].sort())
     expect(client).toContain("subscribeConsoleNavigation(sectionsBase, addContributedRoutes)")
     expect(client).toContain("const name = consoleSectionRouteName(section)")
+    expect(client).toContain('return router.resolve(to.fullPath).matched.length > 0 ? to.fullPath : { name: "vitehub-console" }')
   })
 })

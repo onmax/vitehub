@@ -176,8 +176,15 @@ async function runProviderOutput(args: string[], context: InspectContext, plugin
   if (parsed.json) {
     const provisionPath = relative(context.rootDir, resolve(context.rootDir, PROVISION_STATE_FILE)) || "."
     const provisionState = readProvisionStateSync(context.rootDir)
+    const provisionStateOutput = Object.fromEntries(Object.entries(provisionState).map(([provider, categories]) => [
+      provider,
+      Object.fromEntries(Object.entries(categories ?? {}).map(([category, ids]) => [
+        category,
+        Object.fromEntries(Object.entries(ids ?? {}).map(([key, id]) => [key, redactInspectionValue(id)])),
+      ])),
+    ]))
     writeJson(context, { providerOutput: reports.map(report => report.path === provisionPath && report.exists
-      ? { ...report, content: provisionState }
+      ? { ...report, content: provisionStateOutput }
       : report) })
     return 0
   }

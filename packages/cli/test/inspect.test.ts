@@ -181,6 +181,23 @@ describe("vitehub inspect", () => {
     expect(parsed.providerOutput.find((entry: { path: string }) => entry.path === ".vitehub/provision.json")).toMatchObject({ exists: false, owner: "cli" })
   })
 
+  it("preserves provisioned resource names in Provider Output JSON", async () => {
+    const rootDir = await createTempDir()
+    await mkdir(join(rootDir, ".vitehub"), { recursive: true })
+    await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify({
+      vercel: { blob: { api_key: "resource-id" } },
+    }))
+    const result = await run(rootDir, ["inspect", "provider-output", "--json"])
+
+    expect(result.exitCode).toBe(0)
+    const parsed = JSON.parse(result.stdout)
+    expect(parsed.providerOutput.find((entry: { path: string }) => entry.path === ".vitehub/provision.json")).toMatchObject({
+      content: { vercel: { blob: { api_key: "resource-id" } } },
+      exists: true,
+      owner: "cli",
+    })
+  })
+
   it("rejects unknown arguments", async () => {
     const rootDir = await createTempDir()
     const result = await run(rootDir, ["inspect", "provider-output", "--kind", "queue"])

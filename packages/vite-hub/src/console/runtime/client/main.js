@@ -208,7 +208,7 @@ router.beforeEach(async (to) => {
     // Contributed section routes exist only after the navigation response arrives.
     const navigation = await loadConsoleNavigation(sectionsBase);
     if (navigation) addContributedRoutes(navigation);
-    return router.resolve(to.fullPath).matched.length > 0 ? to.fullPath : undefined;
+    return router.resolve(to.fullPath).matched.length > 0 ? to.fullPath : { name: "vitehub-console" };
   }
   const section = to.meta.consoleSection;
   if (!isConsoleSectionId(section)) return;
