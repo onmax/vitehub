@@ -2019,7 +2019,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const recordId = await agentInvocationId(runId, agentName)
       const claimId = createInvocationId()
       const cancellationOwnerId = createInvocationId()
-      const traceId = await boundedIdentity(context.trace?.id || runId)
+      let traceId = await boundedIdentity(context.trace?.id || runId)
       const annotations = normalizeAnnotations(context.run?.annotations)
       let writes = Promise.resolve()
       let finished = false
@@ -2169,11 +2169,6 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         if (ownsRecord) startHeartbeat()
         else stopHeartbeat()
         return ownsRecord
-      }
-      const renew = (force = false, rotate = false): Promise<boolean> => {
-        const task = claimRenewals.then(() => renewClaim(force, rotate))
-        claimRenewals = task.then(() => {}, () => {})
-        return task
       }
       const write = async (operation: () => MaybePromise<unknown>): Promise<void> => {
         writes = writes.then(async () => {
