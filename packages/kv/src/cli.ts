@@ -52,10 +52,6 @@ interface KVDevDiscovery {
   runtime?: unknown
 }
 
-interface KVDevFailure {
-  error?: { code?: unknown, message?: unknown }
-}
-
 interface KVCliFailure {
   code?: string
   message: string
@@ -219,17 +215,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+function isKVDevListResult(value: unknown): value is KVDevListResult {
+  return isRecord(value) && Array.isArray(value.keys) && typeof value.limit === "number" && typeof value.prefix === "string" && typeof value.store === "string" && Array.isArray(value.stores)
+}
+
+function isKVDevGetResult(value: unknown): value is KVDevGetResult {
+  return isRecord(value) && typeof value.found === "boolean" && typeof value.key === "string" && typeof value.store === "string"
+}
+
 function formatValue(result: KVDevGetResult): string | Uint8Array {
   if (result.encoding === "base64" && typeof result.value === "string") return Uint8Array.from(atob(result.value), character => character.charCodeAt(0))
   if (typeof result.value === "string") return `${result.value}\n`
   return `${JSON.stringify(result.value, null, 2)}\n`
 }
 
-function writeResult(operation: KVDevOperation, result: Record<string, unknown>, context: KVCliContext): number {
+function writeResult(operation: KVDevOperation, result: unknown, context: KVCliContext): number {
+  if (!isRecord(result)) return 1
   // SAFETY: the KV dev handler of the same package version writes these shapes.
   switch (operation) {
     case "list": {
-      const page = result as unknown as KVDevListResult
+      if (!isKVDevListResult(result)) return 1
+      const page = result
       // Some drivers scan a fixed number of entries per page, so a page can be empty while more keys exist.
       if (page.keys.length === 0 && page.cursor) context.stdout.write("No keys on this page.\n")
       else if (page.keys.length === 0) context.stdout.write(`No keys${page.prefix ? ` with prefix ${page.prefix}` : ""} in store ${page.store}.\n`)
@@ -239,7 +245,8 @@ function writeResult(operation: KVDevOperation, result: Record<string, unknown>,
       return 0
     }
     case "get": {
-      const value = result as unknown as KVDevGetResult
+      if (!isKVDevGetResult(result)) return 1
+      const value = result
       if (!value.found) {
         context.stderr.write(`Key ${value.key} was not found in store ${value.store}.\n`)
         return 1
@@ -280,9 +287,9 @@ function exitCode(operation: KVDevOperation, result: Record<string, unknown>): n
 async function readFailure(response: Response): Promise<KVCliFailure> {
   const text = await response.text()
   try {
-    const body: KVDevFailure = JSON.parse(text)
-    if (typeof body.error?.message === "string") {
-      return { ...(typeof body.error.code === "string" ? { code: body.error.code } : {}), message: body.error.message }
+    const parsed: unknown = JSON.parse(text)
+    if (isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.message === "string") {
+      return { ...(typeof parsed.error.code === "string" ? { code: parsed.error.code } : {}), message: parsed.error.message }
     }
   }
   catch {
