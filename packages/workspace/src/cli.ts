@@ -8,13 +8,6 @@ import {
 } from "@vite-hub/internal/cli"
 
 import {
-  discoverViteHubDevServer,
-  fetchViteHubDevEndpoint,
-  readViteHubDevTargetOption,
-  resolveViteHubDevServerUrl,
-} from "@vite-hub/internal/cli"
-
-import {
   readWorkspaceDevToken,
   workspaceDevHeader,
   workspaceDevHeaderValue,
