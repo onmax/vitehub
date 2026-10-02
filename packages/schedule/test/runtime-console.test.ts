@@ -133,6 +133,8 @@ describe("Runtime Schedule inspection", () => {
     const summary = summarizeScheduleRun({
       attemptCount: 1,
       id: "run",
+      createdAt: now,
+      updatedAt: now,
       response: { body: { data: "", encoding: "base64", mediaType: "text/plain" }, headers: [], status: 401, statusText: "Authorization: Bearer response-secret" },
       scheduleId: "digest",
       scheduledAt: now,
