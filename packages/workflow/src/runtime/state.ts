@@ -25,6 +25,7 @@ export interface WorkflowRunState<TResult = unknown> {
 }
 
 const runs = new Map<string, WorkflowRunState>()
+const completedRuns = new Map<string, WorkflowRunState>()
 
 function getRunKey(name: string, id: string): string {
   return `${name}\0${id}`
@@ -32,10 +33,13 @@ function getRunKey(name: string, id: string): string {
 
 function pruneWorkflowRuns(): void {
   const now = Date.now()
-  for (const [key, run] of runs) {
+  for (const [key, run] of completedRuns) {
     if (run.expiresAt && run.expiresAt <= now) {
-      runs.delete(key)
+      completedRuns.delete(key)
     }
+  }
+  while (completedRuns.size > RUNS_LIMIT) {
+    completedRuns.delete(completedRuns.keys().next().value!)
   }
 }
 
@@ -215,27 +219,31 @@ export function setWorkflowRun<TResult = unknown>(
   promise: Promise<{ result?: TResult, status: "completed" | "failed", error?: unknown }>,
 ): WorkflowRunState<TResult> {
   pruneWorkflowRuns()
-  if (runs.size >= RUNS_LIMIT) {
-    const oldest = runs.keys().next().value
-    if (oldest !== undefined) runs.delete(oldest)
-  }
+  const key = getRunKey(name, id)
+  completedRuns.delete(key)
   const state: WorkflowRunState<TResult> = {
     promise: promise.then((resolved) => {
       state.status = resolved.status
       state.result = resolved.result
       state.error = resolved.error
       state.expiresAt = Date.now() + RUNS_TTL_MS
+      if (runs.get(key) === state) {
+        runs.delete(key)
+        completedRuns.set(key, state)
+        pruneWorkflowRuns()
+      }
       return resolved
     }),
     status: "running",
   }
-  runs.set(getRunKey(name, id), state)
+  runs.set(key, state)
   return state
 }
 
 export function getWorkflowRunState(name: string, id: string): WorkflowRunState | undefined {
   pruneWorkflowRuns()
-  return runs.get(getRunKey(name, id))
+  const key = getRunKey(name, id)
+  return runs.get(key) ?? completedRuns.get(key)
 }
 
 export function resetWorkflowRuntime(): void {
@@ -246,4 +254,5 @@ export function resetWorkflowRuntime(): void {
   loadedRegistryEntries.clear()
   fallbackEvent = undefined
   runs.clear()
+  completedRuns.clear()
 }
