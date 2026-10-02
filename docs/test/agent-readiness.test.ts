@@ -60,6 +60,8 @@ describe("agent-ready HTTP contracts", () => {
       "db_query",
       "db_schema",
     ]);
+    expect(references["gmail.read"]?.tools.map(tool => tool.name)).toEqual(["gmail_read", "gmail_search"]);
+    expect(references["gmail.draft"]?.tools.map(tool => tool.name)).toEqual(["gmail_draft", "gmail_read", "gmail_search"]);
   });
 
   it("keeps the compact index routed to raw Markdown", () => {

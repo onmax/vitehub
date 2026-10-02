@@ -15,13 +15,11 @@ import {
   access,
   blob,
   browser,
-  channelDelivery,
   chat,
   chatSummary,
   title,
   db,
   email,
-  executor,
   fetch,
   git,
   gmail,
@@ -75,7 +73,6 @@ import {
 | Blob storage | [`blob()`](/docs/capabilities/blob) | The Agent needs scoped object read or edit tools. |
 | Database | [`db()`](/docs/capabilities/db) | The Agent needs guarded SQL query, schema, or mutation tools. |
 | Email | [`email()`](/docs/capabilities/email) | Send authorized plain-text messages through the configured Email primitive. |
-| Channel delivery | [`channelDelivery()`](/docs/capabilities/channel-delivery) | Send the Agent's result through a Channel to a recipient that the application selects. |
 | Sandbox execution | [`sandbox()`](/docs/capabilities/sandbox) | The Agent may run an allowlisted executable in an isolated runtime. |
 | Schedules | [`schedule()`](/docs/capabilities/schedule) | The Agent declares scheduled invocations or manages Runtime Schedules through tools. |
 | OTLP telemetry | [`otlp()`](/docs/capabilities/otlp) | Live Agent Invocation events and completed traces should be exported to an OpenTelemetry receiver. |
@@ -86,20 +83,19 @@ import {
 
 | Ability | Capability | Use it when |
 | --- | --- | --- |
-| Executor catalog | [`executor()`](/docs/capabilities/executor) | Use integrations and policies configured behind one Executor MCP endpoint. |
-| MCP servers | [`mcp()`](/docs/capabilities/mcp) | Add tools from external MCP servers to the Agent. |
+| MCP servers | [`mcp()`](/docs/capabilities/mcp) | Add tools from external MCP servers, such as an Executor catalog, to the Agent. |
 | Web search | [`webSearch()`](/docs/capabilities/web-search) | The Agent needs model web search or normalized web search/read tools. |
 | Fetch tools | [`fetch()`](/docs/capabilities/fetch) | The Agent needs named HTTP tools for developer-approved endpoints. |
 | OpenAPI tools | [`openapi()`](/docs/capabilities/openapi) | The Agent needs a selected OpenAPI operation catalog exposed as bounded HTTP tools or a generated Capability CLI. |
 | Transcription | [`transcribe()`](/docs/capabilities/transcribe) | Turn audio input into text before model execution. |
-| Gmail | [`gmail()`](/docs/capabilities/gmail) | Search, read, label, and draft Gmail messages through a Connection. |
+| Gmail | [`gmail()`](/docs/capabilities/gmail) | Search and read Gmail or create unsent drafts through a Google Connection. |
 
 ### Decisions and output
 
 | Ability | Capability | Use it when |
 | --- | --- | --- |
-| LLM routing | [`llmRoute()`](/docs/capabilities/llm-route) | Choose one developer-defined route with a model, or with Jev for ask Driver Agents, before the invocation. |
-| LLM gate | [`llmGate()`](/docs/capabilities/llm-gate) | Allow or reject a request with a model, or with Jev for ask Driver Agents, before the invocation. |
+| LLM routing | [`llmRoute()`](/docs/capabilities/llm-route) | Choose one developer-defined route with a model before the invocation. |
+| LLM gate | [`llmGate()`](/docs/capabilities/llm-gate) | Allow or reject a request with a model before the invocation. |
 | Rate limit | [`rateLimit()`](/docs/capabilities/rate-limit) | Consume a trusted invocation budget before the Agent runs. |
 | Title | [`title()`](/docs/capabilities/title) | Generate a title for Agent output, finish extensions, or Channel threads. |
 | Chat summary | [`chatSummary()`](/docs/capabilities/chat-summary) | Replace a summary command with a conversation summary. |

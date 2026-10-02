@@ -24,11 +24,14 @@ composition and explicit feature subpaths for application APIs.
 | `vite-hub/agent/presets/workspace` | Opt-in workspace source-provenance citation preset. |
 | `vite-hub/agent/capabilities` | Official Capability factories. |
 | `vite-hub/agent/channels` | Official Channel Kind helpers. |
+| `vite-hub/agent/evlog` | Host-level evlog integration for Agent lifecycle events and diagnostics. |
+| `vite-hub/agent/evlog/posthog` | Optional Node.js PostHog event, Error Tracking and log exporter. |
 | `vite-hub/agent/eval` | Agent Eval authoring helpers; install Evalite and the test runner explicitly. |
 | `vite-hub/agent/observability` | `useObservability()` for the instance configured by `vitehub({ observability })`. |
 | `vite-hub/agent/evlog` | Deprecated compatibility facade for Agent event logging. |
 | `vite-hub/agent/evlog/posthog` | Deprecated compatibility facade for the PostHog event-log exporter. |
 | `vite-hub/agent/presets/babysitter` | Composable Babysitter repair-loop preset. |
+| `vite-hub/agent/presets/babysitter/server` | Babysitter host runtime integration. |
 | `vite-hub/agent/cloudflare` | Cloudflare Agent state configuration helpers. |
 | `vite-hub/agent/vue` | Vue Agent client handle and AI SDK chat composable. |
 | `vite-hub/agent/server` and `vite-hub/agent/state/sqlite` | Manual server integration and libSQL-compatible durable Agent state. |
@@ -38,15 +41,13 @@ composition and explicit feature subpaths for application APIs.
 | `vite-hub/agent/invocations/sqlite` | LibSQL-compatible durable Agent Invocation Journal. |
 | `vite-hub/agent/mcp` | MCP Server configuration helpers. |
 | `vite-hub/agent/runtime/process` | Adaptive process-local Agent capacity for self-hosted Node applications. |
-| `vite-hub/connections` | `defineConnection()` and Connection types. |
-| `vite-hub/connections/google` | Google OAuth provider with typed Gmail API catalog. |
-| `vite-hub/connections/server` | `useConnection()` for typed, governed, audited provider API calls. |
 | `vite-hub/console` | Route metadata for the local read-only invocation console. |
 | `vite-hub/console/auth` | Define a Console-owned Auth Definition and its access policy. |
 | `vite-hub/console/auth/client` | Configure Console Auth client plugins and setup. |
 | `vite-hub/console/auth/cloudflare-access` | Verify Cloudflare Access tokens for the Console guard. |
 | `vite-hub/console/auth/inline` | Build the Node-only inline GitHub Console Auth Definition. |
 | `vite-hub/console/blob` | Read-only Blob inspection registration for framework server integrations. |
+| `vite-hub/console/connections` | Connections management, connect, and callback route registration for framework server integrations. |
 | `vite-hub/console/database` | Read-only Database inspection registration for framework server integrations. |
 | `vite-hub/console/definitions` | Read-only Definition inspection registration for framework server integrations. |
 | `vite-hub/console/env` | Server Env declaration inventory registration for framework server integrations. |
@@ -125,7 +126,9 @@ for libraries, focused integrations, and advanced composition.
 | `@vite-hub/agent/presets/workspace` | Agent Package | Opt-in workspace source-provenance citation preset. |
 | `@vite-hub/agent/capabilities` | Agent Package | Official Capability factories such as `access()`, `browser()`, `workspaceShell()`, and `inputCommands()`. |
 | `@vite-hub/agent/channels` | Agent Package | Official Channel Kind helpers such as `github()`, `teams()`, `telegram()`, `webChat()`, and `defineChannel()`. |
+| `@vite-hub/agent/evlog` | Agent Package | Host-level evlog integration. |
 | `@vite-hub/agent/observability` | Agent Package | `useObservability()` and observability types. |
+| `@vite-hub/agent/evlog/posthog` | Agent Package | Optional PostHog exporter. |
 | `@vite-hub/agent/observability/host` | Agent Package | `installObservability()` for hosts without `vitehub()`. |
 | `@vite-hub/agent/observability/posthog` | Agent Package | Optional PostHog exporter. |
 | `@vite-hub/agent/evlog` | Agent Package | Deprecated compatibility facade for Agent event logging. |
@@ -147,8 +150,8 @@ for libraries, focused integrations, and advanced composition.
 | `@vite-hub/box/ssh` | Box Package | `sshLaunch` and `serveSsh` for a trusted SSH command transport. |
 | `@vite-hub/channels` | Channels Package | Outbound Channel Definitions with `defineOutboundChannel()`, explicit clients, portable types, and normalized delivery results. |
 | `@vite-hub/channels/server` | Channels Runtime | Server-only discovered named delivery. |
-| `@vite-hub/connections` and `@vite-hub/connections/google` | Connections Package | `defineConnection()` and portable types from the root; the `google()` OAuth provider and typed Gmail Operations from `/google`. |
-| `@vite-hub/connections/server`, `@vite-hub/connections/http`, and `@vite-hub/connections/agent` | Connections Runtime | `useConnection()` and runtime access from `/server`; management and OAuth routes from `/http`; the Agent primitive handle from `/agent`. |
+| `@vite-hub/connections` and `@vite-hub/connections/google` | Connections Package | Connection Definitions, `oauth2()`, `useConnection()`, the Google preset, and typed Gmail Operations. |
+| `@vite-hub/connections/server`, `@vite-hub/connections/http`, and `@vite-hub/connections/agent` | Connections Runtime | Runtime access, management and OAuth routes, and the Agent primitive handle. |
 | `@vite-hub/content` and `@vite-hub/content/client` | Content Package | Comark Content runtime definition, ViteHub Source adaptation, server handler, and typed client. |
 | `@vite-hub/email` | Email Package | Explicit clients, portable types, and normalized errors. |
 | `@vite-hub/email/server` | Email Runtime | Server-only configured `email` Runtime Helper. |

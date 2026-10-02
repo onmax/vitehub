@@ -1,5 +1,5 @@
-import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { inheritAgentLayerOptions } from "./agent-layers.ts"
+import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { registeredWorkspaceAgentNames } from "./internal/workspace-agent-registration.ts"
 import { agentInstructionSources, resolveAgentInstructions } from "./agent-instructions.ts"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
@@ -37,7 +37,7 @@ import { inheritAgentCapacity, inspectAgentCapacity } from "./internal/agent-cap
 import { normalizeAgentDriver } from "./internal/agent-driver.ts"
 import { gatewayModelDescriptor } from "./internal/agent-model.ts"
 import { consumesMessageChannelInstructions, inspectMessageChannelInstructions } from "./internal/channels.ts"
-import { colocatedAgentSkillsSymbol, discoveredSkillsSetter, type ColocatedAgentSkills } from "./internal/colocated-agent-skills.ts"
+import { colocatedAgentSkillsSymbol, type ColocatedAgentSkills } from "./internal/colocated-agent-skills.ts"
 
 import type {
   AgentAdapterInstructions,
@@ -209,10 +209,7 @@ export function workspaceDefinitionWithAutoCommitRules(definition: WorkspaceDefi
   return { ...definition, rules: mergeWorkspaceCommitRules(definition.rules, commit) }
 }
 
-/**
- * Reports whether an explicit Agent Workspace `commit: false` leaves no commit to resolve.
- * The Workspace definition, its plugins, and Capability contributions can still add commit rules.
- */
+/** Reports whether an explicit Workspace `commit: false` leaves no commit to resolve. */
 export function workspaceAutoCommitDisabled(definition: WorkspaceDefinition, commit: boolean | string | undefined): boolean {
   if (commit !== false) return false
   if (definition.commit === true || hasRuntimeType(definition.commit, "string")) return false
@@ -318,13 +315,25 @@ export function workspaceAgentWithSourceRoot<Agent>(agent: Agent, sourceRootDir:
     __vitehubWorkspaceAgentOptions: workspaceOptions,
   }
   Object.defineProperty(decoratedAgent, agentDefinitionSourceSymbol, { configurable: true, value: workspaceAgent })
-  for (const key of [colocatedAgentSkillsSymbol, discoveredSkillsSetter]) {
-    const descriptor = Object.getOwnPropertyDescriptor(workspaceAgent, key)
-    if (descriptor) Object.defineProperty(decoratedAgent, key, descriptor)
-  }
   inheritAgentCapacity(workspaceAgent, decoratedAgent)
   inheritAgentLayerOptions(workspaceAgent, decoratedAgent, {
     workspace: decoratedWorkspace,
+  })
+  Object.defineProperty(decoratedAgent, colocatedAgentSkillsSymbol, {
+    configurable: true,
+    enumerable: true,
+    get: () => {
+      const inherited = Reflect.get(workspaceAgent, colocatedAgentSkillsSymbol)
+      const source = Reflect.get(workspaceAgent, agentDefinitionSourceSymbol)
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Reflect metadata is an open boundary.
+      const sourceSkills = source !== null && typeof source === "object" ? Reflect.get(source, colocatedAgentSkillsSymbol) : undefined
+      if (!hasRuntimeType(colocatedSkills, "object") && !hasRuntimeType(inherited, "object") && !hasRuntimeType(sourceSkills, "object")) return undefined
+      return {
+        ...(hasRuntimeType(colocatedSkills, "object") ? colocatedSkills : {}),
+        ...(hasRuntimeType(inherited, "object") ? inherited : {}),
+        ...(hasRuntimeType(sourceSkills, "object") ? sourceSkills : {}),
+      }
+    },
   })
   // SAFETY: Workspace definition normalization establishes the asserted owned Workspace contract.
   return decoratedAgent as Agent
@@ -550,12 +559,12 @@ function capabilityMetadataTool(capability: NormalizedCapability, options: { dri
     }
   }
   if (capability.id === "gmail") {
-    // SAFETY: gmail() sets this metadata.
-    const { connection, tools } = (capability.metadata ?? {}) as { connection?: string, tools?: string[] }
+    // SAFETY: gmail() writes the Connection name and the enabled tool names into its metadata.
+    const metadata = capability.metadata as { connection?: string, operations?: string[] } | undefined
     return {
       category: "capability",
-      commands: (tools ?? []).map(tool => `gmail_${tool}`),
-      description: `Use Gmail through the ${connection ?? "Google"} Connection.`,
+      commands: (metadata?.operations ?? []).map(operation => `gmail_${operation}`),
+      description: `Search, read, or draft Gmail messages through the "${metadata?.connection ?? "google"}" Connection.`,
       icon: "i-lucide-mail-search",
       name: "gmail",
       status: "available",
@@ -627,7 +636,7 @@ function resolvedDriverExecutionAuthority<
   driver: ReturnType<typeof normalizeAgentDriver<TRuntimeConfig, CALL_OPTIONS>>,
   runtime?: AgentRuntimeName,
 ): ExecutionAuthority {
-  if (driver.kind === "model" || driver.kind === "ask") return noExecutionAuthority
+  if (driver.kind === "model") return noExecutionAuthority
   if (driver.kind === "provider" && (runtime === "cloudflare-agents" || runtime === "deno")) return noExecutionAuthority
   return driver.kind === "provider" ? staticDriverExecutionAuthority(driver) : unknownExecutionAuthority
 }
@@ -857,8 +866,7 @@ function staticDriverMetadata<
       provider: providerMetadata(driver),
     }
   }
-  if (driver.kind === "ask") return { executionAuthority: noExecutionAuthority, kind: "ask" }
-  return { executionAuthority: unknownExecutionAuthority, kind: "run" }
+  return { executionAuthority: driver.kind === "ask" ? noExecutionAuthority : unknownExecutionAuthority, kind: driver.kind }
 }
 
 async function resolvedDriverMetadata<
@@ -894,7 +902,6 @@ async function resolvedDriverMetadata<
       provider: providerMetadata(driver),
     }
   }
-  if (driver.kind === "ask") return { executionAuthority: noExecutionAuthority, kind: "ask" }
   return { executionAuthority: unknownExecutionAuthority, kind: "run" }
 }
 
@@ -959,8 +966,7 @@ function agentChannelMetadataInstructions<
   definition: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
 ): string[] {
   const settings = agentSettings(definition)
-  const driverKind = settings ? normalizeAgentDriver(settings).kind : undefined
-  if (!driverKind || driverKind === "run" || driverKind === "ask") return []
+  if (!settings || normalizeAgentDriver(settings).kind === "run") return []
   return inspectMessageChannelInstructions(definition.channels)
 }
 

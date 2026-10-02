@@ -1,299 +1,409 @@
-import { execFileSync } from "node:child_process"
-
-import * as v from "valibot"
 import { describe, expect, it, vi } from "vitest"
 
-import { validateAgentCapabilityComposition } from "../src/capability-runtime.ts"
+import { validateAgentCapabilityComposition, workspaceRetirementPathsSymbol } from "../src/capability-runtime.ts"
 import { gmail } from "../src/capabilities.ts"
-import { createAgentInspectionMetadata, defineAgent, runAgent } from "../src/index.ts"
+import { createAgentInspectionMetadata, defineAgent } from "../src/index.ts"
+import { agentInvocationTraceIdContextKey } from "../src/trace.ts"
 
-import type { AgentCapabilityDefinition, AgentToolSet } from "../src/types.ts"
+import type { AgentCapabilityDefinition, AgentToolDefinition } from "../src/types.ts"
 
-type Call = { input: Record<string, unknown>, method: string, signal?: AbortSignal }
-type Handler = (method: string, input: Record<string, unknown>) => unknown
+type Decision = "allow" | "deny" | "require-approval"
+interface Operation { effect: "read" | "write", id: string, request: () => unknown }
 
-function base64Url(value: string): string {
-  return Buffer.from(value, "utf8").toString("base64url")
+function operation(id: string, effect: "read" | "write"): Operation {
+  return { effect, id, request: () => ({}) }
 }
 
-function fakeConnections(handler: Handler) {
-  const calls: Call[] = []
-  const uses: Array<{ name: string, options: unknown }> = []
-  const method = (name: string) => vi.fn(async (input: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
-    calls.push({ input, method: name, ...(options?.signal ? { signal: options.signal } : {}) })
-    return await handler(name, input)
-  })
-  const primitive = {
-    use: vi.fn((name: string, options: unknown) => {
-      uses.push({ name, options })
-      return {
-        gmail: {
-          users: {
-            drafts: { create: method("drafts.create") },
-            labels: { list: method("labels.list") },
-            messages: { attachments: { get: method("messages.attachments.get") }, get: method("messages.get"), list: method("messages.list"), modify: method("messages.modify") },
-          },
-        },
-      }
+function base64Url(text: string): string {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text))).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
+}
+
+function decodeBase64Url(value: string): string {
+  const normalized = value.replaceAll("-", "+").replaceAll("_", "/")
+  const binary = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="))
+  return new TextDecoder().decode(Uint8Array.from(binary, character => character.charCodeAt(0)))
+}
+
+function connections(options: { decisions?: Record<string, Decision>, record?: () => Promise<void>, responses?: Record<string, (input: Record<string, unknown>) => unknown> } = {}) {
+  const runtime = {
+    call: vi.fn(async (_name: string, op: Operation, input: Record<string, unknown>, _options: unknown) => {
+      const respond = options.responses?.[op.id]
+      if (!respond) throw new Error(`Unexpected Operation ${op.id}`)
+      return respond(input)
     }),
+    decide: vi.fn(async (_name: string, _actor: unknown, op: { effect: "read" | "write", id: string }) => options.decisions?.[op.id] ?? (op.effect === "read" ? "allow" : "deny")),
+    fetch: vi.fn(),
+    record: vi.fn(options.record ?? (async () => {})),
   }
-  return { calls, primitive, uses }
+  const primitive = {
+    operations: {
+      gmail: {
+        attachmentsGet: operation("gmail.messages.attachments.get", "read"),
+        draftsCreate: operation("gmail.drafts.create", "write"),
+        messagesGet: operation("gmail.messages.get", "read"),
+        messagesList: operation("gmail.messages.list", "read"),
+      },
+    },
+    runtime: () => runtime,
+  }
+  return { primitive, runtime }
 }
 
-function contextStore(values: Record<string, unknown>) {
-  return { get: (key: string) => values[key] }
+const event = { id: "event_1" }
+
+function context(primitive: unknown) {
+  return {
+    agentIdentity: { name: "labeller" },
+    capabilities: { connections: primitive },
+    context: new Map([[agentInvocationTraceIdContextKey, "trace_1"]]),
+    event,
+    run: { runId: "run_1" },
+  }
 }
 
-async function capabilityTools(capability: AgentCapabilityDefinition, handler: Handler, values: Record<string, unknown> = { "agent.invocation.traceId": "inv_1", "agent.name": "inbox" }) {
+async function tools(capability: AgentCapabilityDefinition, primitive: unknown, abortSignal?: AbortSignal): Promise<Record<string, AgentToolDefinition>> {
   if (typeof capability.tools !== "function") throw new Error("gmail capability must expose a tool resolver")
-  const connections = fakeConnections(handler)
-  const tools = await capability.tools({ capabilities: { connections: connections.primitive }, context: contextStore(values) } as never) as AgentToolSet
-  return { ...connections, tools }
+  // SAFETY: The Gmail tools read only the fields that the fake context sets.
+  return await capability.tools({ ...context(primitive), abortSignal } as never) as Record<string, AgentToolDefinition>
 }
 
-function connectionError(code: string, fields: Record<string, unknown> = {}): Error {
-  return Object.assign(new Error(code), { code, ...fields })
+async function run(tool: AgentToolDefinition | undefined, input: unknown): Promise<unknown> {
+  if (!tool?.execute) throw new Error("expected an executable tool")
+  // SAFETY: The Gmail tools do not read the execution options.
+  return await tool.execute(input as never, {} as never)
+}
+
+async function decide(tool: AgentToolDefinition | undefined, input?: unknown): Promise<unknown> {
+  if (typeof tool?.policy !== "function") throw new Error("expected a tool policy")
+  return await tool.policy({ input, name: tool.name })
+}
+
+const message = {
+  id: "m1",
+  labelIds: ["INBOX"],
+  payload: {
+    headers: [
+      { name: "From", value: "Alice <alice@example.com>" },
+      { name: "To", value: "bob@example.com" },
+      { name: "Subject", value: "Hello" },
+      { name: "Date", value: "Mon, 28 Sep 2026 10:00:00 +0000" },
+      { name: "X-Other", value: "ignored" },
+    ],
+    mimeType: "multipart/mixed",
+    parts: [
+      { body: { data: base64Url("Plain body ü") }, mimeType: "text/plain" },
+      { body: { data: base64Url("<p>HTML body</p>") }, mimeType: "text/html" },
+      { body: { attachmentId: "a1", size: 12 }, filename: "report.pdf", mimeType: "application/pdf" },
+    ],
+  },
+  snippet: "Plain body",
+  threadId: "t1",
 }
 
 describe("gmail capability", () => {
-  it("exposes the selected tools and requires the connections primitive", async () => {
-    const read = gmail({ connection: "google" })
+  it("declares both historical persisted Skill paths for safe migration", () => {
+    const capability = gmail()
+    expect((capability as unknown as Record<PropertyKey, unknown>)[workspaceRetirementPathsSymbol]).toEqual([
+      ".agents/skills/gmail/SKILL.md",
+      "skills/gmail/SKILL.md",
+    ])
+  })
+  it.each(["execution", "context"])("forwards the %s cancellation signal to every Gmail request", async (source) => {
+    const controller = new AbortController()
+    const { primitive, runtime } = connections({ responses: {
+      "gmail.messages.list": () => ({ messages: [{ id: "m1", threadId: "t1" }] }),
+      "gmail.messages.get": () => message,
+      "gmail.drafts.create": () => ({ id: "d1", message: { id: "m2", threadId: "t1" } }),
+    } })
+    const gmailTools = await tools(gmail({ operations: ["search", "read", "draft"] }), primitive, source === "context" ? controller.signal : undefined)
+    for (const [name, input] of [
+      ["gmail_search", {}],
+      ["gmail_read", { id: "m1" }],
+      ["gmail_draft", { body: "x", subject: "Hi", to: ["bob@example.com"] }],
+    ] as const) {
+      const tool = gmailTools[name]!
+      await tool.execute!(input as never, { abortSignal: source === "execution" ? controller.signal : undefined } as never)
+    }
+    expect(runtime.call).toHaveBeenCalledTimes(4)
+    for (const call of runtime.call.mock.calls) expect(call[3]).toMatchObject({ signal: controller.signal })
+  })
+
+  it("defines tools, requirements, and inspection from the enabled operations", async () => {
+    const { primitive } = connections()
+    const read = gmail()
     expect(read).toMatchObject({
       id: "gmail",
-      metadata: { connection: "google", tools: ["read", "search"] },
+      metadata: { connection: "google", operations: ["search", "read"] },
       mode: "read",
       requires: [{ primitive: "connections" }],
     })
-    expect(read.workspace).toBeUndefined()
-    expect(Object.keys((await capabilityTools(read, () => ({}))).tools).sort()).toEqual(["gmail_read", "gmail_search"])
+    expect(Object.keys(await tools(read, primitive)).sort()).toEqual(["gmail_read", "gmail_search"])
 
-    const all = gmail({ connection: "google", tools: ["draft", "labels", "modify", "read", "search"] })
-    expect(all).toMatchObject({ mode: "write" })
-    expect(Object.keys((await capabilityTools(all, () => ({}))).tools).sort())
-      .toEqual(["gmail_draft", "gmail_labels", "gmail_modify", "gmail_read", "gmail_search"])
-    expect(gmail({ connection: "google", tools: ["labels"] })).toMatchObject({ mode: "read" })
+    const draft = gmail({ connection: "work-google", operations: ["search", "draft"] })
+    expect(draft).toMatchObject({ metadata: { connection: "work-google", operations: ["search", "draft"] }, mode: "write" })
+    const draftTools = await tools(draft, primitive)
+    expect(Object.keys(draftTools).sort()).toEqual(["gmail_draft", "gmail_search"])
+    expect(draftTools.gmail_draft?.metadata).toEqual({ connection: { name: "work-google", operation: "gmail.drafts.create" } })
 
-    expect(() => gmail({} as never)).toThrow("requires a Connection name")
-    expect(() => gmail({ connection: "   " })).toThrow("requires a Connection name")
-    expect(() => gmail({ connection: "google", tools: [] })).toThrow("gmail({ tools })")
-    expect(() => gmail({ connection: "google", tools: ["send" as never] })).toThrow("gmail({ tools })")
-    await expect(Promise.resolve().then(() => (read.tools as (context: never) => unknown)({ capabilities: {} } as never)))
-      .rejects.toThrow("requires the connections primitive")
-  })
-
-  it("does not need a Workspace or provider Driver and lists its tools in inspection", () => {
-    const capability = gmail({ connection: "google", tools: ["search", "modify"] })
-    expect(() => validateAgentCapabilityComposition([capability], { driverKind: "model", hasWorkspace: false })).not.toThrow()
-    const inspected = createAgentInspectionMetadata(defineAgent({ capabilities: [capability], driver: "codex", workspace: { mode: "read" } }))
+    // Model Drivers can use Gmail because the Connection runs on the server.
+    expect(() => validateAgentCapabilityComposition([draft], { driverKind: "model", hasWorkspace: false })).not.toThrow()
+    const inspected = createAgentInspectionMetadata(defineAgent({ capabilities: [draft], driver: "codex", workspace: { mode: "write" } }))
     expect(inspected.tools).toContainEqual(expect.objectContaining({
-      commands: ["gmail_modify", "gmail_search"],
-      description: "Use Gmail through the google Connection.",
+      commands: ["gmail_search", "gmail_draft"],
+      description: "Search, read, or draft Gmail messages through the \"work-google\" Connection.",
       name: "gmail",
     }))
   })
 
-  it("calls the Connection as the Agent actor with the invocation id and abort signal", async () => {
-    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["labels"] }), () => ({ labels: [{ id: "Label_1", name: "Receipts", type: "user" }] }))
-    const controller = new AbortController()
-    await expect(runtime.tools.gmail_labels!.execute?.({}, { abortSignal: controller.signal } as never)).resolves.toEqual({
-      labels: [{ id: "Label_1", name: "Receipts", type: "user" }],
-      status: "ok",
+  it("rejects invalid options and a missing primitive", async () => {
+    expect(() => gmail({ operations: ["send" as never] })).toThrow("gmail() requires")
+    expect(() => gmail({ operations: [] })).toThrow("gmail() requires")
+    expect(() => gmail({ connection: " " })).toThrow("gmail() requires")
+    await expect(tools(gmail(), undefined)).rejects.toThrow("gmail() uses Connection \"google\", so it requires Connections")
+    await expect(tools(gmail(), { runtime: "nope" })).rejects.toThrow("requires the connections primitive to expose runtime()")
+    await expect(tools(gmail(), { runtime: () => ({}) })).rejects.toThrow("expose the Gmail Operations")
+  })
+
+  it("searches through the Connection with the Agent actor and invocation trace", async () => {
+    const { primitive, runtime } = connections({
+      responses: {
+        "gmail.messages.get": input => ({ ...message, id: String(input.id) }),
+        "gmail.messages.list": () => ({ messages: [{ id: "m1", threadId: "t1" }], nextPageToken: "next" }),
+      },
     })
-    expect(runtime.uses).toEqual([{ name: "google", options: { actor: "agent:inbox", invocationId: "inv_1" } }])
-    expect(runtime.calls).toEqual([{ input: { userId: "me" }, method: "labels.list", signal: controller.signal }])
-  })
-
-  it("preserves the definition name when runAgent has no host identity", async () => {
-    const connections = fakeConnections(() => ({ labels: [] }))
-    const agent = defineAgent({
-      name: "inbox",
-      capabilities: [gmail({ connection: "google", tools: ["labels"] })],
-      driver: { run: async context => await context.tools?.gmail_labels?.execute?.({}) },
-    })
-    const result = await runAgent(agent, { capabilities: { connections: connections.primitive }, memo: (_key, create) => create(), runtime: "unknown", waitUntil: () => {} }, {})
-    expect(result).toMatchObject({ status: "ok" })
-    expect(connections.uses).toEqual([expect.objectContaining({ options: expect.objectContaining({ actor: "agent:inbox" }) })])
-  })
-
-  it("retrieves external text parts and preserves the abort signal", async () => {
-    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["read"] }), (method) => method === "messages.get"
-      ? { id: "m1", payload: { mimeType: "text/plain", body: { attachmentId: "a1" } } }
-      : { data: base64Url("External body") })
-    const controller = new AbortController()
-    await expect(runtime.tools.gmail_read!.execute?.({ id: "m1" }, { abortSignal: controller.signal } as never)).resolves.toMatchObject({ message: { body: "External body" } })
-    expect(runtime.calls.at(-1)).toEqual({ method: "messages.attachments.get", input: { id: "a1", messageId: "m1", userId: "me" }, signal: controller.signal })
-  })
-
-  it.each([
-    { filename: "notes.txt" },
-    { headers: [{ name: "Content-Disposition", value: "attachment; filename=notes.txt" }] },
-  ])("selects the HTML body instead of a text attachment, %j", async (attachment) => {
-    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["read"] }), () => ({
-      id: "m1",
-      payload: { mimeType: "multipart/mixed", parts: [
-        { ...attachment, mimeType: "text/plain", body: { attachmentId: "a1", data: base64Url("Attached file") } },
-        { mimeType: "text/html", body: { data: base64Url("<p>Email body</p>") } },
-      ] },
-    }))
-    await expect(runtime.tools.gmail_read!.execute?.({ id: "m1" })).resolves.toMatchObject({ message: { body: "Email body" } })
-    expect(runtime.calls).toHaveLength(1)
-  })
-
-  it.each(["team/google", "équipe/google", "a b"])("uses the discovered Connection name %s", async (name) => {
-    const runtime = await capabilityTools(gmail({ connection: name, tools: ["labels"] }), () => ({ labels: [] }))
-    await runtime.tools.gmail_labels!.execute?.({})
-    expect(runtime.uses[0]?.name).toBe(name)
-  })
-
-  it.each(["text/plain", "text/html"])("decodes the declared MIME charset for %s", async (mimeType) => {
-    const body = mimeType === "text/html" ? "<p>Résumé</p>" : "Résumé"
-    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["read"] }), () => ({
-      id: "m1", payload: { mimeType, headers: [{ name: "Content-Type", value: `${mimeType}; charset=\"iso-8859-1\"` }], body: { data: Buffer.from(body, "latin1").toString("base64url") } },
-    }))
-    await expect(runtime.tools.gmail_read!.execute?.({ id: "m1" })).resolves.toMatchObject({ message: { body: "Résumé" } })
-  })
-
-  it("falls back to UTF-8 when the MIME charset is unsupported", async () => {
-    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["read"] }), () => ({
-      id: "m1", payload: { mimeType: "text/plain", headers: [{ name: "Content-Type", value: "text/plain; charset=not-a-real-charset" }], body: { data: base64Url("Résumé") } },
-    }))
-    await expect(runtime.tools.gmail_read!.execute?.({ id: "m1" })).resolves.toMatchObject({ message: { body: "Résumé" } })
-  })
-
-  it("folds long Unicode draft subjects into valid encoded words", async () => {
-    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["draft"] }), () => ({ id: "d1" }))
-    const subject = "Résumé 🚀".repeat(20)
-    await runtime.tools.gmail_draft!.execute?.({ body: "body", subject, to: ["a@example.com"] })
-    const message = (runtime.calls[0]!.input.requestBody as { message: { raw: string } }).message
-    const mime = Buffer.from(message.raw, "base64url").toString("utf8")
-    const header = mime.match(/Subject: ([\s\S]*?)\r\nMIME-Version:/)![1]!
-    const words = header.split(/\r\n /)
-    expect(words.length).toBeGreaterThan(1)
-    expect(words.every(word => word.length <= 75)).toBe(true)
-    expect(words.map(word => Buffer.from(word.slice(10, -2), "base64").toString("utf8")).join("")).toBe(subject)
-  })
-
-  it("searches with message metadata", async () => {
-    const runtime = await capabilityTools(gmail({ connection: "google" }), (method, input) => method === "messages.list"
-      ? { messages: [{ id: "m1" }, { id: "m2" }], nextPageToken: "next" }
-      : {
-          id: input.id,
-          labelIds: ["INBOX"],
-          payload: { headers: [{ name: "From", value: "a@example.com" }, { name: "subject", value: `Hello ${String(input.id)}` }] },
-          snippet: "Hi",
-          threadId: "t1",
-        })
-
-    const result = await runtime.tools.gmail_search!.execute?.({ max: 2, query: "is:unread" })
+    const result = await run((await tools(gmail(), primitive)).gmail_search, { max: 5, query: " from:alice " })
     expect(result).toEqual({
-      messages: [
-        { date: undefined, from: "a@example.com", id: "m1", labelIds: ["INBOX"], snippet: "Hi", subject: "Hello m1", threadId: "t1", to: undefined },
-        { date: undefined, from: "a@example.com", id: "m2", labelIds: ["INBOX"], snippet: "Hi", subject: "Hello m2", threadId: "t1", to: undefined },
-      ],
+      messages: [{
+        date: "Mon, 28 Sep 2026 10:00:00 +0000",
+        from: "Alice <alice@example.com>",
+        id: "m1",
+        labelIds: ["INBOX"],
+        snippet: "Plain body",
+        subject: "Hello",
+        threadId: "t1",
+        to: "bob@example.com",
+      }],
       nextPageToken: "next",
-      status: "ok",
+      query: "from:alice",
     })
-    expect(runtime.calls[0]).toEqual({ input: { maxResults: 2, q: "is:unread", userId: "me" }, method: "messages.list" })
-    expect(runtime.calls[1]).toEqual({ input: { format: "metadata", id: "m1", metadataHeaders: ["Date", "From", "Subject", "To"], userId: "me" }, method: "messages.get" })
-
-    await runtime.tools.gmail_search!.execute?.({})
-    expect(runtime.calls.at(-3)).toMatchObject({ input: { maxResults: 10, q: "in:inbox" } })
-    await expect(runtime.tools.gmail_search!.execute?.({ max: 51 })).rejects.toThrow("max must be an integer from 1 to 50")
+    expect(runtime.call.mock.calls.map(([name, op, input]) => [name, op.id, input])).toEqual([
+      ["google", "gmail.messages.list", { maxResults: 5, q: "from:alice" }],
+      ["google", "gmail.messages.get", { format: "metadata", id: "m1", metadataHeaders: ["From", "To", "Cc", "Subject", "Date"] }],
+    ])
+    expect(runtime.call.mock.calls[0]?.[3]).toEqual({
+      actor: { id: "labeller", kind: "agent" },
+      audit: "all",
+      event,
+      trace: { invocationId: "trace_1", runId: "run_1", tool: "gmail_search" },
+    })
+    await expect(run((await tools(gmail(), primitive)).gmail_search, { max: 51 })).rejects.toThrow("from 1 to 50")
   })
 
-  it("reads the plain-text body, falls back to HTML, and truncates", async () => {
-    const plain = { payload: { mimeType: "multipart/alternative", parts: [
-      { body: { data: base64Url("<p>HTML</p>") }, mimeType: "text/html" },
-      { body: { data: base64Url("Olá, plain body") }, mimeType: "text/plain" },
-    ] } }
-    const html = { payload: { body: { data: base64Url("<style>x{}</style><p>Line &amp; one</p><br>two") }, mimeType: "text/html" } }
-    const runtime = await capabilityTools(gmail({ connection: "google" }), (_method, input) => ({ id: input.id, ...(input.id === "html" ? html : plain) }))
-
-    await expect(runtime.tools.gmail_read!.execute?.({ id: "plain" })).resolves.toMatchObject({
-      message: { body: "Olá, plain body", id: "plain", truncated: false },
-      status: "ok",
+  it("reads the text body, falls back to HTML, and truncates", async () => {
+    const html = { ...message, payload: { ...message.payload, parts: [message.payload.parts[1]!] } }
+    const { primitive } = connections({
+      responses: { "gmail.messages.get": input => input.id === "html" ? html : message },
     })
-    expect(runtime.calls[0]).toEqual({ input: { format: "full", id: "plain", userId: "me" }, method: "messages.get" })
-    await expect(runtime.tools.gmail_read!.execute?.({ id: "html" })).resolves.toMatchObject({ message: { body: "Line & one\n\ntwo" } })
-    await expect(runtime.tools.gmail_read!.execute?.({ id: "plain", maxChars: 3 })).resolves.toMatchObject({ message: { body: "Olá", truncated: true } })
-    await expect(runtime.tools.gmail_read!.execute?.({ id: "../x" })).rejects.toThrow("must be a Gmail message id")
+    const readTools = await tools(gmail(), primitive)
+    expect(await run(readTools.gmail_read, { id: "m1" })).toMatchObject({
+      attachments: [{ filename: "report.pdf", mimeType: "application/pdf", size: 12 }],
+      subject: "Hello",
+      text: "Plain body ü",
+      truncated: false,
+    })
+    expect(await run(readTools.gmail_read, { id: "html" })).toMatchObject({ text: "HTML body" })
+    const long = { ...message, payload: { mimeType: "text/plain", body: { data: base64Url("x".repeat(600)) } } }
+    const { primitive: longPrimitive } = connections({ responses: { "gmail.messages.get": () => long } })
+    expect(await run((await tools(gmail(), longPrimitive)).gmail_read, { id: "m1", maxChars: 500 })).toMatchObject({ text: "x".repeat(500), truncated: true })
+    await expect(run(readTools.gmail_read, { id: "a\nb" })).rejects.toThrow("one line")
   })
 
-  it("modifies labels with validated ids", async () => {
-    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["modify"] }), () => ({ id: "m1", labelIds: ["Label_1"] }))
-    await expect(runtime.tools.gmail_modify!.execute?.({ addLabelIds: ["Label_1"], id: "m1", removeLabelIds: ["INBOX"] })).resolves.toEqual({
-      message: { id: "m1", labelIds: ["Label_1"] },
-      status: "ok",
+  it("fetches body parts that Gmail stores as attachments", async () => {
+    const large = { ...message, payload: { mimeType: "multipart/alternative", parts: [{ body: { attachmentId: "body-1", size: 90_000 }, mimeType: "text/plain" }] } }
+    const { primitive, runtime } = connections({
+      responses: {
+        "gmail.messages.attachments.get": () => ({ data: base64Url("Large plain body"), size: 16 }),
+        "gmail.messages.get": () => large,
+      },
     })
-    expect(runtime.calls).toEqual([{ input: { id: "m1", requestBody: { addLabelIds: ["Label_1"], removeLabelIds: ["INBOX"] }, userId: "me" }, method: "messages.modify" }])
-    await expect(runtime.tools.gmail_modify!.execute?.({ id: "m1" })).rejects.toThrow("requires addLabelIds or removeLabelIds")
-    await expect(runtime.tools.gmail_modify!.execute?.({ addLabelIds: ["a b"], id: "m1" })).rejects.toThrow("Gmail label ids")
+    const readTools = await tools(gmail(), primitive)
+    expect(await run(readTools.gmail_read, { id: "m1" })).toMatchObject({ attachments: [], text: "Large plain body" })
+    expect(runtime.call.mock.calls.map(([, op, input]) => [op.id, input])).toEqual([
+      ["gmail.messages.get", { format: "full", id: "m1" }],
+      ["gmail.messages.attachments.get", { id: "body-1", messageId: "m1" }],
+    ])
+    await decide(readTools.gmail_read)
+    expect(runtime.decide.mock.calls.map(([, , op]) => op.id)).toEqual(["gmail.messages.get", "gmail.messages.attachments.get"])
   })
 
-  it("creates drafts as RFC 2822 messages and rejects header injection", async () => {
-    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["draft"] }), () => ({ id: "d1", message: { id: "m1", threadId: "t1" } }))
-    await expect(runtime.tools.gmail_draft!.execute?.({
-      bcc: ["hidden@example.com"],
-      body: "Hello\nÜber",
-      subject: "Café",
-      to: ["person@example.com"],
-    })).resolves.toEqual({ draft: { id: "d1", messageId: "m1", threadId: "t1" }, status: "ok" })
+  it("decodes text with the charset of its MIME part", async () => {
+    const latin1 = btoa(String.fromCharCode(0x47, 0x72, 0xFC, 0xDF, 0x65)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
+    const part = (charset: string) => ({ body: { data: latin1 }, headers: [{ name: "Content-Type", value: `text/plain; charset="${charset}"` }], mimeType: "text/plain" })
+    const { primitive } = connections({
+      responses: { "gmail.messages.get": input => ({ ...message, payload: input.id === "unknown" ? part("x-unknown") : part("ISO-8859-1") }) },
+    })
+    const readTools = await tools(gmail(), primitive)
+    expect(await run(readTools.gmail_read, { id: "m1" })).toMatchObject({ text: "Grüße" })
+    // An unknown charset falls back to UTF-8 instead of failing.
+    expect(await run(readTools.gmail_read, { id: "unknown" })).toMatchObject({ text: expect.any(String) })
+  })
 
-    const raw = (runtime.calls[0]!.input.requestBody as { message: { raw: string } }).message.raw
-    const message = Buffer.from(raw, "base64url").toString("utf8")
-    const [headers, body] = message.split("\r\n\r\n")
-    expect(headers!.split("\r\n")).toEqual([
-      "To: person@example.com",
-      "Bcc: hidden@example.com",
-      `Subject: =?UTF-8?B?${Buffer.from("Café").toString("base64")}?=`,
+  it("reads MIME charset parameters without matching text inside quoted values", async () => {
+    const encoded = (text: string) => btoa(text).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
+    const { primitive } = connections({ responses: { "gmail.messages.get": input => ({
+      ...message,
+      payload: {
+        mimeType: "text/plain",
+        body: { data: input.id === "quoted" ? encoded(String.fromCharCode(0xC3, 0xBC)) : encoded(String.fromCharCode(0xFC)) },
+        headers: [{ name: "Content-Type", value: input.id === "quoted"
+          ? 'text/plain; name="notes; charset=ISO-8859-1"; charset=UTF-8'
+          : 'text/plain; charset = "ISO-8859-1"' }],
+      },
+    }) } })
+    const readTools = await tools(gmail(), primitive)
+    expect(await run(readTools.gmail_read, { id: "quoted" })).toMatchObject({ text: "ü" })
+    expect(await run(readTools.gmail_read, { id: "spaces" })).toMatchObject({ text: "ü" })
+  })
+
+  it("rejects an unexpected Gmail response", async () => {
+    const { primitive } = connections({ responses: { "gmail.messages.get": () => ({ id: 1 }) } })
+    await expect(run((await tools(gmail(), primitive)).gmail_read, { id: "m1" })).rejects.toThrow("unexpected Gmail response")
+  })
+
+  it("creates an unsent draft as an RFC 2822 message", async () => {
+    const { primitive, runtime } = connections({
+      responses: { "gmail.drafts.create": () => ({ id: "d1", message: { id: "m2", threadId: "t1" } }) },
+    })
+    const draftTools = await tools(gmail({ operations: ["draft"] }), primitive)
+    const body = `Hallo Bob ✓\n${"y".repeat(100)}`
+    expect(await run(draftTools.gmail_draft, {
+      body,
+      cc: ["carol@example.com"],
+      subject: "Grüße",
+      to: ["bob@example.com"],
+    })).toEqual({ draftId: "d1", messageId: "m2", sent: false, threadId: "t1" })
+
+    const input = runtime.call.mock.calls[0]?.[2]
+    expect(input?.threadId).toBeUndefined()
+    const raw = decodeBase64Url(String(input?.raw))
+    const [head = "", encoded = ""] = raw.split("\r\n\r\n")
+    expect(head.split("\r\n")).toEqual([
+      "To: bob@example.com",
+      "Cc: carol@example.com",
+      `Subject: =?UTF-8?B?${btoa(String.fromCharCode(...new TextEncoder().encode("Grüße")))}?=`,
       "MIME-Version: 1.0",
       "Content-Type: text/plain; charset=UTF-8",
       "Content-Transfer-Encoding: base64",
     ])
-    expect(Buffer.from(body!.replace(/\r\n/g, ""), "base64").toString("utf8")).toBe("Hello\nÜber")
+    expect(encoded.split("\r\n").every(line => line.length <= 76)).toBe(true)
+    expect(new TextDecoder().decode(Uint8Array.from(atob(encoded.replaceAll("\r\n", "")), character => character.charCodeAt(0)))).toBe(body)
 
-    await expect(runtime.tools.gmail_draft!.execute?.({ body: "x", subject: "Hi\r\nBcc: evil@example.com", to: ["a@example.com"] }))
-      .rejects.toThrow("subject must be one line")
-    await expect(runtime.tools.gmail_draft!.execute?.({ body: "x", subject: "Hi", to: ["a@example.com, evil@example.com"] }))
-      .rejects.toThrow("valid email address")
-    await expect(runtime.tools.gmail_draft!.execute?.({ body: "x", subject: "Hi", to: [] }))
-      .rejects.toThrow("at least one email address")
-    expect(runtime.calls).toHaveLength(1)
+    await expect(run(draftTools.gmail_draft, { body: "x", subject: "Hi\nBcc: evil@example.com", to: ["bob@example.com"] })).rejects.toThrow("one line")
+    await expect(run(draftTools.gmail_draft, { body: "x", subject: "Hi", to: ["bob@example.com\r\nBcc: evil@example.com"] })).rejects.toThrow("valid email")
+    await expect(run(draftTools.gmail_draft, { body: "x", subject: "Hi", to: [] })).rejects.toThrow("at least one email")
+    await expect(run(draftTools.gmail_draft, { body: "x", to: ["bob@example.com"] })).rejects.toThrow("subject must be one line")
+    expect(runtime.call).toHaveBeenCalledTimes(1)
   })
 
-  it("returns Connection failures as tool results", async () => {
-    const failures: Record<string, Error> = {
-      m1: connectionError("CONNECTION_APPROVAL_REQUIRED", { requestId: "approval_1" }),
-      m2: connectionError("CONNECTION_REAUTH_REQUIRED"),
-      m3: connectionError("CONNECTION_DENIED"),
-      m4: connectionError("CONNECTION_PROVIDER", { status: 404 }),
-      m5: new Error("network down"),
+  it("creates a reply draft with the thread, reply headers, and original subject", async () => {
+    const original = {
+      id: "m1",
+      payload: { headers: [
+        { name: "Subject", value: "Re: Quarterly report" },
+        { name: "Message-ID", value: "<b@mail.example.com>" },
+        { name: "References", value: "<a@mail.example.com>" },
+      ] },
+      threadId: "t9",
     }
-    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["modify"] }), (_method, input) => {
-      throw failures[input.id as string]
+    const { primitive, runtime } = connections({
+      responses: {
+        "gmail.drafts.create": () => ({ id: "d2", message: { id: "m3", threadId: "t9" } }),
+        "gmail.messages.get": () => original,
+      },
     })
-    const modify = (id: string) => runtime.tools.gmail_modify!.execute?.({ addLabelIds: ["Label_1"], id })
+    const draftTools = await tools(gmail({ operations: ["draft"] }), primitive)
+    expect(await run(draftTools.gmail_draft, { body: "Thanks", replyTo: "m1", to: ["alice@example.com"] }))
+      .toEqual({ draftId: "d2", messageId: "m3", sent: false, threadId: "t9" })
 
-    await expect(modify("m1")).resolves.toMatchObject({ approvalId: "approval_1", message: expect.stringContaining("vitehub connections approvals approve approval_1"), status: "approval_required" })
-    await expect(modify("m2")).resolves.toMatchObject({ connection: "google", message: expect.stringContaining("vitehub connections connect 'google'"), status: "reauth_required" })
-    await expect(modify("m3")).resolves.toMatchObject({ status: "denied" })
-    await expect(modify("m4")).resolves.toMatchObject({ httpStatus: 404, status: "provider_error" })
-    await expect(modify("m5")).rejects.toThrow("network down")
+    expect(runtime.call.mock.calls[0]?.[2]).toEqual({ format: "metadata", id: "m1", metadataHeaders: ["Message-ID", "References", "Subject"] })
+    const draft = runtime.call.mock.calls[1]?.[2]
+    expect(draft?.threadId).toBe("t9")
+    const head = decodeBase64Url(String(draft?.raw)).split("\r\n\r\n")[0]!.split("\r\n")
+    expect(head).toContain("Subject: Re: Quarterly report")
+    expect(head).toContain("In-Reply-To: <b@mail.example.com>")
+    expect(head).toContain("References: <a@mail.example.com> <b@mail.example.com>")
+
+    await expect(run(draftTools.gmail_draft, { body: "x", replyTo: "m1", subject: "Other topic", to: ["alice@example.com"] })).rejects.toThrow("must match the original subject")
+    await expect(run(draftTools.gmail_draft, { body: "x", replyTo: "m1", subject: "RE: Quarterly report", to: ["alice@example.com"] })).resolves.toMatchObject({ draftId: "d2" })
   })
 
-  it.each(["team/a b", "team/a'b", "team/$(printf injected)"])("quotes reauthorization for %s as one shell argument", async (connection) => {
-    const runtime = await capabilityTools(gmail({ connection, tools: ["labels"] }), () => { throw connectionError("CONNECTION_REAUTH_REQUIRED") })
-    const result = await runtime.tools.gmail_labels!.execute?.({})
-    const parsed = v.parse(v.object({ message: v.string(), status: v.literal("reauth_required") }), result)
-    const argument = parsed.message.match(/`vitehub connections connect (.*?)`/)?.[1]
-    expect(argument).toBeDefined()
-    const output = execFileSync("bash", ["-c", `set -- ${argument}; printf '%s\\n' "$#" "$1"`], { encoding: "utf8" })
-    expect(output).toBe(`1\n${connection}\n`)
+  it("rejects a reply when the original message has no Message-ID", async () => {
+    const { primitive, runtime } = connections({
+      responses: { "gmail.messages.get": () => ({ id: "m1", payload: { headers: [{ name: "Subject", value: "Hi" }] }, threadId: "t1" }) },
+    })
+    const draftTools = await tools(gmail({ operations: ["draft"] }), primitive)
+    await expect(run(draftTools.gmail_draft, { body: "x", replyTo: "m1", to: ["alice@example.com"] })).rejects.toThrow("no valid Message-ID")
+    expect(runtime.call).toHaveBeenCalledTimes(1)
   })
 
-  it("uses a generic Agent actor when the Agent name is unknown", async () => {
-    const runtime = await capabilityTools(gmail({ connection: "google", tools: ["labels"] }), () => ({}), {})
-    await runtime.tools.gmail_labels!.execute?.({})
-    expect(runtime.uses).toEqual([{ name: "google", options: { actor: "agent:agent" } }])
+  it("records denied and approval-required outcomes before the tool runs", async () => {
+    const denied = connections()
+    const draftTools = await tools(gmail({ operations: ["search", "draft"] }), denied.primitive)
+    expect(await decide(draftTools.gmail_draft)).toBe("deny")
+    expect(denied.runtime.record).toHaveBeenCalledWith({
+      action: "call",
+      actor: { id: "labeller", kind: "agent" },
+      connection: "google",
+      effect: "write",
+      invocationId: "trace_1",
+      operation: "gmail.drafts.create",
+      outcome: "denied",
+      runId: "run_1",
+      tool: "gmail_draft",
+    }, event)
+    expect(await decide(draftTools.gmail_search)).toBe("allow")
+    expect(denied.runtime.decide.mock.calls.map(([, , op]) => op.id)).toEqual(["gmail.drafts.create", "gmail.messages.list", "gmail.messages.get"])
+
+    const approval = connections({ decisions: { "gmail.drafts.create": "require-approval" } })
+    expect(await decide((await tools(gmail({ operations: ["draft"] }), approval.primitive)).gmail_draft)).toBe("require-approval")
+    expect(approval.runtime.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "gmail.drafts.create", outcome: "approval-required" }), event)
+
+    const readDenied = connections({ decisions: { "gmail.messages.get": "deny" } })
+    expect(await decide((await tools(gmail(), readDenied.primitive)).gmail_search)).toBe("deny")
+    expect(readDenied.runtime.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "gmail.messages.get", outcome: "denied", tool: "gmail_search" }), event)
+  })
+
+  it("checks the original message read before a reply draft", async () => {
+    const { primitive, runtime } = connections({ decisions: { "gmail.drafts.create": "allow", "gmail.messages.get": "deny" } })
+    const draftTool = (await tools(gmail({ operations: ["draft"] }), primitive)).gmail_draft
+    expect(await decide(draftTool, { body: "x", subject: "Hi", to: ["a@example.com"] })).toBe("allow")
+    expect(await decide(draftTool, { body: "x", replyTo: "m1", to: ["a@example.com"] })).toBe("deny")
+    expect(runtime.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "gmail.messages.get", outcome: "denied", tool: "gmail_draft" }), event)
+  })
+
+  it("passes approval only to the run of the approved input, once", async () => {
+    const { primitive, runtime } = connections({
+      decisions: { "gmail.drafts.create": "require-approval" },
+      responses: { "gmail.drafts.create": () => ({ id: "d1", message: { id: "m2", threadId: "t1" } }) },
+    })
+    const draftTools = await tools(gmail({ operations: ["search", "draft"] }), primitive)
+    const input = { body: "x", subject: "Hi", to: ["a@example.com"] }
+    // The tool flow asks for approval, then runs the approved tool with the same input object.
+    expect(await decide(draftTools.gmail_draft, input)).toBe("require-approval")
+    await run(draftTools.gmail_draft, input)
+    expect(runtime.call.mock.calls[0]?.[3]).toMatchObject({ approved: true, trace: { tool: "gmail_draft" } })
+
+    // Another run, even with equal content or the same object again, is not approved.
+    await run(draftTools.gmail_draft, { ...input })
+    await run(draftTools.gmail_draft, input)
+    expect(runtime.call.mock.calls.slice(1).map(([, , , options]) => options)).toEqual([
+      expect.not.objectContaining({ approved: true }),
+      expect.not.objectContaining({ approved: true }),
+    ])
+  })
+
+  it("keeps a denial when the activity store fails", async () => {
+    const { primitive } = connections({ record: async () => { throw new Error("database unavailable") } })
+    expect(await decide((await tools(gmail({ operations: ["draft"] }), primitive)).gmail_draft)).toBe("deny")
   })
 })

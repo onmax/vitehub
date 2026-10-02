@@ -36,8 +36,19 @@ export async function createCapabilityReferences(): Promise<CapabilityReferences
   const dbPrimitive = { exec() {}, query() {}, schema: {} };
   const kvPrimitive = { del() {}, get() {}, keys() {}, set() {} };
   const emailPrimitive = { send() {} };
-  const connectionsPrimitive = { use() {} };
   const sandboxPrimitive = { exec() {} };
+  const gmailOperation = (id: string, effect: "read" | "write") => ({ effect, id, request() {} });
+  const connectionsPrimitive = {
+    operations: {
+      gmail: {
+        attachmentsGet: gmailOperation("gmail.messages.attachments.get", "read"),
+        draftsCreate: gmailOperation("gmail.drafts.create", "write"),
+        messagesGet: gmailOperation("gmail.messages.get", "read"),
+        messagesList: gmailOperation("gmail.messages.list", "read"),
+      },
+    },
+    runtime() {},
+  };
   const emailOptions = {
     from: "support@example.com",
     policy: "require-approval" as const,
@@ -60,12 +71,12 @@ export async function createCapabilityReferences(): Promise<CapabilityReferences
         await resolveReference(email(emailOptions), { capabilities: { email: emailPrimitive } }),
       ],
       [
-        "gmail.default",
-        await resolveReference(gmail({ connection: "google" }), { capabilities: { connections: connectionsPrimitive } }),
+        "gmail.read",
+        await resolveReference(gmail(), { capabilities: { connections: connectionsPrimitive } }),
       ],
       [
-        "gmail.all",
-        await resolveReference(gmail({ connection: "google", tools: ["search", "read", "labels", "modify", "draft"] }), {
+        "gmail.draft",
+        await resolveReference(gmail({ operations: ["search", "read", "draft"] }), {
           capabilities: { connections: connectionsPrimitive },
         }),
       ],

@@ -1988,8 +1988,17 @@ describe("ViteHub Nuxt integration", () => {
     expect(result.outputFiles?.[0]?.text).toContain("auth resolver reached")
   })
 
+  it.each([
+    { connections: true, console: undefined },
+    { connections: { management: true }, console: true },
+  ])("rejects Connections in production Nuxt configuration %#", async ({ connections, console }) => {
+    const { nuxt } = createNuxt()
+    await expect(viteHubNuxtModule({ connections, console, preset: "node" }, nuxt)).rejects.toThrow("connections is not supported by the Nuxt module yet")
+    expect(mocks.vitehub).not.toHaveBeenCalled()
+  })
+
   it("preserves the Nitro mount independently of the Vite asset base", async () => {
-    const { nuxt, runNitroConfigHook } = createNuxt(false)
+    const { nuxt, runNitroConfigHook } = createNuxt(true)
     Object.assign(nuxt.options, { app: { baseURL: "/portal/" } })
     Object.assign(nuxt.options.vite, { base: "https://cdn.example/assets/" })
     await viteHubNuxtModule({ connections: { management: true }, database: true, console: { exposure: "host-managed" }, preset: "node" }, nuxt)
@@ -2005,7 +2014,7 @@ describe("ViteHub Nuxt integration", () => {
       { route: "/api/_vitehub/console/**", authorize: authorizeConsole },
     ] } })`)
     try {
-      const { nuxt, runNitroConfigHook } = createNuxt(false, [{ name: "@vite-hub/auth/vite" }])
+      const { nuxt, runNitroConfigHook } = createNuxt(true, [{ name: "@vite-hub/auth/vite" }])
       Object.assign(nuxt.options.vite, { auth: true })
       await viteHubNuxtModule({ connections: true, database: true, console: { access: "auth" }, preset: "node" }, nuxt)
       const config: { alias?: Record<string, string> } = {}
@@ -2812,14 +2821,14 @@ describe("ViteHub Nuxt integration", () => {
       { name: "@vite-hub/connections/vite", api: { prepareTypes: prepareConnections } },
       { name: "vite-hub/types", api: { prepareTypes: vi.fn(async () => { steps.push("types") }) } },
     ])
-    const { nuxt } = createNuxt()
+    const { nuxt } = createNuxt(true)
     await viteHubNuxtModule({ database: true, connections: true, preset: "node" }, nuxt)
     expect(prepareConnections).toHaveBeenCalledWith({ projectRoot: nuxtRoot, serverDirs: [`${nuxtRoot}/custom-server`] })
     expect(steps).toEqual(["connections", "types"])
   })
 
   it("includes default Connections declarations from a separate effective Vite root", async () => {
-    const { nuxt } = createNuxt()
+    const { nuxt } = createNuxt(true)
     Object.assign(nuxt.options.vite, { root: "frontend" })
     await viteHubNuxtModule({ database: true, connections: true, preset: "node" }, nuxt)
     // SAFETY: Module setup initializes both Nuxt TypeScript include lists before this assertion.
@@ -2831,7 +2840,7 @@ describe("ViteHub Nuxt integration", () => {
   it("prepares Connection types with the effective relative Vite root", async () => {
     const prepareTypes = vi.fn(async () => {})
     mocks.vitehub.mockReturnValue([{ name: "@vite-hub/connections/vite", api: { prepareTypes } }])
-    const { nuxt } = createNuxt()
+    const { nuxt } = createNuxt(true)
     Object.assign(nuxt.options.vite, { root: "app" })
     await viteHubNuxtModule({ database: true, connections: { projectRoot: "packages/api" }, preset: "node" }, nuxt)
     expect(prepareTypes).toHaveBeenCalledWith({ projectRoot: `${nuxtRoot}/app`, serverDirs: [`${nuxtRoot}/custom-server`] })

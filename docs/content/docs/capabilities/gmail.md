@@ -1,114 +1,141 @@
 ---
 title: Gmail
-description: Let an Agent search, read, label, and draft Gmail messages through a ViteHub Connection.
+description: Let an Agent search and read Gmail and create unsent drafts through a Google Connection.
 navigation.title: Gmail
 navigation.order: 96
 navigation.group: External context
 icon: i-lucide-mail-search
 ---
 
-`gmail()` gives an Agent structured Gmail tools. The tools call the Gmail API through a [Connection](/docs/server-primitives/connections). The Connection holds the OAuth grant, applies its access rules, and records each call. The Agent never sees the token.
+`gmail()` gives an Agent structured tools to search Gmail, read messages, and create unsent drafts. The tools call the Gmail REST API through a Google [Connection](/docs/server-primitives/connections). The Connection holds the OAuth grant, checks access for each call, and records activity. No tool can send a message.
+
+The Capability uses only `fetch`, so it runs on Node and Workers. It does not need a Workspace, a CLI, or a Skill.
 
 Use [`email()`](/docs/capabilities/email) for application-owned transactional email through the Email primitive. Use `gmail()` for an operator-owned Gmail account and structured Gmail tools. To run an Agent on each new message and label it, use the [Gmail Channel](/docs/agents/gmail).
 
 ## Configure the Agent
 
-Enable Connections and define a Google Connection. See [Connections](/docs/server-primitives/connections) for the OAuth client, the encryption key, and how to connect the account.
+::steps{level="3"}
+
+### Define the Google Connection
+
+Enable [Connections](/docs/server-primitives/connections#quick-start) and define a Connection with the `google()` preset. `gmail.readonly` covers search and read. `gmail.compose` covers drafts.
 
 ```ts [server/connections/google.ts]
+import { useServerEnv } from '#vitehub/env/server'
 import { defineConnection } from 'vite-hub/connections'
 import { google } from 'vite-hub/connections/google'
 
 export default defineConnection({
   provider: google({
-    clientId: () => process.env.GOOGLE_CLIENT_ID,
-    clientSecret: () => process.env.GOOGLE_CLIENT_SECRET,
+    client: ({ event }) => useServerEnv(event).google,
+    scopes: [
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.compose',
+    ],
   }),
-  scopes: ['https://www.googleapis.com/auth/gmail.modify'],
-  api: {
-    gmail: ['users.labels.list', 'users.messages.list', 'users.messages.get', 'users.messages.attachments.get', 'users.messages.modify'],
+  access: {
+    agents: {
+      inbox: { approve: ['gmail.drafts.create'] },
+    },
   },
 })
 ```
 
-Then give the Agent the tools that it needs:
+The key in `access.agents` is the Agent name. Reads are allowed without a rule. `gmail.drafts.create` is a write, so it needs `allow` or `approve`.
+
+### Add the Capability
 
 ```ts [server/agents/inbox.ts]
 import { defineAgent } from 'vite-hub/agent'
 import { gmail } from 'vite-hub/agent/capabilities'
 
 export default defineAgent({
+  driver: { model },
   capabilities: [
-    gmail({ connection: 'google', tools: ['search', 'read', 'labels', 'modify'] }),
+    gmail({ operations: ['search', 'read', 'draft'] }),
   ],
 })
 ```
 
-`gmail()` works with every Agent Driver. It does not need a Workspace.
+### Connect the account
 
-## Choose tools
+Open the Console, select **Connections**, and select **Connect** for `google`. Or run `vitehub connections connect google`.
 
-| Tool | Gmail API method | Kind |
-| --- | --- | --- |
-| `search` | `users.messages.list`, `users.messages.get` | Read |
-| `read` | `users.messages.get`, `users.messages.attachments.get` | Read |
-| `labels` | `users.labels.list` | Read |
-| `modify` | `users.messages.modify` | Write |
-| `draft` | `users.drafts.create` | Write |
+::
 
-`read` retrieves externally stored text MIME parts through `users.messages.attachments.get`. Allow that method so large message bodies remain readable.
+## Tools
 
-The default is `['search', 'read']`. Each method must also be selected in the Connection `api`. There is no send tool. `draft` creates an unsent draft.
+| Tool | Operation | Connection Operation ids | Effect |
+| --- | --- | --- | --- |
+| `gmail_search` | `search` | `gmail.messages.list`, `gmail.messages.get` | read |
+| `gmail_read` | `read` | `gmail.messages.get`, `gmail.messages.attachments.get` | read |
+| `gmail_draft` | `draft` | `gmail.drafts.create`, and `gmail.messages.get` for a reply | write |
+
+`gmail_search` returns sender, recipients, subject, date, labels, and snippet for each message. The default query is `in:inbox`. `gmail_read` returns the headers, the decoded text body up to `maxChars`, and attachment names. Gmail stores large bodies as attachments; `gmail_read` fetches them. `gmail_draft` creates a plain-text draft with `to`, `subject`, and `body`. The result always has `sent: false`.
+
+Set `replyTo` to a Gmail message id to create a reply draft. The tool reads that message and sets the thread id, `In-Reply-To`, `References`, and `Re: <original subject>`, so Gmail adds the draft to the thread. Omit `subject` for a reply. A different subject fails.
 
 The following Agent-visible definitions are resolved from the real Capability during the docs build.
 
-### Default tools
+### Default operations
 
-::agent-capability-tools{name="gmail" variant="default"}
+::agent-capability-tools{name="gmail" variant="read"}
 ::
 
-### All tools
+### With drafts
 
-::agent-capability-tools{name="gmail" variant="all"}
+::agent-capability-tools{name="gmail" variant="draft"}
 ::
 
-## Access and approvals
+Message content is untrusted external data. The tool descriptions tell the Agent to treat it as data, not instructions.
 
-The Agent calls the Connection as the actor `agent:<agent name>`. The Connection access rules decide each call. Without `access`, every actor can read, and `agent:` actors need approval for each write.
+## Access and approval
 
-```ts [server/connections/google.ts]
-access: {
-  'agent:inbox': { read: true, write: ['gmail.users.messages.modify'], approve: false },
-},
-```
+Before a tool runs, ViteHub checks each of its Operation ids against the Agent rule in the Connection. The rules are the [Connection access rules](/docs/server-primitives/connections#access-rules): `deny` wins, then `approve`, then `allow`. Without a match, reads are allowed and writes are denied.
 
-This rule lets the `inbox` Agent change labels without approval. It cannot create drafts, because `gmail.users.drafts.create` is not listed.
-
-Gmail tools return Connection failures as results, so the Agent can tell the user what to do:
-
-| Status | Meaning |
+| Rule for `gmail.drafts.create` | `gmail_draft` result |
 | --- | --- |
-| `approval_required` | The write waits for approval. `approvalId` is the approval id. An operator approves it in the Console or with `vitehub connections approvals approve <id>`. Approval runs the call once. |
-| `reauth_required` | The Connection is not connected, or the grant expired. An operator connects it again. |
-| `denied` | The access rules deny the call. |
-| `provider_error` | Gmail rejected the call. `httpStatus` is the HTTP status. |
+| `allow` | Creates the draft. |
+| `approve` | Asks for tool approval. In a provider Agent session, the user can approve the call and the draft is created. Otherwise it fails with `APPROVAL_REQUIRED`. Durable approval is not available yet. |
+| `deny` or no match | Fails with `CAPABILITY_DENIED`. |
 
-Activity entries record the Agent actor and the invocation id. Inspect them with `vitehub connections activity google`.
+To block a read tool, deny its Operation, for example `deny: ['gmail.messages.*']`.
 
-Message content is untrusted external data. The tool descriptions tell the Agent to treat it as data, not as instructions.
+The access rules limit the calls. The OAuth scopes limit the grant. `gmail_draft` cannot send, but the `gmail.compose` and `gmail.modify` scopes also permit sending. Server code that uses the same Connection can send through `fetch` when its `server` or `routes` rule allows that write.
+
+## Activity
+
+Each Agent tool call is recorded as Connection activity, reads included. An entry has the Agent name as actor, the Operation id, the outcome, the provider status, the duration, the run id, the Invocation trace id, and the tool name. Denied and approval-required calls are also recorded. Activity never contains message bodies, headers, or tokens.
+
+See activity in the Console under **Connections**, or run `vitehub connections activity google`.
 
 ## Verify Gmail access
 
-Run `vitehub agent info --agent <name> --json` and inspect the resolved tools. Only the selected tools are listed.
+Run `vitehub agent info --agent inbox --json` and inspect the resolved tools. The default lists `gmail_search` and `gmail_read`. With `draft`, it also lists `gmail_draft`.
 
-Start with a test Gmail account. Search for `in:inbox`, create a draft, approve it, and verify in Gmail that the message is in Drafts and was not sent.
+Start with a test Gmail account. Search for `in:inbox`, create a draft, and make sure in Gmail that the message stays in Drafts and was not sent. Then check the activity entries for the Agent.
 
 ## Options
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `connection` | `string` | Required | Name of the Google Connection. |
-| `tools` | `Array<'search' \| 'read' \| 'labels' \| 'modify' \| 'draft'>` | `['search', 'read']` | Gmail tools to expose. |
+| `connection` | `string` | `"google"` | Name of the Google Connection in `server/connections/`. |
+| `operations` | `Array<"search" \| "read" \| "draft">` | `["search", "read"]` | Tools to expose. `"draft"` adds `gmail_draft`. |
+
+## Migrate from `mode`
+
+This is a breaking change. `gmail()` no longer uses the `gog` CLI, a Workspace, or a bundled Gmail Skill.
+
+| Before | After |
+| --- | --- |
+| `gmail()` | `gmail()` |
+| `gmail({ mode: 'draft' })` | `gmail({ operations: ['search', 'read', 'draft'] })` and `allow` or `approve` for `gmail.drafts.create` |
+| `gog` OAuth client, keyring, and `GOG_KEYRING_PASSWORD` | A Google OAuth client in Server Env and a Connection in `server/connections/` |
+| `gmail_auth` tool | Connect the account in the Console or with `vitehub connections connect` |
+| `workspace: { mode: 'write' }` for Gmail | Not required |
+
+Remove the `gog` installation and its state directories after you migrate.
 
 ## Related pages
 

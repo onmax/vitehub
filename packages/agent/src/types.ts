@@ -2313,7 +2313,7 @@ export type AgentChannelDefinitionOf<
   TData = unknown,
   TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
 > = Omit<AgentChannelDefinition<TRuntimeConfig>, "kind" | "message"> & {
-  readonly kind: TKind
+  readonly kind: TKind extends "portal" ? string : TKind
   readonly message?: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods>
 }
 

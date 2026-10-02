@@ -211,6 +211,7 @@ type AgentChannelDefinitionOptions<
   TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>,
   THistoryItem = unknown,
 > = Omit<AgentChannelDefinition<TRuntimeConfig>, "history" | "kind" | "message"> & {
+  effects?: AgentChannelDeliveryEffects<TRuntimeConfig>
   /** Past messages that `replayChannel()` sends through a trigger. */
   history?: AgentChannelHistory<THistoryItem>
   /** Message data and the methods that hooks call through `event.message`. */
@@ -1888,10 +1889,11 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
       const fetcher = options.fetch || fetch
       const apiBaseUrl = options.apiBaseUrl || "https://api.github.com"
       const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
-      const previousUpdate = githubActivityUpdates.get(commentsTarget) || Promise.resolve()
+      const token = await githubPullRequestMetadataToken(app, context, target.installationId, target.repository)
+      if (!token) throw agentDiagnostics.AGENT_R0359({ message: "[vitehub] GitHub Agent activity requires GitHub authentication." })
+      const updateKey = `${token}\0${commentsTarget}`
+      const previousUpdate = githubActivityUpdates.get(updateKey) || Promise.resolve()
       const update = previousUpdate.catch(() => {}).then(async () => {
-        const token = await githubPullRequestMetadataToken(app, context, target.installationId, target.repository)
-        if (!token) throw agentDiagnostics.AGENT_R0359({ message: "[vitehub] GitHub Agent activity requires GitHub authentication." })
         const headers = githubApiHeaders(token, options.userAgent)
         const identity = await githubActivityIdentity(fetcher, apiBaseUrl, headers, token, app, context)
         const activityKey = `${githubActivityIdentityKey(identity)}\0${commentsTarget}`
@@ -1990,12 +1992,12 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
         if (terminal) activeRuns.delete(runId)
         if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
       })
-      githubActivityUpdates.set(commentsTarget, update)
+      githubActivityUpdates.set(updateKey, update)
       try {
         await update
       }
       finally {
-        if (githubActivityUpdates.get(commentsTarget) === update) githubActivityUpdates.delete(commentsTarget)
+        if (githubActivityUpdates.get(updateKey) === update) githubActivityUpdates.delete(updateKey)
       }
     },
   }
@@ -3211,8 +3213,7 @@ function validateChannelHistoryDefinition(kind: string, history: unknown, trigge
  * A method receives the Channel context first; `context.message` is the data that the trigger returned.
  */
 export function defineChannel<
-  const TKind extends string,
-  // No default: a default would replace the contextual type of method parameters.
+  TKind extends string,
   const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   TData = unknown,
@@ -3230,8 +3231,8 @@ export function defineChannel<
     // SAFETY: An omitted message configuration selects the default settings object.
     options.messages === undefined ? {} as AgentMessageChannelSettings<TRuntimeConfig> : options.messages
   const handlers = messages !== false && options.adapter
-    ? messageChannelDeliveryEffects(options[channelDeliveryHandlers])
-    : options[channelDeliveryHandlers]
+    ? messageChannelDeliveryEffects(options.effects ?? options[channelDeliveryHandlers])
+    : options.effects ?? options[channelDeliveryHandlers]
   const channel = {
     ...options,
     ...(handlers ? { [channelDeliveryHandlers]: handlers } : {}),
@@ -3239,7 +3240,8 @@ export function defineChannel<
     messages,
   }
   if (options[channelDeliveryHandlers]?.title || options.message?.methods?.title) customTitleEffectChannels.add(channel)
-  return channel
+  // SAFETY: defineChannel constructs the validated definition while preserving the generic method type.
+  return channel as AgentChannelDefinitionOf<TRuntimeConfig, TKind, TData, TMethods>
 }
 
 export function defineChannelTrigger<
