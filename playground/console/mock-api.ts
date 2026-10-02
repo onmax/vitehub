@@ -310,6 +310,31 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path.startsWith("/api/_vitehub/console/invocations/")) {
     const id = decodeURIComponent(path.slice("/api/_vitehub/console/invocations/".length))
+    if (request.method === "POST") {
+      let input: unknown
+      try {
+        input = await body(request)
+      }
+      catch {
+        json(response, { error: "Malformed invocation action." }, 400)
+        return true
+      }
+      if (!(input instanceof Object) || Array.isArray(input) || Object.keys(input).length !== 1 || Reflect.get(input, "action") !== "delete") {
+        json(response, { error: "Unsupported invocation action." }, 400)
+        return true
+      }
+      const outcome = await invocations.delete(id)
+      if (outcome === "not-found") {
+        json(response, { error: "Invocation not found" }, 404)
+        return true
+      }
+      if (outcome === "not-terminal") {
+        json(response, { error: "Only completed, failed, or cancelled invocations can be deleted." }, 409)
+        return true
+      }
+      json(response, { id, outcome: "deleted" })
+      return true
+    }
     const record = await invocations.get(id)
     const invocation = summary(record)
     if (!record || !invocation) {

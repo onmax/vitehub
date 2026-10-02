@@ -282,6 +282,7 @@ const router = createRouter({
         agentsBase: `${hostBase}/api/_vitehub/console/agents`,
         definitionsBase: `${hostBase}/api/_vitehub/console/definitions`,
         kvBase: `${hostBase}/api/_vitehub/console/kv`,
+        scheduleRunBase: `${hostBase}/_vitehub/schedules/run`,
         searchBase: `${hostBase}/api/_vitehub/console/search`,
         section: "schedules",
         sectionsBase,

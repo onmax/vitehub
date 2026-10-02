@@ -7,7 +7,7 @@ import frameworkPackageManifest from "../package.json" with { type: "json" }
 
 import { defaultServerConditions } from "vite"
 
-import { hubAgent } from "@vite-hub/agent/vite"
+import { discoverAgentDefinitionEntries, hubAgent } from "@vite-hub/agent/vite"
 import { hubAuth, resolveAuthViteConfig } from "@vite-hub/auth/vite"
 import { hubBlob, resolveBlobViteConfig } from "@vite-hub/blob/vite"
 import { hubBrowser } from "@vite-hub/browser/vite"
@@ -29,11 +29,12 @@ import { hubWorkspace } from "@vite-hub/workspace/vite"
 import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { finalizeDeploymentPlanOutput } from "@vite-hub/internal/build/deployment-plan-output"
 import { finalizeDenoDeploymentOutput } from "@vite-hub/internal/build/deno-runtime-packages"
-import { VITEHUB_NITRO_CONFIG_CONTEXT, type ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS, type ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"
 import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 
 import { viteHubTypesPlugin } from "./internal/types.ts"
 import { consoleInvocationRootPlugin, consoleVitePlugin, type ConsoleOptions } from "./console/vite.ts"
+import { observabilityVitePlugin } from "./observability-vite.ts"
 import { resolveConsoleSectionIds } from "./console/runtime/sections.ts"
 
 import type { AgentModuleOptions } from "@vite-hub/agent"
@@ -56,10 +57,12 @@ import type { SandboxPublicOptions } from "@vite-hub/sandbox/vite"
 import type { ScheduleVitePluginOptions } from "@vite-hub/schedule/vite"
 import type { WorkflowModuleOptions } from "@vite-hub/workflow"
 import type { WorkspaceModuleOptions } from "@vite-hub/workspace"
+import type { PublicUrlConfig } from "@vite-hub/runtime"
 import type { Plugin, PluginOption, ResolvedConfig, UserConfig } from "vite"
 import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
 
 export type { ConsoleOptions } from "./console/vite.ts"
+export type { ObservabilityEvlogOptions, ObservabilityOptions } from "./observability-vite.ts"
 
 type FrameworkDependencyName = Extract<keyof typeof frameworkPackageManifest.dependencies, `@vite-hub/${string}`>
 type DeploymentServicesManifest = Record<DeploymentService, object>
@@ -253,6 +256,7 @@ export interface ViteHubOptions {
   dataDir?: string
   preset: DeploymentPreset
   name?: string
+  publicUrl?: string | ((agentName: string) => string)
   agent?: boolean | AgentModuleOptions
   auth?: true | AuthModuleOptions
   blob?: boolean | BlobModuleOptions
@@ -264,6 +268,7 @@ export interface ViteHubOptions {
   database?: boolean | DBModulePublicOptions
   email?: true | EmailVitePluginOptions
   env?: false | EnvIntegrationOptions
+  observability?: import("./observability-vite.ts").ObservabilityOptions
   kv?: boolean | KVModuleOptions
   queue?: boolean
   rateLimit?: boolean | RateLimitModuleOptions
@@ -711,6 +716,39 @@ function presetBlobOptions(
   }
 }
 
+function normalizePublicUrl(value: string): string {
+  const url = URL.canParse(value) ? new URL(value) : undefined
+  if (!url || !["http:", "https:"].includes(url.protocol) || url.pathname !== "/" || url.search || url.hash) {
+    throw viteHubErrorDiagnostics.VITE_HUB_R0124({ message: `[vitehub] publicUrl must be an http(s) origin without a path, received ${JSON.stringify(value)}.` })
+  }
+  return url.origin
+}
+
+const addRuntimeNoExternal = createNoExternalAddition("@vite-hub/runtime")
+
+function publicUrlPlugin(publicUrl: ViteHubOptions["publicUrl"]): Plugin {
+  return {
+    name: "vite-hub/public-url",
+    config(config, { command }) {
+      if (publicUrl === undefined || command !== "build") return
+      let resolved: PublicUrlConfig
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The option is a string or a callback; typeof also accepts callbacks from another realm.
+      if (typeof publicUrl === "function") {
+        const root = resolveViteHubProjectRoot(config.root ?? process.cwd())
+        const serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
+        resolved = { agents: Object.fromEntries(discoverAgentDefinitionEntries(root, serverDirs).map(({ name }) => [name, normalizePublicUrl(publicUrl(name))])) }
+      }
+      else resolved = { url: normalizePublicUrl(publicUrl) }
+      return { define: { __VITEHUB_PUBLIC_URL__: JSON.stringify(resolved) } }
+    },
+    configEnvironment(name, config) {
+      if (!isServerEnvironment(name, config)) return
+      const noExternal = addRuntimeNoExternal(config.resolve?.noExternal)
+      if (noExternal) return { resolve: { noExternal } }
+    },
+  }
+}
+
 export function vitehub(options: ViteHubOptions): PluginOption[] {
   if (!options || typeof options !== "object") throw viteHubErrorDiagnostics.VITE_HUB_R0085({ message: "vitehub() requires a built-in deployment preset." })
   options = withDataDir(options)
@@ -761,6 +799,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
         },
       })
   plugins.push(...deploymentPlugins(plan, requestedServices, blobEnabled, manifestServices, options, envPlugin))
+  plugins.push(publicUrlPlugin(options.publicUrl))
   const providerImportAliases: Record<string, string> = {}
   const configuredKV = options.kv && options.kv !== true ? options.kv : undefined
   const presetKV = options.kv ? resolveKVViteConfig(configuredKV, { hosting: plan.nitroPreset }).kv : false
@@ -769,6 +808,16 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
   const workspaceDependencyRuntimeImports = frameworkWorkspaceDependencyRuntimeImports(sandboxEnabled)
 
   plugins.push(frameworkDependencyResolver(options, envPlugin, providerImportAliases, blobEnabled, presetKVOptions || undefined))
+
+  if (options.observability) {
+    if (options.observability.posthog && !envPlugin) {
+      throw viteHubErrorDiagnostics.VITE_HUB_R0126({ message: "[vitehub] observability.posthog reads its API key from Server Env. Remove env: false." })
+    }
+    if (options.observability.papercuts && !(options.console && options.agent)) {
+      throw viteHubErrorDiagnostics.VITE_HUB_R0127({ message: "[vitehub] observability.papercuts stores reports in the Console invocation journal. Enable agent and console." })
+    }
+    plugins.push(observabilityVitePlugin(options.observability, { agent: options.agent, hosting: plan.nitroPreset }))
+  }
 
   if (envPlugin) plugins.push(envPlugin)
 
