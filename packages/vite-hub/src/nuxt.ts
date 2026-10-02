@@ -1170,6 +1170,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         env: options.env !== false,
         blob: replayedBlobEnabled,
         database: replayConfig.database ?? options.database,
+        email: options.email,
         kv: resolvedKV,
         preset: plan.preset,
         queue: effectiveQueue === false

@@ -52,6 +52,11 @@ interface EmailDevDiscovery {
   runtime?: unknown
 }
 
+function parseEmailDevDiscovery(value: unknown): EmailDevDiscovery {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  return value as EmailDevDiscovery
+}
+
 const emailDevEndpoint = {
   header: emailDevHeader,
   headerValue: emailDevHeaderValue,
@@ -317,6 +322,7 @@ async function runOutboxCommand(command: OutboxCommand, args: string[], context:
     endpoint: emailDevEndpoint,
     fetch: fetchImpl,
     rootDir: context.rootDir,
+    parseDiscovery: parseEmailDevDiscovery,
     serverUrl: parsed.url,
     signal: withTimeout(parsed.timeout).signal ?? undefined,
     stderr: parsed.json ? { write: (chunk) => { discoveryError += chunk; return true } } : context.stderr,
@@ -334,8 +340,9 @@ async function runOutboxCommand(command: OutboxCommand, args: string[], context:
         : "This Vite Development Server cannot reach the Email outbox.",
     })
   }
-  const body: EmailDevRequestBody = { operation: command.operation }
-  if (parsed.id !== undefined) body.id = parsed.id
+  const body: EmailDevRequestBody = parsed.id === undefined
+    ? { operation: command.operation }
+    : { id: parsed.id, operation: command.operation }
   let response: Response
   try {
     response = await fetchViteHubDevEndpoint(fetchImpl, server.url, emailDevEndpoint, {
