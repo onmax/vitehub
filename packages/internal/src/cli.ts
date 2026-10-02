@@ -269,7 +269,7 @@ function devServerDisplayUrl(value: string): string {
     const query = queryStart >= 0 ? display.slice(queryStart, fragmentStart >= 0 ? fragmentStart : undefined) : ""
     const fragment = fragmentStart >= 0 ? display.slice(fragmentStart) : ""
     const redactedPath = redactInspectionText(url.origin === "null" ? path.replace(/^[\s\S]+@/, "[redacted]@") : path)
-    return `${redactedPath}${query}${redactInspectionText(fragment)}`
+    return `${redactedPath}${redactInspectionText(query)}${redactInspectionText(fragment)}`
   }
   catch {
     const redacted = value.replace(/\/\/[\s\S]+@/g, "//[redacted]@")

@@ -234,12 +234,10 @@ async function runRateLimitCommand(
     rootDir: context.rootDir,
     serverUrl: parsed.url,
     ...withTimeout(parsed.timeout),
-    stderr: parsed.json ? { write: (chunk) => { discoveryError += chunk; return true } } : context.stderr,
+    stderr: { write: (chunk) => { discoveryError += chunk; return true } },
   })
   if (!server) {
-    if (parsed.json) return writeFailure(parsed, context, { message: `${discoveryError.trim()} ${rateLimitDevServerHint}` })
-    context.stderr.write(`${rateLimitDevServerHint}\n`)
-    return 1
+    return writeFailure(parsed, context, { message: `${discoveryError.trim()} ${rateLimitDevServerHint}`.trim() })
   }
   if (server.discovery.runtime !== "nitro") {
     return writeFailure(parsed, context, {
