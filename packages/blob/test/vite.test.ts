@@ -59,6 +59,7 @@ describe("hubBlob", () => {
       const add = vi.fn()
       await (plugin.configureServer as (server: unknown) => void)({
         config: {},
+        middlewares: { use: vi.fn() },
         restart,
         watcher: { add, on: (event: string, listener: (file: string) => void) => listeners.set(event, listener) },
       })

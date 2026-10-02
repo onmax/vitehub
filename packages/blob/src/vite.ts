@@ -16,7 +16,7 @@ import { createViteHubDevToken } from "@vite-hub/internal/dev-token"
 import { findExportNames, hasCJSSyntax } from "mlly"
 import { transform } from "esbuild"
 import { init as initCommonJS, parse as parseCommonJS } from "cjs-module-lexer"
-import { resolve } from "pathe"
+import { relative, resolve } from "pathe"
 
 import { blobDevRuntimeRoute, blobDevTokenNamespace, blobDevTokenServerHeader } from "./dev.ts"
 import { createCloudflareR2Bindings, generateProviderOutputs, prepareProviderOutputs, registerSupportedProviderRuntimeModules, renderBlobRuntimeModule, blobPackageName } from "./internal/vite-build.ts"
@@ -337,6 +337,16 @@ function readNitroBaseURL(config: ResolvedConfig | undefined): string | undefine
   return v.is(v.string(), baseURL) ? baseURL : process.env.NITRO_APP_BASE_URL
 }
 
+function isAuthDefinitionPath(file: string, rootDir: string, serverDirs: string[] | undefined): boolean {
+  const projectRelativePath = relative(rootDir, resolve(file)).replaceAll("\\", "/")
+  if (/^server\.auth\.(?:[cm]?[jt]s)$/.test(projectRelativePath)) return true
+  const directories = serverDirs === undefined ? [resolve(rootDir, "server")] : serverDirs.map(directory => resolve(rootDir, directory))
+  return directories.some(directory => {
+    const path = relative(directory, resolve(file)).replaceAll("\\", "/")
+    return !path.startsWith("../") && !path.startsWith("/") && /^auth\.(?:[cm]?[jt]s)$/.test(path)
+  })
+}
+
 async function refreshBlobGeneratedFiles(root: string, blob: BlobViteRuntimeConfig["blob"], cloudflare: boolean, importBase = blobPackageName, provider?: "cloudflare" | "vercel", authorizeModule?: string): Promise<void> {
   const runtimeFile = resolve(root, generatedNitroBlobRuntime)
   await Promise.all([
@@ -440,6 +450,17 @@ export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBl
         forwardHeaders: ["x-vitehub-dev-token", blobDevTokenServerHeader],
         nitroBaseURL: () => readNitroBaseURL(resolved),
       })
+      if (!runtimeConfig?.blob || !runtimeConfig.blob.serve?.authorize) return
+      // SAFETY: ViteHub hosts add the optional shared server directories to the resolved Vite config.
+      const serverDirs = (server.config as ResolvedConfig & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS]
+      const watchedDirectories = (serverDirs ?? [resolve(rootDir, "server")]).map(directory => resolve(rootDir, directory))
+      server.watcher.add([...watchedDirectories, rootDir])
+      const restartForAuthChange = (file: string) => {
+        if (!isAuthDefinitionPath(file, rootDir, serverDirs)) return
+        void server.restart()
+      }
+      server.watcher.on("add", restartForAuthChange)
+      server.watcher.on("unlink", restartForAuthChange)
     },
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) {

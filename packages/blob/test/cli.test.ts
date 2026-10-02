@@ -5,9 +5,10 @@ import { join } from "node:path"
 import { Readable } from "node:stream"
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { createViteHubDevToken, removeViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 
 import { createBlobCliNamespaces, runBlobCli } from "../src/cli.ts"
-import { blobDevFileHeader, blobDevHeader, blobDevHeaderValue, blobDevMaximumUploadBytes, blobDevRoute, blobDevRuntimeRoute } from "../src/dev.ts"
+import { blobDevFileHeader, blobDevHeader, blobDevHeaderValue, blobDevMaximumUploadBytes, blobDevRoute, blobDevRuntimeRoute, blobDevTokenNamespace, blobDevTokenServerHeader } from "../src/dev.ts"
 import { blobDevRuntimeUnavailableMessage, registerBlobDevEndpoint } from "../src/vite-dev.ts"
 import { hubBlob } from "../src/vite.ts"
 
@@ -20,13 +21,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 })
 
 let cwd: string
+let devToken: { serverId: string, token: string }
 
 beforeEach(async () => {
   cwd = await mkdtemp(join(tmpdir(), "vitehub-blob-cli-"))
+  devToken = await createViteHubDevToken(cwd, blobDevTokenNamespace)
 })
 
 afterEach(async () => {
   await rm(cwd, { force: true, recursive: true })
+  await removeViteHubDevToken(cwd, { namespace: blobDevTokenNamespace, serverId: devToken.serverId })
 })
 
 function stream() {
@@ -49,17 +53,21 @@ function context() {
   return { context: { cwd, env: {}, rootDir: cwd, stderr, stdout }, stderr, stdout }
 }
 
+function discovery() {
+  return { blobDevTokenServerId: devToken.serverId, root: cwd, runtime: "nitro" }
+}
+
 /** Fake dev server: `GET` discovery, then one `POST` operation. */
 function devServer(result: unknown, init: { discovery?: Record<string, unknown>, status?: number } = {}) {
   return vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST"
     ? Response.json(result, { status: init.status ?? 200 })
-    : Response.json(init.discovery ?? { root: cwd, runtime: "nitro" }))
+    : Response.json({ ...discovery(), ...init.discovery }))
 }
 
 function fileServer(bytes: Uint8Array, header: unknown) {
   return vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST"
     ? new Response(bytes, { headers: { "content-type": "application/octet-stream", [blobDevFileHeader]: encodeURIComponent(JSON.stringify(header)) } })
-    : Response.json({ root: cwd, runtime: "nitro" }))
+    : Response.json(discovery()))
 }
 
 function sentBody(fetch: ReturnType<typeof devServer>): unknown {
@@ -70,6 +78,23 @@ const binary = Uint8Array.from([0, 255, 1, 128, 10, 13, 0xef, 0xbb, 0xbf, 0xc3, 
 const object = { contentType: "image/png", customMetadata: {}, httpEtag: "\"abc\"", httpMetadata: {}, pathname: "images/a.png", size: 1234, uploadedAt: "2026-09-29T10:00:00.000Z" }
 
 describe("vitehub blob", () => {
+  it("sends the private token for the discovered dev server", async () => {
+    const output = context()
+    const fetch = devServer({ blobs: [], hasMore: false, limit: 100, prefix: "", store: "default", stores: ["default"] })
+    await expect(runBlobCli(["list"], output.context, { fetch })).resolves.toBe(0)
+    const headers = new Headers(fetch.mock.calls[1]?.[1]?.headers)
+    expect(headers.get(viteHubDevTokenHeader)).toBe(devToken.token)
+    expect(headers.get(blobDevTokenServerHeader)).toBe(devToken.serverId)
+  })
+
+  it.each([undefined, "another-server"])("does not send operations without the discovered private token (%s)", async (serverId) => {
+    const output = context()
+    const fetch = devServer({}, { discovery: { blobDevTokenServerId: serverId } })
+    await expect(runBlobCli(["list"], output.context, { fetch })).resolves.toBe(1)
+    expect(output.stderr.output()).toContain("No private Blob Dev token found")
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
   it.each([["head", "--json"], ["list", "--limit", "0", "--json"], ["list", "--timeout", "4294967296", "--json"], ["list", "--timeout", "2147483648", "--json"]])("returns JSON for argument errors: %j", async (...args) => {
     const output = context()
     const fetch = vi.fn()
@@ -90,7 +115,7 @@ describe("vitehub blob", () => {
 
   it.each([{ flags: [] }, { flags: ["--json"] }])("reports failed error body reads with flags %j", async ({ flags }) => {
     const response = new Response(new ReadableStream({ start(controller) { controller.error(new Error("error body interrupted")) } }), { status: 502 })
-    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json({ root: cwd, runtime: "nitro" }))
+    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json(discovery()))
     const output = context()
     await expect(runBlobCli(["list", ...flags], output.context, { fetch })).resolves.toBe(1)
     if (flags.includes("--json")) {
@@ -102,7 +127,7 @@ describe("vitehub blob", () => {
 
   it.each([{ flags: [] }, { flags: ["--json", "--output", "failed.bin"] }])("reports failed download body reads with flags %j", async ({ flags }) => {
     const response = new Response(new ReadableStream({ start(controller) { controller.error(new Error("download interrupted")) } }))
-    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json({ root: cwd, runtime: "nitro" }))
+    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json(discovery()))
     const output = context()
     await expect(runBlobCli(["get", "source.bin", ...flags], output.context, { fetch })).resolves.toBe(1)
     if (flags.includes("--json")) {
@@ -139,10 +164,10 @@ describe("vitehub blob", () => {
     const [discovery, operation] = fetch.mock.calls
     expect(String(discovery?.[0])).toBe(`http://127.0.0.1:4321${blobDevRoute}`)
     expect(operation?.[1]).toMatchObject({
-      body: JSON.stringify({ limit: 2, operation: "list", prefix: "images/" }),
       headers: { "content-type": "application/json", [blobDevHeader]: blobDevHeaderValue },
       method: "POST",
     })
+    expect(JSON.parse(String(operation?.[1]?.body))).toEqual({ limit: 2, operation: "list", prefix: "images/" })
 
     const json = context()
     const jsonFetch = devServer(result)
@@ -252,7 +277,7 @@ describe("vitehub blob", () => {
     await expect(runBlobCli(["list"], guard.context, {
       fetch: vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST"
         ? new Response("Forbidden Blob Dev request.", { status: 403 })
-        : Response.json({ root: cwd, runtime: "nitro" })),
+        : Response.json(discovery())),
     })).resolves.toBe(1)
     expect(guard.stderr.output()).toBe("Forbidden Blob Dev request.\n")
   })
