@@ -1,7 +1,7 @@
 import * as v from "valibot"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 
-import { emailDevHeader, emailDevHeaderValue, isEmailDevOperation } from "../dev.ts"
+import { emailDevHeader, emailDevHeaderValue } from "../dev.ts"
 import { getEmailOutbox } from "./outbox.ts"
 
 import type { ViteHubConsoleRecord } from "@vite-hub/internal/console"

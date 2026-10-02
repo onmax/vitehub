@@ -38,6 +38,7 @@ Available namespaces:
   channels    External Channel registration workflows.
   db          Database development workflows.
   env         Server Env inspection workflows.
+  email       Inspect and preview development Email messages.
   schedule    Run Static Schedule Definitions and inspect or control Runtime Schedules.
   types       Generate ViteHub TypeScript declarations.
   inspect     Inspect discovered Definitions and generated Provider Output.
@@ -60,6 +61,8 @@ Available namespaces:
 | `vitehub connections` | Available | Connections Package | Connect OAuth accounts, set API keys, list Connections, read activity, and approve or deny writes. |
 | `vitehub env inspect` | Available | Env Package | List declared Server Env variables and their status without values. |
 | `vitehub env check` | Available | Env Package | Fail CI or a deploy step when Server Env would not load for a stage. |
+| `vitehub email outbox` | Available | Email Package | List, show, or clear messages captured by a running Vite + Nitro Development Server. |
+| `vitehub email preview` | Available | Email Package | Render a `server/emails` template locally without sending it. |
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
 | `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
 | `vitehub schedule list` | Available | Schedule Package | List Runtime Schedules with enabled state, next due time, and last run. |
