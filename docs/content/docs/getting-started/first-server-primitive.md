@@ -6,17 +6,18 @@ navigation.lanes: [server-primitives]
 icon: i-lucide-server-cog
 ---
 
-This quickstart adds a local KV store to a small H3 server. One request writes a
-value, reads it back, and returns the result.
+Use this quickstart to see a Server Primitive work end to end. You add a local
+KV store to a small H3 server. One request writes a value, reads it back, and
+returns the result.
 
 ::note
 You need Node.js 24.15 or newer and `pnpm`. The first result runs locally without
 an account or credential.
 ::
 
-## Install KV
+## Create the project
 
-Create an empty project and install ViteHub with Vite and H3.
+Create an empty ESM project and install ViteHub with Vite and H3.
 
 ```bash [Terminal]
 mkdir vitehub-kv-start
@@ -26,10 +27,12 @@ pnpm pkg set type=module
 pnpm add vite-hub h3 vite
 ```
 
-## Configure the Vite Integration
+## Configure the Vite integration
 
-Register `vitehub()` and select the file-backed local KV driver. The explicit
-configuration stores values under `.vitehub/data/kv`.
+Register `vitehub()` with the `node` preset and enable KV with the file-backed
+`fs-lite` driver. Values are stored under `.vitehub/data/kv`. `blob: false` and
+`env: false` keep the build to KV only. Vite builds `src/server.ts` into
+`dist/server.js`.
 
 ```ts [vite.config.ts]
 import { resolve } from "node:path"
@@ -90,7 +93,8 @@ createServer(toNodeHandler(app)).listen(port, () => {
 
 ## Run the server
 
-Build and start the generated Node.js entry.
+Build and start the generated Node.js entry. The server listens on port `5173`
+unless you set `PORT`.
 
 ```bash [Terminal]
 pnpm vite build
@@ -111,8 +115,8 @@ The response proves that the route wrote and read through ViteHub:
 {"settings":{"theme":"system"}}
 ```
 
-To move to a hosted store, change the provider in `vite.config.ts`. The server
-route keeps importing `kv` from `vite-hub/kv`.
+To move to a hosted store, change the preset or the KV driver in
+`vite.config.ts`. The server route keeps importing `kv` from `vite-hub/kv`.
 
 ## Next steps
 

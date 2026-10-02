@@ -6,72 +6,68 @@ navigation.group: Local tools
 icon: i-lucide-terminal
 ---
 
-Run the application locally before testing a hosted build. ViteHub uses the same
-Vite config to discover definitions, prepare generated files, and resolve Agent
-metadata.
+Use this section to run a ViteHub application on your machine and check its
+behavior before you deploy it. ViteHub uses the same Vite config to discover
+Definitions, write generated files, and resolve Agent metadata in development
+and in production builds.
 
-## Local proof map
+## Choose a local tool
 
-| Proof path | Use it for | Output to inspect |
+| Tool | Use it for | Output to inspect |
 | --- | --- | --- |
-| Vite dev server | Definition discovery, server imports, Agent streams, and local providers | Terminal output, CLI behavior, and resolved Agent metadata |
-| ViteHub Console | Discovered Agents, retained sessions, search, invocation events, and provider usage | `/_vitehub` and the configured Agent Invocation store |
-| ViteHub CLI | Package-owned command workflows such as Agent Evals and Provision | CLI exit code, concise output, optional JSON files |
-| Generated files | Registries, generated env access, deployment output, and provision state | `.vitehub/**`, `.vercel/output/**`, `dist/**`, or provider config files |
-| Application tests | Server API behavior and application regressions | Test output and application fixtures |
+| Vite dev server | Definition discovery, server imports, Agent streams, and local providers | Terminal output and responses from your routes |
+| [ViteHub CLI](/docs/development/cli) | Package-owned commands such as `inspect`, `agent dev`, `agent eval`, and `provision` | Exit code, terminal output, and optional JSON |
+| [ViteHub Console](/docs/development/console) | Discovered Agents, retained sessions, invocation events, and stored data | The `/_vitehub` page in the browser |
+| [Generated files](/docs/development/generated-files) | Registries, generated types, Provision State, and host output | `.vitehub/**` and the preset's output directory |
+| Application tests | Server API behavior and application regressions | Test output |
 
 ## Run the local app
 
-Start with the app's normal development command.
-ViteHub Vite Integrations run during Vite startup, so discovery and generated local files use the same root as the app.
+Start the application with its normal development command. ViteHub integrations
+run during Vite startup, so discovery and generated files use the application
+root.
 
 ```bash [Terminal]
 pnpm dev
 ```
 
-Run the application's normal test and build commands after the development server proves discovery.
+When discovery works, run the application's tests and a production build.
 
 ```bash [Terminal]
 pnpm test
 pnpm build
 ```
 
-## Inspect generated state
+## Inspect what ViteHub discovered
 
-Generated files help you debug discovery and host output. Do not import them from
-application code unless a reference page documents the path.
+Run `vitehub inspect` while the app is configured. It lists the Definitions that
+each enabled package discovered and the host output files that a build writes.
+It does not start a server or call a provider.
 
 ```bash [Terminal]
-find .vitehub -maxdepth 3 -type f | sort
-cat .vitehub/provision.json
+pnpm vitehub inspect definitions
+pnpm vitehub inspect provider-output
 ```
 
-Common generated paths include env modules, Workspace types, Agent webhook route
-handlers, schedule Nitro bridge files, and deployment output. The installed
-packages and selected host determine which files appear.
-
-## Inspect interactive Agent behaviour
-
-Use [the ViteHub CLI](/docs/development/cli) to inspect Agent metadata or run an
-Agent locally. Enable the [ViteHub Console](/docs/development/console) when you
-need retained session search and invocation event inspection in a browser. The
-[Agents overview](/docs/agents) links to registration, invocation, and deployment details.
+Use [`vitehub agent dev`](/docs/development/cli#talk-to-an-agent-during-development)
+to talk to an Agent through the running dev server. Enable the
+[Console](/docs/development/console) when you need session search and
+invocation events in a browser.
 
 ## Verify before deploy
 
-Run the narrowest check that proves the behavior you changed.
-Use a package test for public contract changes, `vitehub agent eval` for Agent behavior, `vitehub provision run --dry-run` for provider resources, and a provider build when generated Provider Output changed.
+Run the narrowest check that covers the behavior you changed:
 
-```bash [Terminal]
-pnpm vitehub agent eval
-pnpm vitehub provision run --provider cloudflare --dry-run
-pnpm build
-```
+- `vitehub agent eval` for Agent behavior.
+- `vitehub provision run --provider <name> --dry-run` for provider resources.
+- `pnpm build` when generated host output changed.
+
+[Verification](/docs/development/verification) explains each check and what it
+does not cover.
 
 ## Next steps
 
-- Open [CLI](/docs/development/cli) for command-owned proof paths.
-- Open [Console](/docs/development/console) to inspect retained Agent Invocations in a browser.
-- Open [Agent Evals](/docs/agents/evals) for repeatable Agent behavior checks.
-- Open [Generated files](/docs/development/generated-files) when a Runtime Registry or Provider Output looks wrong.
+- Open [CLI](/docs/development/cli) for every command and flag.
+- Open [Generated files](/docs/development/generated-files) when a registry or host output looks wrong.
+- Open [Troubleshooting](/docs/development/troubleshooting) when a check fails.
 - Open [Errors and diagnostics](/docs/reference/errors-diagnostics) for failure families.
