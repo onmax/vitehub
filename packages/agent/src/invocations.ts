@@ -309,6 +309,8 @@ export interface AgentInvocations {
    */
   cancel(id: string): Promise<AgentInvocationCancelResult>
   readonly supportsDelete: boolean
+  /** Deletes a terminal record. Rejects when the store does not implement deletion. */
+  delete(id: string): Promise<AgentInvocationDeleteOutcome>
   get(id: string, options?: { observationNames?: readonly string[] }): Promise<AgentInvocationRecord | undefined>
   getByRunId(runId: string, agentName?: string): Promise<AgentInvocationRecord | undefined>
   /** Reads invocation metadata without observation payloads. */
@@ -2603,6 +2605,30 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         throw agentDiagnostics.AGENT_R0902({ message: "[vitehub] Invocation store did not persist appended observation." })
       }
       return persisted
+    },
+    async delete(id) {
+      assertInvocationId(id)
+      if (!store.delete) {
+        throw agentDiagnostics.AGENT_R0932({ message: "[vitehub] This Agent Invocation store does not support deletion. Implement store.delete() or use a ViteHub store." })
+      }
+      return await store.delete(id)
+    },
+    async prune(pruneOptions = {}) {
+      if (!store.prune) {
+        throw agentDiagnostics.AGENT_R0932({ message: "[vitehub] This Agent Invocation store does not support pruning. Implement store.prune() or use a ViteHub store." })
+      }
+      const { dryRun, olderThanMs } = pruneOptions
+      if (olderThanMs !== undefined && (!Number.isSafeInteger(olderThanMs) || olderThanMs < 0)) {
+        throw agentDiagnostics.AGENT_R0929({ message: "[vitehub] Agent Invocation prune olderThanMs must be a non-negative safe integer." })
+      }
+      const cutoff = olderThanMs === undefined ? undefined : new Date(Date.now() - olderThanMs)
+      if (cutoff && Number.isNaN(cutoff.getTime())) {
+        throw agentDiagnostics.AGENT_R0929({ message: "[vitehub] Agent Invocation prune olderThanMs must produce a cutoff within JavaScript's Date range." })
+      }
+      return await store.prune({
+        ...(dryRun ? { dryRun: true } : {}),
+        ...(cutoff === undefined ? {} : { updatedBefore: cutoff.toISOString() }),
+      })
     },
     async cancel(id) {
       assertInvocationId(id)

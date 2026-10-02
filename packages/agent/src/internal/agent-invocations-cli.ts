@@ -6,7 +6,7 @@ import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./runtime-ty
 import { discoverViteHubDevServer, fetchViteHubDevEndpoint, readViteHubDevTargetOption, resolveViteHubDevServerUrl } from "@vite-hub/internal/cli"
 import { agentInvocationsDevGuard, agentInvocationsDevRoute, agentInvocationsDevRuntimeUnavailableMessage } from "../invocations-dev.ts"
 import { isCompatibleAgentDevServerRoot } from "./agent-info-cli.ts"
-import type { AgentInvocationCancelResult, AgentInvocationListResult, AgentInvocationRecord } from "../invocations.ts"
+import type { AgentInvocationCancelResult, AgentInvocationListResult, AgentInvocationRecord, AgentInvocationStore } from "../invocations.ts"
 import type { AgentInvocationsDevRequestBody } from "../invocations-dev.ts"
 import type { AgentInvocationDetailResult } from "../invocations-vue.ts"
 import type { RuntimeDiagnosticError } from "@vite-hub/runtime"
@@ -35,7 +35,9 @@ function isAction(value: string): value is Action {
 }
 
 interface ParsedArgs {
-  action?: "cancel" | "list" | "show" | "tail"
+  action?: Action | "cancel"
+  database?: string
+  dryRun: boolean
   help: boolean
   id?: string
   interval: number
@@ -43,6 +45,7 @@ interface ParsedArgs {
   limit?: number
   olderThanMs?: number
   status?: string
+  tablePrefix?: string
   timeout?: number
   url: string
   urlSet: boolean
@@ -77,20 +80,25 @@ const durationUnits: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 
 
 function usage(context: AgentInvocationsCliContext): void {
   context.stdout.write([
-    "Usage: vitehub agent invocations <list|show|tail|cancel> [id] [options]",
+    "Usage: vitehub agent invocations <list|show|tail|cancel|delete|prune> [id] [options]",
     "",
-    "Inspect an application's Agent Invocation journal over HTTP.",
+    "list, show, tail, and cancel inspect or control an application's Agent Invocation journal.",
+    "delete and prune remove completed, failed, and cancelled records from a SQLite or libSQL journal.",
     "cancel asks a running Vite + Nitro Development Server to cancel a pending or running Invocation.",
     "",
     "Options:",
     "  --url <url>       Invocation endpoint. Defaults to http://localhost:5173/api/invocations.",
     "                    For cancel, the Vite Development Server URL. Defaults to VITEHUB_DEV_SERVER_URL or http://localhost:5173.",
-    "  --timeout <ms>    Request timeout. Defaults to 30000.",
-    "  --status <status> Filter list results by status.",
-    "  --limit <count>   Limit list results.",
-    "  --interval <ms>   Tail polling interval. Defaults to 1000.",
-    "  --json            Print JSON or JSON Lines.",
-    "  -h, --help        Show this help.",
+    "  --timeout <ms>            Request timeout. Defaults to 30000.",
+    "  --status <status>         Filter list results by status.",
+    "  --limit <count>           Limit list results.",
+    "  --interval <ms>           Tail polling interval. Defaults to 1000.",
+    "  --database <url>          Journal database for delete and prune. Defaults to the Console journal.",
+    "  --table-prefix <prefix>   Journal table prefix. Defaults to vitehub_agent_.",
+    "  --older-than <duration>   Prune records last updated before this age, such as 12h or 7d. Defaults to 30d.",
+    "  --dry-run                 List the records that prune would delete.",
+    "  --json                    Print JSON or JSON Lines.",
+    "  -h, --help                Show this help.",
     "",
   ].join("\n"))
 }
@@ -153,6 +161,13 @@ function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
     }
     else if (argument === "-h" || argument === "--help") parsed.help = true
     else if (argument === "--json") parsed.json = true
+    else if (argument === "--dry-run") parsed.dryRun = true
+    else if (argument === "--database") { parsed.database = optionValue(args, index, argument); index += 1 }
+    else if (argument.startsWith("--database=")) parsed.database = argument.slice("--database=".length)
+    else if (argument === "--table-prefix") { parsed.tablePrefix = optionValue(args, index, argument); index += 1 }
+    else if (argument.startsWith("--table-prefix=")) parsed.tablePrefix = argument.slice("--table-prefix=".length)
+    else if (argument === "--older-than") { parsed.olderThanMs = duration(optionValue(args, index, argument), argument); index += 1 }
+    else if (argument.startsWith("--older-than=")) parsed.olderThanMs = duration(argument.slice("--older-than=".length), "--older-than")
     else if (argument === "--status") {
       parsed.status = optionValue(args, index, argument)
       index += 1
@@ -169,12 +184,13 @@ function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
     }
     else if (argument.startsWith("--interval=")) parsed.interval = positiveInteger(argument.slice(11), "--interval")
     else if (argument.startsWith("-")) throw agentDiagnostics.AGENT_R0504({ message: `Unknown option: ${argument}.` })
-    else if (!parsed.action && (argument === "cancel" || argument === "list" || argument === "show" || argument === "tail")) parsed.action = argument
+    else if (!parsed.action && (argument === "cancel" || isAction(argument))) parsed.action = argument
     else if (!parsed.id) parsed.id = argument
     else throw agentDiagnostics.AGENT_R0505({ message: `Unexpected argument: ${argument}.` })
   }
-  if (!parsed.help && !parsed.action) throw agentDiagnostics.AGENT_R0506({ message: "Choose list, show, tail, or cancel." })
-  if (!parsed.help && parsed.action !== "list" && !parsed.id) throw agentDiagnostics.AGENT_R0507({ message: `${parsed.action} requires an invocation id.` })
+  if (!parsed.help && !parsed.action) throw agentDiagnostics.AGENT_R0506({ message: "Choose list, show, tail, cancel, delete, or prune." })
+  if (!parsed.help && parsed.action !== "list" && parsed.action !== "prune" && !parsed.id) throw agentDiagnostics.AGENT_R0507({ message: `${parsed.action} requires an invocation id.` })
+  if (!parsed.help && parsed.dryRun && parsed.action !== "prune") throw agentDiagnostics.AGENT_R0505({ message: "--dry-run is only supported for prune." })
   // cancel targets the Vite Development Server, not the application inspection route.
   if (parsed.action === "cancel" && !parsed.urlSet) parsed.url = resolveViteHubDevServerUrl(env)
   return parsed
@@ -491,6 +507,8 @@ export async function runAgentInvocationsCli(
       context.stdout.write(parsed.json ? `${JSON.stringify(result, null, 2)}\n` : `${cancelMessage(result)}\n`)
       return cancelExitCode(result)
     }
+    if (parsed.action === "delete") return await deleteInvocation(parsed, context, parsed.id!)
+    if (parsed.action === "prune") return await pruneInvocations(parsed, context)
     if (parsed.action === "list") {
       const result = await request(endpoint(parsed), fetchImpl, timeout, parseInvocationList)
       if (parsed.json) context.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
