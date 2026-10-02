@@ -1,7 +1,7 @@
 import { expect, it } from "vitest"
 import { custom } from "../src/index.ts"
 import { syncWorkspaceDefinition } from "../src/lifecycle.ts"
-import { readWorkspaceFileOwner } from "../src/sources/file-ownership.ts"
+import { readWorkspaceFileOwner, recordWorkspaceFileOwner, withWorkspaceFileCheckpoint } from "../src/sources/file-ownership.ts"
 import { materializeWorkspaceSources } from "../src/sources/materialization.ts"
 import { createMemoryWorkspaceStore } from "../src/storage/memory.ts"
 import { contentStreamToBytes, sha256 } from "../src/core/path.ts"
@@ -357,4 +357,32 @@ it.each((["build", "startup"] as const).flatMap(mode =>
   await expect(readWorkspaceFileOwner(reopened, "file.md")).resolves.toEqual(owner)
   await sync({ name: definition.name, sources: {} }, reopened)
   await expect(reopened.readFile("file.md")).resolves.toBeUndefined()
+})
+
+it("clears a failed write checkpoint before another owner records the same path", async () => {
+  const store = createMemoryWorkspaceStore()
+  await store.writeFile("file.md", { path: "file.md", content: "original" })
+  const failure = new Error("write unavailable")
+  let checkpointed = false
+
+  await expect(withWorkspaceFileCheckpoint(store, "file.md", async () => {
+    throw failure
+  }, async () => {
+    checkpointed = true
+  })).rejects.toBe(failure)
+
+  expect(checkpointed).toBe(false)
+  await expect(store.readFile("file.md")).resolves.toMatchObject({ content: "original" })
+
+  const owner = { workspace: "independent", source: "docs", digest: await sha256("original") }
+  await recordWorkspaceFileOwner(store, "file.md", owner)
+  // Reopening reads persisted ownership without the first Store's active checkpoints.
+  const reopened: WorkspaceStore = {
+    readFile: store.readFile.bind(store), writeFile: store.writeFile.bind(store),
+    stat: store.stat.bind(store), list: store.list.bind(store), glob: store.glob.bind(store),
+    mkdir: store.mkdir.bind(store), rm: store.rm.bind(store),
+    snapshot: store.snapshot.bind(store), diff: store.diff.bind(store),
+    getMeta: store.getMeta!.bind(store), setMeta: store.setMeta!.bind(store),
+  }
+  await expect(readWorkspaceFileOwner(reopened, "file.md")).resolves.toEqual(owner)
 })
