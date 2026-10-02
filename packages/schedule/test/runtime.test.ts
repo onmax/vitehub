@@ -1020,6 +1020,22 @@ describe("KV Schedule Run Store", () => {
     expect(await store.getRun("srun_runtime_actual_opaque%_29")).toEqual(latest[0])
   })
 
+  it("reports incomplete history when the unindexed fallback exceeds its safety bound", async () => {
+    const kvStore = createTestKVStore()
+    const set = kvStore.set.bind(kvStore)
+    vi.spyOn(kvStore, "set").mockImplementation(async (key, value) => {
+      if (key.includes("/schedule-run-index/")) throw new Error("index unavailable")
+      return set(key, value)
+    })
+    const store = createKVScheduleRunStore({ kvStore })
+    const scheduledAt = new Date("2026-01-01T00:00:00.000Z")
+    for (let index = 0; index < 1001; index++) {
+      await store.createRun({ id: `legacy_${index}`, scheduleId: "legacy", target: "report", scheduledAt,
+        createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+    }
+    await expect(store.listRuns({ limit: 1 })).rejects.toThrow("history is incomplete")
+  })
+
   it("parses each indexed key once for a multi-Schedule history batch", async () => {
     const store = createKVScheduleRunStore({ kvStore: createTestKVStore() })
     const scheduledAt = new Date("2026-05-23T09:00:00.000Z")

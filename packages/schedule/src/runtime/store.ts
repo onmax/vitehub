@@ -468,6 +468,9 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
   }
 
   async function listRuns(options: ScheduleRunListOptions, snapshot: Awaited<ReturnType<typeof readSnapshot>>) {
+    if (snapshot.unknown.length > maxLegacyHistoryRecords) {
+      throw new Error(`Schedule run history is incomplete because more than ${maxLegacyHistoryRecords} records have no usable metadata index. Rebuild the schedule run index before listing history.`)
+    }
     const { keys, recordsByKey } = snapshot
     const group = options.scheduleId === undefined ? undefined : snapshot.bySchedule.get(options.scheduleId)
     const known = options.scheduleId === undefined
