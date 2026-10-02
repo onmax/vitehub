@@ -262,7 +262,7 @@ function devServerDisplayUrl(value: string): string {
     const display = url.href.replace(/%5Bredacted%5D/g, "[redacted]")
     // URL credentials and secret query values have been redacted structurally above. Preserve non-secret query
     // parameters in diagnostics, since callers use them to identify the requested development target.
-    return url.origin === "null" ? display.replace(/^[\s\S]+@/, "[redacted]@") : display
+    return redactInspectionText(url.origin === "null" ? display.replace(/^[\s\S]+@/, "[redacted]@") : display)
   }
   catch {
     const redacted = value.replace(/\/\/[\s\S]+@/g, "//[redacted]@")
