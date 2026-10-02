@@ -75,11 +75,12 @@ export function consoleSectionRouteName(section: ConsoleSectionId): string {
  * Returns the enabled section ids in navigation order. Owner packages contribute `rate-limits`, `sandboxes`,
  * `workspaces`, `workflows`, `queues`, and `schedules`. `console/contributions.ts` maps each id to its owner.
  */
-export function resolveConsoleSectionIds(options: { env?: unknown; agent?: unknown; blob?: unknown; database?: unknown; kv?: unknown; preset?: unknown; queue?: unknown; rateLimit?: unknown; sandbox?: unknown; schedule?: unknown; workflow?: unknown; workspace?: unknown }): ConsoleSectionId[] {
+export function resolveConsoleSectionIds(options: { env?: unknown; connections?: unknown; agent?: unknown; blob?: unknown; database?: unknown; kv?: unknown; preset?: unknown; queue?: unknown; rateLimit?: unknown; sandbox?: unknown; schedule?: unknown; workflow?: unknown; workspace?: unknown }): ConsoleSectionId[] {
   const workflowEnabled = options.workflow !== false
     && Boolean(options.workflow || (options.agent && options.preset !== "netlify"))
   return [
     ...(options.env ? ["env"] : []),
+    ...(options.connections ? ["connections"] : []),
     ...(options.agent ? ["agents", "usage"] : []),
     ...(options.blob ? ["blob"] : []),
     ...(options.database ? ["databases"] : []),
