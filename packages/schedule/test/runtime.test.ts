@@ -1131,8 +1131,8 @@ describe("KV Schedule Run Store", () => {
     expect((await store.listRuns({ scheduleId: "alpha" }))[0]).toMatchObject({ id: run.id, status: "pending" })
 
     const externalStore = createKVScheduleRunStore({ kvStore })
-    await externalStore.updateRun(run.id, { status: "completed", updatedAt: new Date("2026-01-02T00:00:00Z") })
-    expect((await store.listRuns({ scheduleId: "alpha" }))[0]).toMatchObject({ id: run.id, status: "completed" })
+    await externalStore.updateRun(run.id, { status: "succeeded", updatedAt: new Date("2026-01-02T00:00:00Z") })
+    expect((await store.listRuns({ scheduleId: "alpha" }))[0]).toMatchObject({ id: run.id, status: "succeeded" })
     await kvStore.del((await kvStore.keys("vitehub:schedule/schedule-runs"))[0]!)
     expect(await store.listRuns({ scheduleId: "alpha" })).toEqual([])
   })
