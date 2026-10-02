@@ -6,14 +6,15 @@ import { isRuntimeScheduleDue } from "./due.ts"
 import { getRuntimeScheduleStore, getScheduleRunStore, loadScheduleDefinition } from "./state.ts"
 import { createLocalWaitUntil } from "./wait-until.ts"
 
-import type { RuntimeScheduleRecord, RuntimeScheduleStore, RuntimeScheduleWake, ScheduleDefinition, ScheduleRegistryDefinition, ScheduleRunAttemptRecord, ScheduleRunContext, ScheduleRunError, ScheduleRunRecord, ScheduleRunStore, ScheduleTargetName } from "../types.ts"
+import type { RuntimeScheduleRecord, RuntimeScheduleStore, RuntimeScheduleWake, ScheduleDefinition, ScheduleDefinitionRegistry, ScheduleRegistryDefinition, ScheduleRunAttemptRecord, ScheduleRunContext, ScheduleRunError, ScheduleRunRecord, ScheduleRunStore, ScheduleTargetName } from "../types.ts"
 
 interface ExecuteScheduleOptions {
   definition: ScheduleRegistryDefinition
   input?: unknown
   runStore?: ScheduleRunStore
+  runIdSuffix?: string
   scheduleId: string
-  source?: "direct" | "runtime" | "static"
+  source?: "direct" | "manual" | "runtime" | "static"
   scheduledAt?: Date
   target: ScheduleTargetName
   waitUntil?: (promise: PromiseLike<unknown>) => void
@@ -25,6 +26,11 @@ interface ExecuteStaticScheduleOptions {
   name: string
   scheduledAt?: Date
   waitUntil?: (promise: PromiseLike<unknown>) => void
+}
+
+export interface RunScheduleOptions {
+  /** Loads the definition from this registry instead of the one installed with `setScheduleRuntimeRegistry()`. */
+  registry?: ScheduleDefinitionRegistry
 }
 
 interface ExecuteRuntimeScheduleOptions {
@@ -54,9 +60,9 @@ function normalizeRunSource(source: ExecuteScheduleOptions["source"]): NonNullab
   return source ?? "direct"
 }
 
-/** Returns the deterministic Schedule Run id for one scheduled occurrence. */
-export function toRunId(source: ExecuteScheduleOptions["source"], scheduleId: string, scheduledAt: Date): string {
-  return `srun_${normalizeRunSource(source)}_${encodeURIComponent(scheduleId)}_${scheduledAt.toISOString()}`
+/** Returns the Schedule Run id for one scheduled occurrence, with an optional unique suffix. */
+export function toRunId(source: ExecuteScheduleOptions["source"], scheduleId: string, scheduledAt: Date, runIdSuffix?: string): string {
+  return `srun_${normalizeRunSource(source)}_${encodeURIComponent(scheduleId)}_${scheduledAt.toISOString()}${runIdSuffix ? `_${runIdSuffix}` : ""}`
 }
 
 function validateScheduledAt(scheduledAt: Date): Date {
@@ -88,7 +94,7 @@ function requireUpdatedRun(run: ScheduleRunRecord | undefined): ScheduleRunRecor
 
 async function createOrGetRun(options: Omit<ExecuteScheduleOptions, "definition"> & { scheduledAt: Date }): Promise<{ created: boolean, run: ScheduleRunRecord }> {
   const store = options.runStore ?? getScheduleRunStore()
-  const id = toRunId(options.source, options.scheduleId, options.scheduledAt)
+  const id = toRunId(options.source, options.scheduleId, options.scheduledAt, options.runIdSuffix)
   const existing = await store.getRun(id)
   if (existing) {
     return { created: false, run: existing }
@@ -238,6 +244,41 @@ export async function executeStaticSchedule(options: ExecuteStaticScheduleOption
     target: options.name,
     waitUntil: options.waitUntil,
   })
+}
+
+async function loadStaticScheduleDefinition(name: string, registry: ScheduleDefinitionRegistry | undefined): Promise<ScheduleDefinition | undefined> {
+  let definition: ScheduleRegistryDefinition | undefined
+  if (registry) {
+    const entry = Object.hasOwn(registry, name) ? registry[name] : undefined
+    const loaded = typeof entry === "function" ? await entry() : undefined
+    definition = loaded && "handler" in loaded ? loaded : loaded?.default
+  }
+  else {
+    definition = await loadScheduleDefinition(name)
+  }
+  return definition && typeof definition.handler === "function" && "cron" in definition ? definition : undefined
+}
+
+/** Runs a manually dispatchable static Schedule Definition immediately. */
+export async function runSchedule(name: string, options: RunScheduleOptions = {}): Promise<ScheduleRunRecord> {
+  const definition = typeof name === "string" && name ? await loadStaticScheduleDefinition(name, options.registry) : undefined
+  if (!definition) {
+    throw createScheduleError("SCHEDULE_DEFINITION_NOT_FOUND")
+  }
+  if (definition.options?.manual !== true) {
+    throw createScheduleError("SCHEDULE_MANUAL_RUN_DISABLED")
+  }
+  const runStore = getScheduleRunStore()
+  const scheduledAt = new Date()
+  const runIdSuffix = randomId("manual")
+  try {
+    return await executeSchedule({ definition, runIdSuffix, runStore, scheduleId: name, source: "manual", scheduledAt, target: name })
+  }
+  catch (error) {
+    const run = await runStore.getRun(toRunId("manual", name, scheduledAt, runIdSuffix))
+    if (run?.status === "failed") return run
+    throw error
+  }
 }
 
 async function loadRequiredRuntimeSchedule(id: string, store: RuntimeScheduleStore = getRuntimeScheduleStore()): Promise<RuntimeScheduleRecord> {
