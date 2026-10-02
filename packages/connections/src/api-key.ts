@@ -77,7 +77,7 @@ export function apiKey<const TApis extends object = object>(options: ApiKeyProvi
   const catalogsSafe = Object.values(provider.apis).every(catalog => {
     try {
       const url = new URL(catalog.rootUrl)
-      return !url.username && !url.password && !url.search && !url.hash && apiKeyOrigin(url.origin) !== undefined
+      return !url.username && !url.password && !url.search && !url.hash && apiKeyOrigin(catalog.rootUrl) !== undefined
     }
     catch {
       return false

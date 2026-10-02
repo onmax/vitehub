@@ -56,6 +56,7 @@ describe("apiKey()", () => {
     { origins: ["https://api.example.com"], scheme: "Bad Scheme" },
     { id: "has space", origins: ["https://api.example.com"] },
     { apis: { items: { methods: {}, rootUrl: "http://api.example.com" } }, origins: ["https://api.example.com"] },
+    { apis: { items: { methods: {}, rootUrl: "https://api.example.com/v1" } }, origins: ["https://api.example.com"] },
   ])("rejects an unsafe provider (%o)", (options) => {
     expect(() => apiKey(options)).toThrow(expect.objectContaining({ code: "CONNECTION_INVALID" }))
   })
