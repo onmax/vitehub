@@ -263,6 +263,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       hasFinalNitroEnvironment = Boolean(config.environments?.nitro)
       providerOutput = useProviderOutputCatalog(config)
       workflow = config.workflow ?? workflow
+      // SAFETY: ViteHub attaches this symbol to its extended config; the intersection reflects that optional property.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       if (devRegistryRootDir) {
         devRegistryRootDir = resolve(config.root)
