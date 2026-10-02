@@ -297,6 +297,7 @@ async function runOperation(body: BlobDevRequestBody, stores: readonly BlobDevSt
  * `get` returns the raw file bytes. Every other response is JSON.
  */
 export async function handleBlobDevRequest(request: Request, storesOrRoot?: readonly BlobDevStore[] | string, rootDir: string = process.cwd(), serverId?: string): Promise<Response> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This overload boundary distinguishes the legacy root-path argument from configured stores.
   const stores = typeof storesOrRoot === "string" ? undefined : storesOrRoot
   if (typeof storesOrRoot === "string") {
     serverId = rootDir
