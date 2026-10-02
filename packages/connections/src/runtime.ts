@@ -1019,8 +1019,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         updatedAt: timestamp,
       }, replacement.revision)
       if (!persisted) throw new ConnectionError("invalid", "The Connection key changed while it was set.", { details: { connection: name } })
+      const inspection = await inspect(name)
       retainLease = false
-      return await inspect(name)
+      quarantine = false
+      return inspection
     }
     catch (error) {
       if (retainLease && quarantine) {

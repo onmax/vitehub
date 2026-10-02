@@ -98,6 +98,22 @@ describe("API key Connections", () => {
     expect(await test.runtime.inspect("executor")).toMatchObject({ status: "reauth_required" })
   })
 
+  it("retains the mutation lease when post-persistence inspection fails", async () => {
+    const test = harness()
+    const get = test.store.state.get
+    let calls = 0
+    test.store.state.get = async name => {
+      if (++calls === 1) throw new Error("state inspection unavailable")
+      return get(name)
+    }
+    await expect(test.runtime.setKey({ key: KEY, name: "executor" })).rejects.toThrow("state inspection unavailable")
+    test.store.state.get = get
+    const stored = await test.store.secrets.inspect("connection/executor")
+    expect(stored?.revision).toBeTruthy()
+    expect(await test.store.refreshLeases.claim({ expiresAt: Date.now() + 60_000, name: "executor", now: Date.now(), owner: "other", revision: stored!.revision })).toBe("busy")
+    expect(await test.runtime.inspect("executor")).toMatchObject({ status: "reauth_required" })
+  })
+
   it("calls typed catalog methods with the scheme and key", async () => {
     const provider = apiKey<{ items: ItemsApi }>({
       apis: { items: { methods: { "items.create": ["POST", "v1/items", true], "items.list": ["GET", "v1/items", false] }, rootUrl: "https://api.example.com/" } },
