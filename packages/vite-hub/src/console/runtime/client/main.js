@@ -21,9 +21,10 @@ import {
   consoleDatabasesSchemaPath,
   consoleDatabasesTablePath,
 } from "../console-route";
-import { isConsoleSectionId } from "../sections";
+import { consoleSectionRouteName, isConsoleSectionId } from "../sections";
 import App from "./app.vue";
-import { createConsoleSectionLoader } from "./sections";
+import { createConsoleSectionLoader, loadConsoleNavigation, subscribeConsoleNavigation } from "./sections";
+import { deferLucideIcons } from "./icons";
 
 const hostBase = consoleMountBase(window.location.pathname);
 const sectionsBase = `${hostBase}/api/_vitehub/console/sections`;
@@ -293,6 +294,31 @@ const router = createRouter({
 
 const loadSections = createConsoleSectionLoader(sectionsBase);
 
+/** Adds one route for each installed section contributed by an owner package. */
+function addContributedRoutes(navigation) {
+  for (const section of navigation.sections) {
+    const details = navigation.contributions[section];
+    const name = consoleSectionRouteName(section);
+    if (!details || router.hasRoute(name)) continue;
+    router.addRoute({
+      component: ConsoleDefinitions,
+      name,
+      path: `/${section}`,
+      meta: { consoleSection: section, title: `${details.label} · ViteHub Console` },
+      props: {
+        agentsBase: `${hostBase}/api/_vitehub/console/agents`,
+        definitionsBase: `${hostBase}/api/_vitehub/console/definitions`,
+        details,
+        kvBase: `${hostBase}/api/_vitehub/console/kv`,
+        scheduleRunBase: `${hostBase}/api/_vitehub/console/schedule-run`,
+        searchBase: `${hostBase}/api/_vitehub/console/search`,
+        sectionsBase,
+      },
+    });
+  }
+}
+subscribeConsoleNavigation(sectionsBase, addContributedRoutes);
+
 const preferredColorScheme = window.matchMedia("(prefers-color-scheme: dark)");
 const applyPreferredColorScheme = ({ matches }) => {
   document.documentElement.classList.toggle("dark", matches);
@@ -300,7 +326,12 @@ const applyPreferredColorScheme = ({ matches }) => {
 applyPreferredColorScheme(preferredColorScheme);
 preferredColorScheme.addEventListener("change", applyPreferredColorScheme);
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
+  if (to.matched.length === 0) {
+    const navigation = await loadConsoleNavigation(sectionsBase);
+    if (navigation) addContributedRoutes(navigation);
+    return router.resolve(to.fullPath).matched.length > 0 ? to.fullPath : { name: "vitehub-console" };
+  }
   const section = to.meta.consoleSection;
   if (!isConsoleSectionId(section)) return;
   void loadSections().then((installed) => {
@@ -317,8 +348,14 @@ router.beforeEach((to) => {
 router.afterEach((to) => {
   document.title = String(to.meta.title ?? "ViteHub Console");
 });
+deferLucideIcons();
 createApp(App)
   .use(router)
   .use(ui, { router: () => router.currentRoute.value })
   .use(createViteHubUI())
   .mount("#app");
+
+// KaTeX styles embed their fonts. Load them after the first render instead of in the blocking stylesheet.
+const loadMathStyles = () => void import("katex/dist/katex.min.css");
+if ("requestIdleCallback" in window) window.requestIdleCallback(loadMathStyles, { timeout: 2_000 });
+else setTimeout(loadMathStyles, 0);

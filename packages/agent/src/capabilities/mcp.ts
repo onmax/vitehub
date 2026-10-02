@@ -198,6 +198,7 @@ export function mcp<
     integrityLabel: "mcp({ integrity })",
     invalidServerMessage: "[vitehub] mcp({ servers }) entries must resolve to an MCP client or MCP client config.",
     metadata: { servers: sanitizeMcpMetadata(options.servers) as Record<string, unknown> },
+    // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Preserve the optional public property in the capability definition.
     ...(options.unavailableNotice !== undefined
       ? { unavailableNotice: options.unavailableNotice }
       : {}),

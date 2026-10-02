@@ -194,12 +194,7 @@ export default defineConfig({
       { from: "src/console/runtime/components/console-oauth-connection-details.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/components/console-oauth-connection-activity.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/pages/kv.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/queues.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/rate-limits.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/schedules.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/sandboxes.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/workflows.vue", to: "dist/console/runtime/pages" },
-      { from: "src/console/runtime/pages/workspaces.vue", to: "dist/console/runtime/pages" },
+      { from: "src/console/runtime/pages/section.vue", to: "dist/console/runtime/pages" },
       { from: "../ui/styles.css", to: "dist/ui" },
       { from: "templates/cloudflare-types.d.ts", to: "dist" },
     ],
@@ -247,6 +242,7 @@ export default defineConfig({
       "src/console/runtime/sections.ts",
       "src/console/runtime/server/agents.get.ts",
       "src/console/runtime/server/blob.get.ts",
+      "src/console/runtime/server/channel-replay.ts",
       "src/console/runtime/server/client.get.ts",
       "src/console/runtime/server/database.get.ts",
       "src/console/runtime/server/definitions.get.ts",
@@ -260,6 +256,7 @@ export default defineConfig({
       "src/console/runtime/server/connections-route.ts",
       "src/console/runtime/server/kv.get.ts",
       "src/console/runtime/server/page.get.ts",
+      "src/console/runtime/server/schedule-run.ts",
       "src/console/runtime/server/search.get.ts",
       "src/console/runtime/server/sections.get.ts",
       "src/console/runtime/server/usage.get.ts",
@@ -282,6 +279,7 @@ export default defineConfig({
         delete exports["./console/runtime/server/agents.get"];
         delete exports["./console/runtime/server/blob"];
         delete exports["./console/runtime/server/blob.get"];
+        delete exports["./console/runtime/server/channel-replay"];
         delete exports["./console/runtime/server/client.get"];
         delete exports["./console/runtime/server/database"];
         delete exports["./console/runtime/server/database.get"];
@@ -300,6 +298,7 @@ export default defineConfig({
         delete exports["./console/runtime/server/kv.get"];
         delete exports["./console/runtime/server/kv"];
         delete exports["./console/runtime/server/page.get"];
+        delete exports["./console/runtime/server/schedule-run"];
         delete exports["./console/runtime/server/search.get"];
         delete exports["./console/runtime/server/sections.get"];
         delete exports["./console/runtime/server/sections"];
