@@ -70,6 +70,7 @@ interface ScheduledWorkflowBuildConfig {
   providerOutput: ProviderOutputCatalog | undefined
   workflow: WorkflowModuleOptions | undefined
   serverDirs: string[] | undefined
+  environmentNames: Set<string>
 }
 
 interface InternalWorkflowModuleOptions {
@@ -127,7 +128,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     return Boolean(environmentName && environmentName !== ownerEnvironment && viteHubNitroContext)
   }
 
-  function scheduledBuildConfig(config: ResolvedConfig): ScheduledWorkflowBuildConfig | undefined {
+  function scheduledBuildConfig(config: ResolvedConfig, environmentName?: string): ScheduledWorkflowBuildConfig | undefined {
     const direct = scheduleBuildConfigs.get(config)
     if (direct) return direct
     const candidates = scheduledBuildConfigsByRoot.get(config.root) ?? []
@@ -139,6 +140,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       base: config.define?.__VITEHUB_APP_BASE_URL__,
     })
     const matches = candidates.filter(candidate => {
+      if (environmentName && candidate.environmentNames.size > 0 && !candidate.environmentNames.has(environmentName)) return false
       if (catalog && candidate.providerOutput !== catalog) return false
       if (candidate.config.build.outDir !== config.build.outDir) return false
       const candidatePublicDefine = JSON.stringify({
@@ -378,7 +380,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       }
       const buildServerDirs = buildConfig[VITEHUB_SERVER_DIRS] ?? buildConfig.__vitehubWorkflowServerDirs
       serverDirs = buildServerDirs
-      const scheduled = { config, providerOutput, workflow, serverDirs: buildServerDirs }
+      const scheduled = { config, providerOutput, workflow, serverDirs: buildServerDirs, environmentNames: new Set<string>() }
       scheduleBuildConfigs.set(config, scheduled)
       const configs = (scheduledBuildConfigsByRoot.get(config.root) ?? []).filter(previous => previous.config !== config)
       configs.push(scheduled)
@@ -396,6 +398,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       if (!isServerEnvironment(name, config)) {
         return
       }
+      scheduleBuildConfigs.get(config)?.environmentNames.add(name)
       return {
         resolve: { noExternal: noExternalAddition(config.resolve?.noExternal) },
       }
@@ -453,7 +456,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         const config = environmentConfig as typeof environmentConfig & { [VITEHUB_SERVER_DIRS]?: string[], __vitehubWorkflowServerDirs?: string[] }
         let scheduled = scheduleBuildConfigs.get(config)
         try {
-          scheduled ??= scheduledBuildConfig(config)
+          scheduled ??= scheduledBuildConfig(config, this.environment?.name)
         } catch (error) {
           rejectedBuilds.add(context)
           throw error
@@ -463,6 +466,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
           providerOutput: useProviderOutputCatalog(config),
           serverDirs: config[VITEHUB_SERVER_DIRS] ?? config.__vitehubWorkflowServerDirs,
           workflow: config.workflow ?? defaultWorkflow,
+          environmentNames: new Set<string>(),
         }
         buildConfigs.set(context, {
           config: environmentConfig,
