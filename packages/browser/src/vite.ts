@@ -12,7 +12,7 @@ import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 import { isPlainObject } from "@vite-hub/internal/object"
 import {
-  createNoExternalMerger,
+  createNoExternalAddition,
   isServerEnvironment,
   resolveViteHubProjectRoot,
   shouldSkipViteProviderBuild,
@@ -58,7 +58,7 @@ const browserRegistryId = "#vitehub/browser/registry"
 const browserRuntimeId = "#vitehub/browser/runtime"
 const resolvedBrowserRegistryId = `\0${browserRegistryId}`
 const resolvedBrowserRuntimeId = `\0${browserRuntimeId}`
-const mergeNoExternal = createNoExternalMerger("@vite-hub/browser")
+const mergeNoExternal = createNoExternalAddition("@vite-hub/browser")
 const browserWranglerConfigOwnership = {
   keys: ["browser"],
   arrays: {

@@ -5,7 +5,7 @@ import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir } from "@vite-hub/internal/build/provider-output-sources"
-import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
 import { renderViteHubNitroDevHandler } from "@vite-hub/internal/dev-endpoint"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { isPlainObject } from "@vite-hub/internal/object"
@@ -53,7 +53,7 @@ interface InternalBlobModuleOptions {
   nitroOwned?: boolean
 }
 
-const mergeNoExternal = createNoExternalMerger(blobPackageName)
+const mergeNoExternal = createNoExternalAddition(blobPackageName)
 
 function serializeVirtualConfig(config: BlobViteRuntimeConfig): string {
   return [

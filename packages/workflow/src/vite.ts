@@ -6,7 +6,7 @@ import { getViteMode } from "@vite-hub/internal/build/mode"
 import { encodeProviderOutputAliases } from "@vite-hub/internal/build/esbuild"
 import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, getProviderRuntimeModule, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
-import { collectViteHubProviderImportAliases, createNoExternalMerger, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { collectViteHubProviderImportAliases, createNoExternalAddition, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { normalizeHosting } from "@vite-hub/internal/hosting"
 
 import { normalizeWorkflowOptions } from "./config.ts"
@@ -54,7 +54,7 @@ interface AgentWorkflowRegistryPlugin extends Plugin {
   }
 }
 
-const mergeNoExternal = createNoExternalMerger(workflowPackageName)
+const mergeNoExternal = createNoExternalAddition(workflowPackageName)
 
 interface InternalWorkflowModuleOptions {
   agentImportBase?: string

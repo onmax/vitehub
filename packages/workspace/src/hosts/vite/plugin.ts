@@ -4,7 +4,7 @@ import { dirname, extname, isAbsolute, relative, resolve } from "node:path"
 import { createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { copyVercelFunctionRuntimePackages } from "@vite-hub/internal/build/vercel-runtime-packages"
-import { createNoExternalMerger, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { registerViteHubDevEndpoint } from "@vite-hub/internal/dev-endpoint"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
@@ -43,7 +43,7 @@ const RESOLVED_WORKSPACE_REGISTRY_ID = `\0${WORKSPACE_REGISTRY_ID}`
 const generatedNitroWorkspacePlugin = ".vitehub/nitro/workspace/plugin.ts"
 const generatedNitroWorkspaceRegistry = ".vitehub/nitro/workspace/registry.js"
 const cloudflareArtifactsBindingsFileName = ".vitehub-workspace-artifacts-bindings.json"
-const mergeNoExternal = createNoExternalMerger(WORKSPACE_PACKAGE_NAME)
+const mergeNoExternal = createNoExternalAddition(WORKSPACE_PACKAGE_NAME)
 const workspacesDirSegment = /[\\/](?:server[\\/])?workspaces(?:[\\/]|$)/
 
 const sourceModuleExtensions = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs", ".tsx", ".jsx"]

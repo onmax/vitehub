@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
-import { createNoExternalMerger, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { normalize } from "pathe"
 
 import { createDbCliContributor } from "./cli.ts"
@@ -48,7 +48,7 @@ interface DBCliContributingPlugin {
 
 export type DBVitePlugin = Plugin & DBCliContributingPlugin & { api: DBVitePluginAPI }
 
-const mergeNoExternal = createNoExternalMerger(dbPackageName)
+const mergeNoExternal = createNoExternalAddition(dbPackageName)
 
 function resolveDatabaseVirtualId(id: string) {
   if (id === DB_VIRTUAL_SCHEMA_ID || id === DB_INTERNAL_VIRTUAL_SCHEMA_ID) return RESOLVED_DB_VIRTUAL_SCHEMA_ID

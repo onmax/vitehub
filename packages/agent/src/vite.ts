@@ -10,7 +10,7 @@ import { encodeProviderOutputAliases } from "@vite-hub/internal/build/esbuild"
 import { rebasePublishedProviderSourceLinks, removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources, rewriteRetainedProviderSourcePaths } from "@vite-hub/internal/build/provider-output-sources"
 import { copyNodeRuntimePackages, copyVercelFunctionRuntimePackages } from "@vite-hub/internal/build/vercel-runtime-packages"
 import { deploymentPresetFromNitro } from "@vite-hub/internal/deployment"
-import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubGeneratedRoot, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubGeneratedRoot, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 
@@ -50,8 +50,8 @@ interface AgentCliContributingPlugin {
 export type AgentVitePlugin = Plugin & AgentCliContributingPlugin
 
 const agentPackageName = "@vite-hub/agent"
-const mergeNoExternal = createNoExternalMerger(agentPackageName)
-const mergeProviderRuntimeNoExternal = createNoExternalMerger("@t3tools/provider-runtime")
+const mergeNoExternal = createNoExternalAddition(agentPackageName)
+const mergeProviderRuntimeNoExternal = createNoExternalAddition("@t3tools/provider-runtime")
 const generatedAgentDenoServer = "agent/deno-server.ts"
 const generatedAgentDiscordGatewayRouteHandler = "agent/discord-gateway-route.ts"
 const generatedAgentDiscordGatewayPlugin = "agent/discord-gateway-plugin.ts"
