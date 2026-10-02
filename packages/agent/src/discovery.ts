@@ -232,6 +232,28 @@ function relativeExportBindings(clause: string[]): [string, string][] {
   return bindings
 }
 
+/** Presets whose Agents need a long-running process host. */
+const processHostPresetModules = new Set(["@vite-hub/agent/presets/babysitter", "vite-hub/agent/presets/babysitter"])
+
+/** Whether an Agent module statically imports a preset that needs a process host. */
+export function usesProcessHostPreset(source: string): boolean {
+  const { tokens } = tokenizeAgentSource(source)
+  for (let index = 0; index < tokens.length; index++) {
+    if (tokens[index] !== "import" || tokens[index + 1] === "(") continue
+    for (let next = index + 1; next < tokens.length && tokens[next] !== ";" && tokens[next] !== "import"; next++) {
+      if (!/^['"`]/.test(tokens[next] ?? "")) continue
+      if (processHostPresetModules.has(moduleSpecifier(tokens[next]))) return true
+      break
+    }
+  }
+  return false
+}
+
+/** Discovered Agents whose definitions use a process host preset, by discovered name. */
+export function discoverProcessHostAgentNames(definitions: readonly DiscoveredAgentDefinition[]): string[] {
+  return definitions.filter(definition => usesProcessHostPreset(readFileSync(definition.handler, "utf8"))).map(definition => definition.name).sort()
+}
+
 function isWorkspaceAgentDefinition(source: string, file: string): boolean {
   return inspectAgentModule(source, file, new Set([file])).agentOwnsWorkspace()
 }
@@ -351,6 +373,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
                   moduleNamespaces.set(clause[star + 2]!, moduleName)
                 }
               }
+              // Process host presets own no Workspace, so they are known, inspectable parents.
+              if (processHostPresetModules.has(moduleName)) for (const binding of tokens.slice(i + 1, j)) imported.delete(binding)
               i = j; break
             }
             continue
@@ -1558,6 +1582,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   function resolveReference(index: number, seen = new Set<number>(), preserveCalls = false): number {
     while (tokens[index] === "(" || tokens[index] === "<") {
       if (tokens[index] === "<") { index = skipTypeArguments(index); continue }
+      if (preserveCalls) {
+        let depth = 1
+        let close = index + 1
+        for (; close < tokens.length && depth > 0; close++) {
+          if (tokens[close] === "(") depth++
+          else if (tokens[close] === ")") depth--
+        }
+        if (depth === 0 && hasChannelContinuation(close)) return index
+      }
       let last = index + 1
       let depth = 1
       for (let i = index + 1; i < tokens.length && depth > 0; i++) {
@@ -1915,22 +1948,29 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       && !callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(tokens[index]))
   }
 
+  function hasChannelContinuation(index: number): boolean {
+    const token = tokens[index]
+    if (["(", "<", ".", "[", "?"].includes(token)) return true
+    if (token !== "!") return false
+    return ![undefined, ",", "}", ")", "]", ";"].includes(tokens[index + 1])
+  }
+
   function channelOwnsWorkspace(channel: number, channelId?: string): boolean {
     let channelOptions = resolveReference(channel, new Set(), true)
     const moduleNamespace = moduleNamespaces.get(tokens[channelOptions])
     if (moduleNamespace && isModuleBinding(channelOptions)) {
       const member = memberAccess(channelOptions)
-      if (!member || hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?", "!"].includes(tokens[member.end]) || mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
+      if (!member || hasLogicalOperator(channelOptions) || hasChannelContinuation(member.end) || mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleNamespace, member.name, channelId)
     }
     const moduleImport = moduleImports.get(tokens[channelOptions])
     const namespaceMember = memberAccess(channelOptions)
     if (moduleImport && namespaceMember && isModuleBinding(channelOptions)
       && !mutatedBindings.has(tokens[channelOptions]!)) {
-      if (hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?", "!"].includes(tokens[namespaceMember.end])) throw opaqueChannelError()
+      if (hasLogicalOperator(channelOptions) || hasChannelContinuation(namespaceMember.end)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId, namespaceMember.name)
     }
-    if (moduleImport && isModuleBinding(channelOptions) && !["(", "<", ".", "[", "?", "!"].includes(tokens[channelOptions + 1])) {
+    if (moduleImport && isModuleBinding(channelOptions) && !hasChannelContinuation(channelOptions + 1)) {
       if (mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId)
     }

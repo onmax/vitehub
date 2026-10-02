@@ -276,6 +276,7 @@ class CloudflareArtifactsWorkspaceStore implements WorkspaceStore {
     const normalized = normalizeSafeWorkspacePath(path)
     await this.#ensure()
     await this.#mutate(async () => {
+      if (options.ifDigest !== undefined) assertWorkspaceDigest(path, options.ifDigest, (await this.#stat(normalized))?.digest)
       const absolute = this.#absolute(normalized)
       const stat = await this.#fs!.promises.stat(absolute).catch(() => undefined) as { isDirectory(): boolean } | undefined
       if (!stat) {

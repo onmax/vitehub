@@ -76,7 +76,16 @@ const storeOperationTimedOut = Symbol("vitehub.storeOperationTimedOut")
 export type AgentInvocationAnnotationValue = boolean | number | string | null
 export type AgentInvocationRecordStatus = AgentInvocationStatus
 
+export interface AgentInvocationWorkflowBinding {
+  name: string
+  provider: string
+  /** Absent while provider acknowledgement is unknown. */
+  id?: string
+}
+
 export interface AgentInvocationRecord {
+  /** Durable provider dispatch intent and acknowledged physical identity. */
+  workflow?: AgentInvocationWorkflowBinding
   agentName?: string
   annotations?: Record<string, AgentInvocationAnnotationValue>
   /** Capability IDs observed during this Invocation, including uses omitted from a truncated trace. */
@@ -132,10 +141,14 @@ export interface AgentInvocationStoreCreateResult {
 }
 
 export interface AgentInvocationStoreUpdateInput {
+  workflow?: AgentInvocationWorkflowBinding
   /** Append with a stable observation identity and a sequence assigned atomically by the store. */
   appendObservation?: Omit<TraceEventLogEntry, "sequence">
   annotations?: AgentInvocationRecord["annotations"]
   capabilityIds?: readonly string[]
+  channelId?: string
+  origin?: string
+  threadId?: string
   error?: AgentInvocationRecord["error"]
   observation?: TraceEventLogEntry
   observationsTruncated?: boolean
@@ -145,6 +158,8 @@ export interface AgentInvocationStoreUpdateInput {
 
 export interface AgentInvocationStore {
   claim(id: string, claimId: string, leaseMs: number, options?: {
+    /** Atomically rotate only an absent claim or one of these owned generations, unless replaceExisting is true. */
+    expectedClaimIds?: readonly string[]
     replaceClaimToken?: string
     replaceExisting?: boolean
   }): MaybePromise<boolean>
@@ -267,21 +282,52 @@ export interface AgentInvocations {
 interface BoundAgentInvocations extends AgentInvocations {
   [bindAgentInvocationsSymbol]<TRuntimeConfig extends AgentRuntimeConfig>(
     context: AgentRuntimeContext<TRuntimeConfig>,
-    options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean },
+    options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean, replaceClaimToken?: string, recoverPending?: boolean },
   ): Promise<AgentInvocationJournal<TRuntimeConfig>>
   [recoverInterruptedAgentInvocationsSymbol](options: Parameters<typeof failInterruptedAgentInvocations>[1]): Promise<number>
 }
 
+export const exclusiveAgentInvocation: unique symbol = Symbol("vitehub.exclusiveAgentInvocation")
+export const inheritedAgentInvocationClaim: unique symbol = Symbol("vitehub.inheritedAgentInvocationClaim")
+export const pendingAgentInvocationAnnotation = "vitehub.invocation.executionPending"
+export const workflowDispatchAttemptedAnnotation = "vitehub.invocation.workflowDispatchAttempted"
+
+export function pendingAgentInvocationAnnotations(input: AgentRunMetadata["annotations"]): NonNullable<AgentRunMetadata["annotations"]> {
+  const annotations: NonNullable<AgentRunMetadata["annotations"]> = { [pendingAgentInvocationAnnotation]: true, [workflowDispatchAttemptedAnnotation]: false }
+  for (const [key, value] of Object.entries(input || {})) {
+    if (key !== pendingAgentInvocationAnnotation && key !== workflowDispatchAttemptedAnnotation) annotations[key] = value
+  }
+  return annotations
+}
+
+export class AgentInvocationClaimConflict extends Error {
+  constructor() {
+    super("Invocation already exists or is claimed.")
+    this.name = "AgentInvocationClaimConflict"
+  }
+}
+
 export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   configuration?: TraceEventContentPolicy
+  /** Whether this journal holds the store execution claim, lost it, or could not reach the store. */
+  readonly createdNew: boolean
+  readonly claimStatus?: "owned" | "conflict" | "unavailable"
   context: AgentRuntimeContext<TRuntimeConfig>
   /** The stored `traceId`, available after creation confirms the record identity. */
   traceId: string | undefined
   /** Wait for an asynchronous create attempt to resolve its stored identity. */
   ready(): Promise<void>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
-  running(): Promise<void>
+  getWorkflowDispatchAttempted(): Promise<boolean | undefined>
+  handoffClaim(options?: { workflowDispatch?: boolean }): Promise<string | undefined>
+  prepareWorkflowDispatch(binding: AgentInvocationWorkflowBinding): Promise<boolean>
+  confirmWorkflowDispatch(binding?: AgentInvocationWorkflowBinding): Promise<boolean>
+  releaseClaim(): Promise<void>
+  /** Persist the execution-start marker; false means execution must not begin. */
+  running(): Promise<boolean>
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
+  /** Persist resolved run metadata while this journal owns the execution claim. */
+  setRunMetadata(run: AgentRunMetadata): Promise<boolean>
 }
 
 function cloneObservation(observation: TraceEventLogEntry): TraceEventLogEntry {
@@ -314,6 +360,7 @@ function cloneSummary(record: AgentInvocationRecord): AgentInvocationSummary {
   const { observations: _observations, ...summary } = record
   return {
     ...summary,
+    ...(record.workflow ? { workflow: { ...record.workflow } } : {}),
     ...(record.annotations ? { annotations: { ...record.annotations } } : {}),
     ...(record.capabilityIds ? { capabilityIds: [...record.capabilityIds] } : {}),
     ...(record.observationLimits ? { observationLimits: { ...record.observationLimits } } : {}),
@@ -1354,6 +1401,7 @@ export function applyAgentInvocationStoreUpdate(
   }
   const updated: AgentInvocationRecord = {
     ...record,
+    ...(input.workflow ? { workflow: { ...input.workflow } } : {}),
     ...(configuredAnnotations
       ? { annotations: mergeConfigurationAnnotations(record.annotations, configuredAnnotations) }
       : {}),
@@ -1372,6 +1420,12 @@ export function applyAgentInvocationStoreUpdate(
     status,
     updatedAt: input.timestamp > record.updatedAt ? input.timestamp : record.updatedAt,
   }
+  for (const field of ["channelId", "origin", "threadId"] as const) {
+    if (!Object.hasOwn(input, field)) continue
+    const value = input[field]
+    if (value) updated[field] = boundedString(value)
+    else delete updated[field]
+  }
   if (Object.hasOwn(input, "annotations")) {
     const annotations = normalizeAnnotations(input.annotations)
     if (annotations) updated.annotations = annotations
@@ -1382,15 +1436,28 @@ export function applyAgentInvocationStoreUpdate(
 
 export function createMemoryAgentInvocationStore(): AgentInvocationStore {
   const claims = new Map<string, { claimId: string, expiresAt: number, token: string }>()
+  const supersededClaims = new Map<string, Set<string>>()
   const records = new Map<string, AgentInvocationRecord>()
   let cursor = 0
   return {
     claim(id, claimId, leaseMs, options) {
       const claim = claims.get(id)
       const now = Date.now()
+      if (supersededClaims.get(id)?.has(claimId)) return false
+      const expected = options?.expectedClaimIds
+      const expectedMismatch = expected !== undefined && claim !== undefined
+        && claim.claimId !== claimId && !expected.includes(claim.claimId)
+      if (expectedMismatch) return false
       const replace = options?.replaceExisting
-        || (options?.replaceClaimToken !== undefined && claim?.token === options.replaceClaimToken)
-      if (!records.has(id) || (!replace && claim && claim.claimId !== claimId && claim.expiresAt > now)) return false
+        || (expected === undefined && options?.replaceClaimToken !== undefined && claim?.token === options.replaceClaimToken)
+      const claimConflict = claim !== undefined && claim.claimId !== claimId
+      const activeConflict = expected === undefined && claimConflict && claim.expiresAt > now
+      if (!records.has(id) || (!replace && activeConflict)) return false
+      if (claim && claim.claimId !== claimId) {
+        let superseded = supersededClaims.get(id)
+        if (!superseded) supersededClaims.set(id, superseded = new Set())
+        superseded.add(claim.claimId)
+      }
       claims.set(id, { claimId, expiresAt: now + leaseMs, token: globalThis.crypto.randomUUID() })
       return true
     },
@@ -1889,12 +1956,18 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
     },
     async [bindAgentInvocationsSymbol]<TRuntimeConfig extends AgentRuntimeConfig>(
       context: AgentRuntimeContext<TRuntimeConfig>,
-      bindOptions: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean } = {},
+      bindOptions: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean, replaceClaimToken?: string, recoverPending?: boolean } = {},
     ): Promise<AgentInvocationJournal<TRuntimeConfig>> {
       const runId = context.run?.runId || createInvocationId()
       const agentName = bindOptions.agentName || context.agentIdentity?.name
       const recordId = await agentInvocationId(runId, agentName)
-      const claimId = createInvocationId()
+      let claimId = createInvocationId()
+      let claimConfirmed = false
+      let claimUncertain = false
+      let claimHandedOff = false
+      let claimAttempt = 0
+      let claimRenewals = Promise.resolve()
+      const pendingClaimIds = new Set<string>()
       let traceId = await boundedIdentity(context.trace?.id || runId)
       const annotations = normalizeAnnotations(context.run?.annotations)
       let writes = Promise.resolve()
@@ -1902,12 +1975,16 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       let boundToTerminalRecord = false
       let finishing = false
       let ownsRecord = false
+      let claimUnavailable = true
       let limits = configuredObservationLimits
       let observationCount = 0
       let observationsTruncated = false
       let truncationPersisted = false
       let observationSequence = 0
       let created = false
+      let heartbeatRenewal: Promise<unknown> = Promise.resolve()
+      let workflowDispatchAllowed = false
+      let createdNew = false
       let creationTimedOut = false
       let creationTask: Promise<AgentInvocationStoreCreateResult | undefined> | undefined
       let runningPersisted = false
@@ -1931,7 +2008,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       }
       const startHeartbeat = () => {
         if (finished || !ownsRecord || heartbeat !== undefined) return
-        heartbeat = setInterval(() => { void renew() }, CLAIM_RENEW_INTERVAL_MS)
+        heartbeat = setInterval(() => { heartbeatRenewal = renew() }, CLAIM_RENEW_INTERVAL_MS)
         unrefTimer(heartbeat)
       }
       const ensureCreated = async (): Promise<boolean> => {
@@ -1949,6 +2026,8 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
               invocationCapabilityIds(result.record).forEach(capabilityId => observedCapabilityIds.add(capabilityId))
               finished = terminalStatus(result.record.status)
               boundToTerminalRecord = finished
+              workflowDispatchAllowed = result.created || (result.record.status === "pending" && result.record.annotations?.[pendingAgentInvocationAnnotation] === true)
+              createdNew = result.created
               created = true
             }
             else if (creationTask === task) {
@@ -1969,12 +2048,47 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         if (result === storeOperationTimedOut) creationTimedOut = true
         return created
       }
-      const renew = async (force = false): Promise<boolean> => {
-        if (!await ensureCreated()) return false
-        const claim = await boundedStoreOperation(() => store.claim(recordId, claimId, CLAIM_LEASE_MS, force ? { replaceExisting: true } : undefined))
+      const renewClaim = async (force = false, rotate = false): Promise<boolean> => {
+        if (!await ensureCreated() || (finished && !runningRequested) || (claimHandedOff && !rotate)) return false
+        if ((bindOptions.requireNew && !createdNew) || (bindOptions.recoverPending && !workflowDispatchAllowed)) {
+          claimUnavailable = false
+          return false
+        }
+        if (!force && pendingClaimIds.size >= 2) {
+          claimUnavailable = true
+          ownsRecord = false
+          stopHeartbeat()
+          return false
+        }
+        const attempt = ++claimAttempt
+        const attemptId = claimConfirmed && !claimUncertain && !rotate && pendingClaimIds.size === 0 ? claimId : createInvocationId()
+        const expectedClaimIds = [...pendingClaimIds, ...(claimConfirmed ? [claimId] : [])]
+        pendingClaimIds.add(attemptId)
+        const claimTask = Promise.resolve().then(() => store.claim(recordId, attemptId, CLAIM_LEASE_MS,
+          force ? { replaceExisting: true }
+            : expectedClaimIds.length ? { expectedClaimIds }
+              : bindOptions.replaceClaimToken ? { replaceClaimToken: bindOptions.replaceClaimToken } : undefined))
+        const claim = await boundedStoreOperation(() => claimTask)
+        if (claim !== true && claim !== false) {
+          claimUncertain = true
+          // An execution that never started must not leave a late claim blocking recovery.
+          void claimTask.then(owned => owned ? store.release(recordId, attemptId) : undefined, () => store.release(recordId, attemptId)).catch(() => {}).finally(() => pendingClaimIds.delete(attemptId))
+        } else {
+          pendingClaimIds.delete(attemptId)
+        }
+        if (attempt !== claimAttempt) {
+          if (claim === true && attemptId !== claimId) await boundedStoreOperation(() => store.release(recordId, attemptId))
+          return false
+        }
+        if (claim === true) {
+          claimId = attemptId
+          claimConfirmed = true
+          claimUncertain = false
+        }
+        claimUnavailable = claim !== true && claim !== false
         ownsRecord = claim === true
         if (ownsRecord && finished) {
-          await boundedStoreOperation(() => store.release(recordId, claimId))
+          await boundedStoreOperation(() => store.release(recordId, attemptId))
           ownsRecord = false
           stopHeartbeat()
           return false
@@ -1982,6 +2096,11 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         if (ownsRecord) startHeartbeat()
         else stopHeartbeat()
         return ownsRecord
+      }
+      const renew = (force = false, rotate = false): Promise<boolean> => {
+        const task = claimRenewals.then(() => renewClaim(force, rotate))
+        claimRenewals = task.then(() => {}, () => {})
+        return task
       }
       const write = async (operation: () => MaybePromise<unknown>): Promise<void> => {
         writes = writes.then(async () => {
@@ -2177,6 +2296,71 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         writeNextObservation()
       }
       return {
+        get createdNew() { return createdNew },
+        get claimStatus() { return ownsRecord ? "owned" : claimUnavailable ? "unavailable" : "conflict" },
+        async getWorkflowDispatchAttempted() {
+          const record = await boundedStoreOperation(() => store.getSummary(recordId))
+          if (!record || record === storeOperationTimedOut) return undefined
+          const attempted = record.annotations?.[workflowDispatchAttemptedAnnotation]
+          return attempted === true || attempted === false ? attempted : undefined
+        },
+        async handoffClaim(options = {}) {
+          stopHeartbeat()
+          await heartbeatRenewal
+          const record = await boundedStoreOperation(() => store.get(recordId))
+          if (!record || record === storeOperationTimedOut || terminalStatus(record.status)) return undefined
+          if (!await renew(false, true)) return undefined
+          claimHandedOff = true
+          stopHeartbeat()
+          if (options.workflowDispatch) {
+            let attempted = false
+            await write(async () => {
+              const current = await boundedStoreOperation(() => store.get(recordId))
+              if (!current || current === storeOperationTimedOut || terminalStatus(current.status)) return
+              const annotations = { [workflowDispatchAttemptedAnnotation]: true, ...current.annotations }
+              annotations[workflowDispatchAttemptedAnnotation] = true
+              const updated = await boundedStoreOperation(() => store.update(recordId, {
+                annotations,
+                timestamp: new Date().toISOString(),
+              }, claimId))
+              attempted = updated !== undefined && updated !== storeOperationTimedOut
+                && updated.annotations?.[workflowDispatchAttemptedAnnotation] === true
+            })
+            if (!attempted) return undefined
+          }
+          const token = await boundedStoreOperation(() => store.getClaimToken(recordId))
+          return token === storeOperationTimedOut ? undefined : token
+        },
+        async prepareWorkflowDispatch(binding) {
+          return await update({ workflow: binding, timestamp: new Date().toISOString() })
+        },
+        async confirmWorkflowDispatch(binding) {
+          let confirmed = false
+          // Renewing here would rotate the token already sent to the worker.
+          await write(async () => {
+            let record = await boundedStoreOperation(() => store.get(recordId))
+            if (!record || record === storeOperationTimedOut) return
+            if (binding) {
+              const associated = await boundedStoreOperation(() => store.update(recordId, {
+                workflow: binding,
+                timestamp: new Date().toISOString(),
+              }, claimId))
+              if (!associated || associated === storeOperationTimedOut) return
+              record = associated
+            }
+            const updated = await boundedStoreOperation(() => store.update(recordId, {
+              annotations: { ...record.annotations, [pendingAgentInvocationAnnotation]: false },
+              timestamp: new Date().toISOString(),
+            }, claimId))
+            confirmed = updated !== undefined && updated !== storeOperationTimedOut
+          })
+          return confirmed
+        },
+        async releaseClaim() {
+          stopHeartbeat()
+          if (ownsRecord) await write(() => boundedStoreOperation(() => store.release(recordId, claimId)))
+          ownsRecord = false
+        },
         configuration: options.configuration,
         get traceId() { return created ? traceId : undefined },
         async ready() {
@@ -2298,13 +2482,25 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           registerAgentInvocationRecovery(context, retry)
         },
         async running() {
-          if (finished) return
+          if (finished) return false
           runningRequested = true
           const markRunning = async () => {
-            runningPersisted = await update({ status: "running", timestamp: new Date().toISOString() })
+            // Clear the replay reservation before any Driver work starts. If a
+            // later terminal update is lost, the pending record still carries
+            // proof that execution began and cannot be retried as preparation.
+            const annotations = normalizeAnnotations(context.run?.annotations) || {}
+            // SAFETY: The runtime context is extended with the private inherited claim marker by the claim handoff path.
+            const inheritedClaim = (context as AgentRuntimeContext & { [inheritedAgentInvocationClaim]?: string })[inheritedAgentInvocationClaim]
+            if (inheritedClaim) annotations[pendingAgentInvocationAnnotation] = false
+            runningPersisted = await update({
+              status: "running",
+              annotations,
+              timestamp: new Date().toISOString(),
+            })
             return runningPersisted
           }
-          if (await markRunning() || runningRetry) return
+          if (await markRunning()) return true
+          if (runningRetry) return false
           runningRetry = (async () => {
             const deadline = Date.now() + TERMINAL_RETRY_TIMEOUT_MS
             while (!finished && Date.now() < deadline) {
@@ -2317,10 +2513,21 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             }
           })()
           registerAgentInvocationRecovery(context, runningRetry)
+          return false
         },
         async setAnnotations(annotations) {
           if (finished || finishing) return
           await update({ annotations: normalizeAnnotations(annotations), timestamp: new Date().toISOString() })
+        },
+        async setRunMetadata(run) {
+          if (finished || finishing) return false
+          return await update({
+            annotations: normalizeAnnotations(run.annotations),
+            channelId: run.channelId,
+            origin: run.origin,
+            threadId: run.threadId,
+            timestamp: new Date().toISOString(),
+          })
         },
       }
     },
@@ -2464,7 +2671,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
 export async function bindAgentInvocations<TRuntimeConfig extends AgentRuntimeConfig>(
   invocations: AgentInvocations | undefined,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean },
+  options?: { agentName?: string, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean, replaceClaimToken?: string, recoverPending?: boolean },
 ): Promise<AgentInvocationJournal<TRuntimeConfig> | undefined> {
   if (!invocations) return
   // SAFETY: Invocation event normalization establishes the asserted invocation contract.

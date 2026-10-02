@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { createLocalWorkspaceStore } from "../src/storage/local.ts"
+import { createWorkspaceStoreFromProvider } from "../src/storage/provider.ts"
 
 const permissionsFixture = vi.hoisted(() => ({ root: "" }))
 
@@ -2058,5 +2059,189 @@ describe("local workspace store", () => {
       expect.objectContaining({ path: "docs/readme.md", type: "file" }),
       expect.objectContaining({ path: "docs/guide.mdx", type: "file" }),
     ]))
+  })
+})
+
+describe("local workspace store process locks", () => {
+  async function createProcessStore() {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-store-"))
+    tempDirs.push(root)
+    return { root, store: createLocalWorkspaceStore(root, { locks: "process" }) }
+  }
+
+  it("rejects an unknown lock mode", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-store-"))
+    tempDirs.push(root)
+    // @ts-expect-error Runtime validation covers untyped configuration.
+    expect(() => createLocalWorkspaceStore(root, { locks: "shared" })).toThrow("locks must be \"filesystem\" or \"process\"")
+    expect(() => createLocalWorkspaceStore(root, { locks: "filesystem" })).not.toThrow()
+  })
+
+  it("writes and snapshots without a lock directory", async () => {
+    const { root, store } = await createProcessStore()
+    await store.writeFile("docs/readme.md", { path: "docs/readme.md", content: "hello" })
+    await store.writeFile("docs/guide.md", { path: "docs/guide.md", content: "guide" })
+    const snapshot = await store.snapshot({ name: "baseline" })
+    await store.writeFile("docs/readme.md", { path: "docs/readme.md", content: "changed" })
+    const diff = await store.diff({ from: snapshot })
+
+    expect(diff.entries).toEqual([expect.objectContaining({ path: "docs/readme.md", type: "modified" })])
+    expect((await stat(`${root}/.vitehub`)).isDirectory()).toBe(true)
+    await expect(stat(`${root}/.vitehub/locks`)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("prepares .vitehub again when a reused root loses it", async () => {
+    const { root, store } = await createProcessStore()
+    await store.writeFile("docs/readme.md", { path: "docs/readme.md", content: "hello" })
+    await rm(`${root}/.vitehub`, { recursive: true, force: true })
+    await rm(`${root}/docs`, { recursive: true, force: true })
+
+    const reused = createLocalWorkspaceStore(root, { locks: "process" })
+    await reused.writeFile("docs/readme.md", { path: "docs/readme.md", content: "again" })
+    expect((await lstat(`${root}/.vitehub`)).isDirectory()).toBe(true)
+    await expect(reused.readFile("docs/readme.md")).resolves.toMatchObject({ path: "docs/readme.md" })
+  })
+
+  it("passes the lock mode from Workspace store options", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-store-"))
+    tempDirs.push(root)
+    const store = createWorkspaceStoreFromProvider({ name: "docs", store: { provider: "local", root, locks: "process" } })
+    await store.writeFile("docs/readme.md", { path: "docs/readme.md", content: "hello" })
+    await expect(stat(`${root}/.vitehub/locks`)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("serializes writes to one path and lets sibling writes overlap", async () => {
+    const { root, store } = await createProcessStore()
+    const second = createLocalWorkspaceStore(root, { locks: "process" })
+    await store.writeFile("docs/page.md", { path: "docs/page.md", content: "initial" })
+    vi.mocked(writeFile).mockClear()
+    const { writeFile: actualWriteFile } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")
+    let release!: () => void
+    let signalWriting!: () => void
+    const writingStarted = new Promise<void>((resolve) => { signalWriting = resolve })
+    const blocked = new Promise<void>((resolve) => { release = resolve })
+    vi.mocked(writeFile).mockImplementationOnce(async (...args) => {
+      signalWriting()
+      await blocked
+      return await actualWriteFile(...args)
+    })
+
+    const first = store.writeFile("docs/page.md", { path: "docs/page.md", content: "first" })
+    await writingStarted
+    await second.writeFile("docs/sibling.md", { path: "docs/sibling.md", content: "sibling" })
+    const writesBeforeRelease = vi.mocked(writeFile).mock.calls.length
+    const next = second.writeFile("docs/page.md", { path: "docs/page.md", content: "second" })
+    let finished = false
+    void next.then(() => { finished = true })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(finished).toBe(false)
+    expect(vi.mocked(writeFile).mock.calls.length).toBe(writesBeforeRelease)
+
+    release()
+    await first
+    await next
+    await expect(readFile(join(root, "docs/page.md"), "utf8")).resolves.toBe("second")
+    await expect(readFile(join(root, "docs/sibling.md"), "utf8")).resolves.toBe("sibling")
+  })
+
+  it("lets a queued writer run before readers that arrive after it", async () => {
+    const { store } = await createProcessStore()
+    await store.writeFile("docs/page.md", { path: "docs/page.md", content: "initial" })
+    const { writeFile: actualWriteFile } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")
+    let release!: () => void
+    let signalWriting!: () => void
+    const writingStarted = new Promise<void>((resolve) => { signalWriting = resolve })
+    const blocked = new Promise<void>((resolve) => { release = resolve })
+    vi.mocked(writeFile).mockImplementationOnce(async (...args) => {
+      signalWriting()
+      await blocked
+      return await actualWriteFile(...args)
+    })
+
+    const first = store.writeFile("docs/page.md", { path: "docs/page.md", content: "first" })
+    await writingStarted
+    const queuedWriter = store.writeFile("docs/page.md", { path: "docs/page.md", content: "queued" })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    const laterRead = store.readFile("docs/page.md")
+    release()
+    await Promise.all([first, queuedWriter])
+    expect(new TextDecoder().decode((await laterRead)?.content as Uint8Array)).toBe("queued")
+  })
+})
+
+describe("local workspace store Git ignore", () => {
+  async function createCheckout() {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-git-"))
+    tempDirs.push(root)
+    const { execFile } = await import("node:child_process")
+    await new Promise<void>((resolve, reject) => execFile("git", ["init", "-q", root], error => error ? reject(error) : resolve()))
+    await writeFile(join(root, ".gitignore"), "node_modules\ndist/\n")
+    await mkdir(join(root, "node_modules/pkg"), { recursive: true })
+    await writeFile(join(root, "node_modules/pkg/index.js"), "ignored")
+    await mkdir(join(root, "dist"), { recursive: true })
+    await writeFile(join(root, "dist/out.js"), "ignored")
+    await mkdir(join(root, "src"), { recursive: true })
+    await writeFile(join(root, "src/index.ts"), "tracked")
+    const nestedRoot = join(root, "vendor/repo")
+    await mkdir(nestedRoot, { recursive: true })
+    await new Promise<void>((resolve, reject) => execFile("git", ["init", "-q", nestedRoot], error => error ? reject(error) : resolve()))
+    await writeFile(join(nestedRoot, ".gitignore"), "node_modules/\nsrc/ignored/\n")
+    await mkdir(join(nestedRoot, "node_modules/pkg"), { recursive: true })
+    await writeFile(join(nestedRoot, "node_modules/pkg/index.js"), "nested ignored")
+    await mkdir(join(nestedRoot, "src/ignored"), { recursive: true })
+    await writeFile(join(nestedRoot, "src/ignored/index.ts"), "nested prefix ignored")
+    return root
+  }
+
+  it("hides .git and Git-ignored paths from listings, snapshots, and diffs", async () => {
+    const root = await createCheckout()
+    const store = createLocalWorkspaceStore(root, { ignore: "git", locks: "process" })
+    const paths = (await store.list("", { recursive: true })).map(entry => entry.path)
+    expect(paths).toContain("src/index.ts")
+    expect(paths).toContain(".gitignore")
+    expect(paths.some(path => path === ".git" || path.startsWith(".git/"))).toBe(false)
+    expect(paths.some(path => path.split("/").some(component => component.toLowerCase() === ".git"))).toBe(false)
+    expect(paths.some(path => path.startsWith("node_modules") || path.startsWith("dist"))).toBe(false)
+    expect(paths.some(path => path.startsWith("vendor/repo/node_modules"))).toBe(false)
+    expect((await store.list("vendor/repo/src", { recursive: true })).map(entry => entry.path)).not.toContain("vendor/repo/src/ignored/index.ts")
+
+    const snapshot = await store.snapshot({ name: "baseline" })
+    await writeFile(join(root, "dist/out.js"), "changed build output")
+    await store.writeFile("src/index.ts", { path: "src/index.ts", content: "changed" })
+    const diff = await store.diff({ from: snapshot })
+    expect(diff.entries.map(entry => entry.path)).toEqual(["src/index.ts"])
+  })
+
+  it("keeps ignored paths visible without the option and rejects unknown values", async () => {
+    const root = await createCheckout()
+    const paths = (await createLocalWorkspaceStore(root).list("", { recursive: true })).map(entry => entry.path)
+    expect(paths).toContain("node_modules/pkg/index.js")
+    // @ts-expect-error Runtime validation covers untyped configuration.
+    expect(() => createLocalWorkspaceStore(root, { ignore: "all" })).toThrow("ignore must be \"git\"")
+    const fromProvider = createWorkspaceStoreFromProvider({ name: "docs", store: { provider: "local", root, ignore: "git" } })
+    expect((await fromProvider.list("", { recursive: true })).map(entry => entry.path)).not.toContain("dist/out.js")
+  })
+
+  it("reports an unusable Git root instead of disabling exclusions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-broken-git-"))
+    tempDirs.push(root)
+    await writeFile(join(root, ".git"), "gitdir: missing-worktree")
+    await writeFile(join(root, ".gitignore"), "ignored/\n")
+    await mkdir(join(root, "ignored"), { recursive: true })
+    await writeFile(join(root, "ignored/file.txt"), "ignored")
+
+    await expect(createLocalWorkspaceStore(root, { ignore: "git" }).list("", { recursive: true }))
+      .rejects.toThrow(/not a git repository|gitdir|repository/i)
+  })
+
+  it("keeps case-variant directories visible on case-sensitive filesystems", async () => {
+    if (process.platform === "win32") return
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workspace-case-variant-git-"))
+    tempDirs.push(root)
+    await mkdir(join(root, ".GIT"), { recursive: true })
+    await writeFile(join(root, ".GIT", "notes.txt"), "visible")
+
+    const paths = (await createLocalWorkspaceStore(root, { ignore: "git" }).list("", { recursive: true })).map(entry => entry.path)
+    expect(paths).toContain(".GIT/notes.txt")
   })
 })

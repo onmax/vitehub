@@ -31,6 +31,7 @@ import type {
 } from "@vite-hub/workspace"
 import type { BoxDefinition } from "@vite-hub/box"
 import type { channelDeliveryHandlers } from "./internal/channel-delivery-handlers.ts"
+import type { ReplayChannelResult } from "./channel-replay.ts"
 import type {
   AgentChannelOptions,
   AgentWebChatChannelOptions,
@@ -64,26 +65,12 @@ export type AgentCapabilities = RuntimeCapabilities
 
 export interface AgentRuntimeConfig {}
 
-/** Named Box integrations owned by an agent definition.
- * Values are intentionally opaque to the agent package: integrations can
- * expose their own typed contracts while remaining lazily resolved.
- */
-export type AgentBoxValue<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
-  | BoxDefinition<any>
-  | Record<string, unknown>
-  | (string & {})
-
-export type AgentBoxDefinitions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
-  Readonly<Record<string, AgentBoxValue<TRuntimeConfig>>>
-export type AgentBoxInput<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
-  | AgentBoxDefinitions<TRuntimeConfig>
-  | (() => AgentBoxDefinitions<TRuntimeConfig>)
-
-export interface AgentBoxContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
-  readonly definitions: AgentBoxDefinitions
-  readonly [name: string]: unknown
-  get(name: string): unknown
-}
+/** Box used by a built-in provider Driver. Callbacks resolve once per invocation. */
+export type AgentBoxDefinition<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+> = BoxDefinition<AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues>>
 
 export interface AgentHostIdentity {
   readonly name: string
@@ -106,8 +93,6 @@ export interface AgentGitHub {
 export interface AgentRuntimeContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
   extends Omit<RuntimeHostContext<TRuntimeConfig>, "cloudflare" | "platform" | "runtime"> {
   agentIdentity?: AgentHostIdentity
-  /** Agent-owned Box integrations. Secrets are resolved by integrations on demand. */
-  box?: AgentBoxContext<TRuntimeConfig>
   channelDelivery?: AgentChannelDelivery
   cloudflare?: RuntimeHostContext<TRuntimeConfig>["cloudflare"]
   /** The Agent GitHub identity from `defineAgent({ github })`. */
@@ -660,6 +645,7 @@ export type AgentWebhookSecretToken<TRuntimeConfig extends AgentRuntimeConfig = 
 export interface AgentWebhookRegistrationDefinition<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   adapter?: string
   channelId?: string
+  durableState?: boolean
   id?: string
   method?: "POST" | (string & {})
   path?: string
@@ -670,6 +656,7 @@ export interface AgentWebhookRegistrationDefinition<TRuntimeConfig extends Agent
     toleranceSeconds?: number
   } | {
     verify: (input: {
+      context?: AgentCallbackContext<TRuntimeConfig>
       header: string
       rawBody: Uint8Array
       request: Request
@@ -698,6 +685,27 @@ export interface AgentTriggerContext<
   }
 }
 
+/** One message that `AgentChannelTriggerContext.dispatch()` sends through a Channel trigger. */
+export interface AgentChannelDispatchItem {
+  /** Trigger input. */
+  input: unknown
+  /** Stable key, such as the provider message ID. The Invocation ID derives from it. */
+  key: string
+}
+
+export interface AgentChannelDispatchOptions {
+  /** Record Channel message writes in the trace instead of calling the provider. */
+  dryRun?: boolean
+  /** Trigger of the same Channel that receives each item. */
+  trigger: string
+}
+
+/** Durable state of one Channel. Keys that start with `keyPrefix` belong to the Channel. */
+export interface AgentChannelStateBinding {
+  keyPrefix: string
+  state: StateAdapter
+}
+
 export interface AgentChannelTriggerContext<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
 > extends AgentCallbackContext<TRuntimeConfig> {
@@ -705,6 +713,13 @@ export interface AgentChannelTriggerContext<
   agentCapabilities: readonly AgentCapabilityDefinition<TRuntimeConfig>[]
   agentName?: string
   channel: AgentChannelDefinition<TRuntimeConfig>
+  /** The Channel's State Adapter. Present when a webhook route runs the trigger. */
+  channelState?: AgentChannelStateBinding
+  /**
+   * Starts one Invocation per item through another trigger of this Channel, for a webhook that carries several messages.
+   * Items use the same Invocation IDs as `replayChannel()`, so an item that already has an Invocation is skipped.
+   */
+  dispatch: (items: readonly AgentChannelDispatchItem[], options: AgentChannelDispatchOptions) => Promise<ReplayChannelResult>
   trigger: {
     channelId: string
     id: `${string}.${string}`
@@ -1462,6 +1477,11 @@ export interface AgentProviderDriverOptions<
   TOutput = unknown,
 > {
   capacity?: AgentDriverCapacityOptions
+  /**
+   * Existing directory where the provider runs. The driver does not copy, snapshot, write back, or remove it.
+   * Workspace Sources still materialize, but no Workspace session starts. Title and progress summary runs ignore it.
+   */
+  cwd?: AgentProviderWorkingDirectoryResolver<TRuntimeConfig>
   /** Provider process environment. Every resolved value is treated as a credential in persisted diagnostics. */
   env?: AgentProviderEnvironmentResolver<TRuntimeConfig>
   execution?: {
@@ -1507,8 +1527,11 @@ export type AgentProviderEnvironment = Record<string, string | undefined>
 export type AgentProviderEnvironmentResolver<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
   MaybeResolvable<AgentProviderEnvironment, AgentProviderCredentialContext<TRuntimeConfig>>
 
+export type AgentProviderWorkingDirectoryResolver<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
+  MaybeResolvable<string, AgentProviderCredentialContext<TRuntimeConfig>>
+
 export interface AgentProviderExitContext {
-  /** Disposable provider working directory, still available during this callback. */
+  /** Provider working directory, still available during this callback. It is temporary unless `driver.cwd` is set. */
   cwd: string
   /** Independent teardown deadline. Stop all I/O when this signal aborts. */
   abortSignal: AbortSignal
@@ -1576,6 +1599,7 @@ export interface AgentModelDriver<
   ask?: never
   capacity?: AgentDriverCapacityOptions
   credentials?: never
+  cwd?: never
   execution?: AgentModelExecutionOptions<TRuntimeConfig, CALL_OPTIONS>
   instructions?: AgentAdapterInstructions<TRuntimeConfig>
   kind?: never
@@ -1604,6 +1628,7 @@ export interface AgentRunDriver<
   ask?: never
   capacity?: AgentDriverCapacityOptions
   credentials?: never
+  cwd?: never
   execution?: never
   instructions?: never
   kind?: never
@@ -1732,7 +1757,8 @@ type AgentSharedSettings<
   TIntercept = never,
   TDataInput = TData,
 > = {
-  box?: AgentBoxInput<TRuntimeConfig>
+  /** Run the built-in provider Driver inside this Box. Each invocation opens a new Box session. */
+  box?: AgentBoxDefinition<TRuntimeConfig, CALL_OPTIONS, TContextValues>
   /**
    * GitHub identity for this Agent. Provider Drivers receive its `access().env`,
    * and the pull request checkout and `git()` use its token.
@@ -1810,7 +1836,7 @@ export interface AgentDefinition<
   TInterceptOutput = TOutput,
 > extends AgentDataCarrier<TDataInput>, AgentDataOutputCarrier<TData>, AgentDriverOutputCarrier<TDriverOutput>, AgentInterceptOutputCarrier<TInterceptOutput> {
   [agentOutputType]?: TOutput
-  box?: AgentBoxInput<TRuntimeConfig>
+  box?: AgentBoxDefinition<TRuntimeConfig, CALL_OPTIONS, TContextValues>
   github?: AgentGitHub
   health?: AgentHealthDescriptor
   capabilities?: AgentCapabilityDefinition<TRuntimeConfig>[]
@@ -1836,10 +1862,6 @@ export interface AgentDefinition<
   uiMessageStream?: AgentUIMessageStreamProjectionResolver<TRuntimeConfig, CALL_OPTIONS, TContextValues>
   version?: string
   workspace?: WorkspaceAgentWorkspaceConfig
-}
-
-export interface AgentBox {
-  [key: string]: unknown
 }
 
 export type AgentInput<
@@ -2248,12 +2270,14 @@ export type AgentChannelMessageCalls<TMethods> = {
 
 /** Message methods available when Discord, Slack, Teams, or Telegram has an adapter and messages are enabled. */
 export interface AgentChannelReplyCalls {
+  /** Present when the Channel has a delivery adapter. */
   readonly reply?: (input: AgentChannelDeliveryReplyInput) => Promise<void>
 }
 
 /** Message methods that the GitHub Channel provides. They exist only when the Channel has a GitHub App. */
 export interface AgentGitHubMessageCalls {
   readonly reaction?: (input: AgentChannelDeliveryReactionInput) => Promise<void>
+  /** Present when the Channel has a GitHub App. */
   readonly reply?: (input: AgentChannelDeliveryReplyInput) => Promise<void>
   readonly status?: (input: AgentChannelDeliveryStatusInput) => Promise<void>
 }
@@ -2289,7 +2313,7 @@ export type AgentChannelDefinitionOf<
   TData = unknown,
   TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>,
 > = Omit<AgentChannelDefinition<TRuntimeConfig>, "kind" | "message"> & {
-  readonly kind: TKind
+  readonly kind: TKind extends "portal" ? string : TKind
   readonly message?: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods>
 }
 
@@ -2332,12 +2356,37 @@ export type AgentChannelMessageOf<TChannels> =
     ? undefined
     : { [TName in keyof TChannels & string]: AgentChannelMessageFromInput<TName, NonNullable<TChannels[TName]>> }[keyof TChannels & string] | undefined
 
+/** Request query for a Channel history Collection: one string or repeated strings per key. */
+export type AgentChannelHistoryQuery = Record<string, string | readonly string[] | undefined>
+
+/**
+ * The part of a `@vite-hub/source` Collection that Channel replay uses.
+ * A Collection from `defineCollection()` satisfies it.
+ */
+export interface AgentChannelHistoryCollection<TItem = unknown> {
+  page(options: { cursor?: string, limit?: number, query: object, signal?: AbortSignal }): Promise<{ items: TItem[], nextCursor: string | null }>
+  parseQuery(input: AgentChannelHistoryQuery): Promise<object>
+  readonly querySchema?: StandardSchemaV1
+}
+
+/** Past Channel messages that `replayChannel()` sends through a Channel trigger. */
+export interface AgentChannelHistory<TItem = unknown> {
+  /** Collection of past messages. Each item is the input of `trigger`. */
+  collection: AgentChannelHistoryCollection<TItem>
+  /** Returns a stable key for an item, such as the provider message ID. Replay derives the Invocation ID from it. */
+  key(item: TItem): string
+  /** Channel trigger that receives each item. Optional when the Channel has exactly one trigger. */
+  trigger?: string
+}
+
 export interface AgentChannelDefinition<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   /** Internal delivery handlers for built-in Channels. */
   [channelDeliveryHandlers]?: AgentChannelDeliveryEffects<TRuntimeConfig>
   activity?: AgentChannelActivityDefinition<TRuntimeConfig>
   adapter?: AgentChatPlatformResolver<TRuntimeConfig>
   capabilities?: readonly AgentCapabilityDefinition<TRuntimeConfig>[]
+  /** Past messages that `replayChannel()` and `vitehub channels replay` send through a trigger. */
+  history?: AgentChannelHistory
   identity?: IdentityResolver
   kind: string
   listener?: { kind: "telegram-polling" }
@@ -2507,6 +2556,8 @@ export interface AgentInspectionModelExecutionMetadata {
 export interface AgentInspectionProviderMetadata {
   credentialProfile?: string
   credentials?: true
+  /** Present when driver.cwd runs the provider in an existing directory. The path is not exposed. */
+  cwd?: "dynamic" | "static"
   environment?: "dynamic" | "static"
   launch?: "dynamic" | "static"
   model?: string

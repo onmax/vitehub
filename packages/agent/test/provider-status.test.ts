@@ -52,6 +52,26 @@ describe("provider inspection", () => {
     expect(different.account?.id).not.toBe(first.account?.id)
   })
 
+  it("caches host-account status without driver.credentials for 30 seconds", async () => {
+    inspectProvider.mockResolvedValue(ready())
+    const options = { provider: "codex" as const }
+    const first = await inspectAgentProvider(options, context())
+    const second = await inspectAgentProvider(options, { ...context(), agentIdentity: { name: "other" } })
+    expect(inspectProvider).toHaveBeenCalledTimes(1)
+    expect(second).toEqual({ ...first, agent: "other" })
+    expect(first).not.toHaveProperty("account")
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse(first.checkedAt) + 30_000)
+    try {
+      await inspectAgentProvider(options, context())
+      expect(inspectProvider).toHaveBeenCalledTimes(2)
+    }
+    finally {
+      now.mockRestore()
+    }
+    await inspectAgentProvider({ provider: "codex" }, context())
+    expect(inspectProvider).toHaveBeenCalledTimes(3)
+  })
+
   it("resolves invocation credentials and environment, without starting a session, then removes temporary credentials", async () => {
     let home = ""
     inspectProvider.mockImplementation(async options => {

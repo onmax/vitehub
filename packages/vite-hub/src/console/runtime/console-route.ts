@@ -1,5 +1,7 @@
 import { viteHubErrorDiagnostics } from "../../error-diagnostics.ts"
 import { decodeRouteSegment, encodeRouteSegment } from "@vite-hub/runtime"
+export const consoleDatabaseSchemaPath = "/database/schema/diagram"
+export const consoleDatabaseTablePath = "/database/:table?"
 export const consoleDatabasesSchemaPath = "/databases/:database/schema/diagram"
 export const consoleDatabasesTablePath = "/databases/:database?/:table?"
 
@@ -22,6 +24,7 @@ export function resolveConsoleRouteName(currentRouteName: string | symbol | null
 
   const consoleRouteName = [
     "vitehub-console-databases-schema",
+    "vitehub-console-database-schema",
     "vitehub-console-invocation",
     "vitehub-console-rate-limits",
     "vitehub-console-workspaces",
@@ -29,6 +32,7 @@ export function resolveConsoleRouteName(currentRouteName: string | symbol | null
     "vitehub-console-sandboxes",
     "vitehub-console-schedules",
     "vitehub-console-databases",
+    "vitehub-console-database",
     "vitehub-console-queues",
     "vitehub-console-agents",
     "vitehub-console-agent",
@@ -36,10 +40,16 @@ export function resolveConsoleRouteName(currentRouteName: string | symbol | null
     "vitehub-console-blob",
     "vitehub-console-kv",
     "vitehub-console-env",
+    "vitehub-console-connections",
     "vitehub-console",
   ].find(
-    (routeName) => currentRouteName.startsWith(routeName),
+    (routeName) => currentRouteName === routeName || currentRouteName.startsWith(`${routeName}___`),
   )
+
+  if (!consoleRouteName && currentRouteName.startsWith("vitehub-console-")) {
+    const decoration = currentRouteName.indexOf("___")
+    return `${targetRouteName}${decoration === -1 ? "" : currentRouteName.slice(decoration)}`
+  }
 
   return `${targetRouteName}${consoleRouteName ? currentRouteName.slice(consoleRouteName.length) : ""}`
 }

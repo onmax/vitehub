@@ -399,7 +399,6 @@ describe("Provider Agent Driver", () => {
     const launch = vi.fn((launchContext: { command: string, cwd: string, environment: Readonly<Record<string, string | undefined>>, requiredEnvironment: readonly string[] }) => {
       expect(launchContext).toMatchObject({
         command: "/app/node_modules/@openai/codex/bin/codex.js",
-        providerCommand: "/app/node_modules/@openai/codex/bin/codex.js",
         environment: expect.objectContaining({ LAUNCH_OUTPUT: outputPath, PROVIDER_SELECTED: "selected" }),
       })
       expect(launchContext.environment).not.toHaveProperty("PATH")
@@ -4933,14 +4932,8 @@ cli_auth_credentials_store = "keyring"
   })
 
   it("makes canonical and legacy Skill directories mutually readable without overwriting collisions", async () => {
-    const { gmail } = await import("../src/capabilities/gmail.ts")
-    const capability = gmail()
-    if (typeof capability.workspace !== "function") throw new Error("expected workspace resolver")
-    const contribution = await capability.workspace({} as never)
-    if (!contribution) throw new Error("expected Gmail workspace contribution")
-    const gmailSource = contribution.sources?.["skill.gmail"]
-    if (!gmailSource || typeof gmailSource !== "object" || !("content" in gmailSource) || typeof gmailSource.content !== "string") throw new Error("expected Gmail Skill content")
-    const gmailPath = capability.metadata!.skillPath as string
+    const gmailSource = { content: "# Gmail\nUse gmail_search.\n" }
+    const gmailPath = ".agents/skills/gmail/SKILL.md"
     const threadId = "thread-workspace-provider-skill-compatibility"
     let root = ""
     runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
