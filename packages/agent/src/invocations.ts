@@ -2489,6 +2489,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             // later terminal update is lost, the pending record still carries
             // proof that execution began and cannot be retried as preparation.
             const annotations = normalizeAnnotations(context.run?.annotations) || {}
+            // SAFETY: The runtime context is extended with the private inherited claim marker by the claim handoff path.
             const inheritedClaim = (context as AgentRuntimeContext & { [inheritedAgentInvocationClaim]?: string })[inheritedAgentInvocationClaim]
             if (inheritedClaim) annotations[pendingAgentInvocationAnnotation] = false
             runningPersisted = await update({
