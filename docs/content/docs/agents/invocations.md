@@ -8,6 +8,33 @@ icon: i-lucide-play-circle
 
 An Agent Invocation is one request to an Agent. ViteHub prepares its input, Actor, Capabilities, Workspace, and Driver, then returns or streams the result.
 
+## What happens during an Invocation
+
+An Agent Definition describes reusable behavior. An Invocation records one execution of that behavior.
+
+| Stage | What happens |
+| --- | --- |
+| Entry | A route, Channel, schedule, webhook, CLI command, or another caller provides input. |
+| Actor | ViteHub resolves the trusted [Agent Actor](/docs/agents/actors). |
+| Capabilities | The Definition and invocation context select the abilities for this request. |
+| Context | ViteHub prepares tools, policy, context values, and the Workspace Scope. |
+| Execution | The Agent Driver runs the prepared request. |
+| Result | ViteHub returns or streams the output and records events and usage. |
+
+The Agent can use only the Capabilities selected for that Invocation. A Capability that is not selected adds nothing to the request.
+
+| Term | Describes |
+| --- | --- |
+| Agent Definition | Reusable Agent behavior. |
+| Agent Invocation | One execution for one input. |
+| Channel | Message origin and delivery facts around an Invocation. |
+| Workflow Run | Durable work that can continue across waits or server restarts. |
+| Agent Memory | Persistent context stored outside the Invocation. |
+
+A Channel can start many Invocations, and a Workflow Run can carry an Invocation. Neither one replaces the Invocation record.
+
+Run `vitehub agent info` to inspect the resolved Agent Definition. Run `vitehub agent dev` to talk to the Agent through a running Vite development server. Read [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-approvals-and-traces) for the records produced during execution.
+
 ## Run an Agent
 
 Use `runAgent()` when the caller needs to invoke the Agent directly. Inline runtimes may return a native `Response` when the Agent produces an HTTP-shaped result. Workflow runtimes return a Workflow Run for durable inspection and control. Structured Agent outputs remain typed values, and streaming uses the separate stream contract below.
@@ -227,6 +254,8 @@ export default defineAgent({
 
 Use `invocations.getSummary(id)` to read metadata without observation payloads. It returns `undefined` when the Invocation does not exist. Every `AgentInvocationStore` must implement `getSummary(id)`; `get(id)` returns the full record.
 
+Custom stores must enforce `claim(id, claimId, leaseMs, { expectedClaimIds })` atomically. Unless `replaceExisting` is `true`, this form can claim an unclaimed record or replace one of the listed claim IDs. It must reject a different owner, including an expired claim. Journals rotate the claim ID for handoff and after an uncertain renewal so cleanup of a timed-out attempt cannot release a newer claim. `release(id, claimId)` must release only that claim ID. The memory, libSQL, and D1 stores enforce these rules.
+
 Pass `observationNames` to read only the observations needed for an inspection:
 
 ```ts
@@ -403,7 +432,7 @@ D1 batches make creation and retention atomic. Conditional updates retry when an
 
 The adapter targets D1. It does not provide transactions for other Database providers. The database binding stays owned by the host; the store does not open or close it. Use [`redact`](#redact-stored-evidence) to remove sensitive values before they reach D1. Route authorization remains application policy.
 
-On the Cloudflare preset, the Console journal uses this store with the D1 Database binding when no Agent Definition configures `invocations`. See [Cloudflare journal](/docs/development/console#cloudflare-journal). Local D1 tests cover the SQL and concurrency contract; they do not measure production D1 limits or latency.
+On the Cloudflare preset, the Console journal uses this store with the D1 Database binding when no Agent Definition configures `invocations`. See [Cloudflare journal](/docs/development/console#know-what-the-console-stores). Local D1 tests cover the SQL and concurrency contract; they do not measure production D1 limits or latency.
 
 ## Append delivery evidence
 
@@ -448,7 +477,7 @@ For GitHub-backed sessions, `createGitHubWorkspaceInspector(host)` from `@vite-h
 ## Durable retry budgets
 
 On Node hosts, the GitHub inbox can bound repeated provider dispatches and PR work
-in its existing SQLite database. This is an explicit scheduler API; configuring it
+in its SQLite storage. Every inbox method is asynchronous. This is an explicit scheduler API; configuring it
 does not intercept Agent invocations or classify errors automatically.
 
 ```ts
@@ -469,14 +498,14 @@ are occupied. Check `providerBudget(scope)` to distinguish pending work from fou
 recorded failures.
 
 ```ts
-const token = inbox.reserveProviderAttempt('codex:primary-account')
+const token = await inbox.reserveProviderAttempt('codex:primary-account')
 if (!token) {
   // Leave the PR claim unstarted. Inspect pending attempts or exhausted failures.
   return
 }
-const claim = inbox.claim(1)[0]
+const [claim] = await inbox.claim(1)
 if (!claim) {
-  inbox.finishProviderAttempt(token, 'other-failure')
+  await inbox.finishProviderAttempt(token, 'other-failure')
   return
 }
 
@@ -486,23 +515,23 @@ try {
 } catch (error) {
   // Application-owned classification: only known retryable provider failures count.
   const retryable = isRetryableProviderFailure(error)
-  inbox.finishProviderAttempt(token, retryable ? 'retryable-failure' : 'other-failure')
-  inbox.release(claim)
+  await inbox.finishProviderAttempt(token, retryable ? 'retryable-failure' : 'other-failure')
+  await inbox.release(claim)
   throw error
 }
-inbox.finishProviderAttempt(token, 'success')
+await inbox.finishProviderAttempt(token, 'success')
 
 try {
   // Compare GitHub/provider state before and after the invocation. Do not parse prose.
   const evidence = await verifyNewProgress(claim, result)
-  inbox.finish(claim, {
+  await inbox.finish(claim, {
     text: result.text,
     retry: !evidence,
     progress: evidence ? { kind: 'verified', evidence } : { kind: 'no-progress' },
   })
 }
 catch (error) {
-  inbox.release(claim)
+  await inbox.release(claim)
   throw error
 }
 ```

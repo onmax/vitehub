@@ -238,3 +238,9 @@ export interface ConnectionApproval {
   status: ConnectionApprovalStatus
   traceId?: string
 }
+
+/** A bounded approval page. Pass `nextCursor` as `before` to read older approvals. */
+export interface ConnectionApprovalPage {
+  approvals: ConnectionApproval[]
+  nextCursor?: string
+}

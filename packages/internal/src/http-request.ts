@@ -49,7 +49,11 @@ export interface NormalizedHttpRequest extends Omit<HttpRequestDefinition, "maxR
 }
 
 export interface HttpRequestExecutionOptions<TOutput = unknown> {
+  /** Sends the request. Default: the global `fetch`. */
+  fetch?: (input: string, init: RequestInit) => Promise<Response>
   responseType?: InternalHttpResponseType
+  /** Whether a rejected fetch can retry. Defaults to true; HTTP status retries are handled separately. */
+  retryFetchError?: (error: unknown) => boolean
   schema?: StandardSchemaV1<TOutput>
   signal?: AbortSignal
 }
@@ -103,7 +107,7 @@ export async function executeHttpRequest<TOutput = unknown>(
   const normalized = normalizeHttpRequest(definition)
   const responseType = options.responseType || "json"
   const { data, response } = await httpEffectBoundary.run(
-    fetchWithRetry(normalized, responseType, options.schema),
+    fetchWithRetry(normalized, responseType, options.schema, options.fetch ?? ((input, init) => fetch(input, init)), options.retryFetchError ?? (() => true)),
     { signal: options.signal },
   )
   return {
@@ -119,9 +123,11 @@ function fetchWithRetry<TOutput>(
   definition: NormalizedHttpRequest,
   responseType: InternalHttpResponseType,
   schema: StandardSchemaV1<TOutput> | undefined,
+  send: (input: string, init: RequestInit) => Promise<Response>,
+  retryFetchError: (error: unknown) => boolean,
 ): Effect.Effect<{ data: unknown, response: Response }, EffectBoundaryFailure> {
   const attempts = definition.method === "GET" || definition.method === "HEAD" ? 2 : 1
-  const attempt = fetchOnce(definition, responseType)
+  const attempt = fetchOnce(definition, responseType, send, retryFetchError)
   const timed = Effect.timeoutOrElse(attempt, {
     duration: definition.timeout,
     orElse: () => Effect.fail(new HttpAttemptFailure({
@@ -146,15 +152,17 @@ function fetchWithRetry<TOutput>(
 function fetchOnce(
   definition: NormalizedHttpRequest,
   responseType: InternalHttpResponseType,
+  send: (input: string, init: RequestInit) => Promise<Response>,
+  retryFetchError: (error: unknown) => boolean,
 ): Effect.Effect<{ data: unknown, response: Response }, HttpAttemptFailure> {
   return Effect.acquireUseRelease(
     Effect.sync(() => new AbortController()),
     controller => Effect.tryPromise({
-      catch: cause => new HttpAttemptFailure({ cause, retryable: true }),
+      catch: cause => new HttpAttemptFailure({ cause, retryable: retryFetchError(cause) }),
       try: () => {
         const headers = new Headers(definition.headers)
         applyCookies(headers, definition.cookies)
-        return fetch(urlWithQuery(definition).toString(), {
+        return send(urlWithQuery(definition).toString(), {
           body: serializeRequestBody(definition.body, headers),
           headers,
           method: definition.method,

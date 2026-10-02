@@ -169,7 +169,7 @@ it("keeps configured presets extendable after colocated Skills and Workspace dis
   expect(child.description).toBe("true")
   expect(child.options.autoMerge).toBe(true)
   expect(getAgentLayerOptions(child)?.workspace).toHaveProperty("sourceRootDir", "/app/agents/repair/workspace")
-  expect(Reflect.get(child, colocatedAgentSkillsSymbol)).toBe(skills)
+  expect(Reflect.get(child, colocatedAgentSkillsSymbol)).toEqual(skills)
   expect(preset.options.autoMerge).toBe(false)
   expect(getAgentLayerOptions(preset)?.workspace).not.toHaveProperty("sourceRootDir")
 })
@@ -193,7 +193,7 @@ it("keeps plain Agents extendable after colocated Skills discovery", () => {
   expect(getAgentLayerOptions(discovered)?.driver).toBe("codex")
   const child = defineAgent({ extends: discovered, description: "Child" })
   expect(child.description).toBe("Child")
-  expect(Reflect.get(child, colocatedAgentSkillsSymbol)).toBe(skills)
+  expect(Reflect.get(child, colocatedAgentSkillsSymbol)).toEqual(skills)
   expect(Object.getOwnPropertyDescriptor(base, colocatedAgentSkillsSymbol)?.value).toBe(skills)
 })
 

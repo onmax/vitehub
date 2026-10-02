@@ -176,6 +176,14 @@ pnpm --filter @vite-hub/sandbox test
 | Cloudflare binding was not found | Generated `ratelimits` output is missing from the running Worker or request context. | Inspect `wrangler.json`, then exercise the deployed Worker rather than an unrelated Node process. |
 | `reason: 'unavailable'` with `allowed: true` | A `failure: 'allow'` policy allowed work after a driver error. | Record the unavailable decision and inspect provider health before changing the budget. |
 
+## Verify a diagnostic
+
+The `docs` link of a ViteHub diagnostic opens this page. Use these steps to repair the defect:
+
+1. Read the complete `code` and `fix` fields.
+2. Inspect the Provider Output, source locations, or trace events named by the diagnostic.
+3. Run the nearest package or consumer test again after you apply the repair.
+
 ## Production response
 
 Keep secrets out of production diagnostics.

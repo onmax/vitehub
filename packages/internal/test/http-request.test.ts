@@ -13,6 +13,31 @@ afterEach(() => {
 })
 
 describe("HTTP request", () => {
+  it("sends through a custom fetch and never calls the global fetch", async () => {
+    const global = vi.fn(async () => new Response("unexpected"))
+    vi.stubGlobal("fetch", global)
+    const send = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ ok: true }), {
+      headers: { "content-type": "application/json" },
+      status: 200,
+    }))
+
+    const result = await executeHttpRequest({ query: { page: "2" }, url: "https://api.example.com/items" }, { fetch: send })
+
+    expect(global).not.toHaveBeenCalled()
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0]?.[0]).toBe("https://api.example.com/items?page=2")
+    expect(result.data).toEqual({ ok: true })
+  })
+
+  it("does not retry a fetch rejection excluded by the caller", async () => {
+    const failure = new Error("policy rejected")
+    const send = vi.fn(async () => { throw failure })
+    const retryFetchError = vi.fn(() => false)
+    await expect(executeHttpRequest({ url: "https://api.example.com/items" }, { fetch: send, retryFetchError })).rejects.toBe(failure)
+    expect(send).toHaveBeenCalledOnce()
+    expect(retryFetchError).toHaveBeenCalledWith(failure)
+  })
+
   it("applies cookies to fetch while redacting them from summaries", async () => {
     const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), {
       headers: { "content-type": "application/json" },

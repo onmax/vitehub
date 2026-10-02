@@ -9,12 +9,10 @@ import {
 import { cloneWithPropertyDescriptors } from "../../internal/stream-result.ts"
 import { loadAgentWorkflowBlobPrimitive } from "../../internal/workflow-runtime-loaders.ts"
 import { attachmentStringBytes, currentInputAttachments, isAttachmentData, resolveAttachmentData } from "../../messages.ts"
+import { defineInternalTool, jsonObjectSchema, requirePrimitive } from "../internal.ts"
 import {
   assertString,
-  createTool,
-  jsonObjectSchema,
   method,
-  requirePrimitive,
   selectStore,
   storageValue,
 } from "./shared.ts"
@@ -282,7 +280,7 @@ function blobTools(mode: AgentCapabilityMode, options: BlobCapabilityOptions): A
     const attachments = resolvableInputAttachments(context)
       .flatMap(part => part.id ? [`${part.id} (${part.mediaType})`] : [])
     const tools: AgentToolSet = {
-      blob_read: createTool<BlobReadInput>({
+      blob_read: defineInternalTool<BlobReadInput>({
         description: "Read one Blob object, read object metadata, or list objects under a developer-provided prefix.",
         execute: async ({ cursor, folded, limit, operation, pathname, prefix }: BlobReadInput) => {
           const store = await resolveBlobStore(context, options)
@@ -301,7 +299,7 @@ function blobTools(mode: AgentCapabilityMode, options: BlobCapabilityOptions): A
       }),
     }
     if (mode === "write") {
-      tools.blob_edit = createTool<BlobEditInput>({
+      tools.blob_edit = defineInternalTool<BlobEditInput>({
         description: [
           "Put or delete Blob objects. Use attachmentId for a current input attachment or workspacePath for a Workspace file.",
           ...(attachments.length ? [`Current input attachments: ${attachments.join(", ")}.`] : []),

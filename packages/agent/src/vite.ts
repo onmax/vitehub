@@ -24,7 +24,7 @@ import {
   installCloudflareAgentStateEntrypoint,
 } from "./cloudflare.ts"
 import { normalizeAgentOptions } from "./config.ts"
-import { discoverAgentDefinitions, discoverAgentEvalFiles } from "./discovery.ts"
+import { discoverAgentDefinitions, discoverAgentEvalFiles, discoverProcessHostAgentNames } from "./discovery.ts"
 import { removeAgentEvaliteConfig, resolveAgentEvalOptions, writeAgentEvaliteConfig } from "./internal/evalite-config.ts"
 import { resolveProviderRuntimePackages } from "./internal/provider-runtime-packages.ts"
 import { isPortableAgentWorkflowCapability } from "./internal/final-channel-output.ts"
@@ -66,6 +66,13 @@ const generatedAgentWebhookRouteHandler = "agent/chat-webhook-route.ts"
 const generatedAgentPreparationPlugin = "agent/preparation-plugin.ts"
 const generatedAgentPreparationHandler = "agent/preparation-route.ts"
 const generatedAgentWebhookQueuePlugin = "agent/webhook-queue-plugin.ts"
+const generatedAgentProcessHosts = "agent/process-hosts.ts"
+const generatedAgentProcessHostsPlugin = "agent/process-hosts-plugin.ts"
+const generatedAgentProcessHostsDrain = "agent/process-hosts-drain.ts"
+const generatedAgentProcessHostsHealth = "agent/process-hosts-health.ts"
+/** Routes of the process hosts that presets such as the Babysitter contribute. */
+const agentProcessHostDrainRoute = "/api/_vitehub/host/drain"
+const agentProcessHostHealthRoute = "/api/_vitehub/host/health"
 const generatedAgentNetlifyFunction = "agent/netlify-function.mjs"
 const generatedAgentEmailRuntime = "agent/email-runtime.js"
 const generatedAgentScheduleRegistry = "agent/schedule-registry.js"
@@ -168,8 +175,8 @@ interface GeneratedAgentRuntimeCapability {
 
 const generatedAgentRuntimeCapabilityDefinitions: GeneratedAgentRuntimeCapability[] = [
   { importName: "blob", name: "blob", packageName: "@vite-hub/blob", pluginName: "@vite-hub/blob/vite" },
+  { importName: "connections", name: "connections", packageName: "@vite-hub/connections/server", pluginName: "@vite-hub/connections/vite" },
   { importName: "console", name: "console", packageName: "vite-hub/console/server", pluginName: "vite-hub/console" },
-  { importName: "connections", name: "connections", packageName: "@vite-hub/connections/agent", pluginName: "@vite-hub/connections/vite" },
   { importName: "agentDb", name: "db", packageName: "@vite-hub/database/drizzle", pluginName: "@vite-hub/database/vite" },
   { importName: "email", name: "email", packageName: "@vite-hub/email/server", pluginName: "@vite-hub/email/vite" },
   { importName: "kv", name: "kv", packageName: "@vite-hub/kv", pluginName: "@vite-hub/kv/vite" },
@@ -230,7 +237,8 @@ async function writeStandaloneAgentRuntimeCapabilities(
   config: Pick<ResolvedConfig, "plugins" | "root">,
   capabilities: GeneratedAgentRuntimeCapability[],
 ): Promise<GeneratedAgentRuntimeCapability[]> {
-  const standaloneCapabilities = capabilities.filter(capability => capability.name !== "db")
+  // Database-backed primitives need the host runtime.
+  const standaloneCapabilities = capabilities.filter(capability => capability.name !== "db" && capability.name !== "connections")
   const emailCapability = standaloneCapabilities.find(capability =>
     capability.name === "email" && capability.packageName !== false
   )
@@ -1993,6 +2001,7 @@ async function generateAgentWebhookRouteHandler(
     ...generatedRuntimeHelpers(),
     ...(options.cloudflareState ? generatedCloudflareChatStateHelper() : []),
     ...(options.libsqlState ? generatedLibsqlChatStateHelper(options.libsqlState, true) : []),
+    ...(options.libsqlState ? ["/** Agent State for contributed process hosts, such as the Babysitter's PR inbox. */", "export const agentProcessHostState = () => chatStateFromLibsql()"] : []),
     "",
     ...routeCapabilities.setup,
     ...(options.libsqlState ? generatedWebhookQueueResumeHelper(routeCapabilities, true, runtimeRouteOption) : []),
@@ -2244,6 +2253,35 @@ async function writeAgentWebhookRouteHandler(
   }
   else {
     await rm(gatewayPluginPath, { force: true })
+  }
+  const processHosts = options.libsqlState && !options.cloudflareState ? discoverProcessHostAgentNames(definitions) : []
+  const processHostFiles = [generatedAgentProcessHosts, generatedAgentProcessHostsPlugin, generatedAgentProcessHostsDrain, generatedAgentProcessHostsHealth].map(file => join(root, file))
+  if (processHosts.length) {
+    const routeModule = `./${generatedAgentWebhookRouteHandler.split("/").at(-1)!.replace(/\.ts$/, "")}`
+    await writeFile(processHostFiles[0]!, [
+      `import registry from ${JSON.stringify(agentRegistryId)}`,
+      `import { createAgentProcessHosts } from ${JSON.stringify(subpath(options.agentImportBase ?? agentPackageName, "runtime/process"))}`,
+      `import { agentProcessHostState } from ${JSON.stringify(routeModule)}`,
+      "",
+      `export const host = createAgentProcessHosts({ names: ${JSON.stringify(processHosts)}, registry, state: agentProcessHostState })`,
+      "",
+    ].join("\n"), "utf8")
+    await writeFile(processHostFiles[1]!, [
+      `import { host } from "./process-hosts"`,
+      "",
+      "export default function viteHubAgentProcessHostsPlugin(nitroApp) {",
+      "  if (import.meta.prerender) return",
+      "  // Start after the server installs its shutdown listeners.",
+      "  setTimeout(() => host.start(), 0)",
+      "  nitroApp.hooks.hook('close', () => host.close())",
+      "}",
+      "",
+    ].join("\n"), "utf8")
+    await writeFile(processHostFiles[2]!, `import { defineEventHandler } from "h3"\nimport { host } from "./process-hosts"\n\nexport default defineEventHandler(() => ({ status: host.status() }))\n`, "utf8")
+    await writeFile(processHostFiles[3]!, `import { defineEventHandler } from "h3"\nimport { host } from "./process-hosts"\n\nexport default defineEventHandler(() => host.health())\n`, "utf8")
+  }
+  else {
+    await Promise.all(processHostFiles.map(file => rm(file, { force: true })))
   }
   const queuePluginPath = join(root, generatedAgentWebhookQueuePlugin)
   if (options.libsqlState) {
@@ -3153,6 +3191,18 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         && getInternalAgentOptions(agent)?.processDiscordGateway,
       )
       const installPreparation = Boolean(resolved && hasHostedAgents && !denoOutput && resolved.preparation)
+      const processHostAgents = resolved && hasHostedAgents
+        ? discoverProcessHostAgentNames(discoverAgentDefinitions({ mode: "server-agents", scanDirs: serverDirs ?? [join(root, "server")] }))
+        : []
+      if (processHostAgents.length) {
+        const hosting = denoOutput ? "deno" : resolveAgentHosting(config)
+        if (hosting) {
+          throw agentDiagnostics.AGENT_B0022({ message: `[vitehub] Agent ${processHostAgents.map(name => `"${name}"`).join(", ")} uses a preset that runs a long-lived process host, such as the Babysitter. ${hosting} cannot run it; deploy with the Node server preset.` })
+        }
+        if (!installWebhookQueue) {
+          throw agentDiagnostics.AGENT_B0023({ message: `[vitehub] Agent ${processHostAgents.map(name => `"${name}"`).join(", ")} stores its process host state in Agent State. Use the sqlite, libsql, or auto Agent State provider.` })
+        }
+      }
       const nitroHandlers = [
         ...(installPreparation && resolved && resolved.preparation
           ? [{ handler: join(generatedRoot, generatedAgentPreparationHandler), route: resolved.preparation.route || "/api/_vitehub/ready" }]
@@ -3174,6 +3224,12 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
               handler: join(generatedRoot, generatedAgentWebhookRouteHandler),
               route: normalizeNitroRoute(resolved.routes.webhooks),
             }]
+          : []),
+        ...(processHostAgents.length
+          ? [
+              { handler: join(generatedRoot, generatedAgentProcessHostsDrain), route: agentProcessHostDrainRoute },
+              { handler: join(generatedRoot, generatedAgentProcessHostsHealth), route: agentProcessHostHealthRoute },
+            ]
           : []),
         ...(resolved && hasHostedAgents && !denoOutput && resolved.routes.discordGateway && !installProcessDiscordGateway
           ? [{
@@ -3214,6 +3270,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           ...(installPreparation ? [join(generatedRoot, generatedAgentPreparationPlugin)] : []),
           ...(installWebhookQueue ? [join(generatedRoot, generatedAgentWebhookQueuePlugin)] : []),
           ...(installProcessDiscordGateway ? [join(generatedRoot, generatedAgentDiscordGatewayPlugin)] : []),
+          ...(processHostAgents.length ? [join(generatedRoot, generatedAgentProcessHostsPlugin)] : []),
         ],
       ))
       const mergedNitro = nitroContext && hasScheduledAgents && !denoOutput

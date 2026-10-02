@@ -12,6 +12,9 @@ import type {
   AgentChannelDefinition,
   AgentChannelDeliveryEffectIntent,
   AgentChannelDeliveryFinishEffect,
+  AgentChannelDispatchItem,
+  AgentChannelDispatchOptions,
+  AgentChannelStateBinding,
   AgentChannels,
   AgentInput,
   AgentRunInput,
@@ -83,13 +86,37 @@ function agentCapabilityOptions<TRuntimeConfig extends AgentRuntimeConfig>(
   return (Array.isArray(capabilities) ? capabilities : []) as AgentCapabilityDefinition<TRuntimeConfig>[]
 }
 
-function agentChannelOptions<TRuntimeConfig extends AgentRuntimeConfig>(
+export function agentChannelOptions<TRuntimeConfig extends AgentRuntimeConfig>(
   agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
 ): AgentChannels<TRuntimeConfig> {
   if (!hasAgentDefinition(agent)) return {}
   const workspaceDefinition = agent as Partial<WorkspaceAgentDefinition<TRuntimeConfig>>
   const workspaceOptions = workspaceDefinition.__vitehubWorkspaceAgentOptions as WorkspaceAgentOptions<TRuntimeConfig> | undefined
   return (agent.channels || workspaceOptions?.channels || {}) as AgentChannels<TRuntimeConfig>
+}
+
+const channelTriggerStates = new WeakMap<Request, { binding: AgentChannelStateBinding, channelId: string }>()
+
+/** Gives the triggers of one Channel its State Adapter for the lifetime of a webhook request. */
+export function bindAgentChannelTriggerState(request: Request, channelId: string, binding: AgentChannelStateBinding): void {
+  channelTriggerStates.set(request, { binding, channelId })
+}
+
+function agentChannelTriggerState(request: Request | undefined, channelId: string): AgentChannelStateBinding | undefined {
+  const bound = request ? channelTriggerStates.get(request) : undefined
+  return bound?.channelId === channelId ? bound.binding : undefined
+}
+
+async function dispatchAgentChannelItems<TRuntimeConfig extends AgentRuntimeConfig>(
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
+  context: ResolvedAgentRuntimeContext<TRuntimeConfig>,
+  channelId: string,
+  items: readonly AgentChannelDispatchItem[],
+  options: AgentChannelDispatchOptions,
+) {
+  // Loaded on use: Channel replay depends on the Agent runner, which depends on this module.
+  const { dispatchChannelItems } = await import("./channel-replay.ts")
+  return await dispatchChannelItems(agent, context, channelId, items, options)
 }
 
 function assertTriggerName(name: unknown, owner: string): asserts name is string {
@@ -164,6 +191,7 @@ export async function resolveAgentTriggers<
   for (const [channelId, channel] of Object.entries(agentChannelOptions(agent))) {
     const channelCapabilities = normalizeCapabilities([...capabilities, ...(channel.capabilities || [])]) as AgentCapabilityDefinition<TRuntimeConfig>[]
     const channelWebhooks = normalizeChannelWebhookRegistrations(channelId, channel.kind, channel.webhooks)
+    const channelState = agentChannelTriggerState(context.request, channelId)
     const capabilityWebhookTrigger = capabilityWebhookTriggerForChannel(triggers, channelId, channel.kind)
     if (capabilityWebhookTrigger && channelWebhooks?.length) {
       capabilityWebhookTrigger.webhooks = [
@@ -187,6 +215,9 @@ export async function resolveAgentTriggers<
           agentCapabilities: channelCapabilities,
           agentName: agent.name || runtimeContext.agentIdentity?.name,
           channel,
+          ...(channelState ? { channelState } : {}),
+          dispatch: (items: readonly AgentChannelDispatchItem[], options: AgentChannelDispatchOptions) =>
+            dispatchAgentChannelItems(agent, context, channelId, items, options),
           trigger: {
             channelId,
             id,
@@ -313,7 +344,6 @@ async function verifyStripeSignature(secret: string, header: string, rawBody: Ui
     const value = part.slice(separator + 1).trim()
     if (key === "t") timestamp = value
     else if (key === "v1") {
-      // Bound unauthenticated cryptographic work while allowing secret rotation.
       if (++signatureCount > 32) return false
       if (/^[a-f0-9]{64}$/.test(value)) signatures.push(value)
     }
@@ -404,7 +434,7 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Webhook signature verifiers cross the user configuration boundary and require runtime validation.
     if (typeof registration.signature === "object" && registration.signature !== null && "verify" in registration.signature && typeof registration.signature.verify === "function") {
       const rawBody = options.rawBody ? Uint8Array.from(options.rawBody) : new Uint8Array(await request.clone().arrayBuffer())
-      if (await registration.signature.verify({ header: headerValue ?? "", rawBody, request, secret: secretToken || "" })) {
+      if (await registration.signature.verify({ context: verificationContext, header: headerValue ?? "", rawBody, request, secret: secretToken || "" })) {
         return { registration, verified: true }
       }
       continue
@@ -448,8 +478,7 @@ function withAgentTriggerContext<CALL_OPTIONS>(
   message?: unknown,
 ): AgentRunInput<CALL_OPTIONS> {
   const context = { ...input.context }
-  if (message === undefined) delete context[channelMessageContextKey]
-  else context[channelMessageContextKey] = message
+  if (message !== undefined) context[channelMessageContextKey] = message
   const effects = delivery?.effects ? Array.isArray(delivery.effects) ? delivery.effects : [delivery.effects] : undefined
   const finishEffects = delivery?.finishEffects ? Array.isArray(delivery.finishEffects) ? delivery.finishEffects : [delivery.finishEffects] : undefined
   if (effects?.length) context[channelDeliveryEffectsContextKey] = effects as AgentChannelDeliveryEffectIntent[]

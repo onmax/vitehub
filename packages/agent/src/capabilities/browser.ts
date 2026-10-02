@@ -138,14 +138,14 @@ export function browser(options: BrowserCapabilityOptions = {}): AgentCapability
   }
   const skillPath = normalizeSkillPath(options.skillPath || ".agents/skills/agent-browser/SKILL.md")
   const sourceKey = options.sourceKey || "skill.browser"
-  // An unset runtime with the default command is resolved per invocation: external when driver.launch runs the provider elsewhere, otherwise managed.
+  // The default command uses the managed runtime unless the caller explicitly selects external.
   const runtimeMode = options.runtime ?? (command === "agent-browser" ? undefined : "external")
   const invocationSkillContentKey = "vitehub.browser.skill-content"
   const defaultSkillContent = options.skillContent || defaultBrowserSkillContent.replaceAll("agent-browser", command)
 
   return Object.assign(defineCapability({
     id: "browser",
-    metadata: { command, runtime: runtimeMode ?? "auto", skillPath, sourceKey },
+    metadata: { command, runtime: runtimeMode ?? "managed", skillPath, sourceKey },
     output(context) {
       if (context.driver?.kind === "provider") {
         context.output.final(result => attachBrowserScreenshots(result, context), { order: "last" })
@@ -156,9 +156,12 @@ export function browser(options: BrowserCapabilityOptions = {}): AgentCapability
       if (context.driver?.kind !== "provider") throw agentDiagnostics.AGENT_R0026({ message: "[vitehub] browser() requires a Provider Agent Driver." })
       // Inspection also receives a synthetic invocation, so use the resolver's
       // trusted phase marker before allocating browser resources.
-      if (!context.invocation || isCapabilityInspection(context)) return
-      const launched = isRuntimeRecord(context.agentDriver) && context.agentDriver.launch !== undefined
-      if ((runtimeMode ?? (launched ? "external" : "managed")) !== "managed") {
+      if (isCapabilityInspection(context)) return
+      const driver = isRuntimeRecord(context.agentDriver) && isRuntimeRecord(context.agentDriver.driver)
+        ? context.agentDriver.driver
+        : context.agentDriver
+      const launched = isRuntimeRecord(driver) && driver.launch !== undefined
+      if ((runtimeMode ?? "managed") !== "managed") {
         provideBrowserRuntimeEnvironment(context.context, Object.freeze({ VITEHUB_BROWSER_ACTIVE: "1" }))
         return
       }

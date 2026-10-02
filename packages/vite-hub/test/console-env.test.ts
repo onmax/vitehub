@@ -20,7 +20,7 @@ describe("Console Env", () => {
   it("loads declaration metadata without importing provider-backed Server Env", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-env-"))
     const plugin = join(root, "console.mjs")
-    await writeConsoleNitroPlugin(plugin, root, ["env"], [], { agents: [], definitions: {} }, [], [])
+    await writeConsoleNitroPlugin(plugin, root, ["env"], [], { agents: [], content: {} }, [], [])
     const generated = await readFile(plugin, "utf8")
     expect(generated).toContain('import { describeServerEnv } from "#vitehub/env/description"')
     expect(generated).not.toContain('from "#vitehub/env/server"')
