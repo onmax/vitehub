@@ -1,7 +1,9 @@
 import { registerViteHubNitroDevEndpoint } from "@vite-hub/internal/dev-endpoint"
+import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 
-import { blobDevHeader, blobDevHeaderValue, blobDevRoute, blobDevRuntimeRoute } from "./dev.ts"
+import { blobDevHeader, blobDevHeaderValue, blobDevRoute, blobDevRuntimeRoute, blobDevTokenNamespace, blobDevTokenServerHeader } from "./dev.ts"
 
+import type { IncomingMessage } from "node:http"
 import type { ViteHubNitroDevServer } from "@vite-hub/internal/dev-endpoint"
 
 /** Message that the Blob dev endpoint returns when the host does not run Nitro in the Vite process. */
@@ -14,6 +16,8 @@ export interface BlobDevEndpointOptions {
   nitroBaseURL?: () => string | undefined
   discovery?: () => Record<string, unknown>
   forwardHeaders?: readonly string[]
+  /** Returns the private token server id for this Vite dev server. */
+  devTokenServerId?: () => string | undefined
 }
 
 /**
@@ -25,6 +29,17 @@ export interface BlobDevEndpointOptions {
  */
 export function registerBlobDevEndpoint(server: BlobDevServer, options: BlobDevEndpointOptions = {}): void {
   registerViteHubNitroDevEndpoint(server, {
+    authorize: async (request: IncomingMessage) => {
+      const expectedServerId = options.devTokenServerId?.()
+      if (!expectedServerId) return
+      const serverId = request.headers[blobDevTokenServerHeader]
+      const token = request.headers[viteHubDevTokenHeader]
+      const requestedServerId = Array.isArray(serverId) ? serverId[0] : serverId
+      const requestedToken = Array.isArray(token) ? token[0] : token
+      if (requestedServerId !== expectedServerId || !requestedToken || requestedToken !== await readViteHubDevToken(server.config.root, { namespace: blobDevTokenNamespace, serverId: expectedServerId })) {
+        return new Response("Forbidden Blob Dev token.", { status: 403 })
+      }
+    },
     header: blobDevHeader,
     headerValue: blobDevHeaderValue,
     label: "Blob Dev",

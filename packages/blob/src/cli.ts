@@ -444,7 +444,13 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
     })
   }
   const serverId = v.is(v.string(), server.discovery.blobDevTokenServerId) ? server.discovery.blobDevTokenServerId : undefined
-  const token = serverId ? await readViteHubDevToken(context.rootDir, { namespace: blobDevTokenNamespace, serverId }) : undefined
+  let token: string | undefined
+  try {
+    token = serverId ? await readViteHubDevToken(context.rootDir, { namespace: blobDevTokenNamespace, serverId }) : undefined
+  }
+  catch (error) {
+    return writeFailure(parsed, context, { message: `Could not read the private Blob Dev token: ${error instanceof Error ? error.message : String(error)}` })
+  }
   if (!serverId || !token) return writeFailure(parsed, context, { message: "No private Blob Dev token found. Restart the Compatible Vite Development Server." })
   const body: BlobDevRequestBody = { operation: command.name }
   if (parsed.contentType !== undefined) body.contentType = parsed.contentType

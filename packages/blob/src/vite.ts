@@ -435,6 +435,7 @@ export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBl
     },
     configureServer(server) {
       registerBlobDevEndpoint(server, {
+        devTokenServerId: () => devTokenServerId,
         discovery: () => devTokenServerId ? { blobDevTokenServerId: devTokenServerId } : {},
         forwardHeaders: ["x-vitehub-dev-token", blobDevTokenServerHeader],
         nitroBaseURL: () => readNitroBaseURL(resolved),
