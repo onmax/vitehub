@@ -28,10 +28,12 @@ describe("Auth access handlers", () => {
     const definition = defineAuth({ access: { routes: [
       { route: "/private", authorize },
       { route: "/admin/**", method: "post", authorize },
+      { route: "/patch", method: "PATCH", authorize },
     ] } })
     const handler = createAuthAccessHandler([
       { route: "/private", authorize: true },
       { route: "/admin/**", method: "post", authorize: true },
+      { route: "/patch", method: "PATCH", authorize: true },
     ], definition)
 
     for (const [path, method, matches] of [
@@ -42,6 +44,7 @@ describe("Auth access handlers", () => {
       ["/admin/users", "POST", true],
       ["/admin/users", "GET", false],
       ["/administrator", "POST", false],
+      ["/patch", "patch", true],
     ] as const) {
       authorize.mockClear()
       provider.getSession.mockClear()

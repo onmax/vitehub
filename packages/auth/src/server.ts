@@ -537,7 +537,8 @@ export function createAuthAccessHandler(
   return async (input) => {
     const request = unwrapAuthRequest(input)
     const pathname = new URL(request.url).pathname
-    const matched = rules.filter(rule => (!rule.method || rule.method === request.method)
+    const method = request.method.toUpperCase()
+    const matched = rules.filter(rule => (!rule.method || rule.method === method)
       && (pathname === rule.path || (rule.recursive && pathname.startsWith(`${rule.path}/`))))
     if (matched.length === 0) return
 
