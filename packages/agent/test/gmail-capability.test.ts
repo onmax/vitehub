@@ -103,7 +103,7 @@ const message = {
 describe("gmail capability", () => {
   it("declares both historical persisted Skill paths for safe migration", () => {
     const capability = gmail()
-    expect((capability as Record<PropertyKey, unknown>)[workspaceRetirementPathsSymbol]).toEqual([
+    expect((capability as unknown as Record<PropertyKey, unknown>)[workspaceRetirementPathsSymbol]).toEqual([
       ".agents/skills/gmail/SKILL.md",
       "skills/gmail/SKILL.md",
     ])

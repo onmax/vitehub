@@ -978,7 +978,7 @@ async function applyCapabilityWorkspaceContributions<
           mode: capability.mode,
         })
       : capability.workspace || {}
-    if (!resolved || resolved === false) continue
+    if (!resolved) continue
 
     if (trustedGitHubPullRequestWorkspaceCapabilities.has(capability) && resolved.sources?.vitehubGitHubPullRequest) {
       const pr = normalizedContributionSource("vitehubGitHubPullRequest", resolved.sources.vitehubGitHubPullRequest, workspaceRuntime)

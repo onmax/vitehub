@@ -29,6 +29,7 @@ import { agentInvocationInputSupport, sendAgentInvocationInput } from "./interna
 import { withAgentInvocationResponseOwner } from "./internal/agent-invocation-response-owner.ts"
 import {
   createReactionDeliveryEffectIntent,
+  defineFinishEffect,
   createReplyDeliveryEffectIntent,
   createStatusDeliveryEffectIntent,
 } from "./delivery-effects.ts"

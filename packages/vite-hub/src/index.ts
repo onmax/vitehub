@@ -799,7 +799,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
         },
       })
   plugins.push(...deploymentPlugins(plan, requestedServices, blobEnabled, manifestServices, options, envPlugin))
-  plugins.push(publicUrlPlugin(options.publicUrl))
+  if (options.publicUrl !== undefined) plugins.push(publicUrlPlugin(options.publicUrl))
   const providerImportAliases: Record<string, string> = {}
   const configuredKV = options.kv && options.kv !== true ? options.kv : undefined
   const presetKV = options.kv ? resolveKVViteConfig(configuredKV, { hosting: plan.nitroPreset }).kv : false
