@@ -1,4 +1,4 @@
-import type { ServerEnvDescription } from "@vite-hub/env"
+import type { ServerEnvDescription, ServerEnvInspection } from "@vite-hub/env"
 import type { AgentInvocations } from "@vite-hub/agent"
 import type { BlobStorage } from "@vite-hub/blob"
 import type { RuntimeDatabaseEntry } from "@vite-hub/database/drizzle"
@@ -6,6 +6,7 @@ import type { KVStorage } from "@vite-hub/kv"
 import type { ScheduleDefinitionRegistry } from "@vite-hub/schedule"
 import type { ConsoleSectionCatalog } from "./runtime/definitions.ts"
 import type { ConsoleSectionId } from "./runtime/sections.ts"
+import type { ConsoleRequestEvent } from "./runtime/server/request.ts"
 
 export const consoleDefinitionsKey: unique symbol = Symbol.for("vitehub.console.definitions")
 export const consoleDefinitionsRegistryKey: unique symbol = Symbol.for("vitehub.console.definitions.registry")
@@ -57,7 +58,10 @@ type ConsoleDefinitionsByRoot = {
   readonly size: number
 }
 
-export type ConsoleEnvInspection = ServerEnvDescription & { manage?: (request: Request) => Promise<Response> }
+export type ConsoleEnvInspection = ServerEnvDescription & {
+  inspect?: (event: ConsoleRequestEvent) => Promise<ServerEnvInspection>
+  manage?: (request: Request) => Promise<Response>
+}
 
 export interface ConsoleKVInspection {
   storage: KVStorage
@@ -621,7 +625,7 @@ export function installConsoleSectionScope(
   projectRoot: string,
   sections: readonly ConsoleSectionId[],
   scope: ConsoleInvocationScope = defaultConsoleInvocationScope(),
-  independentAuth = false,
+  independentAuth: ConsoleAuthMode | false = false,
 ): readonly ConsoleSectionId[] {
   const installed = [...new Set(sections)]
   if (scope[consoleSectionsRootKey] && scope[consoleSectionsRootKey] !== projectRoot) scope[consoleSectionsAmbiguousRootKey] = true
@@ -669,7 +673,7 @@ export function resolveConsoleSections(scope: ConsoleInvocationScope = defaultCo
   return (registry?.[consoleSectionsKey] as readonly ConsoleSectionId[] | undefined) ?? scope[consoleSectionsKey] ?? []
 }
 
-export function resolveConsoleAuth(scope: ConsoleInvocationScope = defaultConsoleInvocationScope()): boolean {
+export function resolveConsoleAuth(scope: ConsoleInvocationScope = defaultConsoleInvocationScope()): ConsoleAuthMode | false {
   // A shared scope can register several projects. Its last root cannot identify the current request.
   if (scope[consoleSectionsAmbiguousRootKey]) return false
   const root = scope[consoleSectionsRootKey]

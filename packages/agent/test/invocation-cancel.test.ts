@@ -383,7 +383,7 @@ describe("Agent Invocation cancel", () => {
       vi.useFakeTimers()
       const cancellation = owner.cancel(id).then(result => result, error => error)
       if (warning === "durable") {
-        expect(await cancellation).toMatchObject({ delivery: "local", notEnforcedBy: "run", outcome: "requested", status: "running" })
+        expect(await cancellation).toMatchObject({ delivery: "journal", notEnforcedBy: "run", outcome: "requested", status: "running" })
       }
       else {
         await vi.advanceTimersByTimeAsync(5_000)
@@ -396,6 +396,52 @@ describe("Agent Invocation cancel", () => {
     finally {
       abortLocalAgentInvocation(store, id, new Error("Cancellation was requested during fixture cleanup"))
       release.resolve("Replacement result")
+      await Promise.all([firstSettled, secondSettled])
+    }
+  })
+
+  it("reports journal delivery for an enforceable replacement after a local custom owner loses its lease", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    const backing = createMemoryAgentInvocationStore()
+    const store = { ...backing, claim: (...args: Parameters<typeof backing.claim>) => backing.claim(args[0], args[1], 1, args[3]) }
+    const owner = defineAgentInvocations({ store })
+    const replacementStore = { ...backing }
+    const replacement = defineAgentInvocations({ store: replacementStore })
+    let customSignal: AbortSignal | undefined
+    let modelSignal: AbortSignal | undefined
+    const release = deferred<string>()
+    const started = deferred()
+    const runId = "stale-custom-enforceable-replacement"
+    const first = runAgent(defineAgent({ invocations: owner, driver: { run: ({ input }) => {
+      customSignal = input.abortSignal
+      started.resolve()
+      return release.promise
+    } } }), runtime(runId), {})
+    const firstSettled = first.then(result => result, error => error)
+    await started.promise
+    const { id } = await recordWithStatus(owner, runId, "running")
+    await vi.waitFor(async () => expect(await backing.getSummary(id)).toMatchObject({ cancelNotEnforcedBy: "run" }))
+    await new Promise(resolve => setTimeout(resolve, 5))
+    modelGenerate.mockImplementation(async (input: { abortSignal?: AbortSignal }) => {
+      modelSignal = input.abortSignal
+      return await untilAborted(modelSignal)
+    })
+    const second = runAgent(defineAgent({ driver: modelDriver, invocations: replacement }), runtime(runId), { prompt: "Wait." })
+    const secondSettled = second.then(result => result, error => error)
+    try {
+      await vi.waitFor(() => expect(modelSignal).toBeDefined())
+      expect((await backing.getSummary(id))?.cancelNotEnforcedBy).toBeUndefined()
+      const result = await owner.cancel(id)
+      expect(result).toEqual({ delivery: "journal", id, outcome: "requested", status: "running" })
+      expect(customSignal?.aborted).toBe(true)
+      expect(modelSignal?.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(modelSignal?.aborted).toBe(true)
+    }
+    finally {
+      abortLocalAgentInvocation(store, id, new Error("Cancellation was requested during fixture cleanup"))
+      abortLocalAgentInvocation(replacementStore, id, new Error("Cancellation was requested during fixture cleanup"))
+      release.resolve("Stale result")
       await Promise.all([firstSettled, secondSettled])
     }
   })

@@ -1815,6 +1815,34 @@ describe("ViteHub Nuxt integration", () => {
     expect(generated).toContain(`observations: ${JSON.stringify(observations)}`)
   })
 
+  it.each([true, false])("preserves Console retention through Nuxt plugin refreshes with dev %s", async (dev) => {
+    const application = createNuxt(dev)
+    await viteHubNuxtModule({
+      agent: true,
+      console: { exposure: "host-managed", retention: { maxAgeMs: false, maxRecords: 10 } },
+      preset: "node",
+    }, application.nuxt)
+    const plugin = "/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs"
+    const retention = "retention: { maxAgeMs: false, maxRecords: 10 }"
+    expect(await readFile(plugin, "utf8")).toContain(retention)
+
+    await application.runNitroConfigHook(nitroOptions(application.nuxt))
+    expect(await readFile(plugin, "utf8")).toContain(retention)
+    if (dev) {
+      await application.runBuilderWatchHook("/tmp/vitehub-nuxt/custom-server/agents/support.ts")
+      expect(await readFile(plugin, "utf8")).toContain(retention)
+    }
+  })
+
+  it("validates retention when installing the Nuxt development Console journal", async () => {
+    const development = createNuxt(true)
+    await expect(viteHubNuxtModule({
+      agent: true,
+      console: { exposure: "host-managed", retention: { maxRecords: 0 } },
+      preset: "node",
+    }, development.nuxt)).rejects.toThrow("must be a positive safe integer or false")
+  })
+
   it.each([undefined, "/tmp/vitehub-nuxt/persistent data"])("rejects bare production Console enablement with dataDir %s", async (dataDir) => {
     const production = createNuxt(false)
 

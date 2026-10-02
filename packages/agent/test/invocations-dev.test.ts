@@ -1,4 +1,8 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { ensureWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } from "@vite-hub/workspace/server"
 
 const modelGenerate = vi.hoisted(() => vi.fn())
 const registry = vi.hoisted((): Record<string, () => Promise<unknown>> => ({}))
@@ -17,9 +21,11 @@ vi.mock("../src/internal/ai-sdk-runtime.ts", () => ({
 }))
 
 import { defineAgent, runAgent } from "../src/index.ts"
-import { agentInvocationsDevHeader, agentInvocationsDevRuntimeRoute } from "../src/invocations-dev.ts"
+import { agentInvocationsDevHeader, agentInvocationsDevRuntimeRoute, agentInvocationsDevTokenServerHeader } from "../src/invocations-dev.ts"
 import { handleAgentInvocationsDevRequest } from "../src/runtime/invocations-dev.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
+import { hubAgent } from "../src/vite.ts"
+import { hasRuntimeType } from "../src/internal/runtime-type.ts"
 
 import type { AgentInvocations } from "../src/index.ts"
 
@@ -50,6 +56,34 @@ afterEach(() => {
 })
 
 describe("Agent Invocations Nitro dev handler", () => {
+  it("generates a handler that authenticates with the project root and server ID", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-agent-dev-handler-"))
+    try {
+      const plugin = hubAgent({ providers: { state: { provider: "memory" } } })
+      const hook = plugin.configResolved
+      if (!hasRuntimeType(hook, "function")) throw new Error("Expected a configResolved hook")
+      // SAFETY: Agent output generation reads only these resolved config fields in this fixture.
+      await hook.call({} as never, { root, command: "serve", plugins: [], build: { outDir: "dist" }, resolve: { alias: [] }, server: { port: 5173 } } as never)
+      const source = await readFile(join(root, ".vitehub/agent/invocations-dev-handler.ts"), "utf8")
+      // Execute the generated callback with its real owner handler to verify the authorization boundary.
+      const callback: (event: { req: Request }) => Promise<Response> = new Function("defineEventHandler", "handleViteHubDevRequest", source.replace(/^import .*\n/gm, "").replace("export default", "return"))((handler: unknown) => handler, handleAgentInvocationsDevRequest)
+      const body = { id: "ainv_missing", operation: "cancel" }
+      expect((await callback({ req: devRequest(body) })).status).toBe(403)
+      const serverId = workspaceDevTokenServerId(5173)
+      const token = await ensureWorkspaceDevToken(root, { serverId })
+      const response = await callback({ req: devRequest(body, {
+        [agentInvocationsDevHeader]: "1",
+        [agentInvocationsDevTokenServerHeader]: serverId,
+        [workspaceDevTokenHeader]: token,
+      }) })
+      expect(response.status).toBe(404)
+      expect(await response.json()).toEqual({ error: { message: "No Agent invocation journal is configured." } })
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it("cancels a running Invocation through the application registry", async () => {
     modelGenerate.mockImplementation(async (input: { abortSignal?: AbortSignal }) => await new Promise((_resolve, reject) => {
       const signal = input.abortSignal

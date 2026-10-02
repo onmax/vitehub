@@ -87,18 +87,22 @@ const lowLevelOwnerExports = new Set([
   "@vite-hub/agent/mcp/stdio",
   "@vite-hub/agent/messages",
   "@vite-hub/agent/output",
+  "@vite-hub/agent/observability/host",
+  "@vite-hub/agent/observability/posthog",
   "@vite-hub/agent/server/github",
   "@vite-hub/agent/server/workspace",
   "@vite-hub/blob/config",
   "@vite-hub/blob/errors",
   "@vite-hub/box/ssh",
   "@vite-hub/database/config",
+  "@vite-hub/env/seal",
   "@vite-hub/kv/errors",
   "@vite-hub/workspace/source-metadata",
 ]);
 
 const generatedRuntimeOwnerExports = new Set([
   "@vite-hub/agent/runtime/empty-registry",
+  "@vite-hub/agent/runtime/invocations-dev",
   "@vite-hub/agent/runtime/workflow",
   "@vite-hub/blob/runtime/cloudflare-vite",
   "@vite-hub/blob/runtime/dev",
@@ -123,6 +127,7 @@ const generatedRuntimeOwnerExports = new Set([
   "@vite-hub/sandbox/runtime/provider-loader",
   "@vite-hub/sandbox/runtime/state",
   "@vite-hub/schedule/runtime/console",
+  "@vite-hub/schedule/runtime/dev",
   "@vite-hub/schedule/runtime/state",
   "@vite-hub/schedule/runtime/static",
   "@vite-hub/workflow/runtime/cloudflare-runner",
@@ -194,7 +199,12 @@ describe("framework package contract", () => {
       ownerAgentProcessRuntime.createProcessAgentCapacity,
     );
     expect(frameworkCapabilities.email).toBe(ownerCapabilities.email);
-    expect(frameworkCapabilities.executor).toBe(ownerCapabilities.executor);
+    expect(Object.keys(frameworkCapabilities).sort()).toEqual(Object.keys(ownerCapabilities).sort());
+    for (const [name, capability] of Object.entries(ownerCapabilities)) {
+      // The framework narrows inputCommands to its Console Runtime context.
+      if (name === "inputCommands") continue;
+      expect(Reflect.get(frameworkCapabilities, name), name).toBe(capability);
+    }
     expect(frameworkCapabilities.workspaceShell).toBe(ownerCapabilities.workspaceShell);
     expect(frameworkAgentMcp.remoteMcpServer).toBe(ownerAgentMcp.remoteMcpServer);
     expect(frameworkAgentVite.agentHostRoutes).toBe(ownerAgentVite.agentHostRoutes);
@@ -243,6 +253,7 @@ describe("framework package contract", () => {
       "./console",
       "./console/auth",
       "./console/auth/client",
+      "./console/auth/cloudflare-access",
       "./console/auth/inline",
       "./console/blob",
       "./console/database",
@@ -725,14 +736,14 @@ describe("framework package contract", () => {
       `${packageRoot}/dist/console/runtime/server/page.get.js`,
       "utf8",
     );
-    const consoleDevframeSource = readFileSync(
-      `${packageRoot}/dist/console/runtime/server/devframe.js`,
+    const consoleRpcSource = readFileSync(
+      `${packageRoot}/dist/console/runtime/server/rpc.js`,
       "utf8",
     );
     expect(consolePageSource).toContain(`/_vitehub/assets/${consoleClientFile.split("/").at(-1)}`);
     expect(consolePageSource).toContain(`/_vitehub/assets/${consoleCssFile.split("/").at(-1)}`);
     expect(consolePageSource).not.toContain("__VITEHUB_CONSOLE_");
-    expect(consoleDevframeSource).not.toContain("devframe/adapters/h3");
+    expect(consoleRpcSource).not.toContain("devframe/adapters/h3");
     expect(manifest.dependencies).toHaveProperty("@cloudflare/workers-types");
     expect(manifest.dependencies).toHaveProperty("h3");
     expect(manifest.dependencies).toHaveProperty("ocache");
@@ -771,7 +782,7 @@ describe("framework package contract", () => {
       if (!Array.isArray(handlers) || !Array.isArray(publicAssets)) {
         throw new TypeError("Expected the distributed Console Nitro configuration.");
       }
-      expect(handlers).toHaveLength(7);
+      expect(handlers).toHaveLength(9);
       expect(handlers.map((registration) => Reflect.get(Object(registration), "route"))).toEqual([
         "/api/_vitehub/console/status",
         "/api/_vitehub/console/usage",
@@ -780,6 +791,8 @@ describe("framework package contract", () => {
         "/api/_vitehub/console/client.js",
         "/_vitehub/rpc/**",
         "/_vitehub/env/manage",
+        "/_vitehub/channels/replay",
+        "/_vitehub/schedules/run",
       ]);
       for (const registration of handlers) {
         const handler = Reflect.get(Object(registration), "handler");

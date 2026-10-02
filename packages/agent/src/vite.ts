@@ -2895,7 +2895,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       const handler = join(generatedRoot, generatedAgentInvocationsDevHandler)
       await mkdir(dirname(handler), { recursive: true })
       await writeFile(handler, renderViteHubNitroDevHandler({
-        arguments: [config.root, workspaceDevTokenServerId(config.server?.port)],
+        context: { rootDir: config.root, serverId: workspaceDevTokenServerId(config.server?.port) },
         export: "handleAgentInvocationsDevRequest",
         module: `${getAgentImportBase(agent, frameworkOptions)}/runtime/invocations-dev`,
       }), "utf8")
