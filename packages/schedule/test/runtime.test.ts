@@ -1016,7 +1016,7 @@ describe("KV Schedule Run Store", () => {
     const other = await store.listRuns({ scheduleId: "other", runtimeOnly: true, limit: 10 })
     expect(other).toHaveLength(10)
     expect(other[0]?.id).toBe("srun_runtime_other_opaque%_29")
-    expect(get).toHaveBeenCalledTimes(indexAvailable ? 10 : 60)
+    expect(get).toHaveBeenCalledTimes(indexAvailable ? 10 : 0)
     expect(await store.getRun("srun_runtime_actual_opaque%_29")).toEqual(latest[0])
   })
 
@@ -1080,7 +1080,7 @@ describe("KV Schedule Run Store", () => {
       expect(results[4]?.[0]?.scheduledAt.getUTCFullYear()).toBe(2026)
       get.mockClear()
       expect((await store.listRunsBatch!([{ scheduleId: "alpha", limit: 1 }]))[0]?.[0]?.id).toBe("srun_runtime_alpha_opaque%_7")
-      expect(get).toHaveBeenCalledTimes(indexAvailable ? 1 : 32)
+      expect(get).toHaveBeenCalledTimes(indexAvailable ? 1 : 0)
     }
     finally {
       clone.mockRestore()

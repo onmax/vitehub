@@ -143,7 +143,7 @@ Built-in Agent Drivers and Box runtimes are selected by literal or tagged values
 
 ## Invoke Agents from the Console
 
-The Console **Usage** page provides session history with date, Agent, status, and search filters. Open a row to inspect that session in the existing Agents view. History keeps completed, failed, and cancelled Agent Invocations visible even when token or cost evidence is unavailable. Totals use the same filters as the history table. See [Session history and usage](https://vitehub.dev/docs/console/usage) for the identity, coverage, and pagination contract.
+The Console **Usage** page provides session history with date, Agent, status, and search filters. Open a row to inspect that session in the existing Agents view. History keeps completed, failed, and cancelled Agent Invocations visible even when token or cost evidence is unavailable. Totals use the same filters as the history table. See [Session history and usage](https://vitehub.dev/docs/development/console#inspect-usage) for the identity, coverage, and pagination contract.
 
 Set `console: { access: "auth", auth: { ... }, invoke: true }` for an independent Console session, `console: { access: "auth", auth: { provider: "cloudflare-access" } }` to verify a Cloudflare Access token on each Console request, `console: { access: "auth", invoke: true }` to reuse the Primary Auth Definition, or `console: { exposure: "host-managed", invoke: true }` when host middleware protects all `/_vitehub/**` and `/api/_vitehub/console/**` routes. Explicit access configurations keep invocation disabled by default. The development shorthand `console: true` enables invocation. Invocation also enables the Schedules page **Run now** button and `POST /_vitehub/schedules/run` for Static Schedule Definitions that set `manual: true`; see [Run Schedules on demand](https://vitehub.dev/docs/development/cli#run-a-schedule-on-demand).
 
@@ -159,6 +159,6 @@ The D1 journal supports Drizzle queries and atomic writes through `console.resol
 
 ## Console images
 
-The Console accepts up to ten PNG, JPEG, WebP, or GIF images per message, within a combined 10 MiB limit. Configure durable Blob storage to keep the bytes, and content-enabled Invocation storage to keep message references. Agents can return published Blob image URLs in Markdown. See [Console usage](https://vitehub.dev/docs/console/usage).
+The Console accepts up to ten PNG, JPEG, WebP, or GIF images per message, within a combined 10 MiB limit. Configure durable Blob storage to keep the bytes, and content-enabled Invocation storage to keep message references. Agents can return published Blob image URLs in Markdown. See [Console usage](https://vitehub.dev/docs/development/console#image-upload-boundaries).
 
 Console image uploads require invocation to be enabled. The Console fixes the Agent, route, and invoker profile when submission starts, so switching Agents during an upload cannot redirect the input. Uploads without a usable Blob serving URL are removed before the request fails.

@@ -382,6 +382,10 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
   const prefix = options.prefix ?? "vitehub:schedule"
 
   const store = options.kvStore
+  // Keep legacy records discovered before the metadata index in this runtime.
+  // Providers can reject index writes, so a fresh request must not reread the
+  // complete fallback history when the derived index remains unavailable.
+  const legacyRecordsByKey = new Map<string, ScheduleRunRecord | undefined>()
 
   async function indexRun(run: ScheduleRunRecord): Promise<void> {
     try {
@@ -444,8 +448,14 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
     // Group legacy records once per snapshot, even when their index cannot be published.
     for (let offset = 0; offset < unknown.length; offset += 16) {
       const batch = await Promise.all(unknown.slice(offset, offset + 16).map(async key => {
+        if (legacyRecordsByKey.has(key)) {
+          const run = legacyRecordsByKey.get(key)
+          recordsByKey.set(key, run)
+          return { key, run }
+        }
         const stored = await store.get<StoredScheduleRunRecord>(key)
         const run = stored ? deserializeScheduleRun(stored) : undefined
+        legacyRecordsByKey.set(key, run)
         recordsByKey.set(key, run)
         if (run) await indexRun(run)
         return { key, run }
@@ -470,13 +480,14 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
     const records: ScheduleRunRecord[] = []
     const selectedKeys = options.scheduleId === undefined && options.limit === undefined && !options.runtimeOnly
       ? keys
-      : known.slice(0, options.limit).map(entry => entry.key)
+      : known.slice(0, options.limit ?? known.length).map(entry => entry.key)
     for (let index = 0; index < selectedKeys.length; index += 16) {
       const batch = await Promise.all(selectedKeys.slice(index, index + 16).map(async (key) => {
         if (recordsByKey.has(key)) return recordsByKey.get(key)
         const stored = await store.get<StoredScheduleRunRecord>(key)
         const run = stored ? deserializeScheduleRun(stored) : undefined
         recordsByKey.set(key, run)
+        legacyRecordsByKey.set(key, run)
         return run
       }))
       records.push(...batch.flatMap(run => run ? [run] : []))
@@ -588,6 +599,7 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
         updatedAt: patch.updatedAt,
       })
       await store.set(key, serializeScheduleRun(next))
+      legacyRecordsByKey.delete(key)
       return cloneScheduleRun(next)
     },
   }
