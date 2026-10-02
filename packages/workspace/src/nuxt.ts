@@ -47,6 +47,7 @@ export default function viteHubWorkspaceNuxtModule(options: WorkspaceNuxtModuleO
   let resolvedNitroHosting: string | undefined
   const plugins = Array.isArray(nuxt.options.vite.plugins) ? nuxt.options.vite.plugins : []
   if (!plugins.some(isWorkspaceVitePlugin)) {
+    // SAFETY: Nuxt's Vite plugin list accepts the plugin returned by hubWorkspace.
     plugins.push(hubWorkspace({
       ...workspaceOptions,
       hosting: () => resolvedNitroHosting,
