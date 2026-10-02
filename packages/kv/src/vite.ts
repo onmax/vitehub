@@ -16,7 +16,7 @@ import {
   useProviderOutputCatalog,
 } from "@vite-hub/internal/build/deployment-output"
 import { getViteMode } from "@vite-hub/internal/build/mode"
-import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot, shouldSkipViteProviderBuild } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot, shouldSkipViteProviderBuild } from "@vite-hub/internal/build/vite"
 import { renderViteHubNitroDevHandler } from "@vite-hub/internal/dev-endpoint"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { isPlainObject } from "@vite-hub/internal/object"
@@ -39,7 +39,7 @@ const UPSTASH_DRIVER_IMPORT_ID = "@vite-hub/kv/runtime/upstash-driver"
 const CLOUDFLARE_KV_RUNTIME_IMPORT_ID = import.meta.url.endsWith(".ts")
   ? "@vite-hub/kv/runtime/cloudflare-kv"
   : new URL("./runtime/cloudflare-kv.js", import.meta.url).href
-const mergeNoExternal = createNoExternalMerger("@vite-hub/kv")
+const mergeNoExternal = createNoExternalAddition("@vite-hub/kv")
 const KV_CLOUDFLARE_BINDINGS_FILE = ".vitehub-kv-bindings.json"
 const KV_PACKAGE_NAME = "@vite-hub/kv"
 const generatedNitroDevHandler = ".vitehub/nitro/kv/dev-handler.ts"
