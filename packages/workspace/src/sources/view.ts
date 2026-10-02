@@ -1,6 +1,7 @@
 import { workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata } from "../core/file-metadata.ts"
-import { contentStreamToBytes, decodeFile, isExcludedWorkspacePath, matchesAny, normalizeWorkspacePath, sha256 } from "../core/path.ts"
+import { createWorkspaceGlobMatcher } from "../core/glob.ts"
+import { contentStreamToBytes, decodeFile, isExcludedWorkspacePath, normalizeWorkspacePath, sha256 } from "../core/path.ts"
 import { createWorkspaceWritePolicy } from "../core/rules.ts"
 import { searchText } from "../core/search.ts"
 import { createSourceContext, normalizeWorkspaceSources, sourceMountContainsPath, sourceMountIntersectsPath, workspaceSourceRequestDescriptorPath } from "./config.ts"
@@ -675,6 +676,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
     },
     async glob(pattern, options) {
       const patterns = Array.isArray(pattern) ? pattern : [pattern]
+      const { cwd, matches } = createWorkspaceGlobMatcher(patterns, options)
       await ensurePreparedSources()
       await ensureMaterializedSources(sources.filter(source => !usesLiveProvider(source)))
 
@@ -682,13 +684,13 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
       for (const entry of await store.glob(patterns, options)) {
         result.set(entry.path, entry)
       }
-      for (const entry of descriptorPathEntries("", { recursive: true })) {
-        if (entry.type === "file" && patterns.some(pattern => matchesAny(entry.path, pattern))) result.set(entry.path, entry)
+      for (const entry of descriptorPathEntries(cwd, { recursive: true })) {
+        if (entry.type === "file" && matches(entry.path)) result.set(entry.path, entry)
       }
       for (const source of sources.filter(usesLiveProvider)) {
         await pruneLiveSourceStoreEntries(result, source)
         for (const entry of liveSourceEntries(source)) {
-          if (entry.type === "file" && patterns.some(pattern => matchesAny(entry.path, pattern))) result.set(entry.path, entry)
+          if (entry.type === "file" && matches(entry.path)) result.set(entry.path, entry)
         }
       }
 
