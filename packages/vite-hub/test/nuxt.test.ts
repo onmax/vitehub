@@ -362,6 +362,9 @@ describe("ViteHub Nuxt integration", () => {
     if (!resolver || typeof resolver.resolveId !== "function" || typeof resolver.load !== "function") {
       throw new TypeError("Expected Nitro Email resolver hooks.")
     }
+    const resolved = await resolver.resolveId.call({}, "#vitehub/email/definition", undefined, {})
+    expect(resolved).toBe("\0vitehub-test-email-definition")
+    expect(await resolver.load.call({}, String(resolved))).toContain("email resolver reached")
     expect(await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8"))
       .toContain("vite-hub/_internal/email/runtime/console")
   })
