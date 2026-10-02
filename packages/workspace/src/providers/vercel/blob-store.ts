@@ -68,6 +68,10 @@ function auth(options: VercelBlobWorkspaceStoreOptions) {
   return options.token ? { token: options.token } : {}
 }
 
+function isNotFoundError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "NotFound"
+}
+
 async function createVercelBlobClient(options: VercelBlobWorkspaceStoreOptions) {
   const blob = await importVercelBlobPeer()
   const access = options.access || "private"
@@ -152,7 +156,10 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
   async readFile(path: string): Promise<WorkspaceFile | undefined> {
     const normalized = normalizeSafeWorkspacePath(path)
     const pathname = this.#fileKey(normalized)
-    const file = await (await this.#client()).download(pathname).catch(() => null)
+    const file = await (await this.#client()).download(pathname).catch((error: unknown) => {
+      if (isNotFoundError(error)) return undefined
+      throw error
+    })
     if (!file) return undefined
     const bytes = await file.arrayBuffer()
     return { path: normalized, content: new Uint8Array(bytes) }

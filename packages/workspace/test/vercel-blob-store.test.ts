@@ -106,6 +106,19 @@ describe("Vercel Blob workspace store", () => {
     await expect(store.diff({ from: legacy })).resolves.toMatchObject({ entries: [] })
   })
 
+  it("does not persist a partial snapshot when digest hydration fails", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "token" }, "docs")
+    await store.writeFile("readme.md", { path: "readme.md", content: "before" })
+    blobMock.get.mockRejectedValueOnce(new Error("temporary failure"))
+
+    await expect(store.snapshot()).rejects.toThrow("temporary failure")
+    await expect(store.snapshot()).resolves.toMatchObject({
+      entries: { "readme.md": { digest: expect.any(String) } },
+    })
+  })
+
   it("stores files, metadata, snapshots, and diffs in Blob", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "token"
     const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
