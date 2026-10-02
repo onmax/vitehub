@@ -66,6 +66,7 @@ Available namespaces:
 | `vitehub schedule runs` | Available | Schedule Package | List the recorded runs of one Schedule, newest first. |
 | `vitehub schedule attempts` | Available | Schedule Package | List the attempts of one Schedule Run. |
 | `vitehub schedule run` | Available | Schedule Package | Run one Runtime Schedule now in the development runtime. |
+| `vitehub schedule run-runtime` | Available | Schedule Package | Run one Runtime Schedule now in the development runtime. |
 | `vitehub schedule enable` | Available | Schedule Package | Enable one Runtime Schedule. |
 | `vitehub schedule disable` | Available | Schedule Package | Disable one Runtime Schedule. |
 | `vitehub workspace dev` | Available | Workspace Package | Run commands through a Workspace Session exposed by a Compatible Vite Development Server. |

@@ -483,6 +483,7 @@ function deploymentPlugins(
   const resolvedBuildConfigs = new WeakMap<object, { current: ResolvedBuildConfig }>()
   let providerOutput: ReturnType<typeof useProviderOutputCatalog> | undefined
   let deploymentRoot: string | undefined
+  let deploymentOutputDir: string | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   const deploymentEnvPlugin = { current: envPlugin }
   const subscribedEnvPlugins = new WeakSet<EnvVitePlugin>()
@@ -661,7 +662,7 @@ function deploymentPlugins(
           },
         },
         inspect: () => ({
-          providerOutput: describeDeploymentPlanOutput(plan, deploymentRoot ?? process.cwd()),
+          providerOutput: describeDeploymentPlanOutput(plan, deploymentRoot ?? process.cwd(), deploymentOutputDir),
         }),
       },
       config(config) {
@@ -674,7 +675,10 @@ function deploymentPlugins(
         }
       },
       configResolved(config) {
-        deploymentRoot = config.root
+        // SAFETY: Vite preserves the user-defined Nitro field on the resolved config, while ResolvedConfig omits framework extensions from its type.
+        const inspectionNitro = (config as ResolvedConfig & { nitro?: { rootDir?: string, output?: { dir?: string } } }).nitro
+        deploymentRoot = resolve(inspectionNitro?.rootDir ?? config.root ?? process.cwd())
+        deploymentOutputDir = inspectionNitro?.output?.dir
         const serverResolve = resolveServerOptions(config)
         const buildConfig = {
           alias: (serverResolve.alias ?? []).map(alias => ({
@@ -995,7 +999,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
   }
   else plugins.push(hubEmailOptionalPeerResolver())
   if (options.kv) {
-    plugins.push(hubKv(presetKVOptions || undefined))
+    plugins.push(hubKv(presetKVOptions || undefined, { importBase: `${generatedImportBase}/kv` }))
   }
   else plugins.push(hubKvOptionalPeerResolver())
   if (options.queue && plan.services.queue.supported) {
