@@ -86,6 +86,7 @@ function hasValidSandboxBundle(definition: SandboxRegistryEntry) {
     && typeof definition.bundle.modules === 'object'
     && (Object.hasOwn(definition.bundle.modules, definition.bundle.entry)
       || (!!definition.bundle.project?.files
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Bundles come from generated registry data and require runtime shape validation.
         && typeof definition.bundle.project.files === 'object'
         && Object.hasOwn(definition.bundle.project.files, definition.bundle.entry)))
 }
