@@ -1,6 +1,6 @@
 # @vite-hub/connections
 
-`@vite-hub/connections` stores one OAuth grant per Connection and lets server code call the provider API with typed methods. Each call applies the Connection access rules, can wait for approval, and is recorded as Env Bridge activity. Application code never reads the token.
+`@vite-hub/connections` stores one OAuth grant or API key per Connection and lets server code call the provider API with typed methods. Each call applies the Connection access rules, can wait for approval, and is recorded as Env Bridge activity. Application code never reads the token.
 
 Install this owner package alongside `vite-hub` and use `@vite-hub/connections` imports. The owner plugin provides Connection discovery and management for Vite applications.
 
@@ -47,6 +47,37 @@ const { labels = [] } = await gmail.users.labels.list({ userId: "me" });
 The client exposes only the methods selected in `api`. GET, HEAD, and OPTIONS methods are reads and other methods are writes. Denied calls throw `ConnectionError` with code `CONNECTION_DENIED`. Dry-run clients keep read responses non-optional; only skipped writes add `undefined` to the result. Custom typed catalogs can include a `method` field in each method signature to preserve this distinction. Writes that need approval throw `CONNECTION_APPROVAL_REQUIRED` and create an approval.
 
 `useConnection().fetch()` calls provider catalog origins with the Connection token. `ConnectionFetchInit` accepts `method`, `headers`, `redirect`, `signal`, and a string `body` for approval replay. Encode form parameters with `URLSearchParams.toString()` and set the form content type.
+
+## Use an API key
+
+Use `apiKey()` when the provider gives a static key instead of OAuth. An admin sets the key at runtime, so it never appears in code or Server Env:
+
+```ts
+// server/connections/executor.ts
+import { apiKey, defineConnection } from "@vite-hub/connections";
+
+export default defineConnection({
+  provider: apiKey({ id: "executor", origins: ["https://executor.sh"] }),
+  access: { "agent:support": { read: true, write: ["fetch"] } },
+});
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `origins` | required | Origins that `fetch` may send the key to. Use `https`, or `http` for a loopback host. API catalog root URLs in `apis` also receive the key. |
+| `header` | `authorization` | Request header that carries the key. |
+| `scheme` | `Bearer` for `authorization`, none for other headers | Text before the key. Set `""` to send the bare key. |
+| `apis` | `{}` | Typed API catalogs, as for OAuth providers. |
+| `verify` | none | Check a new key before it is stored. It receives the runtime `fetch` and a 30-second abort signal. Return `false` to reject the key, or `{ account }` to label the Connection. |
+| `id` | `"api-key"` | Provider id in inspection and the Console. |
+
+Set the key in the Console with **Set key**, or pipe it to the CLI. The CLI reads the key only from stdin and sends it only over HTTPS or to a loopback host:
+
+```sh
+printf %s "$EXECUTOR_API_KEY" | vitehub connections set-key executor
+```
+
+ViteHub seals the key like an OAuth token, and access rules, approvals, dry run, and activity work the same way. An API key has no scopes and no refresh: a `401` response does not change the Connection status. When a redirect leaves the first origin, ViteHub removes the key header. Revoking an API key Connection deletes the stored key. Revoke the key at the provider too.
 
 ## Use a custom store
 

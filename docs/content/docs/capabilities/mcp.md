@@ -119,9 +119,9 @@ mcp({
 })
 ```
 
-Allow the tools in the Connection with `agents: { support: { allow: ['mcp.executor.tools.*'] } }`. Connections support OAuth 2 only, so the `executor` Connection needs an OAuth client for your app.
+Allow the tools in the Connection with `agents: { support: { allow: ['mcp.executor.tools.*'] } }`. The `executor` Connection can use an OAuth client for your app, or an [API key Connection](/docs/server-primitives/connections#api-key-connections) with a personal Executor API key.
 
-With an Executor API key in Server Env, send the key from a resolver. Use a personal API key: Executor rejects organization keys for MCP sessions.
+Without Connections, you can also send an Executor API key from Server Env in a resolver. Use a personal API key: Executor rejects organization keys for MCP sessions.
 
 ```ts [server/agents/support.ts]
 mcp({

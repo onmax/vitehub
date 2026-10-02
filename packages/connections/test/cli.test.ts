@@ -29,7 +29,7 @@ describe("vitehub connections", () => {
   it("contributes the connections namespace", () => {
     const [namespace] = createConnectionsCliContributor().namespaces
     expect(namespace?.name).toBe("connections")
-    expect(namespace?.features.map(feature => feature.name)).toEqual(["list", "inspect", "connect", "activity", "approvals", "revoke"])
+    expect(namespace?.features.map(feature => feature.name)).toEqual(["list", "inspect", "connect", "set-key", "activity", "approvals", "revoke"])
   })
 
   it("connects through a loopback callback", async () => {

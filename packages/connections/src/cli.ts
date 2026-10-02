@@ -2,6 +2,7 @@ import { createServer } from "node:http"
 
 import * as v from "valibot"
 
+import { isLoopbackHost } from "./api-key.ts"
 import { CONNECTIONS_ROUTE } from "./route.ts"
 
 import type { ViteHubCliContext, ViteHubCliContributor, ViteHubCliFeature } from "@vite-hub/internal/cli"
@@ -11,6 +12,8 @@ type CliContext = Pick<ViteHubCliContext, "env" | "stderr" | "stdout">
 
 export interface ConnectionsCliOptions {
   fetch?: typeof fetch
+  /** Input for `set-key`. Defaults to `process.stdin`. */
+  stdin?: AsyncIterable<string | Uint8Array> & { isTTY?: boolean }
   /** Seconds to wait for the loopback callback. Defaults to 300. */
   timeout?: number
 }
@@ -87,6 +90,7 @@ function isLoopback(url: URL): boolean {
 const inspectionSchema = v.looseObject({
   account: v.optional(v.looseObject({ email: v.optional(v.string()), id: v.string() })),
   actions: v.array(v.looseObject({ highRisk: v.boolean(), id: v.string(), method: v.string(), write: v.boolean() })),
+  credential: v.picklist(["api-key", "oauth2"]),
   name: v.string(),
   provider: v.string(),
   scopes: v.looseObject({ declared: v.array(v.string()), granted: v.array(v.string()), missing: v.array(v.string()) }),
@@ -104,16 +108,18 @@ const activityResponse = v.looseObject({ activity: v.array(v.looseObject({
   operation: v.optional(v.string()), outcome: v.string(), timestamp: v.string(),
 })) })
 
-async function request<T>(parsed: ParsedArgs, options: ConnectionsCliOptions, body: Record<string, unknown>, schema: v.BaseSchema<unknown, T, v.BaseIssue<unknown>>): Promise<T> {
+async function request<T>(parsed: ParsedArgs, options: ConnectionsCliOptions, body: Record<string, unknown>, schema: v.BaseSchema<unknown, T, v.BaseIssue<unknown>>, redirect?: RequestInit["redirect"]): Promise<T> {
   const base = appUrl(parsed)
   const endpoint = new URL(CONNECTIONS_ROUTE, base)
   let response: Response
   try {
-    response = await (options.fetch ?? fetch)(endpoint, {
+    const init: RequestInit = {
       body: JSON.stringify(body),
       headers: { "content-type": "application/json", origin: base.origin },
       method: "POST",
-    })
+    }
+    if (redirect) init.redirect = redirect
+    response = await (options.fetch ?? fetch)(endpoint, init)
   }
   catch {
     throw new CliError(`Could not reach ${endpoint.origin}. Start the development server, or pass --url.`)
@@ -150,6 +156,19 @@ function describeConnection(connection: ConnectionInspection): string {
 
 function describeApproval(approval: ConnectionApproval): string {
   return `${approval.id}  ${approval.status}  ${approval.name}  ${approval.action}  ${approval.actor}  ${approval.createdAt}`
+}
+
+/** Read a piped key. A key in an argument would stay in the shell history. */
+async function readKey(options: ConnectionsCliOptions): Promise<string> {
+  const stdin = options.stdin ?? process.stdin
+  if (stdin.isTTY) throw new CliError("Pipe the key on stdin, for example: printf %s \"$KEY\" | vitehub connections set-key <name>")
+  const decoder = new TextDecoder()
+  let text = ""
+  for await (const chunk of stdin) text += v.is(v.string(), chunk) ? chunk : decoder.decode(chunk, { stream: true })
+  text += decoder.decode()
+  const key = text.trim()
+  if (!key) throw new CliError("The key on stdin is empty.")
+  return key
 }
 
 function requireName(parsed: ParsedArgs, command: string): string {
@@ -254,6 +273,21 @@ const commands: Record<string, { description: string, run: Command, usage: strin
       write(context, parsed, connection, () => `Connected. ${describeConnection(connection)}`)
     },
   },
+  "set-key": {
+    description: "Set the key of an API key Connection from stdin.",
+    usage: "vitehub connections set-key <name> [--url <app>] [--json] < key",
+    async run(parsed, context, options) {
+      const name = requireName(parsed, "set-key")
+      const base = appUrl(parsed)
+      if (base.protocol !== "https:" && !isLoopbackHost(base.hostname)) {
+        throw new CliError(`set-key sends the key only over HTTPS or to a loopback host. Refusing ${base.origin}.`)
+      }
+      const key = await readKey(options)
+      // A redirect would send the key to another URL.
+      const { connection } = await request(parsed, options, { action: "set-key", key, name }, connectionResponse, "error")
+      write(context, parsed, connection, () => `Key stored. ${describeConnection(connection)}`)
+    },
+  },
   activity: {
     description: "Show audited calls, refreshes, and denials for a Connection.",
     usage: "vitehub connections activity <name> [--before <id>] [--url <app>] [--json]",
@@ -353,6 +387,6 @@ export function createConnectionsCliContributor(options: ConnectionsCliOptions =
     usage: command.usage,
   }))
   return {
-    namespaces: [{ description: "Manage OAuth Connections, approvals, and activity.", features, name: "connections" }],
+    namespaces: [{ description: "Manage Connections, API keys, approvals, and activity.", features, name: "connections" }],
   }
 }

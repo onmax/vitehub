@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { consoleSessionActor } from "../src/console/auth.ts"
 import { consoleConnectionsActorId, writeConsoleConnectionsActor } from "../src/console/auth-build.ts"
 import {
+  canSendConnectionKey,
   connectionApprovalsSchema,
   connectionApprovalCountsSchema,
   connectionConnectURL,
@@ -22,6 +23,7 @@ const connection = {
   account: { email: "ada@example.com", id: "1" },
   actions: [{ highRisk: true, id: "gmail.users.messages.send", method: "POST", write: true }],
   connectedAt: "2026-09-29T08:00:00.000Z",
+  credential: "oauth2",
   name: "gmail",
   provider: "google",
   scopes: { declared: ["a", "b"], granted: ["a"], missing: ["b"] },
@@ -122,6 +124,24 @@ describe("Connections management client", () => {
   it("rejects responses that do not match the schema", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ connections: [{ ...connection, status: "unknown" }] })))
     await expect(requestConnectionsManagement("/_vitehub/connections", "list", connectionListSchema)).rejects.toThrow()
+  })
+
+  it("requires the credential kind of each Connection", async () => {
+    const { credential: _credential, ...withoutCredential } = connection
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ connections: [withoutCredential] })))
+    await expect(requestConnectionsManagement("/_vitehub/connections", "list", connectionListSchema)).rejects.toThrow()
+  })
+
+  it.each([
+    [{ hostname: "console.example.com", protocol: "https:" }, true],
+    [{ hostname: "localhost", protocol: "http:" }, true],
+    [{ hostname: "app.localhost", protocol: "http:" }, true],
+    [{ hostname: "127.0.0.1", protocol: "http:" }, true],
+    [{ hostname: "[::1]", protocol: "http:" }, true],
+    [{ hostname: "console.example.com", protocol: "http:" }, false],
+    [{ hostname: "10.0.0.5", protocol: "http:" }, false],
+  ])("sends API keys only over HTTPS or to a loopback host (%o)", (location, expected) => {
+    expect(canSendConnectionKey(location)).toBe(expected)
   })
 
   it("builds the connect URL under the management base", () => {
