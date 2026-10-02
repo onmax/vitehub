@@ -242,6 +242,18 @@ describe("Workflow dev registry", () => {
     expect(await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-registry.mjs"), "utf8")).toContain("welcome")
   })
 
+  it("keeps plugin options when config exposes an undefined Workflow value", async () => {
+    const projectRoot = await createApp()
+    const plugin = hubWorkflow({ provider: "vercel" })
+    const hook = plugin.config
+    if (!hook || typeof hook === "function") throw new TypeError("Expected config object hook")
+    await (hook.handler as unknown as ConfigHook)({ root: projectRoot, workflow: undefined }, { command: "serve", mode: "development" })
+    await (plugin.configResolved as (config: unknown) => Promise<void>)({ root: projectRoot, workflow: undefined })
+    const generated = await readFile(join(projectRoot, workflowDevGeneratedDir, "dev-plugin.mjs"), "utf8")
+    expect(generated).toContain('"provider":"vercel"')
+    expect(generated).not.toContain("setWorkflowRuntimeConfig(false)")
+  })
+
   it("disables the generated startup registry after a final Workflow override", async () => {
     const projectRoot = await createApp()
     const plugin = hubWorkflow({ provider: "vercel" })
