@@ -194,7 +194,6 @@ describe("framework package contract", () => {
       ownerAgentProcessRuntime.createProcessAgentCapacity,
     );
     expect(frameworkCapabilities.email).toBe(ownerCapabilities.email);
-    expect(frameworkCapabilities.gmail).toBe(ownerCapabilities.gmail);
     expect(frameworkBoxSsh.serveSsh).toBe(ownerBoxSsh.serveSsh);
     expect(frameworkBoxSsh.sshLaunch).toBe(ownerBoxSsh.sshLaunch);
     expect(frameworkCapabilities.workspaceShell).toBe(ownerCapabilities.workspaceShell);
@@ -248,7 +247,6 @@ describe("framework package contract", () => {
       "./console/auth/cloudflare-access",
       "./console/auth/inline",
       "./console/blob",
-      "./console/connections",
       "./console/database",
       "./console/definitions",
       "./console/env",

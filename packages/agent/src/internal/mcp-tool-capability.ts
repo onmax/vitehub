@@ -192,7 +192,7 @@ function recordMcpAvailabilityWarning(
   })
 }
 
-/** Send initialize first unless a config opts in to protocol discovery. */
+/** Send `initialize` first unless a config opts in to protocol discovery. */
 export function withMcpInitializationCompatibility(connection: McpClient | McpClientConfig): McpClient | McpClientConfig {
   if (isMcpClient(connection) || !isMcpClientConfig(connection)) return connection
   return {

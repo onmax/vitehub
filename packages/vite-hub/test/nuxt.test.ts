@@ -3488,12 +3488,6 @@ describe("ViteHub Nuxt integration", () => {
     })
   })
 
-  it("rejects Connections before publishing a Console section without Nuxt routes", async () => {
-    const { nuxt } = createNuxt()
-    await expect(viteHubNuxtModule({ connections: true, console: true, preset: "node" }, nuxt)).rejects.toThrow("connections is not supported by the Nuxt module yet")
-    expect(mocks.vitehub).not.toHaveBeenCalled()
-  })
-
   it("does nothing when Nuxt has not initialized", async () => {
     await expect(viteHubNuxtModule({ preset: "node" })).resolves.toBeUndefined()
     expect(mocks.vitehub).not.toHaveBeenCalled()

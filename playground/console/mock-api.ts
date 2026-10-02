@@ -10,7 +10,6 @@ import {
 } from "../../packages/vite-hub/src/console/runtime/server/usage.ts"
 import { consoleSearchExcerpt } from "../../packages/vite-hub/src/console/runtime/server/search.ts"
 
-import type { ConnectionActivity, ConnectionSummary } from "../../packages/connections/src/types.ts"
 import type { Plugin } from "vite"
 import databaseFixture from "./database.fixture.json" with { type: "json" }
 import fixtureDocument from "./console.fixture.json" with { type: "json" }
@@ -75,87 +74,6 @@ const kvStores = {
   ]),
 } as const
 
-const connections = new Map<string, ConnectionSummary>([
-  ["google", {
-    access: {
-      agents: { "interface-engineer": { allow: ["gmail.messages.*", "gmail.labels.list"], approve: ["gmail.drafts.create"] } },
-      server: { allow: ["gmail.*"] },
-    },
-    account: "owner@example.com",
-    connectedAt: "2026-09-28T09:12:00.000Z",
-    description: "Gmail for the release inbox.",
-    expiresAt: "2026-09-29T10:12:00.000Z",
-    kind: "oauth2",
-    name: "google",
-    origins: ["https://*.googleapis.com"],
-    provider: "google",
-    scopes: ["https://www.googleapis.com/auth/gmail.modify"],
-    status: "active",
-  }],
-  ["github", {
-    access: { agents: { "release-engineer": { allow: ["github.repos.*"], deny: ["github.repos.delete"] } } },
-    kind: "oauth2",
-    name: "github",
-    origins: ["https://api.github.com"],
-    provider: "oauth2",
-    scopes: ["repo"],
-    status: "disconnected",
-  }],
-  ["executor", {
-    access: { agents: { "interface-engineer": { allow: ["mcp.executor.tools.*"] } } },
-    account: "acme workspace",
-    connectedAt: "2026-09-28T08:30:00.000Z",
-    description: "Executor MCP tool catalog.",
-    header: "authorization",
-    kind: "api-key",
-    name: "executor",
-    origins: ["https://executor.sh"],
-    provider: "executor",
-    scopes: [],
-    status: "active",
-  }],
-])
-const connectionActivity: ConnectionActivity[] = [
-  { action: "call", actor: { id: "interface-engineer", kind: "agent" }, connection: "google", durationMs: 184, effect: "read", id: "cact_004", invocationId: "ainv_console_navigation", operation: "gmail.messages.list", outcome: "succeeded", status: 200, target: "gmail.googleapis.com/gmail/v1/users/me/messages", timestamp: "2026-09-28T10:04:00.000Z", tool: "gmail_search" },
-  { action: "call", actor: { id: "interface-engineer", kind: "agent" }, connection: "google", effect: "write", id: "cact_003", invocationId: "ainv_console_navigation", operation: "gmail.drafts.create", outcome: "approval-required", timestamp: "2026-09-28T10:03:00.000Z", tool: "gmail_draft" },
-  { action: "call", actor: { id: "/api/labels", kind: "route" }, connection: "google", durationMs: 97, effect: "write", id: "cact_002", operation: "gmail.messages.modify", outcome: "succeeded", status: 200, target: "gmail.googleapis.com/gmail/v1/users/me/messages/18f/modify", timestamp: "2026-09-28T09:40:00.000Z" },
-  { action: "connect", actor: { id: "console", kind: "user" }, connection: "google", id: "cact_001", outcome: "succeeded", timestamp: "2026-09-28T09:12:00.000Z" },
-  { action: "call", actor: { id: "interface-engineer", kind: "agent" }, connection: "executor", durationMs: 412, effect: "write", id: "cact_006", invocationId: "ainv_console_navigation", operation: "mcp.executor.tools.execute", outcome: "succeeded", status: 200, target: "executor.sh/acme/mcp", timestamp: "2026-09-28T10:06:00.000Z", tool: "mcp_executor_execute" },
-  { action: "connect", actor: { id: "console", kind: "user" }, connection: "executor", id: "cact_005", outcome: "succeeded", timestamp: "2026-09-28T08:30:00.000Z" },
-]
-
-// Synthetic Connections management. The playground has no provider, so "start" returns to the Console as if consent succeeded.
-async function handleConnections(request: IncomingMessage, response: ServerResponse): Promise<void> {
-  const input = Object(await body(request))
-  const action = Reflect.get(input, "action")
-  const name = String(Reflect.get(input, "name") ?? "")
-  if (action === "list") return json(response, { admin: true, connections: [...connections.values()] })
-  const connection = connections.get(name)
-  if (!connection) return json(response, { message: `Unknown Connection ${name}.` }, 400)
-  if (action === "inspect") return json(response, { connection })
-  if (action === "activity") return json(response, { events: connectionActivity.filter(event => event.connection === name) })
-  if (action === "start") {
-    connections.set(name, { ...connection, account: connection.account ?? "owner@example.com", connectedAt: new Date().toISOString(), status: "active" })
-    return json(response, { expiresAt: new Date(Date.now() + 300_000).toISOString(), url: `/_vitehub/connections?connection=${encodeURIComponent(name)}&result=connected` })
-  }
-  if (action === "refresh") {
-    const next = { ...connection, expiresAt: new Date(Date.now() + 3_600_000).toISOString() }
-    connections.set(name, next)
-    return json(response, { connection: next })
-  }
-  if (action === "set-key") {
-    const next: ConnectionSummary = { ...connection, connectedAt: new Date().toISOString(), status: "active" }
-    connections.set(name, next)
-    return json(response, { connection: next })
-  }
-  if (action === "disconnect") {
-    const next: ConnectionSummary = { access: connection.access, kind: connection.kind, name, origins: connection.origins, provider: connection.provider, scopes: connection.scopes, status: "disconnected", ...(connection.header ? { header: connection.header } : {}) }
-    connections.set(name, next)
-    return json(response, { connection: next })
-  }
-  json(response, { message: "Unsupported Connections action." }, 400)
-}
-
 function json(response: ServerResponse, value: unknown, status = 200): void {
   response.statusCode = status
   response.setHeader("cache-control", "no-store")
@@ -167,6 +85,87 @@ async function body(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
   for await (const chunk of request) chunks.push(Buffer.from(chunk))
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}")
+}
+
+const googleScopes = ["https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.send"]
+const connections = new Map([
+  ["gmail", {
+    account: { email: "ada@example.com", id: "108230129837" },
+    actions: [
+      { highRisk: false, id: "gmail.users.messages.list", method: "GET", write: false },
+      { highRisk: false, id: "gmail.users.messages.modify", method: "POST", write: true },
+      { highRisk: true, id: "gmail.users.messages.send", method: "POST", write: true },
+    ],
+    connectedAt: "2026-09-21T08:12:00.000Z",
+    name: "gmail",
+    provider: "google",
+    refreshedAt: "2026-09-29T07:58:00.000Z",
+    scopes: { declared: googleScopes, granted: googleScopes, missing: [] },
+    status: "connected",
+  }],
+  ["calendar", {
+    account: { email: "ada@example.com", id: "108230129837" },
+    actions: [{ highRisk: false, id: "calendar.events.list", method: "GET", write: false }],
+    connectedAt: "2026-08-02T10:40:00.000Z",
+    name: "calendar",
+    provider: "google",
+    scopes: {
+      declared: ["https://www.googleapis.com/auth/calendar.events"],
+      granted: [],
+      missing: ["https://www.googleapis.com/auth/calendar.events"],
+    },
+    status: "reauth_required",
+  }],
+  ["support-inbox", {
+    actions: [{ highRisk: false, id: "gmail.users.threads.list", method: "GET", write: false }],
+    name: "support-inbox",
+    provider: "google",
+    scopes: { declared: ["https://www.googleapis.com/auth/gmail.readonly"], granted: [], missing: ["https://www.googleapis.com/auth/gmail.readonly"] },
+    status: "disconnected",
+  }],
+])
+const connectionActivity = [
+  { action: "use", actor: { id: "email-labeller", kind: "agent" }, id: "cact_004", invocationId: "ainv_email_labeller", key: "connection/gmail", operation: "gmail.users.messages.send", operationId: "cop_004", outcome: "denied", timestamp: "2026-09-29T08:03:00.000Z" },
+  { action: "use", actor: { id: "email-labeller", kind: "agent" }, id: "cact_003", invocationId: "ainv_email_labeller", key: "connection/gmail", operation: "gmail.users.messages.modify", operationId: "cop_003", outcome: "succeeded", timestamp: "2026-09-29T08:02:00.000Z" },
+  { action: "resolve", actor: { id: "email-labeller", kind: "agent" }, id: "cact_002", key: "connection/gmail", operationId: "cop_002", outcome: "succeeded", timestamp: "2026-09-29T08:01:00.000Z" },
+  { action: "replace", actor: { id: "ada", kind: "user" }, id: "cact_001", key: "connection/gmail", operationId: "cop_001", outcome: "succeeded", timestamp: "2026-09-21T08:12:00.000Z" },
+]
+const connectionApprovals = [
+  { action: "gmail.users.messages.send", actor: "agent:email-labeller", createdAt: "2026-09-29T08:03:00.000Z", id: "capr_002", input: { to: "team@example.com" }, invocationId: "ainv_email_labeller", name: "gmail", status: "pending" },
+  { action: "gmail.users.messages.send", actor: "agent:email-labeller", createdAt: "2026-09-28T16:20:00.000Z", decidedAt: "2026-09-28T16:24:00.000Z", decidedBy: "user:ada", id: "capr_001", input: { to: "ada@example.com" }, name: "gmail", status: "executed" },
+]
+
+// Synthetic Connections management API. It accepts the same JSON actions as `/_vitehub/connections`.
+async function handleConnections(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  // SAFETY: This synthetic API receives the fixed JSON action shapes from the Console fixture client.
+  const input = await body(request) as { action?: string, before?: string, id?: string, name?: string, status?: string }
+  const approvalView = ({ input: _input, ...approval }: typeof connectionApprovals[number]) => approval
+  const connection = input.name ? connections.get(input.name) : undefined
+  const approval = connectionApprovals.find(entry => entry.id === input.id)
+  switch (input.action) {
+    case "list": return json(response, { connections: [...connections.values()] })
+    case "inspect": return connection ? json(response, { connection }) : json(response, { error: { code: "CONNECTION_INVALID", message: `No Connection Definition was discovered for "${input.name}".` } }, 400)
+    case "revoke":
+      if (!connection) return json(response, { error: { code: "CONNECTION_INVALID", message: "Unknown Connection." } }, 400)
+      Object.assign(connection, { scopes: { ...connection.scopes, granted: [], missing: connection.scopes.declared }, status: "revoked" })
+      return json(response, { connection })
+    case "activity": return json(response, { activity: input.before ? [] : connectionActivity.filter(event => event.key === `connection/${input.name}`) })
+    case "approval-counts": return json(response, { counts: Object.fromEntries([...connections.keys()].map(name => [name, connectionApprovals.filter(entry => entry.name === name && entry.status === "pending").length])) })
+    case "approvals":
+    case "approval-summaries": {
+      const approvals = connectionApprovals.filter(entry => (!input.name || entry.name === input.name) && (!input.status || entry.status === input.status))
+      return json(response, { approvals: input.action === "approval-summaries" ? approvals.map(approvalView) : approvals })
+    }
+    case "approve":
+    case "approve-summary":
+    case "deny":
+    case "deny-summary":
+      if (!approval || approval.status !== "pending") return json(response, { error: { code: "CONNECTION_INVALID", message: "This approval is not pending." } }, 400)
+      Object.assign(approval, { decidedAt: new Date().toISOString(), decidedBy: "user:local", status: input.action === "approve" || input.action === "approve-summary" ? "executed" : "denied" })
+      if (input.action === "approve-summary" || input.action === "deny-summary") return json(response, { approval: approvalView(approval) })
+      return json(response, input.action === "approve" ? { approval, result: { id: "msg_synthetic" } } : { approval })
+    default: return json(response, { error: { code: "CONNECTION_INVALID", message: "Invalid Connections request." } }, 400)
+  }
 }
 
 function summary(record: Awaited<ReturnType<typeof invocations.get>>): Record<string, unknown> | undefined {
@@ -332,6 +331,31 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path.startsWith("/api/_vitehub/console/invocations/")) {
     const id = decodeURIComponent(path.slice("/api/_vitehub/console/invocations/".length))
+    if (request.method === "POST") {
+      let input: unknown
+      try {
+        input = await body(request)
+      }
+      catch {
+        json(response, { error: "Malformed invocation action." }, 400)
+        return true
+      }
+      if (!(input instanceof Object) || Array.isArray(input) || Object.keys(input).length !== 1 || Reflect.get(input, "action") !== "delete") {
+        json(response, { error: "Unsupported invocation action." }, 400)
+        return true
+      }
+      const outcome = await invocations.delete(id)
+      if (outcome === "not-found") {
+        json(response, { error: "Invocation not found" }, 404)
+        return true
+      }
+      if (outcome === "not-terminal") {
+        json(response, { error: "Only completed, failed, or cancelled invocations can be deleted." }, 409)
+        return true
+      }
+      json(response, { id, outcome: "deleted" })
+      return true
+    }
     const record = await invocations.get(id)
     const invocation = summary(record)
     if (!record || !invocation) {
@@ -448,8 +472,13 @@ export function consoleMockAPI(): Plugin {
             response.end()
             return
           }
-          if (url.pathname === "/_vitehub/connections/manage" && request.method === "POST") {
+          if (request.method === "POST" && url.pathname === "/_vitehub/connections") {
             await handleConnections(request, response)
+            return
+          }
+          if (request.method === "GET" && url.pathname.startsWith("/_vitehub/connections/connect/")) {
+            response.setHeader("content-type", "text/html; charset=utf-8")
+            response.end("<!doctype html><title>Connected</title><p>Synthetic playground. No provider was contacted. You can close this tab.</p>")
             return
           }
           if (await handleAPI(request, response, url)) return

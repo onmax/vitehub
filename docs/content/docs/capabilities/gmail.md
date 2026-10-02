@@ -11,7 +11,7 @@ icon: i-lucide-mail-search
 
 The Capability uses only `fetch`, so it runs on Node and Workers. It does not need a Workspace, a CLI, or a Skill.
 
-Use [`email()`](/docs/capabilities/email) for application-owned transactional email through the Email primitive. Use `gmail()` for one Gmail account that the app owns.
+Use [`email()`](/docs/capabilities/email) for application-owned transactional email through the Email primitive. Use `gmail()` for an operator-owned Gmail account and structured Gmail tools. To run an Agent on each new message and label it, use the [Gmail Channel](/docs/agents/gmail).
 
 ## Configure the Agent
 

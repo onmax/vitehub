@@ -1,182 +1,358 @@
+import { createServer } from "node:http"
+
 import * as v from "valibot"
 
-import type { ViteHubCliContext, ViteHubCliContributor } from "@vite-hub/internal/cli"
-import type { ConnectionActivity, ConnectionSummary } from "./types.ts"
+import { CONNECTIONS_ROUTE } from "./route.ts"
 
-const usage = [
-  "Usage: vitehub connections <command> [name] [--url <url>]",
-  "",
-  "Inspect and manage Connections through a running development server with the Console.",
-  "",
-  "Commands:",
-  "  list                 List Connections and their status.",
-  "  status <name>        Show one Connection.",
-  "  activity [name]      Show recent activity.",
-  "  connect <name>       Print a single-use connect URL. Open it in a browser.",
-  "  refresh <name>       Refresh the access token now.",
-  "  disconnect <name>    Revoke the grant at the provider and delete it.",
-  "  set-key <name>       Set the key of an API key Connection. Pipe the key on stdin.",
-  "",
-  "Options:",
-  "  --url <url>          Development server URL. Defaults to VITEHUB_DEV_SERVER_URL or http://localhost:5173.",
-  "",
-].join("\n")
+import type { ViteHubCliContext, ViteHubCliContributor, ViteHubCliFeature } from "@vite-hub/internal/cli"
+import type { ConnectionApproval, ConnectionInspection } from "./types.ts"
 
-function parse(args: string[], env: NodeJS.ProcessEnv): { help: boolean, name?: string, url: string } {
-  const parsed: { help: boolean, name?: string, url: string } = { help: false, url: env.VITEHUB_DEV_SERVER_URL || "http://localhost:5173" }
+type CliContext = Pick<ViteHubCliContext, "env" | "stderr" | "stdout">
+
+export interface ConnectionsCliOptions {
+  fetch?: typeof fetch
+  /** Seconds to wait for the loopback callback. Defaults to 300. */
+  timeout?: number
+}
+
+interface ParsedArgs {
+  confirm?: string
+  flags: Map<string, string | true>
+  json: boolean
+  positionals: string[]
+  url: string
+}
+
+class CliError extends Error {}
+
+const valueFlags = new Set(["--before", "--confirm", "--name", "--port", "--status", "--url"])
+
+function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
+  const flags = new Map<string, string | true>()
+  const positionals: string[] = []
   for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!
-    if (arg === "-h" || arg === "--help") parsed.help = true
-    else if (arg === "--url" || arg === "--server") {
-      const value = args[index + 1]
-      if (!value || value.startsWith("-")) throw new TypeError(`Missing value for ${arg}.`)
-      parsed.url = value
-      index += 1
+    const argument = args[index]!
+    if (!argument.startsWith("-")) {
+      positionals.push(argument)
+      continue
     }
-    else if (arg.startsWith("--url=")) parsed.url = arg.slice("--url=".length)
-    else if (arg.startsWith("-")) throw new TypeError(`Unknown option: ${arg}.`)
-    else if (parsed.name === undefined) parsed.name = arg
-    else throw new TypeError(`Unexpected argument: ${arg}.`)
+    const separator = argument.indexOf("=")
+    const flag = separator < 0 ? argument : argument.slice(0, separator)
+    const inline = separator < 0 ? undefined : argument.slice(separator + 1)
+    if (flag === "-h" || flag === "--help" || flag === "--json") {
+      flags.set(flag === "-h" ? "--help" : flag, true)
+      continue
+    }
+    if (!valueFlags.has(flag)) throw new CliError(`Unknown option: ${flag}.`)
+    const value = inline ?? args[index + 1]
+    if (!value || (inline === undefined && value.startsWith("-"))) throw new CliError(`Missing value for ${flag}.`)
+    if (inline === undefined) index += 1
+    flags.set(flag, value)
   }
-  return parsed
+  const url = flags.get("--url")
+  return {
+    confirm: stringFlag(flags.get("--confirm")),
+    flags,
+    json: flags.has("--json"),
+    positionals,
+    url: stringFlag(url) ?? (env.VITEHUB_CONNECTIONS_URL || "http://localhost:5173"),
+  }
 }
 
-const optionalString = v.fallback(v.optional(v.string()), undefined)
-const errorBody = v.object({ code: optionalString, message: optionalString })
-const resultBody = v.record(v.string(), v.unknown())
+function stringFlag(value: string | true | undefined): string | undefined {
+  return value === true ? undefined : value
+}
 
-async function manage(url: string, body: Record<string, unknown>, redirect: "error" | "follow" = "follow"): Promise<Record<string, unknown>> {
-  const base = new URL(url)
-  const response = await fetch(new URL("/_vitehub/connections/manage", base), {
-    body: JSON.stringify(body),
-    headers: { "content-type": "application/json", "origin": base.origin },
-    method: "POST",
-    redirect,
-  })
-  const value: unknown = await response.json().catch(() => undefined)
+function flag(parsed: ParsedArgs, name: string): string | undefined {
+  const value = parsed.flags.get(name)
+  return stringFlag(value)
+}
+
+function appUrl(parsed: ParsedArgs): URL {
+  let url: URL
+  try {
+    url = new URL(parsed.url)
+  }
+  catch {
+    throw new CliError(`Invalid --url: ${parsed.url}.`)
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new CliError("--url must use http or https.")
+  return url
+}
+
+function isLoopback(url: URL): boolean {
+  return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]"
+}
+
+const inspectionSchema = v.looseObject({
+  account: v.optional(v.looseObject({ email: v.optional(v.string()), id: v.string() })),
+  actions: v.array(v.looseObject({ highRisk: v.boolean(), id: v.string(), method: v.string(), write: v.boolean() })),
+  name: v.string(),
+  provider: v.string(),
+  scopes: v.looseObject({ declared: v.array(v.string()), granted: v.array(v.string()), missing: v.array(v.string()) }),
+  status: v.picklist(["connected", "disconnected", "reauth_required", "revoked"]),
+})
+const approvalSchema = v.looseObject({
+  action: v.string(), actor: v.string(), createdAt: v.string(), id: v.string(), input: v.unknown(), name: v.string(),
+  status: v.picklist(["approved", "denied", "executed", "failed", "pending"]),
+})
+const connectionResponse = v.looseObject({ connection: inspectionSchema })
+const approvalResponse = v.looseObject({ approval: approvalSchema, result: v.optional(v.unknown()) })
+const authorizationResponse = v.looseObject({ state: v.string(), url: v.pipe(v.string(), v.url()) })
+const activityResponse = v.looseObject({ activity: v.array(v.looseObject({
+  action: v.string(), actor: v.looseObject({ id: v.string(), kind: v.string() }), id: v.string(),
+  operation: v.optional(v.string()), outcome: v.string(), timestamp: v.string(),
+})) })
+
+async function request<T>(parsed: ParsedArgs, options: ConnectionsCliOptions, body: Record<string, unknown>, schema: v.BaseSchema<unknown, T, v.BaseIssue<unknown>>): Promise<T> {
+  const base = appUrl(parsed)
+  const endpoint = new URL(CONNECTIONS_ROUTE, base)
+  let response: Response
+  try {
+    response = await (options.fetch ?? fetch)(endpoint, {
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json", origin: base.origin },
+      method: "POST",
+    })
+  }
+  catch {
+    throw new CliError(`Could not reach ${endpoint.origin}. Start the development server, or pass --url.`)
+  }
+  const text = await response.text()
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  }
+  catch {
+    throw new CliError(`${endpoint.href} returned ${response.status} without a Connections response. Check that the app uses Connections and that the management API is mounted.`)
+  }
   if (!response.ok) {
-    const error = v.safeParse(errorBody, value)
-    const code = error.success && error.output.code ? `${error.output.code}: ` : ""
-    const message = error.success && error.output.message ? error.output.message : `Request failed with ${response.status}.`
-    throw new Error(`${code}${message}`)
+    const parsedError = v.safeParse(v.object({ error: v.object({ code: v.optional(v.string()), message: v.optional(v.string()) }) }), value)
+    const error = parsedError.success ? parsedError.output.error : undefined
+    throw new CliError(`${error?.message ?? `Request failed with ${response.status}.`}${error?.code ? ` (${error.code})` : ""}`)
   }
-  return v.parse(resultBody, value)
+  const result = v.safeParse(schema, value)
+  if (!result.success) throw new CliError(`${endpoint.href} returned an invalid Connections response.`)
+  return result.output
 }
 
-/** `set-key` sends the key only over HTTPS or to a loopback development server. */
-export function assertKeyTarget(url: string): void {
-  const target = new URL(url)
-  const loopback = target.hostname === "localhost" || target.hostname.endsWith(".localhost") || target.hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(target.hostname)
-  if (target.protocol === "https:" || (target.protocol === "http:" && loopback)) return
-  throw new TypeError(`vitehub connections set-key sends the key only over HTTPS or to a loopback server. Refusing ${target.origin}.`)
+function write(context: CliContext, parsed: ParsedArgs, value: unknown, text: () => string): void {
+  context.stdout.write(parsed.json ? `${JSON.stringify(value, null, 2)}\n` : `${text()}\n`)
 }
 
-/** Reads a piped key. A key in an argument would stay in the shell history. */
-export async function readPipedKey(stdin: NodeJS.ReadStream = process.stdin): Promise<string> {
-  if (stdin.isTTY) throw new TypeError("Pipe the key on stdin, for example: printf %s \"$KEY\" | vitehub connections set-key <name>")
-  let text = ""
-  for await (const chunk of stdin) text += String(chunk)
-  const key = text.trim()
-  if (!key) throw new TypeError("The key on stdin is empty.")
-  return key
+function describeConnection(connection: ConnectionInspection): string {
+  const lines = [
+    `${connection.name}  ${connection.provider}  ${connection.status}${connection.account?.email ? `  ${connection.account.email}` : ""}`,
+  ]
+  if (connection.scopes.missing.length) lines.push(`  missing scopes: ${connection.scopes.missing.join(" ")}`)
+  return lines.join("\n")
 }
 
-function line(connection: ConnectionSummary): string {
-  return [
-    connection.name.padEnd(20),
-    connection.provider.padEnd(10),
-    connection.status.padEnd(16),
-    connection.account ?? "-",
-    connection.expiresAt ? `expires ${connection.expiresAt}` : "",
-  ].join(" ").trimEnd()
+function describeApproval(approval: ConnectionApproval): string {
+  return `${approval.id}  ${approval.status}  ${approval.name}  ${approval.action}  ${approval.actor}  ${approval.createdAt}`
 }
 
-function activityLine(event: ConnectionActivity): string {
-  return [
-    event.timestamp,
-    event.connection,
-    `${event.actor.kind}:${event.actor.id}`,
-    event.action,
-    event.operation ?? "",
-    event.outcome,
-    event.status ?? "",
-    event.durationMs === undefined ? "" : `${event.durationMs}ms`,
-  ].filter(value => value !== "").join("  ")
+function requireName(parsed: ParsedArgs, command: string): string {
+  const name = parsed.positionals[0]
+  if (!name) throw new CliError(`${command} requires a Connection name.`)
+  return name
 }
 
-function command(
-  name: string,
-  description: string,
-  run: (parsed: { name?: string, url: string }, context: ViteHubCliContext) => Promise<void>,
-  requiresName = true,
-) {
-  return {
-    description,
-    name,
-    usage,
-    async run(args: string[], context: ViteHubCliContext): Promise<number> {
-      try {
-        const parsed = parse(args, context.env)
-        if (parsed.help) {
-          context.stdout.write(usage)
-          return 0
-        }
-        if (requiresName && !parsed.name) throw new TypeError(`vitehub connections ${name} requires a Connection name.`)
-        await run(parsed, context)
-        return 0
-      }
-      catch (error) {
-        context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
-        return 1
-      }
+function port(parsed: ParsedArgs): number {
+  const value = flag(parsed, "--port")
+  if (value === undefined) return 0
+  const result = Number(value)
+  if (!Number.isSafeInteger(result) || result < 1 || result > 65_535) throw new CliError("--port requires a TCP port.")
+  return result
+}
+
+async function connectLoopback(name: string, parsed: ParsedArgs, context: CliContext, options: ConnectionsCliOptions): Promise<ConnectionInspection> {
+  let resolveCallback!: (value: { code: string, state: string }) => void
+  let rejectCallback!: (error: Error) => void
+  const callback = new Promise<{ code: string, state: string }>((resolve, reject) => {
+    resolveCallback = resolve
+    rejectCallback = reject
+  })
+  let expectedState: string | undefined
+  const server = createServer((incoming, outgoing) => {
+    const url = new URL(incoming.url ?? "/", "http://127.0.0.1")
+    if (url.pathname !== "/callback") {
+      outgoing.writeHead(404).end()
+      return
+    }
+    const state = url.searchParams.get("state")
+    const code = url.searchParams.get("code")
+    const done = (status: number, message: string) => outgoing.writeHead(status, { "content-type": "text/plain; charset=utf-8" }).end(`${message}\n`)
+    if (url.searchParams.get("error")) {
+      done(400, "The provider did not grant access. You can close this tab.")
+      rejectCallback(new CliError("The provider did not grant access."))
+      return
+    }
+    if (!state || !code || state !== expectedState) {
+      done(400, "The authorization response does not match this request.")
+      return
+    }
+    done(200, "Authorization received. You can close this tab and return to the terminal.")
+    resolveCallback({ code, state })
+  })
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(port(parsed), "127.0.0.1", () => resolve())
+  })
+  const timeout = setTimeout(() => rejectCallback(new CliError("Timed out while waiting for the authorization callback.")), (options.timeout ?? 300) * 1_000)
+  try {
+    const address = server.address()
+    if (!address || v.is(v.string(), address)) throw new CliError("Could not start the loopback callback server.")
+    const redirectUri = `http://127.0.0.1:${address.port}/callback`
+    const authorization = await request(parsed, options, { action: "authorize", name, redirectUri }, authorizationResponse)
+    expectedState = authorization.state
+    context.stderr.write(`Open this URL to connect "${name}":\n\n  ${authorization.url}\n\nWaiting for ${redirectUri} ...\n`)
+    const result = await callback
+    return (await request(parsed, options, { action: "complete", ...result }, connectionResponse)).connection
+  }
+  finally {
+    clearTimeout(timeout)
+    server.close()
+  }
+}
+
+type Command = (parsed: ParsedArgs, context: CliContext, options: ConnectionsCliOptions) => Promise<number | void>
+
+const commands: Record<string, { description: string, run: Command, usage: string }> = {
+  list: {
+    description: "List Connections and their status.",
+    usage: "vitehub connections list [--url <app>] [--json]",
+    async run(parsed, context, options) {
+      const { connections } = await request(parsed, options, { action: "list" }, v.looseObject({ connections: v.array(inspectionSchema) }))
+      write(context, parsed, connections, () => connections.length ? connections.map(describeConnection).join("\n") : "No Connections found.")
     },
+  },
+  inspect: {
+    description: "Show one Connection: account, scopes, and actions.",
+    usage: "vitehub connections inspect <name> [--url <app>] [--json]",
+    async run(parsed, context, options) {
+      const { connection } = await request(parsed, options, { action: "inspect", name: requireName(parsed, "inspect") }, connectionResponse)
+      write(context, parsed, connection, () => [
+        describeConnection(connection),
+        `  granted scopes: ${connection.scopes.granted.join(" ") || "none"}`,
+        ...connection.actions.map(action => `  ${action.write ? "write" : "read "}  ${action.id}${action.highRisk ? "  high risk" : ""}`),
+      ].join("\n"))
+    },
+  },
+  connect: {
+    description: "Grant access to a Connection with the provider OAuth flow.",
+    usage: "vitehub connections connect <name> [--url <app>] [--port <port>] [--json]",
+    async run(parsed, context, options) {
+      const name = requireName(parsed, "connect")
+      const base = appUrl(parsed)
+      if (!isLoopback(base)) {
+        const url = new URL(`${CONNECTIONS_ROUTE}/connect/${encodeURIComponent(name)}`, base)
+        write(context, parsed, { url: url.href }, () => `Open this URL while signed in to the Console:\n\n  ${url.href}`)
+        return
+      }
+      const connection = await connectLoopback(name, parsed, context, options)
+      write(context, parsed, connection, () => `Connected. ${describeConnection(connection)}`)
+    },
+  },
+  activity: {
+    description: "Show audited calls, refreshes, and denials for a Connection.",
+    usage: "vitehub connections activity <name> [--before <id>] [--url <app>] [--json]",
+    async run(parsed, context, options) {
+      const before = flag(parsed, "--before")
+      const { activity } = await request(parsed, options, {
+        action: "activity",
+        name: requireName(parsed, "activity"),
+        before,
+      }, activityResponse)
+      write(context, parsed, activity, () => activity.length
+        ? activity.map(entry => `${entry.timestamp}  ${entry.outcome}  ${entry.action}${entry.operation ? `  ${entry.operation}` : ""}  ${entry.actor.kind}:${entry.actor.id}  ${entry.id}`).join("\n")
+        : "No activity.")
+    },
+  },
+  approvals: {
+    description: "List, approve, or deny writes that wait for approval.",
+    usage: "vitehub connections approvals [approve|deny <id>] [--name <name>] [--status <status>] [--before <id>] [--url <app>] [--json]",
+    async run(parsed, context, options) {
+      const [subcommand, id] = parsed.positionals
+      if (subcommand === "approve" || subcommand === "deny") {
+        if (!id) throw new CliError(`approvals ${subcommand} requires an approval id.`)
+        if (subcommand === "approve") {
+          const result = await request(parsed, options, { action: "approve", id }, approvalResponse)
+          write(context, parsed, result, () => describeApproval(result.approval))
+          return result.approval.status === "failed" ? 1 : undefined
+        }
+        const result = await request(parsed, options, { action: "deny", id }, approvalResponse)
+        write(context, parsed, result, () => describeApproval(result.approval))
+        return
+      }
+      if (subcommand) throw new CliError(`Unknown approvals command: ${subcommand}.`)
+      const name = flag(parsed, "--name")
+      const page = await request(parsed, options, {
+        action: "approvals",
+        before: flag(parsed, "--before"),
+        name,
+        status: flag(parsed, "--status") ?? "pending",
+      }, v.looseObject({ approvals: v.array(approvalSchema), nextCursor: v.optional(v.string()) }))
+      write(context, parsed, page, () => [
+        page.approvals.length ? page.approvals.map(describeApproval).join("\n") : "No approvals.",
+        ...(page.nextCursor ? [`Next page: repeat this command with --before ${page.nextCursor}.`] : []),
+      ].join("\n"))
+    },
+  },
+  revoke: {
+    description: "Revoke the provider grant and delete the stored token.",
+    usage: "vitehub connections revoke <name> --confirm <name> [--url <app>] [--json]",
+    async run(parsed, context, options) {
+      const name = requireName(parsed, "revoke")
+      if (parsed.confirm !== name) throw new CliError(`Pass --confirm ${name} to revoke this Connection.`)
+      const { connection } = await request(parsed, options, { action: "revoke", name }, connectionResponse)
+      write(context, parsed, connection, () => `Revoked. ${describeConnection(connection)}`)
+    },
+  },
+}
+
+function usage(): string {
+  return [
+    "Usage: vitehub connections <command> [options]",
+    "",
+    "Manage Connections through the app management API.",
+    "",
+    ...Object.values(commands).map(command => `  ${command.usage}`),
+    "",
+    "Options:",
+    "  --url <url>   App origin. Defaults to VITEHUB_CONNECTIONS_URL or http://localhost:5173.",
+    "  --port <port> Loopback callback port for connect. The OAuth client must allow http://127.0.0.1:<port>/callback.",
+    "  --json        Print JSON.",
+    "",
+  ].join("\n")
+}
+
+/** Run one Connections CLI command. */
+export async function runConnectionsCli(command: string, args: string[], context: CliContext, options: ConnectionsCliOptions = {}): Promise<number> {
+  try {
+    const parsed = parse(args, context.env)
+    const entry = commands[command]
+    if (!entry || parsed.flags.has("--help")) {
+      context.stdout.write(usage())
+      return entry ? 0 : 1
+    }
+    return (await entry.run(parsed, context, options)) ?? 0
+  }
+  catch (error) {
+    context.stderr.write(`${error instanceof CliError ? error.message : error instanceof Error ? error.message : String(error)}\n`)
+    return 1
   }
 }
 
-/** CLI commands for Connections. They call the Console management route of a development server. */
-export function createConnectionsCliContributor(options: { readKey?: () => Promise<string> } = {}): ViteHubCliContributor {
-  const readKey = options.readKey ?? (() => readPipedKey())
+/** CLI namespace that `vitehub connections` uses. */
+export function createConnectionsCliContributor(options: ConnectionsCliOptions = {}): ViteHubCliContributor {
+  const features: ViteHubCliFeature[] = Object.entries(commands).map(([name, command]) => ({
+    description: command.description,
+    name,
+    run: (args, context) => runConnectionsCli(name, args, context, options),
+    usage: command.usage,
+  }))
   return {
-    namespaces: [{
-      description: "Inspect and manage Connections.",
-      features: [
-        command("list", "List Connections.", async ({ url }, context) => {
-          const result = await manage(url, { action: "list" })
-          // SAFETY: The management route returns ConnectionSummary values for the list action.
-          for (const connection of result.connections as ConnectionSummary[]) context.stdout.write(`${line(connection)}\n`)
-        }, false),
-        command("status", "Show one Connection.", async ({ name, url }, context) => {
-          const result = await manage(url, { action: "inspect", name })
-          context.stdout.write(`${JSON.stringify(result.connection, null, 2)}\n`)
-        }),
-        command("activity", "Show recent activity.", async ({ name, url }, context) => {
-          const result = await manage(url, { action: "activity", ...(name ? { name } : {}) })
-          // SAFETY: The management route returns ConnectionActivity values for the activity action.
-          for (const event of result.events as ConnectionActivity[]) context.stdout.write(`${activityLine(event)}\n`)
-        }, false),
-        command("connect", "Print a connect URL.", async ({ name, url }, context) => {
-          const result = await manage(url, { action: "start", name })
-          context.stdout.write(`Open this URL in a browser before ${String(result.expiresAt)}:\n${String(result.url)}\n`)
-        }),
-        command("refresh", "Refresh the access token.", async ({ name, url }, context) => {
-          const result = await manage(url, { action: "refresh", name })
-          // SAFETY: The management route returns a ConnectionSummary for the refresh action.
-          context.stdout.write(`${line(result.connection as ConnectionSummary)}\n`)
-        }),
-        command("disconnect", "Revoke and delete the grant.", async ({ name, url }, context) => {
-          const result = await manage(url, { action: "disconnect", name })
-          // SAFETY: The management route returns a ConnectionSummary for the disconnect action.
-          context.stdout.write(`${line(result.connection as ConnectionSummary)}\n`)
-        }),
-        command("set-key", "Set the key of an API key Connection from stdin.", async ({ name, url }, context) => {
-          assertKeyTarget(url)
-          // A redirect would resend the key to another URL.
-          const result = await manage(url, { action: "set-key", key: await readKey(), name }, "error")
-          // SAFETY: The management route returns a ConnectionSummary for the set-key action.
-          context.stdout.write(`${line(result.connection as ConnectionSummary)}\n`)
-        }),
-      ],
-      name: "connections",
-    }],
+    namespaces: [{ description: "Manage OAuth Connections, approvals, and activity.", features, name: "connections" }],
   }
 }

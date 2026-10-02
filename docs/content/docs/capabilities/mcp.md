@@ -68,7 +68,7 @@ export default defineAgent({
 
 ## Authenticate through a Connection
 
-Set `connection` on a client config to use a [Connection](/docs/server-primitives/connections) as the server credential. The Connection can hold an OAuth 2 grant or an [API key](/docs/server-primitives/connections#api-keys). It sends the credential header, refreshes OAuth tokens, checks access for each request, and records activity. The Agent and the MCP client never see the credential.
+Set `connection` on a client config to use a [Connection](/docs/server-primitives/connections) as the server credential. The Connection sends the `Authorization` header, refreshes the token, checks access for each request, and records activity. The Agent and the MCP client never see the token.
 
 ```ts [server/agents/support.ts]
 mcp({
@@ -106,20 +106,7 @@ ViteHub checks access before the tool runs. A denied tool fails with `CAPABILITY
 
 Use `mcp()` to connect an [Executor](https://executor.sh/) tool catalog. Executor keeps the upstream integration credentials and policies behind one MCP endpoint. Copy the exact endpoint from Executor's **Connect** card.
 
-Define an API key Connection for Executor. Use a personal API key: Executor rejects organization keys for MCP sessions.
-
-```ts [server/connections/executor.ts]
-import { apiKey, defineConnection } from 'vite-hub/connections'
-
-export default defineConnection({
-  provider: apiKey({ id: 'executor', origins: ['https://executor.sh'] }),
-  access: {
-    agents: { support: { allow: ['mcp.executor.tools.*'] } },
-  },
-})
-```
-
-Point the MCP server at the Connection:
+With an OAuth 2 Connection named `executor`:
 
 ```ts [server/agents/support.ts]
 mcp({
@@ -132,11 +119,9 @@ mcp({
 })
 ```
 
-Set the key in the Console, or with `printf %s "$EXECUTOR_API_KEY" | vitehub connections set-key executor`. A replaced key applies to the next request. The Console shows each Executor tool call in the Connection activity.
+Allow the tools in the Connection with `agents: { support: { allow: ['mcp.executor.tools.*'] } }`. Connections support OAuth 2 only, so the `executor` Connection needs an OAuth client for your app.
 
-Executor tools use normalized names such as `mcp_executor_execute`. Pin them with `integrity: { executor: approvedExecutorTools }`.
-
-Without Connections, send a key from Server Env in a resolver. The Agent then has no access rules or activity for the key.
+With an Executor API key in Server Env, send the key from a resolver. Use a personal API key: Executor rejects organization keys for MCP sessions.
 
 ```ts [server/agents/support.ts]
 mcp({
@@ -153,6 +138,8 @@ mcp({
   },
 })
 ```
+
+The resolver runs for each Agent Invocation, so a rotated key applies to the next Invocation. Executor tools use normalized names such as `mcp_executor_execute`. Pin them with `integrity: { executor: approvedExecutorTools }`.
 
 ## How MCP connections work
 

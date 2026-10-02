@@ -38,10 +38,27 @@ describe("discoverConnectionDefinitions", () => {
     ])
   })
 
-  it("rejects a Connection name longer than the management routes accept", async () => {
+  it("preserves filesystem-valid punctuation, spaces, and Unicode in names", async () => {
+    const root = await createTempProject()
+    await touch(root, "server/connections/sales+ops.ts")
+    await touch(root, "server/connections/team/客户 inbox.ts")
+    expect(discoverConnectionDefinitions({ rootDir: root }).map(definition => definition.name).sort())
+      .toEqual(["sales+ops", "team/客户 inbox"])
+  })
+
+  it("preserves discovered names longer than the old management limit", async () => {
     const root = await createTempProject()
     await touch(root, `server/connections/${"n".repeat(129)}.ts`)
-    expect(() => discoverConnectionDefinitions({ rootDir: root })).toThrow("Invalid Connection request.")
+    expect(discoverConnectionDefinitions({ rootDir: root })[0]?.name).toBe("n".repeat(129))
+  })
+
+  it("limits nested names to the default Env key capacity", async () => {
+    const root = await createTempProject()
+    const name = ["a".repeat(166), "b".repeat(166), "c".repeat(167)].join("/")
+    await touch(root, `server/connections/${name}.ts`)
+    expect(discoverConnectionDefinitions({ rootDir: root })[0]?.name).toBe(name)
+    await touch(root, `server/connections/${name}d.ts`)
+    expect(() => discoverConnectionDefinitions({ rootDir: root })).toThrow("exceeds 501 characters")
   })
 
   it("returns no definitions without a connections directory", async () => {

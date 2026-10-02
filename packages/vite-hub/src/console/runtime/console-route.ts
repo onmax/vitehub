@@ -5,10 +5,6 @@ export const consoleDatabaseTablePath = "/database/:table?"
 export const consoleDatabasesSchemaPath = "/databases/:database/schema/diagram"
 export const consoleDatabasesTablePath = "/databases/:database?/:table?"
 
-export function consoleMountBase(pathname: string): string {
-  return pathname.match(/^(.*?)\/_vitehub(?:\/|$)/)?.[1] ?? ""
-}
-
 export function encodeAgentRouteParam(name: string): string {
   if (!name || name.trim() !== name || name.length > 512) {
     throw viteHubErrorDiagnostics.VITE_HUB_R0045({ message: `[vitehub] Agent name ${JSON.stringify(name)} must be a non-empty trimmed string of at most 512 characters.` })

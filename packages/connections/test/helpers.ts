@@ -1,136 +1,115 @@
 import { createClient } from "@libsql/client"
-import { sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/libsql"
-import { afterEach, expect, vi } from "vitest"
 
-import { createConnectionsRuntime, decodeConnectionsKey } from "../src/runtime/core.ts"
-import { createConnectionsStore } from "../src/store.ts"
+import { defineConnection } from "../src/definition.ts"
+import { createConnectionsRuntime } from "../src/runtime.ts"
+import { createDatabaseConnectionStore } from "../src/store.ts"
 
-import type { ConnectionsRuntime, ConnectionsRuntimeOptions } from "../src/runtime/core.ts"
-import type { ConnectionsDatabase } from "../src/store.ts"
-import type { ConnectionDefinition, ConnectionOperation, ConnectionOAuth2Provider, ConnectionTokenSet } from "../src/types.ts"
+import type { ConnectionsRuntime } from "../src/runtime.ts"
+import type { ConnectionStore } from "../src/store.ts"
+import type { ConnectionAccessRule, ConnectionActionPattern, ConnectionDefinition, ConnectionProvider } from "../src/types.ts"
 
-const cleanup: Array<() => void> = []
-
-afterEach(() => {
-  for (const close of cleanup.splice(0)) close()
-})
-
-export const accessToken = "ya29.synthetic-access-token-0001"
-export const refreshToken = "1//synthetic-refresh-token-0001"
-
-export function testKey(fill = 7): Uint8Array {
-  return new Uint8Array(32).fill(fill)
+export interface MailApi {
+  "labels.list": { method: "GET", body: never, params: { userId: string }, response: { labels: Array<{ id: string }> } }
+  "messages.modify": { method: "POST", body: { addLabelIds?: string[] }, params: { id: string, userId: string }, response: { id: string } }
+  "messages.send": { method: "POST", body: { raw: string }, params: { userId: string }, response: { id: string } }
 }
 
-export function base64urlKey(fill = 7): string {
-  return Buffer.from(testKey(fill)).toString("base64url")
-}
+export const ACCESS_TOKEN = "access-token-secret-1"
+export const REFRESH_TOKEN = "refresh-token-secret-1"
+export const CLIENT_SECRET = "client-secret-value"
 
-export function createDatabase(): ConnectionsDatabase {
-  const client = createClient({ url: ":memory:" })
-  cleanup.push(() => client.close())
-  return drizzle(client)
-}
-
-export async function rows(db: ConnectionsDatabase, table: string): Promise<Array<Record<string, unknown>>> {
-  const result = await db.all(sql.raw(`SELECT * FROM ${table}`))
-  return result.map(row => ({ ...(row as Record<string, unknown>) }))
-}
-
-export function tokenSet(overrides: Partial<ConnectionTokenSet> = {}): ConnectionTokenSet {
+export function testProvider(): ConnectionProvider<{ mail: MailApi }> {
   return {
-    accessToken,
-    account: "owner@example.com",
-    expiresAt: Date.now() + 3_600_000,
-    refreshToken,
-    scopes: ["test.read", "test.write"],
-    tokenType: "Bearer",
-    ...overrides,
+    account: token => token.id_token ? { email: "owner@example.com", id: token.id_token } : undefined,
+    apis: {
+      mail: {
+        highRisk: ["messages.send"],
+        methods: {
+          "labels.list": ["GET", "mail/v1/users/{userId}/labels", false],
+          "messages.modify": ["POST", "mail/v1/users/{userId}/messages/{id}/modify", true],
+          "messages.send": ["POST", "mail/v1/users/{userId}/messages/send", true],
+        },
+        rootUrl: "https://mail.example.com/",
+      },
+    },
+    authorizationEndpoint: "https://auth.example.com/authorize",
+    authorizationParams: { access_type: "offline" },
+    clientId: "client-id",
+    clientSecret: CLIENT_SECRET,
+    id: "example",
+    identityScopes: ["openid"],
+    revocationEndpoint: "https://auth.example.com/revoke",
+    tokenEndpoint: "https://auth.example.com/token",
   }
 }
 
-/** Hand-written provider. `refresh` returns `access-<n>` tokens. */
-export function fakeProvider(overrides: Partial<ConnectionOAuth2Provider> = {}) {
-  let count = 0
-  const refresh = vi.fn(async (token: ConnectionTokenSet): Promise<ConnectionTokenSet> => {
-    count += 1
-    return { ...token, accessToken: `refreshed-access-${count}`, expiresAt: Date.now() + 3_600_000 }
-  })
-  const revoke = vi.fn(async (_token: ConnectionTokenSet): Promise<void> => undefined)
-  const provider: ConnectionOAuth2Provider = {
-    authorizationUrl: async input => `https://auth.example/authorize?state=${input.state}`,
-    exchange: async () => tokenSet(),
-    id: "fake",
-    kind: "oauth2",
-    origins: ["https://api.example"],
-    refresh,
-    revoke,
-    scopes: ["test.read"],
-    ...overrides,
+export interface FakeProvider {
+  calls: Array<{ body?: string, headers: Headers, method: string, url: string }>
+  fetch: typeof fetch
+  /** Access tokens that the API accepts. */
+  valid: Set<string>
+  tokenResponses: Array<{ body: Record<string, unknown>, status?: number }>
+}
+
+export function fakeProvider(): FakeProvider {
+  const provider: FakeProvider = {
+    calls: [],
+    fetch: async (input, init) => {
+      const url = input instanceof Request ? input.url : input.toString()
+      const body = init?.body === undefined || init.body === null ? undefined : String(init.body)
+      provider.calls.push({ ...(body === undefined ? {} : { body }), headers: new Headers(init?.headers), method: init?.method ?? "GET", url })
+      if (url === "https://auth.example.com/token") {
+        // Give concurrent callers a chance to overlap.
+        await new Promise(resolve => setTimeout(resolve, 5))
+        const next = provider.tokenResponses.shift() ?? { body: { error: "invalid_grant" }, status: 400 }
+        return Response.json(next.body, { status: next.status ?? 200 })
+      }
+      if (url === "https://auth.example.com/revoke") return new Response(null, { status: 200 })
+      const authorization = new Headers(init?.headers).get("authorization") ?? ""
+      if (!provider.valid.has(authorization.replace(/^Bearer /, ""))) return Response.json({ error: { message: "Invalid credentials" } }, { status: 401 })
+      if (url.includes("/labels")) return Response.json({ labels: [{ id: "INBOX" }] })
+      return Response.json({ id: "message-1" })
+    },
+    tokenResponses: [],
+    valid: new Set([ACCESS_TOKEN]),
   }
-  return { provider, refresh, revoke }
+  return provider
 }
 
-export const readOperation: ConnectionOperation<{ id: string }, { id: string, ok: boolean }, "read"> = {
-  effect: "read",
-  id: "test.items.get",
-  request: input => ({ method: "GET", query: { secret: "query-value" }, url: `https://api.example/items/${input.id}` }),
+export function mailConnection(access?: Record<string, ConnectionAccessRule<ConnectionActionPattern<{ mail: MailApi }>>>): ConnectionDefinition {
+  return defineConnection({
+    ...(access ? { access } : {}),
+    api: { mail: ["labels.*", "messages.modify", "messages.send"] },
+    provider: testProvider(),
+    scopes: ["mail.modify"],
+  }) as ConnectionDefinition
 }
 
-export const writeOperation: ConnectionOperation<{ name: string }, { created: string }, "write"> = {
-  effect: "write",
-  id: "test.items.create",
-  parse: body => ({ created: String((body as { name?: unknown }).name) }),
-  request: input => ({ body: { name: input.name }, method: "POST", url: "https://api.example/items" }),
+export function createStore(): ConnectionStore {
+  const client = createClient({ url: ":memory:" })
+  return createDatabaseConnectionStore({ db: drizzle(client), encryptionKey: new Uint8Array(32).fill(3) })
 }
 
-export interface FetchCall {
-  authorization: string | null
-  body: string | undefined
-  method: string
-  url: string
+export interface TestRuntime {
+  now: { value: number }
+  provider: FakeProvider
+  runtime: ConnectionsRuntime
+  store: ConnectionStore
 }
 
-/** Records every call and answers with the handler result. Never reaches the network. */
-export function mockFetch(handler: (url: URL, init: RequestInit, index: number) => Response | Promise<Response>) {
-  const calls: FetchCall[] = []
-  const mock = vi.fn(async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
-    const url = new URL(input instanceof Request ? input.url : input)
-    const headers = new Headers(init.headers)
-    calls.push({
-      authorization: headers.get("authorization"),
-      body: typeof init.body === "string" ? init.body : init.body instanceof URLSearchParams ? init.body.toString() : undefined,
-      method: (init.method ?? "GET").toUpperCase(),
-      url: url.toString(),
-    })
-    return handler(url, init, calls.length - 1)
+export function createTestRuntime(definition: ConnectionDefinition | (() => Promise<unknown>) = mailConnection(), store: ConnectionStore = createStore()): TestRuntime {
+  const provider = fakeProvider()
+  const now = { value: Date.parse("2026-09-29T10:00:00.000Z") }
+  const runtime = createConnectionsRuntime({ definitions: { mail: definition }, fetch: provider.fetch, now: () => now.value, store })
+  return { now, provider, runtime, store }
+}
+
+/** Run the authorization code flow against the fake provider. */
+export async function connect(test: TestRuntime, token: Record<string, unknown> = {}): Promise<void> {
+  const { state } = await test.runtime.authorize({ name: "mail", redirectUri: "http://127.0.0.1:8976/callback" })
+  test.provider.tokenResponses.push({
+    body: { access_token: ACCESS_TOKEN, expires_in: 3600, id_token: "account-1", refresh_token: REFRESH_TOKEN, scope: "openid mail.modify", token_type: "Bearer", ...token },
   })
-  return { calls, fetch: mock as typeof globalThis.fetch, mock }
-}
-
-export function setupRuntime(options: {
-  definition?: ConnectionDefinition
-  fetch?: typeof globalThis.fetch
-  key?: Uint8Array | string
-  name?: string
-} & Partial<Pick<ConnectionsRuntimeOptions, "basePath">> = {}) {
-  const db = createDatabase()
-  const fake = fakeProvider()
-  const definition = options.definition ?? { provider: fake.provider }
-  const name = options.name ?? "api"
-  const key = options.key ?? testKey()
-  const runtime: ConnectionsRuntime = createConnectionsRuntime({
-    ...(options.basePath ? { basePath: options.basePath } : {}),
-    database: () => db,
-    encryptionKey: () => key,
-    ...(options.fetch ? { fetch: options.fetch } : {}),
-    registry: { [name]: async () => ({ default: definition }) },
-  })
-  const store = createConnectionsStore({ db, encryptionKey: decodeConnectionsKey(key) })
-  return { db, definition, fake, name, runtime, store }
-}
-
-export async function expectCode(promise: Promise<unknown>, code: string): Promise<void> {
-  await expect(promise).rejects.toMatchObject({ code })
+  await test.runtime.complete({ code: "code-1", state })
 }

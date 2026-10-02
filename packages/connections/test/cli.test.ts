@@ -1,208 +1,132 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 
-import { Readable } from "node:stream"
+import { createConnectionsCliContributor, runConnectionsCli } from "../src/cli.ts"
+import { createConnectionsHandler } from "../src/http.ts"
+import { ACCESS_TOKEN, connect, createTestRuntime, REFRESH_TOKEN } from "./helpers.ts"
 
-import { assertKeyTarget, createConnectionsCliContributor, readPipedKey } from "../src/cli.ts"
-
-import type { ViteHubCliContext } from "@vite-hub/internal/cli"
-import type { ConnectionActivity, ConnectionSummary } from "../src/types.ts"
-
-const summary: ConnectionSummary = {
-  access: {},
-  account: "owner@example.com",
-  expiresAt: "2026-09-29T12:00:00.000Z",
-  kind: "oauth2",
-  name: "gmail",
-  origins: ["https://*.googleapis.com"],
-  provider: "google",
-  scopes: [],
-  status: "active",
-}
-
-function context(env: NodeJS.ProcessEnv = {}) {
-  const stdout: string[] = []
-  const stderr: string[] = []
-  const value: ViteHubCliContext = {
-    cwd: "/app",
-    env,
-    rootDir: "/app",
-    spawn: async () => ({ exitCode: 0 }),
-    stderr: { write: chunk => stderr.push(String(chunk)) },
-    stdout: { write: chunk => stdout.push(String(chunk)) },
+function cli(test = createTestRuntime()) {
+  const handler = createConnectionsHandler({ actor: () => "user:local", runtime: () => test.runtime })
+  const output = { stderr: "", stdout: "" }
+  const context = {
+    env: {},
+    stderr: { write: (chunk: string | Uint8Array) => (output.stderr += String(chunk)) },
+    stdout: { write: (chunk: string | Uint8Array) => (output.stdout += String(chunk)) },
   }
-  return { context: value, stderr, stdout }
+  const options = { fetch: (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => handler(new Request(input, init))) as typeof fetch, timeout: 5 }
+  return {
+    output,
+    run: (command: string, args: string[] = []) => runConnectionsCli(command, args, context, options),
+    test,
+  }
 }
 
-function stubFetch(response: () => Response) {
-  const fetch = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => response())
-  vi.stubGlobal("fetch", fetch)
-  return fetch
+async function waitFor(check: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200 && !check(); attempt += 1) await new Promise(resolve => setTimeout(resolve, 10))
+  if (!check()) throw new Error("Timed out.")
 }
 
-function feature(name: string, readKey?: () => Promise<string>) {
-  const [namespace] = createConnectionsCliContributor(readKey ? { readKey } : {}).namespaces
-  const found = namespace!.features.find(item => item.name === name)
-  if (!found) throw new Error(`Missing feature ${name}.`)
-  return found
-}
-
-function request(fetch: ReturnType<typeof stubFetch>, index = 0) {
-  const [input, init] = fetch.mock.calls[index]!
-  return { body: JSON.parse(String(init?.body)) as unknown, headers: new Headers(init?.headers), method: init?.method, url: String(input) }
-}
-
-afterEach(() => {
-  vi.unstubAllGlobals()
-})
-
-describe("connections CLI", () => {
-  it("lists Connections from the default development server", async () => {
-    const fetch = stubFetch(() => Response.json({ connections: [summary, { ...summary, account: undefined, expiresAt: undefined, name: "drive", status: "disconnected" }] }))
-    const io = context()
-
-    expect(await feature("list").run([], io.context)).toBe(0)
-    expect(request(fetch)).toEqual({
-      body: { action: "list" },
-      headers: expect.any(Headers),
-      method: "POST",
-      url: "http://localhost:5173/_vitehub/connections/manage",
-    })
-    expect(request(fetch).headers.get("origin")).toBe("http://localhost:5173")
-    expect(request(fetch).headers.get("content-type")).toBe("application/json")
-    expect(io.stdout.join("")).toContain("gmail")
-    expect(io.stdout.join("")).toContain("owner@example.com expires 2026-09-29T12:00:00.000Z")
-    expect(io.stdout[1]).toMatch(/^drive\s+google\s+disconnected\s+-$/m)
+describe("vitehub connections", () => {
+  it("contributes the connections namespace", () => {
+    const [namespace] = createConnectionsCliContributor().namespaces
+    expect(namespace?.name).toBe("connections")
+    expect(namespace?.features.map(feature => feature.name)).toEqual(["list", "inspect", "connect", "activity", "approvals", "revoke"])
   })
 
-  it("uses --url, --url=, --server, and VITEHUB_DEV_SERVER_URL", async () => {
-    const fetch = stubFetch(() => Response.json({ connection: summary }))
+  it("connects through a loopback callback", async () => {
+    const harness = cli()
+    const done = harness.run("connect", ["mail", "--json"])
+    await waitFor(() => harness.output.stderr.includes("Waiting for"))
+    const authorization = new URL(harness.output.stderr.match(/https:\/\/auth\.example\.com\/\S+/)![0])
+    const redirect = new URL(authorization.searchParams.get("redirect_uri")!)
+    expect(redirect.hostname).toBe("127.0.0.1")
+    harness.test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600, id_token: "account-1", refresh_token: REFRESH_TOKEN, scope: "mail.modify" } })
 
-    await feature("status").run(["gmail", "--url", "https://dev.example:3000/some/path"], context().context)
-    await feature("status").run(["--url=http://127.0.0.1:4000", "gmail"], context().context)
-    await feature("status").run(["gmail", "--server", "http://localhost:8080"], context().context)
-    await feature("status").run(["gmail"], context({ VITEHUB_DEV_SERVER_URL: "http://localhost:9999" }).context)
-
-    expect(fetch.mock.calls.map((_call, index) => `${request(fetch, index).url} ${request(fetch, index).headers.get("origin")}`)).toEqual([
-      "https://dev.example:3000/_vitehub/connections/manage https://dev.example:3000",
-      "http://127.0.0.1:4000/_vitehub/connections/manage http://127.0.0.1:4000",
-      "http://localhost:8080/_vitehub/connections/manage http://localhost:8080",
-      "http://localhost:9999/_vitehub/connections/manage http://localhost:9999",
-    ])
-    expect(request(fetch).body).toEqual({ action: "inspect", name: "gmail" })
+    expect((await fetch(`${redirect.href}?code=code-1&state=wrong`)).status).toBe(400)
+    expect((await fetch(`${redirect.href}?code=code-1&state=${authorization.searchParams.get("state")}`)).status).toBe(200)
+    expect(await done).toBe(0)
+    expect(JSON.parse(harness.output.stdout)).toMatchObject({ account: { email: "owner@example.com" }, status: "connected" })
+    expect(harness.output.stdout + harness.output.stderr).not.toContain(ACCESS_TOKEN)
   })
 
-  it("sends the matching action for each command", async () => {
-    const fetch = stubFetch(() => Response.json({ connection: summary, events: [], expiresAt: "soon", url: "http://localhost:5173/_vitehub/connections/gmail/connect?ticket=t" }))
-    const io = context()
+  it("prints the Console connect URL for a deployed app", async () => {
+    const harness = cli()
+    expect(await harness.run("connect", ["mail", "--url", "https://app.example.com"])).toBe(0)
+    expect(harness.output.stdout).toContain("https://app.example.com/_vitehub/connections/connect/mail")
+  })
 
-    for (const [name, args] of [["activity", []], ["activity", ["gmail"]], ["connect", ["gmail"]], ["refresh", ["gmail"]], ["disconnect", ["gmail"]]] as const) {
-      expect(await feature(name).run([...args], io.context)).toBe(0)
+  it("lists, approves, and revokes", async () => {
+    const harness = cli()
+    await connect(harness.test)
+    expect(await harness.run("list")).toBe(0)
+    expect(harness.output.stdout).toContain("mail  example  connected  owner@example.com")
+
+    await harness.test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.messages.modify", { id: "m1", userId: "me" }).catch(() => undefined)
+    harness.output.stdout = ""
+    expect(await harness.run("approvals", ["--json"])).toBe(0)
+    const { approvals: [approval] } = JSON.parse(harness.output.stdout) as { approvals: Array<{ id: string }> }
+    expect(await harness.run("approvals", ["approve", approval!.id])).toBe(0)
+    expect(harness.output.stdout).toContain("executed")
+
+    expect(await harness.run("revoke", ["mail"])).toBe(1)
+    expect(harness.output.stderr).toContain("--confirm mail")
+    expect(await harness.run("revoke", ["mail", "--confirm", "mail"])).toBe(0)
+    expect(harness.output.stdout).toContain("revoked")
+  })
+
+  it("exposes approval cursors in JSON and supports older-page decisions", async () => {
+    const harness = cli()
+    for (let index = 0; index < 101; index++) {
+      await harness.test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:mail", createdAt: new Date().toISOString(), id: `approval-${index}`, input: {}, name: "mail", status: "pending" })
     }
-
-    expect(fetch.mock.calls.map((_call, index) => request(fetch, index).body)).toEqual([
-      { action: "activity" },
-      { action: "activity", name: "gmail" },
-      { action: "start", name: "gmail" },
-      { action: "refresh", name: "gmail" },
-      { action: "disconnect", name: "gmail" },
-    ])
-    expect(io.stdout.join("")).toContain("Open this URL in a browser before soon:\nhttp://localhost:5173/_vitehub/connections/gmail/connect?ticket=t\n")
+    expect(await harness.run("approvals", ["--name", "mail", "--json"])).toBe(0)
+    const first = JSON.parse(harness.output.stdout) as { approvals: Array<{ id: string }>, nextCursor: string }
+    expect(first.approvals).toHaveLength(100)
+    expect(first.nextCursor).toBe("approval-1")
+    expect(harness.output.stderr).toBe("")
+    harness.output.stdout = ""
+    expect(await harness.run("approvals", ["--name", "mail", "--before", first.nextCursor, "--json"])).toBe(0)
+    expect(JSON.parse(harness.output.stdout)).toMatchObject({ approvals: [{ id: "approval-0" }] })
+    expect(JSON.parse(harness.output.stdout)).not.toHaveProperty("nextCursor")
+    expect(await harness.run("approvals", ["deny", "approval-0"])).toBe(0)
+    expect(await harness.test.store.approvals.get("approval-0")).toMatchObject({ status: "denied" })
+    harness.output.stdout = ""
+    expect(await harness.run("approvals", ["--name", "mail"])).toBe(0)
+    expect(harness.output.stdout).not.toContain("Next page:")
+    await harness.test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:mail", createdAt: new Date().toISOString(), id: "new-pending", input: {}, name: "mail", status: "pending" })
+    harness.output.stdout = ""
+    expect(await harness.run("approvals", ["--name", "mail"])).toBe(0)
+    expect(harness.output.stdout).toContain("Next page: repeat this command with --before approval-2.")
+    expect(await harness.run("approvals", ["--before"])).toBe(1)
+    expect(harness.output.stderr).toContain("Missing value for --before.")
   })
 
-  it("prints activity lines", async () => {
-    const event: ConnectionActivity = {
-      action: "call",
-      actor: { id: "triage", kind: "agent" },
-      connection: "gmail",
-      durationMs: 12,
-      id: "1",
-      operation: "gmail.messages.modify",
-      outcome: "succeeded",
-      status: 200,
-      timestamp: "2026-09-29T12:00:00.000Z",
+  it("prints the activity timestamp", async () => {
+    const harness = cli()
+    await connect(harness.test)
+    await harness.test.runtime.client("mail", { actor: "schedule:mail" }).call("mail.labels.list", { userId: "me" })
+    expect(await harness.run("activity", ["mail"])).toBe(0)
+    expect(harness.output.stdout).toMatch(/^\d{4}-\d{2}-\d{2}T\S+ {2}succeeded {2}\S+ {2}mail\.labels\.list {2}service:schedule:mail /m)
+    expect(harness.output.stdout).not.toContain("undefined")
+  })
+
+  it("rejects malformed successful management responses", async () => {
+    const output = { stderr: "", stdout: "" }
+    const context = {
+      env: {},
+      stderr: { write: (chunk: string | Uint8Array) => (output.stderr += String(chunk)) },
+      stdout: { write: (chunk: string | Uint8Array) => (output.stdout += String(chunk)) },
     }
-    stubFetch(() => Response.json({ events: [event] }))
-    const io = context()
-
-    await feature("activity").run([], io.context)
-    expect(io.stdout).toEqual(["2026-09-29T12:00:00.000Z  gmail  agent:triage  call  gmail.messages.modify  succeeded  200  12ms\n"])
+    const options = { fetch: async () => Response.json({ connections: [{ name: "mail" }] }) }
+    expect(await runConnectionsCli("list", [], context, options)).toBe(1)
+    expect(output.stderr).toContain("invalid Connections response")
+    expect(output.stdout).toBe("")
   })
 
-  it("returns 1 and prints the server error", async () => {
-    stubFetch(() => Response.json({ code: "CONNECTIONS_DENIED", message: "Only Console admins can change Connections." }, { status: 403 }))
-    const io = context()
-
-    expect(await feature("connect").run(["gmail"], io.context)).toBe(1)
-    expect(io.stderr.join("")).toBe("CONNECTIONS_DENIED: Only Console admins can change Connections.\n")
-  })
-
-  it("returns 1 with the status when the error body is not JSON", async () => {
-    stubFetch(() => new Response("boom", { status: 502 }))
-    const io = context()
-
-    expect(await feature("list").run([], io.context)).toBe(1)
-    expect(io.stderr.join("")).toBe("Request failed with 502.\n")
-  })
-
-  it("rejects invalid arguments without a request", async () => {
-    const fetch = stubFetch(() => Response.json({}))
-    for (const [name, args, message] of [
-      ["status", [], "vitehub connections status requires a Connection name."],
-      ["list", ["--unknown"], "Unknown option: --unknown."],
-      ["list", ["--url"], "Missing value for --url."],
-      ["status", ["a", "b"], "Unexpected argument: b."],
-    ] as const) {
-      const io = context()
-      expect(await feature(name).run([...args], io.context)).toBe(1)
-      expect(io.stderr.join("")).toBe(`${message}\n`)
-    }
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  it("prints usage for --help", async () => {
-    const fetch = stubFetch(() => Response.json({}))
-    const io = context()
-
-    expect(await feature("status").run(["--help"], io.context)).toBe(0)
-    expect(io.stdout.join("")).toContain("Usage: vitehub connections <command> [name] [--url <url>]")
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  it("sets an API key from stdin without printing it", async () => {
-    const fetch = stubFetch(() => Response.json({ connection: { ...summary, account: undefined, expiresAt: undefined, kind: "api-key", name: "executor", provider: "api-key" } }))
-    const io = context()
-
-    expect(await feature("set-key", async () => "sk_cli_marker").run(["executor"], io.context)).toBe(0)
-    expect(request(fetch).body).toEqual({ action: "set-key", key: "sk_cli_marker", name: "executor" })
-    // A redirect would resend the key to another URL.
-    expect(fetch.mock.calls[0]?.[1]?.redirect).toBe("error")
-    // Other commands have no key in the body and follow redirects.
-    await feature("list").run([], context().context)
-    expect(fetch.mock.calls[1]?.[1]?.redirect).toBe("follow")
-    expect(io.stdout.join("")).toMatch(/^executor\s+api-key\s+active/)
-    expect(io.stdout.join("") + io.stderr.join("")).not.toContain("sk_cli_marker")
-  })
-
-  it("sends a key only over HTTPS or to a loopback server", async () => {
-    for (const url of ["https://app.example", "http://localhost:5173", "http://app.localhost:3000", "http://127.0.0.1:4000", "http://[::1]:5173"]) {
-      expect(() => assertKeyTarget(url)).not.toThrow()
-    }
-    for (const url of ["http://remote-host:5173", "http://10.0.0.2:5173", "http://localhost.example.com"]) {
-      expect(() => assertKeyTarget(url)).toThrow("only over HTTPS or to a loopback server")
-    }
-    const fetch = stubFetch(() => Response.json({}))
-    const readKey = vi.fn(async () => "sk_never_sent")
-    const io = context()
-    expect(await feature("set-key", readKey).run(["executor", "--url", "http://remote-host:5173"], io.context)).toBe(1)
-    expect(readKey).not.toHaveBeenCalled()
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  it("reads a piped key and rejects a terminal or an empty pipe", async () => {
-    // SAFETY: A Readable stream matches the parts of NodeJS.ReadStream that readPipedKey uses.
-    const pipe = (text: string, isTTY = false) => Object.assign(Readable.from([text]), { isTTY }) as unknown as NodeJS.ReadStream
-    await expect(readPipedKey(pipe("  sk_piped\n"))).resolves.toBe("sk_piped")
-    await expect(readPipedKey(pipe("\n"))).rejects.toThrow("empty")
-    await expect(readPipedKey(pipe("sk", true))).rejects.toThrow("Pipe the key on stdin")
+  it("reports errors and unknown options", async () => {
+    const harness = cli()
+    expect(await harness.run("inspect", ["missing"])).toBe(1)
+    expect(harness.output.stderr).toContain("CONNECTION_INVALID")
+    expect(await harness.run("list", ["--nope"])).toBe(1)
+    expect(harness.output.stderr).toContain("Unknown option: --nope.")
   })
 })
