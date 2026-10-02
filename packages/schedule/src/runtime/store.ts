@@ -382,11 +382,6 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
   const prefix = options.prefix ?? "vitehub:schedule"
 
   const store = options.kvStore
-  // Keep legacy records discovered before the metadata index in this runtime.
-  // Providers can reject index writes, so a fresh request must not reread the
-  // complete fallback history when the derived index remains unavailable.
-  const legacyRecordsByKey = new Map<string, ScheduleRunRecord | undefined>()
-
   async function indexRun(run: ScheduleRunRecord): Promise<void> {
     try {
       await store.set(joinKey(prefix, "schedule-run-index", run.id, run.scheduleId, run.scheduledAt.toISOString()), true)
@@ -448,14 +443,8 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
     // Group legacy records once per snapshot, even when their index cannot be published.
     for (let offset = 0; offset < unknown.length; offset += 16) {
       const batch = await Promise.all(unknown.slice(offset, offset + 16).map(async key => {
-        if (legacyRecordsByKey.has(key)) {
-          const run = legacyRecordsByKey.get(key)
-          recordsByKey.set(key, run)
-          return { key, run }
-        }
         const stored = await store.get<StoredScheduleRunRecord>(key)
         const run = stored ? deserializeScheduleRun(stored) : undefined
-        legacyRecordsByKey.set(key, run)
         recordsByKey.set(key, run)
         if (run) await indexRun(run)
         return { key, run }
@@ -487,7 +476,6 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
         const stored = await store.get<StoredScheduleRunRecord>(key)
         const run = stored ? deserializeScheduleRun(stored) : undefined
         recordsByKey.set(key, run)
-        legacyRecordsByKey.set(key, run)
         return run
       }))
       records.push(...batch.flatMap(run => run ? [run] : []))
@@ -599,7 +587,6 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
         updatedAt: patch.updatedAt,
       })
       await store.set(key, serializeScheduleRun(next))
-      legacyRecordsByKey.delete(key)
       return cloneScheduleRun(next)
     },
   }
