@@ -1,5 +1,6 @@
 import { discoverAgentDefinitionEntries } from "@vite-hub/agent/vite"
 import { inspectDatabaseDefinitions } from "@vite-hub/database/vite"
+import { discoverScheduleDefinitions } from "@vite-hub/schedule/vite"
 
 import { consoleContributedSections } from "./contributions.ts"
 
@@ -14,6 +15,7 @@ export type ConsoleScheduleEntry = { handler: string; name: string }
 
 export interface ConsoleBuildCatalog {
   agents: readonly ConsoleAgentEntry[]
+  manualSchedules?: readonly ConsoleScheduleEntry[]
   /** Content of the `databases` section and of each enabled contributed section, keyed by section id. */
   content: Record<ConsoleSectionId, ConsoleSectionContent>
 }
@@ -45,5 +47,14 @@ export async function discoverConsoleBuildCatalog(options: ConsoleSectionDiscove
     const contributed = consoleContributedSections.get(section)
     if (contributed) content[section] = await contributed.read(options)
   }
-  return { agents, content }
+  const manualSchedules = sections.includes("schedules")
+    ? discoverScheduleDefinitions({
+        rootDir: options.discoveryRoot,
+        serverDirs,
+        serverRootDir: options.scheduleDiscoveryRoot ?? projectRoot,
+      })
+        .filter(definition => definition.manual === true && definition.runtimeOnly !== true)
+        .map(definition => ({ handler: definition.handler, name: definition.name }))
+    : []
+  return { agents, content, manualSchedules }
 }

@@ -2176,7 +2176,7 @@ describe("Agent invocation console", () => {
       await expect(definition.invocations?.getSummary(running.id)).resolves.not.toHaveProperty("cancelRequestedAt")
 
       install(true)
-      await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 400 })
+      await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 409 })
       await expect(invocationHandler(detailEvent("missing", { action: "cancel" }))).rejects.toMatchObject({ statusCode: 404 })
       // A custom `run` Driver receives the abort signal, but the Console does not report the cancel as enforced.
       await expect(invocationHandler(detailEvent(running.id, { action: "cancel" }))).resolves.toEqual({
@@ -2196,8 +2196,10 @@ describe("Agent invocation console", () => {
       }, { timeout: 4_000 })
       await expect(invocationHandler(detailEvent(running.id, { action: "cancel" }))).rejects.toMatchObject({ statusCode: 409 })
       await expect(getConsoleInvocationDetail(detailEvent(running.id))).resolves.toMatchObject({
-        invocation: { actions: { cancel: { available: false } } },
+        invocation: { actions: { cancel: { available: false }, delete: { available: true }, rerun: { available: false, reason: expect.any(String) } } },
       })
+      await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).resolves.toEqual({ id: running.id, outcome: "deleted" })
+      await expect(definition.invocations?.getSummary(running.id)).resolves.toBeUndefined()
     }
     finally {
       release("done")

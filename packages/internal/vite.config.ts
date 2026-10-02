@@ -11,6 +11,7 @@ export default defineConfig({
       "src/definition-catalog.ts",
       "src/deployment.ts",
       "src/dev-endpoint.ts",
+      "src/dev-token.ts",
       "src/env.ts",
       "src/effect.ts",
       "src/http-request.ts",

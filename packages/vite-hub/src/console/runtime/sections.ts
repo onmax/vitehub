@@ -1,5 +1,5 @@
 /** Sections that the Console UI in `vite-hub` renders with its own components. Owner packages contribute the others. */
-export const consoleBuiltinSectionIds = ["env", "agents", "usage", "blob", "database", "databases", "kv"] as const
+export const consoleBuiltinSectionIds = ["env", "agents", "usage", "blob", "databases", "kv"] as const
 
 export type ConsoleBuiltinSectionId = (typeof consoleBuiltinSectionIds)[number]
 

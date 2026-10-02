@@ -262,6 +262,7 @@ export { agentInvocationId, agentInvocationRerunInput } from "./invocations.ts"
 export type {
   AgentInvocationAnnotationValue,
   AgentInvocationCancelResult,
+  AgentInvocationDeleteOutcome,
   AgentInvocationListOptions,
   AgentInvocationListResult,
   AgentInvocationObservationOptions,
@@ -1327,7 +1328,7 @@ async function runAgentAsWorkflow<
   catch (error) {
     const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
     await activity?.update(status, error)
-    const ambiguous = isAmbiguousWorkflowStartFailure(error)
+    const ambiguous = isAmbiguousAgentWorkflowStartFailure(error)
     const failedRunId = !options.fresh && context.run?.runId
       ? context.run.runId
       : workflowRunId || (ambiguous ? undefined : createTraceId())
@@ -7899,7 +7900,8 @@ function invocationCancellationDriver(definition: unknown): AgentInvocationCance
   const internal = definition as { [baseAgentDriver]?: unknown, [baseAgentDriverKind]?: AgentDriverKind } | undefined
   const driver = internal?.[baseAgentDriver]
   const provider = isRuntimeRecord(driver) && hasRuntimeType(driver.provider, "string") ? driver.provider : undefined
-  const cancellationDriver: { kind: AgentDriverKind, provider?: string } = { kind: internal?.[baseAgentDriverKind] ?? "model" }
+  const kind = internal?.[baseAgentDriverKind] ?? "model"
+  const cancellationDriver: { kind: "model" | "provider" | "run", provider?: string } = { kind: kind === "ask" ? "run" : kind }
   if (provider) cancellationDriver.provider = provider
   return agentInvocationCancellationDriver(cancellationDriver)
 }

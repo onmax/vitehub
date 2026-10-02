@@ -93,6 +93,8 @@ async function parseTypeScript(): Promise<(source: string) => ReturnType<typeof 
 }
 
 const agentPackageName = "@vite-hub/agent"
+const agentProcessHostDrainRoute = "/api/_vitehub/host/drain"
+const agentProcessHostHealthRoute = "/api/_vitehub/host/health"
 const mergeNoExternal = createNoExternalAddition(agentPackageName, "@t3tools/provider-runtime")
 const generatedAgentDenoServer = "agent/deno-server.ts"
 const generatedAgentDiscordGatewayRouteHandler = "agent/discord-gateway-route.ts"

@@ -651,16 +651,16 @@ describe("Agent Invocation Stream Channel replay", () => {
     await configurePluginServer((await import("../src/vite.ts")).hubAgent(), server)
     const headers = { "content-type": "application/json", [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue }
 
-    const description = await invokeMiddleware(handlers[0]!, { agent: "support", replay: { channel: "mailbox", describe: true } }, agentInvocationStreamRoute, headers)
+    const description = await invokeMiddleware(handlers, { agent: "support", replay: { channel: "mailbox", describe: true } }, agentInvocationStreamRoute, headers)
     expect(description.statusCode).toBe(200)
     expect(JSON.parse(description.body)).toMatchObject({ channel: "mailbox", query: { type: "object" }, trigger: "received" })
 
-    const replay = await invokeMiddleware(handlers[0]!, { agent: "support", replay: { channel: "mailbox", dryRun: true } }, agentInvocationStreamRoute, headers)
+    const replay = await invokeMiddleware(handlers, { agent: "support", replay: { channel: "mailbox", dryRun: true } }, agentInvocationStreamRoute, headers)
     expect(replay.statusCode).toBe(200)
     expect(JSON.parse(replay.body)).toMatchObject({ items: [{ key: "m1", status: "completed" }], nextCursor: null, processed: 1 })
     expect(label).not.toHaveBeenCalled()
 
-    const live = await invokeMiddleware(handlers[0]!, { agent: "support", replay: { channel: "mailbox" } }, agentInvocationStreamRoute, headers)
+    const live = await invokeMiddleware(handlers, { agent: "support", replay: { channel: "mailbox" } }, agentInvocationStreamRoute, headers)
     expect(live.statusCode).toBe(409)
     expect(JSON.parse(live.body)).toMatchObject({ code: "AGENT_R0932" })
   })

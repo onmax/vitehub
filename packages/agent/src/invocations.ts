@@ -326,7 +326,7 @@ export interface AgentInvocations {
 interface BoundAgentInvocations extends AgentInvocations {
   [bindAgentInvocationsSymbol]<TRuntimeConfig extends AgentRuntimeConfig>(
     context: AgentRuntimeContext<TRuntimeConfig>,
-    options?: { agentName?: string, cancellationDriver?: AgentInvocationCancellationDriver, deferClaim?: boolean, terminalTakeover?: boolean },
+    options?: { agentName?: string, cancellationDriver?: AgentInvocationCancellationDriver, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean, replaceClaimToken?: string, recoverPending?: boolean },
   ): Promise<AgentInvocationJournal<TRuntimeConfig>>
   [recoverInterruptedAgentInvocationsSymbol](options: Parameters<typeof failInterruptedAgentInvocations>[1]): Promise<number>
 }
@@ -373,6 +373,8 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   /** Records the Driver dispatch boundary without delaying execution. */
   driverStarted(): void
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
+  /** Persist resolved run metadata while this journal owns the execution claim. */
+  setRunMetadata(run: AgentRunMetadata): Promise<boolean>
   /** Registers this run and checks durable cancellation before setup or dispatch consumes {@link abortSignal}. */
   watchCancellation(driver: AgentInvocationCancellationDriver): Promise<void>
 }
@@ -2020,12 +2022,18 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
     },
     async [bindAgentInvocationsSymbol]<TRuntimeConfig extends AgentRuntimeConfig>(
       context: AgentRuntimeContext<TRuntimeConfig>,
-      bindOptions: { agentName?: string, cancellationDriver?: AgentInvocationCancellationDriver, deferClaim?: boolean, terminalTakeover?: boolean } = {},
+      bindOptions: { agentName?: string, cancellationDriver?: AgentInvocationCancellationDriver, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean, replaceClaimToken?: string, recoverPending?: boolean } = {},
     ): Promise<AgentInvocationJournal<TRuntimeConfig>> {
       const runId = context.run?.runId || createInvocationId()
       const agentName = bindOptions.agentName || context.agentIdentity?.name
       const recordId = await agentInvocationId(runId, agentName)
-      const claimId = createInvocationId()
+      let claimId = createInvocationId()
+      let claimConfirmed = false
+      let claimUncertain = false
+      let claimHandedOff = false
+      let claimAttempt = 0
+      let claimRenewals = Promise.resolve()
+      const pendingClaimIds = new Set<string>()
       const cancellationOwnerId = createInvocationId()
       let traceId = await boundedIdentity(context.trace?.id || runId)
       const annotations = normalizeAnnotations(context.run?.annotations)
@@ -2053,6 +2061,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       let runningRetry: Promise<void> | undefined
       let terminalRetry: Promise<void> | undefined
       let heartbeat: ReturnType<typeof setInterval> | undefined
+      let heartbeatGeneration = 0
       let observationWrite: Promise<void> | undefined
       let activeObservation: TraceEventLogEntry | undefined
       const pendingObservations: TraceEventLogEntry[] = []
@@ -2100,12 +2109,17 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         heartbeat = undefined
       }
       const startHeartbeat = () => {
-        if (finished || !ownsRecord || heartbeat !== undefined) return
+        if (finished || claimHandedOff || !ownsRecord || heartbeat !== undefined) return
+        const generation = heartbeatGeneration
         heartbeat = setInterval(() => {
           // A timer callback may already be queued when handoff stops the interval.
           // Do not enqueue a renewal after ownership handoff has begun.
-          if (heartbeat === undefined || finished || !ownsRecord) return
-          heartbeatRenewal = heartbeatRenewal.then(() => renew()).catch(() => undefined)
+          if (heartbeat === undefined || generation !== heartbeatGeneration || claimHandedOff || finished || !ownsRecord) return
+          heartbeatRenewal = heartbeatRenewal.then(() => {
+            // The callback may have passed the guard before handoff fenced this generation.
+            if (generation !== heartbeatGeneration || claimHandedOff || finished || !ownsRecord) return
+            return renew()
+          }).catch(() => undefined)
         }, CLAIM_RENEW_INTERVAL_MS)
         unrefTimer(heartbeat)
       }
@@ -2149,10 +2163,44 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         if (result === storeOperationTimedOut) creationTimedOut = true
         return created
       }
-      const renew = async (force = false): Promise<boolean> => {
-        if (!await ensureCreated() || (finished && !runningRequested)) return false
-        const claim = await boundedStoreOperation(() => store.claim(recordId, claimId, CLAIM_LEASE_MS, force ? { replaceExisting: true } : undefined))
-        claimUnavailable = claim === undefined || claim === storeOperationTimedOut
+      const renewClaim = async (force = false, rotate = false): Promise<boolean> => {
+        if (!await ensureCreated() || (finished && !runningRequested) || (claimHandedOff && !rotate)) return false
+        if ((bindOptions.requireNew && !createdNew) || (bindOptions.recoverPending && !workflowDispatchAllowed)) {
+          claimUnavailable = false
+          return false
+        }
+        if (!force && pendingClaimIds.size >= 2) {
+          claimUnavailable = true
+          ownsRecord = false
+          stopHeartbeat()
+          return false
+        }
+        const attempt = ++claimAttempt
+        const attemptId = claimConfirmed && !claimUncertain && !rotate && pendingClaimIds.size === 0 ? claimId : createInvocationId()
+        const expectedClaimIds = [...pendingClaimIds, ...(claimConfirmed ? [claimId] : [])]
+        pendingClaimIds.add(attemptId)
+        const claimTask = Promise.resolve().then(() => store.claim(recordId, attemptId, CLAIM_LEASE_MS,
+          force ? { replaceExisting: true }
+            : expectedClaimIds.length ? { expectedClaimIds }
+              : bindOptions.replaceClaimToken ? { replaceClaimToken: bindOptions.replaceClaimToken } : undefined))
+        const claim = await boundedStoreOperation(() => claimTask)
+        if (claim !== true && claim !== false) {
+          claimUncertain = true
+          // An execution that never started must not leave a late claim blocking recovery.
+          void claimTask.then(owned => owned ? store.release(recordId, attemptId) : undefined, () => store.release(recordId, attemptId)).catch(() => {}).finally(() => pendingClaimIds.delete(attemptId))
+        } else {
+          pendingClaimIds.delete(attemptId)
+        }
+        if (attempt !== claimAttempt) {
+          if (claim === true && attemptId !== claimId) await boundedStoreOperation(() => store.release(recordId, attemptId))
+          return false
+        }
+        if (claim === true) {
+          claimId = attemptId
+          claimConfirmed = true
+          claimUncertain = false
+        }
+        claimUnavailable = claim !== true && claim !== false
         ownsRecord = claim === true
         if (ownsRecord) {
           const latest = await boundedStoreOperation(() => store.getSummary(recordId))
@@ -2173,7 +2221,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         }
         if (ownsRecord && finished) {
           if (!cancelNotEnforcedBy) stopWatchingCancellation()
-          await boundedStoreOperation(() => store.release(recordId, claimId))
+          await boundedStoreOperation(() => store.release(recordId, attemptId))
           ownsRecord = false
           stopHeartbeat()
           return false
@@ -2181,6 +2229,11 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         if (ownsRecord) startHeartbeat()
         else stopHeartbeat()
         return ownsRecord
+      }
+      const renew = (force = false, rotate = false): Promise<boolean> => {
+        const task = claimRenewals.then(() => renewClaim(force, rotate))
+        claimRenewals = task.then(() => {}, () => {})
+        return task
       }
       const write = async (operation: () => MaybePromise<unknown>): Promise<void> => {
         writes = writes.then(async () => {
@@ -2395,11 +2448,14 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           return attempted === true || attempted === false ? attempted : undefined
         },
         async handoffClaim(options = {}) {
+          // Fence callbacks that entered the interval before it was stopped.
+          heartbeatGeneration++
           stopHeartbeat()
           await heartbeatRenewal
           const record = await boundedStoreOperation(() => store.get(recordId))
           if (!record || record === storeOperationTimedOut || terminalStatus(record.status)) return undefined
-          if (!await renew(false)) return undefined
+          if (!await renew(false, true)) return undefined
+          claimHandedOff = true
           stopHeartbeat()
           if (options.workflowDispatch) {
             const current = await boundedStoreOperation(() => store.get(recordId))
@@ -2587,7 +2643,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
           if (cancellationDriver?.enforced === false && !cancellationWarningPrepared) {
             throw agentDiagnostics.AGENT_R0973({ message: "[vitehub] Initial custom Driver cancellation state could not be persisted." })
           }
-          if (runningRetry) return
+          if (runningRetry) return false
           runningRetry = (async () => {
             const deadline = Date.now() + TERMINAL_RETRY_TIMEOUT_MS
             while (!finished && Date.now() < deadline) {
@@ -2596,7 +2652,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
                 unrefTimer(timer)
               })
               if (finished) return
-              if (await markRunning()) return true
+              if (await markRunning()) return
             }
           })()
           registerAgentInvocationRecovery(context, runningRetry)
@@ -2623,6 +2679,16 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         async setAnnotations(annotations) {
           if (finished || finishing) return
           await update({ annotations: normalizeAnnotations(annotations), timestamp: new Date().toISOString() })
+        },
+        async setRunMetadata(run) {
+          if (finished || finishing) return false
+          return await update({
+            annotations: normalizeAnnotations(run.annotations),
+            channelId: run.channelId,
+            origin: run.origin,
+            threadId: run.threadId,
+            timestamp: new Date().toISOString(),
+          })
         },
         async watchCancellation(driver) {
           if (finished || finishing) return
@@ -2728,9 +2794,10 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       if (!current) return { id, outcome: "not-found" }
       if (terminalStatus(current.status)) return terminalResult(current, local)
       // A pending warning is verified only by the owner that dispatched its custom Driver.
-      const ownerNotEnforcedBy = current.cancelWarningOwnerId === undefined
+      const warningOwnerId = current.cancelWarningOwnerId
+      const ownerNotEnforcedBy = warningOwnerId === undefined
         ? undefined
-        : local.notEnforcedByOwners?.find(entry => entry.ownerId === current.cancelWarningOwnerId)?.name
+        : local.notEnforcedByOwners?.find(entry => entry.ownerId === warningOwnerId)?.name
       if (local.aborted && (!current.cancelWarningPending || current.cancelNotEnforcedBy || ownerNotEnforcedBy)) {
         const notEnforcedBy = ownerNotEnforcedBy || current.cancelNotEnforcedBy || (!current.cancelWarningPending ? local.notEnforcedBy : undefined)
         return {
@@ -2861,7 +2928,7 @@ export function isAgentInvocations(value: unknown): value is AgentInvocations {
 export async function bindAgentInvocations<TRuntimeConfig extends AgentRuntimeConfig>(
   invocations: AgentInvocations | undefined,
   context: AgentRuntimeContext<TRuntimeConfig>,
-  options?: { agentName?: string, cancellationDriver?: AgentInvocationCancellationDriver, deferClaim?: boolean, terminalTakeover?: boolean },
+  options?: { agentName?: string, cancellationDriver?: AgentInvocationCancellationDriver, deferClaim?: boolean, terminalTakeover?: boolean, requireNew?: boolean, replaceClaimToken?: string, recoverPending?: boolean },
 ): Promise<AgentInvocationJournal<TRuntimeConfig> | undefined> {
   if (!invocations) return
   // SAFETY: Invocation event normalization establishes the asserted invocation contract.

@@ -49,7 +49,7 @@ const generatedNitroProviderRegistry = ".vitehub/nitro/schedule/provider-registr
 const generatedNitroRuntimeRegistry = ".vitehub/nitro/schedule/runtime-registry.js"
 const generatedNitroStaticRegistry = ".vitehub/nitro/schedule/static-registry.js"
 const generatedNitroCloudflareModule = "./.vitehub/nitro/schedule/module.mjs"
-const generatedNitroDevHandler = ".vitehub/nitro/schedule/dev-handler.ts"
+const generatedNitroDevHandlerDirectory = ".vitehub/nitro/schedule/dev-handlers"
 const mergeNoExternal = createNoExternalAddition(schedulePackageName)
 
 export interface ScheduleProcessRuntimeOptions {
@@ -218,10 +218,11 @@ function mergeNitroScheduleConfig(value: unknown, options: { crons: string[], mo
  * Adds the development-only Nitro handler that runs `vitehub schedule` operations in the Nitro runtime.
  * Build output never contains this handler.
  */
-async function addNitroScheduleDevHandler(value: unknown, root: string, importBase?: string): Promise<NitroConfig> {
-  const handler = resolve(root, generatedNitroDevHandler)
+async function addNitroScheduleDevHandler(value: unknown, roots: ReturnType<typeof resolveSchedulePluginRoots>, serverId: string, importBase?: string): Promise<NitroConfig> {
+  const handler = resolve(roots.projectRoot, generatedNitroDevHandlerDirectory, `${serverId}.ts`)
   await mkdir(dirname(handler), { recursive: true })
-  await writeFile(handler, renderViteHubNitroDevHandler({ export: "handleScheduleDevRequest", module: `${importBase ?? schedulePackageName}/runtime/console` }), "utf8")
+  const contents = renderViteHubNitroDevHandler({ context: { rootDir: roots.viteRoot, serverId }, export: "handleScheduleDevRequest", module: `${importBase ?? schedulePackageName}/runtime/dev` })
+  if (!existsSync(handler) || await readFile(handler, "utf8") !== contents) await writeFile(handler, contents, "utf8")
   const kit = createNitroServerKit(cloneNitroConfig(value))
   kit.addHandler({ handler, route: scheduleDevRuntimeRoute })
   // SAFETY: The kit preserves the Nitro config object shape while adding only one Nitro handler.
@@ -608,7 +609,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
       })
       emitStandaloneProviderOutput = (options.runtime === undefined || options.providerOutput === "standalone") && shouldEmitStandaloneProviderOutput(definitions, options)
       standaloneProviderSource = selectStandaloneProviderSource(definitions, options)
-      const currentNitro = (config as { nitro?: unknown }).nitro
+      const currentNitro = Reflect.get(config, "nitro")
       const nitro = await createScheduleNitroConfig({
         ...options,
         command: env.command,
@@ -618,7 +619,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
         serverDirs,
       })
       if (env.command === "serve") {
-        ;(config as ViteConfigWithNitro).nitro = await addNitroScheduleDevHandler(nitro ?? currentNitro, roots.projectRoot, internalOptions.importBase)
+        Reflect.set(config, "nitro", await addNitroScheduleDevHandler(nitro ?? currentNitro, roots, devServerId, internalOptions.importBase))
         return
       }
       if (!nitro) return null
@@ -636,15 +637,6 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
       })
       const { registerScheduleDevRunEndpoint } = await import("./dev-run.ts")
       registerScheduleDevRunEndpoint(server, { serverId: devServerId })
-    },
-    configureServer(server) {
-      registerScheduleDevEndpoint(server, {
-        nitroBaseURL: () => {
-          // SAFETY: Vite keeps unknown user config keys on the resolved config. Nitro reads the same `nitro` key.
-          const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
-          return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
-        },
-      })
     },
     async configResolved(config) {
       resolved = config

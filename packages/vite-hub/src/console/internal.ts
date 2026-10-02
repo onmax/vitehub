@@ -110,7 +110,7 @@ type ConsoleDatabaseByRoot = {
 
 type ConsoleInvocationRegistry = Record<
   symbol,
-  AgentInvocations | boolean | ConsoleBlobByRoot | ConsoleBlobInspection | ConsoleDatabaseByRoot | ConsoleDatabaseInspection | ConsoleSectionCatalog | ConsoleDefinitionsByRoot | string | readonly ConsoleSectionId[] | ConsoleInvocationsByRoot | ConsoleInvocationIdentitiesByRoot | ConsoleKVByRoot | ConsoleKVInspection | ConsoleEnvByRoot | ConsoleEnvInspection | ConsoleSectionsByRoot | undefined
+  AgentInvocations | boolean | ConsoleBlobByRoot | ConsoleBlobInspection | ConsoleDatabaseByRoot | ConsoleDatabaseInspection | ConsoleSectionCatalog | ConsoleDefinitionsByRoot | string | readonly ConsoleSectionId[] | ConsoleInvocationsByRoot | ConsoleInvocationIdentitiesByRoot | ConsoleKVByRoot | ConsoleKVInspection | ConsoleEnvByRoot | ConsoleEnvInspection | ConsoleSchedulesByRoot | ScheduleDefinitionRegistry | ConsoleSectionsByRoot | undefined
 >
 
 type ConsoleInvocationIdentitiesByRoot = {

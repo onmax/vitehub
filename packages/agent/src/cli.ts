@@ -20,6 +20,7 @@ import { runAgentChannelReplayCli } from "./internal/channel-replay-cli.ts"
 import { enrichAgentUsageCost, modelsDevPricing, type AgentUsagePricing } from "./internal/usage-pricing.ts"
 import { resolveAgentEvalOptions, writeAgentEvaliteConfig, type ResolvedAgentEvalOptions } from "./internal/evalite-config.ts"
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute, readAgentInvocationStream } from "./invocation-stream.ts"
+import type { AgentDevLoopDiscoveryResponse } from "./invocation-stream.ts"
 
 import type { AgentEvalOptions, AgentUsageRecord } from "./types.ts"
 import type { UIMessageLike } from "./chat-message-input.ts"

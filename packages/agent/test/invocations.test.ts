@@ -4803,7 +4803,7 @@ describe("Agent Invocations", () => {
     expect(await invocations.getByRunId("trace-write-failure")).toMatchObject({ status: "completed" })
   })
 
-  it("retries the running transition after storage recovers", async () => {
+  it("retries the journal running transition after storage recovers", async () => {
     const memory = createMemoryAgentInvocationStore()
     let runningFailures = 1
     const store: AgentInvocationStore = {
@@ -4814,30 +4814,22 @@ describe("Agent Invocations", () => {
       },
     }
     const waitUntilTasks: Array<Promise<unknown>> = []
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => { release = resolve })
     const invocations = defineAgentInvocations({ store })
-    const agent = defineAgent({
-      driver: { async run() { await gate; return "done" } },
-      invocations,
-      runtime: false,
-    })
-    const invocation = runAgent(agent, {
+    const journal = await bindAgentInvocations(invocations, {
       ...runtime("recover-running"),
       waitUntil: promise => waitUntilTasks.push(promise),
-    }, {})
-
-    await vi.waitFor(() => expect(waitUntilTasks).toHaveLength(2))
+    })
+    expect(await journal?.running()).toBe(false)
     await Promise.all(waitUntilTasks)
     await expect(invocations.getByRunId("recover-running")).resolves.toMatchObject({
       startedAt: expect.any(String),
       status: "running",
     })
-    release()
-    await expect(invocation).resolves.toBe("done")
+    expect(await journal?.running()).toBe(true)
+    await journal?.finish("completed")
   })
 
-  it("persists startedAt before a fast terminal transition", async () => {
+  it("does not dispatch a Driver when the running transition fails", async () => {
     const memory = createMemoryAgentInvocationStore()
     let runningFailures = 1
     const recoveryTasks: Array<Promise<unknown>> = []
@@ -4850,18 +4842,19 @@ describe("Agent Invocations", () => {
         },
       },
     })
-    const agent = defineAgent({ driver: { run: () => "done" }, invocations, runtime: false })
+    const run = vi.fn(() => "done")
+    const agent = defineAgent({ driver: { run }, invocations, runtime: false })
 
     await expect(runAgent(agent, {
       ...runtime("fast-running-recovery"),
       waitUntil: promise => recoveryTasks.push(promise),
-    }, {})).resolves.toBe("done")
+    }, {})).rejects.toThrow("Could not persist the Invocation running state.")
     await Promise.all(recoveryTasks)
     const record = await invocations.getByRunId("fast-running-recovery")
     expect(record).toMatchObject({
-      startedAt: expect.any(String),
-      status: "completed",
+      status: "failed",
     })
+    expect(run).not.toHaveBeenCalled()
     expect(record && await memory.claim(record.id, "post-terminal", 30_000)).toBe(true)
   })
 

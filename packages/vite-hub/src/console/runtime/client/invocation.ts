@@ -58,3 +58,8 @@ export async function cancelConsoleInvocation(base: string, id: string): Promise
   if (!result.success) throw viteHubErrorDiagnostics.VITE_HUB_R0102({ message: "The invocation cancel response was not valid." })
   return result.output
 }
+
+/** Delete one completed, failed, or cancelled invocation from the Console journal. */
+export async function deleteConsoleInvocation(base: string, id: string): Promise<void> {
+  await requestConsole(`${base}/${encodeURIComponent(id)}`, { body: { action: "delete" }, method: "POST" })
+}
