@@ -1,9 +1,4 @@
 import { CLOUDFLARE_RETRIABLE_STARTUP_ERROR_RE, CLOUDFLARE_SANDBOX_RETRY_DELAYS_MS, collectCloudflareErrorMessages } from '../internal/shared/cloudflare-retry'
-import {
-  createResourceRuntime,
-  type ProviderPort,
-  type ResourceRuntimeContext,
-} from '../internal/shared/resource-runtime'
 import { sleep } from '../internal/shared/utils'
 import { sandboxError } from '../sandbox/errors'
 import { executeSandboxDefinition } from './execute'
@@ -18,10 +13,9 @@ import {
   resolveRuntimeProvider,
   resolveSandboxBox,
   withSandboxProvider,
-  type SandboxEvent,
 } from './provider-resolution'
 import { err, ok } from './result'
-import { getSandboxRuntimeConfig, getSandboxRuntimeRegistry, type SandboxRegistryEntry } from './state'
+import { getSandboxRuntimeConfig, getSandboxRuntimeRegistry, type SandboxRegistryEntry, type SandboxRuntimeRegistry } from './state'
 
 import type {
   AgentSandboxConfig,
@@ -30,6 +24,7 @@ import type {
 } from '../module-types'
 import { getSandboxFeatureProvider } from '../module-types'
 import type { ExecutionAuthority } from '@vite-hub/runtime'
+import { sandboxErrorDiagnostics } from "../error-diagnostics.ts"
 
 const cloudflareRunQueues = new Map<string, Promise<void>>()
 
@@ -48,9 +43,6 @@ async function serializeCloudflareRun<TResult>(id: string | undefined, run: () =
     if (cloudflareRunQueues.get(id) === current) cloudflareRunQueues.delete(id)
   }
 }
-
-type SandboxRuntimeContext = ResourceRuntimeContext<AgentSandboxConfig, SandboxRegistryEntry, SandboxEvent>
-const sandboxRegistry = {}
 
 function isRetriableCloudflareSandboxError(error: unknown) {
   const metadata = readSandboxErrorMetadata(error)
@@ -74,131 +66,143 @@ export interface SandboxRunner {
   ) => Promise<TResult>
 }
 
-const sandboxPort: ProviderPort<ResolvedSandboxBox, SandboxRunner, SandboxRuntimeContext> = {
-  async resolve(context) {
-    assertSandboxDefinitionOptions(context.definition.options ?? {})
-    const config = getSandboxFeatureProvider(context.config)
-    const provider = resolveRuntimeProvider(config, context.event)
+async function loadSandboxDefinition(name: string): Promise<SandboxRegistryEntry | undefined> {
+  const registry: SandboxRuntimeRegistry = getSandboxRuntimeRegistry() ?? {}
+  const entry = registry[name]
+  if (!entry)
+    return undefined
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry entries intentionally support generated lazy loader functions and resolved definitions.
+  return typeof entry === 'function' ? (await entry()).default : entry
+}
 
-    return await resolveSandboxBox(
-      provider,
-      withSandboxProvider(provider, config),
-      context.definition.options ?? {},
-      { event: context.event },
-    )
-  },
-  async create(provider, context) {
-    const packageManager = context.definition.bundle.project?.install.command
-    const box = await provider.resolveBox(['node', ...(packageManager ? [packageManager] : [])])
+function hasValidSandboxBundle(definition: SandboxRegistryEntry) {
+  return !!definition.bundle
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Bundles come from generated registry data and require runtime shape validation.
+    && typeof definition.bundle === 'object'
+    && typeof definition.bundle.entry === 'string'
+    && definition.bundle.entry.length > 0
+    && !!definition.bundle.modules
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Bundles come from generated registry data and require runtime shape validation.
+    && typeof definition.bundle.modules === 'object'
+    && (Object.hasOwn(definition.bundle.modules, definition.bundle.entry)
+      || (!!definition.bundle.project?.files
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Bundles come from generated registry data and require runtime shape validation.
+        && typeof definition.bundle.project.files === 'object'
+        && Object.hasOwn(definition.bundle.project.files, definition.bundle.entry)))
+}
 
-    return {
-      executionAuthority: box.plan.executionAuthority,
-      name: context.name,
-      async run<TPayload = unknown, TResult = unknown>(payload?: TPayload, options: SandboxExecutionOptions = {}): Promise<TResult> {
-        const cloudflareSandboxId = provider.provider === 'cloudflare'
-          ? createCloudflareExecutionSandboxId(context.name, options.sandboxId || provider.sandboxId)
-          : undefined
-        const attempts = provider.provider === 'cloudflare'
-          ? CLOUDFLARE_SANDBOX_RETRY_DELAYS_MS.length + 1
-          : 1
+async function resolveSandboxProvider(
+  sandboxConfig: false | AgentSandboxConfig | undefined,
+  definition: SandboxRegistryEntry,
+): Promise<ResolvedSandboxBox> {
+  assertSandboxDefinitionOptions(definition.options ?? {})
+  const config = getSandboxFeatureProvider(sandboxConfig)
+  const provider = resolveRuntimeProvider(config)
 
-        return await serializeCloudflareRun(cloudflareSandboxId, async () => {
-          for (let attempt = 0; attempt < attempts; attempt++) {
-            let sandbox: SandboxExecutionBox | undefined
-            let handlerMayHaveStarted = false
-            let runError: Error | undefined
-            try {
-              const session = await box.open({ id: cloudflareSandboxId })
-              sandbox = createSandboxExecutionBox(session, provider.provider)
-              const result = await executeSandboxDefinition<TPayload>(
-                sandbox,
-                context.name,
-                context.definition.options,
-                context.definition.bundle,
-                payload,
-                options.context,
-                {
-                  onHandlerStart() {
-                    handlerMayHaveStarted = true
-                  },
+  return await resolveSandboxBox(
+    provider,
+    withSandboxProvider(provider, config),
+    definition.options ?? {},
+    {},
+  )
+}
+
+async function createSandboxRunner(
+  name: string,
+  definition: SandboxRegistryEntry,
+  provider: ResolvedSandboxBox,
+): Promise<SandboxRunner> {
+  const packageManager = definition.bundle.project?.install.command
+  const box = await provider.resolveBox(['node', ...(packageManager ? [packageManager] : [])])
+
+  return {
+    executionAuthority: box.plan.executionAuthority,
+    name,
+    async run<TPayload = unknown, TResult = unknown>(payload?: TPayload, options: SandboxExecutionOptions = {}): Promise<TResult> {
+      const cloudflareSandboxId = provider.provider === 'cloudflare'
+        ? createCloudflareExecutionSandboxId(name, options.sandboxId || provider.sandboxId)
+        : undefined
+      const attempts = provider.provider === 'cloudflare'
+        ? CLOUDFLARE_SANDBOX_RETRY_DELAYS_MS.length + 1
+        : 1
+
+      return await serializeCloudflareRun(cloudflareSandboxId, async () => {
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          let sandbox: SandboxExecutionBox | undefined
+          let handlerMayHaveStarted = false
+          let runError: Error | undefined
+          try {
+            const session = await box.open({ id: cloudflareSandboxId })
+            sandbox = createSandboxExecutionBox(session, provider.provider)
+            const result = await executeSandboxDefinition<TPayload>(
+              sandbox,
+              name,
+              definition.options,
+              definition.bundle,
+              payload,
+              options.context,
+              {
+                onHandlerStart() {
+                  handlerMayHaveStarted = true
                 },
-              )
-              // SAFETY: The generated registry binds this runtime Definition to its public result contract.
-              return result as TResult
-            }
-            catch (error) {
-              const sandboxError = toSandboxError(error)
-              runError = sandboxError
-              const shouldRetry = !handlerMayHaveStarted
-                && provider.provider === 'cloudflare'
-                && attempt < CLOUDFLARE_SANDBOX_RETRY_DELAYS_MS.length
-                && isRetriableCloudflareSandboxError(sandboxError)
+              },
+            )
+            // SAFETY: The generated registry binds this runtime Definition to its public result contract.
+            return result as TResult
+          }
+          catch (error) {
+            const sandboxError = toSandboxError(error)
+            runError = sandboxError
+            const shouldRetry = !handlerMayHaveStarted
+              && provider.provider === 'cloudflare'
+              && attempt < CLOUDFLARE_SANDBOX_RETRY_DELAYS_MS.length
+              && isRetriableCloudflareSandboxError(sandboxError)
 
-              if (!shouldRetry)
-                throw sandboxError
+            if (!shouldRetry)
+              throw sandboxError
 
-              await sleep(CLOUDFLARE_SANDBOX_RETRY_DELAYS_MS[attempt])
-            }
-            finally {
-              if (provider.closeAfterRun !== false || (provider.provider === 'cloudflare' && !options.sandboxId && !provider.sandboxId)) {
-                try {
-                  await sandbox?.close()
+            await sleep(CLOUDFLARE_SANDBOX_RETRY_DELAYS_MS[attempt])
+          }
+          finally {
+            if (provider.closeAfterRun !== false || (provider.provider === 'cloudflare' && !options.sandboxId && !provider.sandboxId)) {
+              try {
+                await sandbox?.close()
+              }
+              catch (cleanupError) {
+                if (runError) {
+                  throw new AggregateError(
+                    [runError, cleanupError],
+                    `${runError.message} Cleanup failed: ${toSandboxError(cleanupError).message}`,
+                  )
                 }
-                catch (cleanupError) {
-                  if (runError) {
-                    throw new AggregateError(
-                      [runError, cleanupError],
-                      `${runError.message} Cleanup failed: ${toSandboxError(cleanupError).message}`,
-                    )
-                  }
-                  throw toSandboxError(cleanupError)
-                }
+                throw toSandboxError(cleanupError)
               }
             }
           }
+        }
 
-          throw sandboxError('Cloudflare sandbox retries exhausted.', {
-            code: 'SANDBOX_RUNTIME_ERROR',
-            provider: provider.provider,
-          })
+        throw sandboxError('Cloudflare sandbox retries exhausted.', {
+          code: 'SANDBOX_RUNTIME_ERROR',
+          provider: provider.provider,
         })
-      },
-    }
-  },
+      })
+    },
+  }
 }
 
-const sandboxRuntime = createResourceRuntime({
-  feature: 'sandbox',
-  readConfig(runtimeConfig) {
-    return runtimeConfig.sandbox as false | AgentSandboxConfig | undefined
-  },
-  getFallbackConfig: getSandboxRuntimeConfig,
-  registry: {
-    entries: new Proxy(sandboxRegistry as Record<string, SandboxRegistryEntry | (() => Promise<{ default?: SandboxRegistryEntry }>)>, {
-      get(target, property) {
-        if (typeof property !== 'string')
-          return Reflect.get(target, property)
-        return getSandboxRuntimeRegistry()?.[property] ?? target[property]
-      },
-    }),
-    validate(definition) {
-      return !!definition.bundle
-        && typeof definition.bundle === 'object'
-        && typeof definition.bundle.entry === 'string'
-        && definition.bundle.entry.length > 0
-        && !!definition.bundle.modules
-        && typeof definition.bundle.modules === 'object'
-        && (Object.hasOwn(definition.bundle.modules, definition.bundle.entry)
-          || (!!definition.bundle.project?.files
-            && typeof definition.bundle.project.files === 'object'
-            && Object.hasOwn(definition.bundle.project.files, definition.bundle.entry)))
-    },
-  },
-  port: sandboxPort,
-})
-
 export async function resolveSandboxRunner<TPayload = unknown, TResult = unknown>(name?: string) {
-  return await sandboxRuntime.get(name) as SandboxRunner & {
+  if (!name)
+    throw sandboxErrorDiagnostics.SANDBOX_R0052({ message: '[vitehub] Sandbox name is required. An explicit name is required.' })
+  const config = getSandboxRuntimeConfig()
+  const definition = await loadSandboxDefinition(name)
+  if (!definition)
+    throw sandboxErrorDiagnostics.SANDBOX_R0053({ message: `[vitehub] Unknown sandbox "${name}".` })
+  if (!hasValidSandboxBundle(definition))
+    throw sandboxErrorDiagnostics.SANDBOX_R0054({ message: `[vitehub] Sandbox "${name}" is invalid.` })
+
+  const provider = await resolveSandboxProvider(config, definition)
+  // SAFETY: createSandboxRunner returns the generic runner whose run method is narrowed to this invocation's payload and result types.
+  return await createSandboxRunner(name, definition, provider) as SandboxRunner & {
     run: (payload?: TPayload, options?: SandboxExecutionOptions) => Promise<TResult>
   }
 }
