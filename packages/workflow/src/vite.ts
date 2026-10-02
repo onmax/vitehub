@@ -432,7 +432,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
           },
         }],
         providerOutput: (() => {
-          const options = normalizeWorkflowOptions(workflow)
+          const options = normalizeWorkflowOptions(workflow, { hosting: internalOptions?.hosting ?? "vercel" })
           const rootDir = resolveViteHubProjectRoot(resolved?.root ?? process.cwd())
           if (options?.provider === "cloudflare") return [{ description: "Generated Cloudflare Workflow worker", owner: "workflow", path: resolve(createDefaultCloudflareOutputRoot(rootDir), "index.js") }]
           if (options?.provider === "vercel") return [{ description: "Generated Vercel Workflow function", owner: "workflow", path: resolve(createDefaultVercelOutputRoot(rootDir), "functions", resolveNitroVercelFunctionName(resolved ?? {}, "workflow") ?? "__server.func", "index.mjs") }]

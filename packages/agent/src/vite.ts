@@ -3208,9 +3208,14 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
               return inspectAgentDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
             },
           }],
-          providerOutput: options?.runtime === "deno"
-            ? [{ description: "Generated Deno Agent server", owner: "agent", path: join(rootDir, ".vitehub", "agent", "deno-server.ts") }]
-            : [],
+          providerOutput: [
+            ...(options?.runtime === "deno" && hasHostedAgentDefinitions(rootDir, serverDirs)
+              ? [{ description: "Generated Deno Agent server", owner: "agent", path: join(rootDir, ".vitehub", "agent", "deno-server.ts") }]
+              : []),
+            ...(hasHostedAgentDefinitions(rootDir, serverDirs) && resolveAgentHosting(resolved) === "netlify"
+              ? [{ description: "Generated Netlify Agent function", owner: "agent", path: join(createDefaultNetlifyOutputRoot(rootDir), "functions", `${netlifyAgentFunctionName}.mjs`) }]
+              : []),
+          ],
         }
       },
     },
