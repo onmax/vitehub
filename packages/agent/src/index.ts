@@ -7899,7 +7899,9 @@ function invocationCancellationDriver(definition: unknown): AgentInvocationCance
   const internal = definition as { [baseAgentDriver]?: unknown, [baseAgentDriverKind]?: AgentDriverKind } | undefined
   const driver = internal?.[baseAgentDriver]
   const provider = isRuntimeRecord(driver) && hasRuntimeType(driver.provider, "string") ? driver.provider : undefined
-  return agentInvocationCancellationDriver({ kind: internal?.[baseAgentDriverKind] ?? "model", ...(provider ? { provider } : {}) })
+  const cancellationDriver: { kind: AgentDriverKind, provider?: string } = { kind: internal?.[baseAgentDriverKind] ?? "model" }
+  if (provider) cancellationDriver.provider = provider
+  return agentInvocationCancellationDriver(cancellationDriver)
 }
 
 async function executeAgentInvocation<

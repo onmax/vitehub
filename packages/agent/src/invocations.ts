@@ -2608,13 +2608,14 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       assertInvocationId(id)
       const terminalResult = (record: AgentInvocationSummary, local?: ReturnType<typeof abortLocalAgentInvocation>): AgentInvocationCancelResult => {
         const notEnforcedBy = local?.notEnforcedBy || record.cancelNotEnforcedBy
-        return {
-          ...(local?.aborted ? { delivery: "local" as const } : {}),
+        const result: AgentInvocationCancelResult = {
           id,
-          ...(notEnforcedBy ? { notEnforcedBy } : {}),
           outcome: "terminal",
           status: record.status,
         }
+        if (local?.aborted) result.delivery = "local"
+        if (notEnforcedBy) result.notEnforcedBy = notEnforcedBy
+        return result
       }
       let summary: AgentInvocationSummary | undefined
       try {
@@ -2672,13 +2673,14 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       if (!current) return { id, outcome: "not-found" }
       if (terminalStatus(current.status)) return terminalResult(current, local)
       if (!current.cancelRequestedAt) return { id, outcome: "unavailable", status: current.status }
-      return {
+      const result: AgentInvocationCancelResult = {
         delivery: local.aborted ? "local" : "journal",
         id,
-        ...(current.cancelNotEnforcedBy ? { notEnforcedBy: current.cancelNotEnforcedBy } : {}),
         outcome: "requested",
         status: current.status,
       }
+      if (current.cancelNotEnforcedBy) result.notEnforcedBy = current.cancelNotEnforcedBy
+      return result
     },
     async get(id, options) {
       assertInvocationId(id)

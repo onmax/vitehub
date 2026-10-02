@@ -86,12 +86,13 @@ export function abortLocalAgentInvocation(owner: AgentInvocationStore, id: strin
     return driver && !driver.enforced ? [{ ownerId: entry.ownerId, name: driver.name }] : []
   })
   const notEnforcedBy = notEnforcedByOwners[0]?.name
-  return {
+  const result: LocalAgentInvocationCancellation = {
     aborted: entries.length > 0,
     ownerIds: entries.map(entry => entry.ownerId),
-    ...(notEnforcedBy ? { notEnforcedBy } : {}),
-    ...(notEnforcedByOwners.length > 0 ? { notEnforcedByOwners } : {}),
   }
+  if (notEnforcedBy) result.notEnforcedBy = notEnforcedBy
+  if (notEnforcedByOwners.length > 0) result.notEnforcedByOwners = notEnforcedByOwners
+  return result
 }
 
 export function agentInvocationCancellationDriver(driver: { kind: "model" | "provider" | "run", provider?: string }): AgentInvocationCancellationDriver {

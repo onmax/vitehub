@@ -13,7 +13,7 @@ import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
 import { normalizeWorkflowOptions } from "./config.ts"
 import { inspectWorkflowDefinitions } from "./inspect.ts"
-import { writeWorkflowDevRegistryFiles } from "./internal/dev-registry.ts"
+import { discoverWorkflowDevDefinitions, writeWorkflowDevRegistryFiles } from "./internal/dev-registry.ts"
 import { createCloudflareWorkflowNitroConfig, createOptionalViteDevtoolsPlugin, createVercelWorkflowTransformPlugin, discoverWorkflowProviderSources, generateWorkflowProviderOutputs, hasVercelNativeWorkflowEntry, resolveVercelWorkflowWorld, workflowPackageName, writeProviderEntries } from "./internal/vite-build.ts"
 
 import type { ResolvedWorkflowOptions, WorkflowModuleOptions } from "./types.ts"

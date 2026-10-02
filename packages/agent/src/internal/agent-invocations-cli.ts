@@ -61,7 +61,9 @@ function parseCancelDiscovery(value: unknown): AgentInvocationsDevDiscovery {
     || (value.message !== undefined && !hasRuntimeType(value.message, "string"))) {
     throw agentDiagnostics.AGENT_R0971({ message: "Invocation cancellation discovery returned an invalid response." })
   }
-  return { root: value.root, runtime: value.runtime, ...(value.message === undefined ? {} : { message: value.message }) }
+  const discovery: AgentInvocationsDevDiscovery = { root: value.root, runtime: value.runtime }
+  if (value.message !== undefined) discovery.message = value.message
+  return discovery
 }
 
 const devTargetErrors = {
