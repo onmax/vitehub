@@ -462,7 +462,9 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
       return { keys, known, runtime, bySchedule, recordsByKey, unknown }
     }
     // Group legacy records once per snapshot, even when their index cannot be published.
-    const legacyKeys = unknown.slice(0, maxLegacyHistoryRecords)
+    // The over-cap case returned above, so every remaining legacy key is read.
+    // This keeps the fallback complete without depending on provider key order.
+    const legacyKeys = unknown
     for (let offset = 0; offset < legacyKeys.length; offset += 16) {
       const batch = await Promise.all(legacyKeys.slice(offset, offset + 16).map(async key => {
         const stored = await store.get<StoredScheduleRunRecord>(key)
