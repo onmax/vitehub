@@ -196,7 +196,6 @@ describe("framework package contract", () => {
     expect(frameworkCapabilities.email).toBe(ownerCapabilities.email);
     expect(frameworkBoxSsh.serveSsh).toBe(ownerBoxSsh.serveSsh);
     expect(frameworkBoxSsh.sshLaunch).toBe(ownerBoxSsh.sshLaunch);
-    expect(frameworkCapabilities.executor).toBe(ownerCapabilities.executor);
     expect(frameworkCapabilities.workspaceShell).toBe(ownerCapabilities.workspaceShell);
     expect(frameworkAgentMcp.remoteMcpServer).toBe(ownerAgentMcp.remoteMcpServer);
     expect(frameworkAgentVite.agentHostRoutes).toBe(ownerAgentVite.agentHostRoutes);

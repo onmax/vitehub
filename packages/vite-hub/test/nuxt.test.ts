@@ -1990,7 +1990,7 @@ describe("ViteHub Nuxt integration", () => {
 
   it.each([
     { connections: true, console: undefined },
-    { connections: { management: true }, console: {} },
+    { connections: { management: true }, console: true },
   ])("rejects Connections in production Nuxt configuration %#", async ({ connections, console }) => {
     const { nuxt } = createNuxt()
     await expect(viteHubNuxtModule({ connections, console, preset: "node" }, nuxt)).rejects.toThrow("connections is not supported by the Nuxt module yet")
