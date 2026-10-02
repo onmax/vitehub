@@ -80,7 +80,7 @@ The Vite config key is `workflow`.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `workflow` | `boolean` or `WorkflowModuleOptions` | disabled | Enables Workflow discovery and provider output through `vitehub()` with `true` or an options object; `false` leaves it disabled. |
+| `workflow` | `boolean` or `WorkflowModuleOptions` | disabled, or enabled when `agent` is enabled | Enables Workflow discovery and provider output through `vitehub()` with `true` or an options object; `false` disables it. |
 | `provider` | `WorkflowProvider` | inferred | Selects `cloudflare`, `vercel`, or `openworkflow`. |
 | `binding` | `string` | provider default | Provider binding name for generated output. |
 | `name` | `string` | discovered workflow name | Provider resource name override. |
@@ -270,7 +270,7 @@ Every `ViteHubError` requires a stable `code` and public `message`. Calling `err
 | --- | --- | --- |
 | `id` | `string` | Provider or ViteHub Workflow Run id. |
 | `provider` | `WorkflowProvider` | Selected provider for the run. |
-| `status` | `WorkflowRunStatus` | `queued`, `running`, `completed`, `failed`, or `unknown`. |
+| `status` | `WorkflowRunStatus` | `queued`, `running`, `completed`, `failed`, `cancelled`, or `unknown`. |
 | `result` | `TResult` | Completed result when available. |
 | `payload` | `TPayload` | Original payload when the provider returns it. |
 | `metadata` | `unknown` | Provider metadata. |
@@ -286,33 +286,6 @@ export default defineEventHandler((event) => {
   return getWorkflowRun('onboard-user', getRouterParam(event, 'id')!)
 })
 ```
-
-## Run Workflows from the CLI
-
-During development, `vitehub workflow` starts a discovered Workflow and reads its run through a guarded endpoint on the Vite Development Server.
-The command reaches only a local Vite Development Server. It does not reach deployed stages.
-
-```bash [Terminal]
-pnpm vitehub workflow start onboard-user --input '{"email":"ada@example.com"}'
-pnpm vitehub workflow get wrun_abc123 --workflow onboard-user --json
-```
-
-The app must use Vite + Nitro. The Vite endpoint forwards each operation into the Nitro dev runtime, so the CLI and the app use the same Workflow state. Nuxt and plain Vite do not run Nitro in the Vite process, so every command exits with `WORKFLOW_DEV_RUNTIME_UNAVAILABLE`.
-
-The CLI does not change the Workflow configuration of the Nitro dev runtime. When the app installs no configuration, the runtime uses inline Vercel execution. The `[workflow]` note says so when the Vite config selects another provider.
-The CLI reads the Workflow registry of the Nitro dev runtime and does not change it. The Workflow Vite plugin installs the discovered registry when the dev server starts, so the CLI and the app start the same Workflows by name. When the runtime has no registry, `start` exits with `WORKFLOW_DEV_REGISTRY_MISSING` and says why.
-
-| Provider in the Nitro dev runtime | `start` | `get` | `cancel` | `resume` |
-| --- | --- | --- | --- | --- |
-| `vercel`, or no configuration | Runs inline. Not durable, no retries. | Reads inline runs, including runs that the app started. Finished runs expire after 5 minutes. | Calls the runtime. Inline runs return `WORKFLOW_OPERATION_UNSUPPORTED`. | Calls the Workflow SDK. A token that no hook registered returns the provider error. |
-| `cloudflare` | Uses the Workflow binding when the runtime has one. Otherwise runs inline. | Reads from the binding, or reads inline runs. | Not supported by the provider. | Not supported by the provider. |
-| `openworkflow` | Enqueues the run in OpenWorkflow storage. The run stays queued until a worker processes the same storage. | Reads the run from OpenWorkflow storage, including runs that the app started. | Not supported by the provider. | Not supported by the provider. |
-
-When Workflow is disabled or its configuration is not valid, every command reports the reason.
-`vitehub workflow get <runId>` finds the Workflow name for runs that the CLI started in the current Nitro dev runtime. For other runs, pass `--workflow <name>`, because the runtime reads runs by Workflow name and run ID.
-`vitehub workflow resume <token>` takes the opaque token that `resumeWorkflowSignal()` uses.
-
-The runtime has no API to list runs or replay a run. The CLI has no `list` or `replay` command, and the Console shows the Workflow Definition catalog but no run view. Keep run IDs from `start` output or from your own app records.
 
 ## Connect Workflows to Agents
 

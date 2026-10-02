@@ -1,8 +1,9 @@
 import { resolve } from "node:path"
 
-import { installConsoleDefinitionScope, resolveConsoleDefinitions } from "../../internal.ts"
+import { installConsoleDefinitionScope, installConsoleSchedulesScope, resolveConsoleDefinitions, resolveConsoleSchedules } from "../../internal.ts"
 import { isConsoleSectionId } from "../sections.ts"
 
+import type { ScheduleDefinitionRegistry } from "@vite-hub/schedule"
 import type { ConsoleContributedSection, ConsoleDefinitionField, ConsoleRecord, ConsoleSectionCatalog, ConsoleSectionContent } from "../definitions.ts"
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
 
@@ -70,4 +71,16 @@ export function getConsoleDefinitions(): ConsoleSectionCatalog {
 /** Returns the installed descriptors of contributed sections, or an empty list when no catalog is installed. */
 export function getConsoleContributedSections(): readonly ConsoleContributedSection[] {
   return resolveConsoleDefinitions()?.sections ?? []
+}
+
+/**
+ * Installs the Static Schedule Definitions that the Console may run.
+ * The generated Console plugin passes only `manual: true` definitions, and only with Console invocation enabled.
+ */
+export function installConsoleSchedules(projectRoot: string, registry: ScheduleDefinitionRegistry): ScheduleDefinitionRegistry {
+  return installConsoleSchedulesScope(resolve(projectRoot), { ...registry })
+}
+
+export function getConsoleSchedules(): ScheduleDefinitionRegistry {
+  return resolveConsoleSchedules() ?? {}
 }

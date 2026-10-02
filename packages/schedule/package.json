@@ -30,6 +30,7 @@
     "./nuxt": "./dist/nuxt.js",
     "./runtime": "./dist/runtime.js",
     "./runtime/console": "./dist/runtime/console.js",
+    "./runtime/dev": "./dist/runtime/dev.js",
     "./runtime/driver": "./dist/runtime/driver.js",
     "./runtime/kv": "./dist/runtime/kv.js",
     "./runtime/process": "./dist/runtime/process.js",

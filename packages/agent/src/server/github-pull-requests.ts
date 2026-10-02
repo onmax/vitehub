@@ -1,7 +1,7 @@
 import * as v from "valibot"
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
 import { createHash } from "node:crypto";
-import { encodeRouteSegment } from "@vite-hub/runtime";
+import { consoleInvocationUrl, resolvePublicUrl } from "@vite-hub/runtime";
 import type { GitHubHost } from "./github-host.ts";
 
 export type PullRequestFeedback = {
@@ -271,6 +271,7 @@ export function createGitHubPullRequests(
       reviews: new Map<string, FeedbackReview>(),
       threads: new Map<string, FeedbackThread>(),
     };
+    let more = true;
     do {
       const result = await github.command(
         [
@@ -289,7 +290,7 @@ export function createGitHubPullRequests(
         { repository },
       );
       const node = parseFeedback(graphQL(result.stdout, "data", "repository", "pullRequest"));
-      let more = false;
+      more = false;
       function collect<T extends { id: string }>(key: string, items: Map<string, T>, connection: Connection<T>) {
         for (const item of connection.nodes) items.set(item.id, item)
         if (connection.pageInfo.hasNextPage) {
@@ -302,7 +303,7 @@ export function createGitHubPullRequests(
       collect("reviews", collected.reviews, node.reviews)
       collect("threads", collected.threads, node.reviewThreads)
       if (!more) break;
-    } while (true);
+    } while (more);
     for (const thread of collected.threads.values()) {
       while (thread.comments.pageInfo.hasNextPage) {
         const query =
@@ -429,12 +430,13 @@ export function parseRequiredChecks(stdout: string, stderr: string): unknown[] |
 export async function createGitHubPullRequestRun(
   repository: string,
   pullRequest: Pick<PullRequest, 'number' | 'headRefOid' | 'title' | 'url'>,
-  options: { agentName: string, runId: string, publicUrl?: string, sessionUrl?: string },
+  options: { agentName: string, runId: string, publicUrl?: string },
 ): Promise<import('../types.ts').AgentRunMetadata> {
   const { agentInvocationId } = await import('../invocations.ts')
-  const sessionUrl = options.publicUrl
-    ? new URL(`/_vitehub/agents/${encodeRouteSegment(options.agentName)}/invocations/${encodeURIComponent(await agentInvocationId(options.runId, options.agentName))}`, options.publicUrl).href
-    : options.sessionUrl
+  const publicUrl = options.publicUrl ?? resolvePublicUrl({ agentName: options.agentName })
+  const sessionUrl = publicUrl
+    ? consoleInvocationUrl(publicUrl, options.agentName, await agentInvocationId(options.runId, options.agentName))
+    : undefined
   return {
     runId: options.runId,
     channelId: 'github',

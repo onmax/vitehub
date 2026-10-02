@@ -77,6 +77,17 @@ try {
 
 Binary file reads and writes, directory operations, recursive listing, removal, and command execution are required across runtimes. Long-running processes and exposed ports are explicit optional capabilities through `session.spawn` and `session.ports`. `close()` is idempotent, and every operation rejects after closure.
 
+A spawned `BoxProcess` can also expose `stdin` as a `WritableStream<Uint8Array>`. The `trusted-host` and `crabbox` runtimes forward it to the process. Close the writer to end the process input. Runtimes that cannot forward input leave `stdin` undefined:
+
+```ts
+const child = await session.spawn!("node", ["workspace/filter.mjs"]);
+const writer = child.stdin?.getWriter();
+if (!writer) throw new Error("This Box runtime does not forward process input.");
+await writer.write(new TextEncoder().encode("input\n"));
+await writer.close();
+console.log(await new Response(child.stdout).text(), await child.wait());
+```
+
 Hosted runtimes use tagged values from the same root API:
 
 ```ts
@@ -118,6 +129,8 @@ const ascii = await resolveBox(
 `runtime: "ascii"` reads `BOX_API_KEY` and uses a two-hour disposable TTL, which leaves room for an hour-long Agent Invocation plus preparation and cleanup. Use `{ kind: "ascii", apiKey, baseUrl, ttlSeconds }` for explicit server configuration. ViteHub creates the machine without account secrets, authorizes a session-only SSH key, materializes Home and the exact Git commit through the shared Box path, and deletes the Box when the session closes. It does not use caller-owned SSH keys or introduce a separate remote-Box abstraction.
 
 The Cloudflare runtime uses `@cloudflare/sandbox`, preserves Durable Object idle reuse, and bounds transient transport operations with retries and deadlines. The preview `cloudflare-computer` runtime uses `@cloudflare/computer`: its Durable Object owns the authoritative filesystem while the selected Computer shell backend executes against it. Closing a Box clears ViteHub's managed roots and disposes Computer RPC handles without deleting the Durable Object or unrelated files. The Vercel runtime exposes only the ports declared when the microVM is created. All three reject host `cwd`; materialize a Workspace into their working tree instead.
+
+If Cloudflare Sandbox or Vercel cleanup fails, retry `session.close()`. The session rejects new operations after the first close attempt. Concurrent close calls wait for the same cleanup.
 
 `box.open({ initialize })` runs initialization inside runtime preparation. If initialization fails, a runtime must tear down the session and roll back state created for that failed boot.
 
@@ -186,7 +199,9 @@ Crabbox materializes the same declaration on the target before requirement check
 
 Crabbox requires either `cwd` or `checkout` and targets Linux/POSIX Static SSH hosts. `stateRoot` is an absolute path on the target. File reads and writes use Crabbox's resolved SSH copy transport. Port URLs wait for and reuse one loopback-only Crabbox tunnel per port by default, and session teardown stops those tunnels. Use `network: "direct"` only when the target shares the ViteHub process loopback namespace.
 
-Commands must remain owned by their Box session. Daemonizing or escaping the session's process supervision is outside the v1 concurrency guarantee.
+Commands must remain owned by their Box session. ViteHub adds the reserved `VITEHUB_BOX_SESSION` environment marker to commands and reclaims marked processes on the SSH target when the session closes, including children adopted by supervisors. Commands cannot override this marker through the `env` option. Supervisors that launch replacement processes must preserve it.
+
+The marker is read from each process's environment at launch. A process that starts with the marker remains owned by that Box, even if it later changes its environment. A process started without the marker is not owned by that Box, even if it references the Box directory. This cleanup does not add process isolation.
 
 ## Security boundary
 
@@ -215,5 +230,7 @@ const launch = sshLaunch({
 ```
 
 The target must expose the same working-directory and credential paths, for example through a shared sidecar volume. Host keys are verified. Environment names come from the resolved provider launch context; values travel through SSH environment requests. An explicit `forwardEnvironment` narrows the list while retaining framework-required names. `serveSsh` accepts valid environment names from authenticated clients unless `acceptEnvironment` restricts them.
+
+The `vite-hub` distribution also exposes this module as `vite-hub/box/ssh`, and `vitehub box serve` and `vitehub box check` run the server and a Driver readiness check without a project config. See the [CLI reference](https://vitehub.dev/docs/development/cli#commands).
 
 This transport grants arbitrary command execution as the configured user. It is not a sandbox and does not synchronize Workspace files. Server shutdown closes connections and stops supervised process groups.

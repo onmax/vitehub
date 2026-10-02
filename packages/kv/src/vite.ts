@@ -6,20 +6,27 @@ import {
 
 import {
   contributeProviderDeploymentOutput,
+  createDefaultCloudflareOutputRoot,
   createProviderDeploymentOutputGenerationState,
   finalizeProviderDeploymentOutputs,
   isProviderJsonRecord,
   useProviderOutputCatalog,
 } from "@vite-hub/internal/build/deployment-output"
 import { getViteMode } from "@vite-hub/internal/build/mode"
-import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, shouldSkipViteProviderBuild } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, shouldSkipViteProviderBuild } from "@vite-hub/internal/build/vite"
 import { isPlainObject } from "@vite-hub/internal/object"
+import { readProvisionStateSync } from "@vite-hub/internal/provision-state"
+import { resolve } from "node:path"
 
 import { configureCloudflareKV } from "./integrations/cloudflare.ts"
+import { createKVCloudflareProvisionStep } from "./provision.ts"
 
 import type { KVViteRuntimeConfig } from "./vite-config.ts"
 import type { KVModuleOptions, ResolvedKVModuleOptions } from "./types.ts"
 import type { ProviderJsonRecord } from "@vite-hub/internal/build/deployment-output"
+import type { ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
+import type { ViteHubCliContributor } from "@vite-hub/internal/cli"
+import type { ProvisionState } from "@vite-hub/internal/provision"
 import type { Plugin, ResolvedConfig } from "vite"
 
 const RESOLVED_KV_VIRTUAL_CONFIG_ID = `\0${KV_VIRTUAL_CONFIG_ID}`
@@ -30,7 +37,7 @@ const UPSTASH_DRIVER_IMPORT_ID = "@vite-hub/kv/runtime/upstash-driver"
 const CLOUDFLARE_KV_RUNTIME_IMPORT_ID = import.meta.url.endsWith(".ts")
   ? "@vite-hub/kv/runtime/cloudflare-kv"
   : new URL("./runtime/cloudflare-kv.js", import.meta.url).href
-const mergeNoExternal = createNoExternalMerger("@vite-hub/kv")
+const noExternalAddition = createNoExternalAddition("@vite-hub/kv")
 const KV_CLOUDFLARE_BINDINGS_FILE = ".vitehub-kv-bindings.json"
 
 export { KV_VIRTUAL_CONFIG_ID, KV_VITE_PLUGIN_NAME, resolveKVViteConfig }
@@ -42,6 +49,7 @@ export interface KVVitePluginAPI {
 
 export type KVVitePlugin = Plugin & {
   api: KVVitePluginAPI
+  vitehub: ViteHubInspectionPluginMetadata & { cli: () => Promise<ViteHubCliContributor> }
   nitro: {
     name: string
     setup: (nitro: { options: NitroCloudflareKVTarget }) => void
@@ -86,10 +94,10 @@ function isKVOptionalUpstashImport(id: string, importer: string | undefined): bo
     || normalizedImporter.includes("/@vite-hub/kv/dist/index.js")
 }
 
-function createCloudflareKVWranglerConfig(kv: KVViteRuntimeConfig["kv"]) {
+function createCloudflareKVWranglerConfig(kv: KVViteRuntimeConfig["kv"], provisionState: ProvisionState) {
   if (!kv) return
   const target: { cloudflare?: { wrangler?: { kv_namespaces?: Array<{ binding: string, id?: string }> } } } = {}
-  configureCloudflareKV(target, kv)
+  configureCloudflareKV(target, kv, provisionState)
   return target.cloudflare?.wrangler?.kv_namespaces?.length ? target.cloudflare.wrangler : undefined
 }
 
@@ -191,6 +199,7 @@ function reconcileNitroCloudflareKV(
   target: NitroCloudflareKVTarget,
   kv: KVViteRuntimeConfig["kv"],
   ownedNamespaces: Set<{ binding: string, id?: string }>,
+  provisionState: ProvisionState,
 ): void {
   const namespaces = target.cloudflare?.wrangler?.kv_namespaces
   if (namespaces?.length && ownedNamespaces.size) {
@@ -199,13 +208,14 @@ function reconcileNitroCloudflareKV(
       if (ownedIndex !== -1) namespaces.splice(ownedIndex, 1)
     }
   }
-  if (kv) configureCloudflareKV(target, kv)
+  if (kv) configureCloudflareKV(target, kv, provisionState)
 }
 
 function configureNitroCloudflareKV(
   config: { kv?: KVModuleOptions, nitro?: unknown },
   options: KVModuleOptions | undefined,
   ownedNamespaces: Set<{ binding: string, id?: string }>,
+  provisionState: ProvisionState,
 ): boolean {
   const { nitro } = config
   if (!isPlainObject(nitro)) return false
@@ -221,7 +231,7 @@ function configureNitroCloudflareKV(
   const kv = resolveKVViteConfig(config.kv ?? options).kv
   if (kv) {
     const existingNamespaces = new Set(target.cloudflare?.wrangler?.kv_namespaces)
-    configureCloudflareKV(target, kv)
+    configureCloudflareKV(target, kv, provisionState)
     for (const namespace of target.cloudflare?.wrangler?.kv_namespaces ?? []) {
       if (!existingNamespaces.has(namespace)) ownedNamespaces.add(namespace)
     }
@@ -236,6 +246,10 @@ export function hubKv(options?: KVModuleOptions): KVVitePlugin {
   let resolved: ResolvedConfig | undefined
   let providerOutput: ReturnType<typeof useProviderOutputCatalog> | undefined
   let runtimeConfig: KVViteRuntimeConfig | undefined
+  let configuredOptions = options
+  // `vitehub provision run` writes Provision State under the resolved Vite root.
+  let projectRoot = process.cwd()
+  const readProvisionState = () => readProvisionStateSync(projectRoot)
   const getConfig = () => runtimeConfig ??= resolveKVViteConfig(options)
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
 
@@ -243,28 +257,51 @@ export function hubKv(options?: KVModuleOptions): KVVitePlugin {
     name: KV_VITE_PLUGIN_NAME,
     enforce: "post",
     api: { getConfig },
+    vitehub: {
+      cli: async () => ({
+        namespaces: [],
+        provision: [createKVCloudflareProvisionStep(() => configuredOptions)],
+      }),
+      inspect: () => {
+        const config = getConfig()
+        if (!isCloudflareKVConfig(config.kv) || nitroOwned) return
+        const rootDir = resolved?.root ?? process.cwd()
+        return {
+          providerOutput: [{
+            description: "Generated Cloudflare KV worker config",
+            owner: "kv",
+            path: resolve(createDefaultCloudflareOutputRoot(rootDir), "wrangler.json"),
+          }],
+        }
+      },
+    },
     nitro: {
       name: "@vite-hub/kv/cloudflare-bindings",
       setup(nitro) {
         nitroOptions = nitro.options
-        if (runtimeConfig) reconcileNitroCloudflareKV(nitroOptions, runtimeConfig.kv, ownedNitroNamespaces)
+        if (runtimeConfig) reconcileNitroCloudflareKV(nitroOptions, runtimeConfig.kv, ownedNitroNamespaces, readProvisionState())
       },
     },
     config: {
       order: "pre",
       handler(config) {
-        nitroOwned = configureNitroCloudflareKV(config, options, ownedNitroNamespaces)
+        configuredOptions = config.kv ?? options
+        projectRoot = resolve(config.root ?? process.cwd())
+        nitroOwned = configureNitroCloudflareKV(config, options, ownedNitroNamespaces, readProvisionState())
       },
     },
     configResolved: {
       order: "pre",
       handler(config) {
         resolved = config
+        configuredOptions = config.kv ?? options
+        projectRoot = config.root
         providerOutput = useProviderOutputCatalog(config)
         runtimeConfig = resolveKVViteConfig(config.kv ?? options)
-        if (nitroOptions) reconcileNitroCloudflareKV(nitroOptions, runtimeConfig.kv, ownedNitroNamespaces)
+        const provisionState = readProvisionState()
+        if (nitroOptions) reconcileNitroCloudflareKV(nitroOptions, runtimeConfig.kv, ownedNitroNamespaces, provisionState)
         if (hasNitroConfigContext(config) || isPlainObject(getResolvedNitroConfig(config))) {
-          nitroOwned = configureNitroCloudflareKV(config, options, ownedNitroNamespaces)
+          nitroOwned = configureNitroCloudflareKV(config, options, ownedNitroNamespaces, provisionState)
         }
       },
     },
@@ -274,7 +311,7 @@ export function hubKv(options?: KVModuleOptions): KVVitePlugin {
         if (!isServerEnvironment(name, config)) return
 
         return {
-          resolve: { noExternal: mergeNoExternal(config.resolve?.noExternal) },
+          resolve: { noExternal: noExternalAddition(config.resolve?.noExternal) },
         }
       },
     },
@@ -315,7 +352,7 @@ export function hubKv(options?: KVModuleOptions): KVVitePlugin {
 
         const rootDir = resolved.root
         const clientOutDir = resolved.build.outDir
-        const wranglerConfig = nitroOwned ? undefined : createCloudflareKVWranglerConfig(getConfig().kv)
+        const wranglerConfig = nitroOwned ? undefined : createCloudflareKVWranglerConfig(getConfig().kv, readProvisionState())
         const nextBindings = wranglerConfig?.kv_namespaces?.map(binding => binding.binding) ?? []
         const nitroNamespaces = nitroOwned
           ? [...new Map([

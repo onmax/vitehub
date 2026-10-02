@@ -6,13 +6,16 @@ navigation.group: Deployment hosts
 icon: i-simple-icons-netlify
 ---
 
-Netlify support is package-specific. ViteHub currently provides Netlify-owned behaviour for Blob, generated Agent HTTP routes, and static Schedule wake functions; it does not expose a platform-wide Netlify provider for every primitive.
+Use the `netlify` preset to deploy a ViteHub application to Netlify. Support is
+package-specific: ViteHub provides Netlify behavior for Blob, generated Agent
+HTTP routes, and static Schedule wake functions. Other primitives need an
+explicit remote provider or are not available on this preset.
 
 ## Available boundaries
 
 | Surface | Current contract |
 | --- | --- |
-| Blob | `hubBlob()` selects the `netlify-blobs` driver when the build reports Netlify hosting. Application code continues to use `@vite-hub/blob`. |
+| Blob | `hubBlob()` selects the `netlify-blobs` driver when the build reports Netlify hosting. Application code continues to use `vite-hub/blob`. |
 | Agent routes | `hubAgent()` writes one `vitehub-agent` function when hosted Agent Definitions exist. It mounts the conventional chat dispatcher and webhook route; route-enabled Channels select which Agents answer chat requests. `routes.discordGateway` remains explicit. |
 | Static schedules | `hubSchedule()` writes one scheduled Netlify function per discovered static Schedule Definition. |
 | Local proof | The repository runs a real-project fixture through Netlify CLI in pull-request CI. |
@@ -20,9 +23,16 @@ Netlify support is package-specific. ViteHub currently provides Netlify-owned be
 Agent function output lives under `.netlify/v1/functions`, with its generated source wrapper under `.vitehub/agent/netlify-function.mjs`. The wrapper and deployed function are Provider Output, not public application imports.
 In a Nuxt app, the source wrapper follows Nuxt's build directory and is normally `.nuxt/vitehub/agent/netlify-function.mjs`; the deployed function path is unchanged.
 
-## Package output composition
+## Configure the preset
 
 Each active package integration contributes only its owned Netlify output.
+This example adds the Schedule integration directly with
+`providerOutput: 'standalone'`, so each static Schedule Definition becomes a
+Netlify scheduled function. Install its owner package first.
+
+```bash [Terminal]
+pnpm add @vite-hub/schedule
+```
 
 ```ts [vite.config.ts]
 import { hubSchedule } from '@vite-hub/schedule/vite'
@@ -44,7 +54,7 @@ export default defineConfig({
 })
 ```
 
-Netlify environment detection selects the Blob driver and Agent function output. Static Schedule Definitions generate Netlify functions alongside the other supported Schedule output families.
+The `netlify` preset selects the Netlify Blobs driver and the Agent function output. Each static Schedule Definition generates a function such as `.netlify/v1/functions/vitehub-schedule-heartbeat.mjs`.
 
 ## Generated functions
 
@@ -58,11 +68,11 @@ find .vitehub/agent -maxdepth 2 -type f | sort
 
 For Nuxt, replace the wrapper inspection command with `find .nuxt/vitehub/agent -maxdepth 2 -type f | sort`, or use the equivalent path under a custom `buildDir`.
 
-## Unsupported inference
+## Features without a Netlify provider
 
-ViteHub does not infer native Netlify providers for Queue, Workflow, or Sandbox. Disable an unused preset integration or select an explicit supported provider only when that external provider is valid from the Netlify runtime.
+ViteHub does not infer Netlify providers for Queue, Rate Limit, Sandbox, or Workflow. On the `netlify` preset, `queue: true`, `rateLimit: true`, and `sandbox: true` fail the build. Workflow stays off when only `agent` enables it; an explicit `workflow` option needs `workflow.provider`. Select an external provider only when it is valid from the Netlify runtime.
 
-The ViteHub Provision CLI does not create Netlify resources. It currently accepts Cloudflare and Vercel plans only.
+The ViteHub Provision CLI does not create Netlify resources. It currently accepts Cloudflare and Vercel plans only. Netlify Blobs stores need no provisioning; see [Resources without provisioning](/docs/development/provisioning#resources-without-provisioning).
 
 Netlify-specific KV Provider Output is also not provided. Configure a remote KV driver explicitly for deployed state; do not rely on the local `fs-lite` fallback in a serverless deployment.
 
@@ -72,7 +82,7 @@ Workspace has no Netlify-specific hosted store. Select a durable remote Workspac
 
 Pull-request CI exercises the Netlify output through Netlify CLI. ViteHub does not currently publish a deployed Netlify Live Smoke, so verify the generated functions in the target Netlify site before treating an application-specific combination as production-proven.
 
-## Related pages
+## Next steps
 
 - [Runtime and host support](/docs/frameworks-hosts/support-matrix)
 - [Provider output](/docs/reference/provider-output)

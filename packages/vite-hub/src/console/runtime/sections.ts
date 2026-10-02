@@ -1,5 +1,5 @@
 /** Sections that the Console UI in `vite-hub` renders with its own components. Owner packages contribute the others. */
-export const consoleBuiltinSectionIds = ["env", "agents", "usage", "blob", "database", "databases", "kv"] as const
+export const consoleBuiltinSectionIds = ["env", "agents", "usage", "blob", "databases", "kv"] as const
 
 export type ConsoleBuiltinSectionId = (typeof consoleBuiltinSectionIds)[number]
 
@@ -34,14 +34,8 @@ export const consoleSectionDetails: Readonly<Record<ConsoleBuiltinSectionId, Con
     label: "Blob",
     routeName: "vitehub-console-blob",
   },
-  database: {
-    description: "Inspect database tables, rows, columns, and relationships.",
-    icon: "i-ph-database-light",
-    label: "Database",
-    routeName: "vitehub-console-database",
-  },
   databases: {
-    description: "Inspect discovered Database Definitions and static schema metadata.",
+    description: "Inspect Database schemas, relationships, and live table rows.",
     icon: "i-lucide-database",
     label: "Databases",
     routeName: "vitehub-console-databases",
@@ -81,11 +75,12 @@ export function consoleSectionRouteName(section: ConsoleSectionId): string {
  * Returns the enabled section ids in navigation order. Owner packages contribute `rate-limits`, `sandboxes`,
  * `workspaces`, `workflows`, `queues`, and `schedules`. `console/contributions.ts` maps each id to its owner.
  */
-export function resolveConsoleSectionIds(options: { env?: unknown; agent?: unknown; blob?: unknown; database?: unknown; kv?: unknown; preset?: unknown; queue?: unknown; rateLimit?: unknown; sandbox?: unknown; schedule?: unknown; workflow?: unknown; workspace?: unknown }): ConsoleSectionId[] {
+export function resolveConsoleSectionIds(options: { env?: unknown; connections?: unknown; agent?: unknown; blob?: unknown; database?: unknown; kv?: unknown; preset?: unknown; queue?: unknown; rateLimit?: unknown; sandbox?: unknown; schedule?: unknown; workflow?: unknown; workspace?: unknown }): ConsoleSectionId[] {
   const workflowEnabled = options.workflow !== false
     && Boolean(options.workflow || (options.agent && options.preset !== "netlify"))
   return [
     ...(options.env ? ["env"] : []),
+    ...(options.connections ? ["connections"] : []),
     ...(options.agent ? ["agents", "usage"] : []),
     ...(options.blob ? ["blob"] : []),
     ...(options.database ? ["databases"] : []),

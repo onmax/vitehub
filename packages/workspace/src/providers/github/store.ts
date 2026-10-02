@@ -345,6 +345,7 @@ class GitHubWorkspaceStore implements WorkspaceStore {
       const normalized = normalizeSafeWorkspacePath(path);
       await this.#ensure({ refresh: false });
       const file = this.#files.get(normalized);
+      if (options.ifDigest !== undefined) assertWorkspaceDigest(path, options.ifDigest, file ? (await this.#fileEntry(file)).digest : undefined)
       if (file && !isReservedWorkspacePath(normalized)) {
         this.#files.delete(normalized);
         this.#dirty = true;

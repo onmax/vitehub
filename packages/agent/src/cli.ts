@@ -16,11 +16,11 @@ import { isCompatibleAgentDevServerRoot, runAgentInfoCli } from "./internal/agen
 import { runAgentInvocationsCli } from "./internal/agent-invocations-cli.ts"
 import { runAgentChannelSyncCli } from "./internal/channel-sync-cli.ts"
 import { runAgentChannelHistoryCli } from "./internal/channel-history-cli.ts"
+import { runAgentChannelReplayCli } from "./internal/channel-replay-cli.ts"
 import { enrichAgentUsageCost, modelsDevPricing, type AgentUsagePricing } from "./internal/usage-pricing.ts"
 import { resolveAgentEvalOptions, writeAgentEvaliteConfig, type ResolvedAgentEvalOptions } from "./internal/evalite-config.ts"
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute, readAgentInvocationStream } from "./invocation-stream.ts"
 
-import type { AgentDevLoopDiscoveryResponse } from "./invocation-stream.ts"
 import type { AgentEvalOptions, AgentUsageRecord } from "./types.ts"
 import type { UIMessageLike } from "./chat-message-input.ts"
 import type { WorkspaceDevTokenOptions } from "@vite-hub/workspace/server"
@@ -760,9 +760,17 @@ async function readDiscovery(
   context: AgentCliContext,
   fetchImpl: typeof fetch,
 ): Promise<AgentDevTarget | undefined> {
-  const server = await discoverViteHubDevServer<Partial<AgentDevLoopDiscoveryResponse>>({
+  const server = await discoverViteHubDevServer({
     endpoint: agentDevEndpoint,
     fetch: fetchImpl,
+    parseDiscovery(value: unknown) {
+      const response = isRecord(value) ? value : {}
+      return {
+        root: response.root,
+        workspaceDevTokenServerId: response.workspaceDevTokenServerId,
+        agents: Array.isArray(response.agents) ? response.agents.filter(isRecord) : [],
+      }
+    },
     isCompatibleRoot: isCompatibleAgentDevServerRoot,
     rootDir: context.rootDir,
     serverUrl: parsed.url,
@@ -1317,12 +1325,18 @@ export function createAgentCliContributor(options?: false | AgentCliContributorO
             usage: "vitehub channels history --stage <name> --url <https-origin> --output <directory> [--thread <id>]",
           },
           {
-            description: "Inspect and synchronize provider-owned Channel webhooks for a deployed stage.",
+            description: "Send past Channel messages from a Channel history through its trigger.",
+            name: "replay",
+            run: async (args, context) => await runAgentChannelReplayCli(args, context),
+            usage: "vitehub channels replay --agent <name> --channel <name> [--url <console-url>] [--dry-run] [--force] [--limit <n>]",
+          },
+          {
+            description: "Inspect and synchronize provider-owned Channel webhooks and account resources for a deployed stage.",
             name: "sync",
             run: async (args, context) => await runAgentChannelSyncCli(args, context, {
               rootDir: options?.rootDir,
             }),
-            usage: "vitehub channels sync --stage <name> --url <https-origin> [--apply --confirm-origin <https-origin>]",
+            usage: "vitehub channels sync --stage <name> [--url <https-origin>] [--apply [--confirm-origin <https-origin>]]",
           },
         ],
         name: "channels",

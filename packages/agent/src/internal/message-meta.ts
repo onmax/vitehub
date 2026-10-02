@@ -1,3 +1,4 @@
+import { copyAgentInvocationCallerAbortSignal } from "./invocation-input.ts"
 import { parseStandardSchema } from "@vite-hub/internal/http-request"
 
 import { chatTriggerUserMeta, derivedChatTriggerInvoker, markDerivedChatTriggerInvoker } from "../chat-message-input.ts"
@@ -20,7 +21,7 @@ export interface ParsedAgentMessageMetaState {
 const parsedAgentMessageMetaReceipts = new WeakMap<object, WeakMap<object, Map<string | undefined, ParsedAgentMessageMetaReceipt>>>()
 
 function parsedAgentMessageMetaReceipt<TRuntimeConfig extends AgentRuntimeConfig, CALL_OPTIONS>(
-  definition: AgentDefinition<TRuntimeConfig, CALL_OPTIONS> | undefined,
+  definition: Pick<AgentDefinition<TRuntimeConfig, CALL_OPTIONS>, "channels" | "messages"> | undefined,
   invocationContext: AgentInvocationContextStore,
   run?: AgentRunMetadata,
 ): ParsedAgentMessageMetaReceipt | undefined {
@@ -45,7 +46,7 @@ function parsedAgentMessageMetaReceipt<TRuntimeConfig extends AgentRuntimeConfig
 }
 
 export function hasParsedAgentMessageMeta<TRuntimeConfig extends AgentRuntimeConfig, CALL_OPTIONS>(
-  definition: AgentDefinition<TRuntimeConfig, CALL_OPTIONS> | undefined,
+  definition: Pick<AgentDefinition<TRuntimeConfig, CALL_OPTIONS>, "channels" | "messages"> | undefined,
   input: AgentRunInput<CALL_OPTIONS>,
   run?: AgentRunMetadata,
 ): boolean {
@@ -55,7 +56,7 @@ export function hasParsedAgentMessageMeta<TRuntimeConfig extends AgentRuntimeCon
 }
 
 export function parsedAgentMessageMetaState<TRuntimeConfig extends AgentRuntimeConfig, CALL_OPTIONS>(
-  definition: AgentDefinition<TRuntimeConfig, CALL_OPTIONS> | undefined,
+  definition: Pick<AgentDefinition<TRuntimeConfig, CALL_OPTIONS>, "channels" | "messages"> | undefined,
   input: AgentRunInput<CALL_OPTIONS>,
   run?: AgentRunMetadata,
 ): ParsedAgentMessageMetaState | undefined {
@@ -69,7 +70,7 @@ export function parsedAgentMessageMetaState<TRuntimeConfig extends AgentRuntimeC
 }
 
 export function restoreParsedAgentMessageMeta<TRuntimeConfig extends AgentRuntimeConfig, CALL_OPTIONS>(
-  definition: AgentDefinition<TRuntimeConfig, CALL_OPTIONS> | undefined,
+  definition: Pick<AgentDefinition<TRuntimeConfig, CALL_OPTIONS>, "channels" | "messages"> | undefined,
   input: AgentRunInput<CALL_OPTIONS>,
   run?: AgentRunMetadata,
   state?: ParsedAgentMessageMetaState,
@@ -81,19 +82,19 @@ export function restoreParsedAgentMessageMeta<TRuntimeConfig extends AgentRuntim
     if (!state.derivedInvoker) return input
     const unresolved = withoutResolvedAgentInvokerInput(input)
     if (receipt) return unresolved
-    return {
+    return copyAgentInvocationCallerAbortSignal(unresolved, {
       ...unresolved,
       context: {
         ...unresolved.context,
         actor: state.derivedInvoker,
         invoker: state.derivedInvoker,
       },
-    }
+    })
   }
-  return {
+  return copyAgentInvocationCallerAbortSignal(input, {
     ...input,
     context: { ...input.context, [parsedAgentMessageMetaContextKey]: receipt },
-  }
+  })
 }
 
 function withParsedMeta(invoker: unknown, rawMeta: unknown, meta: Record<string, unknown>, user: unknown, derived: AgentInvoker | undefined): unknown {
@@ -114,7 +115,7 @@ function withParsedMeta(invoker: unknown, rawMeta: unknown, meta: Record<string,
 }
 
 function activeMessageSettings<TRuntimeConfig extends AgentRuntimeConfig, CALL_OPTIONS>(
-  definition: AgentDefinition<TRuntimeConfig, CALL_OPTIONS> | undefined,
+  definition: Pick<AgentDefinition<TRuntimeConfig, CALL_OPTIONS>, "channels" | "messages"> | undefined,
   invocationContext: AgentInvocationContextStore,
   run?: AgentRunMetadata,
 ) {
@@ -128,7 +129,7 @@ function activeMessageSettings<TRuntimeConfig extends AgentRuntimeConfig, CALL_O
 }
 
 export async function parseAgentMessageMeta<TRuntimeConfig extends AgentRuntimeConfig, CALL_OPTIONS>(
-  definition: AgentDefinition<TRuntimeConfig, CALL_OPTIONS> | undefined,
+  definition: Pick<AgentDefinition<TRuntimeConfig, CALL_OPTIONS>, "channels" | "messages"> | undefined,
   invocationContext: AgentInvocationContextStore,
   run?: AgentRunMetadata,
 ): Promise<void> {
@@ -170,11 +171,11 @@ export async function parseAgentMessageMeta<TRuntimeConfig extends AgentRuntimeC
 }
 
 export async function withParsedAgentMessageMeta<TRuntimeConfig extends AgentRuntimeConfig, CALL_OPTIONS>(
-  definition: AgentDefinition<TRuntimeConfig, CALL_OPTIONS> | undefined,
+  definition: Pick<AgentDefinition<TRuntimeConfig, CALL_OPTIONS>, "channels" | "messages"> | undefined,
   input: AgentRunInput<CALL_OPTIONS>,
   run?: AgentRunMetadata,
 ): Promise<AgentRunInput<CALL_OPTIONS>> {
   const invocationContext = createAgentInvocationContextStore(input.context)
   await parseAgentMessageMeta(definition, invocationContext, run)
-  return { ...input, context: { ...input.context, ...invocationContext.toJSON() } }
+  return copyAgentInvocationCallerAbortSignal(input, { ...input, context: { ...input.context, ...invocationContext.toJSON() } })
 }

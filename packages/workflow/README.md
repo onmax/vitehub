@@ -151,19 +151,6 @@ The other runtime helpers are:
 
 Unsupported provider operations fail with `WORKFLOW_OPERATION_UNSUPPORTED`; ViteHub does not pretend that an inline run was cancelled or resumed.
 
-## Run Workflows from the CLI during development
-
-`hubWorkflow()` contributes the `vitehub workflow` namespace. It calls a guarded endpoint on the local Vite Development Server and never reaches a deployed stage.
-
-```sh
-pnpm vitehub workflow start onboard-user --input '{"email":"ada@example.com"}'
-pnpm vitehub workflow get <runId> [--workflow <name>] [--json]
-pnpm vitehub workflow cancel <runId> [--workflow <name>]
-pnpm vitehub workflow resume <token> [--payload <json|@file>]
-```
-
-The endpoint forwards each operation into the Nitro dev runtime of a Vite + Nitro app, so the CLI and the app share Workflow state. Nuxt and plain Vite return `WORKFLOW_DEV_RUNTIME_UNAVAILABLE`. The CLI does not change the Workflow configuration or the registry of the runtime. In Vite dev, the Workflow Vite plugin installs the discovered registry when the dev server starts. When the runtime has no registry, `start` returns `WORKFLOW_DEV_REGISTRY_MISSING`. `get` and `cancel` need `--workflow <name>` for runs that the CLI did not start. Operations that the provider or the run does not support return the reason. There is no run list or replay, because the runtime has no API for them.
-
 ## Make a Vercel workflow durable
 
 A plain Vercel definition executes inline and does not survive a function restart. For durable execution, keep the same context-shaped handler and register a native Workflow DevKit entry:
