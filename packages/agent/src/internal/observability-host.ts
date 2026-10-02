@@ -1,6 +1,5 @@
 import type { AgentCapabilityDefinition } from "../types.ts"
-import type { AgentEvlogStatus } from "../evlog.ts"
-import type { Observability } from "../observability.ts"
+import type { AgentEvlogStatus, Observability } from "./observability-types.ts"
 
 const observabilityKey = Symbol.for("vitehub.observability")
 const capabilitiesKey = Symbol.for("vitehub.observability.capabilities")

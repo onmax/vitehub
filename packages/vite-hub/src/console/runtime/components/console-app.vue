@@ -873,7 +873,8 @@ watch(
 watch(
   selectedAgentName,
   () => {
-    void loadCapabilityIds();
+    // Filter values scan every Invocation of the Agent. Load them for the open menu or to validate an active filter.
+    if (filterOpen.value || selectedCapabilityId.value || selectedTriggeredBy.value) void loadCapabilityIds();
   },
   { immediate: true },
 );

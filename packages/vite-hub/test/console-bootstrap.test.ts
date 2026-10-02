@@ -33,6 +33,14 @@ it("opens the inspector on its launcher and keeps terminal session chrome quiet"
   expect(sessionNavbar).toContain('v-if="refreshable" text="Refresh session"');
 });
 
+it("loads session filter values only for the filter menu or an active filter", () => {
+  expect(consolePage).toContain(
+    "if (filterOpen.value || selectedCapabilityId.value || selectedTriggeredBy.value) void loadCapabilityIds();",
+  );
+  expect(consolePage).toContain("if (open) void loadCapabilityIds();");
+  expect(consolePage.match(/void loadCapabilityIds\(\)/g)).toHaveLength(2);
+});
+
 it("copies the session link and jumps from tool rows to calls", () => {
   expect(sessionNavbar).toContain('<UTooltip v-if="hasSelection" :text="linkCopyLabel">');
   expect(sessionNavbar).toContain("navigator.clipboard.writeText(window.location.href)");

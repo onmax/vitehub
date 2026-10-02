@@ -4,7 +4,7 @@ import { createLogger, type DrainContext, type WideEvent } from "evlog"
 import { createDrainPipeline } from "evlog/pipeline"
 import { withExportDeadline } from "./internal/export-deadline.ts"
 import { defineCapability, eagerFinishExtensionSymbol } from "./capability-runtime.ts"
-import { createPapercutReporter, type PapercutReporterOptions, type PapercutReporterStatus } from "./papercut-reporter.ts"
+import { createPapercutReporter, type PapercutReporterOptions } from "./papercut-reporter.ts"
 import { papercuts } from "./capabilities/papercuts.ts"
 import { diagnostics } from "./capabilities/diagnostics.ts"
 import { sanitizeAgentLog } from "./evlog/privacy.ts"
@@ -12,6 +12,7 @@ import { agentInvocationId } from "./invocations.ts"
 import { consoleInvocationUrl, resolvePublicUrl } from "@vite-hub/runtime"
 import type { AgentCapabilityDefinition, AgentFinishEvent, ResolvedAgentRuntimeContext } from "./types.ts"
 import type { RuntimeDiagnosticReporter } from "@vite-hub/runtime"
+import type { AgentEvlogStatus } from "./internal/observability-types.ts"
 
 export { sanitizeAgentLog } from "./evlog/privacy.ts"
 
@@ -43,17 +44,7 @@ export interface AgentEvlogOptions {
   papercuts?: Omit<PapercutReporterOptions, "send" | "sessionUrl">
 }
 
-export interface AgentEvlogStatus {
-  /** An exporter is configured. Without one, events reach only local evlog output. */
-  configured: boolean
-  accepted: number
-  failed: number
-  dropped: number
-  pending: number
-  closed: boolean
-  /** Papercut delivery, when enabled. */
-  papercuts?: PapercutReporterStatus
-}
+export type { AgentEvlogStatus }
 
 export interface AgentEvlog {
   capability: AgentCapabilityDefinition
