@@ -53,6 +53,7 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
 }
 
+const fileOrExtensionProtocol = /^(?:file|.+-extension):/i
 
 const ipv4Octet = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)"
 const ipv4Literal = new RegExp(`^${ipv4Octet}(?:\\.${ipv4Octet}){3}$`)
@@ -77,6 +78,7 @@ function isIPv6Literal(value: string): boolean {
 }
 
 function hostHeaderAllowed(host: string, allowedHosts: readonly string[]): boolean {
+  if (fileOrExtensionProtocol.test(host)) return true
   const trimmed = host.trim()
   if (trimmed.startsWith("[")) {
     const end = trimmed.indexOf("]")
@@ -209,6 +211,8 @@ export interface ViteHubNitroDevServer extends ViteHubDevEndpointServer {
 }
 
 export interface ViteHubNitroDevForwardOptions extends ViteHubDevEndpointGuard {
+  /** Additional authenticated headers to forward into the Nitro handler. */
+  forwardHeaders?: readonly string[]
   /** Trusted headers added only when forwarding to the runtime. Incoming headers are not copied. */
   runtimeHeaders?: Readonly<Record<string, string>>
   /** Nitro `baseURL`. Nitro routes use this prefix. Read on each request. */
@@ -220,6 +224,10 @@ export interface ViteHubNitroDevForwardOptions extends ViteHubDevEndpointGuard {
 }
 
 export interface ViteHubNitroDevEndpointOptions extends ViteHubNitroDevForwardOptions {
+  /** Owner authorization before POST bodies are read or forwarded. */
+  authorize?: (request: IncomingMessage) => Promise<Response | undefined>
+  /** Public discovery metadata. Never include credentials. */
+  discovery?: Record<string, unknown>
   /** Vite Development Server route that the CLI calls, for example `/__vitehub/schedule/dev`. */
   route: string
 }
@@ -281,6 +289,10 @@ export async function forwardViteHubDevRequestToNitro(
   const environment = findViteHubNitroDevEnvironment(server)
   if (!environment) return unavailableResponse(options)
   const headers = new Headers(options.runtimeHeaders)
+  for (const name of options.forwardHeaders ?? []) {
+    const value = firstHeader(req.headers[name])
+    if (value !== undefined) headers.set(name, value)
+  }
   headers.set("content-type", "application/json")
   headers.set(options.header, options.headerValue)
   return await environment.dispatchFetch(new Request(`http://localhost${viteHubNitroRuntimeRoute(options.runtimeRoute, options.nitroBaseURL?.())}`, {
@@ -301,9 +313,11 @@ export function registerViteHubNitroDevEndpoint(server: ViteHubNitroDevServer, o
   const respond = async (req: IncomingMessage): Promise<Response> => {
     if (req.method === "GET") {
       return Response.json(findViteHubNitroDevEnvironment(server)
-        ? { root: server.config.root, runtime: "nitro" }
-        : { message: options.unavailable?.message ?? viteHubNitroDevUnavailableMessage(options.label), root: server.config.root, runtime: "unavailable" })
+        ? { root: server.config.root, runtime: "nitro", ...options.discovery }
+        : { message: options.unavailable?.message ?? viteHubNitroDevUnavailableMessage(options.label), root: server.config.root, runtime: "unavailable", ...options.discovery })
     }
+    const rejected = await options.authorize?.(req)
+    if (rejected) return rejected
     return await forwardViteHubDevRequestToNitro(server, req, options)
   }
   const write = (res: ServerResponse, response: Response) => {
@@ -364,6 +378,8 @@ export function validateViteHubNitroDevRequest(request: Request, guard: ViteHubD
 }
 
 export interface ViteHubNitroDevHandlerSource {
+  /** Public owner context, for example a project path. Never include credentials. */
+  context?: Record<string, unknown>
   /** Additional serialized string arguments passed after the request. */
   arguments?: readonly string[]
   /** Named export of `module` that takes a Fetch `Request` and returns a `Response`. */
@@ -384,7 +400,7 @@ export function renderViteHubNitroDevHandler(source: ViteHubNitroDevHandlerSourc
     "import { defineEventHandler } from 'h3'",
     `import { ${source.export} as handleViteHubDevRequest } from ${JSON.stringify(source.module)}`,
     "",
-    `export default defineEventHandler(event => handleViteHubDevRequest(${["event.req", ...(source.arguments ?? []).map(value => JSON.stringify(value))].join(", ")}))`,
+    `export default defineEventHandler(event => handleViteHubDevRequest(${["event.req", ...(source.context ? [JSON.stringify(source.context)] : []), ...(source.arguments ?? []).map(value => JSON.stringify(value))].join(", ")}))`,
     "",
   ].join("\n")
 }
