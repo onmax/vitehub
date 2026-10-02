@@ -210,7 +210,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         // An explicit `false` disables Workflow support and must replace the
         // plugin's initial options. Nullish coalescing would keep the previous
         // configuration for that valid value.
-        if ("workflow" in config) workflow = config.workflow
+        if (config.workflow !== undefined) workflow = config.workflow
         // SAFETY: Vite config permits the shared server-directory symbol added by ViteHub discovery.
         serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
         if (env.command !== "serve") return
@@ -268,7 +268,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       hasFinalNitroEnvironment = Boolean(config.environments?.nitro)
       providerOutput = useProviderOutputCatalog(config)
       // Preserve an explicit disabled configuration during final resolution.
-      if ("workflow" in config) workflow = config.workflow
+      if (config.workflow !== undefined) workflow = config.workflow
       // SAFETY: ViteHub attaches this symbol to its extended config; the intersection reflects that optional property.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       if (devRegistryRootDir) {
