@@ -64,6 +64,22 @@ function replayEvent(body: unknown, headers: Record<string, string> = { "content
   }
 }
 
+function nodeReplayEvent(body: unknown): ConsoleRequestEvent {
+  const payload = JSON.stringify(body)
+  return {
+    node: {
+      req: {
+        headers: { "content-type": ["application/json"] },
+        method: "POST",
+        url: "/_vitehub/channels/replay",
+        async *[Symbol.asyncIterator]() {
+          yield payload
+        },
+      },
+    },
+  }
+}
+
 describe("Console Channel replay route", () => {
   let root: string
   beforeEach(async () => {
@@ -89,6 +105,15 @@ describe("Console Channel replay route", () => {
     const live = await channelReplayHandler(replayEvent({ agent: "labeller", channel: "mailbox" }))
     await expect(live.json()).resolves.toMatchObject({ processed: 2, skipped: 0 })
     expect(label.mock.calls).toEqual([["Finance"], ["Finance"]])
+  })
+
+  it("accepts headers from a path-only Nitro Node request", async () => {
+    const { agent } = labeller()
+    installConsoleAgentDefinitions([{ definition: { default: agent }, fallbackName: "labeller" }], { invoke: true, projectRoot: root })
+
+    const response = await channelReplayHandler(nodeReplayEvent({ agent: "labeller", channel: "mailbox", dryRun: true }))
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ processed: 2 })
   })
 
   it("stays unavailable while Console invocation is disabled", async () => {

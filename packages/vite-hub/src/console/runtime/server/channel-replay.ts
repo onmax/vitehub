@@ -16,7 +16,8 @@ function replayError(message: string, status: number): Response {
 }
 
 function header(event: ConsoleRequestEvent, name: string): string | undefined {
-  return event.req?.headers?.get(name) ?? event.headers?.get(name) ?? undefined
+  const raw = event.req?.headers?.get(name) ?? event.headers?.get(name) ?? event.node?.req?.headers?.[name]
+  return (Array.isArray(raw) ? raw[0] : raw) ?? undefined
 }
 
 function memo() {

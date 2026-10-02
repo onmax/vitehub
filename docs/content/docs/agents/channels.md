@@ -404,6 +404,12 @@ export default defineAgent({
 
 Install the matching `@chat-adapter/*` package when a built-in Channel uses provider adapter options. Keep provider credentials in Server Env.
 
+### Channel Env
+
+Built-in Channels read credentials from Server Env under `env.server.<channel>`. ViteHub discovers built-in Channel factories in Agent definitions and declares their fields automatically, so applications usually need no separate Env declaration. Explicit Channel options take precedence over Env values. Declare a field yourself when the host variable name or provider differs from the default.
+
+Use [Server Env](/docs/server-primitives/env) to inspect the discovered fields and their required or secret status. When a Channel is defined outside a discovered Agent file, declare its Env fields explicitly.
+
 For Telegram, ViteHub can own the verified webhook route and synchronize it after deployment:
 
 ```ts [server/agents/support.ts]
@@ -523,3 +529,17 @@ Provider-backed Drivers materialize inline data and application-owned `fetchData
 | User-authored command parsing | Input Commands Capability |
 | Prior conversational messages | Chat History and sessions |
 | Product event to Agent input | Trigger |
+
+## Channels and Invocations
+
+A Channel and an Agent Invocation are separate records. One Agent Definition can run behind several Channels because of this split.
+
+| | Channel | Agent Invocation |
+| --- | --- | --- |
+| Describes | Message origin and delivery | Actor, Capabilities, execution, and result |
+| Lifetime | Can contain many messages and Invocations | One request |
+| Can exist alone | Yes. A Channel can receive a message without starting an Agent. | Yes. A route or schedule can start an Invocation without a Channel. |
+
+Use verified Channel metadata to identify the Agent Actor, choose a Capability, or select a Workspace Scope. When a message reaches the wrong Agent, carries the wrong identity, or loses delivery data, inspect the Channel and the [Invocation](/docs/agents/invocations) together.
+
+To send an application message without an Agent, use the [Channels Server Primitive](/docs/server-primitives/channels).
