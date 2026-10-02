@@ -87,6 +87,33 @@ describe("source scanner", () => {
     ])
   })
 
+  it.each([
+    "satisfies Record<string, unknown>",
+    "as Record<string, unknown>",
+    "as const satisfies Record<string, Map<string, unknown>>",
+    "satisfies /* type */ Types.Record /* args */ <string, unknown>",
+  ])("keeps generic assertion commas inside one argument: %s", (assertion) => {
+    const argument = `{ cron: '0 8 * * *', handler: () => {} } ${assertion}`
+    expect(splitTopLevel(`${argument}, second`)).toEqual([argument, "second"])
+    expect(findDefaultExportCall(`export default defineSchedule(${argument})`, ["defineSchedule"])?.arguments)
+      .toEqual([argument])
+  })
+
+  it.each([
+    "value as number < lower, upper > 0",
+    "value satisfies number < lower, upper > 0",
+    "object.as.Record < lower, upper > 0",
+    "object.satisfies.Record < lower, upper > 0",
+    "value as const, left < lower, upper > 0",
+  ])("does not treat comparisons after assertion-like tokens as generics: %s", (expression) => {
+    expect(splitTopLevel(expression)).toEqual(expression.split(", "))
+  })
+
+  it.each(["|| fallback", "+ extra", " > limit", "(argument)"])("rejects runtime suffixes after generic assertions: %s", (suffix) => {
+    expect(findDefaultExportCall(`export default defineSchedule({ cron: '0 8 * * *' } satisfies Record<string, unknown>${suffix})`, ["defineSchedule"]))
+      .toBeUndefined()
+  })
+
   it("keeps regex literals non-structural while splitting arguments", () => {
     expect(splitTopLevel(`() => { return /\\)/.test(")") }, { id: "daily" }`)).toEqual([
       `() => { return /\\)/.test(")") }`,

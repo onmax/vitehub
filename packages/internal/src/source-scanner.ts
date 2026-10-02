@@ -345,6 +345,53 @@ export function findMatching(source: string, index: number, open: string, close:
   }
 }
 
+function isAssertionTypeArguments(source: string, index: number) {
+  const controlFlowRegexes: ControlFlowRegexCache = new Map()
+  let current = previousCodeIndex(source, index - 1, controlFlowRegexes)
+  let qualified = false
+  let typeName = ""
+  while (current >= 0) {
+    const end = current + 1
+    while (isIdentifierChar(source[current])) current -= 1
+    const identifier = source.slice(current + 1, end)
+    if (!/^[A-Za-z_$][\w$]*$/.test(identifier)) return false
+    typeName = identifier
+    current = previousCodeIndex(source, current, controlFlowRegexes)
+    if (source[current] !== ".") break
+    qualified = true
+    current = previousCodeIndex(source, current - 1, controlFlowRegexes)
+  }
+  // Primitive type keywords end an assertion before a comparison, rather than
+  // accepting type arguments like a named type reference does.
+  if (!qualified && /^(?:any|bigint|boolean|const|never|null|number|object|string|symbol|undefined|unknown|void)$/.test(typeName)) return false
+  const end = current + 1
+  while (isIdentifierChar(source[current])) current -= 1
+  const keyword = source.slice(current + 1, end)
+  return (keyword === "as" || keyword === "satisfies")
+    && source[previousCodeIndex(source, current, controlFlowRegexes)] !== "."
+}
+
+function maskAssertionTypeArguments(source: string) {
+  const output = source.split("")
+  for (let index = 0; index < source.length; index++) {
+    if (isQuote(source[index])) {
+      index = skipQuoted(source, index) - 1
+      continue
+    }
+    let end: number | undefined
+    if (source[index] === "/" && source[index + 1] === "/") end = skipLineComment(source, index)
+    else if (source[index] === "/" && source[index + 1] === "*") end = skipBlockComment(source, index)
+    else if (source[index] === "<" && isAssertionTypeArguments(source, index)) {
+      const close = findMatching(source, index, "<", ">")
+      if (close !== undefined) end = close + 1
+    }
+    if (end === undefined) continue
+    output.fill(" ", index, end)
+    index = end - 1
+  }
+  return output.join("")
+}
+
 export function splitTopLevel(source: string, separator = ",") {
   const parts: string[] = []
   let depth = 0
@@ -373,7 +420,7 @@ export function splitTopLevel(source: string, separator = ",") {
     }
     if (char === "<") {
       const genericEnd = findMatching(source, index, "<", ">")
-      if (genericEnd !== undefined && nextNonWhitespace(source, genericEnd + 1) === "(") {
+      if (genericEnd !== undefined && (nextNonWhitespace(source, genericEnd + 1) === "(" || isAssertionTypeArguments(source, index))) {
         index = genericEnd
         previousSignificant = ">"
         continue
@@ -482,6 +529,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
     // unrestricted (generic, union, indexed-access, `typeof`, etc.). Runtime
     // expression operators after the assertion remain unsupported.
     const isCompleteAssertion = (value: string) => {
+      value = maskAssertionTypeArguments(value)
       const assertion = /^(?:as|satisfies)\b\s+.+$/is.test(value)
       // Reject runtime operators that can follow an assertion, while allowing
       // punctuation that is valid inside TypeScript type expressions (for
