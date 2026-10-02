@@ -2102,6 +2102,9 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const startHeartbeat = () => {
         if (finished || !ownsRecord || heartbeat !== undefined) return
         heartbeat = setInterval(() => {
+          // A timer callback may already be queued when handoff stops the interval.
+          // Do not enqueue a renewal after ownership handoff has begun.
+          if (heartbeat === undefined || finished || !ownsRecord) return
           heartbeatRenewal = heartbeatRenewal.then(() => renew()).catch(() => undefined)
         }, CLAIM_RENEW_INTERVAL_MS)
         unrefTimer(heartbeat)
