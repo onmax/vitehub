@@ -454,7 +454,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       let text = target.text
       let cursor = 0
       let runs = 0
-      let maxRuns = Math.max(1_000, text.length + 1)
+      const maxRuns = Math.max(1_000, text.length + 1)
       while (cursor <= text.length) {
         const invocation = findInputCommandInvocation(text, trigger, commands, cursor)
         if (!invocation) break
@@ -485,7 +485,6 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         target = getInputCommandTarget(input)
         if (!target) return
         text = target.text
-        maxRuns = Math.max(maxRuns, text.length + 1)
 
         if (hasRuntimeType(result, "string")) {
           if (text.slice(invocation.start, invocation.end) !== invocation.text) {
@@ -502,7 +501,6 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           context.input.set(input)
           target = getInputCommandTarget(input)
           if (!target) return
-          maxRuns = Math.max(maxRuns, text.length + 1)
           // SAFETY: Input command parsing establishes the asserted command contract.
           await runInputCommandInputHook(command, context as AgentCapabilityRuntimeContext, invocation)
           cursor = replacement === invocation.text ? invocation.end : invocation.start
@@ -516,7 +514,6 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           target = getInputCommandTarget(input)
           if (!target) return
           text = target.text
-          maxRuns = Math.max(maxRuns, text.length + 1)
           if (text !== previousText) {
             // SAFETY: Input command parsing establishes the asserted command contract.
             await runInputCommandInputHook(command, context as AgentCapabilityRuntimeContext, invocation)
@@ -537,7 +534,6 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           target = getInputCommandTarget(input)
           if (!target) return
           text = target.text
-          maxRuns = Math.max(maxRuns, text.length + 1)
           // SAFETY: Input command parsing establishes the asserted command contract.
           await runInputCommandInputHook(command, context as AgentCapabilityRuntimeContext, invocation)
           cursor = 0

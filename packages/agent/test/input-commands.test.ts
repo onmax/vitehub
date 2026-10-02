@@ -11,6 +11,28 @@ const runtime = () => ({
 })
 
 describe("inputCommands", () => {
+  it.each(["replacement", "result"] as const)("bounds growing command expansion through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        loop: {
+          call({ text }) {
+            if (++calls > 1_500) throw new Error("Expansion did not stop")
+            const prompt = `${text} x`
+            if (mode === "replacement") return prompt
+            return { prompt }
+          },
+        },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/loop" }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBe(1_000)
+  })
+
   it("exposes resolved runtime primitives and can reply without running the driver", async () => {
     const { agentInvocationId } = await import("../src/invocations.ts")
     const { inputCommands } = await import("../src/capabilities.ts")
