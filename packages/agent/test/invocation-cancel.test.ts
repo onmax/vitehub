@@ -18,7 +18,7 @@ vi.mock("../src/internal/ai-sdk-runtime.ts", () => ({
 import { agentInvocationId, defineAgent, defineCapability, runAgent, streamAgent, startAgentInvocation } from "../src/index.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
 import { bindAgentInvocations } from "../src/invocations.ts"
-import { abortLocalAgentInvocation, isAgentInvocationAbortError } from "../src/internal/invocation-cancellation.ts"
+import { abortLocalAgentInvocation, isAgentInvocationAbortError, registerAgentInvocationCancellation } from "../src/internal/invocation-cancellation.ts"
 
 import type { AgentInvocationRecordStatus, AgentInvocations } from "../src/index.ts"
 
@@ -1233,6 +1233,29 @@ describe("Agent Invocation cancel", () => {
     await run
     requestRelease.resolve()
     expect(await cancel).toEqual({ id, notEnforcedBy: "run", outcome: "terminal", status: "completed" })
+  })
+
+  it.each([true, false])("reports local delivery when the journal record is missing, enforced=%s", async enforced => {
+    const store = createMemoryAgentInvocationStore()
+    const invocations = defineAgentInvocations({ store })
+    const controller = new AbortController()
+    const unregister = registerAgentInvocationCancellation(store, "missing", {
+      abort: reason => controller.abort(reason),
+      driver: () => ({ enforced, name: enforced ? "model" : "run" }),
+      ownerId: "stale-owner",
+    })
+    try {
+      const result = await invocations.cancel("missing")
+      expect(result).toEqual(enforced
+        ? { delivery: "local", id: "missing", outcome: "requested" }
+        : { delivery: "local", id: "missing", notEnforcedBy: "run", outcome: "requested" })
+      expect(controller.signal.aborted).toBe(true)
+      expect(await store.getSummary("missing")).toBeUndefined()
+    }
+    finally {
+      unregister()
+    }
+    expect(await invocations.cancel("missing")).toEqual({ id: "missing", outcome: "not-found" })
   })
 
   it("reports missing Invocations", async () => {

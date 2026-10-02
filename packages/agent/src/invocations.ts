@@ -292,7 +292,7 @@ export interface AgentInvocationCancelResult {
   /**
    * `requested`: the request was recorded or sent locally; owner observation is unconfirmed.
    * `terminal`: the journal has a final state; a stale local Driver may still be active.
-   * `not-found`: the journal has no Invocation with this id.
+   * `not-found`: the journal has no Invocation with this id and no local run received the request.
    * `unavailable`: the store did not keep the request and no run in this process holds the Invocation.
    */
   outcome: "not-found" | "requested" | "terminal" | "unavailable"
@@ -2757,6 +2757,9 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
     async cancel(id) {
       assertInvocationId(id)
       const local = abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
+      const missingResult: AgentInvocationCancelResult = { id, outcome: local.aborted ? "requested" : "not-found" }
+      if (local.aborted) missingResult.delivery = "local"
+      if (local.notEnforcedBy) missingResult.notEnforcedBy = local.notEnforcedBy
       const terminalResult = (record: AgentInvocationSummary, local?: ReturnType<typeof abortLocalAgentInvocation>): AgentInvocationCancelResult => {
         const notEnforcedBy = local?.notEnforcedBy || record.cancelNotEnforcedBy
         const result: AgentInvocationCancelResult = {
@@ -2775,7 +2778,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       catch (error) {
         throw error
       }
-      if (!summary) return { id, outcome: "not-found" }
+      if (!summary) return missingResult
       if (terminalStatus(summary.status)) {
         return terminalResult(summary, local)
       }
@@ -2784,7 +2787,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       let flagged: AgentInvocationRecord | undefined
       flagged = await store.update(id, { cancelRequestedAt: timestamp, timestamp })
       let current = await store.getSummary(id) ?? flagged
-      if (!current) return { id, outcome: "not-found" }
+      if (!current) return missingResult
       if (terminalStatus(current.status)) return terminalResult(current, local)
       // A pending warning is verified only by the owner that dispatched its custom Driver.
       const warningOwnerId = current.cancelWarningOwnerId
@@ -2804,7 +2807,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       // Lease availability and a pending record cannot prove that no Driver started.
       // The durable request is terminalized by an execution owner that observes it.
       current = await store.getSummary(id)
-      if (!current) return { id, outcome: "not-found" }
+      if (!current) return missingResult
       const verificationDeadline = Date.now() + CANCELLATION_VERIFICATION_TIMEOUT_MS
       while (!terminalStatus(current.status) && current.cancelWarningPending && !current.cancelNotEnforcedBy) {
         if (Date.now() >= verificationDeadline) {
@@ -2814,7 +2817,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         const summary = await boundedStoreOperation(() => store.getSummary(id), Math.min(STORE_OPERATION_TIMEOUT_MS, Math.max(0, verificationDeadline - Date.now())))
         if (summary && summary !== storeOperationTimedOut) current = summary
       }
-      if (!current) return { id, outcome: "not-found" }
+      if (!current) return missingResult
       if (terminalStatus(current.status)) return terminalResult(current, local)
       if (!current.cancelRequestedAt) return { id, outcome: "unavailable", status: current.status }
       const result: AgentInvocationCancelResult = {

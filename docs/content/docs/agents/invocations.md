@@ -448,9 +448,9 @@ if (result.notEnforcedBy) console.warn(`Cancel requested, not enforced by ${resu
 
 | `outcome` | Meaning |
 | --- | --- |
-| `requested` | The request was recorded or sent locally. `delivery: 'local'` means a run in this process received an aborted signal. `delivery: 'journal'` means the store retained the request for a current or future execution owner. Neither confirms that execution stopped. |
+| `requested` | The request was recorded or sent locally. `delivery: 'local'` means a run in this process received an aborted signal. `delivery: 'journal'` means the store retained the request for a current or future execution owner. Neither confirms that execution stopped. A missing journal record still returns `requested` with local delivery if a local run received the request. |
 | `terminal` | The journal has a final state in `status`. A stale Driver may still be active. Local abort delivery and durable or local `notEnforcedBy` warnings remain in the result. A durable warning describes the Driver enforcement contract; it does not prove execution is still active. |
-| `not-found` | The journal has no Invocation with this id. |
+| `not-found` | The journal has no Invocation with this id and no local run received the request. |
 | `unavailable` | The store did not keep the request and no run in this process holds the Invocation. |
 
 Before setup, active runs check for a journal cancellation request. A rejected or missing read, or a check that exceeds one second, fails startup with `AGENT_R0973`. After startup, active runs read journal requests every 10 seconds, including after a lost lease stops claim renewal. A crashed owner or expired lease does not prove that a Driver stopped. An orphaned record remains pending or running until execution recovery observes its request; cancellation does not recover orphaned work or promise a completion deadline. Repeating the request does not change that state. Read the final journal status to confirm cancellation.

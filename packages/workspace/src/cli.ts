@@ -17,6 +17,7 @@ import {
 
 import type { WorkspaceDevTokenOptions } from "./server.ts"
 import { workspaceErrorDiagnostics } from "./error-diagnostics.ts"
+import { hasRuntimeType } from "./internal/runtime-type.ts"
 
 interface WorkspaceCliContext {
   cwd: string
@@ -259,7 +260,7 @@ async function readWorkspaceDiscovery(parsed: ParsedWorkspaceDevArgs, context: W
   if (!server) return
   const { discovery, url } = server
   const workspaces = Array.isArray(discovery.workspaces)
-    ? discovery.workspaces.flatMap(workspace => isPlainObject(workspace) && typeof workspace.name === "string" ? [workspace.name] : [])
+    ? discovery.workspaces.flatMap(workspace => isPlainObject(workspace) && hasRuntimeType(workspace.name, "string") ? [workspace.name] : [])
     : []
   if (!workspaces.includes(parsed.workspace)) {
     context.stderr.write(`Unknown Workspace Dev target: ${parsed.workspace}\n`)
