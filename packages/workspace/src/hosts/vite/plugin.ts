@@ -1724,7 +1724,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
         rootDir: roots.projectRoot,
       })
       const runtimeOptions = resolvedHosting && normalized && normalized.store.provider !== "local"
-        ? { ...(workspaceOptions || {}), store: workspaceOptions && workspaceOptions.store ? workspaceOptions.store : normalized.store }
+        ? { ...workspaceOptions, store: workspaceOptions && workspaceOptions.store ? workspaceOptions.store : normalized.store }
         : workspaceOptions
       const viteConfig: ViteConfigWithWorkspaceNitro = {
         server: {

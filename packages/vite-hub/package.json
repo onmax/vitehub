@@ -47,6 +47,7 @@
     "./_internal/blob/runtime/dev": "./dist/_internal/blob/runtime/dev.js",
     "./_internal/blob/runtime/state": "./dist/_internal/blob/runtime/state.js",
     "./_internal/database/runtime/state": "./dist/_internal/database/runtime/state.js",
+    "./_internal/email/runtime/console": "./dist/_internal/email/runtime/console.js",
     "./_internal/kv": "./dist/_internal/kv.js",
     "./_internal/kv/runtime/dev": "./dist/_internal/kv/runtime/dev.js",
     "./_internal/kv/runtime/disabled-upstash": "./dist/_internal/kv/runtime/disabled-upstash.js",

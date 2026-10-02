@@ -142,6 +142,7 @@ function pluginOptionHasName(option: PluginOption, name: string): boolean {
 const nitroRuntimeResolverNames = new Set([
   "@vite-hub/auth/vite",
   "@vite-hub/blob/vite",
+  "@vite-hub/email/vite",
   "@vite-hub/kv/vite",
 ])
 
@@ -1099,6 +1100,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         env: options.env !== false,
         blob: replayedBlobEnabled,
         database: replayConfig.database ?? options.database,
+        email: options.email,
         kv: resolvedKV,
         preset: plan.preset,
         queue: effectiveQueue === false

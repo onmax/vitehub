@@ -40,6 +40,7 @@ Available namespaces:
   db          Database development workflows.
   kv          Read and write keys of the KV stores in a running Vite + Nitro Development Server.
   env         Server Env inspection workflows.
+  email       Inspect and preview development Email messages.
   schedule    Run Static Schedule Definitions and inspect or control Runtime Schedules.
   workflow    Start and inspect Workflow runs in development.
   types       Generate ViteHub TypeScript declarations.
@@ -68,6 +69,8 @@ Available namespaces:
 | `vitehub connections` | Available | Connections Package | Connect OAuth accounts, set API keys, list Connections, read activity, and approve or deny writes. |
 | `vitehub env inspect` | Available | Env Package | List declared Server Env variables and their status without values. |
 | `vitehub env check` | Available | Env Package | Fail CI or a deploy step when Server Env would not load for a stage. |
+| `vitehub email outbox` | Available | Email Package | List, show, or clear messages captured by a running Vite + Nitro Development Server. |
+| `vitehub email preview` | Available | Email Package | Render a `server/emails` template locally without sending it. |
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
 | `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
 | `vitehub kv list` | Available | KV Package | List the keys of one KV store, one page at a time. |
@@ -130,6 +133,18 @@ Errors go to stderr, or into `{ "error": { "code", "message" } }` on stdout with
 
 The commands use a guarded dev endpoint that `hubBlob()` registers only on the Development Server. The endpoint forwards each operation into the Nitro dev environment, which owns the Blob storage. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 and the CLI prints that the host is not supported. Deployed runtimes do not expose the endpoint.
 
+## Inspect the Email development outbox
+
+When a Vite development server has Email enabled, inspect the in-memory outbox from another terminal:
+
+```bash [Terminal]
+pnpm vitehub email outbox list
+pnpm vitehub email outbox show <id> --html
+pnpm vitehub email outbox clear
+```
+
+Use `--json` for machine-readable output. The outbox is available only in `vite dev` and is cleared when the server restarts. Use `vitehub email preview <template>` to render a `server/emails` template without sending it.
+
 ## Inspect Server Env
 
 The Env integration contributes commands that report the status of declared Server Env values without printing their values.
@@ -140,6 +155,40 @@ pnpm vitehub env check [--stage <name>] [--json]
 ```
 
 Both commands load the Vite config in the selected stage mode, including `.env.<stage>` files, with process environment values taking precedence. They list each declared variable with its status, source, required, and secret flags. `env check` exits with status `1` when loading Server Env would fail, so it can gate CI or deployment steps.
+
+## Inspect Definitions and Provider Output
+
+`vitehub inspect` reads the same package-owned summaries that the Console shows. It does not start a server or call a provider. Each active package contributes its own kind: `agent`, `auth`, `browser`, `channel`, `database`, `queue`, `rate-limit`, `realtime`, `sandbox`, `schedule`, `workflow`, and `workspace`.
+
+```bash [Terminal]
+pnpm vitehub inspect definitions
+pnpm vitehub inspect definitions --kind rate-limit
+pnpm vitehub inspect definitions --json
+```
+
+```txt [Output]
+Rate Limits (rate-limit): 1
+  checkout  server/api/checkout.post.ts  [require-rate-limit]
+    Limit: 10
+    Window: 1m
+    Enforcement: Strict
+    Provider failure: Deny
+    Source location: 4:9
+```
+
+`--json` prints `{ "definitions": [{ "kind", "label", "definitions": [...] }] }`. Each Definition has `name`, `file` relative to the project root, `source`, and `fields`. An unknown `--kind` exits with status 1 and lists the available kinds.
+
+`inspect provider-output` lists the Provider Output files that active packages and the deployment preset write, and shows which ones exist. Deployment paths use the preset's default output directory, for example `.output` or `.vercel/output`. Run a production build first to generate deployment output.
+
+```bash [Terminal]
+pnpm build
+pnpm vitehub inspect provider-output
+pnpm vitehub inspect provider-output --json
+```
+
+`--json` includes the parsed content of each JSON file. The CLI redacts values under keys that name secrets, such as `token`, `secret`, `password`, or `apiKey`, every Worker `vars` value, and URLs with embedded credentials. Read [Provider output](/docs/reference/provider-output) for each file's owner and purpose.
+
+Packages contribute inspection through `vitehub.inspect` on their Vite plugin. The owner package defines the summary; the CLI and the Console only render it.
 
 ## Inspect Definitions and Provider Output
 

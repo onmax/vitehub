@@ -85,6 +85,7 @@ vi.mock("@vite-hub/browser/vite", () => ({ hubBrowser: integrationMocks.hubBrows
 vi.mock("@vite-hub/channels/vite", () => ({ hubChannels: integrationMocks.hubChannels }))
 vi.mock("@vite-hub/database/vite", () => ({ hubDb: integrationMocks.hubDb }))
 vi.mock("@vite-hub/email/vite", () => ({
+  emailConsoleSection: integrationMocks.consoleSection("email"),
   hubEmail: integrationMocks.hubEmail,
   hubEmailOptionalPeerResolver: integrationMocks.hubEmailOptionalPeerResolver,
 }))
@@ -679,7 +680,9 @@ describe("vitehub", () => {
     expect(integrationMocks.hubEmail).toHaveBeenLastCalledWith({
       driver: "resend",
       hosting: "cloudflare-module",
+      importBase: "vite-hub/_internal/email",
       runtimeEnvImport: "vite-hub/env/server",
+      workflowProvider: undefined,
     })
     expect(integrationMocks.hubChannels).toHaveBeenLastCalledWith(undefined)
     expect(integrationMocks.hubKv).toHaveBeenLastCalledWith({ driver: "cloudflare-kv-binding" }, { importBase: "vite-hub/_internal/kv" })
@@ -799,6 +802,7 @@ describe("vitehub", () => {
     expect(integrationMocks.hubEmail).toHaveBeenLastCalledWith({
       ...email,
       hosting: "node-server",
+      importBase: "vite-hub/_internal/email",
       runtimeEnvImport: "vite-hub/env/server",
       workflowProvider: undefined,
     })
@@ -813,6 +817,7 @@ describe("vitehub", () => {
     expect(integrationMocks.hubEmail).toHaveBeenLastCalledWith({
       driver: "cloudflare-email",
       hosting: "cloudflare-module",
+      importBase: "vite-hub/_internal/email",
       runtimeEnvImport: "vite-hub/env/server",
       workflowProvider: undefined,
     })

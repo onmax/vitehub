@@ -131,6 +131,47 @@ it("sends a welcome email", async () => {
 
 Captured messages are cloned before storage. `clear()` empties the mailbox and restarts deterministic IDs at `memory-1`.
 
+## Inspect development sends
+
+In `vite dev`, `hubEmail()` wraps the provider driver with a development outbox. Each `email.send()` call records the headers, recipients, subject, text and HTML bodies, attachment metadata, provider name, and delivery result in the memory of the server runtime. Build output never contains the outbox.
+
+By default the outbox records each message and then delivers it through the provider. Pending deliveries appear as Sending. Each development runtime has separate messages, limits, and outbox IDs. Configure it with `outbox`:
+
+```ts
+hubEmail({
+  driver: "resend",
+  options: { apiKey: env({ secret: true, source: env.source("RESEND_API_KEY") }) },
+  // Record messages without a provider request. Keep the newest 100 messages.
+  outbox: { deliver: false, limit: 100 },
+})
+```
+
+`limit` defaults to `50` and accepts 1 to 1000. `outbox: false` disables the outbox. A restart clears it. Header and metadata values with secret names, and credentials in delivery errors, are redacted. Message bodies are kept as rendered.
+
+Read the outbox from a running Vite + Nitro Development Server, or render a template without sending it:
+
+```bash
+pnpm vitehub email outbox list
+pnpm vitehub email outbox show outbox-1 --html
+pnpm vitehub email outbox clear
+pnpm vitehub email preview welcome --data '{"user":{"name":"Maxi"}}'
+```
+
+Application code can select its generated outbox identity through the public server export:
+
+```ts
+import { emailOutboxRuntimeId } from "@vite-hub/email/server"
+import { listEmailOutbox, getEmailOutboxMessage, clearEmailOutbox } from "@vite-hub/email/runtime/console"
+
+const captured = listEmailOutbox(emailOutboxRuntimeId)
+const message = getEmailOutboxMessage("outbox-1", emailOutboxRuntimeId)
+clearEmailOutbox(emailOutboxRuntimeId)
+```
+
+Pass this identity to each reader to inspect this application's configured Email client. Calls without an identity use the standalone default store. Production and disabled outboxes expose `"disabled"` and contain no captured messages.
+
+`emailConsoleSection` adds an **Email** section to the ViteHub Console. It passes the generated definition's `outboxRuntimeId` to `readEmailOutboxConsoleRecords(runtimeId)` from `@vite-hub/email/runtime/console` on each request and shows the HTML body as escaped source text. It never renders captured HTML.
+
 ## Use another provider
 
 Set `driver` to `resend` or `cloudflare-email` and declare its options in `hubEmail({ driver, options })`. Programmatic clients can implement the exported `EmailDriver` interface or import a built-in driver from `@vite-hub/email/drivers/*`.

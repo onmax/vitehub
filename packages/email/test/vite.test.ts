@@ -477,6 +477,7 @@ describe("hubEmail", () => {
     const send = vi.fn()
     functionHook(plugin.configureServer, "configureServer")({
       config: { logger: { error: vi.fn() } },
+      middlewares: { use: vi.fn() },
       moduleGraph: {
         idToModuleMap: new Map(modules.map(module => [module.id, module])),
         invalidateModule,
@@ -519,6 +520,7 @@ describe("hubEmail", () => {
     const configureServer = functionHook(plugin.configureServer, "configureServer")
     configureServer({
       config: { logger: { error: logError } },
+      middlewares: { use: vi.fn() },
       moduleGraph: {
         idToModuleMap: new Map([[generatedModule.id, generatedModule]]),
         invalidateModule,
@@ -581,6 +583,7 @@ describe("hubEmail", () => {
     const configureServer = functionHook(plugin.configureServer, "configureServer")
     configureServer({
       config: { logger: { error: vi.fn() } },
+      middlewares: { use: vi.fn() },
       moduleGraph: { idToModuleMap: new Map(), invalidateModule: vi.fn() },
       watcher: {
         add: vi.fn(),

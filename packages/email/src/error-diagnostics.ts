@@ -15,6 +15,10 @@ export const emailErrorDiagnostics = /*#__PURE__*/ defineDiagnostics({
     EMAIL_R0005: dynamicError,
     EMAIL_R0006: dynamicError,
     EMAIL_R0007: dynamicError,
+    EMAIL_R0008: dynamicError,
+    EMAIL_R0009: dynamicError,
+    EMAIL_R0010: dynamicError,
+    EMAIL_R0011: dynamicError,
     EMAIL_B0001: dynamicError,
     EMAIL_B0002: dynamicError,
     EMAIL_B0003: dynamicError,
@@ -22,5 +26,6 @@ export const emailErrorDiagnostics = /*#__PURE__*/ defineDiagnostics({
     EMAIL_B0005: dynamicError,
     EMAIL_B0006: dynamicError,
     EMAIL_B0007: dynamicError,
+    EMAIL_B0008: dynamicError,
   },
 })
