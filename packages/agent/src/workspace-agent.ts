@@ -325,7 +325,7 @@ export function workspaceAgentWithSourceRoot<Agent>(agent: Agent, sourceRootDir:
     get: () => {
       const inherited = Reflect.get(workspaceAgent, colocatedAgentSkillsSymbol)
       const source = Reflect.get(workspaceAgent, agentDefinitionSourceSymbol)
-      const sourceSkills = hasRuntimeType(source, "object") ? Reflect.get(source, colocatedAgentSkillsSymbol) : undefined
+      const sourceSkills = source !== null && typeof source === "object" ? Reflect.get(source, colocatedAgentSkillsSymbol) : undefined
       if (!hasRuntimeType(colocatedSkills, "object") && !hasRuntimeType(inherited, "object") && !hasRuntimeType(sourceSkills, "object")) return undefined
       return {
         ...(hasRuntimeType(colocatedSkills, "object") ? colocatedSkills : {}),

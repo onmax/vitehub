@@ -194,6 +194,7 @@ export default defineConfig({
       { from: "src/console/runtime/components/console-oauth-connection-details.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/components/console-oauth-connection-activity.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/pages/kv.vue", to: "dist/console/runtime/pages" },
+      { from: "src/console/runtime/pages/connections.vue", to: "dist/console/runtime/pages" },
       { from: "src/console/runtime/pages/section.vue", to: "dist/console/runtime/pages" },
       { from: "../ui/styles.css", to: "dist/ui" },
       { from: "templates/cloudflare-types.d.ts", to: "dist" },
