@@ -115,6 +115,26 @@ function valueType(value: unknown): string {
   return typeof value
 }
 
+/** Reject structured-clone values that cannot be represented by the JSON dev endpoint. */
+function assertJSONValue(value: unknown, seen = new WeakSet<object>()): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return
+  if (typeof value === "number") {
+    if (Number.isFinite(value)) return
+    throw new KVDevRequestError("The stored value is not representable in JSON.", 422, "KV_VALUE_NOT_JSON")
+  }
+  if (typeof value === "bigint" || typeof value === "undefined" || typeof value === "symbol" || typeof value === "function") {
+    throw new KVDevRequestError("The stored value is not representable in JSON.", 422, "KV_VALUE_NOT_JSON")
+  }
+  if (value instanceof Uint8Array) return
+  if (typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new KVDevRequestError("The stored value is not representable in JSON.", 422, "KV_VALUE_NOT_JSON")
+  }
+  if (seen.has(value)) throw new KVDevRequestError("The stored value is not representable in JSON.", 422, "KV_VALUE_NOT_JSON")
+  seen.add(value)
+  for (const entry of Object.values(value)) assertJSONValue(entry, seen)
+  seen.delete(value)
+}
+
 function ttlNotice(driver: KVDriver, ttl: number): string | undefined {
   if (driver === "fs-lite") return "The fs-lite driver ignores TTL. The value does not expire."
   if (driver === "cloudflare-kv-binding" && ttl < 60) return "Cloudflare KV raises a TTL below 60 seconds to 60 seconds."
@@ -206,6 +226,7 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
       const result: KVDevGetResult = { found, key, store: selected.name }
       if (!found) return result
       if (value instanceof Uint8Array) return { ...result, encoding: "base64", type: "bytes", value: encodeBase64(value) }
+      assertJSONValue(value)
       return { ...result, type: valueType(value), value }
     }
     case "has": {
