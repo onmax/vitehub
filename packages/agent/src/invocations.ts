@@ -362,7 +362,7 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   /** Wait for an asynchronous create attempt to resolve its stored identity. */
   ready(): Promise<void>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
-  running(): Promise<void>
+  running(): Promise<boolean>
   /** Records the Driver dispatch boundary without delaying execution. */
   driverStarted(): void
   setAnnotations(annotations: AgentRunMetadata["annotations"]): Promise<void>
@@ -2523,7 +2523,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             if (runningPersisted && cancellationDriver?.enforced === false) cancellationWarningPrepared = true
             return runningPersisted
           }
-          if (await markRunning()) return
+          if (await markRunning()) return true
           if (cancellationDriver?.enforced === false && !cancellationWarningPrepared) {
             throw agentDiagnostics.AGENT_R0973({ message: "[vitehub] Initial custom Driver cancellation state could not be persisted." })
           }
@@ -2536,7 +2536,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
                 unrefTimer(timer)
               })
               if (finished) return
-              if (await markRunning()) return
+              if (await markRunning()) return true
             }
           })()
           registerAgentInvocationRecovery(context, runningRetry)
