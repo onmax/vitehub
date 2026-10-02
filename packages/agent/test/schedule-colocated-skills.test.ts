@@ -13,11 +13,7 @@ import { hubAgent } from "../src/vite.ts"
 
 vi.mock("#vitehub/agent/registry", () => ({ default: {} }))
 
-<<<<<<< HEAD
 it.each(["default-expression", "default-binding", "default-reexport"])("preserves discovered Skills when a built Schedule directly extends an Agent (%s)", async (exportForm) => {
-=======
-it.each(["default-expression", "default-binding"])("preserves discovered Skills when a built Schedule directly extends an Agent (%s)", async (exportForm) => {
->>>>>>> 29515667 (fix(agent): preserve composed Skills across discovery and Schedule builds)
   const root = await mkdtemp(join(tmpdir(), "vitehub-schedule-colocated-skills-"))
   const seen: string[] = []
   vi.stubGlobal("__vitehubScheduleColocatedSkillsProof", seen)
@@ -27,7 +23,6 @@ it.each(["default-expression", "default-binding"])("preserves discovered Skills 
     await mkdir(join(agentDir, "skills", "review"), { recursive: true })
     await mkdir(join(root, "server", "schedules"), { recursive: true })
     await writeFile(join(agentDir, "skills", "review", "SKILL.md"), "Review the report.")
-<<<<<<< HEAD
     await writeFile(join(agentDir, exportForm === "default-reexport" ? "definition.ts" : "index.ts"), [
       "import { defineAgent } from '@vite-hub/agent'",
       "const reporter = defineAgent({ runtime: false, driver: { run: ({ context }) => { const text = new TextDecoder().decode(Object.values(context.get('agent.colocatedSkills') || {})[0]?.content); globalThis.__vitehubScheduleColocatedSkillsProof.push(text); return { text } } } })",
@@ -36,13 +31,6 @@ it.each(["default-expression", "default-binding"])("preserves discovered Skills 
     if (exportForm === "default-reexport") {
       await writeFile(join(agentDir, "index.ts"), "export { default } from './definition'")
     }
-=======
-    await writeFile(join(agentDir, "index.ts"), [
-      "import { defineAgent } from '@vite-hub/agent'",
-      "const reporter = defineAgent({ runtime: false, driver: { run: ({ context }) => { const text = new TextDecoder().decode(Object.values(context.get('agent.colocatedSkills') || {})[0]?.content); globalThis.__vitehubScheduleColocatedSkillsProof.push(text); return { text } } } })",
-      exportForm === "default-expression" ? "export default reporter" : "export { reporter as default }",
-    ].join("\n"))
->>>>>>> 29515667 (fix(agent): preserve composed Skills across discovery and Schedule builds)
     await writeFile(join(root, "server", "schedules", "daily.ts"), [
       "import { defineAgent, runAgent } from '@vite-hub/agent'",
       "import { defineSchedule } from '@vite-hub/schedule'",
