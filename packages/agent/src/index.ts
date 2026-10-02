@@ -1128,7 +1128,7 @@ async function runAgentAsWorkflow<
   }
   // Preparation failures happen before a provider run can create its journal.
   const recordPreparationFailure = async (error: unknown) => {
-    const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
+    const status = invocationFailureWasCancelled(error, input.abortSignal) || invocationFailureWasCancelled(error, replayJournal?.abortSignal) ? "cancelled" : "failed"
     await activity?.update(status, error)
     if (!hasAgentDefinition(agent)) return
     const preservesDeliveryRun = isAgentChannelDeliveryWorkflowBinding(input.context?.[agentChannelDeliveryWorkflowContextKey])
@@ -1315,13 +1315,19 @@ async function runAgentAsWorkflow<
     // A replay can be cancelled after reserving the journal but before the
     // provider accepts the Workflow run. Observe the durable request before
     // handing the claim to the provider.
-    await replayJournal.watchCancellation(invocationCancellationDriver(agent))
-    replayJournal.abortSignal.throwIfAborted()
-    if (!await replayJournal.prepareWorkflowDispatch({ name: workflowName, provider: (workflowConfig && workflowConfig.provider) || "unknown" })) {
-      throw new Error("Could not persist the Workflow dispatch intent.")
+    try {
+      await replayJournal.watchCancellation(invocationCancellationDriver(agent))
+      replayJournal.abortSignal.throwIfAborted()
+      if (!await replayJournal.prepareWorkflowDispatch({ name: workflowName, provider: (workflowConfig && workflowConfig.provider) || "unknown" })) {
+        throw new Error("Could not persist the Workflow dispatch intent.")
+      }
+      payload.invocationClaimToken = await replayJournal.handoffClaim({ workflowDispatch: true })
+      if (!payload.invocationClaimToken) throw new Error("Could not transfer the Invocation execution claim.")
     }
-    payload.invocationClaimToken = await replayJournal.handoffClaim({ workflowDispatch: true })
-    if (!payload.invocationClaimToken) throw new Error("Could not transfer the Invocation execution claim.")
+    catch (error) {
+      await recordPreparationFailure(error)
+      throw error
+    }
   }
   try {
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
@@ -1331,7 +1337,7 @@ async function runAgentAsWorkflow<
     )) as AgentWorkflowRun<AgentWorkflowOutput<TOutput>>
   }
   catch (error) {
-    const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
+    const status = invocationFailureWasCancelled(error, input.abortSignal) || invocationFailureWasCancelled(error, replayJournal?.abortSignal) ? "cancelled" : "failed"
     await activity?.update(status, error)
     const ambiguous = Boolean(replayJournal && (workflowConfig && workflowConfig.provider) === "vercel" && inputHandedOff)
       || isAmbiguousAgentWorkflowStartFailure(error)
