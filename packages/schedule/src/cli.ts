@@ -369,9 +369,9 @@ async function runScheduleCommand(
     endpoint: scheduleDevEndpoint,
     fetch: fetchImpl,
     parseDiscovery: (value) => {
-      if (!value || typeof value !== "object") return {}
       // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Discovery payloads are parsed at this transport boundary.
-      // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The discovery parser narrows this value to a record before reading fields.
+      if (!value || typeof value !== "object") return {}
+      // SAFETY: The discovery parser has narrowed the untrusted response to an object before reading its fields.
       const record = value as Record<string, unknown>
       return { message: record.message, root: record.root, runtime: record.runtime, scheduleDevTokenServerId: record.scheduleDevTokenServerId }
     },

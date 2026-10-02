@@ -1,5 +1,3 @@
-import { isPlainObject } from "./object.ts"
-
 import type { ProvisionStep } from "./provision.ts"
 
 export interface ViteHubCliStreams {
@@ -155,6 +153,7 @@ export interface ViteHubDevServerDiscoveryOptions {
   isCompatibleRoot?: (rootDir: string, serverRoot: string) => boolean
   rootDir: string
   serverUrl: string
+  signal?: AbortSignal | null
   stderr: ViteHubCliStreams["stderr"]
 }
 
@@ -169,8 +168,9 @@ export function resolveViteHubDevServerUrl(env: NodeJS.ProcessEnv): string {
 }
 
 function parseViteHubDevTimeout(value: string, error: (message: string) => Error): number {
-  const timeout = Number.parseInt(value, 10)
-  if (!Number.isFinite(timeout) || timeout <= 0) throw error("--timeout must be a positive number.")
+  const timeout = Number(value)
+  if (!Number.isInteger(timeout) || timeout <= 0) throw error("--timeout must be a positive integer.")
+  if (timeout > 2_147_483_647) throw error("--timeout must be at most 2147483647 milliseconds.")
   return timeout
 }
 
@@ -244,7 +244,7 @@ export async function fetchViteHubDevEndpoint(
  * valid, the server does not answer, or the server root does not match.
  */
 export async function discoverViteHubDevServer<TDiscovery extends { root?: unknown }>(
-  options: ViteHubDevServerDiscoveryOptions,
+  options: ViteHubDevServerDiscoveryOptions & { parseDiscovery?: (value: unknown) => TDiscovery },
 ): Promise<ViteHubDevServerTarget<TDiscovery> | undefined> {
   let url: string
   try {
@@ -258,6 +258,7 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   try {
     response = await fetchViteHubDevEndpoint(options.fetch, url, options.endpoint, {
       headers: { accept: "application/json" },
+      signal: options.signal,
     })
   }
   catch {
@@ -268,9 +269,23 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
     options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
     return
   }
+  const rawDiscovery = await response.json().catch(() => undefined)
   // SAFETY: the owner endpoint defines the discovery shape. Callers check each field before use.
-  const discovery = await response.json().catch(() => ({})) as TDiscovery
+  const discovery = options.parseDiscovery
+    ? options.parseDiscovery(rawDiscovery)
+    // SAFETY: Existing callers validate discovery fields; typed callers can supply the owner parser above.
+    : (() => {
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The unparsed discovery response is validated at this transport boundary.
+        if (rawDiscovery === null || typeof rawDiscovery !== "object") return {}
+        // SAFETY: The generic caller contract supplies the discovery shape after the transport boundary validates it is an object.
+        return rawDiscovery as TDiscovery
+      })()
+  if (options.signal?.aborted) {
+    options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
+    return
+  }
   const isCompatibleRoot = options.isCompatibleRoot ?? ((rootDir: string, serverRoot: string) => serverRoot === rootDir)
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate the untrusted discovery root before comparing it with the local project.
   if (typeof discovery.root === "string" && !isCompatibleRoot(options.rootDir, discovery.root)) {
     options.stderr.write(`Compatible Vite Development Server root mismatch: ${discovery.root}\n`)
     return
