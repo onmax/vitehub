@@ -36,12 +36,14 @@ test('webhook evidence stays durable without model passes until host policy chan
   assert.equal((await inbox.claim(1)).length, 1)
 })
 
-test('pending check revisions do not fence wait creation or wake', async t => {
+test('revision changes fence wait creation and wake even without a new generation', async t => {
   const inbox = await setup(t)
   const claim = (await inbox.claim(1))[0]!
   await inbox.ingest('pending', 'check_run', { repository: { full_name: repository }, action: 'created',
     check_run: { id: 10, head_sha: 'a', status: 'queued', pull_requests: [{ number: 7 }] } })
-  assert.equal(await inbox.finish(claim, { text: 'waiting', wait }), true)
+  assert.equal(await inbox.finish(claim, { text: 'stale', wait }), false)
+  assert.equal((await inbox.get(repository, 7))!.lease, null)
+  assert.equal(await inbox.finish((await inbox.claim(1))[0]!, { text: 'waiting', wait }), true)
   const observed = (await inbox.get(repository, 7))!
   await inbox.ingest('progress', 'check_run', { repository: { full_name: repository }, action: 'in_progress',
     check_run: { id: 10, head_sha: 'a', status: 'in_progress', pull_requests: [{ number: 7 }] } })

@@ -146,6 +146,8 @@ export interface BoxProcessExit {
 export interface BoxProcess {
   readonly pid?: number;
   readonly stderr: ReadableStream<Uint8Array>;
+  /** Process input. Present only when the runtime forwards stdin to the command. */
+  readonly stdin?: WritableStream<Uint8Array>;
   readonly stdout: ReadableStream<Uint8Array>;
   kill(signal?: string): Promise<void>;
   wait(): Promise<BoxProcessExit>;

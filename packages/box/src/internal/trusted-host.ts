@@ -24,7 +24,7 @@ import {
 } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import { promisify } from "node:util";
 import type { ExecutionAuthority } from "@vite-hub/runtime";
 
@@ -980,9 +980,13 @@ function processHandle(
     });
   });
   if (abortSignal?.aborted) abort();
+  let stdin: WritableStream<Uint8Array> | undefined;
   return {
     pid: child.pid,
     stderr: Readable.toWeb(child.stderr) as ReadableStream<Uint8Array>,
+    get stdin() {
+      return (stdin ??= Writable.toWeb(child.stdin));
+    },
     stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     wait: () => wait,
     async kill() {

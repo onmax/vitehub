@@ -149,6 +149,31 @@ describe("createCrabboxRuntime", () => {
     })
   }, 30_000)
 
+  it("forwards spawned process stdin through the Crabbox command", async () => {
+    const root = await temporaryRoot()
+    const workspace = join(root, "workspace")
+    const bin = join(root, "bin")
+    await Promise.all([mkdir(workspace), mkdir(bin)])
+    await fakeCrabbox(bin)
+
+    await withEnvironment({ PATH: `${bin}:${process.env.PATH || ""}` }, async () => {
+      const box = await resolveBox({ runtime: createCrabboxRuntime({ profile: "babysitter" }), cwd: workspace }, {})
+      const session = await box.open()
+      try {
+        const child = await session.spawn!("sh", ["-c", "while read -r line; do printf 'got:%s\\n' \"$line\"; done"])
+        const writer = child.stdin!.getWriter()
+        await writer.write(new TextEncoder().encode("one\ntwo\n"))
+        await writer.close()
+
+        await expect(new Response(child.stdout).text()).resolves.toBe("got:one\ngot:two\n")
+        await expect(child.wait()).resolves.toEqual({ code: 0 })
+      }
+      finally {
+        await session.close()
+      }
+    })
+  }, 30_000)
+
   it.skipIf(process.platform !== "linux")("reclaims session-marked processes across supervisors and preserves unrelated root observers", async () => {
     const root = await temporaryRoot()
     const workspace = join(root, "workspace")

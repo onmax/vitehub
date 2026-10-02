@@ -137,6 +137,28 @@ describe("BoxSession", () => {
     await expect(session.spawn!("true")).rejects.toThrow("Box session is closed");
   });
 
+  it("streams stdin to spawned processes", async () => {
+    const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
+    const session = await box.open();
+
+    try {
+      const child = await session.spawn!(process.execPath, [
+        "-e",
+        "let text = ''; process.stdin.on('data', chunk => text += chunk); process.stdin.on('end', () => process.stdout.write(text.toUpperCase()))",
+      ]);
+      expect(child.stdin).toBe(child.stdin);
+      const writer = child.stdin!.getWriter();
+      await writer.write(new TextEncoder().encode("first\n"));
+      await writer.write(new TextEncoder().encode("second\n"));
+      await writer.close();
+
+      await expect(new Response(child.stdout).text()).resolves.toBe("FIRST\nSECOND\n");
+      await expect(child.wait()).resolves.toEqual({ code: 0 });
+    } finally {
+      await session.close();
+    }
+  });
+
   it("rolls back newly initialized state when initialization fails", async () => {
     let seeds = 0;
     const stateRoot = await mkdtemp(join(tmpdir(), "vitehub-box-state-"));

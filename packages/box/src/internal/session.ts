@@ -12,6 +12,7 @@ import { boxErrorDiagnostics } from "../error-diagnostics.ts"
 export interface RuntimeProcess {
   readonly pid?: number;
   readonly stderr: ReadableStream<Uint8Array>;
+  readonly stdin?: WritableStream<Uint8Array>;
   readonly stdout: ReadableStream<Uint8Array>;
   kill(signal?: string): Promise<void>;
   wait(): Promise<{ exitCode: number }>;
@@ -287,6 +288,9 @@ function adaptProcess(process: RuntimeProcess): BoxProcess {
   return {
     pid: process.pid,
     stderr: process.stderr,
+    get stdin() {
+      return process.stdin;
+    },
     stdout: process.stdout,
     async kill(signal?: string) {
       await process.kill(signal);

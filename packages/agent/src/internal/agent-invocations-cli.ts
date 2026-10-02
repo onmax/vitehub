@@ -265,7 +265,8 @@ function journalDatabase(parsed: ParsedArgs, context: AgentInvocationsCliContext
     : context.env.VITEHUB_CONSOLE_DATABASE_AUTH_TOKEN
   const token = authToken ? { authToken } : {}
   const secrets = authToken ? [authToken] : []
-  if (configured && !/^file:/i.test(configured) && /^[a-z][a-z\d+.-]+:/i.test(configured)) {
+  const isWindowsPath = /^[a-z]:[\\/]/i.test(configured ?? "")
+  if (configured && !isWindowsPath && !/^file:/i.test(configured) && /^[a-z][a-z\d+.-]+:/i.test(configured)) {
     let location: URL
     try {
       location = new URL(configured)

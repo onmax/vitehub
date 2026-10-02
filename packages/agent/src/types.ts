@@ -65,26 +65,12 @@ export type AgentCapabilities = RuntimeCapabilities
 
 export interface AgentRuntimeConfig {}
 
-/** Named Box integrations owned by an agent definition.
- * Values are intentionally opaque to the agent package: integrations can
- * expose their own typed contracts while remaining lazily resolved.
- */
-export type AgentBoxValue<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
-  | BoxDefinition<any>
-  | Record<string, unknown>
-  | (string & {})
-
-export type AgentBoxDefinitions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
-  Readonly<Record<string, AgentBoxValue<TRuntimeConfig>>>
-export type AgentBoxInput<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
-  | AgentBoxDefinitions<TRuntimeConfig>
-  | (() => AgentBoxDefinitions<TRuntimeConfig>)
-
-export interface AgentBoxContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
-  readonly definitions: AgentBoxDefinitions
-  readonly [name: string]: unknown
-  get(name: string): unknown
-}
+/** Box used by a built-in provider Driver. Callbacks resolve once per invocation. */
+export type AgentBoxDefinition<
+  TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
+  CALL_OPTIONS = unknown,
+  TContextValues extends object = AgentInvocationContextValues,
+> = BoxDefinition<AgentRunCallbackContext<TRuntimeConfig, CALL_OPTIONS, TContextValues>>
 
 export interface AgentHostIdentity {
   readonly name: string
@@ -107,8 +93,6 @@ export interface AgentGitHub {
 export interface AgentRuntimeContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
   extends Omit<RuntimeHostContext<TRuntimeConfig>, "cloudflare" | "platform" | "runtime"> {
   agentIdentity?: AgentHostIdentity
-  /** Agent-owned Box integrations. Secrets are resolved by integrations on demand. */
-  box?: AgentBoxContext<TRuntimeConfig>
   channelDelivery?: AgentChannelDelivery
   cloudflare?: RuntimeHostContext<TRuntimeConfig>["cloudflare"]
   /** The Agent GitHub identity from `defineAgent({ github })`. */
@@ -1771,7 +1755,8 @@ type AgentSharedSettings<
   TIntercept = never,
   TDataInput = TData,
 > = {
-  box?: AgentBoxInput<TRuntimeConfig>
+  /** Run the built-in provider Driver inside this Box. Each invocation opens a new Box session. */
+  box?: AgentBoxDefinition<TRuntimeConfig, CALL_OPTIONS, TContextValues>
   /**
    * GitHub identity for this Agent. Provider Drivers receive its `access().env`,
    * and the pull request checkout and `git()` use its token.
@@ -1849,7 +1834,7 @@ export interface AgentDefinition<
   TInterceptOutput = TOutput,
 > extends AgentDataCarrier<TDataInput>, AgentDataOutputCarrier<TData>, AgentDriverOutputCarrier<TDriverOutput>, AgentInterceptOutputCarrier<TInterceptOutput> {
   [agentOutputType]?: TOutput
-  box?: AgentBoxInput<TRuntimeConfig>
+  box?: AgentBoxDefinition<TRuntimeConfig, CALL_OPTIONS, TContextValues>
   github?: AgentGitHub
   health?: AgentHealthDescriptor
   capabilities?: AgentCapabilityDefinition<TRuntimeConfig>[]
@@ -1875,10 +1860,6 @@ export interface AgentDefinition<
   uiMessageStream?: AgentUIMessageStreamProjectionResolver<TRuntimeConfig, CALL_OPTIONS, TContextValues>
   version?: string
   workspace?: WorkspaceAgentWorkspaceConfig
-}
-
-export interface AgentBox {
-  [key: string]: unknown
 }
 
 export type AgentInput<
