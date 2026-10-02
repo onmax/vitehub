@@ -422,23 +422,25 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     },
     vitehub: {
       cli: async () => (await import("./cli.ts")).createWorkflowCliContributor(),
-      inspect: () => ({
-        definitions: [{
-          kind: "workflow",
-          label: "Workflows",
-          list: () => {
-            const rootDir = resolved?.root ?? process.cwd()
-            return inspectWorkflowDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
-          },
-        }],
-        providerOutput: (() => {
-          const options = normalizeWorkflowOptions(workflow, { hosting: internalOptions?.hosting ?? "vercel" })
+      inspect: () => {
+        const options = normalizeWorkflowOptions(workflow, { hosting: internalOptions?.hosting ?? "vercel" })
+        return {
+          definitions: options ? [{
+            kind: "workflow",
+            label: "Workflows",
+            list: () => {
+              const rootDir = resolved?.root ?? process.cwd()
+              return inspectWorkflowDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
+            },
+          }] : [],
+          providerOutput: (() => {
           const rootDir = resolveViteHubProjectRoot(resolved?.root ?? process.cwd())
           if (options?.provider === "cloudflare") return [{ description: "Generated Cloudflare Workflow worker", owner: "workflow", path: resolve(createDefaultCloudflareOutputRoot(rootDir), "index.js") }]
           if (options?.provider === "vercel") return [{ description: "Generated Vercel Workflow function", owner: "workflow", path: resolve(createDefaultVercelOutputRoot(rootDir), "functions", resolveNitroVercelFunctionName(resolved ?? {}, "workflow") ?? "__server.func", "index.mjs") }]
           return []
-        })(),
-      }),
+          })(),
+        }
+      },
       workflow: {
         async createNitroConfig({ nitro, projectRoot, serverDirs: nitroServerDirs, transformRegistry }: WorkflowNitroConfigOptions) {
           return await createCloudflareWorkflowNitroConfig({
