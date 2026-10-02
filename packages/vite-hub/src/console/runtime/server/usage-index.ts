@@ -245,18 +245,18 @@ export function createConsoleUsageIndex(
       ];
       const aggregate = (group: string, modelRows = false): UsageStatement => ({
         // Group equal decimal costs before multiplication in JS bigint. SQLite REAL must not round money.
-        sql: `SELECT ${group} AS grouping, cost_usd AS cost,
+        sql: `SELECT ${group} AS grouping, ${modelRows ? "model_key AS model," : ""} cost_usd AS cost,
           MAX(estimated) AS estimated,
           COUNT(*) AS count, COUNT(usage) AS recorded, MAX(incomplete) AS incomplete,
           ${metrics.map((metric) => `SUM(${metric}) AS ${metric}, COUNT(${metric}) AS ${metric}Count`).join(",")}
           FROM ${table} WHERE model_key ${modelRows ? "!=" : "="} '' AND ${filter}
-          GROUP BY grouping, cost`,
+          GROUP BY grouping, cost${modelRows ? ", model_key" : ""}`,
         args,
       });
       const results = await client.batch(
         [
           aggregate(bucket),
-          aggregate("model_key", true),
+          aggregate(bucket, true),
           aggregate("agent"),
           {
             sql: `SELECT * FROM ${table} WHERE model_key = '' AND ${filter}${after ? " AND (at < ? OR (at = ? AND id < ?))" : ""} ORDER BY at DESC, id DESC LIMIT 51`,
@@ -279,10 +279,10 @@ export function createConsoleUsageIndex(
           message: "Expected six usage query results",
         });
       const incomplete = Number(remaining.rows[0]?.count) > 0;
-      const groups = (rows: UsageRow[]) => {
+      const groups = (rows: UsageRow[], groupBy = (row: UsageRow) => String(row.grouping)) => {
         const result = new Map<string, UsageTotal>();
         for (const row of rows) {
-          const key = String(row.grouping);
+          const key = groupBy(row);
           const total = result.get(key) ?? emptyTotals();
           const count = Number(row.count);
           total.invocations += count;
@@ -301,6 +301,14 @@ export function createConsoleUsageIndex(
         }
         return result;
       };
+      const modelKey = (row: UsageRow) => String(row.model);
+      const periodModelRows = new Map<string, UsageRow[]>();
+      for (const row of models.rows) {
+        const start = String(row.grouping);
+        const rows = periodModelRows.get(start) ?? [];
+        rows.push(row);
+        periodModelRows.set(start, rows);
+      }
       const periodGroups = groups(periods.rows);
       const totals =
         groups(periods.rows.map((row) => ({ ...row, grouping: "total" }))).get("total") ??
@@ -318,7 +326,10 @@ export function createConsoleUsageIndex(
         buckets.push({
           start,
           ...publicTotals(periodGroups.get(start) ?? emptyTotals(), !incomplete),
-          models: [],
+          models: [...groups(periodModelRows.get(start) ?? [], modelKey)].map(([model, total]) => ({
+            model,
+            ...publicTotals(total, !incomplete),
+          })),
         });
       }
       const run = (row: UsageRow) => ({
@@ -345,7 +356,7 @@ export function createConsoleUsageIndex(
         generatedAt: new Date().toISOString(),
         buckets,
         totals: publicTotals(totals, !incomplete),
-        models: [...groups(models.rows)].map(([model, total]) => ({
+        models: [...groups(models.rows, modelKey)].map(([model, total]) => ({
           model,
           ...publicTotals(total, !incomplete),
         })),
