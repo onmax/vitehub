@@ -23,6 +23,8 @@ export function createConnectionTransport(name: string, definition: ConnectionDe
     const headers = new Headers(input)
     headers.delete("authorization")
     headers.delete(header)
+    // Never forward caller-controlled response-cookie data through provider redirects.
+    headers.delete("set-cookie")
     return Object.fromEntries(headers)
   }
 
