@@ -1461,6 +1461,19 @@ describe("agent CLI", () => {
     )
   })
 
+  it("redacts URL credentials and query strings in invalid Invocation CLI arguments", async () => {
+    const stderr = stream()
+    const exitCode = await runAgentInvocationsCli([
+      "list", "--urll=https://user:secret@example.test/?token=private#fragment",
+    ], { env: {}, stderr, stdout: stream() })
+
+    expect(exitCode).toBe(1)
+    expect(stderr.output()).toContain("Unknown option: --urll=https://example.test/.")
+    expect(stderr.output()).not.toContain("secret")
+    expect(stderr.output()).not.toContain("private")
+    expect(stderr.output()).not.toContain("fragment")
+  })
+
   it("cancels an Invocation through the Agent Invocations dev endpoint in the Nitro runtime", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-invocation-cancel-"))
     try {
