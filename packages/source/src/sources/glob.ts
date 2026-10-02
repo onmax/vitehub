@@ -16,9 +16,23 @@ export interface GlobSourceOptions {
   prefix?: string
 }
 
+interface GlobKeyCache {
+  snapshot?: { key: string, keys: Promise<string[]> }
+  latest?: { key: string, keys: string[] }
+}
+
 export function glob(options: GlobSourceOptions): FileSource<string> {
-  let snapshot: { key: string, keys: Promise<string[]> } | undefined
-  let latest: { key: string, keys: string[] } | undefined
+  // createSource retains one context for each reader's preparation and reads.
+  const caches = new WeakMap<SourceContext, GlobKeyCache>()
+
+  function cacheFor(ctx: SourceContext) {
+    let cache = caches.get(ctx)
+    if (!cache) {
+      cache = {}
+      caches.set(ctx, cache)
+    }
+    return cache
+  }
 
   async function getContextKey(ctx: SourceContext) {
     const { root, cwd } = await resolveGlobPaths(resolveSourceRoot(ctx), options.cwd)
@@ -51,26 +65,28 @@ export function glob(options: GlobSourceOptions): FileSource<string> {
   async function refreshKeys(ctx: SourceContext) {
     const key = await getContextKey(ctx)
     const keys = await loadKeys(ctx)
-    latest = { key, keys }
+    cacheFor(ctx).latest = { key, keys }
     return keys
   }
 
   async function getCachedKeys(ctx: SourceContext) {
     if (options.keyCache === false) return await refreshKeys(ctx)
     const key = await getContextKey(ctx)
-    if (!snapshot || snapshot.key !== key) {
+    const cache = cacheFor(ctx)
+    if (!cache.snapshot || cache.snapshot.key !== key) {
       const keys = refreshKeys(ctx)
       const entry = { key, keys }
-      snapshot = entry
+      cache.snapshot = entry
       keys.catch(() => {
-        if (snapshot === entry) snapshot = undefined
+        if (cache.snapshot === entry) cache.snapshot = undefined
       })
     }
-    return await snapshot.keys
+    return await cache.snapshot.keys
   }
 
   async function getKnownKeys(ctx: SourceContext) {
     const key = await getContextKey(ctx)
+    const { latest } = cacheFor(ctx)
     if (latest?.key === key) return latest.keys
     return await getCachedKeys(ctx)
   }
@@ -95,7 +111,7 @@ export function glob(options: GlobSourceOptions): FileSource<string> {
   const source: FileSource<string> = {
     name: "glob",
     async prepare(ctx: SourceContext) {
-      snapshot = undefined
+      cacheFor(ctx).snapshot = undefined
       await getCachedKeys(ctx)
     },
     getKeys(ctx: SourceContext) {
