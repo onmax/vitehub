@@ -239,7 +239,6 @@ Pass `--json` for the structured inspection contract.
 
 - A `webChat()` Channel exposes the Agent through the conventional `/api/_vitehub/agents/[agent]/chat` dispatcher. Use `webChat({ route: false })` when an Agent should not answer it, or `chat()` when an app-owned trigger needs Chat History and `chat.message` behavior without Channel-owned route exposure; see the [First Agent guide](https://vitehub.dev/docs/getting-started/first-agent).
 - `defineChannel(kind, { message })` declares the methods that `agent:finish` and `agent:error` hooks call through `event.message`, typed from the Agent's `channels`. Set `dryRun: true` in the Invocation input to record write methods in the trace instead of calling the provider; see [Act on the Channel message in hooks](https://vitehub.dev/docs/agents/channels#act-on-the-channel-message-in-hooks).
-- A Channel `history` Collection lets `replayChannel()` from `@vite-hub/agent/server` and `vitehub channels replay` send past messages through the Channel trigger. Replay skips items that already have an Invocation; see [Replay Channel history](https://vitehub.dev/docs/agents/channels#replay-channel-history).
 - Built-in GitHub `webhook` and `dev` Triggers supply `{ repository, pullRequest, run, trigger }` as Channel message data. Custom `message.data` schemas must accept this pull request context.
 - `workspaceShell()` runs scoped shell/file work through [`@vite-hub/shell`](../shell/README.md).
 - `webSearch()` searches and reads the web with [Brave](https://brave.com/search/api/), [Exa](https://docs.exa.ai/), [Jina](https://jina.ai/en-US/reader/), [SearXNG](https://docs.searxng.org/dev/search_api.html), [SerpApi](https://serpapi.com/search-api), [SerpBase](https://serpbase.dev/docs), or [Tavily](https://docs.tavily.com/).
@@ -361,12 +360,6 @@ Vite discovers Agent files and generates runtime state for the active server hos
 Learn more at [vitehub.dev](https://vitehub.dev).
 
 ## Invocation summaries
-
-Channel history replay stores the trigger's `annotations`, `channelId`, `origin`, and `threadId` on the claimed Invocation before Driver execution or Workflow dispatch. A failed metadata write fails that item before execution. Custom stores must apply those fields and the `workflow` dispatch binding in `update()` under the supplied execution claim.
-
-Native Vercel replay retains the logical replay ID in the Invocation and stores the provider-assigned Workflow ID in `workflow`. Dispatch intent is persisted before submission. If acknowledgement is lost before a provider ID can be retained, replay reports the unknown outcome and blocks resubmission. The Workflow worker confirms its physical ID before Driver execution. Recovery and cancellation use the provider ID.
-
-A pending replay reservation for a discovery-default Workflow requires the discovered Agent identity to recover. Without that identity, replay skips the existing item, including legacy records without Workflow metadata, because a provider run may already have been accepted. Use the host runtime context for provider reconciliation. `runtime: false` permits inline retries for trigger preparation failures when no Workflow dispatch is recorded. Inline replay must persist the running state before execution. A later replay skips that Invocation if completion persistence fails. Fresh items can still execute inline without a discovered identity.
 
 `defineAgentInvocations()` returns `getSummary(id)` for metadata reads without observations. Every store must implement this method. Use `get(id)` for the full record or `get(id, { observationNames: ["agent.invocation.finish"] })` to read only observations with those exact names. An empty list returns no observations. The built-in SQL stores filter observation payloads inside the database. Custom stores can apply the same option to avoid loading unrelated payloads; the Invocations wrapper also filters their returned records. Both methods return `undefined` when the Invocation does not exist.
 
@@ -498,7 +491,7 @@ Import `observability()` and `createAgentEvlog()` from `@vite-hub/agent/evlog`, 
 
 `createAgentEvlog()` from `@vite-hub/agent/evlog` exports invocation lifecycle events through evlog. Add its `capability` to your Agent, connect its `drain` to the host, and await `flush()` after invocation background tasks finish. `@vite-hub/agent/evlog/posthog` adds PostHog events, Error Tracking and the official evlog log drain through optional dependencies.
 
-`createPapercutReporter()` from `@vite-hub/agent/capabilities` journals reports in persistent Agent Invocations before delivery and replays pending reports after restart. See [evlog](../../docs/content/docs/agents/evlog.md) for delivery, privacy and shutdown contracts.
+`createPapercutReporter()` from `@vite-hub/agent/capabilities` journals reports in persistent Agent Invocations before delivery and replays pending reports after restart. See [observability](../../docs/content/docs/agents/observability.md) for delivery, privacy and shutdown contracts.
 
 GitHub Channels with `activity: true` keep one managed comment per pull request. A single table lists current and recent session links, status, relative start times, and completed durations. Task checkboxes and the latest result appear below; previous results are collapsed. Full transcripts stay in the linked sessions.
 
@@ -543,18 +536,13 @@ The plugin starts it and closes it with Nitro, and serves drain status at
 `/api/drain`, configurable with `drainRoute`. SIGUSR2 starts a drain.
 Use the runtime drain CLI before replacing the process.
 
-On SIGTERM or SIGINT, the plugin first calls `host.close()`. The host stops
-admission and waits only for the invocations it tracks. HTTP stays up during this
-drain, so webhooks still reach durable queues. Then the plugin runs the server's
-own signal listeners, which close HTTP, and calls `process.exit(0)`. It waits at
-most 10 seconds for HTTP to close. A second signal does not start more work.
-The Nitro Node server adds its srvx shutdown listeners after plugins run, and
-Nitro has no option to order them after a plugin. The plugin therefore detaches
-the listeners added during startup and calls them after the drain.
-
 `@vite-hub/agent/server/github-inbox` provides a SQLite PR inbox for Node hosts.
-Construct `PullRequestInbox({ path, repositories, filter })`, seed discovered PRs,
-and ingest verified webhook deliveries with `ingest(deliveryId, event, payload)`.
+Construct `PullRequestInbox({ storage, repositories, filter })` with
+`agentState.extension("babysitter")` from `@vite-hub/agent/state/sqlite` to keep
+the inbox tables in the Agent State database, or with `path` for a private
+`node:sqlite` file. `scope` separates inboxes that share one storage. Every
+method is asynchronous. Seed discovered PRs and ingest verified webhook
+deliveries with `ingest(deliveryId, event, payload)`.
 `filter` uses `GitHubPullRequestFilter` from the GitHub Channel. PR properties apply
 to discovery and claims. Actor and action rules gate new webhook admissions only;
 existing PRs still receive lifecycle evidence that can cancel their active work.
@@ -568,6 +556,15 @@ The inbox binds the wait to the current head and excludes it from claims until
 `wake(observedSnapshot, evidenceKey)` sees changed evidence. See the
 [host reconciliation contract](../../docs/content/docs/reference/github-inbox-waits.md).
 `recoverLeases()` releases expired leases only, including after a process restart.
+Claims, recovery, head matching and `summary()` read indexed columns, so they do
+not parse every stored snapshot. `detectChangedPullRequests()` reads every open PR of a repository with one
+GraphQL query per 50 PRs, at most once a minute. It seeds PRs that no delivery
+reported and marks PRs whose state fingerprint changed, or that closed.
+`probeChangedSnapshots()` then reads only those PRs over REST and ingests them,
+so lost webhook deliveries are recovered without probing unchanged PRs. Row
+order and an unknown mergeability do not count as changes. `pruneDeliveries()` drops delivery payloads after
+7 days and delivery IDs after 30 days. `importLegacyFile(path)` copies an older
+`node:sqlite` inbox file once, clears its leases, and leaves the file unchanged.
 `createClaimStopCheck()` checks lease, PR state, and head changes, and accepts a
 repair push only when the provider Git HEAD proves the new head. Call `close()`
 when the host stops. `snapshotPrompt()` serializes the retained feedback with
@@ -662,7 +659,7 @@ agent: {
 
 The generated `/api/_vitehub/ready` route supports GET and HEAD, returning 503 until preparation succeeds. `requireNonEmpty` rejects an empty prepared Workspace; it is opt-in. Set `route` to change the readiness path.
 
-`agentEvlogPlugin(telemetry, reporters)` from `@vite-hub/agent/evlog` owns Nitro request IDs, drain and error hooks, reporter lifecycle, and shutdown flush. See the [evlog guide](https://vitehub.dev/docs/agents/evlog) for host drain reuse and background delivery.
+`agentEvlogPlugin(telemetry, reporters)` from `@vite-hub/agent/evlog` owns Nitro request IDs, drain and error hooks, reporter lifecycle, and shutdown flush. See the [observability guide](https://vitehub.dev/docs/agents/observability) for host drain reuse and background delivery.
 
 Set `transcripts: { retention: "forever" }` in `createLibsqlAgentState()` to preserve Chat transcript rows before startup expiry cleanup and ignore future transcript TTLs. Other state still expires normally. This cannot recover rows already deleted.
 
@@ -727,7 +724,8 @@ Without a template, extending instructions replaces the inherited document.
 Import `babysitter` from `@vite-hub/agent/presets/babysitter`, or
 `vite-hub/agent/presets/babysitter` in an application. It repairs selected pull
 requests, addresses human and bot review feedback, and parks while checks run.
-Its only workflow options are the GitHub Channel `filter` and `autoMerge`:
+Its workflow options are the GitHub Channel `filter`, the provider `driver`, and
+the `merge` policy:
 
 ```ts
 import { defineAgent } from "@vite-hub/agent"
@@ -737,38 +735,87 @@ export default defineAgent({
   preset: "babysitter",
   presets: { babysitter },
   options: {
-    filter: { labels: { allow: ["repair"], deny: ["do-not-touch"] } },
-    autoMerge: false,
+    filter: {
+      repository: { allow: ["acme/app"] },
+      labels: { allow: ["repair"], deny: ["do-not-touch"] },
+    },
+    driver: "codex",
+    merge: false,
+    concurrency: 2,
   },
   driver: { model: "your-codex-model" },
 })
 ```
 
+`driver` selects the provider Driver that repairs each checkout: `"codex"` (the
+default) or `"claude-code"`. Set its model and other provider settings with the
+ordinary `driver` field. Model and custom run Drivers cannot repair a checkout.
+
+`merge` defaults to `false`:
+
+| Value | Behavior |
+| --- | --- |
+| `false` | The Babysitter never merges. |
+| `"auto"` | The worker may call `requestAutoMerge`, which requests GitHub native auto-merge. |
+| `"direct"` | Before a model pass, the host squash-merges a PR that is ready. |
+| `{ strategy: "direct", method, ready }` | Direct merge with `"squash"`, `"merge"`, or `"rebase"`, and an optional `ready` hook. |
+
+A direct merge needs passing required checks, completed and successful
+current-head checks and statuses, loaded and resolved review threads, a
+non-draft PR, and GitHub's live `mergeable_state: "clean"` on the default
+branch. The merge request pins the head SHA, so a concurrent push makes GitHub
+reject it. `ready({ repository, number, head, snapshot, requiredChecks })` can
+add a policy, such as a required approval check; return `true` or a reason. Any
+other result runs a normal repair pass. `autoMerge: true` is a deprecated alias
+for `merge: "auto"`.
+
+After a repair push, the pass may continue for 3 minutes, then ends. The PR
+waits on the pushed head. Later events on a waiting PR start a pass only when
+they need one: new human or bot feedback, a new failing check, a merge conflict,
+or an unresolved review thread. Pending checks, the pushed head's synchronize
+event, and repeated results for failures the pass already saw keep it waiting.
+With `merge: "direct"`, passing required checks also wake it, so the host can
+merge. `reviewChecks` lists check names, such as a review bot's check, that keep
+a PR waiting while they run. A comment-only review with an empty body does not
+wake a waiting PR; its inline comments do. `noFindingsReviews` lists body
+prefixes, such as `"> ✅ No new issues found."`, of comment-only reviews that
+report no findings; these do not wake it either. A PR that ends three passes on one head without a
+push waits for new evidence. A stacked PR whose parent merged into the default
+branch is retargeted to the default branch. A provider rate limit is retried
+three times; after that, the host admits no PR work for an hour.
+
 Colocated `instructions.md` fills the preset's instruction slot without adding
 headings. Explicit `driver.instructions` replaces that slot. Use
 `{ mode: "replace", value: "..." }` to replace the complete instruction document.
 
-`createBabysitterRuntime` from `@vite-hub/agent/presets/babysitter/server` owns a
-SQLite inbox, bounded GitHub discovery, claims, checkout preparation, repair
-passes and wake handling. Provide a configured Agent, GitHub host, inbox path,
-repositories and concurrency. In a ViteHub application, obtain the Agent through
-`getAgentFromRegistry("babysitter")` so discovery applies its colocated files. The Vite plugin binds `#vitehub/agent/registry` in Vite and Nitro to generated lazy loaders. Build output embeds colocated instructions and skills, so lookup works before any webhook handler loads and does not read Markdown from the deployed filesystem. Outside a ViteHub build, pass an explicit registry to `getAgentFromRegistry(name, registry)`.
-Pass `agentName: "babysitter"` to `createBabysitterRuntime` when the discovered
-definition has no explicit `name`. This selects its configured origin when
-`vitehub({ publicUrl })` uses the per-Agent function form. The runtime defaults
-to the definition's `name`; an explicit `publicUrl` takes precedence.
-Connect `reconcile` to a Process Agent Host, `inbox.ingest` to the signed GitHub
-webhook receiver, and `workload` to health inspection. Keep credentials, provider
-settings, host capacity, telemetry and deployment resources in the application.
-Configure the GitHub host identity with a login and email for repair commits.
-Only its author and committer identity fields pass to the worker; credentials do not.
+A discovered Agent that imports the preset runs without more wiring on the Node
+server preset. ViteHub generates a Nitro plugin that starts a process host for
+it: a SQLite PR inbox in Agent State, bounded GitHub discovery of
+`filter.repository.allow`, claims, repair passes, and wake handling. Signed
+GitHub deliveries to `/api/_vitehub/agents/<name>/webhooks/github` feed the
+inbox; they never start the Agent directly. `GET /api/_vitehub/host/drain`
+reports drain status, and `GET /api/_vitehub/host/health` reports each host's
+health and queue. SIGUSR2 starts a drain. The build fails with `AGENT_B0022` on
+hosts that cannot keep a process running, and with `AGENT_B0023` without SQL
+Agent State. Hosts start in production builds, or in development only with
+`VITEHUB_AGENT_PROCESS_HOSTS=1`, so a development server does not repair real
+PRs by accident.
 
-Each pass uses a disposable Codex workspace with edit permission. GitHub tokens
+The host reads the GitHub App from `env.server.github` or `GITHUB_APP_ID`,
+`GITHUB_APP_PRIVATE_KEY` (or `GITHUB_APP_PRIVATE_KEY_PATH`), and
+`GITHUB_WEBHOOK_SECRET`. It resolves the App installation of each repository and
+commits as the App's bot. `GITHUB_APP_INSTALLATION_ID` pins one installation.
+A delivery without a configured webhook secret is rejected. Only the commit
+author and committer identity pass to the worker; credentials do not. On its
+first start, the host imports `.vitehub/pull-request-inbox.sqlite` from an
+earlier hand-wired Babysitter once.
+
+Each pass uses a disposable provider workspace with edit permission. GitHub tokens
 stay on the host. Tools provide PR-bound log reads, repair pushes, comments,
-metadata updates and thread resolution. `autoMerge: false` omits the merge tool
-and the host rejects auto-merge operations. Enabling it requests GitHub native
-auto-merge subject to current PR admission and repository checks and reviews.
-There is no direct merge or branch-deletion fallback.
+metadata updates and thread resolution. Unless `merge` is `"auto"`, the worker
+has no merge tool and the host rejects auto-merge operations. With `"auto"`, it
+requests GitHub native auto-merge subject to current PR admission and repository
+checks and reviews. Workers never merge directly or delete branches.
 
 ### Bound repeated PR work
 

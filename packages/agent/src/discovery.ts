@@ -232,6 +232,28 @@ function relativeExportBindings(clause: string[]): [string, string][] {
   return bindings
 }
 
+/** Presets whose Agents need a long-running process host. */
+const processHostPresetModules = new Set(["@vite-hub/agent/presets/babysitter", "vite-hub/agent/presets/babysitter"])
+
+/** Whether an Agent module statically imports a preset that needs a process host. */
+export function usesProcessHostPreset(source: string): boolean {
+  const { tokens } = tokenizeAgentSource(source)
+  for (let index = 0; index < tokens.length; index++) {
+    if (tokens[index] !== "import" || tokens[index + 1] === "(") continue
+    for (let next = index + 1; next < tokens.length && tokens[next] !== ";" && tokens[next] !== "import"; next++) {
+      if (!/^['"`]/.test(tokens[next] ?? "")) continue
+      if (processHostPresetModules.has(moduleSpecifier(tokens[next]))) return true
+      break
+    }
+  }
+  return false
+}
+
+/** Discovered Agents whose definitions use a process host preset, by discovered name. */
+export function discoverProcessHostAgentNames(definitions: readonly DiscoveredAgentDefinition[]): string[] {
+  return definitions.filter(definition => usesProcessHostPreset(readFileSync(definition.handler, "utf8"))).map(definition => definition.name).sort()
+}
+
 function isWorkspaceAgentDefinition(source: string, file: string): boolean {
   return inspectAgentModule(source, file, new Set([file])).agentOwnsWorkspace()
 }
@@ -351,6 +373,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
                   moduleNamespaces.set(clause[star + 2]!, moduleName)
                 }
               }
+              // Process host presets own no Workspace, so they are known, inspectable parents.
+              if (processHostPresetModules.has(moduleName)) for (const binding of tokens.slice(i + 1, j)) imported.delete(binding)
               i = j; break
             }
             continue

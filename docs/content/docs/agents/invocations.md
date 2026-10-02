@@ -430,7 +430,7 @@ D1 batches make creation and retention atomic. Conditional updates retry when an
 
 The adapter targets D1. It does not provide transactions for other Database providers. The database binding stays owned by the host; the store does not open or close it. Use [`redact`](#redact-stored-evidence) to remove sensitive values before they reach D1. Route authorization remains application policy.
 
-On the Cloudflare preset, the Console journal uses this store with the D1 Database binding when no Agent Definition configures `invocations`. See [Cloudflare journal](/docs/development/console#cloudflare-journal). Local D1 tests cover the SQL and concurrency contract; they do not measure production D1 limits or latency.
+On the Cloudflare preset, the Console journal uses this store with the D1 Database binding when no Agent Definition configures `invocations`. See [Cloudflare journal](/docs/development/console#know-what-the-console-stores). Local D1 tests cover the SQL and concurrency contract; they do not measure production D1 limits or latency.
 
 ## Append delivery evidence
 
@@ -475,7 +475,7 @@ For GitHub-backed sessions, `createGitHubWorkspaceInspector(host)` from `@vite-h
 ## Durable retry budgets
 
 On Node hosts, the GitHub inbox can bound repeated provider dispatches and PR work
-in its existing SQLite database. This is an explicit scheduler API; configuring it
+in its SQLite storage. Every inbox method is asynchronous. This is an explicit scheduler API; configuring it
 does not intercept Agent invocations or classify errors automatically.
 
 ```ts
@@ -496,14 +496,14 @@ are occupied. Check `providerBudget(scope)` to distinguish pending work from fou
 recorded failures.
 
 ```ts
-const token = inbox.reserveProviderAttempt('codex:primary-account')
+const token = await inbox.reserveProviderAttempt('codex:primary-account')
 if (!token) {
   // Leave the PR claim unstarted. Inspect pending attempts or exhausted failures.
   return
 }
-const claim = inbox.claim(1)[0]
+const [claim] = await inbox.claim(1)
 if (!claim) {
-  inbox.finishProviderAttempt(token, 'other-failure')
+  await inbox.finishProviderAttempt(token, 'other-failure')
   return
 }
 
@@ -513,23 +513,23 @@ try {
 } catch (error) {
   // Application-owned classification: only known retryable provider failures count.
   const retryable = isRetryableProviderFailure(error)
-  inbox.finishProviderAttempt(token, retryable ? 'retryable-failure' : 'other-failure')
-  inbox.release(claim)
+  await inbox.finishProviderAttempt(token, retryable ? 'retryable-failure' : 'other-failure')
+  await inbox.release(claim)
   throw error
 }
-inbox.finishProviderAttempt(token, 'success')
+await inbox.finishProviderAttempt(token, 'success')
 
 try {
   // Compare GitHub/provider state before and after the invocation. Do not parse prose.
   const evidence = await verifyNewProgress(claim, result)
-  inbox.finish(claim, {
+  await inbox.finish(claim, {
     text: result.text,
     retry: !evidence,
     progress: evidence ? { kind: 'verified', evidence } : { kind: 'no-progress' },
   })
 }
 catch (error) {
-  inbox.release(claim)
+  await inbox.release(claim)
   throw error
 }
 ```

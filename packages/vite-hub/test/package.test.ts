@@ -102,6 +102,8 @@ const lowLevelOwnerExports = new Set([
 ]);
 
 const generatedRuntimeOwnerExports = new Set([
+  "@vite-hub/agent/observability/host",
+  "@vite-hub/agent/observability/posthog",
   "@vite-hub/agent/runtime/empty-registry",
   "@vite-hub/agent/runtime/workflow",
   "@vite-hub/blob/runtime/cloudflare-vite",
@@ -623,12 +625,10 @@ describe("framework package contract", () => {
       "utf8",
     );
     expect(consoleKV).toContain("loadedStore.value === store");
-    expect(existsSync(`${packageRoot}/dist/console/runtime/pages/workflows.vue`)).toBe(true);
-    expect(existsSync(`${packageRoot}/dist/console/runtime/pages/queues.vue`)).toBe(true);
-    expect(existsSync(`${packageRoot}/dist/console/runtime/pages/rate-limits.vue`)).toBe(true);
-    expect(existsSync(`${packageRoot}/dist/console/runtime/pages/schedules.vue`)).toBe(true);
-    expect(existsSync(`${packageRoot}/dist/console/runtime/pages/sandboxes.vue`)).toBe(true);
-    expect(existsSync(`${packageRoot}/dist/console/runtime/pages/workspaces.vue`)).toBe(true);
+    expect(existsSync(`${packageRoot}/dist/console/runtime/pages/section.vue`)).toBe(true);
+    for (const page of ["workflows", "queues", "rate-limits", "schedules", "sandboxes", "workspaces"]) {
+      expect(existsSync(`${packageRoot}/dist/console/runtime/pages/${page}.vue`)).toBe(false);
+    }
     expect(
       existsSync(`${packageRoot}/dist/console/runtime/components/console-definitions.vue`),
     ).toBe(true);
@@ -707,12 +707,9 @@ describe("framework package contract", () => {
     expect(consoleClient).toContain("/blob");
     expect(consoleClient).toContain("/databases");
     expect(consoleClient).toContain("/kv");
-    expect(consoleClient).toContain("/workflows");
-    expect(consoleClient).toContain("/queues");
-    expect(consoleClient).toContain("/rate-limits");
-    expect(consoleClient).toContain("/schedules");
-    expect(consoleClient).toContain("/sandboxes");
-    expect(consoleClient).toContain("/workspaces");
+    // Owner-contributed sections get their routes from the navigation response at runtime.
+    expect(consoleClient).toContain(".addRoute(");
+    expect(consoleClient).toContain(".hasRoute(");
     expect(consoleClient).toContain("currentRoute.value");
     const consoleCssFiles = globSync("dist/console/runtime/public/console/console-*.css", {
       cwd: packageRoot,

@@ -1,5 +1,6 @@
 import { createClient } from "@libsql/client"
 import { sql } from "drizzle-orm"
+import { importSealKey, seal } from "@vite-hub/env/seal"
 import { drizzle } from "drizzle-orm/libsql"
 import { drizzle as drizzleD1 } from "drizzle-orm/d1"
 import { Miniflare } from "miniflare"
@@ -24,6 +25,37 @@ describe("stored Connection scopes", () => {
       client.close()
     }
   })
+})
+
+it("migrates sealed grants and pending OAuth transactions from the legacy tables", async () => {
+  const client = createClient({ url: ":memory:" })
+  const key = new Uint8Array(32).fill(9)
+  try {
+    const db = drizzle(client)
+    const sealKey = await importSealKey(key)
+    const grantPayload = await seal(sealKey, new TextEncoder().encode(JSON.stringify(["connection-grant", "mail", "legacy-revision"])), JSON.stringify({ accessToken: "legacy-access", refreshToken: "legacy-refresh", scopes: ["mail.read"], tokenType: "bearer", account: "account-1" }))
+    const pendingPayload = await seal(sealKey, new TextEncoder().encode(JSON.stringify(["connection-pending", "legacy-state"])), JSON.stringify({ actor: { id: "agent-1", kind: "agent" }, redirectUri: "https://app.example/callback", verifier: "legacy-verifier" }))
+    await db.run(sql`CREATE TABLE vitehub_connection_grants (name TEXT PRIMARY KEY, provider TEXT NOT NULL, account TEXT, scopes TEXT NOT NULL, payload TEXT NOT NULL, key_id TEXT NOT NULL, revision TEXT NOT NULL, status TEXT NOT NULL, expires_at INTEGER, lease_until INTEGER, last_error TEXT, connected_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
+    await db.run(sql`CREATE TABLE vitehub_connection_pending (state TEXT PRIMARY KEY, ticket TEXT NOT NULL, name TEXT NOT NULL, payload TEXT NOT NULL, expires_at INTEGER NOT NULL, opened INTEGER NOT NULL DEFAULT 0)`)
+    await db.run(sql`INSERT INTO vitehub_connection_grants (name, provider, account, scopes, payload, key_id, revision, status, connected_at, updated_at) VALUES ('mail', 'google', 'account-1', '["mail.read"]', ${grantPayload}, 'legacy-key', 'legacy-revision', 'active', '2026-09-30T00:00:00.000Z', '2026-09-30T00:00:00.000Z')`)
+    await db.run(sql`INSERT INTO vitehub_connection_pending (state, ticket, name, payload, expires_at, opened) VALUES ('legacy-state', 'legacy-ticket', 'mail', ${pendingPayload}, ${Date.now() + 60_000}, 1)`)
+    await db.run(sql`INSERT INTO vitehub_connection_pending (state, ticket, name, payload, expires_at, opened) VALUES ('unopened-state', 'unopened-ticket', 'mail', ${pendingPayload}, ${Date.now() + 60_000}, 0)`)
+    await db.run(sql`INSERT INTO vitehub_connection_pending (state, ticket, name, payload, expires_at, opened) VALUES ('expired-state', 'expired-ticket', 'mail', ${pendingPayload}, ${Date.now() - 1}, 1)`)
+    const store = createDatabaseConnectionStore({ db, encryptionKey: key })
+    expect(await store.secrets.read("connection/mail")).toMatchObject({ value: expect.stringContaining("legacy-access") })
+    expect(await store.state.get("mail")).toMatchObject({ accountId: "account-1", status: "connected", scopes: ["mail.read"] })
+    expect(await store.authorizations.take("legacy-state")).toMatchObject({ actor: "agent:agent-1", verifier: "legacy-verifier" })
+    expect(await store.authorizations.take("unopened-state")).toBeUndefined()
+    expect(await store.authorizations.take("expired-state")).toBeUndefined()
+    expect(await db.all(sql`SELECT state FROM vitehub_connection_pending ORDER BY state`)).toEqual([
+      { state: "expired-state" },
+      { state: "unopened-state" },
+    ])
+    const restarted = createDatabaseConnectionStore({ db, encryptionKey: key })
+    expect(await restarted.authorizations.take("legacy-state")).toBeUndefined()
+  } finally {
+    client.close()
+  }
 })
 
 describe("approval execution leases", () => {
@@ -115,4 +147,36 @@ it("updates Connection metadata atomically at the token revision", async () => {
     expect(await store.state.get("mail")).toMatchObject({ status: "revoked" })
   }
   finally { client.close() }
+})
+
+it.each(["pending", "executed"] as const)("paginates %s approvals without skipping or repeating entries", async (status) => {
+  const client = createClient({ url: ":memory:" })
+  try {
+    const store = createDatabaseConnectionStore({ db: drizzle(client), encryptionKey: new Uint8Array(32).fill(9) })
+    for (let index = 0; index < 205; index++) {
+      await store.approvals.create({
+        id: `approval-${index}`,
+        name: "mail",
+        actor: "agent:test",
+        action: "mail.write",
+        input: {},
+        status,
+        createdAt: "2026-09-30T00:00:00.000Z",
+      })
+    }
+    await store.approvals.create({ id: "other-connection", name: "calendar", actor: "agent:test", action: "calendar.write", input: {}, status, createdAt: "2026-09-30T00:00:00.000Z" })
+    const first = await store.approvals.list({ name: "mail", status })
+    expect(first.approvals.map(approval => approval.id)).toEqual(Array.from({ length: 100 }, (_, index) => `approval-${204 - index}`))
+    expect(first.nextCursor).toBe("approval-105")
+    const second = await store.approvals.list({ name: "mail", status, before: first.nextCursor })
+    expect(second.approvals.map(approval => approval.id)).toEqual(Array.from({ length: 100 }, (_, index) => `approval-${104 - index}`))
+    expect(second.nextCursor).toBe("approval-5")
+    const last = await store.approvals.list({ name: "mail", status, before: second.nextCursor })
+    expect(last.approvals.map(approval => approval.id)).toEqual(["approval-4", "approval-3", "approval-2", "approval-1", "approval-0"])
+    expect(last.nextCursor).toBeUndefined()
+    if (status === "pending") expect(await store.approvals.pendingCounts(["mail", "calendar"])).toEqual({ mail: 205, calendar: 1 })
+  }
+  finally {
+    client.close()
+  }
 })

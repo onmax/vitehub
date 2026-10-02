@@ -2,6 +2,7 @@ import { relativeDefinitionFile } from "@vite-hub/internal/inspect"
 
 import { discoverViteWorkspaceDefinitions } from "./build/discovery.ts"
 
+import type { ViteHubConsoleSectionContribution } from "@vite-hub/internal/console"
 import type { ViteHubDefinitionSummary } from "@vite-hub/internal/inspect"
 
 export interface WorkspaceInspectionOptions {
@@ -27,4 +28,17 @@ export function inspectWorkspaceDefinitions(options: WorkspaceInspectionOptions)
     name: definition.name,
     source: definition.source || "workspace",
   }))
+}
+
+/** Console section that lists discovered Workspace Definitions. `vitehub inspect definitions` reads the same data. */
+export const workspaceConsoleSection: ViteHubConsoleSectionContribution<WorkspaceInspectionOptions> = {
+  description: "Inspect discovered Workspace Definitions and their source roots.",
+  icon: "i-lucide-folder-kanban",
+  id: "workspaces",
+  label: "Workspaces",
+  read: inspectWorkspaceDefinitions,
+  view: {
+    kind: "definition-catalog",
+    notice: "Workspace files, Sources, collections, sync state, and processes are not opened or initialized by this build-time catalog.",
+  },
 }

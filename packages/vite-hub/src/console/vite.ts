@@ -14,7 +14,7 @@ import type { Environment, Plugin } from "vite"
 import type { ConsoleSectionId } from "./runtime/sections.ts"
 
 import { discoverConsoleBuildCatalog } from "./build.ts"
-import { registeredConsoleAuthMode, resolveConsoleAuthConfig, writeConsoleAuthHandlers, type ConsoleAuthConfig, type ConsoleAuthHandlers } from "./auth-build.ts"
+import { consoleConnectionsActorId, writeConsoleConnectionsActor, registeredConsoleAuthMode, resolveConsoleAuthConfig, writeConsoleAuthHandlers, type ConsoleAuthConfig, type ConsoleAuthHandlers } from "./auth-build.ts"
 import { writeConsoleNitroPlugin } from "./plugin.ts"
 import { serializeConsoleRefresh } from "./refresh.ts"
 import { createConsoleCliNamespace } from "./cli.ts"
@@ -291,10 +291,11 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
       workspaceDiscoveryRoot = configuredProjectRoot(viteConfig.workspace) ?? configuredProjectRoot({ projectRoot: options.workspaceDiscoveryRoot })
       serverDirs = viteConfig[VITEHUB_SERVER_DIRS]
       cliDiscovery = viteConfig.vitehubCliDiscovery === true
+      const appAuth = configured !== true && configured.access === "auth" && !configured.auth
+        ? options.resolveAuthConfig?.(root, viteConfig[VITEHUB_SERVER_DIRS], viteConfig.auth)
+        : undefined
       assertConsoleProductionAccess(configured, {
-        auth: configured !== true && configured.access === "auth" && !configured.auth
-          ? options.resolveAuthConfig?.(root, viteConfig[VITEHUB_SERVER_DIRS], viteConfig.auth)
-          : undefined,
+        auth: appAuth,
         consoleAuth: configured !== true && configured.access === "auth" && Boolean(configured.auth),
         development: environment.command !== "build",
       })
@@ -406,7 +407,15 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         maxAge: 60 * 60 * 24 * 365,
       })
 
-      consoleConfig.nitro = { ...kit.config, publicAssets }
+      const connectionsActor = sections.includes("connections")
+        ? await writeConsoleConnectionsActor(root, consoleAuthHandlers?.auth === true ? "console-auth" : appAuth ? "app-auth" : "none")
+        : undefined
+      const alias = kit.config.alias ?? {}
+      consoleConfig.nitro = {
+        ...kit.config,
+        ...(connectionsActor ? { alias: { ...alias, [consoleConnectionsActorId]: connectionsActor } } : {}),
+        publicAssets,
+      }
     },
     async configResolved(config) {
       if (hostManagedCloudflareBuild) {
