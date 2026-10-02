@@ -244,36 +244,56 @@ export async function fetchViteHubDevEndpoint(
   })
 }
 
+function redactInspectionUrlPart(value: string): string {
+  const separator = value[0]
+  if (separator !== "?" && separator !== "#") return redactInspectionText(value)
+
+  const redacted = value.slice(1).split("&").map(pair => {
+    const equals = pair.indexOf("=")
+    if (equals < 0) return pair
+    const rawKey = pair.slice(0, equals)
+    try {
+      const entry = new URLSearchParams(pair).entries().next().value as [string, string] | undefined
+      if (entry && redactInspectionValue(entry[1], entry[0]) === "[redacted]") return `${rawKey}=[redacted]`
+    }
+    catch {
+      // Keep malformed components for the text redactor below.
+    }
+    return pair
+  }).join("&")
+  return `${separator}${redactInspectionText(redacted)}`
+}
+
 function devServerDisplayUrl(value: string): string {
   try {
     const url = new URL(value)
-    let hasSecretQuery = false
-    for (const [key, queryValue] of [...url.searchParams]) {
-      if (redactInspectionValue(queryValue, key) === "[redacted]") {
-        url.searchParams.set(key, "[redacted]")
-        hasSecretQuery = true
-      }
-    }
-    if (!url.username && !url.password && !hasSecretQuery) {
+    const query = redactInspectionUrlPart(url.search)
+    const fragment = redactInspectionUrlPart(url.hash)
+    const hasSecretQuery = query !== url.search
+    const hasSecretFragment = fragment !== url.hash
+    if (!url.username && !url.password && !hasSecretQuery && !hasSecretFragment) {
       return redactInspectionText(url.origin === "null" ? value.replace(/^[\s\S]+@/, "[redacted]@") : value)
     }
     if (url.username) url.username = "[redacted]"
     if (url.password) url.password = "[redacted]"
     const display = url.href.replace(/%5Bredacted%5D/g, "[redacted]")
-    // URL credentials and secret query values have been redacted structurally above. Preserve non-secret query
-    // parameters in diagnostics, since callers use them to identify the requested development target.
     const queryStart = display.indexOf("?")
     const fragmentStart = display.indexOf("#")
     const pathEnd = [queryStart, fragmentStart].filter(index => index >= 0).sort((a, b) => a - b)[0] ?? display.length
     const path = display.slice(0, pathEnd)
-    const query = queryStart >= 0 ? url.search.replace(/%5Bredacted%5D/gi, "[redacted]") : ""
-    const fragment = fragmentStart >= 0 ? display.slice(fragmentStart) : ""
     const redactedPath = redactInspectionText(url.origin === "null" ? path.replace(/^[\s\S]+@/, "[redacted]@") : path)
-    return `${redactedPath}${redactInspectionText(query)}${redactInspectionText(fragment)}`
+    return `${redactedPath}${queryStart >= 0 ? query : ""}${fragmentStart >= 0 ? fragment : ""}`
   }
   catch {
-    const redacted = value.replace(/\/\/[\s\S]+@/g, "//[redacted]@")
-    return redactInspectionText(redacted === value ? value.replace(/^[\s\S]+@/, "[redacted]@") : redacted)
+    const redacted = value.replace(/\/\/[\s\S]+@/g, "//[redacted]@").replace(/^[\s\S]+@/, "[redacted]@")
+    const queryStart = redacted.indexOf("?")
+    const fragmentStart = redacted.indexOf("#")
+    const pathEnd = [queryStart, fragmentStart].filter(index => index >= 0).sort((a, b) => a - b)[0] ?? redacted.length
+    const path = redacted.slice(0, pathEnd)
+    const queryEnd = fragmentStart >= 0 && fragmentStart > queryStart ? fragmentStart : undefined
+    const query = queryStart >= 0 ? redactInspectionUrlPart(redacted.slice(queryStart, queryEnd)) : ""
+    const fragment = fragmentStart >= 0 ? redactInspectionUrlPart(redacted.slice(fragmentStart)) : ""
+    return `${redactInspectionText(path)}${query}${fragment}`
   }
 }
 
