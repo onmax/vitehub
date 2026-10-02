@@ -334,7 +334,7 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   // SAFETY: owner parsers establish their discovery shape; unparsed responses are normalized to plain records.
   const discovery = (options.parseDiscovery ? options.parseDiscovery(payload) : isPlainObject(payload) ? payload : {}) as TDiscovery
   if (options.signal?.aborted) {
-    options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
+    options.stderr.write(`No Compatible Vite Development Server found at ${devServerDisplayUrl(options.serverUrl)}.\n`)
     return
   }
   const isCompatibleRoot = options.isCompatibleRoot ?? ((rootDir: string, serverRoot: string) => serverRoot === rootDir)
