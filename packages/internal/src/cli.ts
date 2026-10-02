@@ -281,7 +281,11 @@ export async function discoverViteHubDevServer(
   const discovery = options.parseDiscovery ? options.parseDiscovery(value) : isPlainObject(value) ? value : {}
   const isCompatibleRoot = options.isCompatibleRoot ?? ((rootDir: string, serverRoot: string) => serverRoot === rootDir)
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate the untrusted discovery root before comparing it with the local project.
-  if (typeof discovery.root === "string" && !isCompatibleRoot(options.rootDir, discovery.root)) {
+  if (discovery.root !== undefined && typeof discovery.root !== "string") {
+    options.stderr.write("Invalid Vite Development Server discovery root.\n")
+    return
+  }
+  if (discovery.root !== undefined && !isCompatibleRoot(options.rootDir, discovery.root)) {
     options.stderr.write(`Compatible Vite Development Server root mismatch: ${discovery.root}\n`)
     return
   }

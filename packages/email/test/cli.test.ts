@@ -107,6 +107,14 @@ describe("Email discovery failure output", () => {
     expect(fetch).toHaveBeenCalledOnce()
     expect(fetch.mock.calls).toHaveLength(1)
   })
+
+  it("rejects a malformed discovery root", async () => {
+    const output = context()
+    const fetch = devServer({}, { discovery: { root: 123 } })
+    await expect(runEmailOutboxCli(["list"], output.context, { fetch })).resolves.toBe(1)
+    expect(output.stderr.output()).toContain("Invalid Vite Development Server discovery root.")
+    expect(fetch).toHaveBeenCalledOnce()
+  })
 })
 
 describe("vitehub email outbox", () => {
