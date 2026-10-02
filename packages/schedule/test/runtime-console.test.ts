@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { scheduleDevHeader, scheduleDevHeaderValue } from "../src/dev.ts"
 import { defineScheduleTarget, schedules } from "../src/index.ts"
 import {
-  handleScheduleDevRequest,
+  handleScheduleDevRequest as handleAuthorizedScheduleDevRequest,
   inspectRuntimeSchedules,
   listRuntimeScheduleRuns,
   readScheduleConsoleRecords,
@@ -12,9 +12,14 @@ import {
 import type { RuntimeScheduleSummary, ScheduleRunAttemptSummary, ScheduleRunSummary } from "../src/runtime/console.ts"
 import type { RuntimeScheduleRecord } from "../src/types.ts"
 import { nextRuntimeScheduleRunAt } from "../src/runtime/due.ts"
-import { resetScheduleRuntime, setScheduleRuntimeRegistry, setScheduleWakeDriverActive } from "../src/runtime/state.ts"
+import { resetScheduleRuntime, setScheduleRunStore, setScheduleRuntimeRegistry, setScheduleWakeDriverActive } from "../src/runtime/state.ts"
+import { createMemoryScheduleRunStore, ScheduleHistoryIncompleteError } from "../src/runtime/store.ts"
 
 const now = new Date("2026-05-23T08:15:00.000Z")
+
+function handleScheduleDevRequest(request: Request): Promise<Response> {
+  return handleAuthorizedScheduleDevRequest(request, { authorize: async () => true })
+}
 
 interface DevResponseBody {
   attempts?: ScheduleRunAttemptSummary[]
@@ -53,6 +58,22 @@ afterEach(() => {
 })
 
 describe("Runtime Schedule inspection", () => {
+  it.each(["enable", "disable"])("preserves the updated Schedule when %s history is incomplete", async (operation) => {
+    installTargets()
+    await schedules.dynamic.create({ cron: "0 9 * * *", enabled: operation !== "enable", id: "digest", target: "report" })
+    const listRuns = vi.fn(() => { throw new ScheduleHistoryIncompleteError(1001, 1000) })
+    setScheduleRunStore({ ...createMemoryScheduleRunStore(), listRuns })
+
+    const response = await handleScheduleDevRequest(devRequest({ id: "digest", operation }))
+    expect(response.status).toBe(503)
+    expect(await readBody(response)).toMatchObject({
+      error: { code: "SCHEDULE_HISTORY_INCOMPLETE" },
+      schedule: { enabled: operation === "enable", id: "digest" },
+    })
+    expect(listRuns).toHaveBeenCalledWith({ scheduleId: "digest", runtimeOnly: true, limit: 1 })
+    expect((await schedules.get("digest"))?.enabled).toBe(operation === "enable")
+  })
+
   it("finds the next due minute in the Schedule time zone", () => {
     expect(nextRuntimeScheduleRunAt(scheduleRecord("30 9 * * *", "Europe/Copenhagen"), now)?.toISOString()).toBe("2026-05-24T07:30:00.000Z")
     expect(nextRuntimeScheduleRunAt(scheduleRecord("0 9 * * *"), now)?.toISOString()).toBe("2026-05-23T09:00:00.000Z")

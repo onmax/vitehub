@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { refreshWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
+import { refreshWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } from "@vite-hub/workspace/server"
 import { describe, expect, it, vi } from "vitest"
 
 import { createAgentCliContributor, runAgentDevCli, runAgentEvalCli, runAgentInfoCli, runAgentInvocationsCli } from "../src/cli.ts"
@@ -1429,6 +1429,29 @@ describe("agent CLI", () => {
       warnings: [],
     })
     expect(fetchAgentInfo).toHaveBeenCalledWith("http://localhost:5173/__vitehub/agent/invocation-stream?inspect=1&agent=support", expect.anything())
+  })
+
+  it.each([undefined, "http://localhost:5173/custom/api/invocations?status=running#details"])("cancels through the registered dev route with invocation URL %s", async (url) => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-cancel-cli-"))
+    const token = await refreshWorkspaceDevToken(rootDir, { serverId: workspaceDevTokenServerId("5173") })
+    try {
+      const fetchInvocations = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ id: "invocation-1" }))
+      const stderr = stream()
+      const exitCode = await runAgentInvocationsCli([
+        "cancel", "invocation-1", ...(url ? ["--url", url] : []),
+      ], { env: {}, rootDir, stderr, stdout: stream() }, { fetch: fetchInvocations })
+
+      expect(exitCode, stderr.output()).toBe(0)
+      expect(String(fetchInvocations.mock.calls[0]?.[0])).toBe("http://localhost:5173/__vitehub/agent/invocations/dev")
+      expect(fetchInvocations).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({
+        body: JSON.stringify({ id: "invocation-1", operation: "cancel" }),
+        headers: expect.objectContaining({ [workspaceDevTokenHeader]: token }),
+        method: "POST",
+      }))
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
   })
 
   it("lists durable Agent Invocations as JSON", async () => {

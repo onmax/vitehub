@@ -381,7 +381,9 @@ async function cancelInvocation(parsed: ParsedArgs, context: AgentInvocationsCli
   const serverId = workspaceDevTokenServerId(port)
   const token = await readWorkspaceDevToken(context.rootDir ?? process.cwd(), { serverId })
   if (!token) throw new Error("No private Agent Dev token found. Start the Compatible Vite Development Server first.")
-  target.pathname = `${target.pathname.replace(/\/$/u, "")}${agentInvocationsDevRoute}`
+  target.pathname = agentInvocationsDevRoute
+  target.search = ""
+  target.hash = ""
   const response = await fetchImpl(target, {
     body: JSON.stringify({ id: parsed.id, operation: "cancel" }),
     headers: {
