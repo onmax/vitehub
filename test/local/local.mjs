@@ -16,6 +16,18 @@ const log = message => console.log(`[e2e:local] ${message}`)
 const CLOUDFLARE_PORT = 8788
 const VERCEL_PORT = 8789
 
+async function stopChild(child, graceMs = 500) {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  child.kill("SIGTERM")
+  await Promise.race([
+    new Promise(resolve => child.once("close", resolve)),
+    sleep(graceMs),
+  ])
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
+  if (child.exitCode === null && child.signalCode === null)
+    await new Promise(resolve => child.once("close", resolve))
+}
+
 async function waitForProbe(url, timeoutMs = 60_000) {
   const startedAt = Date.now()
   let lastError
@@ -78,9 +90,7 @@ async function runCloudflare() {
     log("EXCEPTION (runtime): sandbox is live-only - it needs real containers.")
   }
   finally {
-    dev.kill("SIGTERM")
-    await sleep(500)
-    if (!dev.killed) dev.kill("SIGKILL")
+    await stopChild(dev)
   }
 }
 
@@ -134,9 +144,7 @@ async function runVercel() {
     log("EXCEPTION (runtime): sandbox is live-only - it needs real containers.")
   }
   finally {
-    bridge.kill("SIGTERM")
-    await sleep(500)
-    if (!bridge.killed) bridge.kill("SIGKILL")
+    await stopChild(bridge)
   }
 }
 
