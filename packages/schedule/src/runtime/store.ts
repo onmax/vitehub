@@ -29,6 +29,11 @@ type StoredScheduleRunAttemptRecord = Omit<ScheduleRunAttemptRecord, "completedA
   updatedAt: string
 }
 
+// Index publication is best effort for stores that do not support the derived
+// metadata keys. Keep fallback inspection bounded when retained history has no
+// usable index, while indexed records continue to support complete queries.
+const maxLegacyHistoryRecords = 1000
+
 function trimPrefix(prefix: string): string {
   return prefix.replace(/^\/+|\/+$/g, "")
 }
@@ -441,8 +446,11 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
       groupRun(key, metadata)
     }
     // Group legacy records once per snapshot, even when their index cannot be published.
-    for (let offset = 0; offset < unknown.length; offset += 16) {
-      const batch = await Promise.all(unknown.slice(offset, offset + 16).map(async key => {
+    // A provider that cannot publish indexes must not turn every inspection
+    // request into an unbounded read of the complete run namespace.
+    const legacyKeys = unknown.slice(0, maxLegacyHistoryRecords)
+    for (let offset = 0; offset < legacyKeys.length; offset += 16) {
+      const batch = await Promise.all(legacyKeys.slice(offset, offset + 16).map(async key => {
         const stored = await store.get<StoredScheduleRunRecord>(key)
         const run = stored ? deserializeScheduleRun(stored) : undefined
         recordsByKey.set(key, run)
