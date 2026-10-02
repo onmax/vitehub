@@ -118,7 +118,12 @@ export function summarizeScheduleRun(run: ScheduleRunRecord): ScheduleRunSummary
   }
   if (completedAt) summary.completedAt = completedAt
   if (error) summary.error = error
-  if (run.response) summary.response = { status: run.response.status, statusText: run.response.statusText }
+  if (run.response) {
+    summary.response = {
+      status: run.response.status,
+      ...(run.response.statusText ? { statusText: redactInspectionText(run.response.statusText) } : {}),
+    }
+  }
   if (startedAt) summary.startedAt = startedAt
   return summary
 }

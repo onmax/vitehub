@@ -7,6 +7,7 @@ import {
   inspectRuntimeSchedules,
   listRuntimeScheduleRuns,
   readScheduleConsoleRecords,
+  summarizeScheduleRun,
 } from "../src/runtime/console.ts"
 import type { RuntimeScheduleSummary, ScheduleRunAttemptSummary, ScheduleRunSummary } from "../src/runtime/console.ts"
 import type { RuntimeScheduleRecord } from "../src/types.ts"
@@ -95,6 +96,29 @@ describe("Runtime Schedule inspection", () => {
     expect(runs).toHaveLength(1)
     expect(runs[0]).toMatchObject({ scheduledAt: "2026-05-22T09:00:00.000Z", status: "failed" })
     expect(runs[0]?.error?.message).not.toContain("hunter2")
+  })
+
+  it("redacts error names and response status text", async () => {
+    installTargets(() => {
+      const error = new Error("safe message")
+      error.name = "Authorization: Bearer secret-name"
+      throw error
+    })
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
+    await schedules.run("digest", { scheduledAt: new Date("2026-05-22T09:00:00.000Z") }).catch(() => {})
+
+    const runs = await listRuntimeScheduleRuns("digest")
+    expect(runs[0]?.error?.name).toBe("Authorization: [redacted]")
+    const summary = summarizeScheduleRun({
+      attemptCount: 1,
+      id: "run",
+      response: { status: 401, statusText: "Authorization: Bearer response-secret" },
+      scheduleId: "digest",
+      scheduledAt: now,
+      status: "succeeded",
+      target: "report",
+    })
+    expect(summary.response?.statusText).toBe("Authorization: Bearer [redacted]")
   })
 
   it("reads Console records with run history and hides records that opt out", async () => {
