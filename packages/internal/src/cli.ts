@@ -255,7 +255,7 @@ function redactInspectionUrlPart(value: string): string {
     try {
       // SAFETY: URLSearchParams.next().value is a string tuple for a non-empty parameter pair.
       const entry = new URLSearchParams(pair).entries().next().value as [string, string] | undefined
-      if (entry && redactInspectionValue(entry[1], entry[0]) === "[redacted]") return `${rawKey}=[redacted]`
+      if (entry && redactInspectionValue(entry[1], entry[0]) !== entry[1]) return `${rawKey}=[redacted]`
     }
     catch {
       // Keep malformed components for the text redactor below.
@@ -333,6 +333,10 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   const payload: unknown = await response.json().catch(() => ({}))
   // SAFETY: owner parsers establish their discovery shape; unparsed responses are normalized to plain records.
   const discovery = (options.parseDiscovery ? options.parseDiscovery(payload) : isPlainObject(payload) ? payload : {}) as TDiscovery
+  if (options.signal?.aborted) {
+    options.stderr.write(`No Compatible Vite Development Server found at ${devServerDisplayUrl(options.serverUrl)}.\n`)
+    return
+  }
   const isCompatibleRoot = options.isCompatibleRoot ?? ((rootDir: string, serverRoot: string) => serverRoot === rootDir)
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Check the untrusted discovery root before comparing it with the local project.
   if (typeof discovery.root === "string" && !isCompatibleRoot(options.rootDir, discovery.root)) {

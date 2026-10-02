@@ -677,7 +677,7 @@ function deploymentPlugins(
       configResolved(config) {
         // SAFETY: Vite preserves the user-defined Nitro field on the resolved config, while ResolvedConfig omits framework extensions from its type.
         const inspectionNitro = (config as ResolvedConfig & { nitro?: { rootDir?: string, output?: { dir?: string } } }).nitro
-        deploymentRoot = resolve(inspectionNitro?.rootDir ?? config.root)
+        deploymentRoot = resolve(inspectionNitro?.rootDir ?? config.root ?? process.cwd())
         deploymentOutputDir = inspectionNitro?.output?.dir
         const serverResolve = resolveServerOptions(config)
         const buildConfig = {
@@ -999,7 +999,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
   }
   else plugins.push(hubEmailOptionalPeerResolver())
   if (options.kv) {
-    plugins.push(hubKv(presetKVOptions || undefined))
+    plugins.push(hubKv(presetKVOptions || undefined, { importBase: `${generatedImportBase}/kv` }))
   }
   else plugins.push(hubKvOptionalPeerResolver())
   if (options.queue && plan.services.queue.supported) {
