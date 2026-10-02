@@ -7,6 +7,7 @@ import { runViteHubCli } from "@vite-hub/cli";
 import { createDbCliContributor } from "@vite-hub/database/cli";
 import { hubEmail } from "@vite-hub/email/vite";
 import { hubEnv } from "@vite-hub/env/vite";
+import { hubKv } from "@vite-hub/kv/vite";
 import { hubWorkflow } from "@vite-hub/workflow/vite";
 import { hubSchedule } from "@vite-hub/schedule/vite";
 import { hubWorkspace } from "@vite-hub/workspace/vite";
@@ -66,6 +67,7 @@ describe("CLI documentation contract", () => {
       { vitehub: { cli: { namespaces: [createConsoleCliNamespace()] } } },
       hubEnv(),
       emailPlugin,
+      hubKv(),
       schedulePlugin,
       workflowPlugin,
       workspacePlugin,

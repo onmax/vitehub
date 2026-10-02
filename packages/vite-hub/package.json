@@ -49,6 +49,7 @@
     "./_internal/database/runtime/state": "./dist/_internal/database/runtime/state.js",
     "./_internal/email/runtime/console": "./dist/_internal/email/runtime/console.js",
     "./_internal/kv": "./dist/_internal/kv.js",
+    "./_internal/kv/runtime/dev": "./dist/_internal/kv/runtime/dev.js",
     "./_internal/kv/runtime/disabled-upstash": "./dist/_internal/kv/runtime/disabled-upstash.js",
     "./_internal/markdown-template": "./dist/_internal/markdown-template.js",
     "./_internal/rate-limit/runtime": "./dist/_internal/rate-limit/runtime.js",

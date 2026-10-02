@@ -19,6 +19,7 @@ const identifier = v.pipe(
   v.string(),
   v.minLength(1),
   v.maxLength(512),
+  // eslint-disable-next-line no-control-regex
   v.regex(/^[^\u0000-\u001f]+$/),
 );
 const actor = v.object({ id: identifier, kind: v.picklist(["user", "agent", "service"]) });

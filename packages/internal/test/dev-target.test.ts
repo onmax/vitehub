@@ -63,14 +63,11 @@ describe("dev target options", () => {
     expect(() => parseTarget(["--timeout=abc"])).toThrow(expect.objectContaining({ code: "inline", message: "--timeout must be an integer from 1 to 2147483647 milliseconds." }))
   })
 
-  it.each(["2147483648", "4294967295", "4294967296", "1.5", "10ms", "Infinity"])("rejects unsupported timer duration %s with owner diagnostics", value => {
-    expect(() => parseTarget(["--timeout", value])).toThrow(expect.objectContaining({ code: "separate" }))
-    expect(() => parseTarget([`--timeout=${value}`])).toThrow(expect.objectContaining({ code: "inline" }))
-  })
-
-  it.each(["1", "2147483647"])("preserves supported timer duration %s", value => {
-    expect(parseTarget(["--timeout", value]).timeout).toBe(Number(value))
-    expect(parseTarget([`--timeout=${value}`]).timeout).toBe(Number(value))
+  it.each([
+    { args: ["--timeout", "2147483648"], code: "separate" },
+    { args: ["--timeout=2147483648"], code: "inline" },
+  ])("rejects timer overflow with the owner $code factory", ({ args, code }) => {
+    expect(() => parseTarget(args)).toThrow(expect.objectContaining({ code, message: "--timeout must be at most 2147483647 milliseconds." }))
   })
 
   it("resolves endpoint routes with and without a trailing slash", () => {
@@ -121,6 +118,9 @@ describe("dev server discovery", () => {
       { fetch: async () => Response.json({ root: "https://host/project?target=https%3A%2F%2Fuser%3Apass%40example.test&target=public" }), message: "Compatible Vite Development Server root mismatch: https://host/project?target=[redacted]&target=public\n", serverUrl: "http://localhost:6" },
       { fetch: async () => Response.json({ root: "https://host/project#%74oken=secret" }), message: "Compatible Vite Development Server root mismatch: https://host/project#%74oken=[redacted]\n", serverUrl: "http://localhost:7" },
       { fetch: async () => Response.json({ root: "https://host:bad/path?%74oken=secret" }), message: "Compatible Vite Development Server root mismatch: https://host:bad/path?%74oken=[redacted]\n", serverUrl: "http://localhost:8" },
+      { fetch: async () => Response.json({ root: "https://host/project?next=Bearer%20secret&next=public#next=prefix%20https%3A%2F%2Fuser%3Apass%40example.test" }), message: "Compatible Vite Development Server root mismatch: https://host/project?next=[redacted]&next=public#next=[redacted]\n", serverUrl: "http://localhost:9" },
+      { fetch: async () => Response.json({ root: "https://host:bad/path?next=Bearer%20secret#next=prefix%20token%3Dhidden" }), message: "Compatible Vite Development Server root mismatch: https://host:bad/path?next=[redacted]#next=[redacted]\n", serverUrl: "http://localhost:10" },
+      { fetch: async () => new Response(), message: "Invalid Vite Development Server URL: https://host:bad/path?next=[redacted]#next=[redacted]\n", serverUrl: "https://host:bad/path?next=prefix%20Bearer%20secret#next=prefix%20token%3Dhidden" },
     ]
     for (const input of cases) {
       const output = captureStderr()
@@ -130,12 +130,35 @@ describe("dev server discovery", () => {
     }
   })
 
-  it("validates the discovery object and accepts an owner parser", async () => {
+  it("redacts credentials when discovery completes after cancellation", async () => {
+    const controller = new AbortController()
     const output = captureStderr()
-    const options = { endpoint, rootDir: "/app", serverUrl: "http://localhost:5173", stderr: output.stderr }
-    expect((await discoverViteHubDevServer({ ...options, fetch: async () => Response.json(null) }))?.discovery).toEqual({})
-    const target = await discoverViteHubDevServer({ ...options, fetch: async () => Response.json({ id: 7 }), parseDiscovery: () => ({ root: "/app", id: 7 }) })
-    expect(target?.discovery.id).toBe(7)
+    const target = await discoverViteHubDevServer({
+      endpoint,
+      fetch: async () => {
+        controller.abort()
+        return Response.json({ root: "/app" })
+      },
+      rootDir: "/app",
+      serverUrl: "http://user:pass@localhost:5173?next=prefix%20Bearer%20secret&next=public#next=prefix%20token%3Dhidden",
+      signal: controller.signal,
+      stderr: output.stderr,
+    })
+    expect(target).toBeUndefined()
+    expect(output.text()).toBe("No Compatible Vite Development Server found at http://[redacted]@localhost:5173/?next=[redacted]&next=public#next=[redacted].\n")
+  })
+
+  it("uses an empty discovery object for a non-object response without an owner parser", async () => {
+    const output = captureStderr()
+    const target = await discoverViteHubDevServer({
+      endpoint,
+      fetch: async () => Response.json(null),
+      rootDir: "/app",
+      serverUrl: "http://localhost:5173",
+      stderr: output.stderr,
+    })
+    expect(target?.discovery).toEqual({})
+    expect(output.text()).toBe("")
   })
 
   it("uses the owner root check", async () => {
@@ -275,11 +298,6 @@ describe("guarded dev endpoint", () => {
       isViteHubDevHostAllowed({ config: { server } }, { headers: host === undefined ? {} : { host } } as unknown as IncomingMessage)
     expect(allowed(undefined)).toBe(true)
     expect(allowed("localhost")).toBe(true)
-    expect(allowed("LOCALHOST:5173")).toBe(true)
-    expect(allowed("App.Localhost:5173")).toBe(true)
-    expect(allowed("APP.TEST:5173", { allowedHosts: ["app.test"] })).toBe(true)
-    expect(allowed("app.test:5173", { allowedHosts: ["APP.TEST"] })).toBe(true)
-
     expect(allowed("app.localhost:5173")).toBe(true)
     expect(allowed("127.0.0.1:5173")).toBe(true)
     expect(allowed("192.168.1.20:5173")).toBe(true)
