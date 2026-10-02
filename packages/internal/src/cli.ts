@@ -271,12 +271,12 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   }
   const rawDiscovery = await response.json().catch(() => undefined)
   // SAFETY: the owner endpoint defines the discovery shape. Callers check each field before use.
-  const discovery = options.parseDiscovery
+  const discovery: TDiscovery = options.parseDiscovery
     ? options.parseDiscovery(rawDiscovery)
     // SAFETY: Existing callers validate discovery fields; typed callers can supply the owner parser above.
     : (() => {
         // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The unparsed discovery response is validated at this transport boundary.
-        if (rawDiscovery === null || typeof rawDiscovery !== "object") return {}
+        if (rawDiscovery === null || typeof rawDiscovery !== "object") return {} as TDiscovery
         // SAFETY: The generic caller contract supplies the discovery shape after the transport boundary validates it is an object.
         return rawDiscovery as TDiscovery
       })()

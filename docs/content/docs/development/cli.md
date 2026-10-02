@@ -50,6 +50,7 @@ Available namespaces:
 | `vitehub agent dev` | Available | Agent Package | Talk to a discovered Agent through a running Vite Development Server. |
 | `vitehub agent invocations` | Available | Agent Package | List, inspect, or follow records in the application's Agent Invocation journal. |
 | `vitehub channels history` | Available | Agent Package | Download one deployed conversation and its attachments. |
+| `vitehub channels replay` | Available | Agent Package | Replay stored Channel history through an Agent trigger. |
 | `vitehub channels sync` | Available | Agent Package | Inspect or apply provider-owned webhook registrations for a deployed stage. |
 | `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
@@ -72,6 +73,7 @@ Available namespaces:
 | `vitehub inspect definitions` | Available | ViteHub CLI plus package inspection contributors | List the Definitions that each active package discovered. |
 | `vitehub inspect provider-output` | Available | ViteHub CLI plus package inspection contributors | List generated Provider Output files with secrets redacted. |
 | `vitehub provision run` | Available | ViteHub CLI plus package Provision Steps | Create missing provider resources idempotently. |
+| `vitehub provision status` | Available | ViteHub CLI plus package Provision Steps | Show recorded provider resources and pending actions without applying them. |
 
 ## Inspect Definitions and Provider Output
 

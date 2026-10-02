@@ -582,6 +582,7 @@ describe("vitehub", () => {
       "vite-hub/public-url",
       "vite-hub/dependencies",
       "@vite-hub/env/vite",
+      "@vite-hub/connections/types-cleanup",
       "@vite-hub/email/optional-peer-resolver",
       "@vite-hub/kv/optional-peers",
       "@vite-hub/source/vite",

@@ -186,14 +186,14 @@ describe("hubKv", () => {
   })
 
   it("contributes the Cloudflare KV provision step with the configured KV options", async () => {
-    const { createKVCliContributor } = await import("../src/cli.ts")
     const { hubKv } = await import("../src/vite.ts")
     const plugin = hubKv({ driver: "cloudflare-kv-binding", binding: "KV" })
     const config = { kv: { driver: "cloudflare-kv-binding" as const, namespaceName: "app-cache" }, root: "/app" }
     const configure = testHook(plugin.config, (_value: typeof config): void | Promise<void> => undefined)
     await configure(config)
 
-    const steps = createKVCliContributor().provision ?? []
+    const contributor = await plugin.vitehub?.cli?.()
+    const steps = contributor?.provision ?? []
     const warnings: string[] = []
     const actions = await steps[0]?.plan({
       env: {},
