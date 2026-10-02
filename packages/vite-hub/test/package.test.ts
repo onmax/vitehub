@@ -131,6 +131,7 @@ const generatedRuntimeOwnerExports = new Set([
   "@vite-hub/workflow/runtime/cloudflare-runner",
   "@vite-hub/workflow/runtime/cloudflare-shared",
   "@vite-hub/workflow/runtime/cloudflare-vite",
+  "@vite-hub/workflow/runtime/dev",
   "@vite-hub/workflow/runtime/execute",
   "@vite-hub/workflow/runtime/openworkflow",
   "@vite-hub/workflow/runtime/openworkflow-worker",
