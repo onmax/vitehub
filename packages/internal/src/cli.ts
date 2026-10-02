@@ -148,6 +148,8 @@ export interface ViteHubDevEndpoint {
 export interface ViteHubDevServerDiscoveryOptions {
   endpoint: ViteHubDevEndpoint
   fetch: typeof fetch
+  /** Parses the untrusted discovery payload into the caller's contract. */
+  parseDiscovery?: (value: unknown) => unknown
   /**
    * Checks the root that the dev server reports. Defaults to exact equality with `rootDir`.
    */
@@ -269,7 +271,7 @@ function devServerDisplayUrl(value: string): string {
  * valid, the server does not answer, or the server root does not match.
  */
 export async function discoverViteHubDevServer<TDiscovery extends { root?: unknown }>(
-  options: ViteHubDevServerDiscoveryOptions,
+  options: ViteHubDevServerDiscoveryOptions & { parseDiscovery?: (value: unknown) => TDiscovery },
 ): Promise<ViteHubDevServerTarget<TDiscovery> | undefined> {
   let url: string
   try {
@@ -295,7 +297,8 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
     return
   }
   // SAFETY: the owner endpoint defines the discovery shape. Callers check each field before use.
-  const discovery = await response.json().catch(() => ({})) as TDiscovery
+  const payload: unknown = await response.json().catch(() => ({}))
+  const discovery = (options.parseDiscovery ? options.parseDiscovery(payload) : payload) as TDiscovery
   const isCompatibleRoot = options.isCompatibleRoot ?? ((rootDir: string, serverRoot: string) => serverRoot === rootDir)
   if (typeof discovery.root === "string" && !isCompatibleRoot(options.rootDir, discovery.root)) {
     options.stderr.write(`Compatible Vite Development Server root mismatch: ${redactInspectionText(discovery.root)}\n`)
