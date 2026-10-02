@@ -977,6 +977,7 @@ async function applyCapabilityWorkspaceContributions<
           mode: capability.mode,
         })
       : capability.workspace || {}
+    if (!resolved || resolved === false) continue
 
     if (trustedGitHubPullRequestWorkspaceCapabilities.has(capability) && resolved.sources?.vitehubGitHubPullRequest) {
       const pr = normalizedContributionSource("vitehubGitHubPullRequest", resolved.sources.vitehubGitHubPullRequest, workspaceRuntime)
@@ -1067,9 +1068,9 @@ async function applyCapabilityWorkspaceContributions<
     }
   }
   const retirementPaths = context.workspaceRetirementPaths || []
-  const conditionalWorkspacePersistence = context.persistWorkspaceContributions
+  const conditionalWorkspacePersistence = Boolean(context.persistWorkspaceContributions
     && (persistencePaths.length || retirementPaths.length)
-    && await supportsSkillPersistence(retainedWorkspace)
+    && await supportsSkillPersistence(retainedWorkspace))
   // Retirement must use the same conditional-write capability as persistence.
   // A read-then-unconditional-delete fallback can remove a concurrent replacement.
   const canRetireWorkspaceContributions = conditionalWorkspacePersistence
@@ -1134,16 +1135,20 @@ async function applyCapabilityWorkspaceContributions<
     // Remove files owned by an older version of a capability. Ownership metadata
     // and the recorded digest protect user-edited files from migration cleanup.
     for (const { capabilityId, path } of retirementPaths) {
-      if (!await retainedWorkspace.fs.exists(path)) continue
-      const stat = await retainedWorkspace.fs.stat(path)
+      // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+      if (!await retainedWorkspace.fs.exists(path as never)) continue
+      // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+      const stat = await retainedWorkspace.fs.stat(path as never)
       const metadata = stat.metadata?.capabilityWorkspaceContribution
       if (!isRuntimeRecord(metadata) || metadata.capabilityId !== capabilityId || metadata.path !== path || !hasRuntimeType(metadata.digest, "string")) continue
-      const current = await retainedWorkspace.fs.readFile(path, { encoding: "binary" })
+      // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+      const current = await retainedWorkspace.fs.readFile(path as never, { encoding: "binary" })
       if (await capabilityContributionDigest(current) !== metadata.digest) continue
       try {
         const removeOptions: { force: true, ifDigest?: string | null } = { force: true }
         if (conditionalWorkspacePersistence) removeOptions.ifDigest = stat.digest
-        await retainedWorkspace.fs.rm(path, removeOptions)
+        // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+        await retainedWorkspace.fs.rm(path as never, removeOptions)
       }
       catch (error) {
         // A concurrent edit or invocation won the conditional removal.

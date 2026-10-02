@@ -313,17 +313,21 @@ export function defineMcpToolCapability<
         const notice = options.unavailableNotice === true
           ? `> ⚠️ ${unavailable.join(", ")} tools were temporarily unavailable. I answered with the remaining context.`
           : options.unavailableNotice(unavailable)
-        const input = context.input.get()
-        const inputContext = input.context && typeof input.context === "object" && !Array.isArray(input.context)
-          ? input.context as Record<string, unknown>
-          : {}
-        const notices = Array.isArray(inputContext["vitehub.chat.final-reply.notices"])
-          ? inputContext["vitehub.chat.final-reply.notices"]
-          : []
-        context.input.set({
-          ...input,
-          context: { ...inputContext, "vitehub.chat.final-reply.notices": [...notices, notice] },
-        })
+        if (notice.trim()) {
+          const input = context.input.get()
+          // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Agent input context is an untrusted runtime boundary.
+          const inputContext = input.context && typeof input.context === "object" && !Array.isArray(input.context)
+            // SAFETY: The object guard above establishes a record-shaped input context.
+            ? input.context as Record<string, unknown>
+            : {}
+          const notices = Array.isArray(inputContext["vitehub.chat.final-reply.notices"])
+            ? inputContext["vitehub.chat.final-reply.notices"]
+            : []
+          context.input.set({
+            ...input,
+            context: { ...inputContext, "vitehub.chat.final-reply.notices": [...notices, notice] },
+          })
+        }
       }
       for (const result of results) {
         if (result.status !== "fulfilled" || !result.value) continue

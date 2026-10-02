@@ -25,7 +25,9 @@ const mcpWarningSchema = v.object({
 /** Return valid MCP availability warnings recorded in an Agent run input. */
 export function getMcpWarnings(input: AgentRunInput): McpAvailabilityWarning[] {
   const context = input.context
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Agent run context is an untrusted runtime boundary.
   if (!context || typeof context !== "object" || Array.isArray(context)) return []
+  // SAFETY: The object guard above establishes a record-shaped Agent input context.
   const warnings = (context as Record<string, unknown>)["vitehub.mcp.warnings"]
   if (!Array.isArray(warnings)) return []
   return warnings.flatMap((warning) => {
@@ -196,7 +198,9 @@ export function mcp<
     integrityLabel: "mcp({ integrity })",
     invalidServerMessage: "[vitehub] mcp({ servers }) entries must resolve to an MCP client or MCP client config.",
     metadata: { servers: sanitizeMcpMetadata(options.servers) as Record<string, unknown> },
-    ...(options.unavailableNotice !== undefined ? { unavailableNotice: options.unavailableNotice } : {}),
+    ...(options.unavailableNotice !== undefined
+      ? { unavailableNotice: options.unavailableNotice }
+      : {}),
     ...(usesConnections ? { requires: [{ primitive: "connections" }] } : {}),
     servers: Object.entries(options.servers).map(([name, server]) => ({
       name,
