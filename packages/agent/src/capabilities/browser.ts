@@ -138,14 +138,14 @@ export function browser(options: BrowserCapabilityOptions = {}): AgentCapability
   }
   const skillPath = normalizeSkillPath(options.skillPath || ".agents/skills/agent-browser/SKILL.md")
   const sourceKey = options.sourceKey || "skill.browser"
-  // The default command uses the managed runtime unless the caller explicitly selects external.
+  // An unset runtime with the default command is resolved per invocation: external when driver.launch runs the provider elsewhere, otherwise managed.
   const runtimeMode = options.runtime ?? (command === "agent-browser" ? undefined : "external")
   const invocationSkillContentKey = "vitehub.browser.skill-content"
   const defaultSkillContent = options.skillContent || defaultBrowserSkillContent.replaceAll("agent-browser", command)
 
   return Object.assign(defineCapability({
     id: "browser",
-    metadata: { command, runtime: runtimeMode ?? "managed", skillPath, sourceKey },
+    metadata: { command, runtime: runtimeMode ?? "auto", skillPath, sourceKey },
     output(context) {
       if (context.driver?.kind === "provider") {
         context.output.final(result => attachBrowserScreenshots(result, context), { order: "last" })
@@ -161,7 +161,7 @@ export function browser(options: BrowserCapabilityOptions = {}): AgentCapability
         ? context.agentDriver.driver
         : context.agentDriver
       const launched = isRuntimeRecord(driver) && driver.launch !== undefined
-      if ((runtimeMode ?? "managed") !== "managed") {
+      if ((runtimeMode ?? (launched ? "external" : "managed")) !== "managed") {
         provideBrowserRuntimeEnvironment(context.context, Object.freeze({ VITEHUB_BROWSER_ACTIVE: "1" }))
         return
       }
