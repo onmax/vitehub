@@ -61,6 +61,9 @@ describe("dev target options", () => {
     expect(() => parseTarget(["--server", "--timeout"])).toThrow(expect.objectContaining({ code: "missing", message: "Missing value for --server." }))
     expect(() => parseTarget(["--timeout", "0"])).toThrow(expect.objectContaining({ code: "separate", message: "--timeout must be a positive number." }))
     expect(() => parseTarget(["--timeout=abc"])).toThrow(expect.objectContaining({ code: "inline", message: "--timeout must be a positive number." }))
+    expect(() => parseTarget(["--timeout", "1.5"])).toThrow(expect.objectContaining({ code: "separate", message: "--timeout must be a positive number." }))
+    expect(() => parseTarget(["--timeout=10ms"])).toThrow(expect.objectContaining({ code: "inline", message: "--timeout must be a positive number." }))
+    expect(() => parseTarget(["--timeout", "2147483648"])).toThrow(expect.objectContaining({ code: "separate", message: "--timeout must be at most 2147483647 milliseconds." }))
   })
 
   it("resolves endpoint routes with and without a trailing slash", () => {
