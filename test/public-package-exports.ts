@@ -74,6 +74,7 @@ const runtimeOnlyPeerExports = new Map<string, readonly string[]>([
 const declarationOnlyPeerExports = new Map<string, readonly string[]>([
   ["@vite-hub/agent", ["@vite-hub/workflow"]],
   ["@vite-hub/agent/runtime/workflow", ["@vite-hub/workflow"]],
+  ["@vite-hub/agent/vite", ["vite"]],
   ["@vite-hub/auth/vite", ["vite"]],
   ["@vite-hub/blob/vite", ["vite"]],
   ["@vite-hub/browser/controllers/playwright", ["playwright-core"]],
