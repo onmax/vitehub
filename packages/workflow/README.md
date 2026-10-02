@@ -240,3 +240,7 @@ await welcome.run({ email: "ada@example.com" })
 ```
 
 This is a breaking type correction. Supply the required payload at each handle call. Named operational functions do not infer a handler from a string, and persisted run results remain unknown.
+
+## Replacing the runtime registry
+
+`setWorkflowRuntimeRegistry()` from `@vite-hub/workflow/runtime/state` installs a fresh discovered-definition registry. New calls load from that registry even when an earlier registry still has pending imports. Calls already loading a definition finish with their original definition. Their completion cannot replace cached definitions or inline registrations in the new registry. Standalone inline definitions remain registered until `resetWorkflowRuntime()` clears them.
