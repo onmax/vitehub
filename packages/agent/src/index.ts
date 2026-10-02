@@ -7936,7 +7936,13 @@ async function executeAgentInvocation<
         // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
         ...((context as AgentRuntimeContext & { [agentInvocationRunId]?: string })[agentInvocationRunId]
           // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-          ? { run: { ...context.run, runId: (context as AgentRuntimeContext & { [agentInvocationRunId]: string })[agentInvocationRunId] } }
+          ? {
+            run: {
+              ...context.run,
+              // SAFETY: The preceding truthy lookup proves this optional runtime marker is a string.
+              runId: (context as AgentRuntimeContext & { [agentInvocationRunId]: string })[agentInvocationRunId],
+            },
+          }
           : {}),
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
       }, {

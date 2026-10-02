@@ -275,11 +275,16 @@ const selectedCancel = computed(() => {
   if (!invocation || record(actions?.cancel)?.available !== true) return;
   const summary = record(invocation);
   const notEnforcedBy = stringValue(summary?.cancelNotEnforcedBy);
-  return {
+  const cancel: {
+    cancelRequested: boolean;
+    id: string;
+    notEnforcedBy?: string;
+  } = {
     cancelRequested: Boolean(stringValue(summary?.cancelRequestedAt)),
     id: invocation.id,
-    ...(notEnforcedBy ? { notEnforcedBy } : {}),
   };
+  if (notEnforcedBy) cancel.notEnforcedBy = notEnforcedBy;
+  return cancel;
 });
 const selectedCost = computed(() => invocationCostDisplay(selectedDisplay.value));
 const selectedTokens = computed(() => invocationTokenDisplay(selectedDisplay.value));
