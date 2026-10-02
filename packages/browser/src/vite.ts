@@ -4,6 +4,7 @@ import { getViteMode } from "@vite-hub/internal/build/mode"
 import { defaultCloudflareCompatibilityDate } from "@vite-hub/internal/build/cloudflare"
 import {
   contributeProviderDeploymentOutput,
+  createDefaultCloudflareOutputRoot,
   createProviderDeploymentOutputGenerationState,
   finalizeProviderDeploymentOutputs,
   useProviderOutputCatalog,
@@ -227,6 +228,11 @@ export function hubBrowser(options?: BrowserModuleOptions | false): BrowserViteP
             kind: "browser",
             label: "Browsers",
             list: () => inspectBrowserDefinitions({ projectRoot, rootDir: resolved?.root ?? projectRoot, serverDirs }),
+          }],
+          providerOutput: [{
+            description: "Generated Cloudflare Browser worker config",
+            owner: "browser",
+            path: resolve(createDefaultCloudflareOutputRoot(resolved?.root ?? projectRoot), "wrangler.json"),
           }],
         }
       },
