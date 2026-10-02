@@ -4,7 +4,6 @@ import * as v from "valibot"
 
 import { ConnectionError } from "../errors.ts"
 import { createConnectionsRuntime } from "../runtime.ts"
-import { createDatabaseConnectionStore } from "../store.ts"
 
 import type { ConnectionDefinitionName, ConnectionRegistryClient } from "../registry-types.ts"
 import type { ConnectionRuntimeClient, ConnectionsRuntime, ConnectionsRuntimeOptions } from "../runtime.ts"
@@ -45,6 +44,7 @@ async function defaultStore(): Promise<ConnectionStore> {
   if (!database) {
     throw new ConnectionError("invalid", "Connections need the ViteHub Database. Enable `database` in vitehub(), or call setConnectionsRuntime() with a store.")
   }
+  const { createDatabaseConnectionStore } = await import("../store.ts")
   return createDatabaseConnectionStore({ db: await database(), encryptionKey: readEncryptionKey() })
 }
 

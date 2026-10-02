@@ -6,8 +6,19 @@ navigation.group: Deployment hosts
 icon: i-simple-icons-vercel
 ---
 
-Vercel is a Provider Selection for packages that can emit Vercel Build Output, functions, queues, workflows, blob-backed storage, or sandbox integration.
-ViteHub keeps Definitions portable and moves Vercel-specific behavior into package Integration Options and Provider Output.
+Use the `vercel` preset to deploy a ViteHub application to Vercel. A production
+build writes Vercel Build Output under `.vercel/output`. Definitions stay
+portable; Vercel-specific behavior stays in the config and the generated output.
+
+| Feature | Default on the `vercel` preset |
+| --- | --- |
+| Blob | Vercel Blob with `BLOB_READ_WRITE_TOKEN` |
+| KV | Upstash Redis with `KV_REST_API_URL` and `KV_REST_API_TOKEN` |
+| Queue | Vercel Queues |
+| Sandbox | Vercel Sandbox |
+| Schedule | Vercel Cron Jobs |
+| Workflow | Vercel Workflow |
+| Rate Limit | None. `rateLimit: true` fails the build. |
 
 ## Vercel boundaries
 
@@ -21,9 +32,9 @@ ViteHub keeps Definitions portable and moves Vercel-specific behavior into packa
 | External Database | A Database Definition backed by Cloudflare D1 over authenticated HTTP, or Database integration `connection` backed by hosted libSQL. |
 | Credentials | `VERCEL_TOKEN` and `VERCEL_PROJECT_ID` for Blob Provision, with an optional team id; Server Env for app runtime secrets. |
 
-## Provider-owned configuration
+## Configure the preset
 
-Select the Vercel preset in the framework integration. Each primitive still owns its Definitions and Runtime Helpers.
+Select the `vercel` preset and enable the features the application uses.
 
 ```ts [vite.config.ts]
 import { nitro } from 'nitro/vite'
@@ -52,7 +63,7 @@ Database Definitions own tables and identity, while the Database Integration sel
 A Definition uses Cloudflare D1 from Vercel only when it declares `cloudflare.http`. Set it to `true` for Cloudflare's D1 raw API, then configure `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` as Vercel Server Env. Cloudflare deployments still prefer the D1 binding.
 
 ```ts [server/databases/config.ts]
-import { defineDatabase } from '@vite-hub/database'
+import { defineDatabase } from 'vite-hub/database'
 
 import { notes } from './schema'
 

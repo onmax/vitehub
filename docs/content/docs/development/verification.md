@@ -6,18 +6,20 @@ navigation.group: Proof and recovery
 icon: i-lucide-badge-check
 ---
 
-Verification checks selected behavior across generated output, local provider execution, and live providers. Each tier covers a different failure mode; no single tier establishes production readiness.
-Use the narrowest tier that covers the change, then verify the provider behavior that local tests cannot exercise.
+Use this page to choose the checks that prove a change before you deploy it.
+Each check covers a different failure mode, and no single check proves
+production readiness. Run the narrowest check that covers the change, then
+verify the provider behavior that local checks cannot exercise.
 
 ## Verification tiers
 
-| Tier | Runs where | Proves |
+| Tier | How to run it | Proves |
 | --- | --- | --- |
-| Unit or package test | Package test suite | Pure runtime behavior, config normalization, and error branches. |
-| Provider Output Contract | Pull request check | Generated Provider Output shape without cloud execution. |
-| Local Provider Run | Pull request check | Built Provider Output can execute the application proof fixture locally. |
-| Live Smoke | Scheduled provider deployment | Thin real-provider coverage for the same application behaviour. |
-| Agent Eval | Local or CI behavior check | Agent Definition behavior and scored Agent Invocations. |
+| Unit or application test | Your test runner | Runtime behavior, config handling, and error branches. |
+| Provider Output Contract | `pnpm build`, then `vitehub inspect provider-output` | Generated Provider Output shape without cloud execution. |
+| Local Provider Run | Start the built output locally, for example `node .output/server/index.mjs` | Built Provider Output can serve the application behavior. |
+| Live Smoke | A deployment to a separate environment | Thin real-provider coverage for the same application behavior. |
+| Agent Eval | `vitehub agent eval` | Agent Definition behavior and scored Agent Invocations. |
 
 ## Run application checks
 
@@ -33,7 +35,12 @@ pnpm build
 Provider Output Contracts inspect generated files rather than cloud state.
 Use them when the change affects bindings, worker bundles, Vercel Build Output, generated functions, cron entries, or runtime imports.
 
-Inspect the selected host directory after the build. The [Provider output reference](/docs/reference/provider-output) lists the expected artifact families.
+```bash [Terminal]
+pnpm build
+pnpm vitehub inspect provider-output --json
+```
+
+The [Provider output reference](/docs/reference/provider-output) lists the expected artifact families.
 
 ## Keep Live Smoke thin
 

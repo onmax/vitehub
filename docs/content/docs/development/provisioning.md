@@ -6,8 +6,20 @@ navigation.group: Build state
 icon: i-lucide-cloud-cog
 ---
 
-Provision is the ViteHub CLI workflow that creates missing provider resources required by app Definitions.
-Provision Steps are package-contributed, idempotent, and create-only; they never delete or mutate existing resources.
+Use Provision to create the provider resources that your Definitions need before
+the first deploy. Each enabled package contributes Provision Steps. The steps are
+idempotent and create-only: they never delete or change existing resources.
+
+| Provider | Resources that Provision can create | Owner package |
+| --- | --- | --- |
+| Cloudflare | D1 databases | Database |
+| Cloudflare | Workers KV namespaces | KV |
+| Cloudflare | R2 buckets | Blob |
+| Cloudflare | Queues | Queue |
+| Vercel | Blob stores, connected to the project | Blob |
+
+`vitehub provision` accepts `--provider cloudflare` and `--provider vercel`
+only.
 
 ## Preview the plan
 
@@ -19,17 +31,19 @@ CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm vitehub provision run --
 VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider vercel --dry-run
 ```
 
-Provider steps use read credentials during planning to distinguish existing resources from resources to create. A dry run does not call `apply()` or write Provision State, but a useful plan still needs the provider credentials required to inspect current state.
+Provider steps use read credentials during planning to distinguish existing resources from resources to create. A dry run does not call `apply()` or write Provision State. A dry run without credentials does not fail, but steps that cannot look up current state report fewer actions.
+
+Each line shows the action status, the resource kind, and the resource name.
 
 ```txt [Output]
-create  d1-database              app-content
+create  cloudflare-d1            app-content
 create  cloudflare-kv-namespace  app-cache
-exists  r2-bucket                uploads
+exists  cloudflare-r2-bucket     uploads
 ```
 
 ## Apply the plan
 
-The apply command uses the same provider credentials as the plan. Cloudflare and Vercel use different credential sets.
+The apply command uses the same provider credentials as the plan. Without them, `provision run` exits with code 1 before it plans. Cloudflare and Vercel use different credential sets.
 
 ```bash [Terminal]
 CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm vitehub provision run --provider cloudflare
