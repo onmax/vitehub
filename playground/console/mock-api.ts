@@ -352,8 +352,15 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
     const id = decodeURIComponent(path.slice("/api/_vitehub/console/invocations/".length))
     if (request.method === "POST") {
       // SAFETY: The playground handler checks the action immediately after decoding this local JSON request.
-      const input = await body(request) as { action?: unknown }
-      if (input.action !== "cancel") {
+      let input: unknown
+      try {
+        input = await body(request)
+      }
+      catch {
+        json(response, { error: "Malformed invocation action." }, 400)
+        return true
+      }
+      if (!(input instanceof Object) || Array.isArray(input) || Object.keys(input).length !== 1 || Reflect.get(input, "action") !== "cancel") {
         json(response, { error: "Unsupported invocation action." }, 400)
         return true
       }

@@ -126,6 +126,13 @@ function assertJSONValue(value: unknown, seen = new WeakSet<object>()): void {
     throw new KVDevRequestError("The stored value is not representable in JSON.", 422, "KV_VALUE_NOT_JSON")
   }
   if (value instanceof Uint8Array) return
+  if (Array.isArray(value)) {
+    if (seen.has(value)) throw new KVDevRequestError("The stored value is not representable in JSON.", 422, "KV_VALUE_NOT_JSON")
+    seen.add(value)
+    for (const entry of value) assertJSONValue(entry, seen)
+    seen.delete(value)
+    return
+  }
   if (typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) {
     throw new KVDevRequestError("The stored value is not representable in JSON.", 422, "KV_VALUE_NOT_JSON")
   }
