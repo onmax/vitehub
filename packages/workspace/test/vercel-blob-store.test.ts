@@ -92,6 +92,20 @@ describe("Vercel Blob workspace store", () => {
     })
   })
 
+  it("preserves unchanged legacy snapshots without file digests", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "token" }, "docs")
+    await store.writeFile("readme.md", { path: "readme.md", content: "before" })
+    const current = await store.snapshot()
+    const legacy = {
+      ...current,
+      entries: Object.fromEntries(Object.entries(current.entries).map(([path, entry]) => [path, { ...entry, digest: undefined }])),
+    }
+
+    await expect(store.diff({ from: legacy })).resolves.toMatchObject({ entries: [] })
+  })
+
   it("stores files, metadata, snapshots, and diffs in Blob", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "token"
     const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
