@@ -220,6 +220,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+function hasResultShape(operation: ScheduleDevOperation, result: Record<string, unknown>): boolean {
+  switch (operation) {
+    case "list":
+      return Array.isArray(result.schedules)
+    case "get":
+    case "enable":
+    case "disable":
+      return isRecord(result.schedule)
+    case "runs":
+      return Array.isArray(result.runs)
+    case "attempts":
+      return isRecord(result.run) && Array.isArray(result.attempts)
+    case "run":
+      return isRecord(result.run)
+  }
+}
+
 function formatResult(operation: ScheduleDevOperation, result: Record<string, unknown>): string {
   // SAFETY: the Schedule dev handler of the same package version writes these shapes.
   switch (operation) {
@@ -331,6 +348,7 @@ async function runScheduleCommand(
   if (!response.ok) return writeFailure(parsed, context, await readFailure(response))
   const result: unknown = await response.json().catch(() => undefined)
   if (!isRecord(result)) return writeFailure(parsed, context, { message: "The Schedule Dev response is not valid JSON." })
+  if (!hasResultShape(command.name, result)) return writeFailure(parsed, context, { message: "The Schedule Dev response has an invalid shape." })
   context.stdout.write(parsed.json ? `${JSON.stringify(result, null, 2)}\n` : formatResult(command.name, result))
   // A failed manual run is a command failure, so scripts can check the exit code.
   return command.name === "run" && isRecord(result.run) && result.run.status === "failed" ? 1 : 0

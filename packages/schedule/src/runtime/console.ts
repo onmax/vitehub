@@ -100,7 +100,7 @@ function redactInput(value: unknown): unknown {
 function summarizeError(error: ScheduleRunError | undefined): ScheduleRunErrorSummary | undefined {
   if (!error) return
   const summary: ScheduleRunErrorSummary = { message: redactInspectionText(error.message) }
-  if (error.name) summary.name = error.name
+  if (error.name) summary.name = redactInspectionText(error.name)
   return summary
 }
 

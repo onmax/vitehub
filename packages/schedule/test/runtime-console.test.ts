@@ -169,7 +169,9 @@ describe("Schedule dev request handler", () => {
 
   it("returns the stored failed run when the handler fails", async () => {
     installTargets(() => {
-      throw new Error("Bearer abc.def.ghi rejected")
+      const error = new Error("Bearer abc.def.ghi rejected")
+      error.name = "access_token=secret-name"
+      throw error
     })
     await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
 
@@ -179,6 +181,7 @@ describe("Schedule dev request handler", () => {
     const body = await readBody(response)
     expect(body.run).toMatchObject({ scheduleId: "digest", status: "failed" })
     expect(JSON.stringify(body)).not.toContain("abc.def.ghi")
+    expect(JSON.stringify(body)).not.toContain("secret-name")
   })
 
   it("reports missing records and a missing registry", async () => {

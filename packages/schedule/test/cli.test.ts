@@ -115,6 +115,12 @@ describe("vitehub schedule", () => {
     expect(disable.stdout.output()).toBe("Disabled Schedule digest.\n")
   })
 
+  it("rejects malformed successful responses", async () => {
+    const result = context()
+    await expect(runScheduleCli(["list"], result.context, { fetch: devServer({ schedules: "invalid" }) })).resolves.toBe(1)
+    expect(result.stderr.output()).toBe("The Schedule Dev response has an invalid shape.\n")
+  })
+
   it("exits with 1 when a manual run fails", async () => {
     const failed = { ...digest.lastRun, error: { message: "Target failed", name: "Error" }, status: "failed" }
     const human = context()
