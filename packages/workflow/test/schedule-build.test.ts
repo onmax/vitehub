@@ -52,7 +52,7 @@ describe("Workflow preparation for Schedule", () => {
       // Both config hooks run before either configResolved hook.
       for (const config of configs) await (plugin.configResolved as (config: ResolvedConfig) => void)(config)
       const artifacts = await Promise.all(configs.map(config =>
-        plugin.vitehub?.workflow?.prepareScheduleRuntime?.(join(config.root, "artifact"), config),
+        plugin.vitehub?.workflow?.prepareScheduleRuntime?.(join(config.root, "artifact")),
       ))
       for (const [index, runtime] of artifacts.entries()) {
         expect(runtime).toBeDefined()
