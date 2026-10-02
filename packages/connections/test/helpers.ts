@@ -7,7 +7,7 @@ import { createDatabaseConnectionStore } from "../src/store.ts"
 
 import type { ConnectionsRuntime } from "../src/runtime.ts"
 import type { ConnectionStore } from "../src/store.ts"
-import type { ConnectionAccessRule, ConnectionActionPattern, ConnectionDefinition, ConnectionProvider } from "../src/types.ts"
+import type { ConnectionAccessRule, ConnectionActionPattern, ConnectionDefinition, ConnectionOAuthDefinition, ConnectionProvider } from "../src/types.ts"
 
 export interface MailApi {
   "labels.list": { method: "GET", body: never, params: { userId: string }, response: { labels: Array<{ id: string }> } }
@@ -77,13 +77,13 @@ export function fakeProvider(): FakeProvider {
   return provider
 }
 
-export function mailConnection(access?: Record<string, ConnectionAccessRule<ConnectionActionPattern<{ mail: MailApi }>>>): ConnectionDefinition {
+export function mailConnection(access?: Record<string, ConnectionAccessRule<ConnectionActionPattern<{ mail: MailApi }>>>): ConnectionOAuthDefinition {
   return defineConnection({
     ...(access ? { access } : {}),
     api: { mail: ["labels.*", "messages.modify", "messages.send"] },
     provider: testProvider(),
     scopes: ["mail.modify"],
-  }) as ConnectionDefinition
+  }) as ConnectionOAuthDefinition
 }
 
 export function createStore(): ConnectionStore {

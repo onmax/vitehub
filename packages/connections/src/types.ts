@@ -95,13 +95,34 @@ export interface ConnectionAccessRule<TPattern extends string = string> {
   approve?: boolean
 }
 
-export interface ConnectionDefinition<
-  TApis extends object = object,
-  TSelection extends ConnectionApiSelection<TApis> = ConnectionApiSelection<TApis>,
-> {
-  provider: ConnectionProvider<TApis>
-  /** Provider scopes to request. Inspection reports declared scopes that the grant lacks. */
-  scopes: readonly string[]
+/** Result of an API key `verify` check. `false` rejects the key. `account` labels the Connection in inspection. */
+export type ConnectionApiKeyVerification = boolean | { account?: ConnectionAccount }
+
+export interface ConnectionApiKeyVerifyContext {
+  /** The runtime fetch. Send the key only to the provider. */
+  fetch: typeof fetch
+  /** Aborts the check after 30 seconds. */
+  signal: AbortSignal
+}
+
+/** A provider whose credential is a static API key. An admin sets the key at runtime. */
+export interface ConnectionApiKeyProvider<TApis extends object = object> {
+  readonly kind: "api-key"
+  readonly id: string
+  /** Lowercase request header that carries the key. */
+  readonly header: string
+  /** Text before the key in the header value, for example `Bearer`. Omit to send the bare key. */
+  readonly scheme?: string
+  /** Origins that `fetch` may send the key to. API catalog root URLs are also allowed. */
+  readonly origins: readonly string[]
+  readonly apis: { readonly [TApi in keyof TApis]: ConnectionApiCatalog }
+  /** Check a new key before ViteHub stores it. */
+  verify?: (key: string, context: ConnectionApiKeyVerifyContext) => Promise<ConnectionApiKeyVerification>
+  /** Type-only method map. It has no runtime value. */
+  readonly "~apis"?: TApis
+}
+
+interface ConnectionDefinitionRules<TApis extends object, TSelection extends ConnectionApiSelection<TApis>> {
   /** API methods to expose. Omit to expose every method of every provider API. */
   api?: TSelection
   /**
@@ -111,6 +132,30 @@ export interface ConnectionDefinition<
    */
   access?: Readonly<Record<string, ConnectionAccessRule<ConnectionActionPattern<TApis>>>>
 }
+
+/** A Connection that an account owner grants through OAuth 2.0. */
+export interface ConnectionOAuthDefinition<
+  TApis extends object = object,
+  TSelection extends ConnectionApiSelection<TApis> = ConnectionApiSelection<TApis>,
+> extends ConnectionDefinitionRules<TApis, TSelection> {
+  provider: ConnectionProvider<TApis>
+  /** Provider scopes to request. Inspection reports declared scopes that the grant lacks. */
+  scopes: readonly string[]
+}
+
+/** A Connection whose credential is a static API key. API keys have no scopes. */
+export interface ConnectionApiKeyDefinition<
+  TApis extends object = object,
+  TSelection extends ConnectionApiSelection<TApis> = ConnectionApiSelection<TApis>,
+> extends ConnectionDefinitionRules<TApis, TSelection> {
+  provider: ConnectionApiKeyProvider<TApis>
+  scopes?: undefined
+}
+
+export type ConnectionDefinition<
+  TApis extends object = object,
+  TSelection extends ConnectionApiSelection<TApis> = ConnectionApiSelection<TApis>,
+> = ConnectionOAuthDefinition<TApis, TSelection> | ConnectionApiKeyDefinition<TApis, TSelection>
 
 /** Fetch options supported by Connections. Bodies are persisted for approval replay. */
 export type ConnectionFetchInit = Pick<RequestInit, "headers" | "method" | "redirect" | "signal"> & { body?: string }
@@ -211,6 +256,8 @@ export interface ConnectionInspection {
   account?: ConnectionAccount
   actions: ConnectionActionInfo[]
   connectedAt?: string
+  /** `oauth2` Connections connect through the provider. `api-key` Connections store a key that an admin sets. */
+  credential: "api-key" | "oauth2"
   name: string
   provider: string
   refreshedAt?: string

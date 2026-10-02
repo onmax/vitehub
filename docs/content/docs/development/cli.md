@@ -25,19 +25,24 @@ Libraries and advanced integrations that do not use the framework distribution
 can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, the framework contributes `types`, and the CLI includes the built-in `inspect` and `provision` namespaces.
+The CLI owns the `inspect` namespace. Plugin command contributions with that name are ignored.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Env contributes `env` when `hubEnv()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, and the Console integration contributes `console` when `console` is enabled. The framework contributes `types` and `box`, and the CLI includes the built-in `inspect` and `provision` namespaces. `box` does not load the project config, so it also runs in a deployed container without Vite.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
+
 Available namespaces:
+  workspace   Workspace development workflows.
+  console     Console development workflows.
   agent       Agent development workflows.
   channels    External Channel registration workflows.
   db          Database development workflows.
+  env         Server Env inspection workflows.
   schedule    Run Static Schedule Definitions and inspect or control Runtime Schedules.
-  workspace   Workspace development workflows.
   types       Generate ViteHub TypeScript declarations.
   inspect     Inspect discovered Definitions and generated Provider Output.
   provision   Idempotently create missing provider resources.
+  box         Serve and check an SSH Box runner. Does not load the project config.
 ```
 
 ## Commands
@@ -52,6 +57,9 @@ Available namespaces:
 | `vitehub channels sync` | Available | Agent Package | Inspect or apply provider-owned webhook registrations for a deployed stage. |
 | `vitehub channels replay` | Available | Agent Package | Replay stored Channel history through an Agent from a development server. |
 | `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
+| `vitehub connections` | Available | Connections Package | Connect OAuth accounts, set API keys, list Connections, read activity, and approve or deny writes. |
+| `vitehub env inspect` | Available | Env Package | List declared Server Env variables and their status without values. |
+| `vitehub env check` | Available | Env Package | Fail CI or a deploy step when Server Env would not load for a stage. |
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
 | `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
 | `vitehub schedule list` | Available | Schedule Package | List Runtime Schedules with enabled state, next due time, and last run. |

@@ -11,6 +11,7 @@ export const connectionInspectionSchema: v.GenericSchema<unknown, ConnectionInsp
   account: v.optional(v.object({ email: v.optional(v.string()), id: v.string() })),
   actions: v.array(v.object({ highRisk: v.boolean(), id: v.string(), method: v.string(), write: v.boolean() })),
   connectedAt: v.optional(v.string()),
+  credential: v.picklist(["api-key", "oauth2"]),
   name: v.string(),
   provider: v.string(),
   refreshedAt: v.optional(v.string()),
@@ -54,6 +55,12 @@ export function connectionConnectURL(endpoint: string, name: string): string {
   return `${endpoint.replace(/\/+$/, "")}/connect/${encodeURIComponent(name)}`
 }
 
+/** The Console sends an API key only over HTTPS or to a loopback development server. */
+export function canSendConnectionKey(location: { hostname: string, protocol: string }): boolean {
+  const host = location.hostname
+  return location.protocol === "https:" || (location.protocol === "http:" && (host === "localhost" || host.endsWith(".localhost") || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host)))
+}
+
 async function errorMessage(response: Response): Promise<string> {
   if (response.status === 401) return "Sign in to manage Connections."
   if (response.status === 403) return "You do not have access to this operation."
@@ -63,8 +70,8 @@ async function errorMessage(response: Response): Promise<string> {
 }
 
 /** Run one action on the Connections management API and validate the response. */
-export async function requestConnectionsManagement<T extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>>(endpoint: string, action: string, schema: T, input: Record<string, unknown> = {}): Promise<v.InferOutput<T>> {
-  const response = await fetch(endpoint, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...input, action }) })
+export async function requestConnectionsManagement<T extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>>(endpoint: string, action: string, schema: T, input: Record<string, unknown> = {}, init: Pick<RequestInit, "redirect"> = {}): Promise<v.InferOutput<T>> {
+  const response = await fetch(endpoint, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...input, action }), ...init })
   if (!response.ok) throw new ConsoleRequestError(response.status, await errorMessage(response))
   return v.parse(schema, await response.json())
 }

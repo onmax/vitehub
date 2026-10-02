@@ -167,10 +167,8 @@ function ownData<T>(value: T, seen = new WeakMap<object, object>()): T {
   // SAFETY: `value` is an object tracked in this map, so the stored clone has type T.
   // SAFETY: every value inserted into `seen` is the clone of the corresponding input object.
   if (seen.has(value)) return seen.get(value) as T
-  const copy = Object.setPrototypeOf(
-    Array.isArray(value) ? new Array(value.length) : {},
-    null,
-  )
+  const copy = Object.setPrototypeOf(Array.isArray(value) ? [] : {}, null)
+  if (Array.isArray(value)) copy.length = value.length
   seen.set(value, copy)
   for (const key of Object.keys(value)) {
     // SAFETY: callers provide object-like data; indexing by an own enumerable key yields its value.

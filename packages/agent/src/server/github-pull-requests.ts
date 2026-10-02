@@ -271,6 +271,7 @@ export function createGitHubPullRequests(
       reviews: new Map<string, FeedbackReview>(),
       threads: new Map<string, FeedbackThread>(),
     };
+    let more = true;
     do {
       const result = await github.command(
         [
@@ -289,7 +290,7 @@ export function createGitHubPullRequests(
         { repository },
       );
       const node = parseFeedback(graphQL(result.stdout, "data", "repository", "pullRequest"));
-      let more = false;
+      more = false;
       function collect<T extends { id: string }>(key: string, items: Map<string, T>, connection: Connection<T>) {
         for (const item of connection.nodes) items.set(item.id, item)
         if (connection.pageInfo.hasNextPage) {
@@ -302,7 +303,7 @@ export function createGitHubPullRequests(
       collect("reviews", collected.reviews, node.reviews)
       collect("threads", collected.threads, node.reviewThreads)
       if (!more) break;
-    } while (true);
+    } while (more);
     for (const thread of collected.threads.values()) {
       while (thread.comments.pageInfo.hasNextPage) {
         const query =

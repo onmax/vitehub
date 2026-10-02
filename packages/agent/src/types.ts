@@ -2032,7 +2032,7 @@ export interface AgentChatMessageHookArgs {
   text: string
 }
 
-export interface AgentChatAgentHookArgs<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> extends Record<string, unknown> {
+export interface AgentChatAgentHookArgs<_TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> extends Record<string, unknown> {
   history: Message[]
   message: AgentChatMessageHookArgs
   run?: AgentRunMetadata
@@ -2043,17 +2043,17 @@ export interface AgentChatAgentHookArgs<TRuntimeConfig extends AgentRuntimeConfi
   thread: { post: (message: unknown) => MaybePromise<unknown> }
 }
 
-export interface AgentChatErrorHookArgs<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> extends AgentChatAgentHookArgs<TRuntimeConfig> {
+export interface AgentChatErrorHookArgs<_TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> extends AgentChatAgentHookArgs<_TRuntimeConfig> {
   error: unknown
   publicError: AgentPublicError
   toolResults: AgentToolStepItem[]
 }
 
-export interface AgentChatEventHookArgs<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> extends Record<string, unknown> {
+export interface AgentChatEventHookArgs<_TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> extends Record<string, unknown> {
 }
 
-export interface AgentChatEventHooks<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> extends Record<string, unknown> {
-  onDirectMessage?: (args: { message: { text: string } } & AgentChatEventHookArgs<TRuntimeConfig>) => MaybePromise<void>
+export interface AgentChatEventHooks<_TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> extends Record<string, unknown> {
+  onDirectMessage?: (args: { message: { text: string } } & AgentChatEventHookArgs<_TRuntimeConfig>) => MaybePromise<void>
 }
 
 type AgentChatVersionBoundAdapterMethod =

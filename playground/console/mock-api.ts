@@ -98,6 +98,7 @@ const connections = new Map([
       { highRisk: true, id: "gmail.users.messages.send", method: "POST", write: true },
     ],
     connectedAt: "2026-09-21T08:12:00.000Z",
+    credential: "oauth2",
     name: "gmail",
     provider: "google",
     refreshedAt: "2026-09-29T07:58:00.000Z",
@@ -108,6 +109,7 @@ const connections = new Map([
     account: { email: "ada@example.com", id: "108230129837" },
     actions: [{ highRisk: false, id: "calendar.events.list", method: "GET", write: false }],
     connectedAt: "2026-08-02T10:40:00.000Z",
+    credential: "oauth2",
     name: "calendar",
     provider: "google",
     scopes: {
@@ -119,9 +121,18 @@ const connections = new Map([
   }],
   ["support-inbox", {
     actions: [{ highRisk: false, id: "gmail.users.threads.list", method: "GET", write: false }],
+    credential: "oauth2",
     name: "support-inbox",
     provider: "google",
     scopes: { declared: ["https://www.googleapis.com/auth/gmail.readonly"], granted: [], missing: ["https://www.googleapis.com/auth/gmail.readonly"] },
+    status: "disconnected",
+  }],
+  ["executor", {
+    actions: [],
+    credential: "api-key",
+    name: "executor",
+    provider: "executor",
+    scopes: { declared: [], granted: [], missing: [] },
     status: "disconnected",
   }],
 ])
@@ -139,7 +150,7 @@ const connectionApprovals = [
 // Synthetic Connections management API. It accepts the same JSON actions as `/_vitehub/connections`.
 async function handleConnections(request: IncomingMessage, response: ServerResponse): Promise<void> {
   // SAFETY: This synthetic API receives the fixed JSON action shapes from the Console fixture client.
-  const input = await body(request) as { action?: string, before?: string, id?: string, name?: string, status?: string }
+  const input = await body(request) as { action?: string, before?: string, id?: string, key?: string, name?: string, status?: string }
   const approvalView = ({ input: _input, ...approval }: typeof connectionApprovals[number]) => approval
   const connection = input.name ? connections.get(input.name) : undefined
   const approval = connectionApprovals.find(entry => entry.id === input.id)
@@ -149,6 +160,11 @@ async function handleConnections(request: IncomingMessage, response: ServerRespo
     case "revoke":
       if (!connection) return json(response, { error: { code: "CONNECTION_INVALID", message: "Unknown Connection." } }, 400)
       Object.assign(connection, { scopes: { ...connection.scopes, granted: [], missing: connection.scopes.declared }, status: "revoked" })
+      return json(response, { connection })
+    case "set-key":
+      // The synthetic API keeps no key. It only marks the API key Connection as connected.
+      if (connection?.credential !== "api-key" || !input.key) return json(response, { error: { code: "CONNECTION_INVALID", message: "Set a key only on an API key Connection." } }, 400)
+      Object.assign(connection, { connectedAt: new Date().toISOString(), status: "connected" })
       return json(response, { connection })
     case "activity": return json(response, { activity: input.before ? [] : connectionActivity.filter(event => event.key === `connection/${input.name}`) })
     case "approval-counts": return json(response, { counts: Object.fromEntries([...connections.keys()].map(name => [name, connectionApprovals.filter(entry => entry.name === name && entry.status === "pending").length])) })
