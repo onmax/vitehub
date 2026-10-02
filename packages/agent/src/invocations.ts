@@ -2756,6 +2756,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
     },
     async cancel(id) {
       assertInvocationId(id)
+      const local = abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
       const terminalResult = (record: AgentInvocationSummary, local?: ReturnType<typeof abortLocalAgentInvocation>): AgentInvocationCancelResult => {
         const notEnforcedBy = local?.notEnforcedBy || record.cancelNotEnforcedBy
         const result: AgentInvocationCancelResult = {
@@ -2772,24 +2773,16 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         summary = await store.getSummary(id)
       }
       catch (error) {
-        abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
         throw error
       }
       if (!summary) return { id, outcome: "not-found" }
       if (terminalStatus(summary.status)) {
-        return terminalResult(summary, abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id)))
+        return terminalResult(summary, local)
       }
       const timestamp = new Date().toISOString()
       // Persist the request first, so a run in another process and a later bind of this record read it.
       let flagged: AgentInvocationRecord | undefined
-      let local: ReturnType<typeof abortLocalAgentInvocation>
-      try {
-        flagged = await store.update(id, { cancelRequestedAt: timestamp, timestamp })
-      }
-      finally {
-        // A failed durable request must still signal work in this process, while the write error propagates.
-        local = abortLocalAgentInvocation(store, id, createAgentInvocationCancellationError(id))
-      }
+      flagged = await store.update(id, { cancelRequestedAt: timestamp, timestamp })
       let current = await store.getSummary(id) ?? flagged
       if (!current) return { id, outcome: "not-found" }
       if (terminalStatus(current.status)) return terminalResult(current, local)
