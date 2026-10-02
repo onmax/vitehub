@@ -773,9 +773,10 @@ async function readDiscovery(
   const { discovery, url } = server
   const tokenOptions = hasRuntimeType(discovery.workspaceDevTokenServerId, "string") ? { serverId: discovery.workspaceDevTokenServerId } : {}
   const root = hasRuntimeType(discovery.root, "string") ? discovery.root : context.rootDir
-  const agents = (discovery.agents || []).flatMap(agent => hasRuntimeType(agent.name, "string") ? [agent.name] : [])
+  const discoveredAgents = Array.isArray(discovery.agents) ? discovery.agents.filter(isRecord) : []
+  const agents = discoveredAgents.flatMap(agent => hasRuntimeType(agent.name, "string") ? [agent.name] : [])
   const agentTargets = new Map<string, string>()
-  for (const agent of discovery.agents || []) {
+  for (const agent of discoveredAgents) {
     if (!hasRuntimeType(agent.name, "string")) continue
     agentTargets.set(agent.name, agent.name)
     if (Array.isArray(agent.aliases)) {

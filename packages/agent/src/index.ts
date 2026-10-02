@@ -1312,6 +1312,11 @@ async function runAgentAsWorkflow<
   }
   let run: AgentWorkflowRun<AgentWorkflowOutput<TOutput>>
   if (replayJournal) {
+    // A replay can be cancelled after reserving the journal but before the
+    // provider accepts the Workflow run. Observe the durable request before
+    // handing the claim to the provider.
+    await replayJournal.watchCancellation(invocationCancellationDriver(agent))
+    replayJournal.abortSignal.throwIfAborted()
     if (!await replayJournal.prepareWorkflowDispatch({ name: workflowName, provider: (workflowConfig && workflowConfig.provider) || "unknown" })) {
       throw new Error("Could not persist the Workflow dispatch intent.")
     }
