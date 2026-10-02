@@ -3240,7 +3240,8 @@ export function defineChannel<
     messages,
   }
   if (options[channelDeliveryHandlers]?.title || options.message?.methods?.title) customTitleEffectChannels.add(channel)
-  return channel as unknown as AgentChannelDefinitionOf<TRuntimeConfig, TKind, TData, TMethods>
+  // SAFETY: defineChannel constructs the validated definition while preserving the generic method type.
+  return channel as AgentChannelDefinitionOf<TRuntimeConfig, TKind, TData, TMethods>
 }
 
 export function defineChannelTrigger<

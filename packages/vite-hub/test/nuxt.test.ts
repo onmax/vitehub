@@ -1988,6 +1988,15 @@ describe("ViteHub Nuxt integration", () => {
     expect(result.outputFiles?.[0]?.text).toContain("auth resolver reached")
   })
 
+  it.each([
+    { connections: true, console: undefined },
+    { connections: { management: true }, console: {} },
+  ])("rejects Connections in production Nuxt configuration %#", async ({ connections, console }) => {
+    const { nuxt } = createNuxt()
+    await expect(viteHubNuxtModule({ connections, console, preset: "node" }, nuxt)).rejects.toThrow("connections is not supported by the Nuxt module yet")
+    expect(mocks.vitehub).not.toHaveBeenCalled()
+  })
+
   it("preserves the Nitro mount independently of the Vite asset base", async () => {
     const { nuxt, runNitroConfigHook } = createNuxt(true)
     Object.assign(nuxt.options, { app: { baseURL: "/portal/" } })
@@ -3477,15 +3486,6 @@ describe("ViteHub Nuxt integration", () => {
     expect(nitroConfig).toMatchObject({
       modules: ["first", "second"],
     })
-  })
-
-  it.each([
-    { connections: true, console: undefined },
-    { connections: { management: true }, console: {} },
-  ])("rejects Connections in production Nuxt configuration %#", async ({ connections, console }) => {
-    const { nuxt } = createNuxt()
-    await expect(viteHubNuxtModule({ connections, console, preset: "node" }, nuxt)).rejects.toThrow("connections is not supported by the Nuxt module yet")
-    expect(mocks.vitehub).not.toHaveBeenCalled()
   })
 
   it("does nothing when Nuxt has not initialized", async () => {

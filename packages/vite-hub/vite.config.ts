@@ -149,6 +149,10 @@ export default defineConfig({
         to: "dist/console/runtime/components",
       },
       {
+        from: "src/console/runtime/components/console-session-actions.vue",
+        to: "dist/console/runtime/components",
+      },
+      {
         from: "src/console/runtime/components/console-session-inspector.vue",
         to: "dist/console/runtime/components",
       },
@@ -190,11 +194,12 @@ export default defineConfig({
       { from: "src/console/runtime/components/console-env-managed.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/components/console-env-activity.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/components/console-env-access.vue", to: "dist/console/runtime/components" },
-      { from: "src/console/runtime/components/console-oauth-connections.vue", to: "dist/console/runtime/components" },
-      { from: "src/console/runtime/components/console-oauth-connection-details.vue", to: "dist/console/runtime/components" },
-      { from: "src/console/runtime/components/console-oauth-connection-activity.vue", to: "dist/console/runtime/components" },
-      { from: "src/console/runtime/pages/kv.vue", to: "dist/console/runtime/pages" },
       { from: "src/console/runtime/pages/connections.vue", to: "dist/console/runtime/pages" },
+      { from: "src/console/runtime/components/console-connections.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/components/console-connections-details.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/components/console-connections-activity.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/components/console-connections-approvals.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/pages/kv.vue", to: "dist/console/runtime/pages" },
       { from: "src/console/runtime/pages/section.vue", to: "dist/console/runtime/pages" },
       { from: "../ui/styles.css", to: "dist/ui" },
       { from: "templates/cloudflare-types.d.ts", to: "dist" },
@@ -234,9 +239,12 @@ export default defineConfig({
       ...distributionEntries,
       "src/console/runtime/console-route.ts",
       "src/console/runtime/client/invocation.ts",
+      "src/console/runtime/client/invocation-deletion.ts",
       "src/console/runtime/client/request.ts",
       "src/console/runtime/client/env-management.ts",
       "src/console/runtime/client/connections-management.ts",
+      "src/console/runtime/client/env-status.ts",
+      "src/console/runtime/client/schedule-run.ts",
       "src/console/runtime/client/time.ts",
       "src/console/runtime/definitions.ts",
       "src/console/runtime/rpc.ts",
@@ -254,7 +262,6 @@ export default defineConfig({
       "src/console/runtime/server/invocations.get.ts",
       "src/console/runtime/server/env.get.ts",
       "src/console/runtime/server/env-manage.ts",
-      "src/console/runtime/server/connections-route.ts",
       "src/console/runtime/server/kv.get.ts",
       "src/console/runtime/server/page.get.ts",
       "src/console/runtime/server/schedule-run.ts",
@@ -270,9 +277,12 @@ export default defineConfig({
         delete exports["./console/runtime/console-route"];
         delete exports["./console/runtime/client/sections"];
         delete exports["./console/runtime/client/invocation"];
+        delete exports["./console/runtime/client/invocation-deletion"];
         delete exports["./console/runtime/client/request"];
         delete exports["./console/runtime/client/env-management"];
         delete exports["./console/runtime/client/connections-management"];
+        delete exports["./console/runtime/client/env-status"];
+        delete exports["./console/runtime/client/schedule-run"];
         delete exports["./console/runtime/client/time"];
         delete exports["./console/runtime/definitions"];
         delete exports["./console/runtime/rpc"];
@@ -294,8 +304,6 @@ export default defineConfig({
         delete exports["./console/runtime/server/env.get"];
         delete exports["./console/runtime/server/env-manage"];
         delete exports["./console/runtime/server/env"];
-        delete exports["./console/runtime/server/connections-route"];
-        delete exports["./console/runtime/server/connections"];
         delete exports["./console/runtime/server/kv.get"];
         delete exports["./console/runtime/server/kv"];
         delete exports["./console/runtime/server/page.get"];
@@ -314,7 +322,6 @@ export default defineConfig({
           "./console/auth/cloudflare-access": "./dist/console/auth-cloudflare-access.js",
           "./console/auth/inline": "./dist/console/auth-inline.js",
           "./console/blob": "./dist/console/runtime/server/blob.js",
-          "./console/connections": "./dist/console/runtime/server/connections.js",
           "./console/database": "./dist/console/runtime/server/database.js",
           "./console/definitions": "./dist/console/runtime/server/definitions.js",
           "./console/env": "./dist/console/runtime/server/env.js",
