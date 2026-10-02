@@ -3,12 +3,14 @@ import {
   fetchViteHubDevEndpoint,
   readViteHubDevTargetOption,
   resolveViteHubDevServerUrl,
+  type ViteHubCliContext,
+  type ViteHubCliContributor,
+  type ViteHubCliStreams,
 } from "@vite-hub/internal/cli"
 
 import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute } from "./dev.ts"
 import { scheduleErrorDiagnostics } from "./error-diagnostics.ts"
 
-import type { ViteHubCliContext, ViteHubCliContributor, ViteHubCliStreams } from "@vite-hub/internal/cli"
 import type { ScheduleDevOperation, ScheduleDevRequestBody } from "./dev.ts"
 import type {
   RuntimeScheduleInspection,
