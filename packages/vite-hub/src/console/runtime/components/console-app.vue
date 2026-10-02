@@ -34,6 +34,8 @@ import ConsoleMark from "./console-mark.vue";
 import ConsoleSessionLoading from "./console-session-loading.vue";
 import ConsoleSessionNavbar from "./console-session-navbar.vue";
 import ConsoleSessionCancel from "./console-session-cancel.vue";
+import ConsoleSessionActions from "./console-session-actions.vue";
+import type { ConsoleSessionRerun } from "./console-session-actions.vue";
 import ConsoleSessionInspector from "./console-session-inspector.vue";
 import ConsoleSearch from "./console-search.vue";
 import ConsoleUsage from "./console-usage.vue";
@@ -250,6 +252,23 @@ const selectedDisplay = computed(() => invocationView.value ?? selectedSummary.v
 const selectedRefreshable = computed(() =>
   selectedDisplay.value?.status === "pending" || selectedDisplay.value?.status === "running",
 );
+const selectedActions = computed(() => {
+  const invocation = invocationView.value;
+  const actions = record(record(detail.invocation.value)?.actions);
+  if (!invocation?.agentName || !actions) return;
+  const rerun = record(actions.rerun);
+  const prompt = stringValue(rerun?.prompt);
+  const invokerProfileId = stringValue(rerun?.invokerProfileId);
+  return {
+    agent: invocation.agentName,
+    deletable: record(actions.delete)?.available === true,
+    deleteUnavailableReason: stringValue(record(actions.delete)?.reason),
+    id: invocation.id,
+    rerun: (rerun?.available === true && prompt
+      ? { available: true, prompt, ...(invokerProfileId ? { invokerProfileId } : {}) }
+      : { available: false, reason: stringValue(rerun?.reason) ?? "unavailable" }) satisfies ConsoleSessionRerun,
+  };
+});
 const selectedCancel = computed(() => {
   const invocation = invocationView.value;
   const actions = record(record(detail.invocation.value)?.actions);
@@ -1267,8 +1286,21 @@ onBeforeUnmount(() => {
                   @refresh="refresh"
                   @toggle-details="detailsOpen = !detailsOpen"
                 >
-                  <template v-if="selectedCancel" #actions>
-                    <ConsoleSessionCancel v-bind="selectedCancel" :api-base="apiBase" @cancelled="refresh" />
+                  <template v-if="selectedActions || selectedCancel" #actions>
+                    <ConsoleSessionActions
+                      v-if="selectedActions"
+                      v-bind="selectedActions"
+                      :agents-base="agentsBase"
+                      :api-base="apiBase"
+                      @deleted="removeDeletedInvocation"
+                      @started="selectStartedInvocation"
+                    />
+                    <ConsoleSessionCancel
+                      v-if="selectedCancel"
+                      v-bind="selectedCancel"
+                      :api-base="apiBase"
+                      @cancelled="refresh"
+                    />
                   </template>
                 </ConsoleSessionNavbar>
                 <UAlert
@@ -1363,8 +1395,21 @@ onBeforeUnmount(() => {
               @refresh="refresh"
               @toggle-details="detailsOpen = !detailsOpen"
             >
-              <template v-if="selectedCancel" #actions>
-                <ConsoleSessionCancel v-bind="selectedCancel" :api-base="apiBase" @cancelled="refresh" />
+              <template v-if="selectedActions || selectedCancel" #actions>
+                <ConsoleSessionActions
+                  v-if="selectedActions"
+                  v-bind="selectedActions"
+                  :agents-base="agentsBase"
+                  :api-base="apiBase"
+                  @deleted="removeDeletedInvocation"
+                  @started="selectStartedInvocation"
+                />
+                <ConsoleSessionCancel
+                  v-if="selectedCancel"
+                  v-bind="selectedCancel"
+                  :api-base="apiBase"
+                  @cancelled="refresh"
+                />
               </template>
             </ConsoleSessionNavbar>
             <ConsoleSessionLoading v-if="initialSessionLoading" class="min-h-0 flex-1" />
