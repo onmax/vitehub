@@ -1219,9 +1219,8 @@ type WorkspacePluginRoots = {
   viteRoot: string
 }
 
-function mergeDedupe(current: string[] | undefined): string[] {
-  if (!current) return [WORKSPACE_PACKAGE_NAME]
-  return current.includes(WORKSPACE_PACKAGE_NAME) ? current : [...current, WORKSPACE_PACKAGE_NAME]
+function dedupeAddition(current: string[] | undefined): string[] | undefined {
+  return current?.includes(WORKSPACE_PACKAGE_NAME) ? undefined : [WORKSPACE_PACKAGE_NAME]
 }
 
 function isWorkspaceFile(file: string) {
@@ -1749,8 +1748,8 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
         const nitro = mergeNitroWorkspaceConfig((config as ViteConfigWithWorkspaceNitro).nitro)
         for (const artifactConfig of artifacts) configureCloudflareArtifacts(nitro, artifactConfig)
         if (usesCloudflareRuntime) configureCloudflareNitroRuntime(nitro)
+        // Replace in place so Vite does not merge the Nitro arrays into themselves.
         ;(config as ViteConfigWithWorkspaceNitro).nitro = nitro
-        viteConfig.nitro = nitro
       }
       return viteConfig
     },
@@ -1785,7 +1784,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
       if (!isServerEnvironment(name, config)) return
       return {
         resolve: {
-          dedupe: mergeDedupe(config.resolve?.dedupe),
+          dedupe: dedupeAddition(config.resolve?.dedupe),
           noExternal: mergeNoExternal(config.resolve?.noExternal),
         },
       }
