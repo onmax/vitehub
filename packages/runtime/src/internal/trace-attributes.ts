@@ -1,5 +1,5 @@
 import type { TraceEventContentPolicy } from "../index.ts"
-import { hasRuntimeType } from "./runtime-type.ts"
+import { hasRuntimeType, isRuntimeObject } from "./runtime-type.ts"
 
 const contentAttributeKeys = new Set([
   "args", "body", "content", "data", "input", "message", "messages", "output",
@@ -17,11 +17,12 @@ export function isTraceContentAttributeKey(key: string): boolean {
   return key.split(".").some((part, index) => index > 0 && contentAttributeKeys.has(part))
 }
 
-function ownProperties(value: object): Array<[string, PropertyDescriptor]> {
-  return Reflect.ownKeys(value).flatMap((key) => {
+function ownProperties(value: unknown): Array<[string, PropertyDescriptor]> {
+  if (!isRuntimeObject(value)) return []
+  return Reflect.ownKeys(value).flatMap<[string, PropertyDescriptor]>((key) => {
     if (!hasRuntimeType(key, "string")) return []
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
-    return descriptor?.enumerable ? [[key, descriptor] as [string, PropertyDescriptor]] : []
+    return descriptor?.enumerable ? [[key, descriptor]] : []
   })
 }
 
