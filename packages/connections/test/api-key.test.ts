@@ -54,6 +54,7 @@ describe("apiKey()", () => {
     { header: "bad header", origins: ["https://api.example.com"] },
     { origins: ["https://api.example.com"], scheme: "Bad Scheme" },
     { id: "has space", origins: ["https://api.example.com"] },
+    { apis: { items: { methods: {}, rootUrl: "http://api.example.com" } }, origins: ["https://api.example.com"] },
   ])("rejects an unsafe provider (%o)", (options) => {
     expect(() => apiKey(options)).toThrow(expect.objectContaining({ code: "CONNECTION_INVALID" }))
   })
@@ -112,13 +113,13 @@ describe("API key Connections", () => {
     test.routes.set("https://api.example.com/start", () => new Response(null, { headers: { location: "/next" }, status: 307 }))
     test.routes.set("https://api.example.com/next", () => new Response(null, { headers: { location: "https://evil.example.net/steal" }, status: 302 }))
     test.routes.set("https://evil.example.net/steal", () => new Response(null, { headers: { location: "https://api.example.com/back" }, status: 302 }))
-    const response = await test.runtime.client("executor", {}).fetch("https://api.example.com/start")
+    const response = await test.runtime.client("executor", {}).fetch("https://api.example.com/start", { headers: { cookie: "session=secret" } })
     expect(response.status).toBe(200)
-    expect(test.calls.map(call => [call.url, call.headers.get("x-api-key"), call.redirect])).toEqual([
-      ["https://api.example.com/start", KEY, "manual"],
-      ["https://api.example.com/next", KEY, "manual"],
-      ["https://evil.example.net/steal", null, "manual"],
-      ["https://api.example.com/back", null, "manual"],
+    expect(test.calls.map(call => [call.url, call.headers.get("x-api-key"), call.headers.get("cookie"), call.redirect])).toEqual([
+      ["https://api.example.com/start", KEY, "session=secret", "manual"],
+      ["https://api.example.com/next", KEY, "session=secret", "manual"],
+      ["https://evil.example.net/steal", null, null, "manual"],
+      ["https://api.example.com/back", null, null, "manual"],
     ])
   })
 

@@ -520,7 +520,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     for (let hop = 0; ; hop += 1) {
       crossed ||= target.origin !== origin
       const headers = new Headers(current.headers)
-      if (crossed) headers.delete(header)
+      if (crossed) {
+        headers.delete(header)
+        for (const credentialHeader of ["authorization", "cookie", "proxy-authorization", "set-cookie"]) headers.delete(credentialHeader)
+      }
       const response = await request(target.toString(), { ...current, headers, redirect: "manual" })
       const location = response.headers.get("location")
       if (!REDIRECT_STATUSES.has(response.status) || !location || hop === MAX_REDIRECTS) return response
@@ -997,6 +1000,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const connections = await getStore()
     const key = tokenKey(name)
     const owner = await claimMutationLease(name)
+    let releaseLease = false
     try {
       const current = await connections.secrets.inspect(key)
       const token: StoredToken = { accessToken: input.key, accountId: account?.id, grantId: randomToken(), scopes: [], tokenType: "api-key" }
@@ -1012,10 +1016,18 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         updatedAt: timestamp,
       }, replacement.revision)
       if (!persisted) throw new ConnectionError("invalid", "The Connection key changed while it was set.", { details: { connection: name } })
+      releaseLease = true
       return await inspect(name)
     }
+    catch (error) {
+      if (!releaseLease) {
+        const current = await connections.secrets.inspect(key).catch(() => undefined)
+        await setStatus(name, { status: "reauth_required" }, current?.revision ?? null).catch(() => undefined)
+      }
+      throw error
+    }
     finally {
-      await connections.refreshLeases.release(name, owner).catch(() => undefined)
+      if (releaseLease) await connections.refreshLeases.release(name, owner).catch(() => undefined)
     }
   }
 

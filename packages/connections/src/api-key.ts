@@ -74,7 +74,16 @@ export function apiKey<const TApis extends object = object>(options: ApiKeyProvi
   }
   if (scheme !== undefined) Object.assign(provider, { scheme })
   if (options.verify) provider.verify = options.verify
-  if (!/^\S+$/.test(id) || origins.includes(undefined) || !isValidApiKeyProvider(provider)) {
+  const catalogsSafe = Object.values(provider.apis).every(catalog => {
+    try {
+      const url = new URL(catalog.rootUrl)
+      return !url.username && !url.password && !url.search && !url.hash && apiKeyOrigin(url.origin) !== undefined
+    }
+    catch {
+      return false
+    }
+  })
+  if (!/^\S+$/.test(id) || origins.includes(undefined) || !catalogsSafe || !isValidApiKeyProvider(provider)) {
     throw new ConnectionError("invalid", "The API key provider needs a token header name, a token scheme, and HTTPS or loopback origins without a path.")
   }
   return provider

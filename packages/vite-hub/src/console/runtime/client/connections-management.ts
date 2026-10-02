@@ -71,7 +71,7 @@ async function errorMessage(response: Response): Promise<string> {
 
 /** Run one action on the Connections management API and validate the response. */
 export async function requestConnectionsManagement<T extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>>(endpoint: string, action: string, schema: T, input: Record<string, unknown> = {}): Promise<v.InferOutput<T>> {
-  const response = await fetch(endpoint, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...input, action }) })
+  const response = await fetch(endpoint, { method: "POST", redirect: "error", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...input, action }) })
   if (!response.ok) throw new ConsoleRequestError(response.status, await errorMessage(response))
   return v.parse(schema, await response.json())
 }
