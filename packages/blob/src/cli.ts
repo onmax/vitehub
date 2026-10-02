@@ -439,16 +439,14 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
         : "This Vite Development Server cannot reach the Blob runtime.",
     })
   }
-  const body: BlobDevRequestBody = {
-    ...(parsed.contentType !== undefined ? { contentType: parsed.contentType } : {}),
-    ...(parsed.cursor !== undefined ? { cursor: parsed.cursor } : {}),
-    ...(data !== undefined ? { data } : {}),
-    ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
-    operation: command.name,
-    ...(parsed.pathname !== undefined ? { pathname: parsed.pathname } : {}),
-    ...(parsed.prefix !== undefined ? { prefix: parsed.prefix } : {}),
-    ...(parsed.store !== undefined ? { store: parsed.store } : {}),
-  }
+  const body: BlobDevRequestBody = { operation: command.name }
+  if (parsed.contentType !== undefined) body.contentType = parsed.contentType
+  if (parsed.cursor !== undefined) body.cursor = parsed.cursor
+  if (data !== undefined) body.data = data
+  if (parsed.limit !== undefined) body.limit = parsed.limit
+  if (parsed.pathname !== undefined) body.pathname = parsed.pathname
+  if (parsed.prefix !== undefined) body.prefix = parsed.prefix
+  if (parsed.store !== undefined) body.store = parsed.store
   let response: Response
   try {
     response = await fetchViteHubDevEndpoint(fetchImpl, server.url, blobDevEndpoint, {

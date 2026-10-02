@@ -91,7 +91,9 @@ function json(value: unknown, status = 200): Response {
 }
 
 function failure(message: string, status: number, code?: string): Response {
-  return json({ error: { ...(code ? { code } : {}), message: redactInspectionText(message) } }, status)
+  const error: { code?: string, message: string } = { message: redactInspectionText(message) }
+  if (code) error.code = code
+  return json({ error }, status)
 }
 
 function resolvedStores(config: false | ResolvedBlobModuleOptions): BlobDevStore[] {
@@ -225,16 +227,18 @@ async function runOperation(body: BlobDevRequestBody, stores: readonly BlobDevSt
       const limit = body.limit ?? blobDevDefaultListLimit
       if (limit > blobDevMaximumListLimit) throw new BlobDevRequestError(`limit must be at most ${blobDevMaximumListLimit}.`, 400)
       if ((body.prefix?.length ?? 0) > maximumPathnameLength) throw new BlobDevRequestError("The prefix is too long.", 400)
-      const page = unwrap(await selected.storage.list({ ...(body.cursor ? { cursor: body.cursor } : {}), limit, prefix: body.prefix ?? "" }))
+      const listOptions: { cursor?: string, limit: number, prefix: string } = { limit, prefix: body.prefix ?? "" }
+      if (body.cursor) listOptions.cursor = body.cursor
+      const page = unwrap(await selected.storage.list(listOptions))
       const result: BlobDevListResult = {
         blobs: page.blobs.map(serializeBlobDevObject),
-        ...(page.cursor ? { cursor: page.cursor } : {}),
         hasMore: page.hasMore,
         limit,
         prefix: body.prefix ?? "",
         store: selected.name,
         stores: stores.map(store => store.name),
       }
+      if (page.cursor) result.cursor = page.cursor
       return json(result)
     }
     case "head": {
@@ -250,11 +254,11 @@ async function runOperation(body: BlobDevRequestBody, stores: readonly BlobDevSt
       if (!file) throw notFound(pathname, selected.name)
       const bytes = new Uint8Array(await file.arrayBuffer())
       const header: BlobDevFileHeader = {
-        ...(file.type ? { contentType: file.type } : {}),
         pathname,
         size: bytes.byteLength,
         store: selected.name,
       }
+      if (file.type) header.contentType = file.type
       // The body is the raw file. JSON is only used for the metadata header, so binary data stays unchanged.
       return new Response(bytes, {
         headers: {

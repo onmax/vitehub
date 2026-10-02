@@ -99,28 +99,28 @@ function redactInput(value: unknown): unknown {
 
 function summarizeError(error: ScheduleRunError | undefined): ScheduleRunErrorSummary | undefined {
   if (!error) return
-  return {
-    message: redactInspectionText(error.message),
-    ...(error.name ? { name: error.name } : {}),
-  }
+  const summary: ScheduleRunErrorSummary = { message: redactInspectionText(error.message) }
+  if (error.name) summary.name = error.name
+  return summary
 }
 
 export function summarizeScheduleRun(run: ScheduleRunRecord): ScheduleRunSummary {
   const error = summarizeError(run.error)
   const completedAt = isoDate(run.completedAt)
   const startedAt = isoDate(run.startedAt)
-  return {
+  const summary: ScheduleRunSummary = {
     attemptCount: run.attemptCount,
-    ...(completedAt ? { completedAt } : {}),
-    ...(error ? { error } : {}),
     id: run.id,
-    ...(run.response ? { response: { status: run.response.status, statusText: run.response.statusText } } : {}),
     scheduleId: run.scheduleId,
     scheduledAt: isoDate(run.scheduledAt) ?? "",
-    ...(startedAt ? { startedAt } : {}),
     status: run.status,
     target: run.target,
   }
+  if (completedAt) summary.completedAt = completedAt
+  if (error) summary.error = error
+  if (run.response) summary.response = { status: run.response.status, statusText: run.response.statusText }
+  if (startedAt) summary.startedAt = startedAt
+  return summary
 }
 
 export function summarizeScheduleRunAttempt(attempt: ScheduleRunAttemptRecord): ScheduleRunAttemptSummary {

@@ -608,6 +608,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
       })
       emitStandaloneProviderOutput = (options.runtime === undefined || options.providerOutput === "standalone") && shouldEmitStandaloneProviderOutput(definitions, options)
       standaloneProviderSource = selectStandaloneProviderSource(definitions, options)
+      // SAFETY: ViteConfigWithNitro is the host config contract extended by the Nitro plugin.
       const currentNitro = (config as { nitro?: unknown }).nitro
       const nitro = await createScheduleNitroConfig({
         ...options,

@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import {
   discoverViteHubDevServer,
   fetchViteHubDevEndpoint,
@@ -45,9 +46,7 @@ interface ScheduleDevDiscovery {
   runtime?: unknown
 }
 
-interface ScheduleDevFailure {
-  error?: { code?: unknown, message?: unknown }
-}
+const scheduleDevFailureSchema = v.object({ error: v.optional(v.object({ code: v.optional(v.string()), message: v.optional(v.string()) })) })
 
 const scheduleDevEndpoint = {
   header: scheduleDevHeader,
@@ -225,14 +224,19 @@ function formatResult(operation: ScheduleDevOperation, result: Record<string, un
   // SAFETY: the Schedule dev handler of the same package version writes these shapes.
   switch (operation) {
     case "list":
-      return formatScheduleList(result as unknown as RuntimeScheduleInspection)
+      // SAFETY: the guarded endpoint in this package returns the RuntimeScheduleInspection shape for list.
+      return formatScheduleList(result as RuntimeScheduleInspection)
     case "get":
+      // SAFETY: the guarded endpoint in this package returns a RuntimeScheduleSummary under schedule.
       return formatSchedule(result.schedule as RuntimeScheduleSummary, result.automaticRuns === true)
     case "runs":
+      // SAFETY: the guarded endpoint in this package returns ScheduleRunSummary[] under runs.
       return formatRuns(result.runs as ScheduleRunSummary[])
     case "attempts":
+      // SAFETY: the guarded endpoint in this package returns a ScheduleRunSummary and attempts under these keys.
       return formatAttempts(result.run as ScheduleRunSummary, result.attempts as ScheduleRunAttemptSummary[])
     case "run":
+      // SAFETY: the guarded endpoint in this package returns a ScheduleRunSummary under run.
       return formatRun(result.run as ScheduleRunSummary)
     case "enable":
     case "disable": {
@@ -245,9 +249,11 @@ function formatResult(operation: ScheduleDevOperation, result: Record<string, un
 async function readFailure(response: Response): Promise<{ code?: string, message: string }> {
   const text = await response.text()
   try {
-    const body: ScheduleDevFailure = JSON.parse(text)
-    if (typeof body.error?.message === "string") {
-      return { ...(typeof body.error.code === "string" ? { code: body.error.code } : {}), message: body.error.message }
+    const parsed = v.safeParse(scheduleDevFailureSchema, JSON.parse(text))
+    if (parsed.success && parsed.output.error?.message !== undefined) {
+      const failure: { code?: string, message: string } = { message: parsed.output.error.message }
+      if (parsed.output.error.code !== undefined) failure.code = parsed.output.error.code
+      return failure
     }
   }
   catch {
