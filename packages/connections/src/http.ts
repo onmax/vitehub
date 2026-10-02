@@ -33,6 +33,11 @@ const actionSchema = v.variant("action", [
     state: id,
   }),
   v.object({ action: v.literal("revoke"), name }),
+  v.object({
+    action: v.literal("set-key"),
+    key: v.pipe(v.string(), v.minLength(1), v.maxLength(8192)),
+    name,
+  }),
   v.object({ action: v.literal("activity"), before: v.optional(id), name }),
   v.object({
     action: v.literal("approvals"),
@@ -267,6 +272,10 @@ export function createConnectionsHandler(
           return json({ connection: await connections.complete(input) });
         case "revoke":
           return json({ connection: await connections.revoke({ actor, name: input.name }) });
+        case "set-key":
+          return json({
+            connection: await connections.setKey({ actor, key: input.key, name: input.name }),
+          });
         case "activity":
           return json({ activity: await connections.activity(input) });
         case "approvals":

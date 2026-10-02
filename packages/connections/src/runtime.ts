@@ -1,5 +1,6 @@
 import * as v from "valibot"
 
+import { isApiKeyProvider } from "./api-key.ts"
 import { ConnectionError, isConnectionError, isEnvBridgeError } from "./errors.ts"
 import { isConnectionDefinition } from "./definition.ts"
 import { CONNECTION_NAME_MAX_LENGTH, isConnectionReadMethod } from "./types.ts"
@@ -8,6 +9,7 @@ import { connectionActions, decide, envActor, providerApis } from "./policy.ts"
 import type { EnvAccessContext, EnvActivity } from "@vite-hub/env/bridge"
 import type { ConnectionState, ConnectionStore } from "./store.ts"
 import type {
+  ConnectionAccount,
   ConnectionApiCatalog,
   ConnectionApproval,
   ConnectionApprovalPage,
@@ -15,6 +17,7 @@ import type {
   ConnectionDefinition,
   ConnectionFetchInit,
   ConnectionInspection,
+  ConnectionProvider,
   ConnectionTokenResponse,
   ConnectionValue,
   UseConnectionOptions,
@@ -25,6 +28,10 @@ const REFRESH_LEASE_MS = 60_000
 const REFRESH_WAIT_MS = 30_000
 const AUTHORIZATION_TTL_MS = 10 * 60_000
 const APPROVAL_EXECUTION_TTL_MS = 5 * 60_000
+const MAX_REDIRECTS = 5
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+// Visible ASCII only, so the key is a valid header value.
+const API_KEY_PATTERN = /^[\x21-\x7e]{1,8192}$/
 
 interface StoredToken {
   grantId?: string
@@ -91,6 +98,8 @@ export interface ConnectionsRuntime {
   inspect: (name: string) => Promise<ConnectionInspection>
   list: () => Promise<ConnectionInspection[]>
   revoke: (input: { actor?: string, name: string }) => Promise<ConnectionInspection>
+  /** Store the key of an API key Connection. The provider `verify` check runs first. */
+  setKey: (input: { actor?: string, key: string, name: string }) => Promise<ConnectionInspection>
 }
 
 const storedTokenSchema = v.object({
@@ -110,6 +119,10 @@ const tokenResponseSchema = v.object({
   scope: v.optional(v.string()),
   token_type: v.optional(v.string()),
 })
+const apiKeyVerificationSchema = v.union([
+  v.boolean(),
+  v.object({ account: v.optional(v.object({ email: v.optional(v.string()), id: v.pipe(v.string(), v.minLength(1)) })) }),
+])
 const approvalInputSchema = v.variant("kind", [
   v.object({ grantId: v.optional(v.string()), input: v.unknown(), kind: v.literal("method") }),
   v.object({ grantId: v.optional(v.string()), body: v.optional(v.string()), headers: v.optional(v.record(v.string(), v.string())), kind: v.literal("fetch"), method: v.string(), redirect: v.optional(v.picklist(["error", "follow", "manual"])), url: v.string() }),
@@ -178,6 +191,23 @@ function buildMethodRequest(catalog: ConnectionApiCatalog, method: string, input
     method: httpMethod,
     url: url.toString(),
   }
+}
+
+/** The header that carries the stored credential. */
+function credentialHeader(definition: ConnectionDefinition): string {
+  return isApiKeyProvider(definition.provider) ? definition.provider.header : "authorization"
+}
+
+function credential(definition: ConnectionDefinition, token: StoredToken): string {
+  const provider = definition.provider
+  if (isApiKeyProvider(provider)) return provider.scheme ? `${provider.scheme} ${token.accessToken}` : token.accessToken
+  return `${token.tokenType === "bearer" ? "Bearer" : token.tokenType} ${token.accessToken}`
+}
+
+/** Origins that may receive the credential: API catalog root URLs, and the origins of an API key provider. */
+function credentialOrigins(definition: ConnectionDefinition): string[] {
+  const origins = Object.values(providerApis(definition)).map(catalog => new URL(catalog.rootUrl).origin)
+  return isApiKeyProvider(definition.provider) ? [...origins, ...definition.provider.origins] : origins
 }
 
 async function providerMessage(response: Response): Promise<string | undefined> {
@@ -285,8 +315,15 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     await (await getStore()).access.append(event)
   }
 
-  async function tokenRequest(definition: ConnectionDefinition, parameters: Record<string, string>, signal?: AbortSignal, onDispatch?: () => void, onResponse?: () => void): Promise<ConnectionTokenResponse> {
+  function oauthProvider(definition: ConnectionDefinition, name: string): ConnectionProvider {
     const provider = definition.provider
+    if (isApiKeyProvider(provider)) {
+      throw new ConnectionError("invalid", `Connection "${name}" uses an API key. Set it with \`vitehub connections set-key ${name}\` or in the Console.`, { details: { connection: name } })
+    }
+    return provider
+  }
+
+  async function tokenRequest(provider: ConnectionProvider, parameters: Record<string, string>, signal?: AbortSignal, onDispatch?: () => void, onResponse?: () => void): Promise<ConnectionTokenResponse> {
     const clientId = await resolveValue(provider.clientId)
     const clientSecret = await resolveValue(provider.clientSecret)
     if (!clientId) throw new ConnectionError("invalid", `Provider "${provider.id}" has no client id.`)
@@ -418,7 +455,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     let dispatched = false
     let responded = false
     try {
-      response = await tokenRequest(definition, { grant_type: "refresh_token", refresh_token: latest.refreshToken! }, AbortSignal.timeout(REFRESH_WAIT_MS), () => { dispatched = true; onDispatch() }, () => { responded = true })
+      response = await tokenRequest(oauthProvider(definition, name), { grant_type: "refresh_token", refresh_token: latest.refreshToken! }, AbortSignal.timeout(REFRESH_WAIT_MS), () => { dispatched = true; onDispatch() }, () => { responded = true })
     }
     catch (error) {
       if (!dispatched) throw error
@@ -470,6 +507,38 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     throw new ConnectionError("reauth_required", message, { details: { connection: name } })
   }
 
+  /**
+   * Send a request that carries an API key. Fetch keeps custom headers on a cross-origin redirect,
+   * so ViteHub follows redirects itself and removes the key once the chain leaves the first origin.
+   */
+  async function sendKey(url: string, init: RequestInit, header: string): Promise<Response> {
+    if (init.redirect && init.redirect !== "follow") return await request(url, init)
+    const origin = new URL(url).origin
+    let target = new URL(url)
+    let current = init
+    let crossed = false
+    for (let hop = 0; ; hop += 1) {
+      crossed ||= target.origin !== origin
+      const headers = new Headers(current.headers)
+      if (crossed) headers.delete(header)
+      const response = await request(target.toString(), { ...current, headers, redirect: "manual" })
+      const location = response.headers.get("location")
+      if (!REDIRECT_STATUSES.has(response.status) || !location || hop === MAX_REDIRECTS) return response
+      await response.body?.cancel().catch(() => undefined)
+      const method = (current.method ?? "GET").toUpperCase()
+      // Fetch turns a 303, and a 301 or 302 after POST, into GET without a body.
+      if ((response.status === 303 && method !== "GET" && method !== "HEAD") || ((response.status === 301 || response.status === 302) && method === "POST")) {
+        headers.delete("content-type")
+        headers.delete("content-length")
+        current = { ...current, body: undefined, headers, method: "GET" }
+      }
+      else {
+        current = { ...current, headers }
+      }
+      target = new URL(location, target)
+    }
+  }
+
   /** Send one provider request with the Connection token inside an audited Env Bridge use. */
   async function send(context: CallContext, providerRequest: ProviderRequest, init: { headers?: Record<string, string>, redirect?: RequestInit["redirect"], signal?: AbortSignal } = {}): Promise<Response> {
     const connections = await getStore()
@@ -487,23 +556,28 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
             if (context.approved && (!context.approvedGrantId || current.grantId !== context.approvedGrantId)) {
               throw new ConnectionError("invalid", "Approval belongs to a previous Connection grant.")
             }
-            const headers: Record<string, string> = {
-              accept: "application/json",
-              ...init.headers,
-              authorization: `${current.tokenType === "bearer" ? "Bearer" : current.tokenType} ${current.accessToken}`,
+            const header = credentialHeader(context.definition)
+            const headers: Record<string, string> = { accept: "application/json" }
+            for (const [key, value] of Object.entries(init.headers ?? {})) {
+              if (key.toLowerCase() !== header) headers[key] = value
             }
+            headers[header] = credential(context.definition, current)
             if (providerRequest.json && providerRequest.body !== undefined && !Object.keys(headers).some(key => key.toLowerCase() === "content-type")) headers["content-type"] = "application/json"
             if (providerRequest.write && context.providerExecution) {
               context.providerExecution.dispatched = true
               context.providerExecution.rejected = false
             }
-            return request(providerRequest.url, {
+            const providerInit: RequestInit = {
               body: providerRequest.body,
               headers,
               method: providerRequest.method,
               redirect: init.redirect,
               signal: init.signal,
-            }).then(response => {
+            }
+            const dispatch = isApiKeyProvider(context.definition.provider)
+              ? sendKey(providerRequest.url, providerInit, header)
+              : request(providerRequest.url, providerInit)
+            return dispatch.then(response => {
               if (providerRequest.write && context.providerExecution) {
                 context.providerExecution.rejected = response.status >= 400 && response.status < 500 && response.status !== 408
               }
@@ -511,7 +585,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
             })
           }
           let response = await call(token)
-          if (response.status === 401) {
+          // An API key has no refresh token. The admin replaces a rejected key.
+          if (response.status === 401 && !isApiKeyProvider(context.definition.provider)) {
             token = await refresh(context.name, context.definition, token.accessToken, true)
             response = await call(token)
           }
@@ -616,15 +691,16 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const url = new URL(input)
     const method = new Request(url, { method: init.method ?? "GET" }).method
     const write = !isConnectionReadMethod(method)
-    const allowed = Object.values(providerApis(context.definition)).some(catalog => url.origin === new URL(catalog.rootUrl).origin)
+    const allowed = credentialOrigins(context.definition).includes(url.origin)
     if (!allowed) throw new ConnectionError("invalid", `Connection "${context.name}" does not send its token to ${url.origin}.`, { details: { connection: context.name } })
     if (init.body !== undefined && init.body !== null && !v.is(v.string(), init.body)) {
       throw new ConnectionError("invalid", "Connection fetch accepts only a string body.")
     }
     const body = init.body ?? undefined
     const headers: Record<string, string> = {}
+    const header = credentialHeader(context.definition)
     for (const [key, value] of new Headers(init.headers)) {
-      if (key.toLowerCase() !== "authorization") headers[key] = value
+      if (key !== "authorization" && key !== header) headers[key] = value
     }
     return await governed(
       context,
@@ -651,12 +727,13 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   async function inspect(name: string): Promise<ConnectionInspection> {
     const loaded = await definition(name)
     const state = await (await getStore()).state.get(name)
-    const declared = [...loaded.scopes]
+    const declared = [...(loaded.scopes ?? [])]
     const granted = state?.scopes ?? []
     return {
       account: state?.accountId ? { id: state.accountId, email: state.accountEmail } : undefined,
       actions: connectionActions(loaded),
       connectedAt: state?.connectedAt,
+      credential: isApiKeyProvider(loaded.provider) ? "api-key" : "oauth2",
       name,
       provider: loaded.provider.id,
       refreshedAt: state?.refreshedAt,
@@ -671,7 +748,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
 
   async function authorize(input: { actor?: string, name: string, redirectUri: string }): Promise<{ state: string, url: string }> {
     const loaded = await definition(input.name)
-    const provider = loaded.provider
+    const provider = oauthProvider(loaded, input.name)
     const clientId = await resolveValue(provider.clientId)
     if (!clientId) throw new ConnectionError("invalid", `Provider "${provider.id}" has no client id.`)
     const redirect = new URL(input.redirectUri)
@@ -689,7 +766,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       verifier,
     })
     const url = new URL(provider.authorizationEndpoint)
-    const scopes = [...new Set([...(provider.identityScopes ?? []), ...loaded.scopes])]
+    const scopes = [...new Set([...(provider.identityScopes ?? []), ...(loaded.scopes ?? [])])]
     for (const [parameter, value] of Object.entries({
       ...provider.authorizationParams,
       client_id: clientId,
@@ -709,11 +786,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     if (!authorization || authorization.expiresAt < now()) throw new ConnectionError("invalid", "The authorization request is unknown or expired. Start the connection again.")
     const name = authorization.name
     const loaded = await definition(name)
+    const provider = oauthProvider(loaded, name)
     const owner = await claimMutationLease(name)
     let releaseLease = true
     let quarantine = false
     try {
-      const response = await tokenRequest(loaded, {
+      const response = await tokenRequest(provider, {
         code: input.code,
         code_verifier: authorization.verifier,
         grant_type: "authorization_code",
@@ -723,9 +801,9 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       // the mutation fenced until the replacement token and state are durable.
       releaseLease = false
       quarantine = true
-      let account: ReturnType<typeof loaded.provider.account>
+      let account: ReturnType<typeof provider.account>
       try {
-        account = loaded.provider.account(response)
+        account = provider.account(response)
       }
       catch (error) {
         quarantine = true
@@ -747,10 +825,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       }
       const accountId = previous?.success ? previous.output.accountId ?? state?.accountId : state?.status === "revoked" ? undefined : state?.accountId
       if (accountId && (!account || accountId !== account.id)) {
-        throw new ConnectionError("invalid", account ? `Connection "${name}" belongs to another account. Confirm the provider outcome and repair the mutation lease before revoking or connecting again.` : `Provider "${loaded.provider.id}" did not identify the account. The existing Connection was quarantined.`, { details: { connection: name } })
+        throw new ConnectionError("invalid", account ? `Connection "${name}" belongs to another account. Confirm the provider outcome and repair the mutation lease before revoking or connecting again.` : `Provider "${provider.id}" did not identify the account. The existing Connection was quarantined.`, { details: { connection: name } })
       }
       const token = toStoredToken(response, previous?.success ? previous.output : undefined, [
-        ...new Set([...(loaded.provider.identityScopes ?? []), ...loaded.scopes]),
+        ...new Set([...(provider.identityScopes ?? []), ...(loaded.scopes ?? [])]),
       ])
       token.accountId = account?.id
       token.grantId = randomToken()
@@ -812,6 +890,8 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const connections = await getStore()
     const key = tokenKey(input.name)
     const actor = input.actor ?? "user:local"
+    // ViteHub cannot revoke an API key at the provider. Revocation deletes the stored key.
+    const revocationEndpoint = isApiKeyProvider(loaded.provider) ? undefined : loaded.provider.revocationEndpoint
     const owner = await claimMutationLease(input.name)
     let releaseLease = true
     let providerFailure: ConnectionError | undefined
@@ -821,7 +901,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const stored = await connections.secrets.inspect(key)
       let revision: string | null = null
       if (stored) {
-        if (!loaded.provider.revocationEndpoint) {
+        if (!revocationEndpoint && !isApiKeyProvider(loaded.provider)) {
           throw new ConnectionError("invalid", `Provider "${loaded.provider.id}" does not support token revocation.`, {
             details: { connection: input.name },
           })
@@ -834,10 +914,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
             token = parseToken(secret.unseal(), input.name)
           }
           catch {}
-          if (token && loaded.provider.revocationEndpoint) {
+          if (token && revocationEndpoint) {
             // A lost response can leave a grant-wide revoke running at the provider.
             releaseLease = false
-            const response = await request(loaded.provider.revocationEndpoint, {
+            const response = await request(revocationEndpoint, {
               body: new URLSearchParams({ token: token.refreshToken ?? token.accessToken }),
               headers: { "content-type": "application/x-www-form-urlencoded" },
               method: "POST",
@@ -879,6 +959,63 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     }
     finally {
       if (releaseLease) await connections.refreshLeases.release(input.name, owner).catch(() => undefined)
+    }
+  }
+
+  async function verifyKey(name: string, provider: ConnectionDefinition["provider"], key: string): Promise<ConnectionAccount | undefined> {
+    if (!isApiKeyProvider(provider) || !provider.verify) return undefined
+    let result: unknown
+    try {
+      result = await provider.verify(key, { fetch: request, signal: AbortSignal.timeout(REFRESH_WAIT_MS) })
+    }
+    catch (error) {
+      // A check failure message could contain the key, so only Connection errors pass through.
+      if (isConnectionError(error)) throw error
+      throw new ConnectionError("provider", `Provider "${provider.id}" could not verify the key.`, { details: { connection: name } })
+    }
+    const verification = v.safeParse(apiKeyVerificationSchema, result)
+    if (!verification.success) throw new ConnectionError("invalid", `The verify check of provider "${provider.id}" must return a boolean or { account }.`, { details: { connection: name } })
+    if (verification.output === false) throw new ConnectionError("invalid", `Provider "${provider.id}" rejected the key.`, { details: { connection: name } })
+    if (verification.output === true || !verification.output.account) return undefined
+    const account: ConnectionAccount = { id: verification.output.account.id }
+    if (verification.output.account.email !== undefined) account.email = verification.output.account.email
+    return account
+  }
+
+  async function setKey(input: { actor?: string, key: string, name: string }): Promise<ConnectionInspection> {
+    const name = input.name
+    const loaded = await definition(name)
+    if (!isApiKeyProvider(loaded.provider)) {
+      throw new ConnectionError("invalid", `Connection "${name}" uses OAuth. Connect it with \`vitehub connections connect ${name}\`.`, { details: { connection: name } })
+    }
+    if (!API_KEY_PATTERN.test(input.key)) {
+      throw new ConnectionError("invalid", "An API key must contain 1 to 8192 visible ASCII characters.", { details: { connection: name } })
+    }
+    const actor = input.actor ?? "user:local"
+    envActor(actor)
+    const account = await verifyKey(name, loaded.provider, input.key)
+    const connections = await getStore()
+    const key = tokenKey(name)
+    const owner = await claimMutationLease(name)
+    try {
+      const current = await connections.secrets.inspect(key)
+      const token: StoredToken = { accessToken: input.key, accountId: account?.id, grantId: randomToken(), scopes: [], tokenType: "api-key" }
+      const replacement = await connections.bridge.replace(envContext(actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
+      const timestamp = new Date(now()).toISOString()
+      const persisted = await connections.state.putForToken({
+        accountEmail: account?.email,
+        accountId: account?.id,
+        connectedAt: timestamp,
+        name,
+        scopes: [],
+        status: "connected",
+        updatedAt: timestamp,
+      }, replacement.revision)
+      if (!persisted) throw new ConnectionError("invalid", "The Connection key changed while it was set.", { details: { connection: name } })
+      return await inspect(name)
+    }
+    finally {
+      await connections.refreshLeases.release(name, owner).catch(() => undefined)
     }
   }
 
@@ -993,5 +1130,6 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     inspect,
     list,
     revoke,
+    setKey,
   }
 }

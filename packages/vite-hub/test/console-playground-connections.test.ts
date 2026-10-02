@@ -2,7 +2,7 @@ import { Readable } from "node:stream"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { afterEach, expect, it, vi } from "vitest"
 import type { Plugin } from "vite"
-import { connectionApprovalsSchema, connectionApprovalCountsSchema, connectionApprovalResultSchema, requestConnectionsManagement } from "../src/console/runtime/client/connections-management.ts"
+import { connectionApprovalsSchema, connectionApprovalCountsSchema, connectionApprovalResultSchema, connectionResultSchema, requestConnectionsManagement } from "../src/console/runtime/client/connections-management.ts"
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -30,6 +30,10 @@ it.each(["approve", "deny"])("runs playground Connections refresh and %s through
     return new Response(text, { status: output.statusCode, headers: { "content-type": "application/json" } })
   }))
   const endpoint = "/_vitehub/connections"
+  const keyed = await requestConnectionsManagement(endpoint, "set-key", connectionResultSchema, { key: "synthetic-key", name: "executor" })
+  expect(keyed.connection).toMatchObject({ credential: "api-key", status: "connected" })
+  expect(responses.join("\n")).not.toContain("synthetic-key")
+  await expect(requestConnectionsManagement(endpoint, "set-key", connectionResultSchema, { key: "synthetic-key", name: "gmail" })).rejects.toThrow()
   const counts = await requestConnectionsManagement(endpoint, "approval-counts", connectionApprovalCountsSchema)
   expect(counts.counts.gmail).toBe(1)
   const page = await requestConnectionsManagement(endpoint, "approval-summaries", connectionApprovalsSchema, { name: "gmail", status: "pending" })

@@ -3,6 +3,7 @@ import type { ConnectionInspection } from "@vite-hub/connections";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import {
+  canSendConnectionKey,
   connectionConnectURL,
   connectionResultSchema,
   connectionStatusLabel,
@@ -26,6 +27,8 @@ const error = ref("");
 const notice = ref("");
 const revoking = ref(false);
 const confirmation = ref("");
+const settingKey = ref(false);
+const key = ref("");
 let authorizing = false;
 
 async function run(action: () => Promise<void>) {
@@ -64,6 +67,29 @@ function connect() {
   notice.value = "Finish the authorization in the new tab. This view reloads when you come back.";
   if (!authorizing) window.addEventListener("focus", onFocus);
   authorizing = true;
+}
+function openKeyForm() {
+  error.value = "";
+  if (!canSendConnectionKey(window.location)) {
+    error.value = "Open the Console over HTTPS to set an API key.";
+    return;
+  }
+  settingKey.value = !settingKey.value;
+}
+function setKey() {
+  const value = key.value.trim();
+  if (!value) return;
+  return run(async () => {
+    const result = await requestConnectionsManagement(props.endpoint, "set-key", connectionResultSchema, {
+      key: value,
+      name: props.connection.name,
+    });
+    current.value = result.connection;
+    settingKey.value = false;
+    key.value = "";
+    notice.value = "Key stored. Calls use the new key now.";
+    emit("changed");
+  });
 }
 function revoke() {
   if (confirmation.value !== props.connection.name) return;
@@ -127,22 +153,38 @@ onBeforeUnmount(() => window.removeEventListener("focus", onFocus));
             }}</time>
           </dd>
         </template>
-        <dt class="text-muted">Granted scopes</dt>
-        <dd class="break-all font-mono text-xs">
-          {{ current.scopes.granted.join(" ") || "None" }}
-        </dd>
-        <dt class="text-muted">Missing scopes</dt>
-        <dd
-          :class="[
-            'break-all font-mono text-xs',
-            current.scopes.missing.length ? 'text-error' : undefined,
-          ]"
-        >
-          {{ current.scopes.missing.join(" ") || "None" }}
-        </dd>
+        <template v-if="current.credential === 'oauth2'">
+          <dt class="text-muted">Granted scopes</dt>
+          <dd class="break-all font-mono text-xs">
+            {{ current.scopes.granted.join(" ") || "None" }}
+          </dd>
+          <dt class="text-muted">Missing scopes</dt>
+          <dd
+            :class="[
+              'break-all font-mono text-xs',
+              current.scopes.missing.length ? 'text-error' : undefined,
+            ]"
+          >
+            {{ current.scopes.missing.join(" ") || "None" }}
+          </dd>
+        </template>
+        <template v-else>
+          <dt class="text-muted">Credential</dt>
+          <dd>API key</dd>
+        </template>
       </dl>
       <div class="flex flex-wrap gap-2">
         <UButton
+          v-if="current.credential === 'api-key'"
+          :label="current.status === 'connected' ? 'Replace key' : 'Set key'"
+          color="neutral"
+          variant="outline"
+          :disabled="busy"
+          :aria-expanded="settingKey"
+          @click="openKeyForm"
+        />
+        <UButton
+          v-else
           :label="
             current.status === 'disconnected' || current.status === 'revoked'
               ? 'Connect'
@@ -165,11 +207,32 @@ onBeforeUnmount(() => window.removeEventListener("focus", onFocus));
       </div>
       <p v-if="error" role="alert" class="text-sm text-error">{{ error }}</p>
       <p v-if="notice" role="status" class="text-sm text-muted">{{ notice }}</p>
+      <form v-if="settingKey" class="space-y-3" @submit.prevent="setKey">
+        <UFormField
+          label="API key"
+          name="key"
+          description="ViteHub stores the key sealed. The Console and Agents never read it again."
+        >
+          <UInput
+            v-model="key"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            class="w-full"
+            :disabled="busy"
+          />
+        </UFormField>
+        <UButton type="submit" label="Store key" :loading="busy" :disabled="!key.trim()" />
+      </form>
       <form v-if="revoking" class="space-y-3" @submit.prevent="revoke">
         <UFormField
           :label="`Type ${current.name} to revoke this Connection`"
           name="confirmation"
-          description="The stored token is deleted. Agents and server code lose access until you connect again."
+          :description="
+            current.credential === 'api-key'
+              ? 'The stored key is deleted. Revoke the key at the provider too.'
+              : 'The stored token is deleted. Agents and server code lose access until you connect again.'
+          "
         >
           <UInput v-model="confirmation" autocomplete="off" class="w-full" :disabled="busy" />
         </UFormField>

@@ -11,6 +11,7 @@ export const connectionInspectionSchema: v.GenericSchema<unknown, ConnectionInsp
   account: v.optional(v.object({ email: v.optional(v.string()), id: v.string() })),
   actions: v.array(v.object({ highRisk: v.boolean(), id: v.string(), method: v.string(), write: v.boolean() })),
   connectedAt: v.optional(v.string()),
+  credential: v.picklist(["api-key", "oauth2"]),
   name: v.string(),
   provider: v.string(),
   refreshedAt: v.optional(v.string()),
@@ -52,6 +53,12 @@ export function connectionActivityLabel(action: EnvActivity["action"]): string {
 /** The page that starts the provider authorization flow for one Connection. */
 export function connectionConnectURL(endpoint: string, name: string): string {
   return `${endpoint.replace(/\/+$/, "")}/connect/${encodeURIComponent(name)}`
+}
+
+/** The Console sends an API key only over HTTPS or to a loopback development server. */
+export function canSendConnectionKey(location: { hostname: string, protocol: string }): boolean {
+  const host = location.hostname
+  return location.protocol === "https:" || (location.protocol === "http:" && (host === "localhost" || host.endsWith(".localhost") || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host)))
 }
 
 async function errorMessage(response: Response): Promise<string> {

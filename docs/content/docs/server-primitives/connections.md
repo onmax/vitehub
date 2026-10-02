@@ -1,6 +1,6 @@
 ---
 title: Connections
-description: Connect provider accounts with OAuth 2, call their APIs with access rules, and record how routes and Agents use them.
+description: Connect provider accounts with OAuth 2 or an API key, call their APIs with access rules, and record how routes and Agents use them.
 navigation.order: 4
 navigation.group: Application
 icon: i-lucide-plug
@@ -10,7 +10,7 @@ Use Connections when server code or an Agent calls a provider API as one account
 
 A Connection Definition in code declares the provider, the OAuth scopes, and the access rules. The [Console](/docs/development/console) connects, reconnects, refreshes, and disconnects the account at runtime. ViteHub stores the grant sealed in the app database, refreshes the access token, checks access before each call, and records activity.
 
-Use [Env](/docs/server-primitives/env) for static API keys. Connections do not replace Auth: they do not sign in users.
+For a provider that gives a static API key, use an [API key Connection](#api-key-connections) when access rules, approvals, and activity must apply to its calls. Use [Env](/docs/server-primitives/env) for other static secrets. Connections do not replace Auth: they do not sign in users.
 
 ## Quick start
 
@@ -86,7 +86,7 @@ export default defineEventHandler(async (event) => {
 
 | Import | Use |
 | --- | --- |
-| `defineConnection`, `oauth2`, `useConnection` from `vite-hub/connections` | Define a Connection, use a generic OAuth 2 provider, and call a Connection from server code. |
+| `defineConnection`, `oauth2`, `apiKey`, `useConnection` from `vite-hub/connections` | Define a Connection, use a generic OAuth 2 or API key provider, and call a Connection from server code. |
 | `google`, `gmail`, `gmailOperations` from `vite-hub/connections/google` | Google OAuth preset and typed Gmail REST Operations. |
 | `createConnectionsRuntime`, `useConnectionsRuntime` from `vite-hub/connections/server` | Runtime access for hosts and tests. |
 | `createConnectionsHandler` from `vite-hub/connections/http` | Management, connect, and callback routes. The Console mounts them. |
@@ -135,6 +135,52 @@ export default defineConnection({
 ```
 
 An origin is `https://host`, `https://host:port`, or `https://*.host` for subdomains. `http` is accepted only for loopback hosts such as `localhost` and `127.0.0.1`. The `userInfoUrl` of `oauth2()` receives the access token, so its origin must be in `origins` too.
+
+## API key Connections
+
+`apiKey()` defines a Connection whose credential is a static key. An admin sets the key at runtime, so it is not in code or Server Env:
+
+```ts [server/connections/executor.ts]
+import { apiKey, defineConnection } from 'vite-hub/connections'
+
+export default defineConnection({
+  provider: apiKey({ id: 'executor', origins: ['https://executor.sh'] }),
+})
+```
+
+`verify` checks a new key before ViteHub stores it. Return `false` to reject the key, or `{ account }` to label the Connection:
+
+```ts [server/connections/crm.ts]
+export default defineConnection({
+  provider: apiKey({
+    id: 'crm',
+    origins: ['https://api.crm.example.com'],
+    verify: async (key, { fetch, signal }) => {
+      const response = await fetch('https://api.crm.example.com/me', { headers: { authorization: `Bearer ${key}` }, signal })
+      return response.ok
+    },
+  }),
+})
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `origins` | Required | Origins that `fetch` may send the key to. Use `https`, or `http` for a loopback host. |
+| `header` | `authorization` | Request header that carries the key. |
+| `scheme` | `Bearer` for `authorization`, none for other headers | Text before the key. Set `''` to send the bare key. |
+| `apis` | `{}` | Typed API catalogs. Their root URLs also receive the key. |
+| `verify` | None | Checks a new key before ViteHub stores it. It receives the runtime `fetch` and a 30-second abort signal. |
+| `id` | `'api-key'` | Provider id in the Console and inspection. |
+
+Set the key in the Console with **Set key**, or pipe it to the CLI:
+
+```bash [Terminal]
+printf %s "$EXECUTOR_API_KEY" | vitehub connections set-key executor
+```
+
+The CLI reads the key only from stdin, so it does not stay in the shell history. The CLI and the Console send the key only over HTTPS or to a loopback host.
+
+ViteHub seals the key like an OAuth grant. Access rules, approvals, dry run, and activity work as for OAuth Connections. An API key has no scopes and no refresh: a `401` response does not change the status. When a redirect leaves the first origin, ViteHub removes the key header. Revoking the Connection deletes the stored key; revoke the key at the provider too.
 
 ## Access rules
 
@@ -194,6 +240,7 @@ The CLI calls the management route of a running development server with the Cons
 | `vitehub connections status <name>` | Show one Connection. |
 | `vitehub connections activity [name]` | Show recent activity. |
 | `vitehub connections connect <name>` | Print a single-use connect URL. |
+| `vitehub connections set-key <name>` | Store the key of an API key Connection from stdin. |
 | `vitehub connections refresh <name>` | Refresh the access token now. |
 | `vitehub connections disconnect <name>` | Revoke the grant at the provider and delete it. If revocation fails, ViteHub still deletes the local grant and records the error in the `disconnect` activity. Revoke the app at the provider then. |
 

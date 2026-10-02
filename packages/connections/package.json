@@ -1,10 +1,11 @@
 {
   "name": "@vite-hub/connections",
   "version": "0.0.4",
-  "description": "Provider OAuth connections with typed, governed, and audited calls for ViteHub.",
+  "description": "Provider OAuth and API key connections with typed, governed, and audited calls for ViteHub.",
   "keywords": [
     "connections",
     "oauth",
+    "api-key",
     "gmail",
     "vite",
     "vitehub"
