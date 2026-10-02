@@ -183,7 +183,7 @@ async function runProviderOutput(args: string[], context: InspectContext, plugin
         Object.fromEntries(Object.entries(ids ?? {}).map(([key, id]) => [key, redactInspectionValue(id)])),
       ])),
     ]))
-    const providerOutput = reports.map(report => report.path === provisionPath && report.exists && report.owner === "cli" && report.type === "file"
+    const providerOutput = reports.map(report => report.path === provisionPath && report.exists && report.owner === "cli" && report.type === "file" && report.content !== "[unreadable JSON]"
       ? { ...report, content: provisionStateOutput }
       : redactInspectionValue(report))
     context.stdout.write(`${JSON.stringify({ providerOutput }, null, 2)}\n`)

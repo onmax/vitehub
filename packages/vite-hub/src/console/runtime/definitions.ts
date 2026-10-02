@@ -21,6 +21,8 @@ export interface ConsoleRecordColumn {
 }
 
 export interface ConsoleRecord {
+  /** Only installed manual Schedule Definitions can run from the Console. */
+  runnable?: boolean
   cells: Readonly<Record<string, string>>
   fields: readonly ConsoleDefinitionField[]
   id: string
@@ -101,7 +103,7 @@ export function parseConsoleDefinitionSummaries(value: unknown): ConsoleDefiniti
   return value.flatMap((entry) => {
     const definition = record(entry)
     return text(definition?.name) && text(definition.file) && text(definition.source)
-      ? [{ fields: parseConsoleDefinitionFields(definition.fields), file: definition.file, name: definition.name, source: definition.source }]
+      ? [{ fields: parseConsoleDefinitionFields(definition.fields), file: definition.file, name: definition.name, ...(definition.runnable === true ? { runnable: true } : {}), source: definition.source }]
       : []
   })
 }
@@ -116,6 +118,7 @@ function parseConsoleRecords(value: unknown): ConsoleRecord[] {
       cells: Object.fromEntries(Object.entries(cells).filter((cell): cell is [string, string] => text(cell[1]))),
       fields: parseConsoleDefinitionFields(row.fields),
       id: row.id,
+      ...(row.runnable === true ? { runnable: true } : {}),
     }]
   })
 }

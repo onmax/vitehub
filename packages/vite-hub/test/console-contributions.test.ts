@@ -50,6 +50,13 @@ describe("Console section contributions", () => {
     }
   })
 
+  it("preserves manual Schedule run metadata when parsing section content", () => {
+    const definition = { fields: [], file: "sync.ts", name: "sync", runnable: true, source: "server-schedules" }
+    expect(parseConsoleSectionContent({ definitions: [definition], kind: "definition-catalog", section: "schedules" }, "schedules")).toEqual({ definitions: [definition], kind: "definition-catalog" })
+    const record = { cells: {}, fields: [], id: "definition:sync", runnable: true }
+    expect(parseConsoleSectionContent({ records: [record], kind: "record-table", section: "schedules" }, "schedules")).toEqual({ records: [record], kind: "record-table" })
+  })
+
   it("serializes descriptors that the Console UI can parse", () => {
     for (const descriptor of describeConsoleContributedSections([...consoleContributedSections.keys()])) {
       expect(parseConsoleContributedSection(JSON.parse(JSON.stringify(descriptor)))).toEqual(descriptor)

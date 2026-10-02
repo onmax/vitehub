@@ -4,6 +4,8 @@ import { useRoute, useRouter } from "vue-router";
 
 import type { ConsoleContributedSection, ConsoleDefinitionSummary, ConsoleRecord, ConsoleSectionContent } from "../definitions";
 import { requestConsole } from "../client/request";
+import { consoleScheduleRunDescription, runConsoleScheduleDefinition } from "../client/schedule-run";
+import type { ConsoleScheduleRunView } from "../client/schedule-run";
 import { parseConsoleSectionContent } from "../definitions";
 import { rememberConsoleSection } from "../sections";
 import ConsoleBrand from "./console-brand.vue";
@@ -60,6 +62,13 @@ const selectedDefinition = computed(() =>
   definitions.value.find((definition) => definition.name === selectedName.value),
 );
 const selectedRecord = computed(() => records.value.find((row) => row.id === selectedName.value));
+const canRunSelected = computed(() =>
+  Boolean(props.scheduleRunBase && selectedDefinition.value?.runnable)
+  || Boolean(props.scheduleRunBase && selectedRecord.value?.runnable),
+);
+const selectedRun = computed(() =>
+  selectedName.value ? scheduleRuns.value[selectedName.value] : undefined,
+);
 const selectedEntry = computed(() => entries.value.find((entry) => entry.id === selectedName.value));
 
 function errorMessage(value: unknown): string | undefined {
@@ -75,7 +84,8 @@ async function runSelectedSchedule(): Promise<void> {
   if (!name || !props.scheduleRunBase || !canRunSelected.value || runningSchedule.value) return;
   runningSchedule.value = name;
   try {
-    const run = await runConsoleScheduleDefinition(props.scheduleRunBase, name);
+    const definitionName = selectedRecord.value ? name.slice("definition:".length) : name;
+    const run = await runConsoleScheduleDefinition(props.scheduleRunBase, definitionName);
     scheduleRuns.value = { ...scheduleRuns.value, [name]: run };
   } finally {
     runningSchedule.value = undefined;
@@ -417,6 +427,14 @@ onBeforeUnmount(() => request?.abort());
         </main>
         <main v-else-if="selectedRecord" class="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
           <div class="mx-auto grid w-full max-w-5xl gap-4">
+            <UAlert
+              v-if="selectedRun"
+              :color="selectedRun.status === 'succeeded' ? 'success' : selectedRun.status === 'failed' || selectedRun.status === 'unavailable' ? 'error' : 'neutral'"
+              :icon="selectedRun.status === 'succeeded' ? 'i-ph-check-circle-light' : 'i-ph-warning-circle-light'"
+              :title="selectedRun.status === 'unavailable' ? 'Could not run this Schedule' : `Run ${selectedRun.status}`"
+              :description="consoleScheduleRunDescription(selectedRun)"
+              variant="subtle"
+            />
             <section class="overflow-x-auto rounded-lg border border-default bg-default">
               <table class="w-full text-left text-xs">
                 <thead class="border-b border-default">

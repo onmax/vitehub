@@ -125,6 +125,18 @@ describe("Console Schedule runs", () => {
     })
   })
 
+  it("marks only installed manual definitions as runnable in the contributed record table", async () => {
+    installSchedules()
+    const records = ["definition:sync", "definition:nightly", "runtime:sync"].map(id => ({ cells: {}, fields: [], id }))
+    installConsoleDefinitions("/schedule-run", { schedules: { kind: "record-table", records } })
+
+    expect(await definitionsHandler({ method: "GET", req: { method: "GET", url: "http://localhost/api/_vitehub/console/definitions?section=schedules" } })).toEqual({
+      kind: "record-table",
+      records: [{ ...records[0], runnable: true }, records[1], records[2]],
+      section: "schedules",
+    })
+  })
+
   it("runs a Schedule through the Console RPC operation", async () => {
     let calls = 0
     installSchedules(() => { calls++ })

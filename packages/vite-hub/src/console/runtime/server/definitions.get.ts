@@ -47,6 +47,14 @@ export default async function consoleDefinitionsHandler(event: ConsoleRequestEve
     }
   }
   const reader = readers && Object.hasOwn(readers, section) ? readers[section] : undefined
-  if (!reader || content.kind !== "record-table") return { ...content, section }
-  return { kind: "record-table", records: mergeRecords(content.records, await readRuntimeRecords(reader)), section }
+  if (content.kind !== "record-table") return { ...content, section }
+  const records = reader ? mergeRecords(content.records, await readRuntimeRecords(reader)) : content.records
+  const runnable = section === "schedules" ? getConsoleSchedules() : {}
+  return {
+    kind: "record-table",
+    records: records.map(record => record.id.startsWith("definition:") && Object.hasOwn(runnable, record.id.slice("definition:".length))
+      ? { ...record, runnable: true }
+      : record),
+    section,
+  }
 }

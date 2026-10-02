@@ -198,6 +198,20 @@ describe("vitehub inspect", () => {
     })
   })
 
+  it("preserves the corruption diagnostic for malformed provision-state JSON", async () => {
+    const rootDir = await createTempDir()
+    await mkdir(join(rootDir, ".vitehub"), { recursive: true })
+    await writeFile(join(rootDir, ".vitehub/provision.json"), "{invalid")
+    const result = await run(rootDir, ["inspect", "provider-output", "--json"])
+
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout).providerOutput.find((entry: { path: string }) => entry.path === ".vitehub/provision.json")).toMatchObject({
+      content: "[unreadable JSON]",
+      exists: true,
+      owner: "cli",
+    })
+  })
+
   it("rejects unknown arguments", async () => {
     const rootDir = await createTempDir()
     const result = await run(rootDir, ["inspect", "provider-output", "--kind", "queue"])

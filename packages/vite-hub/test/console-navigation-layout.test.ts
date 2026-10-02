@@ -33,6 +33,11 @@ describe("shared Console navigation layout", () => {
     expect(readFileSync(new URL("../src/console/runtime/client/main.js", import.meta.url), "utf8")).toContain('scheduleRunBase: "/api/_vitehub/console/schedule-run"')
   })
 
+  it("opens the Database table route in data mode", () => {
+    const routes = readFileSync(new URL("../src/console/runtime/client/main.js", import.meta.url), "utf8")
+    expect(routes).toMatch(/name: "vitehub-console-databases",[\s\S]*?view: "data"/)
+  })
+
   it("renders Usage as the same accessible icon primitive everywhere", () => {
     const switcher = component("console-primitive-switcher")
     expect(switcher).toContain(':text="consoleSectionDetails.usage.label"')
