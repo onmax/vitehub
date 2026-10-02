@@ -109,6 +109,16 @@ describe("Vercel Blob workspace store", () => {
     await expect(store.readFile("docs/readme.md")).resolves.toBeUndefined()
   })
 
+  it("recognizes not-found errors from a separately loaded Blob SDK", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "********" }, "docs")
+    const peerNotFound = new Error("missing")
+    peerNotFound.name = "BlobNotFoundError"
+    blobMock.head.mockRejectedValueOnce(peerNotFound)
+    await expect(store.rm("missing.md", { force: true })).resolves.toBeUndefined()
+  })
+
   it("stores files, metadata, snapshots, and diffs in Blob", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "token"
     const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")

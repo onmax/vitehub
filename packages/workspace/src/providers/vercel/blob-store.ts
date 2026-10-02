@@ -54,6 +54,13 @@ type VercelBlobModule = {
   }): Promise<unknown>
 }
 
+function isMissingBlobError(error: unknown) {
+  return error instanceof Error && (
+    error.name === "BlobNotFoundError"
+    || /requested blob does not exist/i.test(error.message)
+  )
+}
+
 function joinBlobPath(...parts: string[]) {
   return parts.map(part => normalizeWorkspacePath(part)).filter(Boolean).join("/")
 }
@@ -85,7 +92,7 @@ async function createVercelBlobClient(options: VercelBlobWorkspaceStoreOptions) 
     },
     async head(key: string): Promise<BlobListItem | undefined> {
       const result = await blob.head(key, auth(options)).catch((error: unknown) => {
-        if (error instanceof bundledVercelBlob.BlobNotFoundError) return undefined
+        if (isMissingBlobError(error)) return undefined
         throw error
       })
       if (!result) return undefined
