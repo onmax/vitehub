@@ -2102,7 +2102,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const startHeartbeat = () => {
         if (finished || !ownsRecord || heartbeat !== undefined) return
         heartbeat = setInterval(() => {
-          void renew().catch(() => undefined)
+          heartbeatRenewal = heartbeatRenewal.then(() => renew()).catch(() => undefined)
         }, CLAIM_RENEW_INTERVAL_MS)
         unrefTimer(heartbeat)
       }

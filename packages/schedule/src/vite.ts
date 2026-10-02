@@ -660,7 +660,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
         return
       }
       return {
-        resolve: { noExternal: noExternalAddition(config.resolve?.noExternal) },
+        resolve: { noExternal: mergeNoExternal(config.resolve?.noExternal) },
       }
     },
     async handleHotUpdate(context) {
