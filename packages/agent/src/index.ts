@@ -75,7 +75,7 @@ import { registerMessageChannelDeferredReplyTrace, setChatFinalReplyText, setCha
 import { agentInvocationCallbackContextValues, agentInvocationConfigurationUpdatedContextKey, agentInvocationRunId, agentInvocationWorkflowBinding, createAgentInvocationContextStore } from "./invocation-context.ts"
 import { agentInvocationCallerAbortSignal, copyAgentInvocationCallerAbortSignal, markAgentInvocationCallerAbortSignal } from "./internal/invocation-input.ts"
 import { bindAgentRunEvents, type AgentRunEventPublisher } from "./run-events.ts"
-import { AgentInvocationClaimConflict, bindAgentInvocations, exclusiveAgentInvocation, inheritedAgentInvocationClaim, pendingAgentInvocationAnnotations, type AgentInvocationJournal, type AgentInvocationWorkflowBinding } from "./invocations.ts"
+import { AgentInvocationClaimConflict, bindAgentInvocations, exclusiveAgentInvocation, inheritedAgentInvocationClaim, pendingAgentInvocationAnnotation, pendingAgentInvocationAnnotations, type AgentInvocationJournal, type AgentInvocationWorkflowBinding } from "./invocations.ts"
 import { isAttachmentPart, materializeMessageAttachmentData, type AgentMessagePhase, type Message } from "./messages.ts"
 import {
   createFallbackAgentInvoker,
@@ -1043,7 +1043,10 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
       // An existing discovery-default reservation needs its Agent identity
       // even when legacy metadata cannot show whether dispatch was accepted.
       if (!canDispatchAgentWorkflow(binding, context)) {
-        if (binding || dispatch) throw new AgentInvocationClaimConflict()
+        if (binding || dispatch) {
+          if (dispatch && await journal.confirmWorkflowDispatch(dispatch)) throw new AgentInvocationClaimConflict()
+          throw new AgentInvocationClaimConflict()
+        }
         return journal
       }
       const workflowName = resolveAgentWorkflowName(agent, binding, context)
@@ -1068,6 +1071,12 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
       if (accepted.status !== "unknown") {
         if (!await journal.confirmWorkflowDispatch()) throw new Error("Could not confirm the accepted Workflow Invocation.")
         throw new AgentInvocationClaimConflict()
+      }
+      // A missing marker is ambiguous for legacy reservations. Only an explicit
+      // false means the provider call was never attempted; an attempted or
+      // unknown marker must stay pending until the provider can be reconciled.
+      if (await journal.getWorkflowDispatchAttempted() !== false) {
+        throw new Error("Workflow dispatch acknowledgement is unknown; replay cannot safely submit this Invocation again.")
       }
       if ((recoveryConfig && recoveryConfig.provider) === "vercel" && dispatch) {
         throw new Error("The acknowledged Workflow run is unavailable; replay cannot safely submit this Invocation again.")
@@ -1304,7 +1313,7 @@ async function runAgentAsWorkflow<
     if (!await replayJournal.prepareWorkflowDispatch({ name: workflowName, provider: (workflowConfig && workflowConfig.provider) || "unknown" })) {
       throw new Error("Could not persist the Workflow dispatch intent.")
     }
-    payload.invocationClaimToken = await replayJournal.handoffClaim()
+    payload.invocationClaimToken = await replayJournal.handoffClaim({ workflowDispatch: true })
     if (!payload.invocationClaimToken) throw new Error("Could not transfer the Invocation execution claim.")
   }
   try {
@@ -1334,7 +1343,17 @@ async function runAgentAsWorkflow<
     }
     throw error
   }
-  await replayJournal?.confirmWorkflowDispatch({ name: workflowName, provider: run.provider, id: run.id })
+  const dispatchConfirmed = replayJournal
+    ? await replayJournal.confirmWorkflowDispatch({ name: workflowName, provider: run.provider, id: run.id })
+    : true
+  if (replayJournal && run.provider !== "vercel" && !dispatchConfirmed) {
+    const record = context.run?.runId && agent.invocations
+      ? await agent.invocations.getByRunId(context.run.runId, agentInvocationName(agent, context))
+      : undefined
+    if (record?.annotations?.[pendingAgentInvocationAnnotation] !== false) {
+      throw new Error("Could not confirm the Workflow Invocation dispatch.")
+    }
+  }
   if (run.status === "cancelled" || run.status === "completed" || run.status === "failed") {
     await activity?.update(
       run.status,

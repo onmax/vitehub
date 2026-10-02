@@ -2539,6 +2539,7 @@ async function* runProvider<
   options: ProviderAgentAdapterOptions<TRuntimeConfig, CALL_OPTIONS>,
   resumeCursors: Map<string, unknown>,
   sessionLocks: Map<string, Promise<void>>,
+  cwdLocks: Map<string, Promise<void>>,
   context: AgentAdapterRunContext<CALL_OPTIONS, TRuntimeConfig>,
 ): AsyncIterable<StreamEvent> {
   if (context.runtime.runtime === "cloudflare-agents" || context.runtime.runtime === "deno") {
@@ -2583,6 +2584,7 @@ async function* runProvider<
     : undefined
   let root: string
   let launchRoot: string | undefined
+  let releaseCwdLock: (() => void) | undefined
   // driver.cwd is owned by the application. Title and progress summary runs keep a disposable root.
   let ownsRoot = true
   try {
@@ -2598,6 +2600,10 @@ async function* runProvider<
       }
       providerRoot = resolve(configuredRoot)
       ownsRoot = false
+      // An application-owned checkout is shared mutable state. Serialize all provider
+      // runs that target the same directory so generated instructions, capabilities,
+      // and provider files cannot overlap or restore each other's changes.
+      releaseCwdLock = await acquireProviderSessionLock(cwdLocks, providerRoot, effectiveSignal)
     }
     try {
       launchRoot = options.launch === undefined && !options.box ? undefined : await mkdtemp(join(tmpdir(), "vitehub-provider-launch-"))
@@ -2609,6 +2615,7 @@ async function* runProvider<
     root = providerRoot
   }
   catch (error) {
+    releaseCwdLock?.()
     releaseSessionLock?.()
     throw error
   }
@@ -3494,10 +3501,20 @@ async function* runProvider<
     finally {
       cleanup.dispose()
     }
-    const deferredResourceCleanup = forcedRootCleanup || invocationCleanupDeferred || (cleanupTimedOut ? cleanupTask : deferredRuntimeCleanup || deferredWorkspaceCleanup)
-    const deferredCleanup = deferredSessionConsume && deferredResourceCleanup
-      ? Promise.allSettled([deferredSessionConsume, deferredResourceCleanup]).then(() => undefined)
-      : deferredSessionConsume || deferredResourceCleanup
+    // Keep the checkout lock held until every cleanup path that can still touch
+    // the provider root has settled. A forced root cleanup may finish while a
+    // deferred runtime shutdown is still stopping provider code in that root.
+    const deferredResourceCleanups = [
+      forcedRootCleanup,
+      invocationCleanupDeferred,
+      cleanupTimedOut ? cleanupTask : undefined,
+      deferredRuntimeCleanup,
+      deferredWorkspaceCleanup,
+    ].filter((cleanup): cleanup is Promise<void> => cleanup !== undefined)
+    if (deferredSessionConsume) deferredResourceCleanups.push(deferredSessionConsume)
+    const deferredCleanup = deferredResourceCleanups.length
+      ? Promise.allSettled(deferredResourceCleanups).then(() => undefined)
+      : undefined
     if (preservesProviderSession && sessionKey) {
       if (completed && caught === undefined && cleanupErrors.length === 0 && !deferredCleanup && pendingResumeCursor !== undefined) {
         try {
@@ -3525,8 +3542,12 @@ async function* runProvider<
         }
       }
     }
-    if (deferredCleanup) void deferredCleanup.then(releaseSessionLock, releaseSessionLock)
-    else releaseSessionLock?.()
+    const releaseLocks = () => {
+      releaseCwdLock?.()
+      releaseSessionLock?.()
+    }
+    if (deferredCleanup) void deferredCleanup.then(releaseLocks, releaseLocks)
+    else releaseLocks()
     if (cleanupErrors.length) {
       const cleanupError = new AggregateError(caught === undefined ? cleanupErrors : [caught, ...cleanupErrors], "[vitehub] Provider Agent Driver cleanup failed.")
       if (completed && caught === undefined && !exitCallbackPending && !exitCallbackFailed && cleanupErrors.every(providerCleanupTimedOut)) {
@@ -3599,8 +3620,9 @@ export function createProviderAgentAdapter<
 >(options: ProviderAgentAdapterOptions<TRuntimeConfig, CALL_OPTIONS>): AgentAdapter<CALL_OPTIONS, TRuntimeConfig> {
   const resumeCursors = new Map<string, unknown>()
   const sessionLocks = new Map<string, Promise<void>>()
+  const cwdLocks = new Map<string, Promise<void>>()
   return {
-    generate: context => generateProvider(runProvider(options, resumeCursors, sessionLocks, context), context),
+    generate: context => generateProvider(runProvider(options, resumeCursors, sessionLocks, cwdLocks, context), context),
     async metadata(context) {
       const instructions = await resolveAgentInstructions(options.instructions, context)
       return {
@@ -3608,6 +3630,6 @@ export function createProviderAgentAdapter<
       }
     },
     name: options.provider,
-    stream: context => streamAgentOutputToEvents(runProvider(options, resumeCursors, sessionLocks, context)),
+    stream: context => streamAgentOutputToEvents(runProvider(options, resumeCursors, sessionLocks, cwdLocks, context)),
   }
 }

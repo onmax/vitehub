@@ -199,7 +199,7 @@ it("releases the replay claim when reading discovery-default dispatch intent fai
   expect(await replayChannel(test.agent, "mailbox", { runtime: test.runtime })).toMatchObject({ processed: 1 })
   await vi.advanceTimersByTimeAsync(30_001)
   const read = test.invocations.getByRunId.bind(test.invocations)
-  vi.spyOn(test.invocations, "getByRunId").mockImplementationOnce(read).mockRejectedValueOnce(new Error("Dispatch read unavailable"))
+  vi.spyOn(test.invocations, "getByRunId").mockImplementationOnce(read).mockImplementationOnce(read).mockRejectedValueOnce(new Error("Dispatch read unavailable"))
   const release = vi.spyOn(test.store, "release")
   const { agentIdentity: _identity, ...runtime } = test.runtime
   expect(await replayChannel(test.agent, "mailbox", { runtime })).toMatchObject({ failed: 1, processed: 0 })
@@ -215,7 +215,7 @@ it("does not execute an existing native dispatch inline after runtime is explici
   expect(await replayChannel(test.agent, "mailbox", { runtime: test.runtime })).toMatchObject({ processed: 1 })
   await vi.advanceTimersByTimeAsync(30_001)
   const inline = defineAgent({ channels: test.agent.channels, driver: { run: test.driver }, invocations: test.invocations, name: test.name, runtime: false })
-  expect(await replayChannel(inline, "mailbox", { runtime: test.runtime })).toMatchObject({ skipped: 1, failed: 0, processed: 0 })
+  expect(await replayChannel(inline, "mailbox", { runtime: test.runtime })).toMatchObject({ skipped: 0, failed: 1, processed: 0 })
   expect(test.driver).not.toHaveBeenCalled()
   expect(test.primaryStarts()).toHaveLength(1)
 })
@@ -231,7 +231,7 @@ it("skips metadata-less pending discovery-default reservations without Agent ide
   expect(await test.invocations.getByRunId(id, test.name)).toMatchObject({ status: "pending" })
   expect((await test.invocations.getByRunId(id, test.name))?.workflow).toBeUndefined()
   const { agentIdentity: _identity, ...runtime } = test.runtime
-  expect(await replayChannel(test.agent, "mailbox", { runtime })).toMatchObject({ processed: 0, skipped: 1, failed: 0 })
+  expect(await replayChannel(test.agent, "mailbox", { runtime })).toMatchObject({ processed: 0, skipped: 0, failed: 1 })
   expect(test.driver).not.toHaveBeenCalled()
   expect(test.start).not.toHaveBeenCalled()
   expect(test.getRun).not.toHaveBeenCalled()

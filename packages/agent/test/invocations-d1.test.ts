@@ -168,6 +168,22 @@ describe("D1 Agent Invocation store", () => {
     expect(await journal.claim("missing", "new", 30_000)).toBe(false)
   })
 
+  it("rotates only expected claim generations and ignores stale releases", async () => {
+    const journal = store()
+    await journal.create(invocation("one"))
+    expect(await journal.claim("one", "first", 30_000)).toBe(true)
+    expect(await journal.claim("one", "second", 30_000, { expectedClaimIds: ["first"] })).toBe(true)
+    const token = await journal.getClaimToken("one")
+    await journal.release("one", "first")
+    expect(await journal.getClaimToken("one")).toBe(token)
+    expect(await journal.claim("one", "late-first", 30_000, { expectedClaimIds: ["first"] })).toBe(false)
+    await database.prepare(`UPDATE ${tablePrefix}invocations SET claim_expires_at = 0 WHERE id = ?`).bind("one").all()
+    expect(await journal.claim("one", "foreign", 30_000, { expectedClaimIds: ["foreign"] })).toBe(false)
+    expect(await journal.claim("one", "third", 30_000, { expectedClaimIds: ["second"] })).toBe(true)
+    await journal.release("one", "third")
+    expect(await journal.claim("one", "unclaimed", 30_000, { expectedClaimIds: [] })).toBe(true)
+  })
+
   it("takes over expired leases and supports explicit forced takeover", async () => {
     const journal = store()
     await journal.create(invocation("one"))

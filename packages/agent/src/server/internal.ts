@@ -1,5 +1,3 @@
-import { agentDiagnostics } from "../agent-diagnostics.ts"
-
 export {
   createAgentHealthHandler,
   resolveAgentHealth,
@@ -49,6 +47,8 @@ export type {
 
 export { inheritAgentLayerOptions } from "../agent-layers.ts"
 export { decodeColocatedAgentSkills, withColocatedAgentSkills } from "../internal/colocated-agent-skills.ts"
+
+import { agentDiagnostics } from "../agent-diagnostics.ts"
 
 type AgentGeneratedRuntimeErrorCode = "AGENT_R0892" | "AGENT_R0893" | "AGENT_R0894" | "AGENT_R0895" | "AGENT_R0896" | "AGENT_R0897"
 

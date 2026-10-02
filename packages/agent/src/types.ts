@@ -31,6 +31,7 @@ import type {
 } from "@vite-hub/workspace"
 import type { BoxDefinition } from "@vite-hub/box"
 import type { channelDeliveryHandlers } from "./internal/channel-delivery-handlers.ts"
+import type { ReplayChannelResult } from "./channel-replay.ts"
 import type {
   AgentChannelOptions,
   AgentWebChatChannelOptions,
@@ -644,6 +645,7 @@ export type AgentWebhookSecretToken<TRuntimeConfig extends AgentRuntimeConfig = 
 export interface AgentWebhookRegistrationDefinition<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   adapter?: string
   channelId?: string
+  durableState?: boolean
   id?: string
   method?: "POST" | (string & {})
   path?: string
@@ -654,6 +656,7 @@ export interface AgentWebhookRegistrationDefinition<TRuntimeConfig extends Agent
     toleranceSeconds?: number
   } | {
     verify: (input: {
+      context?: AgentCallbackContext<TRuntimeConfig>
       header: string
       rawBody: Uint8Array
       request: Request
@@ -682,6 +685,27 @@ export interface AgentTriggerContext<
   }
 }
 
+/** One message that `AgentChannelTriggerContext.dispatch()` sends through a Channel trigger. */
+export interface AgentChannelDispatchItem {
+  /** Trigger input. */
+  input: unknown
+  /** Stable key, such as the provider message ID. The Invocation ID derives from it. */
+  key: string
+}
+
+export interface AgentChannelDispatchOptions {
+  /** Record Channel message writes in the trace instead of calling the provider. */
+  dryRun?: boolean
+  /** Trigger of the same Channel that receives each item. */
+  trigger: string
+}
+
+/** Durable state of one Channel. Keys that start with `keyPrefix` belong to the Channel. */
+export interface AgentChannelStateBinding {
+  keyPrefix: string
+  state: StateAdapter
+}
+
 export interface AgentChannelTriggerContext<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
 > extends AgentCallbackContext<TRuntimeConfig> {
@@ -689,6 +713,13 @@ export interface AgentChannelTriggerContext<
   agentCapabilities: readonly AgentCapabilityDefinition<TRuntimeConfig>[]
   agentName?: string
   channel: AgentChannelDefinition<TRuntimeConfig>
+  /** The Channel's State Adapter. Present when a webhook route runs the trigger. */
+  channelState?: AgentChannelStateBinding
+  /**
+   * Starts one Invocation per item through another trigger of this Channel, for a webhook that carries several messages.
+   * Items use the same Invocation IDs as `replayChannel()`, so an item that already has an Invocation is skipped.
+   */
+  dispatch: (items: readonly AgentChannelDispatchItem[], options: AgentChannelDispatchOptions) => Promise<ReplayChannelResult>
   trigger: {
     channelId: string
     id: `${string}.${string}`
@@ -2239,12 +2270,14 @@ export type AgentChannelMessageCalls<TMethods> = {
 
 /** Message methods available when Discord, Slack, Teams, or Telegram has an adapter and messages are enabled. */
 export interface AgentChannelReplyCalls {
+  /** Present when the Channel has a delivery adapter. */
   readonly reply?: (input: AgentChannelDeliveryReplyInput) => Promise<void>
 }
 
 /** Message methods that the GitHub Channel provides. They exist only when the Channel has a GitHub App. */
 export interface AgentGitHubMessageCalls {
   readonly reaction?: (input: AgentChannelDeliveryReactionInput) => Promise<void>
+  /** Present when the Channel has a GitHub App. */
   readonly reply?: (input: AgentChannelDeliveryReplyInput) => Promise<void>
   readonly status?: (input: AgentChannelDeliveryStatusInput) => Promise<void>
 }

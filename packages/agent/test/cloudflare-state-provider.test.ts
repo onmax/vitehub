@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { AtomicAgentStateQueueAdapter } from "../src/internal/state-queue.ts"
+import { isDurableAgentState } from "../src/internal/state-lock.ts"
 import { isRuntimeNumber } from "../src/internal/runtime-value.ts"
 import { createCloudflareAgentState } from "../src/state/providers/cloudflare.ts"
 
@@ -199,6 +200,15 @@ function createFakeCloudflareStateNamespace(): ViteHubAgentStateDurableObjectNam
       locks.set(threadId, lock)
       return lock
     },
+    cacheMutateWithLock(threadId, token, mutations) {
+      const held = locks.get(threadId)
+      if (!held || held.token !== token || held.expiresAt <= Date.now()) return false
+      for (const mutation of mutations) {
+        if (mutation.type === "delete") values.delete(mutation.key)
+        else values.set(mutation.key, JSON.stringify(mutation.value))
+      }
+      return true
+    },
     cacheDelete(key) {
       values.delete(key)
       lists.delete(key)
@@ -288,6 +298,7 @@ describe("Cloudflare Agent State Provider", () => {
 
   it("adapts a Durable Object namespace to Chat SDK state", async () => {
     const state = createCloudflareAgentState({ namespace: createFakeCloudflareStateNamespace() })
+    expect(isDurableAgentState(state)).toBe(true)
     await state.connect()
 
     expect(await state.setIfNotExists("seen", { id: 1 })).toBe(true)

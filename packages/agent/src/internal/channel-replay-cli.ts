@@ -38,7 +38,7 @@ const replayBatchSize = 10
 const valueOptions = new Set(["--agent", "--channel", "--cursor", "--filter", "--limit", "--server", "--url"])
 
 function cliError(message: string): Error {
-  return agentDiagnostics.AGENT_R0936({ message })
+  return agentDiagnostics.AGENT_R0934({ message })
 }
 
 function writeUsage(context: ChannelReplayCliContext, queryHelp: string[] = []): void {
@@ -200,8 +200,7 @@ export function channelReplayQueryHelp(schema: unknown): string[] {
       property.type === "array" ? "repeatable" : undefined,
       hasRuntimeType(property.description, "string") ? property.description : undefined,
     ].filter(Boolean).join(", ")
-    const reserved = valueOptions.has(`--${name}`) || ["dry-run", "force", "help"].includes(name)
-    return reserved ? `  --filter ${name}=<${values}>${notes ? `  ${notes}` : ""}` : `  --${name} <${values}>${notes ? `  ${notes}` : ""}`
+    return `  --${name} <${values}>${notes ? `  ${notes}` : ""}`
   })
 }
 
@@ -217,12 +216,8 @@ export function channelReplayQuery(parsed: Pick<ParsedChannelReplayArgs, "filter
   }
   const query: Record<string, string | string[]> = {}
   for (const [name, value] of [...parsed.queryFlags, ...parsed.filters]) {
-    // Query keys come from user supplied schema and flags. Define each key as
-    // an own property so names such as `__proto__` cannot invoke Object's
-    // prototype setter or accidentally read an inherited value.
-    const current = Object.hasOwn(query, name) ? query[name] : undefined
-    const next = current === undefined ? (properties?.[name]?.type === "array" ? [value] : value) : [...(Array.isArray(current) ? current : [current]), value]
-    Object.defineProperty(query, name, { configurable: true, enumerable: true, value: next, writable: true })
+    const current = query[name]
+    query[name] = current === undefined ? value : [...(Array.isArray(current) ? current : [current]), value]
   }
   return query
 }

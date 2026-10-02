@@ -1,3 +1,4 @@
+import type { AgentStateCacheMutation, AtomicAgentStateLockAdapter } from "../../internal/state-lock.ts"
 import type { Lock, QueueEntry, StateAdapter } from "chat"
 
 import { parseAgentStateQueueEntry } from "../../internal/state-queue.ts"
@@ -5,6 +6,7 @@ import { agentDiagnostics } from "../../agent-diagnostics.ts"
 
 export interface ViteHubAgentStateDurableObjectStub {
   acquireLock(threadId: string, ttlMs: number): Promise<Lock | null> | Lock | null
+  cacheMutateWithLock(threadId: string, token: string, mutations: readonly AgentStateCacheMutation[]): Promise<boolean> | boolean
   cacheDelete(key: string): Promise<void> | void
   cacheGet(key: string): Promise<string | null> | string | null
   cacheSet(key: string, value: string, ttlMs?: number): Promise<void> | void
@@ -37,6 +39,7 @@ export interface CloudflareAgentStateOptions {
 }
 
 export class ViteHubAgentStateAdapter implements StateAdapter {
+  readonly durable = true
   private connected = false
   private readonly defaultName: string
   private readonly locationHint?: string
@@ -51,6 +54,21 @@ export class ViteHubAgentStateAdapter implements StateAdapter {
     this.defaultName = options.name || "default"
     this.locationHint = options.locationHint
     this.shardKey = options.shardKey
+  }
+
+  forCacheLocks(): AtomicAgentStateLockAdapter {
+    this.ensureConnected()
+    // Cache stays on its existing default actor; only mailbox locks stop using thread sharding.
+    const scoped = new ViteHubAgentStateAdapter({ namespace: this.namespace, name: this.defaultName, locationHint: this.locationHint })
+    scoped.connected = true
+    return scoped
+  }
+
+  async mutateWithLock(lock: Lock, mutations: readonly AgentStateCacheMutation[]): Promise<boolean> {
+    if (this.shardKey && this.shardKey(lock.threadId) !== this.defaultName) {
+      throw new Error("[vitehub] Cache lease mutations require forCacheLocks() when State locks are sharded.")
+    }
+    return await this.stub().cacheMutateWithLock(lock.threadId, lock.token, mutations)
   }
 
   async acquireLock(threadId: string, ttlMs: number): Promise<Lock | null> {

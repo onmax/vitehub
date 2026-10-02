@@ -5,7 +5,7 @@ import * as v from "valibot"
 import { defineCollection } from "../../source/src/index.ts"
 import { defineChannel, defineChannelTrigger } from "../src/channels.ts"
 import { defineAgent } from "../src/index.ts"
-import { createMemoryAgentInvocationStore, defineAgentInvocations, pendingAgentInvocationAnnotation } from "../src/invocations.ts"
+import { createMemoryAgentInvocationStore, defineAgentInvocations, pendingAgentInvocationAnnotation, workflowDispatchAttemptedAnnotation } from "../src/invocations.ts"
 import { createLibsqlAgentInvocationStore } from "../src/invocations/sqlite.ts"
 import { channelReplayRunId, replayChannel } from "../src/channel-replay.ts"
 
@@ -43,7 +43,7 @@ it.each(["memory", "libsql"])("persists trigger metadata before executing replay
     expect(result).toMatchObject({ failed: 0, processed: 1 })
     expect(run).toHaveBeenCalledOnce()
     expect(await invocations.getByRunId(runId, "metadata-replay")).toMatchObject({ ...metadata, status: "completed" })
-    expect((await invocations.getByRunId(runId, "metadata-replay"))?.annotations).toEqual({ ...metadata.annotations, [pendingAgentInvocationAnnotation]: false })
+    expect((await invocations.getByRunId(runId, "metadata-replay"))?.annotations).toEqual({ ...metadata.annotations, [pendingAgentInvocationAnnotation]: false, [workflowDispatchAttemptedAnnotation]: false })
     expect((await invocations.list()).invocations[0]).toMatchObject(metadata)
     expect(await replayChannel(agent, "mailbox")).toMatchObject({ processed: 0, skipped: 1 })
   }

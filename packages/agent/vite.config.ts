@@ -43,6 +43,8 @@ export default defineConfig({
       "src/cli.ts",
       "src/eval.ts",
       "src/eve.ts",
+      "src/evlog.ts",
+      "src/evlog/posthog.ts",
       "src/observability.ts",
       "src/observability/host.ts",
       "src/observability/posthog.ts",
