@@ -99,6 +99,14 @@ describe("Email discovery failure output", () => {
     expect(JSON.parse(output.stdout.output())).toHaveProperty("error.message")
     expect(fetch).toHaveBeenCalledOnce()
   })
+
+  it("keeps a valid discovery root when another field is malformed", async () => {
+    const output = context()
+    const fetch = devServer({}, { discovery: { root: "/other", runtime: 123 } })
+    await expect(runEmailOutboxCli(["list"], output.context, { fetch })).resolves.toBe(1)
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls).toHaveLength(1)
+  })
 })
 
 describe("vitehub email outbox", () => {

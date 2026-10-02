@@ -60,7 +60,15 @@ const emailDevDiscoverySchema = v.object({
 
 function parseEmailDevDiscovery(value: unknown): EmailDevDiscovery {
   const parsed = v.safeParse(emailDevDiscoverySchema, value)
-  return parsed.success ? parsed.output : {}
+  if (parsed.success) return parsed.output
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {}
+  const record = value as Record<string, unknown>
+  const output: EmailDevDiscovery = {}
+  for (const key of ["message", "root", "runtime"] as const) {
+    const field = v.safeParse(v.string(), record[key])
+    if (field.success) output[key] = field.output
+  }
+  return output
 }
 
 const emailDevEndpoint = {
