@@ -121,6 +121,19 @@ describe("dev server discovery", () => {
     }
   })
 
+  it("uses an empty discovery object for a non-object response without an owner parser", async () => {
+    const output = captureStderr()
+    const target = await discoverViteHubDevServer({
+      endpoint,
+      fetch: async () => Response.json(null),
+      rootDir: "/app",
+      serverUrl: "http://localhost:5173",
+      stderr: output.stderr,
+    })
+    expect(target?.discovery).toEqual({})
+    expect(output.text()).toBe("")
+  })
+
   it("uses the owner root check", async () => {
     const output = captureStderr()
     const target = await discoverViteHubDevServer({

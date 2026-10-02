@@ -269,11 +269,12 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
     options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
     return
   }
+  const rawDiscovery = await response.json().catch(() => undefined)
   // SAFETY: the owner endpoint defines the discovery shape. Callers check each field before use.
   const discovery = options.parseDiscovery
-    ? options.parseDiscovery(await response.json().catch(() => undefined))
+    ? options.parseDiscovery(rawDiscovery)
     // SAFETY: Existing callers validate discovery fields; typed callers can supply the owner parser above.
-    : await response.json().catch(() => ({})) as TDiscovery
+    : (rawDiscovery !== null && typeof rawDiscovery === "object" ? rawDiscovery : {}) as TDiscovery
   if (options.signal?.aborted) {
     options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
     return
