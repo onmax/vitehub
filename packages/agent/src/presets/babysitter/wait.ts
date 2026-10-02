@@ -5,7 +5,7 @@ import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts"
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const pending = new Set(["queued", "in_progress", "pending", "waiting", "requested", "rerequested", "created"]);
-const failed = new Set(["failure", "error", "timed_out", "action_required", "startup_failure", "cancelled", "stale"]);
+const failed = new Set(["failure", "error", "timed_out", "action_required", "startup_failure"]);
 
 export interface BabysitterWaitPolicy {
   /** Logins whose comments and reviews come from this host's repairs. They never wake a wait. */
@@ -79,14 +79,14 @@ export function currentCheckSignals(s: Snapshot): GitHubEvidence[] {
   }
   for (const status of Object.values(s.statuses)) {
     if (!head || status.sha !== head || status.deleted) continue;
-    signals.set(`status:${String(status.context)}`, { ...status, name: status.context, status: status.state, conclusion: status.state, __status: true });
+    signals.set(`status:${String(status.context)}`, { ...status, name: status.context, status: status.state, conclusion: status.state });
   }
   return [...signals.values()];
 }
 
 export function failureKeys(s: Snapshot): string[] {
   return currentCheckSignals(s).filter(signal => failed.has(String(signal.conclusion ?? signal.state)))
-    .map(signal => `${signal.__status ? `status:${String(signal.context)}` : `check:${String(signal.id)}`}:${String(signal.conclusion ?? signal.state)}`).sort();
+    .map(signal => `${String(signal.id ?? signal.context)}:${String(signal.conclusion ?? signal.state)}`).sort();
 }
 
 /** The wait that a pass parks on: feedback the model saw and failures it already knew. */

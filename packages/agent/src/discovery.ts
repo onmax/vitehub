@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs"
-import { basename, dirname, join, relative, resolve } from "node:path"
+import { basename, dirname, relative, resolve } from "node:path"
 
 import {
   createDirectoryDefinitionSource,
@@ -240,15 +240,9 @@ export function usesProcessHostPreset(source: string): boolean {
   const { tokens } = tokenizeAgentSource(source)
   for (let index = 0; index < tokens.length; index++) {
     if (tokens[index] !== "import" || tokens[index + 1] === "(") continue
-    if (tokens[index + 1] === "type") continue
     for (let next = index + 1; next < tokens.length && tokens[next] !== ";" && tokens[next] !== "import"; next++) {
       if (!/^['"`]/.test(tokens[next] ?? "")) continue
-      if (processHostPresetModules.has(moduleSpecifier(tokens[next]))) {
-        const clause = tokens.slice(index + 1, next)
-        if (clause[0] === "type") return false
-        if (clause[0] === "{" && clause.slice(1, -1).every((token, i, list) => token === "," || token === "type" || list[i - 1] === "type")) return false
-        return true
-      }
+      if (processHostPresetModules.has(moduleSpecifier(tokens[next]))) return true
       break
     }
   }
@@ -257,29 +251,7 @@ export function usesProcessHostPreset(source: string): boolean {
 
 /** Discovered Agents whose definitions use a process host preset, by discovered name. */
 export function discoverProcessHostAgentNames(definitions: readonly DiscoveredAgentDefinition[]): string[] {
-  const hasPreset = (file: string, seen: Set<string>): boolean => {
-    if (seen.has(file)) return false
-    seen.add(file)
-    const source = readFileSync(file, "utf8")
-    if (usesProcessHostPreset(source)) return true
-    const { tokens } = tokenizeAgentSource(source)
-    for (let index = 0; index < tokens.length; index++) {
-      if (tokens[index] !== "import" || tokens[index + 1] === "(") continue
-      for (let next = index + 1; next < tokens.length; next++) {
-        if (!/^['"`]/.test(tokens[next] ?? "")) continue
-        const specifier = moduleSpecifier(tokens[next])
-        if (specifier.startsWith("./") || specifier.startsWith("../")) {
-          const base = resolve(dirname(file), specifier)
-          for (const candidate of [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.mjs`, join(base, "index.ts"), join(base, "index.js")]) {
-            try { if (hasPreset(candidate, seen)) return true } catch { /* unresolved imports are outside discovery's scope */ }
-          }
-        }
-        break
-      }
-    }
-    return false
-  }
-  return definitions.filter(definition => hasPreset(definition.handler, new Set())).map(definition => definition.name).sort()
+  return definitions.filter(definition => usesProcessHostPreset(readFileSync(definition.handler, "utf8"))).map(definition => definition.name).sort()
 }
 
 function isWorkspaceAgentDefinition(source: string, file: string): boolean {

@@ -276,13 +276,7 @@ export function createAgentProcessHosts(options: {
       }
       failures.delete(agentName)
       hosts.set(agentName, host)
-      try {
-        host.start()
-      } catch (error) {
-        hosts.delete(agentName)
-        await host.close().catch(() => undefined)
-        throw error
-      }
+      host.start()
     }
     catch (error) {
       failures.set(agentName, error instanceof Error ? error.message : String(error))
@@ -321,9 +315,6 @@ export function createAgentProcessHosts(options: {
       const agents: Record<string, unknown> = {}
       for (const [name, reason] of failures) agents[name] = { status: "degraded", reason }
       for (const [name, host] of hosts) agents[name] = await host.health()
-      if (enabled) for (const name of options.names) {
-        if (!(name in agents)) agents[name] = { status: "degraded", reason: "Process host is starting." }
-      }
       if (!enabled) for (const name of options.names) agents[name] = { status: "degraded", reason: "Process hosts start in production or with VITEHUB_AGENT_PROCESS_HOSTS=1." }
       const degraded = Object.values(agents).some(agent => isRuntimeRecord(agent) && agent.status !== "healthy")
       return { status: degraded ? "degraded" : "healthy", agents }
