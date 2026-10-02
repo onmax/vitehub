@@ -64,7 +64,7 @@ Available namespaces:
 | `vitehub schedule get` | Available | Schedule Package | Show one Runtime Schedule. |
 | `vitehub schedule runs` | Available | Schedule Package | List the recorded runs of one Schedule, newest first. |
 | `vitehub schedule attempts` | Available | Schedule Package | List the attempts of one Schedule Run. |
-| `vitehub schedule run` | Available | Schedule Package | Run one Runtime Schedule now in the development runtime. |
+| `vitehub schedule run` | Available | Schedule Package | Run a manual Static Schedule Definition locally or through the deployed Console. |
 | `vitehub schedule run-runtime` | Available | Schedule Package | Run one Runtime Schedule now in the development runtime. |
 | `vitehub schedule enable` | Available | Schedule Package | Enable one Runtime Schedule. |
 | `vitehub schedule disable` | Available | Schedule Package | Disable one Runtime Schedule. |
@@ -74,6 +74,17 @@ Available namespaces:
 | `vitehub inspect provider-output` | Available | ViteHub CLI plus package inspection contributors | List generated Provider Output files with secrets redacted. |
 | `vitehub provision run` | Available | ViteHub CLI plus package Provision Steps | Create missing provider resources idempotently. |
 | `vitehub provision status` | Available | ViteHub CLI plus package Provision Steps | Show recorded provider resources and pending actions without applying them. |
+
+## Inspect Server Env
+
+The Env integration contributes commands that report the status of declared Server Env values without printing their values.
+
+```bash [Terminal]
+pnpm vitehub env inspect [--stage <name>] [--json]
+pnpm vitehub env check [--stage <name>] [--json]
+```
+
+Both commands load the Vite config in the selected stage mode, including `.env.<stage>` files, with process environment values taking precedence. They list each declared variable with its status, source, required, and secret flags. `env check` exits with status `1` when loading Server Env would fail, so it can gate CI or deployment steps.
 
 ## Inspect Definitions and Provider Output
 
@@ -218,6 +229,32 @@ Errors go to stderr, or into `{ "error": { "code", "message" } }` on stdout with
 
 The commands use a guarded dev endpoint that `hubKv()` registers only on the Development Server. The endpoint forwards each operation into the Nitro dev environment, which owns the KV storage. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 and the CLI prints that the host is not supported. Deployed runtimes do not expose the endpoint.
 
+## Run a Schedule on demand
+
+`schedule run` starts a Static Schedule Definition that sets `manual: true`. It prints the run status, duration, and run id, and exits with `1` when the run fails. Add `--json` to print the run record.
+
+```bash [Terminal]
+pnpm vitehub schedule run sync
+```
+
+Without `--url`, the command posts to the running Vite Development Server at `VITEHUB_DEV_SERVER_URL` or `http://localhost:5173`. Use `--server <url>` to select another local server.
+
+With `--url`, the command posts to `/_vitehub/schedules/run` on the deployment. That route runs only when the deployment enables the [Console](/docs/development/cli#run-a-schedule-on-demand) with `invoke: true`, and the Console access policy protects it like every other `/_vitehub/**` route. Set the credentials for that policy in the environment:
+
+| Variable                        | Value                                                                                                                                           |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITEHUB_CONSOLE_AUTHORIZATION` | An `Authorization` header value that the Console access policy accepts, for example the Basic or Bearer credential that host middleware checks. |
+| `VITEHUB_CONSOLE_COOKIE`        | A `Cookie` header value from a signed-in Console session.                                                                                       |
+| `CF_ACCESS_CLIENT_ID`           | Cloudflare Access service-token client ID. Forwarded as `CF-Access-Client-Id`.                                                                 |
+| `CF_ACCESS_CLIENT_SECRET`       | Cloudflare Access service-token client secret. Forwarded as `CF-Access-Client-Secret`.                                                         |
+
+```bash [Terminal]
+VITEHUB_CONSOLE_AUTHORIZATION="Basic $(printf 'admin:%s' "$ADMIN_TOKEN" | base64)" \
+  pnpm vitehub schedule run sync --url https://app.example.com
+```
+
+The command requires HTTPS for remote URLs and does not follow redirects. A `401`, `403`, or redirect response reports a Console authentication failure. The command never sends the credential to the local Development Server.
+
 ## Inspect and control Runtime Schedules
 
 Start the app's Vite Development Server, then run `vitehub schedule` from another terminal. The commands read the Schedule stores of that server runtime, so they show Runtime Schedules and runs that the running app created.
@@ -228,7 +265,7 @@ pnpm vitehub schedule list --json
 pnpm vitehub schedule get digest
 pnpm vitehub schedule runs digest --limit 5
 pnpm vitehub schedule attempts srun_runtime_digest_2026-05-22T09:00:00.000Z
-pnpm vitehub schedule run digest
+pnpm vitehub schedule run-runtime digest
 pnpm vitehub schedule disable digest
 pnpm vitehub schedule enable digest
 ```
@@ -239,7 +276,7 @@ digest  report  0 9 * * * (Europe/Copenhagen)  yes      2026-05-23T09:00:00.000Z
 Automatic runs: off. No wake driver is installed, so due times do not start runs in this runtime.
 ```
 
-Every command accepts `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>`. `runs` accepts `--limit <n>`. A failed run makes `schedule run` exit with status 1 and prints the stored run. Errors go to stderr, or into the JSON body with `--json`.
+Every command accepts `--json`, `--url <url>` when Vite does not listen on `http://localhost:5173`, and `--timeout <ms>`. `runs` accepts `--limit <n>`. A failed run makes `schedule run-runtime` exit with status 1 and prints the stored run. Errors go to stderr, or into the JSON body with `--json`.
 
 The output redacts credentials: values under secret-named keys in Schedule input, URLs with embedded credentials, bearer tokens, and secret assignments in error messages.
 
@@ -410,7 +447,7 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 | `vitehub kv` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
 | `vitehub kv list` fails with `KV_CURSOR_EXPIRED` | The provider no longer keeps the listing that the cursor points to. | Run `list` again without `--cursor`. |
 | `vitehub schedule` reports that the host is not supported | The Development Server is Nuxt or plain Vite, so Nitro does not run in the Vite process. | Run the commands against a Vite + Nitro app. |
-| `vitehub schedule run` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
+| `vitehub schedule run-runtime` exits with status 1 | The Schedule is disabled, has no target in the registry, or its handler failed. | Read the printed error or run record, then enable the Schedule or fix the target handler. |
 | `Unknown Workspace Dev target` | The named Workspace is not discovered by the running Vite dev server. | Check the Workspace Definition name and make sure `hubWorkspace()` is active. |
 | `Agent Dev Loop command requires workspace.mode: "write"` | A `!` command targeted an Agent without writable Workspace access. | Configure the selected Agent with `workspace: { mode: 'write' }`, or send a normal Agent message instead. |
 | Agent Dev Loop request times out | A streamed invocation emitted no events before the inactivity timeout, or a Capability CLI/Workspace command exceeded its wall-clock deadline. | Pass `--timeout <ms>` for the dev-loop operation or inspect the stalled work. |
