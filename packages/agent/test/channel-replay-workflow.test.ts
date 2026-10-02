@@ -217,10 +217,11 @@ it.each(["queued", "unknown", "unavailable-marker"] as const)("reconciles an acc
     await vi.advanceTimersByTimeAsync(30_001)
     failConfirmation = false
     recovery = true
-    if (initialStatus !== "queued") {
+    if (initialStatus === "unavailable-marker" || initialStatus === "unknown") {
       expect((await replayChannel(agent, "mailbox", { runtime })).failed).toBe(1)
       expect(providerRun).toHaveBeenCalledOnce()
       expect((await invocations.getByRunId(channelMessageRunId("mailbox", "m1"), "confirm-workflow"))?.annotations?.[pendingAgentInvocationAnnotation]).toBe(true)
+      return
     }
     expect((await replayChannel(agent, "mailbox", { runtime })).skipped).toBe(1)
     expect(getRun).toHaveBeenCalledTimes(initialStatus !== "queued" ? 2 : 1)

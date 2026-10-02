@@ -1069,7 +1069,10 @@ export async function reserveAgentChannelItem<TRuntimeConfig extends AgentRuntim
         if (!await journal.confirmWorkflowDispatch()) throw new Error("Could not confirm the accepted Workflow Invocation.")
         throw new AgentInvocationClaimConflict()
       }
-      if (await journal.getWorkflowDispatchAttempted()) {
+      // A missing marker is ambiguous for legacy reservations. Only an explicit
+      // false means the provider call was never attempted; an attempted or
+      // unknown marker must stay pending until the provider can be reconciled.
+      if (await journal.getWorkflowDispatchAttempted() !== false) {
         throw new Error("Workflow dispatch acknowledgement is unknown; replay cannot safely submit this Invocation again.")
       }
       if ((recoveryConfig && recoveryConfig.provider) === "vercel" && dispatch) {
