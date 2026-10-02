@@ -253,6 +253,7 @@ function redactInspectionUrlPart(value: string): string {
     if (equals < 0) return pair
     const rawKey = pair.slice(0, equals)
     try {
+      // SAFETY: URLSearchParams.next().value is a string tuple for a non-empty parameter pair.
       const entry = new URLSearchParams(pair).entries().next().value as [string, string] | undefined
       if (entry && redactInspectionValue(entry[1], entry[0]) === "[redacted]") return `${rawKey}=[redacted]`
     }
