@@ -58,7 +58,6 @@ describe("CLI documentation contract", () => {
       blobPlugin,
       schedulePlugin,
       workflowPlugin,
-      workflowPlugin,
       workspacePlugin,
       typesPlugin,
     ];
