@@ -32,7 +32,9 @@
     "./runtime/upstash-driver": "./dist/runtime/upstash-driver.js",
     "./virtual": "./dist/virtual.js",
     "./vite": "./dist/vite.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./cli": "./dist/cli.js",
+    "./runtime/dev": "./dist/runtime/dev.js"
   },
   "scripts": {
     "build": "vp pack",
