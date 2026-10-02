@@ -410,16 +410,14 @@ async function runKVCommand(command: KVCommand, args: string[], context: KVCliCo
         : "This Vite Development Server cannot reach the KV runtime.",
     })
   }
-  const body: KVDevRequestBody = {
-    ...(parsed.cursor !== undefined ? { cursor: parsed.cursor } : {}),
-    ...(parsed.key !== undefined ? { key: parsed.key } : {}),
-    ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
-    operation: command.name,
-    ...(parsed.prefix !== undefined ? { prefix: parsed.prefix } : {}),
-    ...(parsed.store !== undefined ? { store: parsed.store } : {}),
-    ...(parsed.ttl !== undefined ? { ttl: parsed.ttl } : {}),
-    ...(command.value ? { value } : {}),
-  }
+  const body: KVDevRequestBody = { operation: command.name }
+  if (parsed.cursor !== undefined) body.cursor = parsed.cursor
+  if (parsed.key !== undefined) body.key = parsed.key
+  if (parsed.limit !== undefined) body.limit = parsed.limit
+  if (parsed.prefix !== undefined) body.prefix = parsed.prefix
+  if (parsed.store !== undefined) body.store = parsed.store
+  if (parsed.ttl !== undefined) body.ttl = parsed.ttl
+  if (command.value) body.value = value
   let response: Response
   try {
     response = await fetchViteHubDevEndpoint(fetchImpl, server.url, kvDevEndpoint, {

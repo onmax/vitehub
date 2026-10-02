@@ -79,7 +79,9 @@ function json(value: unknown, status = 200): Response {
 }
 
 function failure(message: string, status: number, code?: string): Response {
-  return json({ error: { ...(code ? { code } : {}), message: redactInspectionText(message) } }, status)
+  const error: { code?: string; message: string } = { message: redactInspectionText(message) }
+  if (code) error.code = code
+  return json({ error }, status)
 }
 
 function resolvedStores(config: false | ResolvedKVModuleOptions): KVDevStore[] {
@@ -236,16 +238,17 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
       const limit = body.limit ?? kvDevDefaultListLimit
       if (limit > kvDevMaximumListLimit) throw new KVDevRequestError(`limit must be at most ${kvDevMaximumListLimit}.`, 400)
       if ((body.prefix?.length ?? 0) > maximumKeyLength) throw new KVDevRequestError("The prefix is too long.", 400)
-      const page = unwrap(await selected.storage.list({ ...(body.cursor ? { cursor: body.cursor } : {}), limit, prefix: body.prefix ?? "" }))
+      const listOptions: { cursor?: string; limit: number; prefix: string } = { limit, prefix: body.prefix ?? "" }
+      if (body.cursor) listOptions.cursor = body.cursor
+      const page = unwrap(await selected.storage.list(listOptions))
       const result: KVDevListResult = {
-        // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Cursor is optional and must be omitted when absent.
-        ...(page.cursor ? { cursor: page.cursor } : {}),
         keys: page.keys,
         limit,
         prefix: body.prefix ?? "",
         store: selected.name,
         stores: stores.map(store => store.name),
       }
+      if (page.cursor) result.cursor = page.cursor
       return result
     }
     case "get": {
@@ -273,11 +276,11 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
       const result: KVDevSetResult = {
         created: !existed,
         key,
-        ...(notice ? { notice } : {}),
         store: selected.name,
-        ...(ttl ? { ttl } : {}),
         type: valueType(body.value),
       }
+      if (notice) result.notice = notice
+      if (ttl) result.ttl = ttl
       return result
     }
     case "del": {

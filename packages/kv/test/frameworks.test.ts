@@ -192,7 +192,8 @@ describe("hubKv", () => {
     const configure = testHook(plugin.config, (_value: typeof config): void | Promise<void> => undefined)
     await configure(config)
 
-    const contributor = await plugin.vitehub?.cli?.()
+    const cli = plugin.vitehub?.cli
+    const contributor = typeof cli === "function" ? await cli() : cli
     const steps = contributor?.provision ?? []
     const warnings: string[] = []
     const actions = await steps[0]?.plan({
