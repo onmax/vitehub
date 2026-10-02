@@ -123,7 +123,7 @@ export function hubRealtime(options: RealtimeVitePluginOptions = {}): RealtimeVi
         ].join("\n")),
       ])
 
-      const nitro = { ...((config as { nitro?: NitroConfig }).nitro || {}) }
+      const nitro = { ...(config as { nitro?: NitroConfig }).nitro }
       const configuredPreset = nitro.preset || process.env.NITRO_PRESET || process.env.SERVER_PRESET || process.env.VITEHUB_HOSTING
       const deploymentPreset = deploymentPresetFromNitro(configuredPreset)
       const provider = getHostingProvider(configuredPreset)

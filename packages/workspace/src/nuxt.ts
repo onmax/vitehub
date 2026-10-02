@@ -48,7 +48,7 @@ export default function viteHubWorkspaceNuxtModule(options: WorkspaceNuxtModuleO
   const plugins = Array.isArray(nuxt.options.vite.plugins) ? nuxt.options.vite.plugins : []
   if (!plugins.some(isWorkspaceVitePlugin)) {
     plugins.push(hubWorkspace({
-      ...(workspaceOptions || {}),
+      ...workspaceOptions,
       hosting: () => resolvedNitroHosting,
     } as never))
   }
