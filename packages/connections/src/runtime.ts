@@ -30,6 +30,7 @@ const AUTHORIZATION_TTL_MS = 10 * 60_000
 const APPROVAL_EXECUTION_TTL_MS = 5 * 60_000
 const MAX_REDIRECTS = 5
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+const CROSS_ORIGIN_CREDENTIAL_HEADERS = ["authorization", "cookie", "proxy-authorization"]
 // Visible ASCII only, so the key is a valid header value.
 const API_KEY_PATTERN = /^[\x21-\x7e]{1,8192}$/
 
@@ -520,7 +521,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     for (let hop = 0; ; hop += 1) {
       crossed ||= target.origin !== origin
       const headers = new Headers(current.headers)
-      if (crossed) headers.delete(header)
+      if (crossed) {
+        headers.delete(header)
+        for (const credentialHeader of CROSS_ORIGIN_CREDENTIAL_HEADERS) headers.delete(credentialHeader)
+      }
       const response = await request(target.toString(), { ...current, headers, redirect: "manual" })
       const location = response.headers.get("location")
       if (!REDIRECT_STATUSES.has(response.status) || !location || hop === MAX_REDIRECTS) return response
