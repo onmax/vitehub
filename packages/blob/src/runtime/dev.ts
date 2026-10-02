@@ -296,7 +296,7 @@ async function runOperation(body: BlobDevRequestBody, stores: readonly BlobDevSt
  * The request must carry the Blob dev header, must not come from another origin, and must use JSON. A successful
  * `get` returns the raw file bytes. Every other response is JSON.
  */
-export async function handleBlobDevRequest(request: Request, storesOrRoot?: readonly BlobDevStore[] | string, rootDir = process.cwd(), serverId?: string): Promise<Response> {
+export async function handleBlobDevRequest(request: Request, storesOrRoot?: readonly BlobDevStore[] | string, rootDir: string = process.cwd(), serverId?: string): Promise<Response> {
   const stores = typeof storesOrRoot === "string" ? undefined : storesOrRoot
   if (typeof storesOrRoot === "string") {
     serverId = rootDir
