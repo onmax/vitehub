@@ -215,11 +215,10 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         const state = devGeneratedState()
         // SAFETY: Nitro extends Vite config with an opaque nitro value that the server kit validates.
         const kit = createNitroServerKit((config as { nitro?: unknown }).nitro)
-        // The build reports configuration errors. Development keeps the app running without a registry.
-        if (state.configuredProvider) {
-          devRegistryRootDir = rootDir
-          kit.addPlugin((await writeDevRegistry(rootDir)).plugin, "start")
-        }
+        // Keep a generated bootstrap in development even when Workflow is disabled. This lets a
+        // later resolved configuration replace the initial state without restarting Vite.
+        devRegistryRootDir = rootDir
+        kit.addPlugin((await writeDevRegistry(rootDir)).plugin, "start")
         const { handler } = await writeWorkflowDevFiles({ ...state, importBase: internalOptions.importBase, projectRoot: resolveViteHubProjectRoot(rootDir) })
         kit.addHandler({ handler, route: workflowDevRuntimeRoute })
         // SAFETY: Nitro reads this extension in its later config hook; the server kit owns its value.
@@ -245,7 +244,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         if (file.includes(`/${workflowDevGeneratedDir}/`)) return
         if (!/\.(?:c|m)?[jt]s$/i.test(file) || !/(?:\/workflows\/|\.workflow\.)/i.test(file)) return
         const { changed } = await writeDevRegistry(rootDir)
-        const nitro = server.environments.nitro
+        const nitro = server.environments.nitro ?? server.environments.ssr
         for (const changedFile of changed) {
           for (const module of nitro?.moduleGraph.getModulesByFile(changedFile) ?? []) nitro?.moduleGraph.invalidateModule(module)
         }
@@ -259,11 +258,16 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         })
       }
     },
-    configResolved(config) {
+    async configResolved(config) {
       resolved = config
       hasFinalNitroEnvironment = Boolean(config.environments?.nitro)
       providerOutput = useProviderOutputCatalog(config)
       workflow = config.workflow ?? workflow
+      serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
+      if (devRegistryRootDir) {
+        devRegistryRootDir = resolve(config.root)
+        await writeDevRegistry(devRegistryRootDir)
+      }
     },
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) {
