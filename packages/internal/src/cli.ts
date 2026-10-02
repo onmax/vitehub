@@ -1,3 +1,4 @@
+import { isPlainObject } from "./object.ts"
 import type { ProvisionStep } from "./provision.ts"
 
 export interface ViteHubCliStreams {
@@ -243,9 +244,13 @@ export async function fetchViteHubDevEndpoint(
  * Writes the reason to `stderr` and returns `undefined` when the URL is not
  * valid, the server does not answer, or the server root does not match.
  */
-export async function discoverViteHubDevServer<TDiscovery extends { root?: unknown }>(
-  options: ViteHubDevServerDiscoveryOptions & { parseDiscovery?: (value: unknown) => TDiscovery },
-): Promise<ViteHubDevServerTarget<TDiscovery> | undefined> {
+export function discoverViteHubDevServer(options: ViteHubDevServerDiscoveryOptions): Promise<ViteHubDevServerTarget<Record<string, unknown>> | undefined>
+export function discoverViteHubDevServer<TDiscovery extends { root?: unknown }>(
+  options: ViteHubDevServerDiscoveryOptions & { parseDiscovery: (value: unknown) => TDiscovery },
+): Promise<ViteHubDevServerTarget<TDiscovery> | undefined>
+export async function discoverViteHubDevServer(
+  options: ViteHubDevServerDiscoveryOptions & { parseDiscovery?: (value: unknown) => { root?: unknown } },
+): Promise<ViteHubDevServerTarget<{ root?: unknown }> | undefined> {
   let url: string
   try {
     url = viteHubDevEndpointUrl(options.serverUrl, options.endpoint.route)
@@ -271,15 +276,7 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   }
   const rawDiscovery = await response.json().catch(() => undefined)
   // SAFETY: the owner endpoint defines the discovery shape. Callers check each field before use.
-  const discovery = options.parseDiscovery
-    ? options.parseDiscovery(rawDiscovery)
-    // SAFETY: Existing callers validate discovery fields; typed callers can supply the owner parser above.
-    : (() => {
-        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The unparsed discovery response is validated at this transport boundary.
-        if (rawDiscovery === null || typeof rawDiscovery !== "object") return {}
-        // SAFETY: The generic caller contract supplies the discovery shape after the transport boundary validates it is an object.
-        return rawDiscovery as TDiscovery
-      })()
+  const discovery = options.parseDiscovery ? options.parseDiscovery(rawDiscovery) : isPlainObject(rawDiscovery) ? rawDiscovery : {}
   if (options.signal?.aborted) {
     options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
     return

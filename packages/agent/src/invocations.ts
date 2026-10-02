@@ -364,6 +364,11 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   /** Wait for an asynchronous create attempt to resolve its stored identity. */
   ready(): Promise<void>
   finish(status: Extract<AgentInvocationRecordStatus, "completed" | "failed" | "cancelled">, error?: unknown): Promise<void>
+  getWorkflowDispatchAttempted(): Promise<boolean | undefined>
+  handoffClaim(options?: { workflowDispatch?: boolean }): Promise<string | undefined>
+  prepareWorkflowDispatch(binding: AgentInvocationWorkflowBinding): Promise<boolean>
+  confirmWorkflowDispatch(binding?: AgentInvocationWorkflowBinding): Promise<boolean>
+  releaseClaim(): Promise<void>
   running(): Promise<boolean>
   /** Records the Driver dispatch boundary without delaying execution. */
   driverStarted(): void
@@ -2144,6 +2149,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const renew = async (force = false): Promise<boolean> => {
         if (!await ensureCreated() || (finished && !runningRequested)) return false
         const claim = await boundedStoreOperation(() => store.claim(recordId, claimId, CLAIM_LEASE_MS, force ? { replaceExisting: true } : undefined))
+        claimUnavailable = claim === undefined || claim === storeOperationTimedOut
         ownsRecord = claim === true
         if (ownsRecord) {
           const latest = await boundedStoreOperation(() => store.getSummary(recordId))
@@ -2377,6 +2383,55 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       }
       return {
         abortSignal: cancellation.signal,
+        get createdNew() { return createdNew },
+        get claimStatus() { return ownsRecord ? "owned" : claimUnavailable ? "unavailable" : "conflict" },
+        async getWorkflowDispatchAttempted() {
+          const record = await boundedStoreOperation(() => store.getSummary(recordId))
+          if (!record || record === storeOperationTimedOut) return undefined
+          const attempted = record.annotations?.[workflowDispatchAttemptedAnnotation]
+          return attempted === true || attempted === false ? attempted : undefined
+        },
+        async handoffClaim(options = {}) {
+          stopHeartbeat()
+          await heartbeatRenewal
+          const record = await boundedStoreOperation(() => store.get(recordId))
+          if (!record || record === storeOperationTimedOut || terminalStatus(record.status)) return undefined
+          if (!await renew(false)) return undefined
+          stopHeartbeat()
+          if (options.workflowDispatch) {
+            const current = await boundedStoreOperation(() => store.get(recordId))
+            if (!current || current === storeOperationTimedOut || terminalStatus(current.status)) return undefined
+            const annotations = { [workflowDispatchAttemptedAnnotation]: true, ...current.annotations }
+            const updated = await boundedStoreOperation(() => store.update(recordId, { annotations, timestamp: new Date().toISOString() }, claimId))
+            if (!updated || updated === storeOperationTimedOut || updated.annotations?.[workflowDispatchAttemptedAnnotation] !== true) return undefined
+          }
+          const token = await boundedStoreOperation(() => store.getClaimToken(recordId))
+          return token === storeOperationTimedOut ? undefined : token
+        },
+        async prepareWorkflowDispatch(binding) {
+          const updated = await boundedStoreOperation(() => store.update(recordId, { workflow: binding, timestamp: new Date().toISOString() }, claimId))
+          return updated !== undefined && updated !== storeOperationTimedOut
+        },
+        async confirmWorkflowDispatch(binding) {
+          let confirmed = false
+          await write(async () => {
+            let record = await boundedStoreOperation(() => store.get(recordId))
+            if (!record || record === storeOperationTimedOut) return
+            if (binding) {
+              const associated = await boundedStoreOperation(() => store.update(recordId, { workflow: binding, timestamp: new Date().toISOString() }, claimId))
+              if (!associated || associated === storeOperationTimedOut) return
+              record = associated
+            }
+            const updated = await boundedStoreOperation(() => store.update(recordId, { annotations: { ...record.annotations, [pendingAgentInvocationAnnotation]: false }, timestamp: new Date().toISOString() }, claimId))
+            confirmed = updated !== undefined && updated !== storeOperationTimedOut
+          })
+          return confirmed
+        },
+        async releaseClaim() {
+          stopHeartbeat()
+          if (ownsRecord) await write(() => boundedStoreOperation(() => store.release(recordId, claimId)))
+          ownsRecord = false
+        },
         configuration: options.configuration,
         get traceId() { return created ? traceId : undefined },
         async ready() {

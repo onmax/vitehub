@@ -29,7 +29,7 @@ export { inspectQueueDefinitions, type QueueInspectionOptions, queueConsoleSecti
 interface QueueProvisionContributingPlugin {
   vitehub?: {
     cli?: () => Promise<ViteHubCliContributor>
-    inspect?: () => ViteHubInspectionContributor
+    inspect?: () => ViteHubInspectionContributor | undefined
     queue?: {
       createNitroConfig: (options: QueueNitroConfigOptions) => Promise<Record<string, unknown>>
     }
@@ -185,20 +185,51 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   let validatesNitroDefinitions = false
   let serverDirs: string[] | undefined
+  const queueOutputRoot = (provider: QueueProvider) => {
+    const rootDir = nuxtProjectRoot ?? resolved?.root ?? process.cwd()
+    // SAFETY: Nitro adds this optional output config to Vite's resolved config; its directory remains unknown until checked below.
+    const outputDir = (resolved as (ResolvedConfig & { nitro?: { output?: { dir?: unknown } } }) | undefined)?.nitro?.output?.dir
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Nitro output.dir is an unknown config value at this integration boundary; only strings are valid paths.
+    if (provider === "cloudflare" && (nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker) && typeof outputDir === "string") return resolve(rootDir, outputDir)
+    return provider === "cloudflare" ? createDefaultCloudflareOutputRoot(rootDir) : createDefaultVercelOutputRoot(rootDir)
+  }
+  const captureBuildOptions = () => ({
+    queue, hosting, configuredDefinitions, nitroOwnsCloudflareWorker,
+    nuxtConfiguredDefinitions, nuxtProjectRoot, resolveNuxtDefinitions,
+    nuxtOwnsCloudflareWorker, validatesNitroDefinitions,
+  })
+  const buildOptions = new WeakMap<ProviderOutputCatalog, ReturnType<typeof captureBuildOptions>>()
 
   return {
     name: "@vite-hub/queue/vite",
     vitehub: {
-      inspect: () => ({
-        definitions: [{
-          kind: "queue",
-          label: "Queues",
-          list: () => {
-            const rootDir = resolved?.root ?? process.cwd()
-            return inspectQueueDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
-          },
-        }],
-      }),
+      inspect: () => {
+        const provider = normalizeQueueOptions(queue, { hosting })?.provider
+        if (!provider) return
+        return {
+          definitions: [{
+            kind: "queue",
+            label: "Queues",
+            list: () => {
+              const rootDir = resolved?.root ?? process.cwd()
+              return inspectQueueDefinitions({ projectRoot: resolveViteHubProjectRoot(rootDir), rootDir, serverDirs })
+            },
+          }],
+          providerOutput: [
+            provider === "cloudflare"
+              ? {
+                  description: "Generated Cloudflare Queue provider config",
+                  owner: "queue",
+                  path: resolve(queueOutputRoot(provider), nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker ? "server/wrangler.json" : "wrangler.json"),
+                }
+              : {
+                  description: "Generated Vercel Queue provider config",
+                  owner: "queue",
+                  path: resolve(queueOutputRoot(provider), "config.json"),
+                },
+          ],
+        }
+      },
       cli: async () => {
         return {
           namespaces: [],
@@ -233,7 +264,8 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
       },
     },
     config(config) {
-      queue = config.queue ?? queue
+      queue = config.queue ?? options
+      // SAFETY: Vite preserves the user-defined server directory field on the config, while UserConfig omits this ViteHub extension from its type.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       const nitro = (config as { nitro?: unknown }).nitro
       ;(config as { nitro?: unknown }).nitro = mergeNitroConfig(config, nitro, queue, config.root || process.cwd())
