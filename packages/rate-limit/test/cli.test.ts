@@ -55,6 +55,14 @@ const known = {
 const cloudflareReason = "The Cloudflare Rate Limiting binding exposes only limit(), which consumes a token. It cannot read or reset a counter."
 
 describe("Rate Limit review regressions", () => {
+  it.each([null, [], "malformed"])("reports malformed discovery payloads: %j", async discovery => {
+    const output = context()
+    const fetch = vi.fn(async () => Response.json(discovery))
+    await expect(runRateLimitCli(["peek", "login", "key", "--json"], output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toMatchObject({ error: { message: expect.stringContaining("cannot reach the Rate Limit runtime") } })
+    expect(output.stderr.output()).toBe("")
+  })
+
   it.each(["2147483648", "4294967296"])("rejects timeout %s before discovery", async timeout => {
     const output = context()
     const fetch = vi.fn()
