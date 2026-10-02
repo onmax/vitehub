@@ -1000,11 +1000,14 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const connections = await getStore()
     const key = tokenKey(name)
     const owner = await claimMutationLease(name)
-    let releaseLease = false
+    let retainLease = false
+    let quarantine = false
     try {
       const current = await connections.secrets.inspect(key)
       const token: StoredToken = { accessToken: input.key, accountId: account?.id, grantId: randomToken(), scopes: [], tokenType: "api-key" }
       const replacement = await connections.bridge.replace(envContext(actor), { expectedRevision: current?.revision ?? null, key, value: JSON.stringify(token) })
+      retainLease = true
+      quarantine = true
       const timestamp = new Date(now()).toISOString()
       const persisted = await connections.state.putForToken({
         accountEmail: account?.email,
@@ -1016,18 +1019,18 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
         updatedAt: timestamp,
       }, replacement.revision)
       if (!persisted) throw new ConnectionError("invalid", "The Connection key changed while it was set.", { details: { connection: name } })
-      releaseLease = true
+      retainLease = false
       return await inspect(name)
     }
     catch (error) {
-      if (!releaseLease) {
+      if (retainLease && quarantine) {
         const current = await connections.secrets.inspect(key).catch(() => undefined)
         await setStatus(name, { status: "reauth_required" }, current?.revision ?? null).catch(() => undefined)
       }
       throw error
     }
     finally {
-      if (releaseLease) await connections.refreshLeases.release(name, owner).catch(() => undefined)
+      if (!retainLease) await connections.refreshLeases.release(name, owner).catch(() => undefined)
     }
   }
 
