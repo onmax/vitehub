@@ -165,6 +165,7 @@ export function parseWorkflowCliArgs(operation: WorkflowDevOperation, args: stri
     const name = operation === "start" ? "Workflow name" : operation === "resume" ? "signal token" : "run ID"
     throw workflowErrorDiagnostics.WORKFLOW_R0034({ message: `Missing ${name}.` })
   }
+  // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Keep optional workflow only on run operations.
   parsed.request = operation === "start"
     ? { operation, workflow: target }
     : operation === "resume"
@@ -322,6 +323,7 @@ async function sendWorkflowDevRequest(url: string, request: WorkflowDevRequest, 
       body: JSON.stringify(request),
       headers: { accept: "application/json", "content-type": "application/json" },
       method: "POST",
+      // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- The timeout signal is optional by contract.
       ...(parsed.timeout ? { signal: AbortSignal.timeout(parsed.timeout) } : {}),
     })
   }

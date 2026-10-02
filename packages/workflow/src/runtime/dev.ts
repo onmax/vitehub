@@ -92,8 +92,10 @@ function errorCode(error: unknown): string | undefined {
 function serializeError(error: Error): { code?: string, message: string, name?: string } {
   const code = errorCode(error)
   return {
+    // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Error code is optional in the public response.
     ...(code ? { code } : {}),
     message: redactInspectionText(error.message),
+    // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Default Error names are omitted from the response.
     ...(error.name && error.name !== "Error" ? { name: error.name } : {}),
   }
 }
@@ -135,8 +137,11 @@ export async function toWorkflowDevRunView(run: WorkflowRun<unknown, unknown>, w
   const metadata = error ? undefined : toJsonValue(run.metadata)
   const result = toJsonValue(await readResult(run.result))
   return {
+    // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Optional run fields are omitted when unavailable.
     ...(completedAt ? { completedAt } : {}),
+    // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Optional run fields are omitted when unavailable.
     ...(createdAt ? { createdAt } : {}),
+    // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Optional run fields are omitted when unavailable.
     ...(error ? { error } : {}),
     id: run.id,
     ...(metadata === undefined ? {} : { metadata }),

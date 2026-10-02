@@ -64,6 +64,7 @@ interface AgentWorkflowRegistryPlugin extends Plugin {
 
 const noExternalAddition = createNoExternalAddition(workflowPackageName)
 const workflowBuildAssociation = Symbol("vitehubWorkflowBuildAssociation")
+const workflowEnvironmentAssociation = Symbol("vitehubWorkflowEnvironmentAssociation")
 
 interface ScheduledWorkflowBuildConfig {
   config: ResolvedConfig
@@ -71,6 +72,7 @@ interface ScheduledWorkflowBuildConfig {
   workflow: WorkflowModuleOptions | undefined
   serverDirs: string[] | undefined
   environmentNames: Set<string>
+  environmentAssociation?: object
 }
 
 interface InternalWorkflowModuleOptions {
@@ -107,6 +109,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     workflow: WorkflowModuleOptions | undefined
     serverDirs: string[] | undefined
     environmentNames: Set<string>
+    environmentAssociation?: object
   }>()
   const scheduledBuildConfigsByRoot = new Map<string, ScheduledWorkflowBuildConfig[]>()
   const buildConfigs = new WeakMap<object, {
@@ -136,11 +139,14 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     const catalog = getProviderOutputCatalog(config)
     // SAFETY: configResolved installs this private token on build options so Vite clones retain their owner.
     const association = config.build && (config.build as typeof config.build & { [workflowBuildAssociation]?: object })[workflowBuildAssociation]
+    // SAFETY: configResolved installs this private token on Vite environment config objects.
+    const environmentAssociation = (config as typeof config & { [workflowEnvironmentAssociation]?: object })[workflowEnvironmentAssociation]
     const publicDefine = JSON.stringify({
       publicUrl: config.define?.__VITEHUB_PUBLIC_URL__,
       base: config.define?.__VITEHUB_APP_BASE_URL__,
     })
     const matches = candidates.filter(candidate => {
+      if (environmentAssociation && candidate.environmentAssociation === environmentAssociation) return true
       if (environmentName && candidate.environmentNames.size > 0 && !candidate.environmentNames.has(environmentName)) return false
       // SAFETY: buildStart exposes the resolved environment options object, which is the same object held by the owning config.
       if (environmentName && (candidate.config.environments?.[environmentName] as unknown) === (config as unknown)) return true
@@ -381,9 +387,18 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
           writable: false,
         })
       }
+      const environmentAssociation = {}
+      for (const environment of Object.values(config.environments ?? {})) {
+        Object.defineProperty(environment, workflowEnvironmentAssociation, {
+          configurable: false,
+          enumerable: false,
+          value: environmentAssociation,
+          writable: false,
+        })
+      }
       const buildServerDirs = buildConfig[VITEHUB_SERVER_DIRS] ?? buildConfig.__vitehubWorkflowServerDirs
       serverDirs = buildServerDirs
-      const scheduled = { config, providerOutput, workflow, serverDirs: buildServerDirs, environmentNames: new Set<string>() }
+      const scheduled = { config, providerOutput, workflow, serverDirs: buildServerDirs, environmentNames: new Set<string>(), environmentAssociation }
       scheduleBuildConfigs.set(config, scheduled)
       const configs = (scheduledBuildConfigsByRoot.get(config.root) ?? []).filter(previous => previous.config !== config)
       configs.push(scheduled)
@@ -456,7 +471,8 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       if (environmentConfig) {
         // SAFETY: This private fallback field is copied from the plugin's config hook by Vite.
         // Vite exposes the resolved environment options here, which are the same object stored in the owning resolved config's environments map.
-        const config = environmentConfig as unknown as ResolvedConfig & { [VITEHUB_SERVER_DIRS]?: string[], __vitehubWorkflowServerDirs?: string[] }
+        // SAFETY: Vite exposes the resolved environment configuration through this hook.
+        const config = environmentConfig as ResolvedConfig & { [VITEHUB_SERVER_DIRS]?: string[], __vitehubWorkflowServerDirs?: string[] }
         let scheduled = scheduleBuildConfigs.get(config)
         try {
           scheduled ??= scheduledBuildConfig(config, this.environment?.name)
