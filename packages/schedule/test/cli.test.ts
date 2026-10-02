@@ -5,11 +5,11 @@ import { describe, expect, it, vi } from "vitest"
 
 vi.mock("@vite-hub/internal/dev-token", async importOriginal => {
   const actual = await importOriginal<typeof import("@vite-hub/internal/dev-token")>()
-  return { ...actual, readViteHubDevToken: async () => "test-schedule-token" }
+  return { ...actual, readViteHubDevToken: async () => "test-schedule-token", createViteHubDevToken: async () => ({ serverId: "test-schedule-server", token: "test-schedule-token" }), removeViteHubDevToken: async () => {} }
 })
 
 import { createScheduleCliContributor, runScheduleCli } from "../src/cli.ts"
-import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute, scheduleDevRuntimeRoute } from "../src/dev.ts"
+import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute, scheduleDevRuntimeRoute, scheduleDevTokenServerHeader } from "../src/dev.ts"
 import { registerScheduleDevEndpoint, scheduleDevRuntimeUnavailableMessage } from "../src/vite-dev.ts"
 
 import type { IncomingMessage, ServerResponse } from "node:http"
@@ -104,7 +104,7 @@ describe("vitehub schedule", () => {
 
   it("runs, enables, and disables a Schedule", async () => {
     const run = context()
-    await expect(runScheduleCli(["run", "digest"], run.context, {
+    await expect(runScheduleCli(["run-runtime", "digest"], run.context, {
       fetch: devServer({ run: { ...digest.lastRun, response: { status: 204, statusText: "No Content" } } }),
     })).resolves.toBe(0)
     expect(run.stdout.output()).toBe(`Run ${digest.lastRun.id}: succeeded (HTTP 204 No Content)\n`)
@@ -123,17 +123,17 @@ describe("vitehub schedule", () => {
   it("rejects malformed successful responses", async () => {
     const result = context()
     await expect(runScheduleCli(["list"], result.context, { fetch: devServer({ schedules: "invalid" }) })).resolves.toBe(1)
-    expect(result.stderr.output()).toBe("The Schedule Dev response has an invalid shape.\n")
+    expect(result.stderr.output()).toBe("The Schedule Dev response has an invalid result shape.\n")
   })
 
   it("exits with 1 when a manual run fails", async () => {
     const failed = { ...digest.lastRun, error: { message: "Target failed", name: "Error" }, status: "failed" }
     const human = context()
-    await expect(runScheduleCli(["run", "digest"], human.context, { fetch: devServer({ run: failed }) })).resolves.toBe(1)
+    await expect(runScheduleCli(["run-runtime", "digest"], human.context, { fetch: devServer({ run: failed }) })).resolves.toBe(1)
     expect(human.stdout.output()).toContain("Error: Error: Target failed\n")
 
     const json = context()
-    await expect(runScheduleCli(["run", "digest", "--json"], json.context, { fetch: devServer({ run: failed }) })).resolves.toBe(1)
+    await expect(runScheduleCli(["run-runtime", "digest", "--json"], json.context, { fetch: devServer({ run: failed }) })).resolves.toBe(1)
     expect(JSON.parse(json.stdout.output())).toEqual({ run: failed })
   })
 
@@ -184,7 +184,7 @@ describe("vitehub schedule", () => {
   it("contributes one feature per command", () => {
     const [namespace] = createScheduleCliContributor().namespaces
     expect(namespace?.name).toBe("schedule")
-    expect(namespace?.features.map(feature => feature.name)).toEqual(["list", "get", "runs", "attempts", "run", "enable", "disable"])
+    expect(namespace?.features.map(feature => feature.name)).toEqual(["run", "list", "get", "runs", "attempts", "run-runtime", "enable", "disable"])
   })
 })
 
@@ -246,7 +246,7 @@ describe("Schedule dev endpoint", () => {
 
     const discovery = await call(middlewares[0]!, { headers: guard, method: "GET" })
     expect(JSON.parse(discovery.body)).toMatchObject({ message: scheduleDevRuntimeUnavailableMessage, root: rootDir, runtime: "unavailable" })
-    const operation = await call(middlewares[0]!, { body: "{\"operation\":\"list\"}", headers: { ...guard, "content-type": "application/json" }, method: "POST" })
+    const operation = await call(middlewares[0]!, { body: "{\"operation\":\"list\"}", headers: { ...guard, "content-type": "application/json", "x-vitehub-dev-token": "test-schedule-token", [scheduleDevTokenServerHeader]: "test-schedule-server" }, method: "POST" })
     expect(operation.status).toBe(501)
     expect(JSON.parse(operation.body)).toMatchObject({ error: { code: "SCHEDULE_DEV_RUNTIME_UNAVAILABLE" } })
   })
@@ -257,7 +257,7 @@ describe("Schedule dev endpoint", () => {
     await registerScheduleDevEndpoint(server, { nitroBaseURL: () => "/app/" })
 
     expect(JSON.parse((await call(middlewares[0]!, { headers: guard, method: "GET" })).body)).toMatchObject({ root: rootDir, runtime: "nitro" })
-    const operation = await call(middlewares[0]!, { body: "{\"operation\":\"list\"}", headers: { ...guard, "content-type": "application/json" }, method: "POST" })
+    const operation = await call(middlewares[0]!, { body: "{\"operation\":\"list\"}", headers: { ...guard, "content-type": "application/json", "x-vitehub-dev-token": "test-schedule-token", [scheduleDevTokenServerHeader]: "test-schedule-server" }, method: "POST" })
 
     expect(operation.status).toBe(200)
     expect(operation.headers["cache-control"]).toBe("no-store")

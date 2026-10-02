@@ -133,13 +133,13 @@ describe("Runtime Schedule inspection", () => {
     const summary = summarizeScheduleRun({
       attemptCount: 1,
       id: "run",
-      response: { status: 401, statusText: "Authorization: Bearer response-secret" },
+      response: { body: { data: "", encoding: "base64", mediaType: "text/plain" }, headers: [], status: 401, statusText: "Authorization: Bearer response-secret" },
       scheduleId: "digest",
       scheduledAt: now,
       status: "succeeded",
       target: "report",
     })
-    expect(summary.response?.statusText).toBe("Authorization: Bearer [redacted]")
+    expect(summary.response?.statusText).toBe("Authorization: [redacted]")
   })
 
   it("reads Console records with run history and hides records that opt out", async () => {

@@ -85,7 +85,7 @@ interface InternalScheduleVitePluginOptions extends ScheduleVitePluginOptions {
 export interface ScheduleVitePlugin {
   name: string
   [hook: string]: unknown
-  vitehub?: { cli?: () => Promise<import("@vite-hub/internal/cli").ViteHubCliContributor> }
+  vitehub?: ViteHubCliPluginMetadata & ViteHubInspectionPluginMetadata
 }
 
 type NitroConfig = Record<string, unknown> & {
