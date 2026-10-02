@@ -7,6 +7,7 @@ import { schedules } from "./client.ts"
 import { nextRuntimeScheduleRunAt } from "./due.ts"
 import { toRunId } from "./execute.ts"
 import { getRuntimeScheduleStore, getScheduleRunStore, getScheduleRuntimeRegistry, isScheduleWakeDriverActive } from "./state.ts"
+import { ScheduleHistoryIncompleteError } from "./store.ts"
 
 import type { ViteHubConsoleRecord } from "@vite-hub/internal/console"
 import type { ViteHubDefinitionField } from "@vite-hub/internal/inspect"
@@ -333,6 +334,9 @@ const errorStatus: Readonly<Record<string, number>> = {
 }
 
 function scheduleFailure(error: unknown): Response {
+  if (error instanceof ScheduleHistoryIncompleteError) {
+    return failure(redactInspectionText(error.message), 503, error.code)
+  }
   if (!(error instanceof ViteHubError)) {
     return failure("The Schedule operation failed.", 500)
   }
@@ -404,8 +408,14 @@ async function runOperation(body: ScheduleDevRequestBody): Promise<Response> {
         try {
           runs = await getScheduleRunStore().listRuns({ scheduleId: id, runtimeOnly: true, limit: 1 })
         }
-        catch {
+        catch (error) {
           // History is optional after the Schedule mutation has persisted.
+          if (error instanceof ScheduleHistoryIncompleteError) {
+            return json({
+              error: { code: error.code, message: redactInspectionText(error.message) },
+              schedule: summarizeRuntimeSchedule(updated, []),
+            }, 503)
+          }
         }
         return json({ schedule: summarizeRuntimeSchedule(updated, runs) })
       }

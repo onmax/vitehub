@@ -11,7 +11,7 @@ import {
 } from "../src/runtime/console.ts"
 import type { RuntimeScheduleSummary, ScheduleRunAttemptSummary, ScheduleRunSummary } from "../src/runtime/console.ts"
 import type { RuntimeScheduleRecord } from "../src/types.ts"
-import { createMemoryScheduleRunStore } from "../src/runtime/store.ts"
+import { createMemoryScheduleRunStore, ScheduleHistoryIncompleteError } from "../src/runtime/store.ts"
 import { handleScheduleDevRequest as handleAuthenticatedScheduleDevRequest } from "../src/runtime/dev.ts"
 import { nextRuntimeScheduleRunAt } from "../src/runtime/due.ts"
 import { resetScheduleRuntime, setScheduleRunStore, setScheduleRuntimeRegistry, setScheduleWakeDriverActive } from "../src/runtime/state.ts"
@@ -108,6 +108,26 @@ describe("Runtime Schedule inspection", () => {
     expect(body.schedule).toMatchObject({ id: "digest", enabled: operation === "enable" })
     expect(body.schedule?.lastRun).toBeUndefined()
     expect((await schedules.get("digest"))?.enabled).toBe(operation === "enable")
+  })
+
+  it("reports incomplete history without hiding a successful mutation", async () => {
+    installTargets()
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
+    setScheduleRunStore({
+      ...createMemoryScheduleRunStore(),
+      listRuns: () => { throw new ScheduleHistoryIncompleteError(1001, 1000) },
+    })
+
+    const mutation = await handleScheduleDevRequest(devRequest({ id: "digest", operation: "enable" }))
+    expect(mutation.status).toBe(503)
+    expect(await readBody(mutation)).toMatchObject({
+      error: { code: "SCHEDULE_HISTORY_INCOMPLETE" },
+      schedule: { enabled: true, id: "digest" },
+    })
+
+    const listing = await handleScheduleDevRequest(devRequest({ operation: "list" }))
+    expect(listing.status).toBe(503)
+    expect(await readBody(listing)).toMatchObject({ error: { code: "SCHEDULE_HISTORY_INCOMPLETE" } })
   })
 
   it("reports persistence failures after the run record was created", async () => {
