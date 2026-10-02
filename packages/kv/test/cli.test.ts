@@ -210,6 +210,16 @@ describe("KV review regressions", () => {
     else expect(output.stderr.output()).toContain("invalid result shape")
   })
 
+  it.each([
+    ["has", { key: "a", store: "default", exists: "yes" }],
+    ["set", { key: "a", store: "default", created: true, type: 1 }],
+    ["del", { key: "a", store: "default", deleted: "yes" }],
+  ] as const)("rejects malformed %s responses", async (operation, result) => {
+    const output = context()
+    await expect(runKVCli([operation, "a", ...(operation === "set" ? ["value"] : []), "--json"], output.context, { fetch: devServer(result) })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toEqual({ error: { message: "The KV Dev response has an invalid result shape." } })
+  })
+
   it("emits JSON for discovery failures", async () => {
     const output = context()
     await expect(runKVCli(["list", "--json"], output.context, { fetch: vi.fn(async () => { throw new Error("offline") }) })).resolves.toBe(1)
