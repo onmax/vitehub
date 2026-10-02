@@ -13,7 +13,7 @@ import {
   shouldSkipViteProviderBuild,
   useProviderOutputCatalog,
 } from "@vite-hub/internal/build/deployment-output"
-import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
 import { renderViteHubNitroDevHandler } from "@vite-hub/internal/dev-endpoint"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
@@ -42,7 +42,7 @@ const pluginName = "@vite-hub/rate-limit/vite"
 const generatedNitroPlugin = ".vitehub/nitro/rate-limit/plugin.ts"
 const generatedRuntimeModule = ".vitehub/rate-limit/cloudflare-runtime.mjs"
 const generatedNitroDevHandler = ".vitehub/nitro/rate-limit/dev-handler.ts"
-const mergeNoExternal = createNoExternalMerger(packageName)
+const mergeNoExternal = createNoExternalAddition(packageName)
 
 interface InternalRateLimitModuleOptions extends RateLimitModuleOptions {
   importBase?: string
