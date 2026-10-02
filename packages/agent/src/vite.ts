@@ -64,7 +64,7 @@ async function parseTypeScript(): Promise<(source: string) => ReturnType<typeof 
 }
 
 const agentPackageName = "@vite-hub/agent"
-const mergeNoExternal =createNoExternalAddition(agentPackageName, "@t3tools/provider-runtime")
+const mergeNoExternal = createNoExternalAddition(agentPackageName, "@t3tools/provider-runtime")
 const generatedAgentDenoServer = "agent/deno-server.ts"
 const generatedAgentDiscordGatewayRouteHandler = "agent/discord-gateway-route.ts"
 const generatedAgentDiscordGatewayPlugin = "agent/discord-gateway-plugin.ts"
