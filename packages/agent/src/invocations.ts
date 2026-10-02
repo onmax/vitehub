@@ -279,6 +279,10 @@ export interface AgentInvocations {
   prune(options?: AgentInvocationPruneOptions): Promise<AgentInvocationPruneResult>
 }
 
+export function isAgentInvocations(value: unknown): value is AgentInvocations {
+  return typeof value === "object" && value !== null && Reflect.get(value, agentInvocationsBrand) === true
+}
+
 interface BoundAgentInvocations extends AgentInvocations {
   [bindAgentInvocationsSymbol]<TRuntimeConfig extends AgentRuntimeConfig>(
     context: AgentRuntimeContext<TRuntimeConfig>,
