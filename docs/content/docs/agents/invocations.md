@@ -8,6 +8,33 @@ icon: i-lucide-play-circle
 
 An Agent Invocation is one request to an Agent. ViteHub prepares its input, Actor, Capabilities, Workspace, and Driver, then returns or streams the result.
 
+## What happens during an Invocation
+
+An Agent Definition describes reusable behavior. An Invocation records one execution of that behavior.
+
+| Stage | What happens |
+| --- | --- |
+| Entry | A route, Channel, schedule, webhook, CLI command, or another caller provides input. |
+| Actor | ViteHub resolves the trusted [Agent Actor](/docs/agents/actors). |
+| Capabilities | The Definition and invocation context select the abilities for this request. |
+| Context | ViteHub prepares tools, policy, context values, and the Workspace Scope. |
+| Execution | The Agent Driver runs the prepared request. |
+| Result | ViteHub returns or streams the output and records events and usage. |
+
+The Agent can use only the Capabilities selected for that Invocation. A Capability that is not selected adds nothing to the request.
+
+| Term | Describes |
+| --- | --- |
+| Agent Definition | Reusable Agent behavior. |
+| Agent Invocation | One execution for one input. |
+| Channel | Message origin and delivery facts around an Invocation. |
+| Workflow Run | Durable work that can continue across waits or server restarts. |
+| Agent Memory | Persistent context stored outside the Invocation. |
+
+A Channel can start many Invocations, and a Workflow Run can carry an Invocation. Neither one replaces the Invocation record.
+
+Run `vitehub agent info` to inspect the resolved Agent Definition. Run `vitehub agent dev` to talk to the Agent through a running Vite development server. Read [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-approvals-and-traces) for the records produced during execution.
+
 ## Run an Agent
 
 Use `runAgent()` when the caller needs to invoke the Agent directly. Inline runtimes may return a native `Response` when the Agent produces an HTTP-shaped result. Workflow runtimes return a Workflow Run for durable inspection and control. Structured Agent outputs remain typed values, and streaming uses the separate stream contract below.
@@ -227,6 +254,8 @@ export default defineAgent({
 
 Use `invocations.getSummary(id)` to read metadata without observation payloads. It returns `undefined` when the Invocation does not exist. Every `AgentInvocationStore` must implement `getSummary(id)`; `get(id)` returns the full record.
 
+Custom stores must enforce `claim(id, claimId, leaseMs, { expectedClaimIds })` atomically. Unless `replaceExisting` is `true`, this form can claim an unclaimed record or replace one of the listed claim IDs. It must reject a different owner, including an expired claim. Journals rotate the claim ID for handoff and after an uncertain renewal so cleanup of a timed-out attempt cannot release a newer claim. `release(id, claimId)` must release only that claim ID. The memory, libSQL, and D1 stores enforce these rules.
+
 Pass `observationNames` to read only the observations needed for an inspection:
 
 ```ts
@@ -248,6 +277,23 @@ await invocations.prune() // applies the store's maxAgeMs and maxRecords now
 ```
 
 `delete(id)` keeps a pending or running record and returns `'not-terminal'`. `prune()` deletes completed, failed, and cancelled records last updated before `olderThanMs`. The age must be a non-negative safe integer that produces a cutoff within JavaScript's Date range. Invalid ages fail with `AGENT_R0929`. Without `olderThanMs`, it applies the store's configured retention. Both return the affected IDs, and `dryRun: true` lists them without deleting. The SQLite and D1 adapters and the memory store implement both operations. A custom store must implement `store.delete()` and `store.prune()` to support them. Deletion removes the journal record and its claim. Artifacts that a Capability wrote to Blob storage are not keyed by the journal record, so the application owns their retention.
+
+Read the recorded prompt of a finished record to start it again:
+
+```ts
+import { agentInvocationRerunInput } from 'vite-hub/agent'
+
+const record = await invocations.get(invocationId)
+const input = record ? agentInvocationRerunInput(record) : undefined
+if (input?.available) {
+  await runAgent(agent, context, {
+    prompt: input.prompt,
+    ...(input.invokerProfileId ? { context: { invokerProfileId: input.invokerProfileId } } : {}),
+  })
+}
+```
+
+The result has `available: false` and a `reason` when the record cannot reproduce its input. Pending and running records return `invocation-not-terminal`; terminal records can return: `input-not-captured` for a missing prompt, `replay-metadata-unavailable` for legacy or incomplete replay metadata, `input-has-invoker` for a direct invoker or actor identity, `input-has-data` for structured input, `input-has-options` for call options, `input-has-messages` for singular or prior Messages, `input-redacted` for changed input or Invoker Profile replay metadata, or `input-truncated` for a bounded prompt. Direct invoker identities, structured input, and call options are not replayed. A resolver-derived Invoker without a selected Invoker Profile returns `input-has-invoker`; a selected profile is resolved again when the new Invocation starts. The journal keeps `input.prompt` only when `metadataContent` or `content: 'content'` includes it. When the start observation recorded an Invoker Profile, `invokerProfileId` holds the selected profile ID, even when an invoker resolver changes the identity. Direct invocation context beyond an Invoker Profile selection, runtime run metadata beyond the run ID, and timeouts are unavailable for rerun because Console cannot reproduce them. Calls in dry-run mode are unavailable for rerun and return `input-has-dry-run`. Calls with a caller-provided cancellation signal are unavailable for rerun and return `input-has-abort-signal`. A prompt changed by a Capability or input hook is unavailable for rerun and returns `input-prompt-changed`. These cases return `input-has-context`, `input-has-run-metadata`, and `input-has-timeout`.
 
 Use `configuration: 'content'` to retain resolved instructions and tool descriptions/schemas independently of other trace content. The default is `configuration: 'metadata'`. Console journals enable configuration retention for inspection; existing records cannot recover contracts that were not saved. Recorded configuration still uses the journal's observation limits and marks truncated values.
 
@@ -431,7 +477,7 @@ For GitHub-backed sessions, `createGitHubWorkspaceInspector(host)` from `@vite-h
 ## Durable retry budgets
 
 On Node hosts, the GitHub inbox can bound repeated provider dispatches and PR work
-in its existing SQLite database. This is an explicit scheduler API; configuring it
+in its SQLite storage. Every inbox method is asynchronous. This is an explicit scheduler API; configuring it
 does not intercept Agent invocations or classify errors automatically.
 
 ```ts
@@ -452,14 +498,14 @@ are occupied. Check `providerBudget(scope)` to distinguish pending work from fou
 recorded failures.
 
 ```ts
-const token = inbox.reserveProviderAttempt('codex:primary-account')
+const token = await inbox.reserveProviderAttempt('codex:primary-account')
 if (!token) {
   // Leave the PR claim unstarted. Inspect pending attempts or exhausted failures.
   return
 }
-const claim = inbox.claim(1)[0]
+const [claim] = await inbox.claim(1)
 if (!claim) {
-  inbox.finishProviderAttempt(token, 'other-failure')
+  await inbox.finishProviderAttempt(token, 'other-failure')
   return
 }
 
@@ -469,23 +515,23 @@ try {
 } catch (error) {
   // Application-owned classification: only known retryable provider failures count.
   const retryable = isRetryableProviderFailure(error)
-  inbox.finishProviderAttempt(token, retryable ? 'retryable-failure' : 'other-failure')
-  inbox.release(claim)
+  await inbox.finishProviderAttempt(token, retryable ? 'retryable-failure' : 'other-failure')
+  await inbox.release(claim)
   throw error
 }
-inbox.finishProviderAttempt(token, 'success')
+await inbox.finishProviderAttempt(token, 'success')
 
 try {
   // Compare GitHub/provider state before and after the invocation. Do not parse prose.
   const evidence = await verifyNewProgress(claim, result)
-  inbox.finish(claim, {
+  await inbox.finish(claim, {
     text: result.text,
     retry: !evidence,
     progress: evidence ? { kind: 'verified', evidence } : { kind: 'no-progress' },
   })
 }
 catch (error) {
-  inbox.release(claim)
+  await inbox.release(claim)
   throw error
 }
 ```

@@ -12,11 +12,7 @@ import {
   scheduledAgentTurnPrompt,
   scheduledAgentTurnReplyEffect,
 } from "../internal/scheduled-turn.ts"
-import {
-  createTool,
-  jsonObjectSchema,
-  requirePrimitive,
-} from "./storage/shared.ts"
+import { defineInternalTool, jsonObjectSchema, requirePrimitive } from "./internal.ts"
 
 import type {
   AgentCapabilityContext,
@@ -411,7 +407,7 @@ function runtimeScheduleTools(options: NormalizedRuntimeScheduleCapabilityOption
         }
       : undefined
     const tools: AgentToolSet = {
-      cronjob: createTool<RuntimeScheduleToolInput>({
+      cronjob: defineInternalTool<RuntimeScheduleToolInput>({
         description: "List, inspect, create, edit, pause, resume, run, or delete scoped cron jobs.",
         async execute(input: RuntimeScheduleToolInput = {}) {
           const operation = input.operation || "list"

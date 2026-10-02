@@ -148,7 +148,7 @@ export default defineAgent({
 
 The resolver remains the external source of truth, but ViteHub does not write Codex refreshes back to it. A persisted profile is a complete Codex Home, including auth, configuration, session state, and logs, so treat the whole volume as sensitive. Give each Kubernetes replica its own persistent volume; profiles do not coordinate a shared multi-writer volume across processes or pods. Agent inspection reports only that a credential source is configured and never resolves, checks, or prints it.
 
-Provider Drivers require a local Node.js host and don't accept `box`; Cloudflare Agents and Deno fail explicitly. Cloudflare Worker builds exclude the provider Driver runtime through the `workerd` and `worker` package conditions and fail with `AGENT_B0019` when a server module selects a provider Driver. Provider Workspaces additionally require a POSIX host and fail explicitly on Windows. ViteHub materializes an Agent Workspace into a temporary provider working directory, applies Workspace Scope, writes `AGENTS.md` for Codex or a literal prompt file for Claude Code, then commits successful write-mode changes through Workspace rules. Runtime sessions resume by Agent thread while the Agent Definition process remains active. Set `sessionStorePath` to keep opaque provider cursors in SQLite across restarts. Codex credentials supplied through `credentials` require a named `credentialProfile` before session persistence can be enabled because an invocation-private Codex Home is removed after each run. Dedicate each file to one provider Agent Definition on one persistent process host; it does not coordinate concurrent ownership of one thread across workers. Normalized assistant, reasoning, tool, approval, user-input, usage, warning, error, and terminal events stay behind the ViteHub Agent Invocation contract.
+Provider Drivers require a local Node.js host; Cloudflare Agents and Deno fail explicitly. Set `box` on the Agent Definition to start the provider command inside an [`@vite-hub/box`](../box/README.md) session. Each invocation opens a new Box with its checkout, environment, Home files, and requirements resolved for that invocation. ViteHub adds the provider command to the requirements and writes Driver instructions and Skills to the Box Home. The Box runtime must forward process input, and Capability tools need a runtime that shares the ViteHub network. `box` rejects model and custom `run` Drivers, `driver.launch`, `driver.credentials`, `driver.credentialProfile`, and `workspace` when the Agent is defined. Box invocations do not resume provider sessions, fail explicitly on Windows hosts, and fail when the Box session cannot close. Set `driver.cwd` to an existing directory, or a resolver that returns one, to run the provider in an application-owned checkout. ViteHub then materializes Workspace Sources but starts no Workspace session: it does not copy files, create a Git baseline, write changes back, or remove the directory. Title and progress summary runs ignore `cwd`. Cloudflare Worker builds exclude the provider Driver runtime through the `workerd` and `worker` package conditions and fail with `AGENT_B0019` when a server module selects a provider Driver. Provider Workspaces additionally require a POSIX host and fail explicitly on Windows. ViteHub materializes an Agent Workspace into a temporary provider working directory, applies Workspace Scope, writes `AGENTS.md` for Codex or a literal prompt file for Claude Code, then commits successful write-mode changes through Workspace rules. Runtime sessions resume by Agent thread while the Agent Definition process remains active. Set `sessionStorePath` to keep opaque provider cursors in SQLite across restarts. Codex credentials supplied through `credentials` require a named `credentialProfile` before session persistence can be enabled because an invocation-private Codex Home is removed after each run. Dedicate each file to one provider Agent Definition on one persistent process host; it does not coordinate concurrent ownership of one thread across workers. Normalized assistant, reasoning, tool, approval, user-input, usage, warning, error, and terminal events stay behind the ViteHub Agent Invocation contract.
 
 When all selected Workspace Sources materialize successfully before the provider session starts, ViteHub appends source evidence for each ready GitHub Source with an immutable commit revision. Direct, inferred shorthand, and resolved GitHub Sources are supported. If session startup must retry materialization, ViteHub omits source evidence because the mounted revision may change. The evidence gives the canonical repository URL, commit revision, configured source root, and Workspace mount so the provider can cite the mounted files without rediscovering their origin. ViteHub omits mutable or unavailable revisions, custom Sources, invalid repository metadata, and Source credentials.
 
@@ -313,7 +313,7 @@ Public HTTP errors keep the `ViteHubError` mapping. An unrecognized diagnostic
 maps to the generic `INTERNAL` response. Approval and cancellation behavior does
 not change.
 
-See [Errors and diagnostics](https://vitehub.dev/docs/reference/diagnostics)
+See [Errors and diagnostics](https://vitehub.dev/docs/reference/errors-diagnostics)
 for the code format and an application catalog example.
 
 ## Chat state
@@ -380,6 +380,8 @@ For GitHub Channels, `activity: true` links pull request webhook activity to its
 `@vite-hub/agent/invocations/d1` exports `createD1AgentInvocationStore({ database })`. Pass a D1 binding or a resolver that returns the current request binding. The store creates its table with idempotent `d1AgentInvocationSchema()` statements on first use of each binding in an isolate. Set `migrate: false` to apply those statements through your own D1 migration tool instead.
 
 D1 batches and conditional writes preserve concurrent journal updates across Workers. Claims use the database clock. Terminal records use the same 30-day and 10,000-record retention defaults as the libSQL store. Pending and running records are retained. `maxAgeMs: false` and `maxRecords: false` disable each limit. `invocations.delete(id)` and `invocations.prune({ olderThanMs, dryRun })` remove terminal records on demand in both adapters; `vitehub agent invocations delete|prune` does the same for a SQLite or libSQL journal. An update rejects after 32 concurrent write conflicts. Use the journal's `redact` hook to remove sensitive values before any store receives them.
+
+`agentInvocationRerunInput(record)` returns the recorded prompt and Invoker Profile ID of a terminal record when the journal kept the complete prompt and selected profile ID. Pending and running records return `available: false` with the reason `invocation-not-terminal`. Otherwise it returns `available: false` with the reason: `input-not-captured`, `replay-metadata-unavailable`, `input-has-invoker`, `input-has-data`, `input-has-options`, `input-has-context`, `input-has-run-metadata`, `input-has-timeout`, `input-has-abort-signal`, `input-has-dry-run`, `input-prompt-changed`, `input-has-messages`, `input-redacted`, or `input-truncated`. Records without the current replay schema and invocations with a direct invoker or actor identity cannot be replayed. A resolver-derived Invoker without a selected Invoker Profile also returns `input-has-invoker`. A selected profile is resolved again when the new Invocation starts. Structured input, call options, extra context, runtime run metadata, timeouts, cancellation signals, dry-run mode, singular message inputs, and prompts changed by input preparation are not replayed. Redaction of the prompt, input-presence flags, or selected Invoker Profile disables replay. The Console uses it for its rerun action. `invocations.supportsDelete` reports whether the configured store implements deletion.
 
 D1 caps retained observations at 1,000,000 UTF-8 bytes to fit its 2 MB row limit. The adapter checks the complete row, preserves lifecycle fields and appended evidence when it removes excess ordinary observations, and rejects a row that still cannot fit. The resolved observation budget is stored with each record.
 
@@ -489,7 +491,7 @@ Import `observability()` and `createAgentEvlog()` from `@vite-hub/agent/evlog`, 
 
 `createAgentEvlog()` from `@vite-hub/agent/evlog` exports invocation lifecycle events through evlog. Add its `capability` to your Agent, connect its `drain` to the host, and await `flush()` after invocation background tasks finish. `@vite-hub/agent/evlog/posthog` adds PostHog events, Error Tracking and the official evlog log drain through optional dependencies.
 
-`createPapercutReporter()` from `@vite-hub/agent/capabilities` journals reports in persistent Agent Invocations before delivery and replays pending reports after restart. See [evlog](../../docs/content/docs/agents/evlog.md) for delivery, privacy and shutdown contracts.
+`createPapercutReporter()` from `@vite-hub/agent/capabilities` journals reports in persistent Agent Invocations before delivery and replays pending reports after restart. See [observability](../../docs/content/docs/agents/observability.md) for delivery, privacy and shutdown contracts.
 
 GitHub Channels with `activity: true` keep one managed comment per pull request. A single table lists current and recent session links, status, relative start times, and completed durations. Task checkboxes and the latest result appear below; previous results are collapsed. Full transcripts stay in the linked sessions.
 
@@ -535,8 +537,12 @@ The plugin starts it and closes it with Nitro, and serves drain status at
 Use the runtime drain CLI before replacing the process.
 
 `@vite-hub/agent/server/github-inbox` provides a SQLite PR inbox for Node hosts.
-Construct `PullRequestInbox({ path, repositories, filter })`, seed discovered PRs,
-and ingest verified webhook deliveries with `ingest(deliveryId, event, payload)`.
+Construct `PullRequestInbox({ storage, repositories, filter })` with
+`agentState.extension("babysitter")` from `@vite-hub/agent/state/sqlite` to keep
+the inbox tables in the Agent State database, or with `path` for a private
+`node:sqlite` file. `scope` separates inboxes that share one storage. Every
+method is asynchronous. Seed discovered PRs and ingest verified webhook
+deliveries with `ingest(deliveryId, event, payload)`.
 `filter` uses `GitHubPullRequestFilter` from the GitHub Channel. PR properties apply
 to discovery and claims. Actor and action rules gate new webhook admissions only;
 existing PRs still receive lifecycle evidence that can cancel their active work.
@@ -550,6 +556,15 @@ The inbox binds the wait to the current head and excludes it from claims until
 `wake(observedSnapshot, evidenceKey)` sees changed evidence. See the
 [host reconciliation contract](../../docs/content/docs/reference/github-inbox-waits.md).
 `recoverLeases()` releases expired leases only, including after a process restart.
+Claims, recovery, head matching and `summary()` read indexed columns, so they do
+not parse every stored snapshot. `detectChangedPullRequests()` reads every open PR of a repository with one
+GraphQL query per 50 PRs, at most once a minute. It seeds PRs that no delivery
+reported and marks PRs whose state fingerprint changed, or that closed.
+`probeChangedSnapshots()` then reads only those PRs over REST and ingests them,
+so lost webhook deliveries are recovered without probing unchanged PRs. Row
+order and an unknown mergeability do not count as changes. `pruneDeliveries()` drops delivery payloads after
+7 days and delivery IDs after 30 days. `importLegacyFile(path)` copies an older
+`node:sqlite` inbox file once, clears its leases, and leaves the file unchanged.
 `createClaimStopCheck()` checks lease, PR state, and head changes, and accepts a
 repair push only when the provider Git HEAD proves the new head. Call `close()`
 when the host stops. `snapshotPrompt()` serializes the retained feedback with
@@ -644,7 +659,7 @@ agent: {
 
 The generated `/api/_vitehub/ready` route supports GET and HEAD, returning 503 until preparation succeeds. `requireNonEmpty` rejects an empty prepared Workspace; it is opt-in. Set `route` to change the readiness path.
 
-`agentEvlogPlugin(telemetry, reporters)` from `@vite-hub/agent/evlog` owns Nitro request IDs, drain and error hooks, reporter lifecycle, and shutdown flush. See the [evlog guide](https://vitehub.dev/docs/agents/evlog) for host drain reuse and background delivery.
+`agentEvlogPlugin(telemetry, reporters)` from `@vite-hub/agent/evlog` owns Nitro request IDs, drain and error hooks, reporter lifecycle, and shutdown flush. See the [observability guide](https://vitehub.dev/docs/agents/observability) for host drain reuse and background delivery.
 
 Set `transcripts: { retention: "forever" }` in `createLibsqlAgentState()` to preserve Chat transcript rows before startup expiry cleanup and ignore future transcript TTLs. Other state still expires normally. This cannot recover rows already deleted.
 
@@ -709,7 +724,8 @@ Without a template, extending instructions replaces the inherited document.
 Import `babysitter` from `@vite-hub/agent/presets/babysitter`, or
 `vite-hub/agent/presets/babysitter` in an application. It repairs selected pull
 requests, addresses human and bot review feedback, and parks while checks run.
-Its only workflow options are the GitHub Channel `filter` and `autoMerge`:
+Its workflow options are the GitHub Channel `filter`, the provider `driver`, and
+the `merge` policy:
 
 ```ts
 import { defineAgent } from "@vite-hub/agent"
@@ -719,38 +735,87 @@ export default defineAgent({
   preset: "babysitter",
   presets: { babysitter },
   options: {
-    filter: { labels: { allow: ["repair"], deny: ["do-not-touch"] } },
-    autoMerge: false,
+    filter: {
+      repository: { allow: ["acme/app"] },
+      labels: { allow: ["repair"], deny: ["do-not-touch"] },
+    },
+    driver: "codex",
+    merge: false,
+    concurrency: 2,
   },
   driver: { model: "your-codex-model" },
 })
 ```
 
+`driver` selects the provider Driver that repairs each checkout: `"codex"` (the
+default) or `"claude-code"`. Set its model and other provider settings with the
+ordinary `driver` field. Model and custom run Drivers cannot repair a checkout.
+
+`merge` defaults to `false`:
+
+| Value | Behavior |
+| --- | --- |
+| `false` | The Babysitter never merges. |
+| `"auto"` | The worker may call `requestAutoMerge`, which requests GitHub native auto-merge. |
+| `"direct"` | Before a model pass, the host squash-merges a PR that is ready. |
+| `{ strategy: "direct", method, ready }` | Direct merge with `"squash"`, `"merge"`, or `"rebase"`, and an optional `ready` hook. |
+
+A direct merge needs passing required checks, completed and successful
+current-head checks and statuses, loaded and resolved review threads, a
+non-draft PR, and GitHub's live `mergeable_state: "clean"` on the default
+branch. The merge request pins the head SHA, so a concurrent push makes GitHub
+reject it. `ready({ repository, number, head, snapshot, requiredChecks })` can
+add a policy, such as a required approval check; return `true` or a reason. Any
+other result runs a normal repair pass. `autoMerge: true` is a deprecated alias
+for `merge: "auto"`.
+
+After a repair push, the pass may continue for 3 minutes, then ends. The PR
+waits on the pushed head. Later events on a waiting PR start a pass only when
+they need one: new human or bot feedback, a new failing check, a merge conflict,
+or an unresolved review thread. Pending checks, the pushed head's synchronize
+event, and repeated results for failures the pass already saw keep it waiting.
+With `merge: "direct"`, passing required checks also wake it, so the host can
+merge. `reviewChecks` lists check names, such as a review bot's check, that keep
+a PR waiting while they run. A comment-only review with an empty body does not
+wake a waiting PR; its inline comments do. `noFindingsReviews` lists body
+prefixes, such as `"> ✅ No new issues found."`, of comment-only reviews that
+report no findings; these do not wake it either. A PR that ends three passes on one head without a
+push waits for new evidence. A stacked PR whose parent merged into the default
+branch is retargeted to the default branch. A provider rate limit is retried
+three times; after that, the host admits no PR work for an hour.
+
 Colocated `instructions.md` fills the preset's instruction slot without adding
 headings. Explicit `driver.instructions` replaces that slot. Use
 `{ mode: "replace", value: "..." }` to replace the complete instruction document.
 
-`createBabysitterRuntime` from `@vite-hub/agent/presets/babysitter/server` owns a
-SQLite inbox, bounded GitHub discovery, claims, checkout preparation, repair
-passes and wake handling. Provide a configured Agent, GitHub host, inbox path,
-repositories and concurrency. In a ViteHub application, obtain the Agent through
-`getAgentFromRegistry("babysitter")` so discovery applies its colocated files. The Vite plugin binds `#vitehub/agent/registry` in Vite and Nitro to generated lazy loaders. Build output embeds colocated instructions and skills, so lookup works before any webhook handler loads and does not read Markdown from the deployed filesystem. Outside a ViteHub build, pass an explicit registry to `getAgentFromRegistry(name, registry)`.
-Pass `agentName: "babysitter"` to `createBabysitterRuntime` when the discovered
-definition has no explicit `name`. This selects its configured origin when
-`vitehub({ publicUrl })` uses the per-Agent function form. The runtime defaults
-to the definition's `name`; an explicit `publicUrl` takes precedence.
-Connect `reconcile` to a Process Agent Host, `inbox.ingest` to the signed GitHub
-webhook receiver, and `workload` to health inspection. Keep credentials, provider
-settings, host capacity, telemetry and deployment resources in the application.
-Configure the GitHub host identity with a login and email for repair commits.
-Only its author and committer identity fields pass to the worker; credentials do not.
+A discovered Agent that imports the preset runs without more wiring on the Node
+server preset. ViteHub generates a Nitro plugin that starts a process host for
+it: a SQLite PR inbox in Agent State, bounded GitHub discovery of
+`filter.repository.allow`, claims, repair passes, and wake handling. Signed
+GitHub deliveries to `/api/_vitehub/agents/<name>/webhooks/github` feed the
+inbox; they never start the Agent directly. `GET /api/_vitehub/host/drain`
+reports drain status, and `GET /api/_vitehub/host/health` reports each host's
+health and queue. SIGUSR2 starts a drain. The build fails with `AGENT_B0022` on
+hosts that cannot keep a process running, and with `AGENT_B0023` without SQL
+Agent State. Hosts start in production builds, or in development only with
+`VITEHUB_AGENT_PROCESS_HOSTS=1`, so a development server does not repair real
+PRs by accident.
 
-Each pass uses a disposable Codex workspace with edit permission. GitHub tokens
+The host reads the GitHub App from `env.server.github` or `GITHUB_APP_ID`,
+`GITHUB_APP_PRIVATE_KEY` (or `GITHUB_APP_PRIVATE_KEY_PATH`), and
+`GITHUB_WEBHOOK_SECRET`. It resolves the App installation of each repository and
+commits as the App's bot. `GITHUB_APP_INSTALLATION_ID` pins one installation.
+A delivery without a configured webhook secret is rejected. Only the commit
+author and committer identity pass to the worker; credentials do not. On its
+first start, the host imports `.vitehub/pull-request-inbox.sqlite` from an
+earlier hand-wired Babysitter once.
+
+Each pass uses a disposable provider workspace with edit permission. GitHub tokens
 stay on the host. Tools provide PR-bound log reads, repair pushes, comments,
-metadata updates and thread resolution. `autoMerge: false` omits the merge tool
-and the host rejects auto-merge operations. Enabling it requests GitHub native
-auto-merge subject to current PR admission and repository checks and reviews.
-There is no direct merge or branch-deletion fallback.
+metadata updates and thread resolution. Unless `merge` is `"auto"`, the worker
+has no merge tool and the host rejects auto-merge operations. With `"auto"`, it
+requests GitHub native auto-merge subject to current PR admission and repository
+checks and reviews. Workers never merge directly or delete branches.
 
 ### Bound repeated PR work
 

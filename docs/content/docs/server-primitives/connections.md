@@ -112,6 +112,7 @@ Options:
 | `actor` | Route from `event`, else `{ id: 'server', kind: 'service' }` | The actor for access rules and activity. |
 | `dryRun` | `false` | Write Operations return `{ skipped: 'dry-run', operation }` and do not call the provider. `fetch` returns `204` with the `x-vitehub-connection-skipped` header. |
 | `audit` | `'changes'` | `'changes'` records writes, denials, skipped calls, and failures. `'all'` also records reads. |
+| `signal` | None | Cancels token refresh, refresh-lease waits, and the Operation request, including its response body. |
 | `trace` | None | `traceId`, `invocationId`, `runId`, and `tool` to link activity to a trace. |
 
 ## Provider origins
@@ -144,20 +145,33 @@ ViteHub checks `deny` first, then `approve`, then `allow`. When no pattern match
 | Decision | Result |
 | --- | --- |
 | `allow` | The call runs. |
-| `require-approval` | The call fails with `CONNECTIONS_APPROVAL_REQUIRED`. Agent tools report it to the model. |
+| `require-approval` | Server code fails with `CONNECTIONS_APPROVAL_REQUIRED`. An Agent tool asks for tool approval. When a user approves it in a provider Agent session, the call runs. `deny` rules still apply. |
 | `deny` | The call fails with `CONNECTIONS_DENIED`. |
+
+## Use from Agents
+
+Agent Capabilities call a Connection with the Agent name as the actor. The rule in `access.agents.<name>` applies. Tools check access before they run.
+
+| Capability | Option | Operation ids |
+| --- | --- | --- |
+| [`gmail()`](/docs/capabilities/gmail) | `connection`, default `'google'` | `gmail.messages.list`, `gmail.messages.get`, `gmail.drafts.create` |
+| [`openapi()`](/docs/capabilities/openapi#authenticate-through-a-connection) | `connection` | `openapi.<operationId>` |
+| [`mcp()`](/docs/capabilities/mcp#authenticate-through-a-connection) | `servers.<name>.connection` | `mcp.<server>.tools.<tool>`, `mcp.<server>.rpc.<method>` |
+
+`gmail.drafts.create`, OpenAPI operations other than `GET` and `HEAD`, and all MCP tool calls are writes. Without a matching rule they are denied, so allow or approve them in the Agent rule.
 
 ## Activity
 
 ViteHub stores activity in the `vitehub_connection_activity` table. Each entry has the actor, action (`call`, `connect`, `refresh`, `disconnect`), Operation id, effect, outcome, provider status, duration, target host and path, and trace ids. Activity never contains request bodies, response bodies, headers, or tokens.
 
-Agent tools record every call, reads included. The Console shows activity for each Connection.
+Agent tools record every call, reads included. MCP protocol messages are recorded only when they are denied or fail. The Console shows activity for each Connection.
 
 ## Storage and security
 
 - Grants are sealed with AES-GCM and the encryption key. Each row stores the key id. With a different key, the status is `needs-reconnect`.
 - The connect flow uses PKCE (`S256`), a single-use ticket that expires after 10 minutes, and a `state` cookie. Tokens never go to the browser or the CLI.
-- Connect, callback, and management routes exist only when the Console is enabled. Console Auth protects them in production.
+- Connect, callback, and management routes exist only when the Console is enabled. Console Auth protects them in production. With an explicit production access contract, the Console is read-only for Connections until you set `console: { manageConnections: true }`. See [Manage Connections](/docs/development/console#manage-connections).
+- The Console preserves the Vite `base` in management, connect, callback, and return URLs.
 - Concurrent refreshes use a database lease, so only one request refreshes a rotating refresh token.
 
 ## Configuration options

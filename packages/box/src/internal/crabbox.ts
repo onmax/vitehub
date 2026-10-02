@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { cp, lstat, mkdtemp, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, posix, resolve } from "node:path"
-import { Readable } from "node:stream"
+import { Readable, Writable } from "node:stream"
 import type { ExecutionAuthority } from "@vite-hub/runtime"
 
 import type {
@@ -1127,10 +1127,15 @@ function processHandle(child: ChildProcessWithoutNullStreams, abortSignal: Abort
       else resolvePromise({ exitCode: code ?? 1 })
     })
   })
+  let stdin: WritableStream<Uint8Array> | undefined
   return {
     pid: child.pid,
     // SAFETY: child-process stderr yields Buffer chunks, which are Uint8Array values.
     stderr: Readable.toWeb(child.stderr) as ReadableStream<Uint8Array>,
+    // Crabbox forwards local stdin to the remote command.
+    get stdin() {
+      return stdin ??= Writable.toWeb(child.stdin)
+    },
     // SAFETY: child-process stdout yields Buffer chunks, which are Uint8Array values.
     stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     wait: () => wait,

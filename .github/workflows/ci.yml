@@ -45,7 +45,6 @@ jobs:
             "consumer-contracts",
             "consumer-contracts-success",
             "windows-agent-credentials",
-            "docs",
             "verify-providers",
           ])
           const failures = Object.entries(results).filter(([name, job]) => {
@@ -78,6 +77,8 @@ jobs:
         env:
           VITE_DOCTOR_SINCE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before || 'HEAD^' }}
       - run: vp run typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
       - name: Docs links
         run: vp run --filter vitehub-docs test:links
 
@@ -214,7 +215,6 @@ jobs:
 
   docs:
     name: docs
-    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

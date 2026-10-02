@@ -1,6 +1,7 @@
-export { createGitHubHost, parseGraphQLRateLimit } from "./github-host.ts"
+export { createGitHubAppCredentials, createGitHubHost, parseGraphQLRateLimit } from "./github-host.ts"
 
 export type {
+  GitHubAppEnvironment,
   GitHubGraphQLBudgetOptions,
   GitHubGraphQLRateLimit,
   GitHubGraphQLReservation,

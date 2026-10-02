@@ -1,3 +1,4 @@
+import { isDurableAgentState, requireAtomicAgentStateLock, type AgentStateCacheMutation, type AtomicAgentStateLockAdapter } from "../internal/state-lock.ts"
 import { parseStandardSchema } from "@vite-hub/internal/http-request"
 import { runWithActiveCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { createExecutionContext, createRuntimeContext as createHostRuntimeContext } from "@vite-hub/runtime"
@@ -17,7 +18,7 @@ import { awaitAgentInvocationResult } from "../agent-invocation.ts"
 import type { AgentInvocationController } from "../agent-invocation.ts"
 import { appendLatestFinalText, hasTraceableStreamResult, isAsyncIterable, streamAgentOutputToEvents } from "../agent-output.ts"
 import { toAgentPublicError } from "../agent-error.ts"
-import { getAccessCapabilityOptions } from "../capabilities/access-metadata.ts"
+import { getAccessCapabilityOptions } from "../capabilities/access.ts"
 import { assertChatDeliveryOptions, CHAT_FINISH_EXTENSION_CONTEXT_KEY, getChatCapabilityOptions, resolveChatErrorFallbackText } from "../chat-trigger.ts"
 import {
   chatMessageHookArgs,
@@ -43,6 +44,7 @@ import { attachmentStringBytes, isAttachmentData } from "../messages.ts"
 import { agentInvokerLabel, hasResolvedAgentInvokerInput, resolveInputAgentInvoker, resolveAgentInvoker, withResolvedAgentInvokerInput } from "../invoker.ts"
 import { createAgentUIMessageStreamResponse } from "../stream-output.ts"
 import {
+  bindAgentChannelTriggerState,
   isResolvedAgentTriggerHandledInvocation,
   resolveAgentTriggerInvocation as resolveAgentTriggerInvocationWithResolvedContext,
   resolveAgentTriggerInvocationResult,
@@ -341,6 +343,7 @@ interface QueuedChatFinishMessage {
   message: AgentChatMessage
   shouldSkip?: () => boolean
   continueOnError?: boolean
+  onError?: () => void
 }
 
 type AgentChatQueuedFinishExtension = AgentChatFinishExtension & ChatFinishDeliveryRegistrar & {
@@ -2559,12 +2562,24 @@ function isExpired(expiresAt: number | null | undefined): boolean {
 }
 
 class ViteHubInMemoryChatStateAdapter implements StateAdapter {
+  readonly durable = false
   private cache = new Map<string, { expiresAt?: number; value: unknown }>()
   private connected = false
   private lists = new Map<string, Array<{ expiresAt?: number; value: unknown }>>()
   private locks = new Map<string, Lock>()
   private queues = new Map<string, QueueEntry[]>()
   private subscriptions = new Set<string>()
+
+  async mutateWithLock(lock: Lock, mutations: readonly AgentStateCacheMutation[]): Promise<boolean> {
+    this.ensureConnected()
+    const held = this.locks.get(lock.threadId)
+    if (!held || held.token !== lock.token || isExpired(held.expiresAt)) return false
+    for (const mutation of mutations) {
+      if (mutation.type === "delete") this.cache.delete(mutation.key)
+      else this.cache.set(mutation.key, { value: mutation.value })
+    }
+    return true
+  }
 
   async acquireLock(threadId: string, ttlMs: number): Promise<Lock | null> {
     this.ensureConnected()
@@ -2730,7 +2745,8 @@ function getInMemoryChatState(key: string): StateAdapter {
 function withChatStateScope(state: StateAdapter, channelPrefix: string, agentPrefix: string): StateAdapter {
   const key = (value: string) => `${value.startsWith("transcripts:user:") ? agentPrefix : channelPrefix}${value}`
   const lock = (value: Lock) => ({ ...value, threadId: key(value.threadId) })
-  const scoped: StateAdapter = {
+  const scoped: StateAdapter & { durable: boolean } = {
+    durable: isDurableAgentState(state),
     async acquireLock(threadId, ttlMs) {
       const acquired = await state.acquireLock(key(threadId), ttlMs)
       return acquired ? { ...acquired, threadId } : null
@@ -2762,6 +2778,16 @@ function withChatStateScope(state: StateAdapter, channelPrefix: string, agentPre
       queuePeek: (threadId: string) => atomic.queuePeek!.call(state, key(threadId)),
       queueReplaceHead: (threadId: string, expected: QueueEntry | null, replacement: QueueEntry[], maxSize: number) =>
         atomic.queueReplaceHead!.call(state, key(threadId), expected, replacement, maxSize),
+    })
+  }
+  // SAFETY: State may implement these optional methods; each is checked before forwarding.
+  const leaseState = state as Partial<AtomicAgentStateLockAdapter>
+  if (isRuntimeFunction(leaseState.mutateWithLock)) {
+    Object.assign(scoped, {
+      mutateWithLock: (held: Lock, mutations: readonly AgentStateCacheMutation[]) => leaseState.mutateWithLock!.call(state, lock(held), mutations.map(mutation => ({ ...mutation, key: key(mutation.key) }))),
+      ...(isRuntimeFunction(leaseState.forCacheLocks) ? {
+        forCacheLocks: () => requireAtomicAgentStateLock(withChatStateScope(leaseState.forCacheLocks!.call(state), channelPrefix, agentPrefix)),
+      } : {}),
     })
   }
   return scoped
@@ -4646,6 +4672,7 @@ function createChatFinishExtension(
       queued.callbacks.push(callback)
       queued.shouldSkip = options?.shouldSkip
       queued.continueOnError = options?.continueOnError
+      queued.onError = options?.onError
       return true
     },
     provider: chatRegistrationOrigin(registration),
@@ -4863,6 +4890,7 @@ async function flushChatFinishExtensionMessages(
     }
     catch (error) {
       capture.error = error instanceof Error ? error.message : String(error)
+      queued.onError?.()
       await settleChatFinishDeliveryCallbacks(callbacks, capture)
       // A failed automatic final reply must leave the queued finish-hook fallback deliverable.
       if (queued.continueOnError && index + 1 < messages.length && !abortSignal?.aborted) continue
@@ -7404,6 +7432,10 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
         (trigger.id === "chat.message" ? undefined : workflowCustody ? undefined : webhookDeliveryState) ||
         (chatDeliveryState ? { keyPrefix: chatDeliveryState.titleKeyPrefix, state: chatDeliveryState.state } : undefined)
       if (!deliveryState) throw agentDiagnostics.AGENT_R0842({ message: "[vitehub] Agent Channel delivery state did not resolve." })
+      const channelState = webhookDeliveryState || deliveryState
+      if (registration.durableState && (!isDurableAgentState(deliveryState.state) || !isDurableAgentState(channelState.state))) {
+        return createJsonErrorResponse(503, "This Channel requires durable State. Configure persistent SQLite/libSQL storage or Cloudflare Durable Objects.")
+      }
       await deliveryState.state.connect()
       const webhookPayload = parseWebhookPayload(rawBody)
       const messageIdentity = agentChannelDeliveryMessageIdentity(registration.provider, webhookPayload)
@@ -7440,13 +7472,19 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
       if (trigger.id !== "chat.message") {
         const channelDelivery = await resolveChannelDelivery()
         context = withAgentChannelDelivery(context, channelDelivery)
+        if (registration.channelId) {
+          bindAgentChannelTriggerState(request, registration.channelId, {
+            keyPrefix: `${channelState.keyPrefix}channel-state:`,
+            state: channelState.state,
+          })
+        }
         try {
           const input = createAgentWebhookTriggerInput(request, registration, rawBody)
           // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
           const invocation = await resolveAgentTriggerInvocation(agent as never, context as never, trigger.id, input)
           if (isResolvedAgentTriggerHandledInvocation(invocation)) {
             await recordChannelDeliveryEvidence(channelDelivery, { type: "accepted" })
-            await context.flushWaitUntil?.()
+            if (!waitUntil) await context.flushWaitUntil?.()
             return await observeHandledChannelDeliveryResponse(invocation.response, channelDelivery)
           }
           if (invocation.webhook?.busy === "steer" && (invocation.webhook.concurrencyKey === undefined || invocation.webhook.concurrencyLimit === undefined)) {

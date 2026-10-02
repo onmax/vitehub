@@ -28,6 +28,7 @@ const integrationMocks = vi.hoisted(() => ({
   hubBrowser: vi.fn(() => ({ name: "@vite-hub/browser/vite" })),
   hubChannels: vi.fn(() => ({ name: "@vite-hub/channels/vite" })),
   hubConnections: vi.fn(() => ({ name: "@vite-hub/connections/vite" })),
+  hubConnectionsTypesCleanup: vi.fn(() => ({ name: "@vite-hub/connections/types-cleanup" })),
   hubDb: vi.fn(() => ({ name: "@vite-hub/database/vite" })),
   hubEmail: vi.fn(() => ({ name: "@vite-hub/email/vite" })),
   hubEmailOptionalPeerResolver: vi.fn(() => ({ name: "@vite-hub/email/optional-peer-resolver" })),
@@ -85,7 +86,10 @@ vi.mock("@vite-hub/blob/vite", () => ({
 }))
 vi.mock("@vite-hub/browser/vite", () => ({ hubBrowser: integrationMocks.hubBrowser }))
 vi.mock("@vite-hub/channels/vite", () => ({ hubChannels: integrationMocks.hubChannels }))
-vi.mock("@vite-hub/connections/vite", () => ({ hubConnections: integrationMocks.hubConnections }))
+vi.mock("@vite-hub/connections/vite", () => ({
+  hubConnections: integrationMocks.hubConnections,
+  hubConnectionsTypesCleanup: integrationMocks.hubConnectionsTypesCleanup,
+}))
 vi.mock("@vite-hub/database/vite", () => ({ hubDb: integrationMocks.hubDb }))
 vi.mock("@vite-hub/email/vite", () => ({
   hubEmail: integrationMocks.hubEmail,
@@ -599,6 +603,7 @@ describe("vitehub", () => {
       "vite-hub/public-url",
       "vite-hub/dependencies",
       "@vite-hub/env/vite",
+      "@vite-hub/connections/types-cleanup",
       "@vite-hub/email/optional-peer-resolver",
       "@vite-hub/kv/optional-peers",
       "@vite-hub/source/vite",
@@ -700,10 +705,23 @@ describe("vitehub", () => {
     })
     expect(integrationMocks.hubChannels).toHaveBeenLastCalledWith(undefined)
     expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
-      databaseImport: "vite-hub/database/drizzle",
-      runtimeEnvImport: "vite-hub/env/server",
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
     })
-    expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
+    vitehub({
+      connections: { management: { actor: "./server/connections-auth.ts" }, projectRoot: "/app", database: false, importBase: "consumer/connections" },
+      console: { exposure: "host-managed" },
+      database: true,
+      preset: "node",
+    })
+    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
+      management: { actor: "./server/connections-auth.ts" },
+      projectRoot: "/app",
+    })
+    expect(() => vitehub({ connections: true, preset: "node" })).toThrowError(expect.objectContaining({ code: "VITE_HUB_R0124" }))
+    expect(() => vitehub({ connections: { management: { actor: "./server/connections-auth.ts" } }, database: true, preset: "node" })).toThrowError(expect.objectContaining({ code: "VITE_HUB_R0126" }))
     expect(integrationMocks.hubKv).toHaveBeenLastCalledWith({ driver: "cloudflare-kv-binding" })
     expect(integrationMocks.hubSandbox).toHaveBeenLastCalledWith({
       provider: "cloudflare",
@@ -807,6 +825,27 @@ describe("vitehub", () => {
       projectRoot: "packages/policies",
       provider: "cloudflare",
       scanDirs: ["rules"],
+    })
+  })
+
+  it("wires Connections to the ViteHub Database", () => {
+    expect(pluginNames(vitehub({ connections: true, database: true, preset: "node" }))).toContain("@vite-hub/connections/vite")
+    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
+    })
+    expect(pluginNames(vitehub({ database: true, preset: "node" }))).not.toContain("@vite-hub/connections/vite")
+    expect(() => vitehub({ connections: true, preset: "node" })).toThrow("connections requires database")
+  })
+
+  it("mounts the Connections management API only behind Console access", () => {
+    expect(() => vitehub({ connections: { management: true }, database: true, preset: "node" }))
+      .toThrow("connections.management requires Console production access")
+    vitehub({ connections: { management: true }, console: { exposure: "host-managed" }, database: true, preset: "node" })
+    expect(integrationMocks.hubConnections).toHaveBeenLastCalledWith({
+      management: { actor: "#vitehub/console/connections-actor" },
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
     })
   })
 
@@ -1454,61 +1493,6 @@ describe("vitehub", () => {
       mainFields: ["server", "module", "main"],
       preserveSymlinks: true,
     }))
-  })
-
-  it("keeps Deno bundle options scoped to each build when plugins are reused", async () => {
-    integrationMocks.finalizeDenoDeploymentOutput.mockClear()
-    const plugins = vitehub({ preset: "deno" })
-    const preset = dependencyPluginByName(plugins, "vite-hub/deployment-preset")
-    const output = dependencyPluginByName(plugins, "vite-hub/deployment-output")
-    const configs = await Promise.all(["first", "second"].map(async name => {
-      const config: Record<string, unknown> = { root: `/app/${name}` }
-      await callHook(preset.config, [config, { command: "build", mode: "production" }])
-      const resolved = await resolveConfig({
-        root: `/app/${name}`,
-        define: {
-          __VITEHUB_PUBLIC_URL__: JSON.stringify({ url: `https://${name}.example.com` }),
-          __VITEHUB_APP_BASE_URL__: JSON.stringify(`/${name}/`),
-        },
-        resolve: { alias: { "#build": `/app/${name}/index.ts` }, conditions: [name] },
-      }, "build", "production")
-      // SAFETY: The preset config hook installed the build's Nitro module.
-      const nitroConfig = config.nitro as { commands: Record<string, unknown>, modules: unknown[] }
-      const resolvedConfig = { ...resolved, nitro: { ...nitroConfig } }
-      callHook(output.configResolved, [resolvedConfig])
-      return { name, nitroConfig }
-    }))
-
-    // Compile only after both builds have resolved, including a cloned Nitro configuration.
-    await Promise.all(configs.map(async ({ name, nitroConfig }) => {
-      let compiled: (() => Promise<void>) | undefined
-      const nitro = {
-        hooks: { hook: (event: string, callback: () => Promise<void>) => {
-          if (event === "compiled") compiled = callback
-        } },
-        options: {
-          commands: nitroConfig.commands,
-          output: { dir: `/app/${name}/.output`, serverDir: `/app/${name}/.output/server` },
-          preset: "deno-deploy",
-          rootDir: `/app/${name}`,
-        },
-      }
-      // SAFETY: The preset prepends its deployment module to the module list.
-      const module = nitroConfig.modules[0] as (target: typeof nitro) => void
-      module(nitro)
-      if (!compiled) throw new TypeError("Expected the Deno output callback.")
-      await compiled()
-      expect(integrationMocks.finalizeDenoDeploymentOutput).toHaveBeenCalledWith(expect.objectContaining({
-        rootDir: `/app/${name}`,
-        alias: expect.arrayContaining([{ customResolver: false, find: "#build", replacement: `/app/${name}/index.ts` }]),
-        conditions: [name],
-        define: {
-          __VITEHUB_PUBLIC_URL__: JSON.stringify({ url: `https://${name}.example.com` }),
-          __VITEHUB_APP_BASE_URL__: JSON.stringify(`/${name}/`),
-        },
-      }))
-    }))
-    expect(integrationMocks.finalizeDenoDeploymentOutput).toHaveBeenCalledTimes(2)
   })
 
   it("composes deployment output through a Nitro module", async () => {

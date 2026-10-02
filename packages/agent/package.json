@@ -103,6 +103,18 @@
       "types": "./dist/messages.d.ts",
       "import": "./dist/messages.js"
     },
+    "./observability": {
+      "types": "./dist/observability.d.ts",
+      "import": "./dist/observability.js"
+    },
+    "./observability/host": {
+      "types": "./dist/observability/host.d.ts",
+      "import": "./dist/observability/host.js"
+    },
+    "./observability/posthog": {
+      "types": "./dist/observability/posthog.d.ts",
+      "import": "./dist/observability/posthog.js"
+    },
     "./output": {
       "types": "./dist/output.d.ts",
       "import": "./dist/output.js"
@@ -110,10 +122,6 @@
     "./presets/babysitter": {
       "types": "./dist/presets/babysitter.d.ts",
       "import": "./dist/presets/babysitter.js"
-    },
-    "./presets/babysitter/server": {
-      "types": "./dist/presets/babysitter/server.d.ts",
-      "import": "./dist/presets/babysitter/server.js"
     },
     "./presets/workspace": {
       "types": "./dist/presets/workspace.d.ts",

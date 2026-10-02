@@ -43,7 +43,7 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
       pushRepair: {
         name: "pushRepair",
         description:
-          "Push committed repairs to this PR's pinned source branch. Stop the pass after pushing.",
+          "Push committed repairs to this PR's pinned source branch. After pushing, resolve any review threads fixed by the push before ending the pass.",
         inputSchema: noArguments,
         execute: async () => {
           await operations.push();

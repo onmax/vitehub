@@ -27,7 +27,7 @@ Start with [Your first server primitive](/docs/getting-started/first-server-prim
   title: Server model
   description: Learn how generated imports and host configuration keep application code independent from providers.
   icon: i-lucide-map
-  to: /docs/concepts/server-primitives-for-any-host
+  to: /docs/server-primitives
   ---
   :::
   :::u-page-card
@@ -49,7 +49,7 @@ Start with [Your first server primitive](/docs/getting-started/first-server-prim
 ::
 
 :::note
-Server code calls runtime helpers directly. Agents receive only the abilities added through Capabilities. Read [Runtime helpers and stable imports](/docs/concepts/runtime-helpers-and-stable-imports) and [Capabilities API](/docs/concepts/capabilities-api) when you need those contracts.
+Server code calls runtime helpers directly. Agents receive only the abilities added through Capabilities. Read [Runtime helpers and stable imports](/docs/concepts/runtime-helpers-and-stable-imports) and [Capabilities API](/docs/capabilities) when you need those contracts.
 :::
 
 ## Pick the right primitive
@@ -134,4 +134,4 @@ Don't expose a server API to a model just because the app uses it. Add the relev
 
 - [Build the first primitive](/docs/getting-started/first-server-primitive)
 - [Build the first Agent](/docs/getting-started/first-agent)
-- [Read the shared primitive pattern](/docs/concepts/server-primitives-for-any-host)
+- [Read the shared primitive pattern](/docs/server-primitives)

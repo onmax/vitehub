@@ -66,6 +66,81 @@ export default defineAgent({
 })
 ```
 
+## Authenticate through a Connection
+
+Set `connection` on a client config to use a [Connection](/docs/server-primitives/connections) as the server credential. The Connection sends the `Authorization` header, refreshes the token, checks access for each request, and records activity. The Agent and the MCP client never see the token.
+
+```ts [server/agents/support.ts]
+mcp({
+  servers: {
+    docs: {
+      connection: 'docs',
+      transport: { type: 'http', url: 'https://docs.example.com/mcp' },
+    },
+  },
+})
+```
+
+`connection` requires an `http` or `sse` transport config without `authProvider`. The Connection replaces `transport.fetch`. A resolver can also return a config with `connection`, for example to select the URL for each Invocation. Without `vitehub({ connections: true })`, resolution fails with an error that names the Connection.
+
+Each request maps to a Connection Operation id:
+
+| Request | Operation id | Effect | Activity |
+| --- | --- | --- | --- |
+| Tool call | `mcp.<server>.tools.<tool>` | write | Every call. |
+| Protocol message, such as `initialize` or `tools/list` | `mcp.<server>.rpc.<method>` | read | Only denials and failures. |
+
+ViteHub treats every tool call as a write, because tool annotations come from the MCP Server. Without a matching rule, writes are denied, so the Agent rule in the Connection must allow the tools:
+
+```ts [server/connections/docs.ts]
+access: {
+  agents: {
+    support: { allow: ['mcp.docs.tools.*'] },
+  },
+},
+```
+
+ViteHub checks access before the tool runs. A denied tool fails with `CAPABILITY_DENIED`. A tool that matches `approve` asks for tool approval: in a provider Agent session, an approved call runs. Otherwise it fails with `APPROVAL_REQUIRED`.
+
+## Executor through `mcp()`
+
+Use `mcp()` to connect an [Executor](https://executor.sh/) tool catalog. Executor keeps the upstream integration credentials and policies behind one MCP endpoint. Copy the exact endpoint from Executor's **Connect** card.
+
+With an OAuth 2 Connection named `executor`:
+
+```ts [server/agents/support.ts]
+mcp({
+  servers: {
+    executor: {
+      connection: 'executor',
+      transport: { type: 'http', url: 'https://executor.sh/acme/mcp' },
+    },
+  },
+})
+```
+
+Allow the tools in the Connection with `agents: { support: { allow: ['mcp.executor.tools.*'] } }`. Connections support OAuth 2 only, so the `executor` Connection needs an OAuth client for your app.
+
+With an Executor API key in Server Env, send the key from a resolver. Use a personal API key: Executor rejects organization keys for MCP sessions.
+
+```ts [server/agents/support.ts]
+mcp({
+  servers: {
+    executor: () => {
+      const apiKey = useServerEnv().executorApiKey
+      return apiKey
+        ? remoteMcpServer({
+            headers: { Authorization: `Bearer ${apiKey.unseal()}` },
+            url: 'https://executor.sh/acme/mcp',
+          })
+        : undefined
+    },
+  },
+})
+```
+
+The resolver runs for each Agent Invocation, so a rotated key applies to the next Invocation. Executor tools use normalized names such as `mcp_executor_execute`. Pin them with `integrity: { executor: approvedExecutorTools }`.
+
 ## How MCP connections work
 
 During resolution, `mcp()` connects to each configured MCP Server and asks for its tool set.
@@ -77,28 +152,6 @@ Transient transport failures during resolution or discovery mark the affected se
 Generic MCP client configurations default top-level `protocolVersionDiscovery` to `false` so existing initialize-first servers remain compatible. Set it to `true` on a client configuration when the server supports protocol-version discovery.
 
 The Capability redacts secret-shaped metadata keys before exposing MCP metadata.
-
-## Call a tool from application code
-
-Use `callMcpTool()` when application code needs one tool result outside an Agent Invocation, for example in a Channel Trigger or a Schedule. Pass the same value that you use as an `mcp({ servers })` entry, so both paths share one server definition:
-
-```ts [server/agents/support.ts]
-import { useServerEnv } from '#vitehub/env/server'
-import { callMcpTool, remoteMcpServer } from 'vite-hub/agent/mcp'
-
-export const productlaneServer = () => remoteMcpServer({
-  headers: { Authorization: `Bearer ${useServerEnv().productlane.token.unseal()}` },
-  url: 'https://productlane.com/api/mcp',
-})
-
-const [error, thread] = await callMcpTool(productlaneServer, 'threads_get', { id: threadId })
-```
-
-The call opens a client, sends `tools/call`, and closes a client that it created. A static direct client stays open. Streamable HTTP servers can answer with JSON or with Server-Sent Events.
-
-The result is a tuple. On success, the value is the tool's `structuredContent`. Without structured content, the value is the text content, parsed as JSON when it is valid JSON. A tool result with `isError`, a missing tool, or a connection failure returns `[error, null]`. A server function receives no Agent context, and `callMcpTool()` does not record `vitehub.mcp.warnings`.
-
-The optional fourth argument accepts `signal` for cancellation and `timeout` in milliseconds. The timeout bounds tool discovery and execution after the client connects. Both direct calls and fallback tool execution receive the cancellation signal.
 
 ## Pin tool definitions
 
@@ -150,33 +203,11 @@ Tool integrity requires `ai` 7.0.19 or newer only when `integrity` is configured
 
 The external MCP Server owns its own credentials, availability, and tool behavior.
 
-During resolution and tool discovery, transient transport failures make only the affected server unavailable. Other servers retain their tools. HTTP 408, 409, 429, and 5xx responses, recognized network errors, and bounded timeouts produce entries in the Invocation input context at `vitehub.mcp.warnings`. Each entry records the server, phase, and HTTP status when available. Read them with `getMcpWarnings(input)`, which returns typed `McpAvailabilityWarning` entries. Inspection marks the server `Unavailable`.
+During resolution and tool discovery, transient transport failures make only the affected server unavailable. Other servers retain their tools. HTTP 408, 409, 429, and 5xx responses, recognized network errors, and bounded timeouts produce entries in the Invocation input context at `vitehub.mcp.warnings`. Each entry records the server, phase, and HTTP status when available. Inspection marks the server `Unavailable`.
 
-Authentication, configuration, cancellation, protocol errors, duplicate tools, and tool-definition integrity drift remain fatal. This degradation applies to `mcp()`; Executor connection and discovery failures remain fatal.
+Authentication, configuration, cancellation, protocol errors, duplicate tools, and tool-definition integrity drift remain fatal.
 
-### Tell chat users about unavailable servers
-
-Set `unavailableNotice` to append a notice to the final chat reply when a server is unavailable. `true` uses the default text, for example `> ⚠️ posthog tools were temporarily unavailable. I answered with the remaining context.` A function receives the names of the unavailable servers and returns the notice.
-
-```ts
-mcp({
-  servers: { posthog: posthogServer },
-  unavailableNotice: servers => `${servers.join(', ')} was unavailable. This answer may be incomplete.`,
-})
-```
-
-With `messages.loading` or durable delivery, the notice is part of the final reply. When the reply streams, or with `stream: false`, the notice follows as a separate message. With `messages.delivery: 'manual'`, ViteHub posts no notice. Read the warnings in a finish hook with `getMcpWarnings(event.input)`:
-
-```ts
-import { getMcpWarnings } from 'vite-hub/agent/capabilities'
-
-hooks: {
-  'agent:finish': (event) => {
-    const servers = getMcpWarnings(event.input).map(warning => warning.server)
-    if (servers.length) return event.reply(`Unavailable: ${servers.join(', ')}`)
-  },
-}
-```
+A server with `connection` also requires the [Connections](/docs/server-primitives/connections) primitive and a connected Connection.
 
 ## Driver support
 
@@ -202,7 +233,7 @@ Confirm that the Capability fails before model execution.
 | --- | --- | --- | --- |
 | `integrity` | `Record<string, McpToolFingerprints>` | none | Approved AI SDK tool fingerprints keyed by configured server name. Blocks added or changed definitions. |
 | `servers` | `Record<string, McpServerConfig>` | required | MCP clients, client configs, optional absent values, or resolvers keyed by server name. |
-| `unavailableNotice` | `boolean \| ((servers: string[]) => string)` | `false` | Append a notice to the final chat reply when a server is unavailable. `true` uses the default text. |
+| `servers.<name>.connection` | `string` | none | Name of a Connection in `server/connections/` that authorizes an `http` or `sse` client config. |
 
 Cover MCP usage guidance in Agent Driver Instructions with explicit Capability coverage blocks. Keep MCP tool descriptions with the MCP Server because they are structured tool contracts.
 
@@ -210,6 +241,7 @@ Cover MCP usage guidance in Agent Driver Instructions with explicit Capability c
 
 - [Official capabilities](/docs/capabilities/official-capabilities)
 - [Custom capabilities](/docs/capabilities/custom-capabilities)
+- [Connections](/docs/server-primitives/connections)
 - [AI SDK MCP tool-definition drift](https://ai-sdk.dev/docs/ai-sdk-core/mcp-tools#detecting-tool-definition-drift-rug-pull)
 
 ## Inspect servers and tools

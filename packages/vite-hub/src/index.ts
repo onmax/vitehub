@@ -12,7 +12,7 @@ import { hubAuth, resolveAuthViteConfig } from "@vite-hub/auth/vite"
 import { hubBlob, resolveBlobViteConfig } from "@vite-hub/blob/vite"
 import { hubBrowser } from "@vite-hub/browser/vite"
 import { hubChannels } from "@vite-hub/channels/vite"
-import { hubConnections } from "@vite-hub/connections/vite"
+import { hubConnections, hubConnectionsTypesCleanup } from "@vite-hub/connections/vite"
 import { hubDb } from "@vite-hub/database/vite"
 import { hubEmail, hubEmailOptionalPeerResolver } from "@vite-hub/email/vite"
 import { hubEnv } from "@vite-hub/env/vite"
@@ -33,8 +33,10 @@ import { createNoExternalAddition, isServerEnvironment, resolveViteHubProjectRoo
 import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 
 import { viteHubTypesPlugin } from "./internal/types.ts"
+import { consoleConnectionsActorId } from "./console/auth-build.ts"
 import { agentChannelEnvPlugin } from "./agent-channel-env.ts"
 import { consoleInvocationRootPlugin, consoleVitePlugin, type ConsoleOptions } from "./console/vite.ts"
+import { observabilityVitePlugin, type ObservabilityOptions } from "./observability-vite.ts"
 import { resolveConsoleSectionIds } from "./console/runtime/sections.ts"
 
 import type { AgentModuleOptions } from "@vite-hub/agent"
@@ -62,6 +64,7 @@ import type { Plugin, PluginOption, ResolvedConfig, UserConfig } from "vite"
 import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
 
 export type { ConsoleOptions } from "./console/vite.ts"
+export type { ObservabilityEvlogOptions, ObservabilityOptions } from "./observability-vite.ts"
 
 type FrameworkDependencyName = Extract<keyof typeof frameworkPackageManifest.dependencies, `@vite-hub/${string}`>
 type DeploymentServicesManifest = Record<DeploymentService, object>
@@ -273,6 +276,8 @@ export interface ViteHubOptions {
   email?: true | EmailVitePluginOptions
   env?: false | EnvIntegrationOptions
   kv?: boolean | KVModuleOptions
+  /** Agent telemetry, request logs, and papercut reports through evlog. Read it at runtime with `useObservability()`. */
+  observability?: ObservabilityOptions
   queue?: boolean
   rateLimit?: boolean | RateLimitModuleOptions
   realtime?: boolean | RealtimeModuleOptions
@@ -804,7 +809,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     throw viteHubErrorDiagnostics.VITE_HUB_R0089({ message: "[vitehub] email: true currently requires the Cloudflare deployment preset; configure an explicit Email driver for other presets." })
   }
   if (options.connections && !options.database) {
-    throw viteHubErrorDiagnostics.VITE_HUB_R0122({ message: "[vitehub] connections requires database because grants and activity are stored in the app database." })
+    throw viteHubErrorDiagnostics.VITE_HUB_R0124({ message: "[vitehub] connections requires database because grants and activity are stored in the app database." })
   }
   const sandboxEnabled = options.sandbox === true && plan.services.sandbox.supported
   const blobEnabled = Boolean(options.blob) && (plan.services.blob.supported || hasExplicitBlobStore(options.blob))
@@ -857,6 +862,16 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
 
   plugins.push(frameworkDependencyResolver(options, envPlugin, providerImportAliases, blobEnabled, presetKVOptions || undefined))
 
+  if (options.observability) {
+    if (options.observability.posthog && !envPlugin) {
+      throw viteHubErrorDiagnostics.VITE_HUB_R0126({ message: "[vitehub] observability.posthog reads its API key from Server Env. Remove env: false." })
+    }
+    if (options.observability.papercuts && !(options.console && options.agent)) {
+      throw viteHubErrorDiagnostics.VITE_HUB_R0127({ message: "[vitehub] observability.papercuts stores reports in the Console invocation journal. Enable agent and console." })
+    }
+    // Before Env, so Env reads the PostHog key declaration.
+    plugins.push(observabilityVitePlugin(options.observability, { agent: options.agent, hosting: plan.nitroPreset }))
+  }
   if (envPlugin) plugins.push(envPlugin)
 
   if (options.console) {
@@ -947,12 +962,20 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
   if (options.browser) plugins.push(hubBrowser(options.browser === true ? undefined : options.browser))
   if (options.channels) plugins.push(hubChannels(options.channels === true ? undefined : options.channels))
   if (options.connections) {
+    if (!options.database) throw viteHubErrorDiagnostics.VITE_HUB_R0125({ message: "[vitehub] connections requires database. Set database: true." })
+    if (options.connections !== true && options.connections.management && !options.console) {
+      throw viteHubErrorDiagnostics.VITE_HUB_R0126({ message: '[vitehub] connections.management requires Console production access. Set console: { access: "auth" } or console: { exposure: "host-managed" }.' })
+    }
     plugins.push(hubConnections({
       ...(options.connections === true ? {} : options.connections),
-      databaseImport: "vite-hub/database/drizzle",
-      runtimeEnvImport: "vite-hub/env/server",
+      ...(options.connections !== true && options.connections.management === true && options.console && consoleSections.includes("connections")
+        ? { management: { actor: consoleConnectionsActorId } }
+        : {}),
+      database: "vite-hub/database/drizzle",
+      importBase: "vite-hub/connections",
     }))
   }
+  else plugins.push(hubConnectionsTypesCleanup())
   if (options.database) plugins.push(hubDb(options.database === true ? undefined : options.database))
   if (blobEnabled) {
     plugins.push(hubBlob(
@@ -1046,7 +1069,10 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     importBase: "vite-hub/source",
   })
   plugins.push(sourcePlugin)
-  plugins.push(viteHubTypesPlugin({ prepareSources: sourcePlugin.api.prepareSources }))
+  plugins.push(viteHubTypesPlugin({
+    additionalProjectRoots: options.connections && options.connections !== true && options.connections.projectRoot ? [options.connections.projectRoot] : [],
+    prepareSources: sourcePlugin.api.prepareSources,
+  }))
   // SAFETY: Each branch above contributes Vite-compatible plugins or nested plugin options.
   return plugins as PluginOption[]
 }

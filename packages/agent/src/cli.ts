@@ -16,6 +16,7 @@ import { isCompatibleAgentDevServerRoot, runAgentInfoCli } from "./internal/agen
 import { runAgentInvocationsCli } from "./internal/agent-invocations-cli.ts"
 import { runAgentChannelSyncCli } from "./internal/channel-sync-cli.ts"
 import { runAgentChannelHistoryCli } from "./internal/channel-history-cli.ts"
+import { runAgentChannelReplayCli } from "./internal/channel-replay-cli.ts"
 import { enrichAgentUsageCost, modelsDevPricing, type AgentUsagePricing } from "./internal/usage-pricing.ts"
 import { resolveAgentEvalOptions, writeAgentEvaliteConfig, type ResolvedAgentEvalOptions } from "./internal/evalite-config.ts"
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute, readAgentInvocationStream } from "./invocation-stream.ts"
@@ -1284,10 +1285,10 @@ export function createAgentCliContributor(options?: false | AgentCliContributorO
       usage: "vitehub agent dev [message...] [--agent <name>]",
     },
     {
-      description: "Inspect, delete, and prune an application's durable Agent Invocation journal.",
+      description: "Inspect an application's durable Agent Invocation journal.",
       name: "invocations",
       run: async (args, context) => await runAgentInvocationsCli(args, context),
-      usage: "vitehub agent invocations <list|show|tail|delete|prune> [id] [--url <url>] [--database <url>] [--older-than <duration>] [--dry-run] [--json]",
+      usage: "vitehub agent invocations <list|show|tail> [id] [--url <url>] [--json]",
     },
   ]
   if (evalFiles.length) {
@@ -1324,12 +1325,18 @@ export function createAgentCliContributor(options?: false | AgentCliContributorO
             usage: "vitehub channels history --stage <name> --url <https-origin> --output <directory> [--thread <id>]",
           },
           {
-            description: "Inspect and synchronize provider-owned Channel webhooks for a deployed stage.",
+            description: "Send past Channel messages from a Channel history through its trigger.",
+            name: "replay",
+            run: async (args, context) => await runAgentChannelReplayCli(args, context),
+            usage: "vitehub channels replay --agent <name> --channel <name> [--url <console-url>] [--dry-run] [--force] [--limit <n>]",
+          },
+          {
+            description: "Inspect and synchronize provider-owned Channel webhooks and account resources for a deployed stage.",
             name: "sync",
             run: async (args, context) => await runAgentChannelSyncCli(args, context, {
               rootDir: options?.rootDir,
             }),
-            usage: "vitehub channels sync --stage <name> --url <https-origin> [--apply --confirm-origin <https-origin>]",
+            usage: "vitehub channels sync --stage <name> [--url <https-origin>] [--apply [--confirm-origin <https-origin>]]",
           },
         ],
         name: "channels",

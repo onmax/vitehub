@@ -32,16 +32,13 @@ export {
   email,
 } from "./email.ts"
 export {
-  executor,
-} from "./executor.ts"
-export {
   git,
 } from "./git.ts"
 export {
   gmail,
 } from "./gmail.ts"
 export type {
-  GmailCapabilityMode,
+  GmailCapabilityOperation,
   GmailCapabilityOptions,
 } from "./gmail.ts"
 export {
@@ -100,11 +97,6 @@ export {
 export type {
   DiagnosticsCapabilityOptions,
 } from "./diagnostics.ts"
-export type {
-  ExecutorCapabilityOptions,
-  ExecutorConnectionOptions,
-  ExecutorCredential,
-} from "./executor.ts"
 export {
   modelsDevPricing,
   usage,
