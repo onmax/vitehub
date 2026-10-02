@@ -1,205 +1,246 @@
-/** Whether an Operation only reads provider state or changes it. */
-export type ConnectionEffect = "read" | "write"
+import type { EnvDatabase } from "@vite-hub/env/database"
 
-/** Who uses a Connection. Routes use `"METHOD /pattern"`. Agents use their Agent name. */
-export interface ConnectionActor {
-  id: string
-  kind: "agent" | "route" | "schedule" | "service" | "user"
+/** Maximum name length that fits the Env Bridge `connection/<name>` key. */
+export const CONNECTION_NAME_MAX_LENGTH = 501
+
+/** Type shape of one provider API method. Generated catalogs describe each method with it. */
+export interface ConnectionMethodSignature {
+  /** Catalog HTTP method. Only GET reads execute during dry run. */
+  method: string
+  body: unknown
+  params: object
+  response: unknown
 }
 
-/** Result of an access check. */
-export type ConnectionAccessDecision = "allow" | "deny" | "require-approval"
+export type ConnectionReadMethod = "GET" | "HEAD" | "OPTIONS"
+
+export function isConnectionReadMethod(method: string): method is ConnectionReadMethod {
+  return method === "GET" || method === "HEAD" || method === "OPTIONS"
+}
+
+/** Runtime description of one provider API. */
+export interface ConnectionApiCatalog {
+  /** Base URL that method paths are relative to. */
+  readonly rootUrl: string
+  /** Method id to `[HTTP method, path template, accepts a JSON body]`. */
+  readonly methods: Readonly<Record<string, readonly [string, string, boolean]>>
+  /** Write methods that an access rule must name exactly. A trailing `.*` matches a subtree. */
+  readonly highRisk?: readonly string[]
+}
+
+/** A value, or a function that reads it when the provider needs it, for example from Server Env. */
+export type ConnectionValue = string | (() => string | undefined | Promise<string | undefined>)
+
+/** OAuth token endpoint response. */
+export interface ConnectionTokenResponse {
+  access_token: string
+  expires_in?: number
+  id_token?: string
+  refresh_token?: string
+  scope?: string
+  token_type?: string
+}
+
+export interface ConnectionAccount {
+  email?: string
+  id: string
+}
+
+/** An OAuth 2.0 provider with authorization code, PKCE, and refresh token support. */
+export interface ConnectionProvider<TApis extends object = object> {
+  readonly id: string
+  readonly authorizationEndpoint: string
+  readonly tokenEndpoint: string
+  readonly revocationEndpoint?: string
+  readonly clientId: ConnectionValue
+  readonly clientSecret?: ConnectionValue
+  /** Scopes added to each authorization request so the provider identifies the account. */
+  readonly identityScopes?: readonly string[]
+  readonly authorizationParams?: Readonly<Record<string, string>>
+  readonly apis: { readonly [TApi in keyof TApis]: ConnectionApiCatalog }
+  /** Read the account identity from the token response of an authorization code exchange. */
+  account: (token: ConnectionTokenResponse) => ConnectionAccount | undefined
+  /** Type-only method map. It has no runtime value. */
+  readonly "~apis"?: TApis
+}
+
+type MethodId<TMethods> = keyof TMethods & string
+type Prefixes<TId extends string> = TId extends `${infer THead}.${infer TRest}`
+  ? `${THead}.*` | `${THead}.${Prefixes<TRest>}`
+  : never
+
+/** A method id, a subtree such as `users.messages.*`, or `*`. */
+export type ConnectionMethodPattern<TMethods> = "*" | MethodId<TMethods> | Prefixes<MethodId<TMethods>>
+
+/** Methods to expose for each provider API. */
+export type ConnectionApiSelection<TApis> = {
+  readonly [TApi in keyof TApis]?: readonly ConnectionMethodPattern<TApis[TApi]>[]
+}
+
+/** An action id such as `gmail.users.messages.modify`, a subtree such as `gmail.users.labels.*`, or `fetch`. */
+export type ConnectionActionPattern<TApis> =
+  | { [TApi in keyof TApis & string]: `${TApi}.${ConnectionMethodPattern<TApis[TApi]>}` }[keyof TApis & string]
+  | "fetch"
 
 /**
- * Operation patterns for one actor. `*` matches any characters, including dots.
- * Deny wins, then approve, then allow. Without a match, reads are allowed and writes are denied.
+ * What one actor may do with a Connection.
+ *
+ * GET methods are reads. Other methods are writes.
  */
-export interface ConnectionAccessRule {
-  allow?: readonly string[]
-  approve?: readonly string[]
-  deny?: readonly string[]
+export interface ConnectionAccessRule<TPattern extends string = string> {
+  read?: boolean
+  /** Allowed writes. `true` allows every write that is not high risk. `"approve"` allows the same writes after approval. */
+  write?: readonly TPattern[] | true | "approve"
+  /** Require approval for each allowed write. Defaults to `true` for `agent:` actors. */
+  approve?: boolean
 }
 
-export interface ConnectionAccess {
-  /** Agents by Agent name. */
-  agents?: Readonly<Record<string, ConnectionAccessRule>>
-  /** Server routes by `"METHOD /pattern"`. Falls back to `server`. */
-  routes?: Readonly<Record<string, ConnectionAccessRule>>
-  /** Server code, schedules, routes without their own rule, and Console users. */
-  server?: ConnectionAccessRule
-}
-
-/** A secret value such as `SecretEnv`, or a plain string. */
-export type ConnectionSecret = string | { unseal(): string }
-
-export interface ConnectionOAuthClient {
-  clientId: string
-  clientSecret?: ConnectionSecret
-}
-
-/** Token set kept sealed in the database. It never leaves the server runtime. */
-export interface ConnectionTokenSet {
-  accessToken: string
-  account?: string
-  expiresAt?: number
-  refreshToken?: string
+export interface ConnectionDefinition<
+  TApis extends object = object,
+  TSelection extends ConnectionApiSelection<TApis> = ConnectionApiSelection<TApis>,
+> {
+  provider: ConnectionProvider<TApis>
+  /** Provider scopes to request. Inspection reports declared scopes that the grant lacks. */
   scopes: readonly string[]
-  tokenType: string
-}
-
-export interface ConnectionAuthorizationInput {
-  codeChallenge: string
-  redirectUri: string
-  state: string
-}
-
-export interface ConnectionExchangeInput {
-  code: string
-  codeVerifier: string
-  redirectUri: string
-}
-
-/** Runtime values that a provider receives for each request. */
-export interface ConnectionProviderContext {
-  /** H3 event of the current request, when there is one. */
-  event?: unknown
-  fetch: typeof globalThis.fetch
-  /** Cancels provider work for the current Operation. The supplied fetch also uses this signal. */
-  signal?: AbortSignal
-}
-
-/** Provider contract. v1 supports OAuth 2 with PKCE. */
-export interface ConnectionProvider {
+  /** API methods to expose. Omit to expose every method of every provider API. */
+  api?: TSelection
   /**
-   * API origins that may receive the credential, for example `https://api.example.com` or `https://*.example.com`.
-   * Calls to any other origin fail before ViteHub attaches the credential.
+   * Access rules by actor, for example `schedule:gmail` or `agent:labeller`.
+   * When set, actors not listed are denied. When omitted, server actors may read and
+   * call non-high-risk writes, and Agent writes require approval.
    */
-  origins: readonly string[]
-  authorizationUrl: (input: ConnectionAuthorizationInput, context: ConnectionProviderContext) => Promise<string>
-  exchange: (input: ConnectionExchangeInput, context: ConnectionProviderContext) => Promise<ConnectionTokenSet>
-  id: string
-  kind: "oauth2"
-  refresh: (token: ConnectionTokenSet, context: ConnectionProviderContext) => Promise<ConnectionTokenSet>
-  revoke?: (token: ConnectionTokenSet, context: ConnectionProviderContext) => Promise<void>
-  scopes: readonly string[]
+  access?: Readonly<Record<string, ConnectionAccessRule<ConnectionActionPattern<TApis>>>>
 }
 
-export interface ConnectionDefinition<TProvider extends ConnectionProvider = ConnectionProvider> {
-  access?: ConnectionAccess
-  description?: string
-  provider: TProvider
-}
+/** Fetch options supported by Connections. Bodies are persisted for approval replay. */
+export type ConnectionFetchInit = Pick<RequestInit, "headers" | "method" | "redirect" | "signal"> & { body?: string }
 
 export type ConnectionDefinitionRegistry = Record<string, () => Promise<unknown>>
+
+/** Loads the ViteHub Database that the default store uses. */
+export type ConnectionsDatabaseLoader = () => Promise<EnvDatabase>
 
 export interface DiscoveredConnectionDefinition {
   handler: string
   name: string
-  source: "server-connections"
+  source: "server-connections" | "vite-suffix"
 }
 
-export interface ConnectionRequest {
-  body?: unknown
-  headers?: Record<string, string>
-  method: "DELETE" | "GET" | "HEAD" | "PATCH" | "POST" | "PUT"
-  query?: Record<string, boolean | number | readonly string[] | string | undefined>
-  url: string
+export interface ConnectionCallOptions {
+  signal?: AbortSignal
 }
 
-/** One typed provider call. The id is matched by access patterns. */
-export interface ConnectionOperation<TInput = unknown, TOutput = unknown, TEffect extends ConnectionEffect = ConnectionEffect> {
-  effect: TEffect
-  id: string
-  request: (input: TInput) => ConnectionRequest
-  scopes?: readonly string[]
-  /** Maps the parsed JSON body to the output. */
-  parse?: (body: unknown) => TOutput
+type Match<TId extends string, TPattern> = TPattern extends "*"
+  ? true
+  : TPattern extends `${infer TPrefix}.*`
+    ? TId extends `${TPrefix}.${string}` ? true : false
+    : TId extends TPattern ? true : false
+
+type SelectedMethods<TMethods, TPatterns> = {
+  [TId in MethodId<TMethods> as true extends Match<TId, TPatterns> ? TId : never]: TMethods[TId]
 }
 
-/** Result of a write Operation that dry run skipped. */
-export interface ConnectionSkipped {
-  operation: string
+type MethodInput<TSignature> = TSignature extends { body: infer TBody, params: infer TParams }
+  ? TParams & ([TBody] extends [never] ? unknown : { requestBody?: TBody })
+  : never
+
+type MethodResponse<TSignature> = TSignature extends { response: infer TResponse } ? TResponse : never
+type MethodDryRunResult<TSignature, TDryRun extends boolean> = TSignature extends { method: infer TMethod }
+  ? TMethod extends ConnectionReadMethod ? never : true extends TDryRun ? undefined : never
+  : true extends TDryRun ? undefined : never
+
+/** A typed provider method. In dry run, a skipped write resolves to `undefined`. */
+export type ConnectionMethod<TSignature, TDryRun extends boolean = false> = object extends MethodInput<TSignature>
+  ? (input?: MethodInput<TSignature>, options?: ConnectionCallOptions) => Promise<MethodResponse<TSignature> | MethodDryRunResult<TSignature, TDryRun>>
+  : (input: MethodInput<TSignature>, options?: ConnectionCallOptions) => Promise<MethodResponse<TSignature> | MethodDryRunResult<TSignature, TDryRun>>
+
+type Head<TId extends string> = TId extends `${infer THead}.${string}` ? THead : TId
+
+/** Nested client built from dotted method ids, for example `gmail.users.labels.list()`. */
+export type ConnectionClientTree<TMethods, TDryRun extends boolean = false> = {
+  readonly [THead in Head<MethodId<TMethods>>]: (THead extends keyof TMethods ? ConnectionMethod<TMethods[THead], TDryRun> : unknown)
+    & ConnectionClientTree<{ [TId in MethodId<TMethods> as TId extends `${THead}.${infer TRest}` ? TRest : never]: TMethods[TId] }, TDryRun>
+}
+
+type SelectionPatterns<TSelection, TApi> = TSelection extends { readonly [TKey in TApi & PropertyKey]?: readonly (infer TPattern)[] } ? TPattern : never
+
+export type ConnectionClient<TApis extends object = object, TSelection = ConnectionApiSelection<TApis>, TDryRun extends boolean = false> = {
+  readonly name: string
+  /**
+   * Call a provider URL with the Connection token. GET is a read. Other methods are
+   * writes, and an access rule must name `fetch` to allow them.
+   */
+  fetch: (input: string | URL, init?: ConnectionFetchInit) => Promise<Response>
+} & {
+  readonly [TApi in keyof TApis & keyof TSelection]: ConnectionClientTree<SelectedMethods<TApis[TApi], SelectionPatterns<TSelection, TApi>>, TDryRun>
+}
+
+/** A write that dry run skipped. The fields match the Channel dry-run record. */
+export interface ConnectionEffect {
+  kind: string
+  payload: {
+    connection: string
+    input?: unknown
+    method: string
+    url: string
+  }
+  read: false
   skipped: "dry-run"
 }
 
-export type ConnectionCallResult<TOutput, TEffect extends ConnectionEffect, TDryRun extends boolean | undefined>
-  = TEffect extends "write"
-    ? TDryRun extends true ? ConnectionSkipped : TDryRun extends false | undefined ? TOutput : TOutput | ConnectionSkipped
-    : TOutput
-
-/** Trace fields that link activity to an Agent Invocation. */
-export interface ConnectionTrace {
+export interface UseConnectionOptions {
+  /** Actor for policy and activity, for example `schedule:gmail`. Defaults to `server`. */
+  actor?: string
+  /** Skip provider calls for writes and report each skipped write to `onEffect`. */
+  dryRun?: boolean
   invocationId?: string
-  runId?: string
-  tool?: string
+  onEffect?: (effect: ConnectionEffect) => void
   traceId?: string
 }
 
-export interface UseConnectionOptions<TDryRun extends boolean | undefined = boolean | undefined> {
-  /** Overrides the actor. By default the actor comes from `event`, or is the server. */
-  actor?: ConnectionActor
-  /** `"all"` records reads too. Agent Capabilities use it. Default: writes, denials, and failures. */
-  audit?: "all" | "changes"
-  /** Skips write Operations and records them as skipped. */
-  dryRun?: TDryRun
-  /** H3 event of the current request. Used for the route actor and host env. */
-  event?: unknown
-  trace?: ConnectionTrace
+export type ConnectionStatus = "connected" | "disconnected" | "reauth_required" | "revoked"
+
+export interface ConnectionActionInfo {
+  highRisk: boolean
+  id: string
+  method: string
+  write: boolean
 }
 
-export type ConnectionStatus = "active" | "disconnected" | "error" | "needs-reconnect"
-
-export interface ConnectionSummary {
-  access: ConnectionAccess
-  account?: string
+export interface ConnectionInspection {
+  account?: ConnectionAccount
+  actions: ConnectionActionInfo[]
   connectedAt?: string
-  description?: string
-  expiresAt?: string
-  lastError?: string
   name: string
-  /** API origins that may receive the credential. */
-  origins: readonly string[]
   provider: string
-  scopes: readonly string[]
+  refreshedAt?: string
+  scopes: {
+    declared: string[]
+    granted: string[]
+    missing: string[]
+  }
   status: ConnectionStatus
-  updatedAt?: string
 }
 
-export type ConnectionActivityAction = "call" | "connect" | "disconnect" | "refresh"
-export type ConnectionActivityOutcome = "approval-required" | "denied" | "failed" | "skipped" | "succeeded"
+export type ConnectionApprovalStatus = "approved" | "denied" | "executed" | "failed" | "pending"
 
-/** Durable activity. It has no request or response bodies, and no headers. */
-export interface ConnectionActivity extends ConnectionTrace {
-  action: ConnectionActivityAction
-  actor: ConnectionActor
-  connection: string
-  durationMs?: number
-  effect?: ConnectionEffect
+export interface ConnectionApproval {
+  action: string
+  actor: string
+  createdAt: string
+  decidedAt?: string
+  decidedBy?: string
   error?: string
   id: string
-  operation?: string
-  outcome: ConnectionActivityOutcome
-  status?: number
-  /** Host and path of the provider request, without the query. */
-  target?: string
-  timestamp: string
+  input: unknown
+  invocationId?: string
+  name: string
+  status: ConnectionApprovalStatus
+  traceId?: string
 }
 
-export interface ConnectionClient<TDryRun extends boolean | undefined = boolean | undefined> {
-  /** Runs a typed Operation with access checks, refresh, dry run, and audit. */
-  call: <TInput, TOutput, TEffect extends ConnectionEffect>(
-    operation: ConnectionOperation<TInput, TOutput, TEffect>,
-    input: TInput,
-  ) => Promise<ConnectionCallResult<TOutput, TEffect, TDryRun>>
-  /** Authenticated fetch. GET and HEAD are reads. Other methods are writes. */
-  fetch: (url: string | URL, init?: RequestInit) => Promise<Response>
-  readonly name: string
-  status: () => Promise<ConnectionSummary>
-}
-
-/** Generated `#vitehub/connections/runtime` module. */
-export interface ConnectionsRuntimeModule {
-  database: () => { all: (query: import("drizzle-orm").SQL) => unknown[] | PromiseLike<unknown[]>, run: (query: import("drizzle-orm").SQL) => unknown } | undefined
-  encryptionKey: (event: unknown) => string | Uint8Array | undefined
-  registry: ConnectionDefinitionRegistry
+/** A bounded approval page. Pass `nextCursor` as `before` to read older approvals. */
+export interface ConnectionApprovalPage {
+  approvals: ConnectionApproval[]
+  nextCursor?: string
 }

@@ -23,7 +23,7 @@ useHead({ title: () => details.value ? `${details.value.label} · ViteHub Consol
         :definitions-base="`${appBaseURL}/api/_vitehub/console/definitions`"
         :details="details"
         :kv-base="`${appBaseURL}/api/_vitehub/console/kv`"
-        :schedule-run-base="`${appBaseURL}/api/_vitehub/console/schedule-run`"
+        :schedule-run-base="`${appBaseURL}/_vitehub/schedules/run`"
         :search-base="`${appBaseURL}/api/_vitehub/console/search`"
         :sections-base="`${appBaseURL}/api/_vitehub/console/sections`"
       />

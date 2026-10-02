@@ -1,628 +1,922 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
-import { useConnection } from "../src/index.ts"
-import { oauth2 } from "../src/providers/oauth2.ts"
-import { createConnectionsRuntime } from "../src/runtime/core.ts"
-import { setConnectionsRuntime } from "../src/runtime/state.ts"
-import { createConnectionsStore } from "../src/store.ts"
-import {
-  accessToken,
-  base64urlKey,
-  createDatabase,
-  expectCode,
-  fakeProvider,
-  mockFetch,
-  readOperation,
-  refreshToken,
-  rows,
-  setupRuntime,
-  testKey,
-  tokenSet,
-  writeOperation,
-} from "./helpers.ts"
+import { isConnectionError } from "../src/errors.ts"
+import { createConnectionsRuntime } from "../src/runtime.ts"
+import { ACCESS_TOKEN, CLIENT_SECRET, connect, createStore, createTestRuntime, mailConnection, REFRESH_TOKEN, testProvider } from "./helpers.ts"
 
-import type { ConnectionActor, ConnectionDefinition, ConnectionTokenSet } from "../src/types.ts"
+import type { ConnectionEffect } from "../src/types.ts"
 
-const server: ConnectionActor = { id: "server", kind: "service" }
-const agent: ConnectionActor = { id: "triage", kind: "agent" }
-
-function okApi() {
-  return mockFetch((url, init) => Response.json(init.method === "POST" ? { name: "created-item" } : { id: url.pathname.split("/").pop(), ok: true }))
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise
+  }
+  catch (error) {
+    return error
+  }
+  throw new Error("Expected the promise to reject.")
 }
 
-afterEach(() => {
-  setConnectionsRuntime(undefined)
-})
+function base64Url(bytes: ArrayBuffer): string {
+  return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+}
 
-describe("Connections runtime access", () => {
-  it("allows reads by default and sends the bearer token", async () => {
-    const api = okApi()
-    const { name, runtime, store } = setupRuntime({ fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expect(runtime.call(name, readOperation, { id: "42" }, { actor: server })).resolves.toEqual({ id: "42", ok: true })
-    expect(api.calls).toEqual([{ authorization: `Bearer ${accessToken}`, body: undefined, method: "GET", url: "https://api.example/items/42?secret=query-value" }])
-    expect(await runtime.activity({})).toEqual([])
+describe("connect", () => {
+  it("rejects oversized custom names before provider token exchange", async () => {
+    const test = createTestRuntime()
+    const name = "n".repeat(502)
+    const runtime = createConnectionsRuntime({ definitions: { [name]: mailConnection() }, fetch: test.provider.fetch, store: test.store })
+    expect(await rejection(runtime.authorize({ name, redirectUri: "http://localhost/callback" }))).toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(test.provider.calls).toHaveLength(0)
   })
 
-  it("denies writes by default, records the denial, and does not call the provider", async () => {
-    const api = okApi()
-    const { name, runtime, store } = setupRuntime({ fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expectCode(runtime.call(name, writeOperation, { name: "x" }, { actor: server, trace: { invocationId: "inv-1", tool: "createItem" } }), "CONNECTIONS_DENIED")
-    expect(api.calls).toEqual([])
-    expect(await runtime.activity({})).toEqual([expect.objectContaining({
-      action: "call",
-      actor: server,
-      connection: name,
-      effect: "write",
-      invocationId: "inv-1",
-      operation: "test.items.create",
-      outcome: "denied",
-      target: "api.example/items",
-      tool: "createItem",
-    })])
-  })
-
-  it("runs allowed writes and records them with status and target", async () => {
-    const api = okApi()
-    const { name, runtime, store } = setupRuntime({
-      definition: { access: { server: { allow: ["test.items.*"] } }, provider: fakeProvider().provider },
-      fetch: api.fetch,
-    })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expect(runtime.call(name, writeOperation, { name: "created-item" }, { actor: server })).resolves.toEqual({ created: "created-item" })
-    expect(api.calls[0]).toMatchObject({ body: JSON.stringify({ name: "created-item" }), method: "POST" })
-    const [event] = await runtime.activity({})
-    expect(event).toMatchObject({ effect: "write", outcome: "succeeded", status: 200, target: "api.example/items" })
-    expect(event!.durationMs).toBeGreaterThanOrEqual(0)
-  })
-
-  it("requires approval and records it", async () => {
-    const api = okApi()
-    const { name, runtime, store } = setupRuntime({
-      definition: { access: { agents: { triage: { allow: ["*"], approve: ["test.items.create"] } } }, provider: fakeProvider().provider },
-      fetch: api.fetch,
-    })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expectCode(runtime.call(name, writeOperation, { name: "x" }, { actor: agent }), "CONNECTIONS_APPROVAL_REQUIRED")
-    expect(api.calls).toEqual([])
-    expect(await runtime.activity({})).toEqual([expect.objectContaining({ actor: agent, outcome: "approval-required" })])
-    await expect(runtime.decide(name, agent, writeOperation)).resolves.toBe("require-approval")
-  })
-
-  it("uses the Agent rule for Agents and the route rule for route events", async () => {
-    const api = okApi()
-    const { name, runtime, store } = setupRuntime({
-      definition: {
-        access: { routes: { "POST /api/items": { allow: ["test.items.create"] } }, server: { allow: ["*"] } },
-        provider: fakeProvider().provider,
-      },
-      fetch: api.fetch,
-    })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-    setConnectionsRuntime(runtime)
-
-    await expectCode(useConnection(name, { actor: agent }).call(writeOperation, { name: "x" }), "CONNECTIONS_DENIED")
-    await expect(useConnection(name, { event: { context: { matchedRoute: { route: "/api/items" } }, method: "POST" } }).call(writeOperation, { name: "x" }))
-      .resolves.toEqual({ created: "created-item" })
-    await expect(useConnection(name).call(writeOperation, { name: "x" })).resolves.toEqual({ created: "created-item" })
-    const actors = (await runtime.activity({})).map(event => `${event.actor.kind}:${event.actor.id}:${event.outcome}`)
-    expect(actors).toEqual(["service:server:succeeded", "route:POST /api/items:succeeded", "agent:triage:denied"])
-  })
-
-  it("rejects unknown Connections and missing grants", async () => {
-    const { name, runtime } = setupRuntime()
-    await expectCode(runtime.call("unknown", readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_NOT_FOUND")
-    await expectCode(runtime.call(name, readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_MISSING")
-    expect(() => useConnection(" ")).toThrow(expect.objectContaining({ code: "CONNECTIONS_INVALID" }))
-  })
-})
-
-describe("Connections runtime dry run and audit", () => {
-  it("skips allowed writes in dry run and records them", async () => {
-    const api = okApi()
-    const { name, runtime, store } = setupRuntime({
-      definition: { access: { server: { allow: ["*"] } }, provider: fakeProvider().provider },
-      fetch: api.fetch,
-    })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expect(runtime.call(name, writeOperation, { name: "x" }, { actor: server, dryRun: true }))
-      .resolves.toEqual({ operation: "test.items.create", skipped: "dry-run" })
-    await expect(runtime.call(name, readOperation, { id: "1" }, { actor: server, dryRun: true })).resolves.toEqual({ id: "1", ok: true })
-    expect(api.calls.map(call => call.method)).toEqual(["GET"])
-    expect(await runtime.activity({})).toEqual([expect.objectContaining({ operation: "test.items.create", outcome: "skipped" })])
-  })
-
-  it("still denies writes in dry run", async () => {
-    const { name, runtime, store } = setupRuntime({ fetch: okApi().fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expectCode(runtime.call(name, writeOperation, { name: "x" }, { actor: server, dryRun: true }), "CONNECTIONS_DENIED")
-  })
-
-  it("records successful reads only with audit all", async () => {
-    const { name, runtime, store } = setupRuntime({ fetch: okApi().fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await runtime.call(name, readOperation, { id: "1" }, { actor: server, audit: "changes" })
-    expect(await runtime.activity({})).toEqual([])
-    await runtime.call(name, readOperation, { id: "2" }, { actor: server, audit: "all" })
-    expect(await runtime.activity({})).toEqual([expect.objectContaining({ effect: "read", operation: "test.items.get", outcome: "succeeded", status: 200 })])
-  })
-
-  it("records failed reads in changes mode and hides the provider body", async () => {
-    const api = mockFetch(() => Response.json({ error: "provider secret detail" }, { status: 500 }))
-    const { name, runtime, store } = setupRuntime({ fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    const error = await runtime.call(name, readOperation, { id: "1" }, { actor: server }).catch((reason: unknown) => reason)
-    expect(error).toMatchObject({ code: "CONNECTIONS_PROVIDER_FAILED", details: { connection: name, operation: "test.items.get", status: 500 } })
-    expect(JSON.stringify(error)).not.toContain("provider secret detail")
-    expect(await runtime.activity({})).toEqual([expect.objectContaining({ error: "CONNECTIONS_PROVIDER_FAILED", outcome: "failed", status: 500 })])
-  })
-
-  it("records a malformed or rejected response as a failed call", async () => {
-    const api = mockFetch(() => new Response("not json", { status: 200 }))
-    const { name, runtime, store } = setupRuntime({ definition: { access: { server: { allow: ["*"] } }, provider: fakeProvider().provider }, fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-    const strict = { ...writeOperation, parse: () => { throw new TypeError("unexpected shape") } }
-
-    await expectCode(runtime.call(name, writeOperation, { name: "x" }, { actor: server }), "CONNECTIONS_PROVIDER_FAILED")
-    api.mock.mockImplementation(async () => Response.json({ other: true }))
-    await expect(runtime.call(name, strict, { name: "x" }, { actor: server })).rejects.toThrow("unexpected shape")
-    expect((await runtime.activity({})).map(event => [event.outcome, event.error, event.status])).toEqual([
-      ["failed", "CONNECTIONS_FAILED", 200],
-      ["failed", "CONNECTIONS_PROVIDER_FAILED", 200],
-    ])
-  })
-
-  it("never sends the credential to an origin outside the provider origins", async () => {
-    const api = okApi()
-    const { name, runtime, store } = setupRuntime({ definition: { access: { server: { allow: ["*"] } }, provider: fakeProvider().provider }, fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expectCode(runtime.fetch(name, "https://attacker.example/collect", undefined, { actor: server }), "CONNECTIONS_ORIGIN_NOT_ALLOWED")
-    await expectCode(runtime.fetch(name, "http://api.example/items", undefined, { actor: server }), "CONNECTIONS_ORIGIN_NOT_ALLOWED")
-    await expectCode(runtime.call(name, { ...readOperation, request: () => ({ method: "GET", url: "https://api.example.attacker.example/x" }) }, { id: "1" }, { actor: server }), "CONNECTIONS_ORIGIN_NOT_ALLOWED")
-    expect(api.calls).toEqual([])
-    expect((await runtime.activity({}))[0]).toMatchObject({ error: "CONNECTIONS_ORIGIN_NOT_ALLOWED", outcome: "denied", target: "api.example.attacker.example/x" })
-  })
-
-  it("runs an approved Operation that an approve rule would stop", async () => {
-    const api = okApi()
-    const { name, runtime, store } = setupRuntime({ definition: { access: { agents: { triage: { approve: ["test.items.create"], deny: ["test.items.get"] } } }, provider: fakeProvider().provider }, fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expectCode(runtime.call(name, writeOperation, { name: "x" }, { actor: agent }), "CONNECTIONS_APPROVAL_REQUIRED")
-    await expect(runtime.call(name, writeOperation, { name: "x" }, { actor: agent, approved: true })).resolves.toEqual({ created: "created-item" })
-    // Approval never overrides a deny rule.
-    await expectCode(runtime.call(name, readOperation, { id: "1" }, { actor: agent, approved: true }), "CONNECTIONS_DENIED")
-  })
-
-  it("never stores tokens or bodies in activity", async () => {
-    const api = mockFetch((url, init, index) => index === 1
-      ? new Response(null, { status: 401 })
-      : Response.json({ echo: init.body ?? url.toString() }))
-    const { db, name, runtime, store } = setupRuntime({
-      definition: { access: { server: { allow: ["*"] } }, provider: fakeProvider().provider },
-      fetch: api.fetch,
-    })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await runtime.call(name, readOperation, { id: "1" }, { actor: server, audit: "all" })
-    await runtime.call(name, writeOperation, { name: "body-marker" }, { actor: server })
-    await runtime.fetch(name, "https://api.example/raw?token=query-marker", { body: "raw-body-marker", method: "PUT" }, { actor: server })
-    await runtime.refresh(name, { actor: server })
-
-    const stored = JSON.stringify(await rows(db, "vitehub_connection_activity"))
-    expect(stored).toContain("test.items.create")
-    for (const marker of [accessToken, refreshToken, "refreshed-access", "body-marker", "raw-body-marker", "query-marker", "query-value"]) {
-      expect(stored).not.toContain(marker)
-    }
-    const actions = (await runtime.activity({})).map(event => `${event.action}:${event.outcome}`)
-    expect(actions).toContain("refresh:succeeded")
-  })
-})
-
-describe("Connections runtime fetch", () => {
-  it("treats GET and HEAD as reads and other methods as writes", async () => {
-    const api = mockFetch(() => new Response("ok"))
-    const { name, runtime, store } = setupRuntime({ fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    expect((await runtime.fetch(name, "https://api.example/a", undefined, { actor: server })).status).toBe(200)
-    expect((await runtime.fetch(name, new URL("https://api.example/b"), { method: "head" }, { actor: server })).status).toBe(200)
-    await expectCode(runtime.fetch(name, "https://api.example/c", { method: "POST" }, { actor: server }), "CONNECTIONS_DENIED")
-    await expectCode(runtime.fetch(name, "https://api.example/d", { method: "delete" }, { actor: server }), "CONNECTIONS_DENIED")
-
-    expect(api.calls.map(call => `${call.method} ${call.url} ${call.authorization}`)).toEqual([
-      `GET https://api.example/a Bearer ${accessToken}`,
-      `HEAD https://api.example/b Bearer ${accessToken}`,
-    ])
-    expect((await runtime.activity({})).map(event => `${event.operation}:${event.effect}:${event.outcome}`)).toEqual([
-      "fetch.delete:write:denied",
-      "fetch.post:write:denied",
-    ])
-  })
-
-  it("uses the operation and effect overrides for access and activity", async () => {
-    const api = mockFetch(() => new Response("ok"))
-    const { name, runtime, store } = setupRuntime({
-      definition: { access: { server: { deny: ["mcp.docs.rpc.ping"] } }, provider: fakeProvider().provider },
-      fetch: api.fetch,
-    })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    // A POST with a read effect is allowed by the default rule.
-    const read = await runtime.fetch(name, "https://api.example/mcp", { method: "POST" }, { actor: server, audit: "all", effect: "read", operation: "mcp.docs.rpc.tools/list" })
-    expect(read.status).toBe(200)
-    await expectCode(runtime.fetch(name, "https://api.example/mcp", { method: "POST" }, { actor: server, effect: "read", operation: "mcp.docs.rpc.ping" }), "CONNECTIONS_DENIED")
-    await expectCode(runtime.fetch(name, "https://api.example/mcp", undefined, { actor: server, effect: "write", operation: "mcp.docs.tools.search" }), "CONNECTIONS_DENIED")
-
-    expect(api.calls).toHaveLength(1)
-    expect((await runtime.activity({})).map(event => `${event.operation}:${event.effect}:${event.outcome}`)).toEqual([
-      "mcp.docs.tools.search:write:denied",
-      "mcp.docs.rpc.ping:read:denied",
-      "mcp.docs.rpc.tools/list:read:succeeded",
-    ])
-  })
-
-  it("allows fetch writes by pattern and skips them in dry run", async () => {
-    const api = mockFetch(() => new Response("ok"))
-    const { name, runtime, store } = setupRuntime({
-      definition: { access: { server: { allow: ["fetch.post"] } }, provider: fakeProvider().provider },
-      fetch: api.fetch,
-    })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    const skipped = await runtime.fetch(name, "https://api.example/x", { method: "POST" }, { actor: server, dryRun: true })
-    expect(skipped.status).toBe(204)
-    expect(skipped.headers.get("x-vitehub-connection-skipped")).toBe("dry-run")
-    expect(api.calls).toEqual([])
-    expect((await runtime.fetch(name, "https://api.example/x", { headers: { "x-custom": "1" }, method: "POST" }, { actor: server })).status).toBe(200)
-    expect(api.calls).toHaveLength(1)
-    const [first] = api.mock.mock.calls
-    expect(new Headers(first![1]?.headers).get("x-custom")).toBe("1")
-  })
-})
-
-describe("Connections runtime refresh", () => {
-  it("refreshes tokens that expire within 60 seconds", async () => {
-    const api = okApi()
-    const { fake, name, runtime, store } = setupRuntime({ fetch: api.fetch })
-    const before = await store.write({ name, provider: "fake", tokens: tokenSet({ expiresAt: Date.now() + 30_000 }) })
-
-    await runtime.call(name, readOperation, { id: "1" }, { actor: server })
-    expect(fake.refresh).toHaveBeenCalledTimes(1)
-    expect(api.calls[0]!.authorization).toBe("Bearer refreshed-access-1")
-    const after = await store.tokens(name)
-    expect(after?.grant.revision).not.toBe(before.revision)
-    expect(after?.tokens).toMatchObject({ accessToken: "refreshed-access-1", account: "owner@example.com", refreshToken })
-    expect(await runtime.activity({})).toEqual([expect.objectContaining({ action: "refresh", outcome: "succeeded" })])
-
-    await runtime.call(name, readOperation, { id: "2" }, { actor: server })
-    expect(fake.refresh).toHaveBeenCalledTimes(1)
-  })
-
-  it("does not refresh tokens without an expiry", async () => {
-    const { fake, name, runtime, store } = setupRuntime({ fetch: okApi().fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet({ expiresAt: undefined }) })
-
-    await runtime.call(name, readOperation, { id: "1" }, { actor: server })
-    expect(fake.refresh).not.toHaveBeenCalled()
-  })
-
-  it("refreshes once for concurrent calls", async () => {
-    const api = okApi()
-    const fake = fakeProvider()
-    let refreshes = 0
-    const refresh = vi.fn(async (token: ConnectionTokenSet): Promise<ConnectionTokenSet> => {
-      refreshes += 1
-      await new Promise(resolve => setTimeout(resolve, 80))
-      return { ...token, accessToken: `concurrent-${refreshes}`, expiresAt: Date.now() + 3_600_000 }
-    })
-    const { name, runtime, store } = setupRuntime({ definition: { provider: { ...fake.provider, refresh } }, fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet({ expiresAt: Date.now() - 1 }) })
-
-    await Promise.all([1, 2, 3, 4].map(id => runtime.call(name, readOperation, { id: String(id) }, { actor: server })))
-    expect(refresh).toHaveBeenCalledTimes(1)
-    expect(new Set(api.calls.map(call => call.authorization))).toEqual(new Set(["Bearer concurrent-1"]))
-  })
-
-  it("marks the Connection for reconnect on invalid_grant", async () => {
-    const provider = mockFetch((url) => {
-      if (url.pathname === "/token") return Response.json({ error: "invalid_grant", error_description: "revoked secret detail" }, { status: 400 })
-      return Response.json({ id: "1", ok: true })
-    })
-    const definition: ConnectionDefinition = {
-      provider: oauth2({ authorizationUrl: "https://auth.example/authorize", client: () => ({ clientId: "client" }), origins: ["https://api.example"], scopes: ["test.read"], tokenUrl: "https://auth.example/token" }),
-    }
-    const { name, runtime, store } = setupRuntime({ definition, fetch: provider.fetch })
-    await store.write({ name, provider: "oauth2", tokens: tokenSet({ expiresAt: Date.now() - 1 }) })
-
-    await expectCode(runtime.call(name, readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_NEEDS_RECONNECT")
-    expect(await runtime.inspect(name)).toMatchObject({ lastError: "CONNECTIONS_NEEDS_RECONNECT", status: "needs-reconnect" })
-    await expectCode(runtime.call(name, readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_NEEDS_RECONNECT")
-    expect(provider.calls.map(call => call.url)).toEqual(["https://auth.example/token"])
-    const events = await runtime.activity({})
-    expect(events.map(event => `${event.action}:${event.outcome}:${event.error}`)).toEqual([
-      "call:failed:CONNECTIONS_NEEDS_RECONNECT",
-      "call:failed:CONNECTIONS_NEEDS_RECONNECT",
-      "refresh:failed:CONNECTIONS_NEEDS_RECONNECT",
-    ])
-    expect(JSON.stringify(events)).not.toContain("revoked secret detail")
-  })
-
-  it("marks the Connection for reconnect when an expired token has no refresh token", async () => {
-    const { fake, name, runtime, store } = setupRuntime({ fetch: okApi().fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet({ expiresAt: Date.now() - 1, refreshToken: undefined }) })
-
-    await expectCode(runtime.call(name, readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_NEEDS_RECONNECT")
-    expect(fake.refresh).not.toHaveBeenCalled()
-    expect((await runtime.inspect(name)).status).toBe("needs-reconnect")
-  })
-
-  it("sets error status when refresh fails for another reason", async () => {
-    const fake = fakeProvider()
-    const refresh = vi.fn(async (): Promise<ConnectionTokenSet> => {
-      throw new Error("network down")
-    })
-    const { name, runtime, store } = setupRuntime({ definition: { provider: { ...fake.provider, refresh } }, fetch: okApi().fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet({ expiresAt: Date.now() - 1 }) })
-
-    await expect(runtime.call(name, readOperation, { id: "1" }, { actor: server })).rejects.toThrow("network down")
-    expect(await runtime.inspect(name)).toMatchObject({ lastError: "CONNECTIONS_FAILED", status: "error" })
-    expect((await store.grant(name))?.leaseUntil).toBeUndefined()
-  })
-
-  it("forces one refresh and one retry after a provider 401", async () => {
-    const api = mockFetch((_url, init) => new Headers(init.headers).get("authorization") === `Bearer ${accessToken}`
-      ? new Response("expired", { status: 401 })
-      : Response.json({ id: "1", ok: true }))
-    const { fake, name, runtime, store } = setupRuntime({ fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expect(runtime.call(name, readOperation, { id: "1" }, { actor: server })).resolves.toEqual({ id: "1", ok: true })
-    expect(fake.refresh).toHaveBeenCalledTimes(1)
-    expect(api.calls.map(call => call.authorization)).toEqual([`Bearer ${accessToken}`, "Bearer refreshed-access-1"])
-  })
-
-  it("does not wait for a 401 response body to finish cancelling before retrying", async () => {
-    let first = true
-    const body = new ReadableStream({
-      cancel: () => new Promise<void>(() => undefined),
-    })
-    const api = mockFetch((_url, init) => {
-      if (first) {
-        first = false
-        return new Response(body, { status: 401 })
+  it.each(["rejected", "invalid"])("retries unsuccessful definition loaders (%s)", async (failure) => {
+    let calls = 0
+    const loader = vi.fn(async () => {
+      calls += 1
+      if (calls === 1) {
+        if (failure === "rejected") throw new Error("Module temporarily unavailable")
+        return { default: {} }
       }
-      return Response.json({ id: "1", ok: true }, { headers: { authorization: new Headers(init.headers).get("authorization") ?? "" } })
+      return { default: mailConnection() }
     })
-    const { fake, name, runtime, store } = setupRuntime({ fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expect(runtime.call(name, readOperation, { id: "1" }, { actor: server })).resolves.toEqual({ id: "1", ok: true })
-    expect(fake.refresh).toHaveBeenCalledTimes(1)
-    expect(api.calls).toHaveLength(2)
+    const test = createTestRuntime(loader)
+    await expect(test.runtime.inspect("mail")).rejects.toThrow()
+    expect(await test.runtime.inspect("mail")).toMatchObject({ name: "mail", status: "disconnected" })
+    await test.runtime.inspect("mail")
+    expect(loader).toHaveBeenCalledTimes(2)
   })
 
-  it("retries a 401 only once", async () => {
-    const api = mockFetch(() => new Response(null, { status: 401 }))
-    const { fake, name, runtime, store } = setupRuntime({ fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
+  it("builds a PKCE authorization URL and stores the exchanged token", async () => {
+    const test = createTestRuntime()
+    const { state, url } = await test.runtime.authorize({ name: "mail", redirectUri: "http://127.0.0.1:8976/callback" })
+    const authorization = new URL(url)
+    expect(authorization.origin + authorization.pathname).toBe("https://auth.example.com/authorize")
+    expect(authorization.searchParams.get("scope")).toBe("openid mail.modify")
+    expect(authorization.searchParams.get("access_type")).toBe("offline")
+    expect(authorization.searchParams.get("code_challenge_method")).toBe("S256")
+    expect(authorization.searchParams.get("state")).toBe(state)
 
-    await expectCode(runtime.call(name, readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_PROVIDER_FAILED")
-    expect(fake.refresh).toHaveBeenCalledTimes(1)
-    expect(api.calls).toHaveLength(2)
+    test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600, id_token: "account-1", refresh_token: REFRESH_TOKEN, scope: "openid mail.modify" } })
+    const connection = await test.runtime.complete({ code: "code-1", state })
+    expect(connection).toMatchObject({ account: { email: "owner@example.com", id: "account-1" }, scopes: { missing: [] }, status: "connected" })
+
+    const exchange = new URLSearchParams(test.provider.calls.at(-1)!.body)
+    expect(exchange.get("grant_type")).toBe("authorization_code")
+    expect(exchange.get("redirect_uri")).toBe("http://127.0.0.1:8976/callback")
+    const challenge = base64Url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(exchange.get("code_verifier")!)))
+    expect(challenge).toBe(authorization.searchParams.get("code_challenge"))
+
+    // A state is single use.
+    expect(await rejection(test.runtime.complete({ code: "code-1", state }))).toMatchObject({ code: "CONNECTION_INVALID" })
   })
 
-  it("does not retry a 401 when the request body is a stream", async () => {
-    const api = mockFetch(() => new Response(null, { status: 401 }))
-    const fake = fakeProvider()
-    const { name, runtime, store } = setupRuntime({
-      definition: { access: { server: { allow: ["fetch.post"] } }, provider: fake.provider },
-      fetch: api.fetch,
+  it("rejects redirect URIs that are not HTTPS or loopback", async () => {
+    const test = createTestRuntime()
+    expect(await rejection(test.runtime.authorize({ name: "mail", redirectUri: "http://example.com/callback" }))).toMatchObject({ code: "CONNECTION_INVALID" })
+  })
+
+  it("retains the refresh grant when the same account authorizes again", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    await connect(test, { refresh_token: undefined, expires_in: 1 })
+    test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600 } })
+    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    const refresh = test.provider.calls.find(call => call.body?.includes("grant_type=refresh_token"))
+    expect(new URLSearchParams(refresh?.body).get("refresh_token")).toBe(REFRESH_TOKEN)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected", account: { id: "account-1" } })
+  })
+
+  it("quarantines an unidentified replacement grant without clearing the account", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    // Model a provider consuming the existing grant while issuing the rejected account token.
+    test.provider.valid.delete(ACCESS_TOKEN)
+    await expect(connect(test, { id_token: undefined, access_token: "unknown-access", refresh_token: "unknown-refresh" })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toHaveLength(0)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" }, status: "reauth_required" })
+    expect(JSON.parse((await test.store.secrets.read("connection/mail"))!.value)).toMatchObject({ accessToken: ACCESS_TOKEN, accountId: "account-1" })
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+  })
+
+  it("reports reduced scopes returned during a token refresh", async () => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600, scope: "openid" } })
+    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ scopes: { granted: ["openid"], missing: ["mail.modify"] } })
+  })
+
+  it("waits for a failed refresh to settle before reconnecting", async () => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    let enter!: () => void
+    let resume!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const release = new Promise<void>(resolve => { resume = resolve })
+    const request = test.provider.fetch
+    test.runtime = createConnectionsRuntime({ definitions: { mail: mailConnection() }, store: test.store, now: () => test.now.value, fetch: async (input, init) => {
+      if (String(init?.body).includes("grant_type=refresh_token")) {
+        enter()
+        await release
+        return Response.json({ error: "invalid_grant" }, { status: 400 })
+      }
+      return await request(input, init)
+    } })
+    const call = test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    const failed = expect(call).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    await entered
+    const reconnecting = connect(test)
+    resume()
+    await failed
+    await reconnecting
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).resolves.toMatchObject({ labels: [{ id: "INBOX" }] })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
+  })
+
+  it("waits for the winning refresh without sending another refresh grant", async () => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    let enter!: () => void
+    let resume!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const release = new Promise<void>(resolve => { resume = resolve })
+    const options = { definitions: { mail: mailConnection() }, store: test.store, now: () => test.now.value }
+    const winner = createConnectionsRuntime({ ...options, fetch: async (input, init) => {
+      if (String(init?.body).includes("grant_type=refresh_token")) {
+        enter()
+        await release
+        return Response.json({ access_token: ACCESS_TOKEN, expires_in: 3600 })
+      }
+      return await test.provider.fetch(input, init)
+    } })
+    let duplicateRefreshes = 0
+    const loser = createConnectionsRuntime({ ...options, fetch: async (input, init) => {
+      if (String(init?.body).includes("grant_type=refresh_token")) {
+        duplicateRefreshes++
+        return Response.json({ error: "invalid_grant" }, { status: 400 })
+      }
+      return await test.provider.fetch(input, init)
+    } })
+    const call = winner.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    await entered
+    const waiting = loser.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    resume()
+    await expect(waiting).resolves.toMatchObject({ labels: [{ id: "INBOX" }] })
+    await call
+    expect(duplicateRefreshes).toBe(0)
+    expect(await winner.inspect("mail")).toMatchObject({ status: "connected" })
+  })
+
+  it("does not resurrect state when revocation follows token replacement", async () => {
+    const test = createTestRuntime()
+    let enter!: () => void
+    let resume!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const release = new Promise<void>(resolve => { resume = resolve })
+    const put = test.store.state.putForToken
+    test.store.state.putForToken = async (state, revision) => {
+      if (state.status === "connected") { enter(); await release }
+      return await put(state, revision)
+    }
+    const callback = connect(test)
+    await entered
+    const revoking = test.runtime.revoke({ name: "mail" })
+    resume()
+    await callback
+    await revoking
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "revoked" })
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+  })
+
+  it("waits for refresh persistence before revoking the replacement token", async () => {
+    const definition = mailConnection()
+    const test = createTestRuntime(definition)
+    await connect(test, { expires_in: 1 })
+    let enter!: () => void
+    let resume!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const release = new Promise<void>(resolve => { resume = resolve })
+    const put = test.store.state.putForToken
+    test.store.state.putForToken = async (state, revision) => {
+      if (state.status === "connected") { enter(); await release }
+      return await put(state, revision)
+    }
+    test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600 } })
+    const call = test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    await entered
+    const revoking = test.runtime.revoke({ name: "mail" })
+    resume()
+    await Promise.allSettled([call])
+    await revoking
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "revoked" })
+  })
+
+  it("rejects revocation when the provider has no revocation endpoint", async () => {
+    const definition = mailConnection()
+    const test = createTestRuntime({ ...definition, provider: { ...definition.provider, revocationEndpoint: undefined } })
+    await connect(test)
+    await expect(test.runtime.revoke({ name: "mail" })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
+    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+  })
+
+  it("serializes concurrent callbacks without revoking either provider grant", async () => {
+    const test = createTestRuntime()
+    const providerFetch = test.provider.fetch
+    test.provider.valid.add("access-one")
+    test.provider.valid.add("access-two")
+    test.provider.fetch = async (...args) => {
+      const response = await providerFetch(...args)
+      // Some providers revoke the entire application grant, including the winning token.
+      if (String(args[0]) === "https://auth.example.com/revoke") test.provider.valid.clear()
+      return response
+    }
+    test.runtime = createConnectionsRuntime({ definitions: { mail: mailConnection() }, store: test.store, fetch: test.provider.fetch, now: () => test.now.value })
+    const second = createConnectionsRuntime({ definitions: { mail: mailConnection() }, store: test.store, fetch: test.provider.fetch, now: () => test.now.value })
+    const replace = test.store.bridge.replace
+    let arrived = 0
+    let enter!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    let resume!: () => void
+    const release = new Promise<void>(resolve => { resume = resolve })
+    test.store.bridge.replace = async (...args) => {
+      if (++arrived === 1) { enter(); await release }
+      return await replace(...args)
+    }
+    const first = connect(test, { access_token: "access-one", refresh_token: "refresh-one", id_token: "account-one" })
+    await entered
+    const other = connect({ ...test, runtime: second }, { access_token: "access-two", refresh_token: "refresh-two", id_token: "account-one" })
+    let blockedExchanges: number
+    try {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      blockedExchanges = test.provider.calls.filter(call => call.url === "https://auth.example.com/token").length
+    }
+    finally { resume() }
+    const results = await Promise.allSettled([first, other])
+    expect(blockedExchanges).toBe(1)
+    expect(results.map(result => result.status)).toEqual(["fulfilled", "fulfilled"])
+    expect(await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).toMatchObject({ labels: [{ id: "INBOX" }] })
+    expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toEqual([])
+    expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-one" }, status: "connected" })
+  })
+
+  it("keeps one account per Connection", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const error = await rejection(connect(test, { access_token: "other-access", id_token: "account-2", refresh_token: "other-refresh" }))
+    expect(error).toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toHaveLength(0)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" } })
+  })
+
+  it.each([false, true])("keeps token and account together during overlapping callbacks (revoked: %s)", async (revoked) => {
+    const test = createTestRuntime()
+    if (revoked) {
+      await connect(test)
+      await test.runtime.revoke({ name: "mail" })
+    }
+    const second = createConnectionsRuntime({ definitions: { mail: mailConnection() }, fetch: test.provider.fetch, now: () => test.now.value, store: test.store })
+    let enter!: () => void
+    let resume!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const release = new Promise<void>(resolve => { resume = resolve })
+    const put = test.store.state.putForToken
+    test.store.state.putForToken = async (state, revision) => {
+      enter()
+      await release
+      return await put(state, revision)
+    }
+    const first = connect(test)
+    await entered
+    const other = connect({ ...test, runtime: second }, { access_token: "other-access", id_token: "account-2", refresh_token: "other-refresh" })
+    resume()
+    await first
+    await expect(other).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toHaveLength(revoked ? 1 : 0)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ account: { id: "account-1" }, status: "reauth_required" })
+    expect(JSON.parse((await test.store.secrets.read("connection/mail"))!.value)).toMatchObject({ accessToken: ACCESS_TOKEN, accountId: "account-1" })
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+  })
+
+  it("does not revoke through a bridge that omits the leased revision", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const use = test.store.bridge.use
+    test.store.bridge.use = (context, key, operation, run) => use(context, key, operation, secret => run(secret))
+    await expect(test.runtime.revoke({ name: "mail" })).rejects.toBeDefined()
+    expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/revoke")).toHaveLength(0)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
+  })
+
+  it("revokes the revision leased after a concurrent token replacement", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const inspect = test.store.secrets.inspect
+    let replaced = false
+    test.store.secrets.inspect = async key => {
+      const stored = await inspect(key)
+      if (!replaced && stored) {
+        replaced = true
+        const current = await test.store.secrets.read(key)
+        if (!current) throw new Error("Expected connected token")
+        await test.store.secrets.replace({ expectedRevision: stored.revision, key, value: JSON.stringify({ ...JSON.parse(current.value), accessToken: "new-access", refreshToken: "new-refresh" }) })
+      }
+      return stored
+    }
+    expect(await test.runtime.revoke({ name: "mail" })).toMatchObject({ status: "revoked" })
+    expect(test.provider.calls.at(-1)).toMatchObject({ body: "token=new-refresh", url: "https://auth.example.com/revoke" })
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect((await test.runtime.activity({ name: "mail" })).some(event => event.action === "use" && event.operation === "revoke" && event.outcome === "succeeded" && event.revision)).toBe(true)
+  })
+
+  it.each([429, 500])("retains the token and mutation fence when provider revocation returns %s", async (status) => {
+    const test = createTestRuntime()
+    await connect(test)
+    const token = await test.store.secrets.read("connection/mail")
+    if (!token?.revision) throw new Error("Expected a persisted token revision.")
+    test.runtime = createConnectionsRuntime({
+      definitions: { mail: mailConnection() },
+      store: test.store,
+      now: () => test.now.value,
+      fetch: async (input, init) => String(input) === "https://auth.example.com/revoke"
+        ? new Response(null, { status })
+        : test.provider.fetch(input, init),
     })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    const body = new ReadableStream({ start: controller => controller.close() })
-    const response = await runtime.fetch(name, "https://api.example/upload", { body, duplex: "half", method: "POST" } as RequestInit, { actor: server })
-    expect(response.status).toBe(401)
-    expect(fake.refresh).not.toHaveBeenCalled()
-    expect(api.calls).toHaveLength(1)
+    await expect(test.runtime.revoke({ name: "mail" })).rejects.toMatchObject({ code: "CONNECTION_PROVIDER", details: { status } })
+    expect(await test.store.secrets.read("connection/mail")).toEqual(token)
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
+    expect(await test.store.refreshLeases.claim({ name: "mail", owner: "another-runtime", revision: token.revision, now: test.now.value, expiresAt: test.now.value + 1000 })).toBe("busy")
   })
 
-  it("does not retry a 401 without a refresh token", async () => {
-    const api = mockFetch(() => new Response(null, { status: 401 }))
-    const { fake, name, runtime, store } = setupRuntime({ fetch: api.fetch })
-    await store.write({ name, provider: "fake", tokens: tokenSet({ refreshToken: undefined }) })
-
-    await expectCode(runtime.call(name, readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_PROVIDER_FAILED")
-    expect(fake.refresh).not.toHaveBeenCalled()
-    expect(api.calls).toHaveLength(1)
-  })
-
-  it("refreshes on request and returns the summary", async () => {
-    const { fake, name, runtime, store } = setupRuntime()
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expect(runtime.refresh(name, { actor: server })).resolves.toMatchObject({ name, status: "active" })
-    expect(fake.refresh).toHaveBeenCalledTimes(1)
+  it("revokes the grant and blocks later calls", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    expect(await test.runtime.revoke({ name: "mail" })).toMatchObject({ status: "revoked" })
+    expect(test.provider.calls.at(-1)).toMatchObject({ body: `token=${REFRESH_TOKEN}`, url: "https://auth.example.com/revoke" })
+    const error = await rejection(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" }))
+    expect(error).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
   })
 })
 
-describe("Connections runtime lifecycle", () => {
-  it("summarizes Connections without tokens", async () => {
-    const { name, runtime, store } = setupRuntime({ definition: { description: "Inbox", provider: fakeProvider().provider } })
-    expect(runtime.names()).toEqual([name])
-    expect(await runtime.list()).toEqual([{ access: {}, description: "Inbox", name, origins: ["https://api.example"], provider: "fake", scopes: ["test.read"], status: "disconnected" }])
-
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-    const summary = await runtime.inspect(name)
-    expect(summary).toMatchObject({ account: "owner@example.com", scopes: ["test.read", "test.write"], status: "active" })
-    expect(summary.expiresAt).toMatch(/Z$/)
-    expect(JSON.stringify(summary)).not.toContain(accessToken)
-  })
-
-  it("reports a key mismatch as needs-reconnect", async () => {
-    const db = createDatabase()
-    const definition: ConnectionDefinition = { provider: fakeProvider().provider }
-    const registry = { api: async () => ({ default: definition }) }
-    const first = createConnectionsRuntime({ database: () => db, encryptionKey: () => testKey(1), registry })
-    const second = createConnectionsRuntime({ database: () => db, encryptionKey: () => base64urlKey(2), fetch: okApi().fetch, registry })
-    await createConnectionsStore({ db, encryptionKey: testKey(1) }).write({ name: "api", provider: "fake", tokens: tokenSet() })
-
-    expect(await second.inspect("api")).toMatchObject({ lastError: "CONNECTIONS_KEY_MISMATCH", status: "needs-reconnect" })
-    await expectCode(second.call("api", readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_KEY_MISMATCH")
-    expect(await first.inspect("api")).toMatchObject({ status: "active" })
-  })
-
-  it("requires a reconnect when the provider of a Connection changed", async () => {
-    const api = okApi()
-    const { fake, name, runtime, store } = setupRuntime({ fetch: api.fetch })
-    await store.write({ name, provider: "previous", tokens: tokenSet() })
-
-    expect(await runtime.inspect(name)).toMatchObject({ lastError: "CONNECTIONS_PROVIDER_CHANGED", status: "needs-reconnect" })
-    await expectCode(runtime.call(name, readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_NEEDS_RECONNECT")
-    expect(api.calls).toEqual([])
-    await runtime.disconnect(name, { actor: server })
-    expect(fake.revoke).not.toHaveBeenCalled()
-    expect(await store.grant(name)).toBeUndefined()
-  })
-
-  it("keeps a grant that a reconnect wrote while disconnect loaded the definition", async () => {
-    const db = createDatabase()
-    const fake = fakeProvider()
-    let notifyLoading = () => {}
-    let finishLoading = () => {}
-    const loading = new Promise<void>((resolve) => { notifyLoading = resolve })
-    const loaded = new Promise<void>((resolve) => { finishLoading = resolve })
-    const runtime = createConnectionsRuntime({
-      database: () => db,
-      encryptionKey: () => testKey(),
-      registry: {
-        api: async () => {
-          notifyLoading()
-          await loaded
-          return { default: { provider: fake.provider } }
-        },
-      },
+describe("OAuth scope fallback", () => {
+  it("uses requested scopes when authorization omits scope and retains them on refresh", async () => {
+    const test = createTestRuntime()
+    await connect(test, { scope: undefined, expires_in: 1 })
+    expect(await test.runtime.inspect("mail")).toMatchObject({
+      scopes: { granted: ["openid", "mail.modify"], missing: [] },
     })
-    const store = createConnectionsStore({ db, encryptionKey: testKey() })
-    await store.write({ name: "api", provider: "fake", tokens: tokenSet() })
-
-    const disconnect = runtime.disconnect("api", { actor: server })
-    await loading
-    await store.write({ name: "api", provider: "fake", tokens: tokenSet({ accessToken: "reconnected" }) })
-    finishLoading()
-
-    await expect(disconnect).resolves.toMatchObject({ status: "active" })
-    expect(fake.revoke).toHaveBeenCalledWith(expect.objectContaining({ accessToken }), expect.anything())
-    expect((await store.tokens("api"))?.tokens.accessToken).toBe("reconnected")
-  })
-
-  it("keeps a grant that a reconnect wrote while disconnect revoked the old one", async () => {
-    const { fake, name, runtime, store } = setupRuntime()
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-    fake.revoke.mockImplementationOnce(async () => {
-      await store.write({ name, provider: "fake", tokens: tokenSet({ accessToken: "reconnected" }) })
+    test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600 } })
+    await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({
+      scopes: { granted: ["openid", "mail.modify"], missing: [] },
     })
-
-    // The summary shows the grant that survived, not a disconnected Connection.
-    await expect(runtime.disconnect(name, { actor: server })).resolves.toMatchObject({ status: "active" })
-    expect((await store.tokens(name))?.tokens.accessToken).toBe("reconnected")
   })
 
-  it("reports a completed disconnect when the activity insert fails", async () => {
-    const { db, name, runtime, store } = setupRuntime()
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-    const originalRun = db.run.bind(db)
-    // SAFETY: The spy keeps the database contract and only fails activity inserts.
-    vi.spyOn(db, "run").mockImplementation(((query: Parameters<typeof db.run>[0]) =>
-      JSON.stringify(query).includes("INSERT INTO vitehub_connection_activity") ? Promise.reject(new Error("activity store down")) : originalRun(query)) as typeof db.run)
-
-    await expect(runtime.disconnect(name, { actor: server })).resolves.toMatchObject({ status: "disconnected" })
-    expect(await store.grant(name)).toBeUndefined()
+  it("uses newly requested scopes when reconnect omits scope", async () => {
+    const test = createTestRuntime()
+    await connect(test, { scope: "openid" })
+    const definition = { ...mailConnection(), scopes: ["mail.modify", "mail.extra"] }
+    const runtime = createConnectionsRuntime({ definitions: { mail: definition }, fetch: test.provider.fetch, now: () => test.now.value, store: test.store })
+    await connect({ ...test, runtime }, { scope: undefined })
+    expect(await runtime.inspect("mail")).toMatchObject({ scopes: { granted: ["openid", "mail.modify", "mail.extra"], missing: [] } })
   })
 
-  it("revokes and deletes the grant on disconnect", async () => {
-    const { fake, name, runtime, store } = setupRuntime()
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await expect(runtime.disconnect(name, { actor: server })).resolves.toMatchObject({ status: "disconnected" })
-    expect(fake.revoke.mock.calls[0]?.[0]).toMatchObject({ refreshToken })
-    expect(await store.grant(name)).toBeUndefined()
-    expect(await runtime.activity({})).toEqual([expect.objectContaining({ action: "disconnect", outcome: "succeeded" })])
-  })
-
-  it("disconnects grants sealed with another key without revoking them", async () => {
-    const db = createDatabase()
-    const fake = fakeProvider()
-    await createConnectionsStore({ db, encryptionKey: testKey(1) }).write({ name: "api", provider: "fake", tokens: tokenSet() })
-    const runtime = createConnectionsRuntime({ database: () => db, encryptionKey: () => testKey(2), registry: { api: async () => ({ default: { provider: fake.provider } }) } })
-
-    await expect(runtime.disconnect("api", { actor: server })).resolves.toMatchObject({ status: "disconnected" })
-    expect(fake.revoke).not.toHaveBeenCalled()
-  })
-
-  it("records a revoke failure but still disconnects", async () => {
-    const fake = fakeProvider({ revoke: async () => Promise.reject(new Error("revoke failed")) })
-    const { name, runtime, store } = setupRuntime({ definition: { provider: fake.provider } })
-    await store.write({ name, provider: "fake", tokens: tokenSet() })
-
-    await runtime.disconnect(name, { actor: server })
-    expect(await store.grant(name)).toBeUndefined()
-    expect(await runtime.activity({})).toEqual([expect.objectContaining({ action: "disconnect", error: "CONNECTIONS_FAILED" })])
+  it("preserves an explicit reduced grant", async () => {
+    const test = createTestRuntime()
+    await connect(test, { scope: "openid" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({
+      scopes: { granted: ["openid"], missing: ["mail.modify"] },
+    })
   })
 })
 
-describe("Connections runtime configuration", () => {
-  const registry = { api: async () => ({ default: { provider: fakeProvider().provider } }) }
-
-  it("fails when the database is missing", async () => {
-    const runtime = createConnectionsRuntime({ database: () => undefined, encryptionKey: () => testKey(), registry })
-    await expectCode(runtime.inspect("api"), "CONNECTIONS_NOT_CONFIGURED")
-    await expectCode(runtime.call("api", readOperation, { id: "1" }, { actor: server }), "CONNECTIONS_NOT_CONFIGURED")
+describe("calls", () => {
+  it("builds provider requests from the catalog", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const client = test.runtime.client("mail", {})
+    expect(await client.call("mail.labels.list", { userId: "me" })).toEqual({ labels: [{ id: "INBOX" }] })
+    expect(await client.call("mail.messages.modify", { id: "a/b", requestBody: { addLabelIds: ["L1"] }, userId: "me" })).toEqual({ id: "message-1" })
+    const [list, modify] = test.provider.calls.slice(-2)
+    expect(list).toMatchObject({ method: "GET", url: "https://mail.example.com/mail/v1/users/me/labels" })
+    expect(list!.headers.get("authorization")).toBe(`Bearer ${ACCESS_TOKEN}`)
+    expect(modify).toMatchObject({ body: "{\"addLabelIds\":[\"L1\"]}", method: "POST", url: "https://mail.example.com/mail/v1/users/me/messages/a%2Fb/modify" })
   })
 
-  it("keeps access decisions when the audit database is missing", async () => {
-    const approval = { api: async () => ({ default: { access: { server: { approve: ["test.items.create"] } }, provider: fakeProvider().provider } }) }
-    const denied = createConnectionsRuntime({ database: () => undefined, encryptionKey: () => testKey(), registry })
-    const approvalRequired = createConnectionsRuntime({ database: () => undefined, encryptionKey: () => testKey(), registry: approval })
-    await expectCode(denied.call("api", writeOperation, { name: "x" }, { actor: server }), "CONNECTIONS_DENIED")
-    await expectCode(approvalRequired.call("api", writeOperation, { name: "x" }, { actor: server }), "CONNECTIONS_APPROVAL_REQUIRED")
+  it("refreshes an expiring token once for concurrent calls", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    test.now.value += 3600_000
+    test.provider.valid = new Set(["access-2"])
+    test.provider.tokenResponses.push({ body: { access_token: "access-2", expires_in: 3600 } })
+    const client = test.runtime.client("mail", {})
+    await Promise.all([client.call("mail.labels.list", { userId: "me" }), client.call("mail.labels.list", { userId: "me" })])
+    expect(test.provider.calls.filter(call => call.url === "https://auth.example.com/token")).toHaveLength(2) // connect + one refresh
+    const refresh = new URLSearchParams(test.provider.calls.find(call => call.body?.includes("grant_type=refresh_token"))!.body)
+    expect(refresh.get("refresh_token")).toBe(REFRESH_TOKEN)
+    // The refresh keeps the refresh token when the provider does not rotate it.
+    test.now.value += 3600_000
+    test.provider.valid = new Set(["access-3"])
+    test.provider.tokenResponses.push({ body: { access_token: "access-3", expires_in: 3600 } })
+    await client.call("mail.labels.list", { userId: "me" })
+    expect(new URLSearchParams(test.provider.calls.filter(call => call.url === "https://auth.example.com/token").at(-1)!.body).get("refresh_token")).toBe(REFRESH_TOKEN)
   })
 
-  it("fails when the key is missing, empty, or not 32 bytes", async () => {
-    const db = createDatabase()
-    for (const key of [undefined, "", "short", new Uint8Array(16), "%%%not-base64%%%"]) {
-      const runtime = createConnectionsRuntime({ database: () => db, encryptionKey: () => key, registry })
-      await expectCode(runtime.inspect("api"), "CONNECTIONS_NOT_CONFIGURED")
+  it("uses the stored token when another isolate wins the refresh", async () => {
+    const store = createStore()
+    const first = createTestRuntime(mailConnection(), store)
+    await connect(first)
+    const second = createConnectionsRuntime({ definitions: { mail: mailConnection() }, fetch: first.provider.fetch, now: () => first.now.value, store })
+    first.now.value += 3600_000
+    first.provider.valid = new Set(["access-a", "access-b"])
+    first.provider.tokenResponses.push({ body: { access_token: "access-a", expires_in: 3600 } }, { body: { access_token: "access-b", expires_in: 3600 } })
+    await Promise.all([
+      first.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" }),
+      second.client("mail", {}).call("mail.labels.list", { userId: "me" }),
+    ])
+    const tokens = first.provider.calls.filter(call => call.url.startsWith("https://mail.example.com/")).map(call => call.headers.get("authorization"))
+    // The losing isolate discards its token and uses the stored one.
+    expect(new Set(tokens).size).toBe(1)
+  })
+
+  it.each([
+    { error: "temporarily_unavailable", status: 400 },
+    { error: "temporarily_unavailable", status: 429 },
+    { error: "server_error", status: 500 },
+  ])("keeps explicit transient refresh failures retryable ($status)", async ({ error, status }) => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    test.provider.tokenResponses.push({ body: { error }, status })
+    const client = test.runtime.client("mail", {})
+    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_PROVIDER", status })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "connected" })
+    test.provider.valid = new Set(["access-after-outage"])
+    test.provider.tokenResponses.push({ body: { access_token: "access-after-outage", expires_in: 3600 } })
+    await client.call("mail.labels.list", { userId: "me" })
+    expect(test.provider.calls.at(-1)?.headers.get("authorization")).toBe("Bearer access-after-outage")
+  })
+
+  it.each(["state", "audit"])("quarantines a committed refresh after its %s persistence fails", async (failure) => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    const original = await test.store.secrets.read("connection/mail")
+    test.provider.tokenResponses.push({ body: { access_token: "replacement-access", expires_in: 3600, refresh_token: "replacement-refresh" } })
+    test.provider.valid.add("replacement-access")
+    if (failure === "state") {
+      const put = test.store.state.putForToken
+      test.store.state.putForToken = async (state, revision) => {
+        if (state.refreshedAt && state.status === "connected") throw new Error("State persistence unavailable")
+        return await put(state, revision)
+      }
+    }
+    else {
+      const append = test.store.access.append
+      test.store.access.append = async (event) => {
+        if (event.action === "replace" && event.outcome === "succeeded") throw new Error("Audit persistence unavailable")
+        await append(event)
+      }
+    }
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).rejects.toThrow()
+    const replacement = await test.store.secrets.read("connection/mail")
+    expect(replacement?.revision).not.toBe(original?.revision)
+    expect(JSON.parse(replacement!.value)).toMatchObject({ accessToken: "replacement-access", refreshToken: "replacement-refresh" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "reauth_required" })
+    const calls = test.provider.calls.length
+    expect(await rejection(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(test.provider.calls).toHaveLength(calls)
+  })
+
+  it("requires reauthorization when a refresh response does not confirm a token", async () => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    test.provider.tokenResponses.push({ body: {} })
+    const client = test.runtime.client("mail", {})
+    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_PROVIDER" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "reauth_required" })
+    const calls = test.provider.calls.length
+    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(test.provider.calls).toHaveLength(calls)
+  })
+
+  it.each(["tokenless", "malformed"] as const)("quarantines a rotating grant after a %s HTTP success", async responseKind => {
+    const test = createTestRuntime()
+    await connect(test, { expires_in: 1 })
+    let rotations = 0
+    const providerFetch: typeof fetch = async (input, init) => {
+      if (String(input) === "https://auth.example.com/token") {
+        rotations += 1
+        test.provider.valid.clear()
+        return responseKind === "tokenless" ? Response.json({ refresh_token: "unconfirmed-replacement" }) : new Response("truncated token response", { status: 200 })
+      }
+      return await test.provider.fetch(input, init)
+    }
+    const runtime = createConnectionsRuntime({ definitions: { mail: mailConnection() }, fetch: providerFetch, now: () => test.now.value, store: test.store })
+    const client = runtime.client("mail", {})
+    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_PROVIDER" })
+    expect(await runtime.inspect("mail")).toMatchObject({ status: "reauth_required" })
+    const count = test.provider.calls.length
+    expect(await rejection(client.call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(test.provider.calls).toHaveLength(count)
+    expect(rotations).toBe(1)
+  })
+
+  it("marks the Connection for reauthorization after invalid_grant", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    test.now.value += 3600_000
+    test.provider.tokenResponses.push({ body: { error: "invalid_grant" }, status: 400 })
+    const error = await rejection(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" }))
+    expect(error).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(await test.runtime.inspect("mail")).toMatchObject({ status: "reauth_required" })
+    const calls = test.provider.calls.length
+    expect(await rejection(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(test.provider.calls).toHaveLength(calls)
+  })
+
+  it("refreshes and retries once after a 401", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    test.provider.valid = new Set(["access-2"])
+    test.provider.tokenResponses.push({ body: { access_token: "access-2", expires_in: 3600 } })
+    expect(await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).toEqual({ labels: [{ id: "INBOX" }] })
+  })
+
+  it.each(["agent:", "user:", "", "agent:bad\u0000id", "n".repeat(513)])("rejects malformed actors without corrupting denied activity (%s)", async (actor) => {
+    const test = createTestRuntime(mailConnection({ server: { read: true } }))
+    await connect(test)
+    const before = await test.runtime.activity({ name: "mail" })
+    const calls = test.provider.calls.length
+    const client = test.runtime.client("mail", { actor })
+    const error = await rejection(client.call("mail.labels.list", { userId: "me" }))
+    expect(await test.runtime.activity({ name: "mail" })).toEqual(before)
+    expect(error).toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(await rejection(client.fetch("https://mail.example.com/mail/v1/users/me/labels"))).toMatchObject({ code: "CONNECTION_INVALID" })
+    expect((await test.runtime.approvals({})).approvals).toEqual([])
+    expect(test.provider.calls).toHaveLength(calls)
+    expect(await test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" })).toMatchObject({ labels: [{ id: "INBOX" }] })
+  })
+
+  it("keeps secrets out of errors and activity", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    test.provider.valid = new Set()
+    test.provider.tokenResponses.push({ body: { access_token: "access-2", expires_in: 3600 } })
+    const error = await rejection(test.runtime.client("mail", {}).call("mail.labels.list", { userId: "me" }))
+    expect(error).toMatchObject({ code: "CONNECTION_PROVIDER", status: 401 })
+    const activity = await test.runtime.activity({ name: "mail" })
+    const serialized = JSON.stringify({ activity, error, message: (error as Error).message, stack: (error as Error).stack })
+    for (const secret of [ACCESS_TOKEN, "access-2", REFRESH_TOKEN, CLIENT_SECRET]) expect(serialized).not.toContain(secret)
+    expect(activity.some(entry => entry.operation === "mail.labels.list" && entry.outcome === "failed")).toBe(true)
+  })
+
+  it.each([["patch", "patch"], ["Egg", "Egg"], ["gEt", "GET"]])("uses Fetch method normalization for %s", async (method, expected) => {
+    const test = createTestRuntime(mailConnection({ server: { read: true, write: ["fetch"] } }))
+    await connect(test)
+    await test.runtime.client("mail", {}).fetch("https://mail.example.com/mail/v1/users/me/labels", { method })
+    expect(test.provider.calls.at(-1)?.method).toBe(expected)
+  })
+
+  it.each(["gEt", "hEaD"])("executes normalized %s reads with read-only access in dry run", async method => {
+    const test = createTestRuntime(mailConnection({ server: { read: true } }))
+    await connect(test)
+    const response = await test.runtime.client("mail", { dryRun: true }).fetch("https://mail.example.com/mail/v1/users/me/labels", { method })
+    expect(response.status).toBe(200)
+    expect(test.provider.calls.at(-1)?.method).toBe(method.toUpperCase())
+  })
+
+  it.each(["HEAD", "OPTIONS"])("executes catalog %s reads in dry run", async method => {
+    const definition = mailConnection({ server: { read: true, write: ["mail.messages.modify"] } })
+    const provider = testProvider()
+    const test = createTestRuntime(async () => ({ default: {
+      ...definition,
+      provider: { ...provider, apis: { mail: { ...provider.apis.mail, methods: { ...provider.apis.mail.methods, "messages.modify": [method, "mail/v1/users/{userId}/messages/{id}", false] } } } },
+    } }))
+    await connect(test)
+    const result = await test.runtime.client("mail", { dryRun: true }).call("mail.messages.modify", { id: "m1", userId: "me" })
+    expect(result).toEqual({ id: "message-1" })
+    expect(test.provider.calls.at(-1)?.method).toBe(method)
+  })
+
+  it("sends fetch only to catalog origins", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const client = test.runtime.client("mail", {})
+    expect((await client.fetch("https://mail.example.com/mail/v1/users/me/labels")).status).toBe(200)
+    expect(await rejection(client.fetch("https://attacker.example.com/"))).toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(await rejection(client.fetch("https://mail.example.com/mail/v1/x", { body: "{}", method: "POST" }))).toMatchObject({ code: "CONNECTION_DENIED" })
+  })
+
+  it.each([new URLSearchParams("label=INBOX"), new FormData()])("rejects unsupported bodies from untyped callers before dispatch (%s)", async (body) => {
+    const test = createTestRuntime(mailConnection({ server: { read: true, write: ["fetch"] } }))
+    await connect(test)
+    const calls = test.provider.calls.length
+    const client = test.runtime.client("mail", {})
+    const result = Reflect.apply(client.fetch, client, ["https://mail.example.com/mail/v1/users/me/messages/m1/modify", { body, method: "POST" }])
+    expect(await rejection(result)).toMatchObject({ code: "CONNECTION_INVALID" })
+    expect(test.provider.calls).toHaveLength(calls)
+  })
+
+  it("applies the JSON content type only to typed method bodies", async () => {
+    const test = createTestRuntime(mailConnection({ server: { read: true, write: ["fetch", "mail.messages.modify"] } }))
+    await connect(test)
+    const client = test.runtime.client("mail", {})
+    await client.fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { body: "label=INBOX", method: "POST" })
+    const raw = test.provider.calls.at(-1)!
+    expect(raw.headers.has("content-type")).toBe(false)
+    expect(new Request(raw.url, { body: raw.body, headers: raw.headers, method: raw.method }).headers.get("content-type"))
+      .toBe("text/plain;charset=UTF-8")
+    await client.fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { body: "label=INBOX", headers: { "Content-Type": "application/x-www-form-urlencoded" }, method: "POST" })
+    expect(test.provider.calls.at(-1)!.headers.get("content-type")).toBe("application/x-www-form-urlencoded")
+    await client.call("mail.messages.modify", { id: "m1", requestBody: { addLabelIds: ["INBOX"] }, userId: "me" })
+    expect(test.provider.calls.at(-1)!.headers.get("content-type")).toBe("application/json")
+  })
+
+  it("preserves caller Accept headers and defaults absent values", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const client = test.runtime.client("mail", {})
+    await client.fetch("https://mail.example.com/mail/v1/users/me/labels", { headers: { Accept: "application/vnd.example+json" } })
+    expect(test.provider.calls.at(-1)!.headers.get("accept")).toBe("application/vnd.example+json")
+    await client.fetch("https://mail.example.com/mail/v1/users/me/labels")
+    expect(test.provider.calls.at(-1)!.headers.get("accept")).toBe("application/json")
+  })
+})
+
+describe("policy", () => {
+  it("allows declared writes for server code and asks approval for Agents by default", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    await expect(test.runtime.client("mail", {}).call("mail.messages.modify", { id: "m1", userId: "me" })).resolves.toEqual({ id: "message-1" })
+    expect(await rejection(test.runtime.client("mail", {}).call("mail.messages.send", { requestBody: { raw: "x" }, userId: "me" }))).toMatchObject({ code: "CONNECTION_DENIED" })
+    await expect(test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.labels.list", { userId: "me" })).resolves.toBeDefined()
+    const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.messages.modify", { id: "m1", userId: "me" }))
+    expect(isConnectionError(error) && error.reason).toBe("approval_required")
+  })
+
+  it("denies actors that the access map does not list and records the denial", async () => {
+    const test = createTestRuntime(mailConnection({
+      "schedule:gmail": { read: true, write: ["mail.messages.modify"] },
+    }))
+    await connect(test)
+    const scheduled = test.runtime.client("mail", { actor: "schedule:gmail", traceId: "trace-1" })
+    await expect(scheduled.call("mail.messages.modify", { id: "m1", userId: "me" })).resolves.toEqual({ id: "message-1" })
+    expect(await rejection(scheduled.call("mail.messages.send", { requestBody: { raw: "x" }, userId: "me" }))).toMatchObject({ code: "CONNECTION_DENIED" })
+    const calls = test.provider.calls.length
+    expect(await rejection(test.runtime.client("mail", { actor: "server" }).call("mail.labels.list", { userId: "me" }))).toMatchObject({ code: "CONNECTION_DENIED" })
+    expect(test.provider.calls).toHaveLength(calls)
+    const activity = await test.runtime.activity({ name: "mail" })
+    expect(activity.filter(entry => entry.outcome === "denied").map(entry => ({ actor: entry.actor, operation: entry.operation }))).toEqual(expect.arrayContaining([
+      { actor: { id: "server", kind: "service" }, operation: "mail.labels.list" },
+      { actor: { id: "schedule:gmail", kind: "service" }, operation: "mail.messages.send" },
+    ]))
+    expect(activity.find(entry => entry.operation === "mail.messages.modify" && entry.outcome === "succeeded")).toMatchObject({ traceId: "trace-1" })
+  })
+
+  it("requires exact names for high-risk writes", async () => {
+    const test = createTestRuntime(mailConnection({
+      "server": { read: true, write: ["mail.messages.*"] },
+      "schedule:send": { write: ["mail.messages.send"] },
+    }))
+    await connect(test)
+    expect(await rejection(test.runtime.client("mail", {}).call("mail.messages.send", { requestBody: { raw: "x" }, userId: "me" }))).toMatchObject({ code: "CONNECTION_DENIED" })
+    await expect(test.runtime.client("mail", { actor: "schedule:send" }).call("mail.messages.send", { requestBody: { raw: "x" }, userId: "me" })).resolves.toEqual({ id: "message-1" })
+  })
+})
+
+describe("dry run", () => {
+  it("reports writes without calling the provider", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const effects: ConnectionEffect[] = []
+    const client = test.runtime.client("mail", { dryRun: true, onEffect: effect => effects.push(effect) })
+    await expect(client.call("mail.labels.list", { userId: "me" })).resolves.toEqual({ labels: [{ id: "INBOX" }] })
+    const calls = test.provider.calls.length
+    await expect(client.call("mail.messages.modify", { id: "m1", requestBody: { addLabelIds: ["L1"] }, userId: "me" })).resolves.toBeUndefined()
+    expect((await client.fetch("https://mail.example.com/x", { body: "{}", method: "POST" }).catch(error => error)).code).toBe("CONNECTION_DENIED")
+    expect(test.provider.calls).toHaveLength(calls)
+    expect(effects).toEqual([{
+      kind: "mail.messages.modify",
+      payload: { connection: "mail", input: { id: "m1", requestBody: { addLabelIds: ["L1"] }, userId: "me" }, method: "POST", url: "https://mail.example.com/mail/v1/users/me/messages/m1/modify" },
+      read: false,
+      skipped: "dry-run",
+    }])
+  })
+
+  it("still denies writes that the policy denies", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const client = test.runtime.client("mail", { dryRun: true })
+    expect(await rejection(client.call("mail.messages.send", { requestBody: { raw: "x" }, userId: "me" }))).toMatchObject({ code: "CONNECTION_DENIED" })
+  })
+})
+
+describe("approvals", () => {
+  it.each(["disconnected", "grantless", "reauth_required", "revoked"])("requires a connected grant before approval creation (%s)", async (status) => {
+    const test = createTestRuntime(mailConnection({ "agent:labeller": { write: ["mail.messages.modify", "fetch"] } }))
+    if (status !== "disconnected") {
+      await connect(test)
+      if (status === "grantless") {
+        const current = await test.store.secrets.read("connection/mail")
+        const token = JSON.parse(current!.value)
+        delete token.grantId
+        await test.store.secrets.replace({ expectedRevision: current!.revision!, key: "connection/mail", value: JSON.stringify(token) })
+      }
+      else {
+        const state = await test.store.state.get("mail")
+        await test.store.state.put({ ...state!, status: status === "revoked" ? "revoked" : "reauth_required" })
+      }
+    }
+    const calls = test.provider.calls.length
+    const client = test.runtime.client("mail", { actor: "agent:labeller" })
+    expect(await rejection(client.call("mail.messages.modify", { id: "m1", userId: "me" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect(await rejection(client.fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { method: "POST" }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect((await test.runtime.approvals({ status: "pending" })).approvals).toEqual([])
+    expect(test.provider.calls).toHaveLength(calls)
+    await connect(test)
+    expect(await rejection(client.call("mail.messages.modify", { id: "m1", userId: "me" }))).toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
+    const [approval] = (await test.runtime.approvals({ status: "pending" })).approvals
+    expect(await test.runtime.approve({ id: approval!.id })).toMatchObject({ approval: { status: "executed" } })
+  })
+
+  it("preserves extension method casing in approval replay", async () => {
+    const test = createTestRuntime(mailConnection({ "agent:labeller": { write: ["fetch"] } }))
+    await connect(test)
+    const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller" }).fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { method: "Egg" }))
+    expect(error).toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
+    const id = isConnectionError(error) ? error.requestId! : ""
+    expect((await test.runtime.approvals({ status: "pending" })).approvals).toEqual([expect.objectContaining({ input: expect.objectContaining({ method: "Egg" }) })])
+    await test.runtime.approve({ id })
+    expect(test.provider.calls.at(-1)?.method).toBe("Egg")
+  })
+
+  it("preserves Accept when replaying an approved fetch", async () => {
+    const test = createTestRuntime(mailConnection({ "agent:labeller": { write: ["fetch"] } }))
+    await connect(test)
+    const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller" }).fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { method: "POST", body: "{}", headers: { Accept: "application/vnd.example+json" } }))
+    expect(error).toMatchObject({ code: "CONNECTION_APPROVAL_REQUIRED" })
+    const id = isConnectionError(error) ? error.requestId! : ""
+    await test.runtime.approve({ id })
+    expect(test.provider.calls.at(-1)!.headers.get("accept")).toBe("application/vnd.example+json")
+  })
+
+  it("replays an approved write once under the requesting actor", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller", invocationId: "inv-1" }).call("mail.messages.modify", { id: "m1", requestBody: { addLabelIds: ["L1"] }, userId: "me" }))
+    const id = isConnectionError(error) ? error.requestId! : ""
+    expect((await test.runtime.approvals({ status: "pending" })).approvals).toEqual([expect.objectContaining({ action: "mail.messages.modify", actor: "agent:labeller", id, invocationId: "inv-1", name: "mail", status: "pending" })])
+    const calls = test.provider.calls.length
+    const approved = await test.runtime.approve({ actor: "user:owner", id })
+    expect(approved).toMatchObject({ approval: { decidedBy: "user:owner", status: "executed" }, result: { id: "message-1" } })
+    expect(test.provider.calls.slice(calls)).toEqual([expect.objectContaining({ body: "{\"addLabelIds\":[\"L1\"]}", method: "POST" })])
+    expect(await rejection(test.runtime.approve({ id }))).toMatchObject({ code: "CONNECTION_INVALID" })
+    const activity = await test.runtime.activity({ name: "mail" })
+    expect(activity.find(entry => entry.operation === "mail.messages.modify" && entry.outcome === "succeeded")).toMatchObject({ actor: { id: "labeller", kind: "agent" }, invocationId: "inv-1" })
+  })
+
+  it("keeps a slow provider write active across concurrent runtime inspection", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const error = await rejection(
+      test.runtime
+        .client("mail", { actor: "agent:labeller" })
+        .call("mail.messages.modify", { id: "m1", userId: "me" }),
+    )
+    const id = isConnectionError(error) ? error.requestId! : ""
+    let finish!: (response: Response) => void
+    let started!: () => void
+    const dispatched = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const slowFetch: typeof fetch = async (input, init) => {
+      const url = input instanceof Request ? input.url : input.toString()
+      if (!url.includes("/modify")) return await test.provider.fetch(input, init)
+      started()
+      return await new Promise<Response>((resolve) => {
+        finish = resolve
+      })
+    }
+    const executing = createConnectionsRuntime({
+      definitions: { mail: mailConnection() },
+      fetch: slowFetch,
+      now: () => test.now.value,
+      store: test.store,
+    })
+    const inspecting = createConnectionsRuntime({
+      definitions: { mail: mailConnection() },
+      now: () => test.now.value,
+      store: test.store,
+    })
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    const replay = executing.approve({ id })
+    try {
+      await dispatched
+      for (let minute = 0; minute < 6; minute++) {
+        test.now.value += 60_000
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect((await inspecting.approvals({ status: "approved" })).approvals).toEqual([
+          expect.objectContaining({ id, status: "approved" }),
+        ])
+      }
+      expect(await rejection(inspecting.approve({ id }))).toMatchObject({
+        code: "CONNECTION_INVALID",
+      })
+      finish(Response.json({ id: "message-1" }))
+      expect(await replay).toMatchObject({
+        approval: { status: "executed" },
+        result: { id: "message-1" },
+      })
+      test.now.value += 5 * 60_000
+      expect((await inspecting.approvals({ status: "failed" })).approvals).toEqual([])
+    } finally {
+      finish(Response.json({ id: "message-1" }))
+      await replay
+      vi.useRealTimers()
     }
   })
 
-  it("passes the event to the key resolver", async () => {
-    const db = createDatabase()
-    const encryptionKey = vi.fn((_event: unknown) => base64urlKey())
-    const runtime = createConnectionsRuntime({ database: () => db, encryptionKey, registry })
-    const event = { method: "GET", path: "/x" }
+  it.each([
+    { dispatched: false, leased: false },
+    { dispatched: true, leased: false },
+    { dispatched: false, leased: true },
+    { dispatched: true, leased: true },
+  ])(
+    "recovers an interrupted replay without repeating a provider write, %j",
+    async ({ dispatched, leased }) => {
+      const test = createTestRuntime()
+      await connect(test)
+      const error = await rejection(
+        test.runtime
+          .client("mail", { actor: "agent:labeller" })
+          .call("mail.messages.modify", { id: "m1", userId: "me" }),
+      )
+      const id = isConnectionError(error) ? error.requestId! : ""
+      await test.store.approvals.transition(id, "pending", "approved", {
+        decidedAt: new Date(test.now.value).toISOString(),
+        decidedBy: "user:owner",
+        ...(leased
+          ? { executionExpiresAt: new Date(test.now.value + 5 * 60_000).toISOString() }
+          : {}),
+      })
+      // Model interruption either before dispatch or after the provider commits the write.
+      if (dispatched)
+        await test.runtime
+          .client("mail", {})
+          .call("mail.messages.modify", { id: "m1", userId: "me" })
+      const calls = test.provider.calls.length
+      const restarted = createConnectionsRuntime({
+        definitions: { mail: mailConnection() },
+        fetch: test.provider.fetch,
+        now: () => test.now.value,
+        store: test.store,
+      })
+      expect((await restarted.approvals({ status: "approved" })).approvals).toEqual([
+        expect.objectContaining({ id, status: "approved" }),
+      ])
+      test.now.value += 5 * 60_000
+      expect((await restarted.approvals({ status: "failed" })).approvals).toEqual([
+        expect.objectContaining({ error: "CONNECTION_EXECUTION_UNKNOWN", id, status: "failed" }),
+      ])
+      expect(await rejection(restarted.approve({ id }))).toMatchObject({
+        code: "CONNECTION_INVALID",
+      })
+      expect(test.provider.calls).toHaveLength(calls)
+    },
+  )
 
-    await runtime.inspect("api", event)
-    expect(encryptionKey).toHaveBeenCalledWith(event)
+  it("recovers interrupted approvals beyond the inspection page", async () => {
+    const test = createTestRuntime()
+    for (let index = 0; index < 101; index++) {
+      const id = `interrupted-${index}`
+      await test.store.approvals.create({ action: "mail.messages.modify", actor: "agent:labeller", createdAt: new Date(test.now.value).toISOString(), id, input: { input: { id: "m1", userId: "me" }, kind: "method" }, name: "mail", status: "pending" })
+      await test.store.approvals.transition(id, "pending", "approved", { decidedAt: new Date(test.now.value).toISOString() })
+    }
+    test.now.value += 5 * 60_000
+    expect((await test.runtime.approvals({ status: "approved" })).approvals).toEqual([])
+    expect(await test.store.approvals.get("interrupted-0")).toMatchObject({ error: "CONNECTION_EXECUTION_UNKNOWN", status: "failed" })
+    expect(test.provider.calls).toEqual([])
   })
 
-  it("accepts definition modules without a default export", async () => {
-    const db = createDatabase()
-    const definition: ConnectionDefinition = { provider: fakeProvider().provider }
-    const runtime = createConnectionsRuntime({ database: () => db, encryptionKey: () => testKey(), registry: { api: async () => definition, bad: async () => ({ default: {} }) } })
+  it("denies a pending write without calling the provider", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.messages.modify", { id: "m1", userId: "me" }))
+    const id = isConnectionError(error) ? error.requestId! : ""
+    const calls = test.provider.calls.length
+    expect(await test.runtime.deny({ actor: "user:owner", id })).toMatchObject({ decidedBy: "user:owner", status: "denied" })
+    expect(test.provider.calls).toHaveLength(calls)
+    expect(await rejection(test.runtime.approve({ id }))).toMatchObject({ code: "CONNECTION_INVALID" })
+  })
 
-    await expect(runtime.inspect("api")).resolves.toMatchObject({ status: "disconnected" })
-    await expectCode(runtime.inspect("bad"), "CONNECTIONS_NOT_FOUND")
+  it("marks a failed replay", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const error = await rejection(test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.messages.modify", { id: "m1", userId: "me" }))
+    const id = isConnectionError(error) ? error.requestId! : ""
+    await test.runtime.revoke({ name: "mail" })
+    expect(await rejection(test.runtime.approve({ id }))).toMatchObject({ code: "CONNECTION_REAUTH_REQUIRED" })
+    expect((await test.runtime.approvals({})).approvals).toEqual([expect.objectContaining({ error: "CONNECTION_REAUTH_REQUIRED", id, status: "failed" })])
   })
 })

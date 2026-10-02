@@ -1,10 +1,11 @@
 {
   "name": "@vite-hub/connections",
   "version": "0.0.4",
-  "description": "App-owned OAuth connections with governed access and activity for ViteHub.",
+  "description": "Provider OAuth connections with typed, governed, and audited calls for ViteHub.",
   "keywords": [
     "connections",
     "oauth",
+    "gmail",
     "vite",
     "vitehub"
   ],
@@ -25,9 +26,9 @@
   "sideEffects": false,
   "types": "./dist/index.d.ts",
   "imports": {
-    "#vitehub/connections/runtime": {
-      "types": "./dist/runtime/empty-runtime.d.ts",
-      "default": "./dist/runtime/empty-runtime.js"
+    "#vitehub/connections/registry": {
+      "types": "./dist/runtime/empty-registry.d.ts",
+      "default": "./dist/runtime/empty-registry.js"
     }
   },
   "exports": {
@@ -42,13 +43,13 @@
   "scripts": {
     "build": "vp pack",
     "dev": "vp pack --watch",
+    "generate": "node scripts/generate-google.ts gmail v1",
     "typecheck": "tsc --noEmit -p ./tsconfig.json",
-    "test": "vp run -t @vite-hub/connections#build && vp test"
+    "test": "vp run -t vite-hub#build && vp run -t @vite-hub/connections#build && vp test"
   },
   "dependencies": {
     "@vite-hub/env": "workspace:*",
     "@vite-hub/runtime": "workspace:*",
-    "drizzle-orm": "catalog:database",
     "nostics": "catalog:runtime",
     "pathe": "catalog:unjs",
     "valibot": "catalog:runtime"
@@ -57,6 +58,7 @@
     "@libsql/client": "catalog:database",
     "@types/node": "catalog:tooling",
     "@vite-hub/internal": "workspace:*",
+    "drizzle-orm": "catalog:database",
     "miniflare": "4.20260714.0",
     "publint": "catalog:tooling",
     "typescript": "catalog:tooling",
@@ -65,10 +67,13 @@
     "vitest": "catalog:tooling"
   },
   "peerDependencies": {
-    "@vite-hub/database": "workspace:*",
+    "drizzle-orm": "catalog:database",
     "vite": "catalog:vite-compat"
   },
   "peerDependenciesMeta": {
+    "drizzle-orm": {
+      "optional": true
+    },
     "vite": {
       "optional": true
     }
