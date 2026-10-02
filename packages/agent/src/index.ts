@@ -7946,6 +7946,7 @@ async function executeAgentInvocation<
           : {}),
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
       }, {
+        // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
         agentName: agentInvocationName(definition as AgentDefinition, context),
         cancellationDriver: invocationCancellationDriver(definition),
         ...(inheritedClaim ? { replaceClaimToken: inheritedClaim } : {}),
