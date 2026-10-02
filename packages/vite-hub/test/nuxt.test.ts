@@ -365,7 +365,32 @@ describe("ViteHub Nuxt integration", () => {
     const resolved = await resolver.resolveId.call({}, "#vitehub/email/definition", undefined, {})
     expect(resolved).toBe("\0vitehub-test-email-definition")
     expect(await resolver.load.call({}, String(resolved))).toContain("email resolver reached")
-    expect(await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8"))
+    const generatedPlugin = "/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs"
+    expect(await readFile(generatedPlugin, "utf8"))
+      .toContain("#vitehub/email/definition")
+    const result = await build({
+      bundle: true,
+      entryPoints: [generatedPlugin],
+      format: "esm",
+      packages: "external",
+      platform: "node",
+      write: false,
+      plugins: [{
+        name: "nitro-email-resolver-test",
+        setup(pluginBuild) {
+          pluginBuild.onResolve({ filter: /^#vitehub\/email\/definition$/ }, async args => ({
+            path: String(await Reflect.apply(resolver.resolveId, {}, [args.path, undefined, {}, {}])),
+            namespace: "nitro-email",
+          }))
+          pluginBuild.onLoad({ filter: /.*/, namespace: "nitro-email" }, async args => ({
+            contents: String(await Reflect.apply(resolver.load, {}, [args.path])),
+            loader: "js",
+          }))
+        },
+      }],
+    })
+    expect(result.outputFiles?.[0]?.text).toContain("email resolver reached")
+    expect(await readFile(generatedPlugin, "utf8"))
       .toContain("vite-hub/_internal/email/runtime/console")
   })
 
