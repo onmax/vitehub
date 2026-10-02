@@ -1,3 +1,4 @@
+import * as v from "valibot"
 import { defineCapability } from "../capability-runtime.ts"
 import { ViteHubError } from "@vite-hub/runtime"
 
@@ -25,13 +26,16 @@ export type RateLimitIdentityResolver = (
   context: AgentCapabilityRuntimeContext,
 ) => MaybePromise<string | null | undefined>
 
+/** Required Capability operations, with optional inspection methods. `createRateLimiter()` supplies all methods. */
+export type RateLimitCapabilityLimiter = Pick<RateLimiter, "capabilities" | "consume" | "policy"> & Partial<Pick<RateLimiter, "peek" | "reset">>
+
 export type RateLimitLimiter =
-  | RateLimiter
+  | RateLimitCapabilityLimiter
   | RateLimitLimiterResolver
 
 export type RateLimitLimiterResolver = (
   context: AgentCapabilityRuntimeContext,
-) => MaybePromise<RateLimiter>
+) => MaybePromise<RateLimitCapabilityLimiter>
 
 interface RateLimitDecisionContext {
   capabilityId: string
@@ -181,6 +185,10 @@ async function resolveScope(
   return stableKeyPart(id)
 }
 
+function hasInspectionMethods(limiter: RateLimitCapabilityLimiter): limiter is RateLimiter {
+  return v.is(v.object({ peek: v.function(), reset: v.function() }), limiter)
+}
+
 async function resolveLimiter(
   limiter: RateLimitLimiter,
   context: AgentCapabilityRuntimeContext,
@@ -189,7 +197,14 @@ async function resolveLimiter(
   if (!resolved || typeof resolved.consume !== "function") {
     throw agentDiagnostics.AGENT_R0162({ message: "[vitehub] rateLimit({ limiter }) must be a RateLimiter." })
   }
-  return resolved
+  if (hasInspectionMethods(resolved)) return resolved
+  return {
+    capabilities: resolved.capabilities,
+    consume: resolved.consume.bind(resolved),
+    policy: resolved.policy,
+    peek: resolved.peek?.bind(resolved) ?? (async () => ({ limit: resolved.policy.limit, reason: "This Capability limiter does not support peek().", status: "unsupported", windowMs: resolved.policy.windowMs })),
+    reset: resolved.reset?.bind(resolved) ?? (async () => ({ reason: "This Capability limiter does not support reset().", status: "unsupported" })),
+  }
 }
 
 function resolveRejectedMessage(

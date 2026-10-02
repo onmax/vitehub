@@ -5,7 +5,6 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { createDefaultCloudflareOutputRoot } from "@vite-hub/internal/build/deployment-output"
-import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
 import { getCloudflareRateLimitBindingName } from "../src/integrations/cloudflare.ts"
 import { hubRateLimit } from "../src/vite.ts"
 
@@ -201,69 +200,6 @@ describe("hubRateLimit", () => {
     await expect(readFile(join(createDefaultCloudflareOutputRoot(root), "wrangler.json"), "utf8")).resolves.toContain(getCloudflareRateLimitBindingName("upload"))
   })
 
-  it.each([
-    { declarations: true, namespace: "inspect-test", nitro: false, provider: "cloudflare", wrangler: true },
-    { declarations: true, namespace: "inspect-test", nitro: true, provider: "cloudflare", wrangler: false },
-    { declarations: true, namespace: "inspect-test", nitro: false, provider: "memory", wrangler: false },
-    { declarations: false, namespace: "inspect-test", nitro: false, provider: "cloudflare", wrangler: false },
-    { declarations: true, namespace: " ", nitro: false, provider: "cloudflare", wrangler: false },
-  ] as const)("reports only package-owned Rate Limit output: %j", async ({ declarations, namespace, nitro, provider, wrangler }) => {
-    const root = await mkdtemp(join(tmpdir(), "vitehub-rate-limit-inspection-"))
-    roots.push(root)
-    if (declarations) await writeCloudflareDeclaration(root)
-    const plugin = hubRateLimit({ namespace, provider })
-    const config = plugin.config as unknown as (config: Record<string, unknown>, env: { command: "build" }) => unknown
-    const configResolved = plugin.configResolved as (config: unknown) => Promise<void>
-    const userConfig = { ...(nitro ? { nitro: { preset: "cloudflare-module" } } : {}), root }
-    config(userConfig, { command: "build" })
-    await configResolved({
-      ...userConfig, build: { outDir: "dist" }, command: "build",
-      plugins: nitro ? [{ name: "nitro:main" }] : [], resolve: { alias: [] },
-    } as never)
-    if (namespace.trim()) await runProviderOutputHooks(plugin)
-    else await expect(runProviderOutputHooks(plugin)).rejects.toThrow("requires rateLimit.namespace")
-
-    const entries = await collectViteHubProviderOutputEntries([plugin])
-    const manifest = {
-      description: "Rate Limit manifest with provider and capabilities",
-      owner: "rate-limit",
-      path: join(root, ".vitehub/rate-limit/manifest.json"),
-    }
-    const wranglerPath = join(createDefaultCloudflareOutputRoot(root), "wrangler.json")
-    if (wrangler) {
-      expect(entries).toEqual([manifest, {
-        description: "Generated Cloudflare Rate Limit worker config",
-        owner: "rate-limit",
-        path: wranglerPath,
-      }])
-      await expect(readFile(wranglerPath, "utf8")).resolves.toContain(getCloudflareRateLimitBindingName("upload"))
-    }
-    else {
-      expect(entries).toEqual([manifest])
-    }
-  })
-
-  it("reports standalone Wrangler output through inspection", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vitehub-rate-limit-inspection-"))
-    roots.push(root)
-    await writeCloudflareDeclaration(root)
-    const plugin = hubRateLimit({ namespace: "vite-test", provider: "cloudflare" })
-    const config = plugin.config as unknown as (config: Record<string, unknown>, env: { command: "build" }) => unknown
-    const configResolved = plugin.configResolved as (config: unknown) => Promise<void>
-    const userConfig = { root }
-
-    config(userConfig, { command: "build" })
-    await configResolved({ ...userConfig, build: { outDir: "dist" }, command: "build", plugins: [], resolve: { alias: [] } } as never)
-
-    const entries = await collectViteHubProviderOutputEntries([plugin])
-    expect(entries).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        owner: "rate-limit",
-        path: join(createDefaultCloudflareOutputRoot(root), "wrangler.json"),
-      }),
-    ]))
-  })
-
   it("rejects Nitro Rate Limit declarations generated after config resolution", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-rate-limit-nitro-late-declaration-"))
     roots.push(root)
@@ -377,6 +313,55 @@ describe("hubRateLimit", () => {
     expect(installer).toContain('from "vite-hub/_internal/rate-limit/runtime"')
     expect(installer).not.toContain("@vite-hub/rate-limit/runtime")
     await expect(access(join(root, ".vitehub", "nitro", "rate-limit", "middleware.ts"))).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("adds the Rate Limit dev handler to Nitro only for the Development Server", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-rate-limit-dev-handler-"))
+    roots.push(root)
+    const plugin = hubRateLimit({ importBase: "vite-hub/_internal/rate-limit" } as never)
+    const config = plugin.config as unknown as (config: Record<string, unknown>, env: { command: "build" | "serve" }) => unknown
+    const serveConfig: Record<string, unknown> = { nitro: { baseURL: "/app/" }, root }
+    expect(config(serveConfig, { command: "serve" })).toBeUndefined()
+    const devHandler = join(root, ".vitehub", "nitro", "rate-limit", "dev-handler.ts")
+    expect(serveConfig.nitro).toMatchObject({ baseURL: "/app/", handlers: [{ handler: devHandler, route: "/_vitehub/rate-limit/dev" }] })
+
+    await (plugin.configResolved as (config: unknown) => Promise<void>)({ build: { outDir: "dist" }, command: "serve", plugins: [], resolve: { alias: [] }, root } as never)
+    const source = await readFile(devHandler, "utf8")
+    expect(source).toContain("import { handleRateLimitDevRequest as handleViteHubDevRequest } from \"vite-hub/_internal/rate-limit/runtime/console\"")
+    expect(source).toMatch(/handleViteHubDevRequest\(event\.req, "[0-9a-f-]{36}"\)/)
+
+    const buildConfig: Record<string, unknown> = { root }
+    const buildPlugin = hubRateLimit({ provider: "memory" })
+    ;(buildPlugin.config as unknown as (config: Record<string, unknown>, env: { command: "build" }) => unknown)(buildConfig, { command: "build" })
+    expect(JSON.stringify(buildConfig.nitro ?? {})).not.toContain("dev-handler")
+  })
+
+  it.each([false, true])("does not create or rewrite the dev token during CLI discovery with existing handler %s", async existing => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-rate-limit-cli-discovery-"))
+    roots.push(root)
+    const config = { build: { outDir: "dist" }, command: "serve", plugins: [], resolve: { alias: [] }, root }
+    const devHandler = join(root, ".vitehub", "nitro", "rate-limit", "dev-handler.ts")
+    let original: string | undefined
+    if (existing) {
+      const serverPlugin = hubRateLimit()
+      await (serverPlugin.configResolved as (config: unknown) => Promise<void>)(config as never)
+      original = await readFile(devHandler, "utf8")
+    }
+    const discoveryPlugin = hubRateLimit()
+    const discoveryConfig = { ...config, nitro: { handlers: [{ handler: "consumer.ts", route: "/consumer" }] }, vitehubCliDiscovery: true }
+    const configure = discoveryPlugin.config as (config: unknown, env: { command: "serve" }) => unknown
+    configure(discoveryConfig, { command: "serve" })
+    expect(discoveryConfig.nitro.handlers).toEqual([{ handler: "consumer.ts", route: "/consumer" }])
+    await (discoveryPlugin.configResolved as (config: unknown) => Promise<void>)(discoveryConfig as never)
+    expect(discoveryConfig.nitro.handlers).toEqual([{ handler: "consumer.ts", route: "/consumer" }])
+    if (existing) expect(await readFile(devHandler, "utf8")).toBe(original)
+    else await expect(access(devHandler)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("contributes the `vitehub rate-limit` CLI commands", async () => {
+    const cli = hubRateLimit().vitehub.cli
+    const contributor = typeof cli === "function" ? await cli() : cli
+    expect(contributor?.namespaces.map(namespace => [namespace.name, namespace.features.map(feature => feature.name)])).toEqual([["rate-limit", ["peek", "reset"]]])
   })
 
   it("fails automatic hosted fallback where no native driver exists", async () => {

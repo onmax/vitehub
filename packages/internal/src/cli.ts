@@ -1,6 +1,7 @@
-import { isPlainObject } from "./object.ts"
-
+import { redactInspectionText, redactInspectionValue } from "./inspect.ts"
 import type { ProvisionStep } from "./provision.ts"
+
+import { isPlainObject } from "./object.ts"
 
 export interface ViteHubCliStreams {
   stderr: { write: (chunk: string | Uint8Array) => unknown }
@@ -149,13 +150,15 @@ export interface ViteHubDevEndpoint {
 export interface ViteHubDevServerDiscoveryOptions {
   endpoint: ViteHubDevEndpoint
   fetch: typeof fetch
+  /** Parses the untrusted discovery payload into the caller's contract. */
+  parseDiscovery?: (value: unknown) => unknown
   /**
    * Checks the root that the dev server reports. Defaults to exact equality with `rootDir`.
    */
   isCompatibleRoot?: (rootDir: string, serverRoot: string) => boolean
   rootDir: string
   serverUrl: string
-  signal?: AbortSignal
+  signal?: AbortSignal | null
   stderr: ViteHubCliStreams["stderr"]
 }
 
@@ -171,8 +174,8 @@ export function resolveViteHubDevServerUrl(env: NodeJS.ProcessEnv): string {
 
 function parseViteHubDevTimeout(value: string, error: (message: string) => Error): number {
   const timeout = Number(value)
-  // JavaScript timers clamp larger durations to one millisecond.
-  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 2_147_483_647) {
+  if (timeout > 2_147_483_647) throw error("--timeout must be at most 2147483647 milliseconds.")
+  if (!Number.isInteger(timeout) || timeout < 1) {
     throw error("--timeout must be an integer from 1 to 2147483647 milliseconds.")
   }
   return timeout
@@ -241,25 +244,75 @@ export async function fetchViteHubDevEndpoint(
   })
 }
 
+function redactInspectionUrlPart(value: string): string {
+  const separator = value[0]
+  if (separator !== "?" && separator !== "#") return redactInspectionText(value)
+
+  const redacted = value.slice(1).split("&").map(pair => {
+    const equals = pair.indexOf("=")
+    if (equals < 0) return pair
+    const rawKey = pair.slice(0, equals)
+    try {
+      // SAFETY: URLSearchParams.next().value is a string tuple for a non-empty parameter pair.
+      const entry = new URLSearchParams(pair).entries().next().value as [string, string] | undefined
+      if (entry && redactInspectionValue(entry[1], entry[0]) === "[redacted]") return `${rawKey}=[redacted]`
+    }
+    catch {
+      // Keep malformed components for the text redactor below.
+    }
+    return pair
+  }).join("&")
+  return `${separator}${redactInspectionText(redacted)}`
+}
+
+function devServerDisplayUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    const query = redactInspectionUrlPart(url.search)
+    const fragment = redactInspectionUrlPart(url.hash)
+    const hasSecretQuery = query !== url.search
+    const hasSecretFragment = fragment !== url.hash
+    if (!url.username && !url.password && !hasSecretQuery && !hasSecretFragment) {
+      return redactInspectionText(url.origin === "null" ? value.replace(/^[\s\S]+@/, "[redacted]@") : value)
+    }
+    if (url.username) url.username = "[redacted]"
+    if (url.password) url.password = "[redacted]"
+    const display = url.href.replace(/%5Bredacted%5D/g, "[redacted]")
+    const queryStart = display.indexOf("?")
+    const fragmentStart = display.indexOf("#")
+    const pathEnd = [queryStart, fragmentStart].filter(index => index >= 0).sort((a, b) => a - b)[0] ?? display.length
+    const path = display.slice(0, pathEnd)
+    const redactedPath = redactInspectionText(url.origin === "null" ? path.replace(/^[\s\S]+@/, "[redacted]@") : path)
+    return `${redactedPath}${queryStart >= 0 ? query : ""}${fragmentStart >= 0 ? fragment : ""}`
+  }
+  catch {
+    const redacted = value.replace(/\/\/[\s\S]+@/g, "//[redacted]@").replace(/^[\s\S]+@/, "[redacted]@")
+    const queryStart = redacted.indexOf("?")
+    const fragmentStart = redacted.indexOf("#")
+    const pathEnd = [queryStart, fragmentStart].filter(index => index >= 0).sort((a, b) => a - b)[0] ?? redacted.length
+    const path = redacted.slice(0, pathEnd)
+    const queryEnd = fragmentStart >= 0 && fragmentStart > queryStart ? fragmentStart : undefined
+    const query = queryStart >= 0 ? redactInspectionUrlPart(redacted.slice(queryStart, queryEnd)) : ""
+    const fragment = fragmentStart >= 0 ? redactInspectionUrlPart(redacted.slice(fragmentStart)) : ""
+    return `${redactInspectionText(path)}${query}${fragment}`
+  }
+}
+
 /**
  * Finds a Compatible Vite Development Server through the discovery `GET` of a guarded dev endpoint.
  *
  * Writes the reason to `stderr` and returns `undefined` when the URL is not
  * valid, the server does not answer, or the server root does not match.
  */
-export function discoverViteHubDevServer(options: ViteHubDevServerDiscoveryOptions): Promise<ViteHubDevServerTarget<Record<string, unknown>> | undefined>
-export function discoverViteHubDevServer<TDiscovery extends { root?: unknown }>(
-  options: ViteHubDevServerDiscoveryOptions & { parseDiscovery: (value: unknown) => TDiscovery },
-): Promise<ViteHubDevServerTarget<TDiscovery> | undefined>
-export async function discoverViteHubDevServer(
-  options: ViteHubDevServerDiscoveryOptions & { parseDiscovery?: (value: unknown) => { root?: unknown } },
-): Promise<ViteHubDevServerTarget<{ root?: unknown }> | undefined> {
+export async function discoverViteHubDevServer<TDiscovery extends { root?: unknown } = Record<string, unknown>>(
+  options: ViteHubDevServerDiscoveryOptions & { parseDiscovery?: (value: unknown) => TDiscovery },
+): Promise<ViteHubDevServerTarget<TDiscovery> | undefined> {
   let url: string
   try {
     url = viteHubDevEndpointUrl(options.serverUrl, options.endpoint.route)
   }
   catch {
-    options.stderr.write(`Invalid Vite Development Server URL: ${options.serverUrl}\n`)
+    options.stderr.write(`Invalid Vite Development Server URL: ${devServerDisplayUrl(options.serverUrl)}\n`)
     return
   }
   let response: Response
@@ -270,23 +323,24 @@ export async function discoverViteHubDevServer(
     })
   }
   catch {
-    options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
+    options.stderr.write(`No Compatible Vite Development Server found at ${devServerDisplayUrl(options.serverUrl)}.\n`)
     return
   }
   if (!response.ok) {
-    options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
+    options.stderr.write(`No Compatible Vite Development Server found at ${devServerDisplayUrl(options.serverUrl)}.\n`)
     return
   }
-  const value: unknown = await response.json().catch(() => undefined)
-  const discovery = options.parseDiscovery ? options.parseDiscovery(value) : isPlainObject(value) ? value : {}
+  const payload: unknown = await response.json().catch(() => ({}))
+  // SAFETY: owner parsers establish their discovery shape; unparsed responses are normalized to plain records.
+  const discovery = (options.parseDiscovery ? options.parseDiscovery(payload) : isPlainObject(payload) ? payload : {}) as TDiscovery
   const isCompatibleRoot = options.isCompatibleRoot ?? ((rootDir: string, serverRoot: string) => serverRoot === rootDir)
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate the untrusted discovery root before comparing it with the local project.
   if (discovery.root !== undefined && typeof discovery.root !== "string") {
     options.stderr.write("Invalid Vite Development Server discovery root.\n")
     return
   }
-  if (discovery.root !== undefined && !isCompatibleRoot(options.rootDir, discovery.root)) {
-    options.stderr.write(`Compatible Vite Development Server root mismatch: ${discovery.root}\n`)
+  if (typeof discovery.root === "string" && !isCompatibleRoot(options.rootDir, discovery.root)) {
+    options.stderr.write(`Compatible Vite Development Server root mismatch: ${devServerDisplayUrl(discovery.root)}\n`)
     return
   }
   return { discovery, url }
