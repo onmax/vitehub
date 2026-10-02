@@ -86,6 +86,7 @@ const workspaceDevEndpoint = {
 }
 
 interface WorkspaceDevDiscovery {
+  root?: unknown
   workspaceDevTokenServerId?: unknown
   workspaces?: Array<{ name?: unknown }>
 }
