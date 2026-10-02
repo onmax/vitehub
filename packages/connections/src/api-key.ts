@@ -74,7 +74,7 @@ export function apiKey<const TApis extends object = object>(options: ApiKeyProvi
   }
   if (scheme !== undefined) Object.assign(provider, { scheme })
   if (options.verify) provider.verify = options.verify
-  const catalogsSafe = Object.values(provider.apis).every(catalog => {
+  const catalogsSafe = (Object.values(provider.apis) as ConnectionApiCatalog[]).every(catalog => {
     try {
       const url = new URL(catalog.rootUrl)
       return !url.username && !url.password && !url.search && !url.hash && apiKeyOrigin(catalog.rootUrl) !== undefined
