@@ -317,7 +317,7 @@ describe("agent public types", () => {
           expectTypeOf(event.message.channel).toEqualTypeOf<"mail">()
           expectTypeOf(event.message.kind).toEqualTypeOf<"mail">()
           expectTypeOf(event.message.data).toEqualTypeOf<{ id: string }>()
-          expectTypeOf(event.message.label).toEqualTypeOf<(input: { add: string[] }) => Promise<{ applied: number }>>()
+          expectTypeOf(event.message.label).toEqualTypeOf<(input: { add: string[] }) => Promise<{ applied: number } | undefined>>()
           expectTypeOf(event.message.subject).toEqualTypeOf<() => Promise<string>>()
           // @ts-expect-error The mail Channel declares no reply method.
           void event.message.reply

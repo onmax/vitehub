@@ -323,7 +323,6 @@ export async function dispatchChannelItems<TRuntimeConfig extends AgentRuntimeCo
   // Items do not inherit the webhook request, its delivery record, or its run.
   const base: AgentRuntimeContext<TRuntimeConfig> = {
     ...(runtime.agentIdentity ? { agentIdentity: runtime.agentIdentity } : {}),
-    ...(runtime.box ? { box: runtime.box } : {}),
     ...(runtime.capabilities ? { capabilities: runtime.capabilities } : {}),
     ...(runtime.cloudflare ? { cloudflare: runtime.cloudflare } : {}),
     ...(runtime.runtimeConfig ? { runtimeConfig: runtime.runtimeConfig } : {}),

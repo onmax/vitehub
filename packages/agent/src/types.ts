@@ -645,6 +645,7 @@ export type AgentWebhookSecretToken<TRuntimeConfig extends AgentRuntimeConfig = 
 export interface AgentWebhookRegistrationDefinition<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   adapter?: string
   channelId?: string
+  durableState?: boolean
   id?: string
   method?: "POST" | (string & {})
   path?: string
@@ -655,6 +656,7 @@ export interface AgentWebhookRegistrationDefinition<TRuntimeConfig extends Agent
     toleranceSeconds?: number
   } | {
     verify: (input: {
+      context?: AgentCallbackContext<TRuntimeConfig>
       header: string
       rawBody: Uint8Array
       request: Request
@@ -2268,13 +2270,13 @@ export type AgentChannelMessageCalls<TMethods> = {
 
 /** Message methods available when Discord, Slack, Teams, or Telegram has an adapter and messages are enabled. */
 export interface AgentChannelReplyCalls {
-  readonly reply?: (input: AgentChannelDeliveryReplyInput) => Promise<void>
+  readonly reply: (input: AgentChannelDeliveryReplyInput) => Promise<void>
 }
 
 /** Message methods that the GitHub Channel provides. They exist only when the Channel has a GitHub App. */
 export interface AgentGitHubMessageCalls {
   readonly reaction?: (input: AgentChannelDeliveryReactionInput) => Promise<void>
-  readonly reply?: (input: AgentChannelDeliveryReplyInput) => Promise<void>
+  readonly reply: (input: AgentChannelDeliveryReplyInput) => Promise<void>
   readonly status?: (input: AgentChannelDeliveryStatusInput) => Promise<void>
 }
 

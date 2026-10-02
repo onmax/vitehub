@@ -283,7 +283,7 @@ describe("replayChannel()", () => {
     }
   })
 
-  it("keeps inline execution recoverable while its claim excludes concurrent replay", async () => {
+  it("marks started inline execution non-recoverable while its claim excludes concurrent replay", async () => {
     const invocations = memoryInvocations()
     const { channel } = mailbox()
     let entered!: () => void
@@ -294,7 +294,7 @@ describe("replayChannel()", () => {
     const execution = replayChannel(agent, "mailbox", { limit: 1 })
     try {
       await Promise.race([running, execution])
-      expect(await invocations.getByRunId(channelMessageRunId("mailbox", "m1"))).toMatchObject({ status: "running", annotations: { [pendingAgentInvocationAnnotation]: true } })
+      expect(await invocations.getByRunId(channelMessageRunId("mailbox", "m1"))).toMatchObject({ status: "running", annotations: { [pendingAgentInvocationAnnotation]: false } })
       expect((await replayChannel(agent, "mailbox", { limit: 1 })).skipped).toBe(1)
       release()
       expect((await execution).processed).toBe(1)
@@ -302,7 +302,7 @@ describe("replayChannel()", () => {
     } finally { release(); await execution }
   })
 
-  it.each(["pending", "running"] as const)("recovers an inline %s reservation after its process and lease are lost", async status => {
+  it.each(["pending", "running"] as const)("recovers only an unstarted inline %s reservation after its process and lease are lost", async status => {
     const invocations = memoryInvocations()
     const { agent, run } = labeller({ invocations })
     const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
@@ -314,8 +314,9 @@ describe("replayChannel()", () => {
       await journal?.handoffClaim()
       expect(await replayChannel(agent, "mailbox", { limit: 1, runtime })).toMatchObject({ failed: status === "pending" ? 1 : 0, processed: 0, skipped: status === "pending" ? 0 : 1 })
       await vi.advanceTimersByTimeAsync(30_001)
-      expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).processed).toBe(1)
-      expect(run).toHaveBeenCalledOnce()
+      expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).processed).toBe(status === "pending" ? 1 : 0)
+      if (status === "pending") expect(run).toHaveBeenCalledOnce()
+      else expect(run).not.toHaveBeenCalled()
       expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).skipped).toBe(1)
     } finally { vi.useRealTimers() }
   })
