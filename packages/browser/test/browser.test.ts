@@ -437,6 +437,79 @@ describe("Browser Sessions", () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
+  it("retains controller ownership when attachment rollback fails", async () => {
+    const { close, controller, provider, release } = fixture()
+    const traceError = new Error("attach trace failed")
+    const releaseError = new Error("detach failed")
+    const trace = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(traceError)
+    release.mockRejectedValueOnce(releaseError)
+    const session = await createBrowser({ provider, trace }).open()
+
+    await expect(session.attach(controller)).rejects.toMatchObject({ errors: [traceError, releaseError] })
+    expect(session.inspect().state).toBe("controlled")
+    await expect(session.attach(controller)).rejects.toMatchObject({ code: "BROWSER_SESSION_STATE" })
+    await expect(session.handoff({ audience: "run-1", mode: "live" })).rejects.toMatchObject({
+      code: "BROWSER_SESSION_STATE",
+    })
+    expect(trace.mock.calls.map(([event]) => event.name)).not.toContain("browser.controller.detach")
+
+    await session.close()
+    expect(close).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
+    expect(session.inspect().state).toBe("closed")
+  })
+
+  it("allows another controller after attachment rollback succeeds even if detach tracing fails", async () => {
+    const { controller, provider, release } = fixture()
+    const traceError = new Error("attach trace failed")
+    const detachError = new Error("detach trace failed")
+    const trace = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(traceError)
+      .mockRejectedValueOnce(detachError)
+    const session = await createBrowser({ provider, trace }).open()
+
+    await expect(session.attach(controller)).rejects.toMatchObject({ errors: [traceError, detachError] })
+    expect(session.inspect().state).toBe("released")
+    expect(release).toHaveBeenCalledOnce()
+
+    const control = await session.attach(controller)
+    await control.release()
+    await session.close()
+    expect(release).toHaveBeenCalledTimes(2)
+  })
+
+  it("allows provider cleanup while attachment rollback is pending", async () => {
+    const { close, controller, provider, release } = fixture()
+    const traceError = new Error("attach trace failed")
+    const trace = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(traceError)
+    let finishRelease!: () => void
+    let releaseStarted!: () => void
+    const started = new Promise<void>(resolve => { releaseStarted = resolve })
+    release.mockImplementation(async () => await new Promise<void>(resolve => {
+      finishRelease = resolve
+      releaseStarted()
+    }))
+    const session = await createBrowser({ provider, trace }).open()
+    const attaching = session.attach(controller)
+    const result = expect(attaching).rejects.toBe(traceError)
+    await started
+
+    try {
+      await expect(session.close()).resolves.toBeUndefined()
+      expect(close).toHaveBeenCalledOnce()
+    }
+    finally {
+      finishRelease()
+      await result
+    }
+    expect(session.inspect().state).toBe("closed")
+  })
+
   it("restores session ownership when handoff tracing fails", async () => {
     const { close, provider } = fixture()
     const traceError = new Error("trace unavailable")

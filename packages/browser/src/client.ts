@@ -195,35 +195,31 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
     }
 
     this.attaching = true
-    let attached: Awaited<ReturnType<typeof controller.attach>> | undefined
+    let control: BrowserControl<TClient> | undefined
     try {
-      attached = await controller.attach(this.providerSession.connection, {
+      const attached = await controller.attach(this.providerSession.connection, {
         provider: this.owner.provider,
         sessionId: this.id,
       })
       this.attaching = false
       if (this.closing || this.state !== "released") {
-        const lateControl = attached
-        attached = undefined
-        await releaseLateController(Promise.resolve(lateControl.release()))
+        await releaseLateController(Promise.resolve(attached.release()))
         throw browserSessionStateError("attach a controller to", this.state)
       }
       this.state = "controlled"
       this.controller = controller.name
       this.lastControllerSupportsHandoff = controller.features.attachExistingSession
         && attached.preservesSessionOnRelease !== false
-      await this.owner.emit("browser.controller.attach", this, { controller: controller.name })
-      const control = attached
       let released = false
       let releasePromise: Promise<void> | undefined
-      return {
-        client: control.client,
+      control = {
+        client: attached.client,
         release: async () => {
           if (releasePromise) return await releasePromise
           if (released) return
           this.detaching = true
           const releasing = (async () => {
-            await control.release()
+            await attached.release()
             released = true
             this.detaching = false
             if (this.state === "controlled") this.state = "released"
@@ -239,26 +235,18 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
           }
         },
       }
+      await this.owner.emit("browser.controller.attach", this, { controller: controller.name })
+      return control
     }
     catch (error) {
       this.attaching = false
       const errors = [error]
-      if (attached) {
+      if (control) {
         try {
-          await attached.release()
+          await control.release()
         }
         catch (releaseError) {
           errors.push(releaseError)
-        }
-      }
-      if (this.state === "controlled") this.state = "released"
-      this.controller = undefined
-      if (attached) {
-        try {
-          await this.owner.emit("browser.controller.detach", this, { controller: controller.name })
-        }
-        catch (traceError) {
-          errors.push(traceError)
         }
       }
       if (errors.length > 1) {

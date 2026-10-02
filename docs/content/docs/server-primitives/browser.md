@@ -209,6 +209,8 @@ finally {
 }
 ```
 
+If attachment tracing fails, ViteHub releases the controller before rejecting `session.attach()`. If controller cleanup also fails, the session blocks another attachment or handoff. Call `session.close()` to terminate the provider session. Provider cleanup is also available while controller cleanup is pending.
+
 Install `@cloudflare/playwright` and `playwright-core` when using the Playwright controller on Cloudflare. Cloudflare builds select the `workerd` export condition and exclude the Node Playwright loader. Standalone Worker bundlers must also select `workerd`. The built-in Playwright CDP adapter requires Node.js.
 
 `localBrowser({ executablePath })` from `@vite-hub/browser/providers/local` starts a local Chromium process on a trusted host. It supports CDP control and live handoff. `playwright-core` supplies the controller but does not download a browser. ViteHub does not sandbox the browser process.

@@ -165,6 +165,8 @@ try {
 
 Set `executablePath` to an installed Chromium-compatible browser. The path above is a Linux example. `playwright-core` supplies the controller but does not download a browser.
 
+If attachment tracing fails, ViteHub releases the attached controller before rejecting `session.attach()`. If that release also fails, the session keeps controller ownership and rejects another attachment or handoff. Call `session.close()` to terminate the provider session, including while rollback cleanup is pending.
+
 Concurrent `control.release()` calls wait for the same cleanup. If controller cleanup fails, the session keeps controller ownership and rejects another attachment or handoff. Retry `control.release()` or call `session.close()` to terminate the provider session. If the detach trace fails after cleanup succeeds, `control.release()` rejects with controller ownership already cleared.
 
 Use this adapter only when the process is allowed to start Chromium and isolate it according to the host's threat model. It uses a temporary browser profile and removes that profile when the session closes. ViteHub does not provide an untrusted-code sandbox around the browser process.
