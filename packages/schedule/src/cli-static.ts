@@ -203,9 +203,13 @@ export async function runScheduleRunCli(
     if (!target.remote) {
       let discoveryFailure = ""
       const rootDir = context.rootDir ?? context.cwd ?? process.cwd()
-      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Discovery payloads are parsed at this transport boundary.
-      // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The endpoint parser guarantees an object-shaped discovery payload here.
-      const server = await discoverViteHubDevServer<ScheduleDevDiscovery>({ endpoint: { header: scheduleDevRunHeader, headerValue: "1", route: scheduleDevRunRoute }, fetch: fetchImpl, parseDiscovery: value => value && typeof value === "object" ? value as ScheduleDevDiscovery : {}, rootDir, serverUrl: baseUrl(parsed.server || context.env.VITEHUB_DEV_SERVER_URL || "http://localhost:5173", "--server").href, signal, stderr: { write: chunk => { discoveryFailure += String(chunk) } } })
+      const parseDiscovery = (value: unknown): ScheduleDevDiscovery => {
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Discovery payloads are parsed at this transport boundary.
+        if (!value || typeof value !== "object") return {}
+        // SAFETY: The endpoint parser has narrowed the discovery payload to an object before applying the owner contract.
+        return value as ScheduleDevDiscovery
+      }
+      const server = await discoverViteHubDevServer<ScheduleDevDiscovery>({ endpoint: { header: scheduleDevRunHeader, headerValue: "1", route: scheduleDevRunRoute }, fetch: fetchImpl, parseDiscovery, rootDir, serverUrl: baseUrl(parsed.server || context.env.VITEHUB_DEV_SERVER_URL || "http://localhost:5173", "--server").href, signal, stderr: { write: chunk => { discoveryFailure += String(chunk) } } })
       if (!server) throw cliError(discoveryFailure.trim() || "No Compatible Vite Development Server for manual Schedule runs.")
       const serverId = server.discovery.scheduleDevTokenServerId
       const serverRoot = server.discovery.root

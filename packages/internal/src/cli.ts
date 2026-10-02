@@ -274,7 +274,12 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   const discovery = options.parseDiscovery
     ? options.parseDiscovery(rawDiscovery)
     // SAFETY: Existing callers validate discovery fields; typed callers can supply the owner parser above.
-    : (rawDiscovery !== null && typeof rawDiscovery === "object" ? rawDiscovery : {}) as TDiscovery
+    : (() => {
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The unparsed discovery response is validated at this transport boundary.
+        if (rawDiscovery === null || typeof rawDiscovery !== "object") return {}
+        // SAFETY: The generic caller contract supplies the discovery shape after the transport boundary validates it is an object.
+        return rawDiscovery as TDiscovery
+      })()
   if (options.signal?.aborted) {
     options.stderr.write(`No Compatible Vite Development Server found at ${options.serverUrl}.\n`)
     return
