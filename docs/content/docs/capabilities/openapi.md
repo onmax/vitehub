@@ -106,6 +106,32 @@ openapi({
 
 ViteHub still keeps caller-owned required fields in the model and generated CLI schemas. If the hook only provides `tenantId`, another required path param such as `orderId` remains required from the caller.
 
+## Authenticate through a Connection
+
+Set `connection` to send each request with the credentials of an OAuth 2 [Connection](/docs/server-primitives/connections).
+
+```ts [server/agents/support.ts]
+openapi({
+  spec: 'https://billing.example.com/openapi.json',
+  operations: ['billingListCustomers', 'billingCreateTicket'],
+  connection: 'billing',
+})
+```
+
+The Connection adds its credentials after `hooks.request`, so hooks never see the token. Each operation has the Connection Operation id `openapi.<operationId>`. `GET` and `HEAD` operations are reads. Other methods are writes. Without a matching rule, writes are denied, so allow them in the Agent rule of the Connection:
+
+```ts [server/connections/billing.ts]
+access: {
+  agents: {
+    support: { allow: ['openapi.billingCreateTicket'] },
+  },
+},
+```
+
+ViteHub checks access before a tool runs. A denied tool fails with `CAPABILITY_DENIED`. A tool that matches `approve` asks for tool approval: in a provider Agent session, an approved call runs. Otherwise it fails with `APPROVAL_REQUIRED`. A generated CLI command fails with `CONNECTIONS_DENIED` or `CONNECTIONS_APPROVAL_REQUIRED` before the request. Each call is recorded as Connection activity with the Agent name, run id, Invocation trace id, and operation id.
+
+## Override the request server
+
 For a broken, missing, or environment-neutral `servers` entry, use `server` as an override escape hatch.
 `server` can also be a callback when the override comes from the current Agent Invocation context.
 
@@ -191,6 +217,7 @@ openapi({
 | `description` | `string` | none | Prefix for generated operation-tool descriptions and fallback description for the generated Capability CLI. |
 | `hooks.request` | `(context) => patch \| void` or `{ provides?, handler }` | none | Fetch-style request preparation hook for runtime headers, cookies, path, query, body, timeout, and `maxResponseBytes` values. |
 | `hooks.request.provides` | `{ body?, path?, query? }` | none | Runtime-owned OpenAPI input fields to remove from model and generated CLI schemas before caller validation. |
+| `connection` | `string` | none | Name of a Connection in `server/connections/`. It adds credentials, checks access for `openapi.<operationId>`, and records activity. |
 | `server` | `string \| URL \| function` | OpenAPI server | Override escape hatch for specs without a usable `servers[0].url` or spec URL origin. |
 | `cli` | `false \| { name, description? }` | `false` | Generates a Capability CLI instead of one model-facing tool per operation. |
 | `responseType` | `"json" \| "text"` | `"json"` | Response parser for operation results. |
@@ -203,5 +230,6 @@ openapi({
 
 - [Fetch](/docs/capabilities/fetch)
 - [Access](/docs/capabilities/access)
+- [Connections](/docs/server-primitives/connections)
 - [Custom capabilities](/docs/capabilities/custom-capabilities)
 - [CLI](/docs/development/cli)

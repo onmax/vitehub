@@ -14,6 +14,7 @@ export type ScheduleHandler<TResult = unknown, TInput = unknown> = {
 }["bivarianceHack"]
 
 export interface ScheduleDefinitionInput<TResult = unknown> {
+  /** Allows `runSchedule()`, the Console, and `vitehub schedule run` to start this definition outside its cron. */
   manual?: boolean
   allowRuntimeSchedules?: boolean
   cron: string
@@ -21,6 +22,7 @@ export interface ScheduleDefinitionInput<TResult = unknown> {
 }
 
 export interface ScheduleDefinitionOptions {
+  /** Allows `runSchedule()`, the Console, and `vitehub schedule run` to start this definition outside its cron. */
   manual?: boolean
   allowRuntimeSchedules?: boolean
 }
@@ -153,13 +155,23 @@ export interface ScheduleRunAttemptRecord {
   updatedAt: Date
 }
 
+export interface ScheduleRunListOptions {
+  /** Maximum number of records, newest scheduled occurrence first. */
+  limit?: number
+  /** Includes only Runtime Schedule runs when true. */
+  runtimeOnly?: boolean
+  scheduleId?: string
+}
+
 export interface ScheduleRunStore {
   createAttempt: (attempt: ScheduleRunAttemptRecord) => Promise<ScheduleRunAttemptRecord> | ScheduleRunAttemptRecord
   createRun: (run: ScheduleRunRecord) => Promise<ScheduleRunRecord> | ScheduleRunRecord
   getAttempt: (id: string) => Promise<ScheduleRunAttemptRecord | undefined> | ScheduleRunAttemptRecord | undefined
   getRun: (id: string) => Promise<ScheduleRunRecord | undefined> | ScheduleRunRecord | undefined
   listAttempts: (runId: string) => Promise<ScheduleRunAttemptRecord[]> | ScheduleRunAttemptRecord[]
-  listRuns: () => Promise<ScheduleRunRecord[]> | ScheduleRunRecord[]
+  /** Reads several histories using one request-scoped key snapshot when supported. */
+  listRunsBatch?: (options: ScheduleRunListOptions[]) => Promise<ScheduleRunRecord[][]> | ScheduleRunRecord[][]
+  listRuns: (options?: ScheduleRunListOptions) => Promise<ScheduleRunRecord[]> | ScheduleRunRecord[]
   updateAttempt: (id: string, patch: Partial<Pick<ScheduleRunAttemptRecord, "completedAt" | "error" | "status">> & { updatedAt: Date }) => Promise<ScheduleRunAttemptRecord | undefined> | ScheduleRunAttemptRecord | undefined
   updateRun: (id: string, patch: Partial<Pick<ScheduleRunRecord, "attemptCount" | "completedAt" | "error" | "response" | "startedAt" | "status">> & { updatedAt: Date }) => Promise<ScheduleRunRecord | undefined> | ScheduleRunRecord | undefined
 }

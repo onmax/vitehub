@@ -6,8 +6,22 @@ navigation.group: Frameworks
 icon: i-lucide-server
 ---
 
-ViteHub is not a Nitro module system.
-ViteHub uses Vite Integrations as the public integration layer, while package-owned Nitro wiring appears only where a host boundary needs generated runtime hooks. ViteHub's current Nitro integration targets Nitro 3.
+Use this page to understand how ViteHub uses Nitro. Nitro builds the server
+output for every preset, in both Vite and Nuxt applications. ViteHub is not a
+Nitro module system: Vite integrations stay the public integration layer, and
+packages add Nitro handlers or plugins only where a host needs them.
+
+## Where Nitro comes from
+
+| Framework | Nitro integration | ViteHub sets |
+| --- | --- | --- |
+| Vite | `nitro()` from `nitro/vite`, next to `vitehub()` | The Nitro preset that matches the ViteHub preset |
+| Nuxt | Nuxt's own Nitro build | The Nitro preset, through the `vite-hub/nuxt` module |
+
+Do not select a different Nitro preset. A conflicting `nitro.preset`,
+`NITRO_PRESET`, or `SERVER_PRESET` fails the build. Read
+[Frameworks and hosts](/docs/frameworks-hosts#choose-a-preset) for the preset
+mapping.
 
 ## Boundary
 
@@ -15,7 +29,7 @@ ViteHub uses Vite Integrations as the public integration layer, while package-ow
 | --- | --- |
 | Vite | Public integration layer for discovery, generated files, the CLI Agent Dev Loop, and Provider Output. |
 | Nitro | Host runtime bridge when a package must register generated handlers, middleware, or runtime hooks. |
-| UnJS libraries | Useful implementation dependencies for server primitives, not public ViteHub framework identity. |
+| UnJS libraries | Implementation dependencies for server primitives, not public ViteHub framework identity. |
 | Application server code | Calls Runtime Helpers and stable handlers without importing generated Nitro internals. |
 
 ## Internal server kit
@@ -29,58 +43,33 @@ The kit is an internal seam, not a public Nitro module API. It currently has one
 implementation for Nitro 3. A second server adapter will be added only when a
 supported host needs different registration semantics.
 
-## Accepted Nitro handoffs
+## Nitro handoffs
 
-| Bridge | Status | Owner | Purpose |
-| --- | --- | --- | --- |
-| Schedule Provider Wake | Available | Schedule Package | Registers Cloudflare scheduled runtime hooks and cron output for Nitro-shaped hosts. |
-| Workspace hosted runtime setup | Available where hosted stores require it | Workspace Package | Moves generated Workspace runtime setup into Nuxt's top-level Nitro config. |
-| Database Nuxt D1 host wiring | Available for Nuxt D1 host resources | Database Package | Keeps one D1 Database Host Resource in sync with Nuxt Content and Cloudflare output. |
-| General Nitro-first integration | Not the public direction | Not applicable | ViteHub keeps the public contract on Vite Integrations. |
-
-## Generated route output
-
-::warning
-Auth and Agent integrations generate Nitro handlers for their owned routes. Treat those files as Provider Output, not as a general Nitro Framework Integration or a public `@vite-hub/*/nitro` authoring surface.
-::
-
-| Output | Current owner | Boundary |
+| Bridge | Owner | Purpose |
 | --- | --- | --- |
+| Schedule Provider Wake | Schedule Package | Registers Cloudflare scheduled runtime hooks and cron output for Nitro-shaped hosts. |
+| Workspace hosted runtime setup | Workspace Package | Moves generated Workspace runtime setup into Nuxt's top-level Nitro config where hosted stores require it. |
+| Database Nuxt D1 host wiring | Database Package | Keeps one D1 Database Host Resource in sync with Nuxt Content and Cloudflare output. |
 | Auth route handler | Auth Package | Exposes the configured Auth route through a generated Nitro handler. |
 | Agent chat and webhook routes | Agent Package | Dispatches generated Agent route output without making Nitro discovery or route files the app API. |
 
-## Package-owned handlers
+::warning
+Treat generated Nitro handlers as Provider Output. They are not a general Nitro
+framework integration or a public `@vite-hub/*/nitro` authoring surface.
+::
 
-The package Vite Integration reads the application Auth Definition and generates Nitro route output when `route` is enabled.
+## Keep application code on Runtime Helpers
 
-```ts [server/auth.ts]
-import { defineAuth } from '@vite-hub/auth'
-
-export default defineAuth({
-  appName: 'Acme',
-  database: true,
-})
-```
-
-```ts [vite.config.ts]
-import { hubAuth } from '@vite-hub/auth/vite'
-import { defineConfig } from 'vite'
-
-export default defineConfig({
-  plugins: [
-    hubAuth(),
-  ],
-})
-```
-
-## What not to do
-
-Do not treat Nitro route files as the primary ViteHub API.
-If a package generates Nitro output, inspect it as Provider Output and keep application code on the package's Runtime Helpers or stable server handler.
+Do not treat Nitro route files as the primary ViteHub API. Application code uses
+the package's Runtime Helpers or stable server handler. For example, the
+[Auth](/docs/server-primitives/auth) package generates its route from the Auth
+Definition, and also exposes `createAuthHandler()` for frameworks that mount the
+handler themselves. [Node and self-hosted](/docs/frameworks-hosts/node-self-hosted#mount-a-server-handler)
+shows that handler.
 
 ## Next steps
 
-- Use [Frameworks and hosts](/docs/frameworks-hosts) for the public integration model.
+- Use [Nuxt](/docs/frameworks-hosts/nuxt) for the Nuxt module.
 - Use [Runtime and host support](/docs/frameworks-hosts/support-matrix) for the complete qualified matrix.
 - Use [Provider output](/docs/reference/provider-output) for generated Nitro and host artifacts.
 - Use [Import paths](/docs/reference/import-paths) for public imports.

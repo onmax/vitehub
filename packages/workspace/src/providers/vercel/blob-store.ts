@@ -1,4 +1,4 @@
-import { workspaceError } from "../../core/errors.ts"
+import { workspaceConflict, workspaceError } from "../../core/errors.ts"
 import { contentToBytes, isExcludedWorkspacePath, matchesAny, normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern, normalizeWorkspacePath, sha256 } from "../../core/path.ts"
 import { resolveRuntimeVercelBlobWorkspaceStore } from "../../storage/provider.ts"
 import { createSnapshotFromEntries, diffSnapshots } from "../../storage/utils.ts"
@@ -232,6 +232,9 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
 
   async rm(path: string, options: RmOptions = {}): Promise<void> {
     const normalized = normalizeSafeWorkspacePath(path)
+    if (options.ifDigest !== undefined) {
+      throw workspaceConflict(`[vitehub] Vercel Blob does not support atomic conditional removal for: ${path}.`)
+    }
     const client = await this.#client()
     const targets: string[] = []
     const current = await client.head(this.#fileKey(normalized)).catch(() => null)

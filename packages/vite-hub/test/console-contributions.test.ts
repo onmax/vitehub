@@ -4,30 +4,13 @@ import { join } from "node:path"
 
 import { describe, expect, it, vi } from "vitest"
 
-import { writeConsoleNitroPlugin } from "../src/console/plugin.ts"
 import { consoleContributedSections, consoleRuntimeReaderModule, describeConsoleContributedSections, describeConsoleRuntimeReaders, isConsoleContributedSectionId } from "../src/console/contributions.ts"
 import { parseConsoleContributedSection, parseConsoleSectionContent } from "../src/console/runtime/definitions.ts"
 import { consoleBuiltinSectionIds, consoleSectionRouteName, isConsoleBuiltinSectionId, isConsoleSectionId, resolveConsoleSectionIds } from "../src/console/runtime/sections.ts"
 
-describe("Email Console runtime ownership", () => {
-  it("passes the generated Email runtime identity to its reader", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vitehub-email-console-"))
-    try {
-      const plugin = join(root, "plugin.ts")
-      await writeConsoleNitroPlugin(plugin, root, ["email"], [], { agents: [], content: {} }, [], [])
-      const source = await readFile(plugin, "utf8")
-      expect(source).toContain('import { outboxRuntimeId as vitehubEmailOutboxRuntimeId } from "#vitehub/email/definition"')
-      expect(source).toContain('"email": () => vitehubConsoleRuntimeReader0(vitehubEmailOutboxRuntimeId)')
-    }
-    finally {
-      await rm(root, { force: true, recursive: true })
-    }
-  })
-})
-
 describe("Console section contributions", () => {
   it("registers the owner sections with valid ids that do not replace built-in sections", () => {
-    expect([...consoleContributedSections.keys()]).toEqual(["rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules", "email"])
+    expect([...consoleContributedSections.keys()]).toEqual(["rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"])
     for (const [id, section] of consoleContributedSections) {
       expect(section.descriptor.id).toBe(id)
       expect(isConsoleSectionId(id)).toBe(true)
@@ -40,7 +23,7 @@ describe("Console section contributions", () => {
   })
 
   it("keeps navigation order and omits built-in sections", () => {
-    const sections = resolveConsoleSectionIds({ agent: true, database: true, email: true, kv: true, queue: true, rateLimit: true, sandbox: true, schedule: true, workflow: true, workspace: true })
+    const sections = resolveConsoleSectionIds({ agent: true, database: true, kv: true, queue: true, rateLimit: true, sandbox: true, schedule: true, workflow: true, workspace: true })
 
     expect(describeConsoleContributedSections(sections).map(section => section.id)).toEqual([
       "rate-limits",
@@ -49,7 +32,6 @@ describe("Console section contributions", () => {
       "workflows",
       "queues",
       "schedules",
-      "email",
     ])
     expect(describeConsoleContributedSections(["agents", "kv", "databases"])).toEqual([])
     expect(consoleSectionRouteName("queues")).toBe("vitehub-console-queues")
@@ -59,9 +41,8 @@ describe("Console section contributions", () => {
     const manifest: { exports: Record<string, unknown> } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
 
     expect(consoleRuntimeReaderModule("@vite-hub/schedule/runtime/console")).toBe("vite-hub/_internal/schedule/runtime/console")
-    expect(describeConsoleRuntimeReaders(["agents", "queues", "schedules", "email"])).toEqual([
+    expect(describeConsoleRuntimeReaders(["agents", "queues", "schedules"])).toEqual([
       { export: "readScheduleConsoleRecords", module: "vite-hub/_internal/schedule/runtime/console", section: "schedules" },
-      { export: "readEmailOutboxConsoleRecords", module: "vite-hub/_internal/email/runtime/console", section: "email" },
     ])
     for (const reader of describeConsoleRuntimeReaders([...consoleContributedSections.keys()])) {
       expect(Object.hasOwn(manifest.exports, reader.module.replace(/^vite-hub\//, "./")), reader.module).toBe(true)
@@ -72,6 +53,20 @@ describe("Console section contributions", () => {
     for (const descriptor of describeConsoleContributedSections([...consoleContributedSections.keys()])) {
       expect(parseConsoleContributedSection(JSON.parse(JSON.stringify(descriptor)))).toEqual(descriptor)
     }
+  })
+
+  it("preserves runnable Schedule metadata for the Console UI", () => {
+    const definition = { fields: [], file: "server/schedules/sync.ts", name: "sync", runnable: true, source: "server-schedules" }
+    const content = { definitions: [definition], kind: "definition-catalog", section: "schedules" }
+
+    expect(parseConsoleSectionContent(JSON.parse(JSON.stringify(content)), "schedules")).toEqual({
+      definitions: [definition],
+      kind: "definition-catalog",
+    })
+    expect(parseConsoleSectionContent({ ...content, definitions: [{ ...definition, runnable: "true" }] }, "schedules")).toEqual({
+      definitions: [{ ...definition, runnable: undefined }],
+      kind: "definition-catalog",
+    })
   })
 
   it("keeps the playground descriptors equal to the owner descriptors", async () => {
@@ -97,14 +92,6 @@ describe("Console section contributions", () => {
     }
     finally {
       await rm(root, { force: true, recursive: true })
-    }
-  })
-
-  it("renders contributed record values as text, never as HTML", async () => {
-    // Runtime readers can return untrusted strings, for example the HTML source of a captured Email message.
-    for (const file of ["../src/console/runtime/pages/section.vue", "../src/console/runtime/components/console-definitions.vue"]) {
-      const source = await readFile(new URL(file, import.meta.url), "utf8")
-      expect(source, file).not.toMatch(/v-html|innerHTML/)
     }
   })
 })

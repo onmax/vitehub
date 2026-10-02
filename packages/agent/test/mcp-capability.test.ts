@@ -246,6 +246,169 @@ describe("mcp capability", () => {
     }
   })
 
+  it("authorizes a config server through a Connection and checks each tool call", async () => {
+    const createdClient = createClient({ search: { execute: vi.fn(async () => "ok") } })
+    const createMCPClient = vi.fn(async (_config: Record<string, unknown>) => createdClient)
+    vi.doMock("@ai-sdk/mcp", () => ({ createMCPClient }))
+    const connections = {
+      decide: vi.fn(async (_name: string, _actor: unknown, operation: { id: string }) => operation.id === "mcp.executor.tools.search" ? "allow" as const : "deny" as const),
+      fetch: vi.fn(async (_name: string, _url: string | URL, _init: RequestInit | undefined, _options: unknown) => new Response("{}")),
+      record: vi.fn(async () => {}),
+    }
+
+    try {
+      const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+      const { mcp } = await import("../src/capabilities.ts")
+      const capability = mcp({
+        servers: { executor: { connection: "executor", transport: { type: "http", url: "https://executor.test/mcp" } } },
+      })
+      expect(capability.requires).toEqual([{ primitive: "connections" }])
+      const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, {
+        ...runtime(),
+        capabilities: { connections: { runtime: () => connections } },
+      }, {})
+
+      const config = createMCPClient.mock.calls[0]?.[0]
+      expect(config).not.toHaveProperty("connection")
+      const transport = config?.transport as { fetch: typeof globalThis.fetch, type: string, url: string }
+      expect(transport).toMatchObject({ type: "http", url: "https://executor.test/mcp" })
+
+      await transport.fetch("https://executor.test/mcp", { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: {}, name: "search" } }), method: "POST" })
+      await transport.fetch("https://executor.test/mcp", { body: JSON.stringify({ id: 2, jsonrpc: "2.0", method: "tools/list" }), method: "POST" })
+      await transport.fetch(new URL("https://executor.test/mcp"), { method: "GET" })
+      await transport.fetch(new Request("https://executor.test/mcp", { body: JSON.stringify({ id: 3, jsonrpc: "2.0", method: "tools/call", params: { name: "search" } }), headers: { "mcp-session-id": "s1" }, method: "POST" }))
+      expect(connections.fetch.mock.calls.map(([name, url, , options]) => [name, String(url), options])).toEqual([
+        ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "all", effect: "write", operation: "mcp.executor.tools.search", trace: expect.objectContaining({ tool: "mcp_executor_search" }) })],
+        ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "changes", effect: "read", operation: "mcp.executor.rpc.tools/list" })],
+        ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "changes", effect: "read", operation: "mcp.executor.rpc.stream" })],
+        ["executor", "https://executor.test/mcp", expect.objectContaining({ effect: "write", operation: "mcp.executor.tools.search" })],
+      ])
+      // A Request keeps its method, headers, and body.
+      const requestInit = connections.fetch.mock.calls[3]?.[2]
+      expect(requestInit?.method).toBe("POST")
+      expect(new Headers(requestInit?.headers).get("mcp-session-id")).toBe("s1")
+      expect(JSON.parse(String(requestInit?.body))).toMatchObject({ method: "tools/call" })
+
+      const tool = resolved.tools?.mcp_executor_search
+      expect(tool?.metadata).toMatchObject({ connection: { name: "executor", operation: "mcp.executor.tools.search" }, mcpServer: "executor" })
+      if (typeof tool?.policy !== "function") throw new Error("expected a Connection tool policy")
+      await expect(tool.policy({ name: "mcp_executor_search" })).resolves.toBe("allow")
+      connections.decide.mockResolvedValue("deny")
+      await expect(tool.policy({ name: "mcp_executor_search" })).resolves.toBe("deny")
+      expect(connections.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "mcp.executor.tools.search", outcome: "denied", tool: "mcp_executor_search" }), undefined)
+      await resolved.close()
+    }
+    finally {
+      vi.doUnmock("@ai-sdk/mcp")
+    }
+  })
+
+  it("passes an approved MCP tool run to its tools/call request only", async () => {
+    let transportFetch: typeof globalThis.fetch | undefined
+    const callTool = async (args: unknown) => transportFetch?.("https://executor.test/mcp", { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: args, name: "execute" } }), method: "POST" })
+    let release: (() => void) | undefined
+    const paused = new Promise<void>(resolve => (release = resolve))
+    let executions = 0
+    const createMCPClient = vi.fn(async (config: { transport: { fetch: typeof globalThis.fetch } }) => {
+      transportFetch = config.transport.fetch
+      return createClient({ execute: { execute: vi.fn(async (input: { code: string }) => {
+        if (++executions === 1) await paused
+        await callTool(input)
+        return "ok"
+      }) } })
+    })
+    vi.doMock("@ai-sdk/mcp", () => ({ createMCPClient }))
+    const connections = {
+      decide: vi.fn(async () => "require-approval" as const),
+      fetch: vi.fn(async (_name: string, _url: string | URL, init: RequestInit | undefined, _options: unknown) => new Response(String(init?.body ?? ""))),
+      record: vi.fn(async () => {}),
+    }
+    const approvedCalls = () => connections.fetch.mock.calls.map(([, , init, options]) => [JSON.parse(String(init?.body)).params.arguments, (options as { approved?: boolean }).approved === true])
+    try {
+      const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+      const { mcp } = await import("../src/capabilities.ts")
+      const resolved = await resolveAgentCapabilities({ capabilities: [mcp({ servers: { executor: { connection: "executor", transport: { type: "http", url: "https://executor.test/mcp" } } } })] }, {
+        ...runtime(),
+        capabilities: { connections: { runtime: () => connections } },
+      }, {})
+      const tool = resolved.tools?.mcp_executor_execute
+      if (typeof tool?.policy !== "function" || !tool.execute) throw new Error("expected a Connection tool")
+
+      // Run A is approved and pauses. An identical concurrent tool execution cannot consume its grant.
+      const approvedInput = { code: "approved" }
+      await expect(tool.policy({ input: approvedInput, name: "mcp_executor_execute" })).resolves.toBe("require-approval")
+      // SAFETY: The MCP tool wrapper does not read the execution options.
+      const runA = tool.execute(approvedInput, {} as never)
+      await tool.execute({ code: "approved" }, {} as never)
+      await callTool({ code: "other" })
+      release?.()
+      await runA
+      // A later run with the same content is not approved either.
+      // SAFETY: The MCP tool wrapper does not read the execution options.
+      await tool.execute({ code: "approved" }, {} as never)
+      expect(approvedCalls()).toEqual([
+        [{ code: "approved" }, false],
+        [{ code: "other" }, false],
+        [{ code: "approved" }, true],
+        [{ code: "approved" }, false],
+      ])
+      await resolved.close()
+    }
+    finally {
+      vi.doUnmock("@ai-sdk/mcp")
+    }
+  })
+
+  it("authorizes a resolved server config through a Connection", async () => {
+    const createMCPClient = vi.fn(async (_config: Record<string, unknown>) => createClient({ search: { execute: vi.fn(async () => "ok") } }))
+    vi.doMock("@ai-sdk/mcp", () => ({ createMCPClient }))
+    const connections = {
+      decide: vi.fn(async () => "allow" as const),
+      fetch: vi.fn(async (_name: string, _url: string | URL, _init: RequestInit | undefined, _options: unknown) => new Response("{}")),
+      record: vi.fn(async () => {}),
+    }
+
+    try {
+      const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+      const { mcp } = await import("../src/capabilities.ts")
+      const capability = mcp({
+        servers: { executor: () => ({ connection: "executor", transport: { type: "http", url: "https://executor.test/tenant/mcp" } }) },
+      })
+      await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), {}))
+        .rejects.toThrow("mcp() uses Connection \"executor\", so it requires Connections")
+
+      const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, {
+        ...runtime(),
+        capabilities: { connections: { runtime: () => connections } },
+      }, {})
+      const transport = createMCPClient.mock.calls.at(-1)?.[0]?.transport as { fetch: typeof globalThis.fetch }
+      await transport.fetch("https://executor.test/tenant/mcp", { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { name: "search" } }), method: "POST" })
+      expect(connections.fetch).toHaveBeenCalledWith("executor", "https://executor.test/tenant/mcp", expect.anything(), expect.objectContaining({ operation: "mcp.executor.tools.search" }))
+      expect(resolved.tools?.mcp_executor_search?.metadata).toMatchObject({ connection: { name: "executor", operation: "mcp.executor.tools.search" } })
+      await resolved.close()
+    }
+    finally {
+      vi.doUnmock("@ai-sdk/mcp")
+    }
+  })
+
+  it("rejects a Connection on a transport it cannot authorize", async () => {
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const { mcp } = await import("../src/capabilities.ts")
+    const primitive = { runtime: () => ({ decide: vi.fn(), fetch: vi.fn(), record: vi.fn() }) }
+    const transport: MCPTransport = { close: vi.fn(), send: vi.fn(), start: vi.fn() }
+    for (const server of [
+      { connection: "executor", transport },
+      { connection: "executor", transport: { authProvider: {} as never, type: "http" as const, url: "https://executor.test/mcp" } },
+      { connection: " ", transport: { type: "http" as const, url: "https://executor.test/mcp" } },
+    ]) {
+      await expect(resolveAgentCapabilities({ capabilities: [mcp({ servers: { executor: server } })] }, {
+        ...runtime(),
+        capabilities: { connections: primitive },
+      }, {})).rejects.toThrow(/uses a connection|non-empty connection name/)
+    }
+  })
+
   it("removes credentials from URL metadata while retaining the endpoint", async () => {
     const createdClient = createClient({ search: { execute: vi.fn() } })
     const createMCPClient = vi.fn(async () => createdClient)
@@ -537,6 +700,57 @@ describe("mcp capability", () => {
     await resolved.close()
     expect(unavailable.close).toHaveBeenCalledTimes(1)
     expect(healthy.close).toHaveBeenCalledTimes(1)
+  })
+
+  it("validates optional status codes in caller-provided MCP warnings", async () => {
+    const { getMcpWarnings } = await import("../src/capabilities.ts")
+    const warnings = [
+      { server: "healthy", phase: "resolve", statusCode: 503 },
+      { server: "absent", phase: "discovery" },
+      { server: "invalid-phase", phase: "connect" },
+      { server: 123, phase: "resolve" },
+      null,
+      ...["503", null, {}, NaN, Infinity].map(statusCode => ({ server: "invalid", phase: "resolve", statusCode })),
+    ]
+    expect(getMcpWarnings({ context: { "vitehub.mcp.warnings": warnings } })).toEqual(warnings.slice(0, 2))
+  })
+
+  it("adds an opt-in unavailable notice for the final chat reply", async () => {
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const { getMcpWarnings, mcp } = await import("../src/capabilities.ts")
+    const unavailable = () => { throw Object.assign(new Error("fetch failed"), { statusCode: 503 }) }
+    const healthy = createClient({ lookup: { execute: vi.fn() } })
+
+    const silent = await resolveAgentCapabilities({ capabilities: [mcp({ servers: { posthog: unavailable } })] }, runtime(), {})
+    expect(silent.input.context).not.toHaveProperty("vitehub.chat.final-reply.notices")
+    await silent.close()
+
+    const defaultNotice = await resolveAgentCapabilities({
+      capabilities: [mcp({ servers: { airtable: unavailable, posthog: unavailable }, unavailableNotice: true })],
+    }, runtime(), {})
+    expect(defaultNotice.input.context?.["vitehub.chat.final-reply.notices"]).toEqual([
+      "> ⚠️ airtable, posthog tools were temporarily unavailable. I answered with the remaining context.",
+    ])
+    expect(getMcpWarnings(defaultNotice.input)).toEqual([
+      { phase: "resolve", server: "airtable", statusCode: 503 },
+      { phase: "resolve", server: "posthog", statusCode: 503 },
+    ])
+    await defaultNotice.close()
+
+    const notice = vi.fn((servers: string[]) => `Missing: ${servers.join(" and ")}`)
+    const custom = await resolveAgentCapabilities({
+      capabilities: [mcp({ servers: { healthy: () => healthy, posthog: unavailable }, unavailableNotice: notice })],
+    }, runtime(), {})
+    expect(notice).toHaveBeenCalledWith(["posthog"])
+    expect(custom.input.context?.["vitehub.chat.final-reply.notices"]).toEqual(["Missing: posthog"])
+    await custom.close()
+
+    const allHealthy = await resolveAgentCapabilities({
+      capabilities: [mcp({ servers: { healthy: () => createClient({}) }, unavailableNotice: true })],
+    }, runtime(), {})
+    expect(allHealthy.input.context?.["vitehub.chat.final-reply.notices"]).toBeUndefined()
+    expect(getMcpWarnings(allHealthy.input)).toEqual([])
+    await allHealthy.close()
   })
 
   it("does not treat resolver failures as absent configuration", async () => {

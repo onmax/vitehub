@@ -147,6 +147,8 @@ export default defineAgent({
 
 The Trigger translates the validated event and attaches trusted context. Keep model selection, tools, and execution behavior in the Agent Definition.
 
+When the Channel declares message methods, also return `message`: JSON data that identifies the provider message. Hooks use it through `event.message`. See [Act on the Channel message in hooks](/docs/agents/channels#act-on-the-channel-message-in-hooks).
+
 ## Choose how to call the Agent
 
 | Situation | Use |

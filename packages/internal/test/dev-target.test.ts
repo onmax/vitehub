@@ -59,8 +59,18 @@ describe("dev target options", () => {
   it("uses the owner error factories", () => {
     expect(() => parseTarget(["--url"])).toThrow(expect.objectContaining({ code: "missing", message: "Missing value for --url." }))
     expect(() => parseTarget(["--server", "--timeout"])).toThrow(expect.objectContaining({ code: "missing", message: "Missing value for --server." }))
-    expect(() => parseTarget(["--timeout", "0"])).toThrow(expect.objectContaining({ code: "separate", message: "--timeout must be a positive number." }))
-    expect(() => parseTarget(["--timeout=abc"])).toThrow(expect.objectContaining({ code: "inline", message: "--timeout must be a positive number." }))
+    expect(() => parseTarget(["--timeout", "0"])).toThrow(expect.objectContaining({ code: "separate", message: "--timeout must be an integer from 1 to 2147483647 milliseconds." }))
+    expect(() => parseTarget(["--timeout=abc"])).toThrow(expect.objectContaining({ code: "inline", message: "--timeout must be an integer from 1 to 2147483647 milliseconds." }))
+  })
+
+  it.each(["2147483648", "4294967295", "4294967296", "1.5", "10ms", "Infinity"])("rejects unsupported timer duration %s with owner diagnostics", value => {
+    expect(() => parseTarget(["--timeout", value])).toThrow(expect.objectContaining({ code: "separate" }))
+    expect(() => parseTarget([`--timeout=${value}`])).toThrow(expect.objectContaining({ code: "inline" }))
+  })
+
+  it.each(["1", "2147483647"])("preserves supported timer duration %s", value => {
+    expect(parseTarget(["--timeout", value]).timeout).toBe(Number(value))
+    expect(parseTarget([`--timeout=${value}`]).timeout).toBe(Number(value))
   })
 
   it("resolves endpoint routes with and without a trailing slash", () => {
@@ -112,6 +122,14 @@ describe("dev server discovery", () => {
       expect(target).toBeUndefined()
       expect(output.text()).toBe(input.message)
     }
+  })
+
+  it("validates the discovery object and accepts an owner parser", async () => {
+    const output = captureStderr()
+    const options = { endpoint, rootDir: "/app", serverUrl: "http://localhost:5173", stderr: output.stderr }
+    expect((await discoverViteHubDevServer({ ...options, fetch: async () => Response.json(null) }))?.discovery).toEqual({})
+    const target = await discoverViteHubDevServer({ ...options, fetch: async () => Response.json({ id: 7 }), parseDiscovery: () => ({ root: "/app", id: 7 }) })
+    expect(target?.discovery.id).toBe(7)
   })
 
   it("uses the owner root check", async () => {
@@ -251,12 +269,19 @@ describe("guarded dev endpoint", () => {
       isViteHubDevHostAllowed({ config: { server } }, { headers: host === undefined ? {} : { host } } as unknown as IncomingMessage)
     expect(allowed(undefined)).toBe(true)
     expect(allowed("localhost")).toBe(true)
+    expect(allowed("LOCALHOST:5173")).toBe(true)
+    expect(allowed("App.Localhost:5173")).toBe(true)
+    expect(allowed("APP.TEST:5173", { allowedHosts: ["app.test"] })).toBe(true)
+    expect(allowed("app.test:5173", { allowedHosts: ["APP.TEST"] })).toBe(true)
+
     expect(allowed("app.localhost:5173")).toBe(true)
     expect(allowed("127.0.0.1:5173")).toBe(true)
     expect(allowed("192.168.1.20:5173")).toBe(true)
     expect(allowed("[::1]:5173")).toBe(true)
     expect(allowed("[not-ip]:5173")).toBe(false)
     expect(allowed("attacker.example:5173")).toBe(false)
+    expect(allowed("attacker-extension:5173")).toBe(false)
+    expect(allowed("file:5173")).toBe(false)
     expect(allowed("localhost.attacker.example")).toBe(false)
     expect(allowed("tunnel.test", { allowedHosts: [".tunnel.test"] })).toBe(true)
     expect(allowed("eviltunnel.test", { allowedHosts: [".tunnel.test"] })).toBe(false)

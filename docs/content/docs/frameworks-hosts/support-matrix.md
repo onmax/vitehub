@@ -7,7 +7,11 @@ navigation.group: Choose a target
 icon: i-lucide-table-properties
 ---
 
-`Package-specific` means support belongs to the named package or generated output, not the host as a whole.
+Use this page before you claim that a feature works on a host. The first table
+names the provider that each primitive uses on each host. The second table shows
+how the repository proves each host and how fresh that proof is.
+`Package-specific` means support belongs to the named package or generated
+output, not the host as a whole.
 
 ## Server primitives
 
@@ -40,14 +44,14 @@ Local Vite discovers Queue Definitions and generates provider output, but it doe
 | Generated Provider Output | — | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | — |
 | Contract tests | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) |
 | Local Provider Run | — | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32939970902) (2026-08-26; 30-day freshness window) | **Not published** | **Not published** | **Not published** |
-| Live Smoke | — | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32928943031) (2026-08-26; 2-day freshness window) | [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32928943031) (2026-08-26; 2-day freshness window) | **Not published** | **Not published** | **Not published** | **Not published** |
+| Live Smoke | — | **Stopped at provision** [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32928943031) (2026-08-26; 2-day freshness window) | **Stopped at provision** [Evidence](https://github.com/vite-hub/vitehub/actions/runs/32928943031) (2026-08-26; 2-day freshness window) | **Not published** | **Not published** | **Not published** | **Not published** |
 
 Cloudflare's nightly target includes nine primitives, including Rate Limit. Vercel targets eight because ViteHub has no native Vercel Rate Limit driver. Browser and Agent routes have contract tests but are outside those deployed runs.
 
 ## Qualifications
 
 - **Local Vite:** Active integrations expose their package imports and generated registries. Blob `fs`, KV `fs-lite`, Rate Limit `memory`, and Workspace `local` or `memory` provide local state. A local build can still generate output for an explicit or inferred hosted provider.
-- **Cloudflare:** Blob, Database, KV, Queue, Rate Limit, Sandbox, Schedule, Workflow, and Workspace run in the live playground. Browser and Agent have package-owned output outside the nightly run. Enabled integrations compose the Worker, `wrangler.json`, bindings, callbacks, and runtime modules. ViteHub can provision R2 buckets, D1 databases, and Cloudflare Queues.
+- **Cloudflare:** Blob, Database, KV, Queue, Rate Limit, Sandbox, Schedule, Workflow, and Workspace run in the live playground. Browser and Agent have package-owned output outside the nightly run. Enabled integrations compose the Worker, `wrangler.json`, bindings, callbacks, and runtime modules. ViteHub can provision R2 buckets, D1 databases, KV namespaces, and Cloudflare Queues.
 - **Vercel:** Blob, Database, KV, Queue, Sandbox, Schedule, Workflow, and Workspace run in the live playground. Agent routes have separate package output outside the nightly run. Enabled integrations write Vercel Build Output, functions, routes, cron entries, and runtime modules. ViteHub can create a Blob store and configure the project environment.
 - **Netlify:** Blob uses `netlify-blobs`. Agent HTTP routes and static Schedules write functions under `.netlify/v1/functions`. CI runs the real-project fixture through Netlify CLI. ViteHub does not provide Netlify provisioning or published live proof.
 - **Deno:** Agent chat and webhook routes and KV with `deno-kv` are supported with their documented permissions. A production build stages the Nitro application and package-owned standalone Schedule output under `.output`. Compose Schedule with `hubSchedule({ providerOutput: "standalone" })`; `vitehub({ preset: "deno", schedule: true })` rejects Schedule because the facade does not own that output. ViteHub does not publish live Deno proof.

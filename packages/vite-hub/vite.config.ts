@@ -149,6 +149,10 @@ export default defineConfig({
         to: "dist/console/runtime/components",
       },
       {
+        from: "src/console/runtime/components/console-session-actions.vue",
+        to: "dist/console/runtime/components",
+      },
+      {
         from: "src/console/runtime/components/console-session-inspector.vue",
         to: "dist/console/runtime/components",
       },
@@ -190,6 +194,11 @@ export default defineConfig({
       { from: "src/console/runtime/components/console-env-managed.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/components/console-env-activity.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/components/console-env-access.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/pages/connections.vue", to: "dist/console/runtime/pages" },
+      { from: "src/console/runtime/components/console-connections.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/components/console-connections-details.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/components/console-connections-activity.vue", to: "dist/console/runtime/components" },
+      { from: "src/console/runtime/components/console-connections-approvals.vue", to: "dist/console/runtime/components" },
       { from: "src/console/runtime/pages/kv.vue", to: "dist/console/runtime/pages" },
       { from: "src/console/runtime/pages/section.vue", to: "dist/console/runtime/pages" },
       { from: "../ui/styles.css", to: "dist/ui" },
@@ -230,19 +239,24 @@ export default defineConfig({
       ...distributionEntries,
       "src/console/runtime/console-route.ts",
       "src/console/runtime/client/invocation.ts",
+      "src/console/runtime/client/invocation-deletion.ts",
       "src/console/runtime/client/request.ts",
       "src/console/runtime/client/env-management.ts",
+      "src/console/runtime/client/connections-management.ts",
+      "src/console/runtime/client/env-status.ts",
+      "src/console/runtime/client/schedule-run.ts",
       "src/console/runtime/client/time.ts",
       "src/console/runtime/definitions.ts",
       "src/console/runtime/rpc.ts",
       "src/console/runtime/sections.ts",
       "src/console/runtime/server/agents.get.ts",
       "src/console/runtime/server/blob.get.ts",
+      "src/console/runtime/server/channel-replay.ts",
       "src/console/runtime/server/client.get.ts",
       "src/console/runtime/server/database.get.ts",
       "src/console/runtime/server/definitions.get.ts",
       "src/console/runtime/server/invocation-capabilities.get.ts",
-      "src/console/runtime/server/devframe.ts",
+      "src/console/runtime/server/rpc.ts",
       "src/console/runtime/server/invocation.get.ts",
       "src/console/runtime/server/invocation-workspace.get.ts",
       "src/console/runtime/server/invocations.get.ts",
@@ -250,6 +264,7 @@ export default defineConfig({
       "src/console/runtime/server/env-manage.ts",
       "src/console/runtime/server/kv.get.ts",
       "src/console/runtime/server/page.get.ts",
+      "src/console/runtime/server/schedule-run.ts",
       "src/console/runtime/server/search.get.ts",
       "src/console/runtime/server/sections.get.ts",
       "src/console/runtime/server/usage.get.ts",
@@ -262,8 +277,12 @@ export default defineConfig({
         delete exports["./console/runtime/console-route"];
         delete exports["./console/runtime/client/sections"];
         delete exports["./console/runtime/client/invocation"];
+        delete exports["./console/runtime/client/invocation-deletion"];
         delete exports["./console/runtime/client/request"];
         delete exports["./console/runtime/client/env-management"];
+        delete exports["./console/runtime/client/connections-management"];
+        delete exports["./console/runtime/client/env-status"];
+        delete exports["./console/runtime/client/schedule-run"];
         delete exports["./console/runtime/client/time"];
         delete exports["./console/runtime/definitions"];
         delete exports["./console/runtime/rpc"];
@@ -271,13 +290,14 @@ export default defineConfig({
         delete exports["./console/runtime/server/agents.get"];
         delete exports["./console/runtime/server/blob"];
         delete exports["./console/runtime/server/blob.get"];
+        delete exports["./console/runtime/server/channel-replay"];
         delete exports["./console/runtime/server/client.get"];
         delete exports["./console/runtime/server/database"];
         delete exports["./console/runtime/server/database.get"];
         delete exports["./console/runtime/server/definitions"];
         delete exports["./console/runtime/server/definitions.get"];
         delete exports["./console/runtime/server/invocation-capabilities.get"];
-        delete exports["./console/runtime/server/devframe"];
+        delete exports["./console/runtime/server/rpc"];
         delete exports["./console/runtime/server/invocation.get"];
         delete exports["./console/runtime/server/invocation-workspace.get"];
         delete exports["./console/runtime/server/invocations.get"];
@@ -287,16 +307,19 @@ export default defineConfig({
         delete exports["./console/runtime/server/kv.get"];
         delete exports["./console/runtime/server/kv"];
         delete exports["./console/runtime/server/page.get"];
+        delete exports["./console/runtime/server/schedule-run"];
         delete exports["./console/runtime/server/search.get"];
         delete exports["./console/runtime/server/sections.get"];
         delete exports["./console/runtime/server/sections"];
         delete exports["./console/runtime/server/usage.get"];
         delete exports["./console/runtime/server/status.get"];
         delete exports["./console/auth-client"];
+        delete exports["./console/auth-cloudflare-access"];
         delete exports["./console/auth-inline"];
         return {
           ...exports,
           "./console/auth/client": "./dist/console/auth-client.js",
+          "./console/auth/cloudflare-access": "./dist/console/auth-cloudflare-access.js",
           "./console/auth/inline": "./dist/console/auth-inline.js",
           "./console/blob": "./dist/console/runtime/server/blob.js",
           "./console/database": "./dist/console/runtime/server/database.js",

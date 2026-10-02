@@ -1,10 +1,8 @@
 import { defineCapability, normalizeMode } from "../../capability-runtime.ts"
+import { defineInternalTool, jsonObjectSchema, requirePrimitive } from "../internal.ts"
 import {
   assertString,
-  createTool,
-  jsonObjectSchema,
   method,
-  requirePrimitive,
   selectStore,
   storageValue,
 } from "./shared.ts"
@@ -55,19 +53,21 @@ function kvTools(mode: AgentCapabilityMode, options: KVCapabilityOptions): Agent
   return (context) => {
     const store = selectStore(requirePrimitive(context as never, "kv"), "KV", options.store)
     const tools: AgentToolSet = {
-      kv_read: createTool<KVReadInput>({
+      kv_read: defineInternalTool<KVReadInput>({
         description: "Read one KV value by exact key or list KV keys under a developer-provided prefix.",
         execute: ({ key, prefix }: KVReadInput = {}) => {
           if (!hasExactlyOne(key, prefix)) throw agentDiagnostics.AGENT_R0224({ message: "[vitehub] kv_read requires exactly one of key or prefix." })
           if (typeof key === "string" && key.trim()) return storageValue(method<(key: string) => MaybePromise<unknown>>(store, "kv", "get")(key))
           return storageValue<string[]>(method<(prefix: string) => MaybePromise<string[]>>(store, "kv", "keys")(assertString(prefix, "kv_read prefix")))
         },
+        icon: "i-lucide-key-round",
         inputSchema: kvReadInputSchema,
         name: "kv_read",
+        title: "Read KV",
       }),
     }
     if (mode === "write") {
-      tools.kv_edit = createTool<KVEditInput>({
+      tools.kv_edit = defineInternalTool<KVEditInput>({
         description: "Put or delete one KV key.",
         execute: ({ key, operation, value }) => {
           assertString(key, "kv_edit key")
@@ -75,9 +75,11 @@ function kvTools(mode: AgentCapabilityMode, options: KVCapabilityOptions): Agent
           if (operation === "delete") return storageValue(method<(key: string) => MaybePromise<unknown>>(store, "kv", "del")(key))
           throw agentDiagnostics.AGENT_R0225({ message: `[vitehub] Unsupported kv_edit operation: ${String(operation)}` })
         },
+        icon: "i-lucide-key-round",
         inputSchema: kvEditInputSchema,
         name: "kv_edit",
         policy: options.policy,
+        title: "Changed KV",
       })
     }
     return tools

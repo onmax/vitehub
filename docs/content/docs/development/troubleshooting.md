@@ -6,8 +6,9 @@ navigation.group: Proof and recovery
 icon: i-lucide-stethoscope
 ---
 
-Troubleshooting starts from the failed proof path.
-Identify whether the failure comes from discovery, generated files, provider resources, Runtime Helpers, the CLI Dev Loop, Agent behavior, or host output before changing code.
+Use this page when a local check, build, or deploy fails. First find the layer
+that failed: discovery, generated files, provider resources, Runtime Helpers, the
+Agent Dev Loop, Agent behavior, or host output. Then change code in that layer.
 
 ## Quick checks
 
@@ -16,7 +17,7 @@ Identify whether the failure comes from discovery, generated files, provider res
 | Definition is missing | File path and default export shape | [File conventions](/docs/reference/file-conventions) and `.vitehub/**` |
 | Stable import fails | Vite Integration and generated TypeScript includes | [Generated files](/docs/development/generated-files) |
 | Provider build fails | Provider Selection and required resource ids | [Provider output](/docs/reference/provider-output) |
-| Agent CLI cannot inspect or invoke | Running Vite server and `hubAgent()` registration | [CLI](/docs/development/cli) |
+| Agent CLI cannot inspect or invoke | Running Vite server and `agent` enabled in `vitehub()` | [CLI](/docs/development/cli) |
 | Agent changed behaviour | Agent Eval result and Agent Usage Record | [Agent Evals](/docs/agents/evals) |
 | Agent proof times out | Dev-loop `--timeout`, `agent.eval.testTimeout`, or stalled provider/session setup | [CLI](/docs/development/cli) and [Agent Evals](/docs/agents/evals) |
 | Runtime error lacks context | Package error family and diagnostics output | [Errors and diagnostics](/docs/reference/errors-diagnostics) |
@@ -42,13 +43,20 @@ The direct export keeps Build-Extracted Definition Options inspectable.
 ## Provider failures
 
 Provider failures usually belong to one of three layers: missing provider credentials, missing Provision State, or invalid Provider Output.
-Dry-run provisioning first, then inspect generated host output.
+Dry-run provisioning first, then build and inspect the generated host output.
 
 ```bash [Terminal]
 pnpm vitehub provision run --provider cloudflare --dry-run
 pnpm build
-find dist -maxdepth 4 -type f | sort
+pnpm vitehub inspect provider-output
 ```
+
+A build also fails when the preset cannot provide an enabled feature. For
+example, `queue: true` fails on the `node`, `netlify`, and `deno` presets, and
+`rateLimit: true` fails on `vercel`, `netlify`, and `deno`. Disable the feature
+or configure an explicit provider through the owner package. The
+[support matrix](/docs/frameworks-hosts/support-matrix) lists the providers for
+each host.
 
 ## Agent failures
 

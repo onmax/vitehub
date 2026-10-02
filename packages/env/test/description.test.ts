@@ -13,10 +13,10 @@ describe("Server Env declaration inventory", () => {
     })
     const description = describeServerEnv(registry)
     expect(description.entries).toEqual([
-      { path: "env.server.host", source: "env", secret: true, required: true, hasDefault: true },
-      { path: "env.server.nested.token", source: "provider", provider: "vault", secret: true, required: true, hasDefault: false },
+      { path: "env.server.host", source: "env", secret: true, required: true, hasDefault: true, type: "string" },
+      { path: "env.server.nested.token", source: "provider", provider: "vault", secret: true, required: true, hasDefault: false, type: "string" },
       { path: "env.server.label", source: "literal", secret: false, required: false, hasDefault: false },
-      { path: "env.server.optional", source: "env", secret: false, required: false, hasDefault: false },
+      { path: "env.server.optional", source: "env", secret: false, required: false, hasDefault: false, type: "string" },
     ])
     const serialized = JSON.stringify(description)
     for (const value of ["PRIVATE_HOST_NAME", "private-default", "private/storage/path", "private-literal"]) expect(serialized).not.toContain(value)
@@ -24,8 +24,23 @@ describe("Server Env declaration inventory", () => {
 
   it("returns independent metadata and withholds unsafe declaration names ", () => {
     const registry = createRuntimeRegistry({ "secret in name!": env({ source: env.provider("vault", "key") }) })
-    expect(describeServerEnv(registry).entries).toEqual([{ source: "provider", provider: "vault", secret: false, required: true, hasDefault: false }])
+    expect(describeServerEnv(registry).entries).toEqual([{ source: "provider", provider: "vault", secret: false, required: true, hasDefault: false, type: "string" }])
     expect(describeServerEnv({})).toEqual({ entries: [] })
+  })
+
+  it("uses the same paths for inventory and status inspection", async () => {
+    const { inspectServerEnv } = await import("../src/server.ts")
+    const registry = createRuntimeRegistry({
+      nested: { token: env({ source: env.source("NESTED_TOKEN") }) },
+      "nested.token": env({ source: env.source("DOTTED_TOKEN") }),
+    })
+    const inspection = await inspectServerEnv(registry, { env: { DOTTED_TOKEN: "dotted" } })
+    expect(inspection.entries.map(entry => entry.path)).toEqual(describeServerEnv(registry).entries.map(entry => entry.path))
+    // A dotted declaration key must not report its status under the nested path.
+    expect(inspection.entries).toEqual([
+      { masked: false, path: "env.server.nested.token", required: true, source: "env", status: "missing" },
+      { masked: false, required: true, source: "env", status: "available" },
+    ])
   })
 })
 

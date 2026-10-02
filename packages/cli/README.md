@@ -37,6 +37,7 @@ pnpm vitehub --help
 ```
 
 Every project includes `inspect` and `provision`. Other namespaces appear when their Vite integrations are active.
+The CLI owns the `inspect` namespace. Plugin command contributions with that name are ignored.
 
 ```txt
 Usage: vitehub <namespace> <feature> [args...]
@@ -48,7 +49,7 @@ Available namespaces:
 
 ## Inspect the project
 
-`inspect definitions` lists the Definitions that each active package discovered. The Console reads the same package-owned summaries. `inspect provider-output` lists generated Provider Output files and shows which exist.
+`inspect definitions` lists the Definitions that each active package discovered. The Console reads the same package-owned summaries. `inspect provider-output` lists generated Provider Output files and shows which exist. It resolves Vite configuration for build with production mode and loads Nuxt with development disabled, so production-only contributors are included. Other commands use development configuration.
 
 ```sh
 pnpm vitehub inspect definitions --kind queue
@@ -100,5 +101,6 @@ CLI-owned argument and execution defects use stable `CLI_R####` Nostics codes. C
 - Help loads and executes the local Vite or Nuxt config. A missing dependency or config error can stop help before it prints.
 - Command effects come from the package that contributes the command. Review command-specific help before applying Database migrations, Channel registration changes, or Provider provisioning.
 - `provision run` creates missing resources but does not delete or replace existing resources. Start with `--dry-run` and pass a provider explicitly.
+- `provision status` shows recorded ids from `.vitehub/provision.json` and pending plan actions. It never applies actions. Add `--json` to `provision run` or `provision status` for one JSON document on stdout.
 
 Read the [CLI guide](https://vitehub.dev/docs/development/cli) for every public command, examples, and troubleshooting.

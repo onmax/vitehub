@@ -1,8 +1,10 @@
+import { copyAgentInvocationCallerAbortSignal } from "./internal/invocation-input.ts"
 import { supportsSkillPersistence } from "./internal/skill-persistence.ts"
 import { markCapabilityInspection } from "./internal/capability-inspection.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
+import { hostObservability, isHostObservabilityCapability } from "./internal/observability-host.ts"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
-import { resolveRuntimeValue } from "@vite-hub/runtime"
+import { resolveRuntimeValue, ViteHubError } from "@vite-hub/runtime"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 
 import { applyWorkspaceAccessWrapper, hasTrustedWorkspaceAccessScope, hasTrustedWorkspaceSourceResolutionDefinition, isTrustedSourceFreeInspection, workspaceOverrideSymbol } from "./access-runtime.ts"
@@ -75,6 +77,8 @@ type ResolvedAgentOutputRenderer = ((result: unknown, extensions?: AgentOutputEx
   providerCount: number
 }
 export const workspacePersistencePathsSymbol: unique symbol = Symbol("vitehub.agent.workspacePersistencePaths")
+/** Paths previously owned by a capability that should be retired during persistence migration. */
+export const workspaceRetirementPathsSymbol: unique symbol = Symbol("vitehub.agent.workspaceRetirementPaths")
 export const workspaceMaterializationPathsSymbol: unique symbol = Symbol("vitehub.agent.workspaceMaterializationPaths")
 export const capabilityInvocationStartSymbol: unique symbol = Symbol("vitehub.agent.capabilityInvocationStart")
 const trustedGitHubPullRequestWorkspaceCapabilities = new WeakSet<object>()
@@ -82,15 +86,18 @@ export function trustGitHubPullRequestWorkspaceCapability<T extends object>(capa
   trustedGitHubPullRequestWorkspaceCapabilities.add(capability)
   return capability
 }
+export const capabilityFinishDeliveryEffectSymbol: unique symbol = Symbol("vitehub.agent.capabilityFinishDeliveryEffect")
 export const eagerFinishExtensionSymbol: unique symbol = Symbol("vitehub.agent.eagerFinishExtension")
 type InternalAgentCapabilityDefinition<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   Name extends WorkspaceName = WorkspaceName,
 > = AgentCapabilityDefinition<TRuntimeConfig, Name> & {
   [capabilityInvocationStartSymbol]?: (context: AgentCapabilityRuntimeContext<TRuntimeConfig, Name>) => MaybePromise<void>
+  [capabilityFinishDeliveryEffectSymbol]?: AgentChannelDeliveryFinishEffect
   [eagerFinishExtensionSymbol]?: boolean
   [workspaceMaterializationPathsSymbol]?: readonly string[]
   [workspacePersistencePathsSymbol]?: readonly string[]
+  [workspaceRetirementPathsSymbol]?: readonly string[]
 }
 type ExactOptions<TInput, TShape> = TInput & Record<Exclude<keyof TInput, keyof TShape>, never>
 type AgentCapabilityDefinitionInput<
@@ -122,7 +129,6 @@ const defaultCapabilityRuntimePhases = ["configure", "prepare", "bind", "input",
 export const channelDeliveryEffectsContextKey = "channel.delivery.effects"
 export const channelDeliveryFinishEffectsContextKey = "channel.delivery.finishEffects"
 type AgentCapabilityRuntimePhase = typeof defaultCapabilityRuntimePhases[number]
-export const optionalWorkspaceCapabilitySymbol: unique symbol = Symbol("vitehub.agent.optionalWorkspaceCapability")
 
 export interface ResolvedAgentFinishExtensionProvider {
   eager?: boolean
@@ -166,6 +172,7 @@ export interface AgentCapabilityInvocationOptions<
   context?: AgentInvocationContextStore
   driverKind?: AgentDriverKind
   driver?: unknown
+  deferPreparation?: boolean
   invocationKind?: "run" | "stream"
   invoker?: AgentInvoker
   model?: AgentModelResolver<TRuntimeConfig, Name>
@@ -180,7 +187,10 @@ export interface ResolvedAgentCapabilities {
   driverContributions: AgentDriverContribution[]
   hasCloseCallbacks: boolean
   input: AgentRunInput
+  inputDataChanged: () => boolean
   messages: Message[]
+  setInputDataBaseline: (input: AgentRunInput) => void
+  prepare?: (input: AgentRunInput) => Promise<ResolvedAgentCapabilities>
   response?: Response
   registries: AgentCapabilityRegistries
   start?: () => Promise<AgentChannelDeliveryEffectIntent[]>
@@ -278,9 +288,8 @@ export function normalizeMode(value: unknown, label: string): AgentCapabilityMod
 }
 
 export function normalizeCapabilities(
-  capabilities: AgentStaticCapabilitiesList | undefined,
+  capabilities: AgentStaticCapabilitiesList | undefined = [],
 ): AgentCapabilityDefinition[] {
-  if (capabilities === undefined) return []
   if (!Array.isArray(capabilities)) {
     throw agentDiagnostics.AGENT_C0008()
   }
@@ -288,13 +297,16 @@ export function normalizeCapabilities(
   if (capabilities.some(capability => (capability as Record<symbol, unknown>)?.[Symbol.for("eve.mounted-extension")] === true)) {
     throw agentDiagnostics.AGENT_B0001()
   }
+  // Remove host-injected copies retained by definitions from an earlier host.
+  const observability = hostObservability()?.capability
   // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-  const explicit = capabilities.map(capability => defineCapability(capability as AgentCapabilityDefinition))
+  const explicit = capabilities.filter(capability => !isHostObservabilityCapability(capability as AgentCapabilityDefinition)).map(capability => defineCapability(capability as AgentCapabilityDefinition))
   const explicitById = new Map<string, AgentCapabilityDefinition>()
   for (const capability of explicit) {
     if (explicitById.has(capability.id)) {
       throw agentDiagnostics.AGENT_C0009({ id: capability.id })
     }
+    if (observability && capability.id === observability.id) throw agentDiagnostics.AGENT_C0009({ id: capability.id })
     explicitById.set(capability.id, capability)
   }
 
@@ -313,6 +325,10 @@ export function normalizeCapabilities(
   }
 
   for (const capability of explicit) add(capability)
+  if (observability) {
+    if (seen.has(observability.id)) throw agentDiagnostics.AGENT_C0009({ id: observability.id })
+    add(observability)
+  }
   return normalized
 }
 
@@ -363,10 +379,6 @@ function validateSandboxCommands(commands: unknown): void {
 
 function capabilityRequiresWorkspace(capability: AgentCapabilityDefinition): boolean {
   const metadata = capability.metadata
-  const optionalWorkspace = hasRuntimeType(metadata, "object")
-    && metadata !== null
-    // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-    && (metadata as { [optionalWorkspaceCapabilitySymbol]?: unknown })[optionalWorkspaceCapabilitySymbol] === true
   const accessWorkspace = capability.id === "access"
     && hasRuntimeType(metadata, "object")
     && metadata !== null
@@ -375,7 +387,7 @@ function capabilityRequiresWorkspace(capability: AgentCapabilityDefinition): boo
   const sandboxCommands = capability.id === "sandbox"
     // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
     && Array.isArray((metadata as { commands?: unknown } | undefined)?.commands)
-  return capability.workspace && !optionalWorkspace
+  return Boolean(capability.workspace)
     || capability.id === "workspace-shell"
     || sandboxCommands
     || accessWorkspace
@@ -386,9 +398,6 @@ export function validateAgentCapabilityComposition(
   options: { driverKind?: AgentDriverKind, hasWorkspace: boolean, workspaceMode?: AgentCapabilityMode },
 ): void {
   for (const capability of normalizeCapabilities(capabilities)) {
-    if (capability.id === "gmail" && options.driverKind !== "provider") {
-      throw agentDiagnostics.AGENT_R0320({ message: "[vitehub] gmail() requires a provider Agent Driver so its Workspace commands have a local execution host." })
-    }
     if (capability.id === "sandbox") {
       // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
       validateSandboxCommands((capability.metadata as { commands?: unknown } | undefined)?.commands)
@@ -443,13 +452,13 @@ function getRunMessages(input: AgentRunInput): Message[] {
 function normalizeRunInput(input: AgentRunInput): AgentRunInput {
   if (input.messages || Array.isArray(input.prompt) || input.message === undefined) return input
   const { message: _message, ...next } = input
-  return { ...next, messages: getRunMessages(input) }
+  return copyAgentInvocationCallerAbortSignal(input, { ...next, messages: getRunMessages(input) })
 }
 
 function withMessages(input: AgentRunInput, messages: Message[]): AgentRunInput {
-  if (input.messages) return { ...input, messages }
-  if (Array.isArray(input.prompt)) return { ...input, prompt: messages }
-  return { ...input, messages }
+  if (input.messages) return copyAgentInvocationCallerAbortSignal(input, { ...input, messages })
+  if (Array.isArray(input.prompt)) return copyAgentInvocationCallerAbortSignal(input, { ...input, prompt: messages })
+  return copyAgentInvocationCallerAbortSignal(input, { ...input, messages })
 }
 
 async function callHooks<
@@ -493,6 +502,83 @@ function pathsConflict(left: string, right: string): boolean {
 
 function isPlainRecord(input: unknown): input is Record<string, unknown> {
   return !!input && hasRuntimeType(input, "object") && !Array.isArray(input)
+}
+
+export function snapshotCapabilityData(value: unknown, seen: WeakMap<object, unknown> = new WeakMap()): unknown {
+  if (!value || !hasRuntimeType(value, "object")) return value
+  const existing = seen.get(value)
+  if (existing) return existing
+  if (value instanceof Date) return new Date(value.getTime())
+  if (value instanceof RegExp) {
+    const snapshot = new RegExp(value.source, value.flags)
+    snapshot.lastIndex = value.lastIndex
+    return snapshot
+  }
+  if (value instanceof URL) return new URL(value.href)
+  if (value instanceof URLSearchParams) return new URLSearchParams(value)
+  if (value instanceof Map) {
+    const snapshot = new Map<unknown, unknown>()
+    seen.set(value, snapshot)
+    for (const [key, entry] of value) snapshot.set(snapshotCapabilityData(key, seen), snapshotCapabilityData(entry, seen))
+    return snapshot
+  }
+  if (value instanceof Set) {
+    const snapshot = new Set<unknown>()
+    seen.set(value, snapshot)
+    for (const entry of value) snapshot.add(snapshotCapabilityData(entry, seen))
+    return snapshot
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return value
+  const snapshot = Array.isArray(value) ? [] : Object.create(prototype)
+  seen.set(value, snapshot)
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor) continue
+    if ("value" in descriptor) descriptor.value = snapshotCapabilityData(descriptor.value, seen)
+    Object.defineProperty(snapshot, key, descriptor)
+  }
+  return snapshot
+}
+
+function capabilityDataEqual(left: unknown, right: unknown, seen = new WeakMap<object, object>()): boolean {
+  if (Object.is(left, right)) return true
+  if (!left || !right || !hasRuntimeType(left, "object") || !hasRuntimeType(right, "object")) return false
+  const matched = seen.get(left)
+  if (matched === right) return true
+  seen.set(left, right)
+  if (left instanceof Date || right instanceof Date) return left instanceof Date && right instanceof Date && Object.is(left.getTime(), right.getTime())
+  if (left instanceof RegExp || right instanceof RegExp) return left instanceof RegExp && right instanceof RegExp && left.source === right.source && left.flags === right.flags && left.lastIndex === right.lastIndex
+  if (left instanceof URL || right instanceof URL) return left instanceof URL && right instanceof URL && left.href === right.href
+  if (left instanceof URLSearchParams || right instanceof URLSearchParams) return left instanceof URLSearchParams && right instanceof URLSearchParams && left.toString() === right.toString()
+  if (left instanceof Map || right instanceof Map) {
+    if (!(left instanceof Map) || !(right instanceof Map) || left.size !== right.size) return false
+    const leftEntries = [...left.entries()]
+    const rightEntries = [...right.entries()]
+    return leftEntries.every(([key, value], index) => capabilityDataEqual(key, rightEntries[index]?.[0], seen) && capabilityDataEqual(value, rightEntries[index]?.[1], seen))
+  }
+  if (left instanceof Set || right instanceof Set) {
+    if (!(left instanceof Set) || !(right instanceof Set) || left.size !== right.size) return false
+    const rightEntries = [...right.values()]
+    return [...left.values()].every((value, index) => capabilityDataEqual(value, rightEntries[index], seen))
+  }
+  const leftPrototype = Object.getPrototypeOf(left)
+  const rightPrototype = Object.getPrototypeOf(right)
+  const isSupportedRecord = (prototype: unknown): boolean => prototype === Object.prototype || prototype === null
+  if (Array.isArray(left) !== Array.isArray(right) || leftPrototype !== rightPrototype) return false
+  if (!Array.isArray(left) && !isSupportedRecord(leftPrototype)) return Object.is(left, right)
+  const leftKeys = Reflect.ownKeys(left)
+  const rightKeys = Reflect.ownKeys(right)
+  if (leftKeys.length !== rightKeys.length || leftKeys.some((key, index) => key !== rightKeys[index])) return false
+  return leftKeys.every(key => {
+    const leftDescriptor = Object.getOwnPropertyDescriptor(left, key)
+    const rightDescriptor = Object.getOwnPropertyDescriptor(right, key)
+    if (!leftDescriptor || !rightDescriptor) return false
+    if ("value" in leftDescriptor || "value" in rightDescriptor) {
+      return "value" in leftDescriptor && "value" in rightDescriptor && capabilityDataEqual(leftDescriptor.value, rightDescriptor.value, seen)
+    }
+    return leftDescriptor.get === rightDescriptor.get && leftDescriptor.set === rightDescriptor.set
+  })
 }
 
 function ruleConflictBase(pattern: string): string {
@@ -869,6 +955,7 @@ async function applyCapabilityWorkspaceContributions<
     workspaceDefinition: WorkspaceDefinition
     workspaceMaterializationPaths?: readonly string[]
     workspacePersistencePaths?: readonly { capabilityId: string, path: string }[]
+    workspaceRetirementPaths?: readonly { capabilityId: string, path: string }[]
     persistWorkspaceContributions: boolean
   },
   workspaceMode: AgentCapabilityMode,
@@ -881,7 +968,8 @@ async function applyCapabilityWorkspaceContributions<
   const workspaceRuntime = await import("@vite-hub/workspace/runtime")
 
   for (const capability of capabilities) {
-    if (!capability.workspace) continue
+    // SAFETY: Capability registration exposes the private retirement-path registry symbol.
+    if (!capability.workspace && !((capability as InternalAgentCapabilityDefinition)[workspaceRetirementPathsSymbol]?.length)) continue
     // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
     await validateCapabilityRuntimeRequirement(capability as AgentCapabilityDefinition, context.workspace, workspaceMode)
     const resolved = hasRuntimeType(capability.workspace, "function")
@@ -889,7 +977,7 @@ async function applyCapabilityWorkspaceContributions<
           ...context,
           mode: capability.mode,
         })
-      : capability.workspace
+      : capability.workspace || {}
     if (!resolved) continue
 
     if (trustedGitHubPullRequestWorkspaceCapabilities.has(capability) && resolved.sources?.vitehubGitHubPullRequest) {
@@ -912,6 +1000,11 @@ async function applyCapabilityWorkspaceContributions<
           && !registries.some(entry => entry.sources.includes(key))) {
           delete remaining[key]
           replacedSources.add("vitehubGitHubPullRequest")
+          continue
+        }
+        // A different repository, root, include, or ignore at the checkout mount cannot be replaced safely.
+        if (!existing.requestOnly && pr.mountPath === existing.mountPath) {
+          throw agentDiagnostics.AGENT_R0327({ message: `[vitehub] The GitHub pull request checkout of ${String(prOptions?.repo)} at "${pr.mountPath || "."}" conflicts with Workspace Source "${key}", which has a different repository or scope. Declare the same repository without root, include, or ignore, set github({ pullRequest: { workspace: { mount } } }) to another path, or remove the Source.` })
         }
       }
       if (replacedSources.size) definition = { ...definition, sources: remaining }
@@ -933,7 +1026,7 @@ async function applyCapabilityWorkspaceContributions<
 
   let selectedWorkspaceScope = mergeSelectedWorkspaceScopePaths(selectedWorkspaceScopeFromContext(context.context), context.workspaceMaterializationPaths || [])
   assertSelectedWorkspaceSourceGrants(selectedWorkspaceScope, [definition, declaredWorkspaceDefinition])
-  if (!registries.length) return
+  if (!registries.length && !context.workspaceRetirementPaths?.length) return
   assertStaticWorkspaceContributionSourcesInScope(registries, definition, selectedWorkspaceScope, workspaceRuntime)
   if (isTrustedSourceFreeInspection(context.context)) {
     return { definition, registries, workspace: context.workspace }
@@ -972,13 +1065,22 @@ async function applyCapabilityWorkspaceContributions<
     capabilities?(): Promise<{ conditionalWrites: boolean }>
     fs: ReadonlyWorkspaceFacade<Name>["fs"] & {
       writeFile(path: string, content: string | Uint8Array, options?: { ifDigest?: string | null, mediaType?: string, metadata?: Record<string, unknown> }): Promise<string>
+      rm(path: string, options?: { force?: boolean, recursive?: boolean, ifDigest?: string | null }): Promise<void>
     }
   }
-  if (context.persistWorkspaceContributions && persistencePaths.length && await supportsSkillPersistence(retainedWorkspace)) {
-    await Promise.all(persistencePaths.map(({ path }) => sourceResolution.workspace.fs.materializeSources?.({ path })))
+  const retirementPaths = context.workspaceRetirementPaths || []
+  const conditionalWorkspacePersistence = Boolean(context.persistWorkspaceContributions
+    && (persistencePaths.length || retirementPaths.length)
+    && await supportsSkillPersistence(retainedWorkspace))
+  // Retirement must use the same conditional-write capability as persistence.
+  // A read-then-unconditional-delete fallback can remove a concurrent replacement.
+  const canRetireWorkspaceContributions = conditionalWorkspacePersistence
+    && retirementPaths.length > 0
+  if (conditionalWorkspacePersistence || canRetireWorkspaceContributions) {
+    if (conditionalWorkspacePersistence) await Promise.all(persistencePaths.map(({ path }) => sourceResolution.workspace.fs.materializeSources?.({ path })))
     const pending: Array<{ capabilityId: string, path: string, ifDigest: string | null }> = []
     const desired = new Map<string, { content: string | Uint8Array, digest: string }>()
-    for (const item of persistencePaths) {
+    for (const item of conditionalWorkspacePersistence ? persistencePaths : []) {
       if (!await sourceResolution.workspace.fs.exists(item.path)) continue
       const content = await sourceResolution.workspace.fs.readFile(item.path, { encoding: "binary" })
       const digest = await capabilityContributionDigest(content)
@@ -1029,6 +1131,29 @@ async function applyCapabilityWorkspaceContributions<
             || !isRuntimeRecord(afterMetadata) || afterMetadata.capabilityId !== capabilityId
             || afterMetadata.digest !== digest) throw error
         }
+      }
+    }
+    // Remove files owned by an older version of a capability. Ownership metadata
+    // and the recorded digest protect user-edited files from migration cleanup.
+    for (const { capabilityId, path } of retirementPaths) {
+      // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+      if (!await retainedWorkspace.fs.exists(path as never)) continue
+      // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+      const stat = await retainedWorkspace.fs.stat(path as never)
+      const metadata = stat.metadata?.capabilityWorkspaceContribution
+      if (!isRuntimeRecord(metadata) || metadata.capabilityId !== capabilityId || metadata.path !== path || !hasRuntimeType(metadata.digest, "string")) continue
+      // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+      const current = await retainedWorkspace.fs.readFile(path as never, { encoding: "binary" })
+      if (await capabilityContributionDigest(current) !== metadata.digest) continue
+      try {
+        const removeOptions: { force: true, ifDigest?: string | null } = { force: true }
+        if (conditionalWorkspacePersistence) removeOptions.ifDigest = stat.digest
+        // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+        await retainedWorkspace.fs.rm(path as never, removeOptions)
+      }
+      catch (error) {
+        // A concurrent edit or invocation won the conditional removal.
+        if (Reflect.get(Object(error), "code") !== "WORKSPACE_CONFLICT") throw error
       }
     }
   }
@@ -1113,13 +1238,24 @@ export async function resolveAgentCapabilities<
           .map(path => ({ capabilityId: capability.id, path })),
       )
     : []
+  const workspaceRetirementPaths = driverKind === "provider"
+    ? capabilities.flatMap(capability =>
+        // SAFETY: Capability registration exposes the private retirement-path registry symbol.
+        ((capability as InternalAgentCapabilityDefinition)[workspaceRetirementPathsSymbol] || [])
+          .map(path => ({ capabilityId: capability.id, path })),
+      )
+    : []
   let currentInput = normalizeRunInput(input)
   // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+  // SAFETY: The workspace is the facade created for this invocation's declared workspace name.
   let currentWorkspace = workspace as ReadonlyWorkspaceFacade<Name> | undefined
   let currentWorkspaceDefinition = invocationOptions.workspaceDefinition
   const inputMessages = getRunMessages(currentInput)
   let messages = memoizeMessageAttachmentData(inputMessages)
   if (messages !== inputMessages) currentInput = withMessages(currentInput, messages)
+  let initialInputDataReference = currentInput.data
+  let initialInputData = snapshotCapabilityData(currentInput.data)
+  const inputDataChanged = () => currentInput.data !== initialInputDataReference || !capabilityDataEqual(currentInput.data, initialInputData)
   let tools: AgentToolSet | undefined
   const driverContributions: AgentDriverContribution[] = []
   let capabilityScope: Awaited<ReturnType<typeof openAgentCapabilityScope>> | undefined
@@ -1128,7 +1264,14 @@ export async function resolveAgentCapabilities<
   const initialFinishDeliveryEffectProviders = invocationContext.get(channelDeliveryFinishEffectsContextKey) || []
   const registries: AgentCapabilityRegistries = {
     deliveryEffectIntents: [...initialDeliveryEffectIntents],
-    finishDeliveryEffectProviders: [...initialFinishDeliveryEffectProviders],
+    finishDeliveryEffectProviders: [
+      ...initialFinishDeliveryEffectProviders,
+      ...capabilities.flatMap(capability => {
+        // SAFETY: Internal Capabilities register completion requirements before input handling can return a Response.
+        const effect = (capability as InternalAgentCapabilityDefinition<TRuntimeConfig, Name>)[capabilityFinishDeliveryEffectSymbol]
+        return effect ? [effect] : []
+      }),
+    ],
     finishExtensionProviders: [],
     finalOutputRenderers: [],
     modelExecutionInstrumentation: [],
@@ -1153,6 +1296,16 @@ export async function resolveAgentCapabilities<
       kind,
       ...(uniqueNames.length ? { names: uniqueNames } : {}),
     })
+  }
+
+  function addCapabilityTools(value: AgentToolSet, capabilityId: string) {
+    for (const name of Object.keys(value)) {
+      if (tools && Object.hasOwn(tools, name) && (tools[name].metadata?.vitehubChannelDelivery === true || value[name]?.metadata?.vitehubChannelDelivery === true)) {
+        throw new ViteHubError("CHANNEL_DELIVERY_TOOL_CONFLICT", `[vitehub] Channel delivery tool "${name}" conflicts with an existing Capability tool.`, { details: { tool: name } })
+      }
+    }
+    recordDriverContribution("Capability tools", capabilityId, Object.keys(value))
+    tools = { ...tools, ...value }
   }
 
   function addFinishExtensionProvider(capabilityId: string, value: unknown | AgentFinishExtensionProvider, eager?: boolean) {
@@ -1216,6 +1369,7 @@ export async function resolveAgentCapabilities<
       workspaceDefinition: currentWorkspaceDefinition,
       workspaceMaterializationPaths,
       workspacePersistencePaths,
+      workspaceRetirementPaths,
       // Inspection needs retained ownership for conflict validation, but must
       // never publish generated contributions to the underlying workspace.
       persistWorkspaceContributions: !inspection
@@ -1231,258 +1385,262 @@ export async function resolveAgentCapabilities<
     for (const item of capabilityContexts) syncCapabilityWorkspaceContext(item.context)
   }
 
-  try {
-    for (const capability of capabilities) {
-      // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-      await validateCapabilityRuntimeRequirement(capability as AgentCapabilityDefinition, currentWorkspace, workspaceMode)
-      const phases = invocationOptions.phases || defaultCapabilityRuntimePhases
-      const metadataContext = {
-        ...agentInvocationCallbackContextValues(invocationContext),
-        ...runtimeContext,
-        abortSignal: currentInput.abortSignal,
-        actor: invoker,
-        context: invocationContext,
-        driver: { kind: driverKind },
-        fs: currentWorkspace?.fs,
-        invoker,
-        runtimeContext: runtime,
-        workspace: currentWorkspace,
-        workspaceDefinition: currentWorkspaceDefinition,
-        workspaceMaterializationPaths,
-      }
-      let capabilityContext: AgentCapabilityRuntimeContext<TRuntimeConfig, Name> & WorkspaceOverrideRuntime<Name>
-      const input: AgentCapabilityInputContext = {
-        get: () => currentInput,
-        messages: () => messages,
-        set(value) {
-          currentInput = normalizeRunInput(value)
-          const inputMessages = getRunMessages(currentInput)
-          messages = memoizeMessageAttachmentData(inputMessages)
-          if (messages !== inputMessages) currentInput = withMessages(currentInput, messages)
-        },
-        setMessages(value) {
-          messages = memoizeMessageAttachmentData(value)
-          currentInput = withMessages(currentInput, messages)
-        },
-      }
-      // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-      capabilityContext = {
-        ...metadataContext,
-        ...(invocationOptions.driver ? { agentDriver: invocationOptions.driver } : {}),
-        [workspaceOverrideSymbol](nextWorkspace: ReadonlyWorkspaceFacade<Name>) {
-          currentWorkspace = nextWorkspace
-          syncCapabilityWorkspaceContext(capabilityContext)
-        },
-        capability,
-        mode: capability.mode,
-        input,
-        invocation: { input, kind: invocationOptions.invocationKind || "run" },
-        delivery: {
-          effect(intent) {
-            if (!intent || !hasRuntimeType(intent, "object") || !hasRuntimeType(intent.kind, "string") || !intent.kind.trim()) {
-              throw agentDiagnostics.AGENT_R0334({ message: "[vitehub] delivery.effect() requires an effect intent with a non-empty kind." })
-            }
-            const next = [...registries.deliveryEffectIntents, intent]
-            registries.deliveryEffectIntents = next
-            invocationContext.set(channelDeliveryEffectsContextKey, next, { overwrite: true })
-          },
-          finishEffect(effect) {
-            const effects = Array.isArray(effect) ? effect : [effect]
-            if (!hasRuntimeType(effect, "function") && effects.some(effect => !effect || !isRuntimeRecord(effect) || !hasRuntimeType(effect.kind, "string") || !effect.kind.trim())) {
-              throw agentDiagnostics.AGENT_R0335({ message: "[vitehub] delivery.finishEffect() requires an effect intent or resolver." })
-            }
-            const next = [...registries.finishDeliveryEffectProviders, effect]
-            registries.finishDeliveryEffectProviders = next
-            invocationContext.set(channelDeliveryFinishEffectsContextKey, next, { overwrite: true })
-          },
-        },
-        model: {
-          async resolve(model, options) {
-            const resolver = model ?? invocationOptions.model
-            if (resolver === undefined) {
-              throw agentDiagnostics.AGENT_R0336({ message: `[vitehub] ${capability.id}() requires a model option or an agent model.` })
-            }
-            const resolverContext = {
-              ...metadataContext,
-              ...(options?.abortSignal ? { abortSignal: options.abortSignal } : {}),
-              fs: currentWorkspace?.fs,
-              runtimeConfig: runtime.runtimeConfig,
-              workspace: currentWorkspace,
-              workspaceDefinition: currentWorkspaceDefinition,
-            }
-            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-            const resolved = await resolveRuntimeValue(resolver as never, resolverContext as never)
-            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-            return await materializeAgentModel(resolved as never, resolverContext)
-          },
-        },
-        modelExecution: {
-          instrument(instrumentation) {
-            registries.modelExecutionInstrumentation.push(instrumentation)
-          },
-        },
-        output: {
-          extensions: createAgentExtensionReader(new Map()),
-          final(renderer: AgentOutputRenderer, options?: { order?: "last" }) {
-            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-            const resolved = ((result: unknown, extensions = createAgentExtensionReader(new Map())) => renderer(result, {
-              ...capabilityContext,
-              output: {
-                ...capabilityContext.output,
-                extensions,
-              },
-            })) as ResolvedAgentOutputRenderer
-            resolved.order = options?.order
-            resolved.providerCount = registries.outputExtensionProviders.length
-            registries.finalOutputRenderers.push(resolved)
-          },
-          provide(value) {
-            registries.outputExtensionProviders.push({
-              id: capability.id,
-              resolve: hasRuntimeType(value, "function")
-                // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-                ? value as AgentOutputExtensionProvider
-                : () => value,
-            })
-          },
-          render(renderer: AgentOutputRenderer) {
-            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-            const resolved = ((result: unknown, extensions = createAgentExtensionReader(new Map())) => renderer(result, {
-              ...capabilityContext,
-              output: {
-                ...capabilityContext.output,
-                extensions,
-              },
-            })) as ResolvedAgentOutputRenderer
-            resolved.providerCount = registries.outputExtensionProviders.length
-            registries.outputRenderers.push(resolved)
-          },
-        },
-        providerTools: {
-          add(tool) {
-            registries.providerTools.push(tool)
-            recordDriverContribution("provider tools", capability.id, [tool.name])
-          },
-        },
-        finish: {
-          provide(value) {
-            addFinishExtensionProvider(capability.id, value)
-          },
-        },
-        state: {
-          require(name, options) {
-            if (!registries.stateRequirements.some(requirement => requirement.name === name)) {
-              registries.stateRequirements.push({ name, optional: options?.optional })
-            }
-          },
-        },
-        telemetry: {
-          metadata(metadata) {
-            if (!metadata || !hasRuntimeType(metadata, "object") || Array.isArray(metadata)) {
-              throw agentDiagnostics.AGENT_R0337({ message: `[vitehub] Capability "${capability.id}" telemetry.metadata() requires a metadata object.` })
-            }
-            registries.telemetryMetadata.push({ capabilityId: capability.id, metadata })
-          },
-        },
-        inspection: {
-          async set(state) {
-            await setAgentCapabilityInspection(invocationContext, capability.id, {
-              label: capability.inspection?.label ?? capability.id,
-              ...capability.inspection,
-              state,
-            })
-          },
-        },
-        tools: {
-          add(value) {
-            if (!value) return
-            recordDriverContribution("Capability tools", capability.id, Object.keys(value))
-            tools = { ...tools, ...value }
-          },
-          transform(transform) {
-            toolTransforms.push(transform)
-          },
-        },
-        workspace: currentWorkspace,
-      } as AgentCapabilityRuntimeContext<TRuntimeConfig, Name> & WorkspaceOverrideRuntime<Name>
-      if (inspection) {
-        markCapabilityInspection(capabilityContext)
-      }
-      capabilityContexts.push({ capability, context: capabilityContext })
-      if (capability.telemetry) {
-        registries.telemetry.push({ capabilityId: capability.id, registration: capability.telemetry })
-      }
-      if (capability.finish) {
-        addFinishExtensionProvider(
-          capability.id,
-          capability.finish,
-          // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-          (capability as InternalAgentCapabilityDefinition<TRuntimeConfig, Name>)[eagerFinishExtensionSymbol],
-        )
-      }
-
-      for (const [name, trigger] of Object.entries(capability.triggers || {})) {
-        assertTriggerName(name, capability.id)
+  async function* resolve(): AsyncGenerator<ResolvedAgentCapabilities, ResolvedAgentCapabilities> {
+    let preparationDeferred = false
+    try {
+      for (const capability of capabilities) {
         // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-        const id = `${capability.id}.${name}` as const
-        registries.triggers.push({
-          capabilityId: capability.id,
-          // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-          definition: trigger as never,
-          id,
-          input: trigger.input,
-          invoke: input => trigger.invoke({
-            ...runtimeContext,
-            actor: invoker,
-            capability,
-            trigger: {
-              capabilityId: capability.id,
-              id,
-              name,
-              source: "capability",
+        await validateCapabilityRuntimeRequirement(capability as AgentCapabilityDefinition, currentWorkspace, workspaceMode)
+        const phases = invocationOptions.phases || defaultCapabilityRuntimePhases
+        const metadataContext = {
+          ...agentInvocationCallbackContextValues(invocationContext),
+          ...runtimeContext,
+          abortSignal: currentInput.abortSignal,
+          actor: invoker,
+          context: invocationContext,
+          driver: { kind: driverKind },
+          fs: currentWorkspace?.fs,
+          invoker,
+          runtimeContext: runtime,
+          workspace: currentWorkspace,
+          workspaceDefinition: currentWorkspaceDefinition,
+          workspaceMaterializationPaths,
+        }
+        let capabilityContext: AgentCapabilityRuntimeContext<TRuntimeConfig, Name> & WorkspaceOverrideRuntime<Name>
+        const input: AgentCapabilityInputContext = {
+          get: () => currentInput,
+          messages: () => messages,
+          set(value) {
+            currentInput = normalizeRunInput(value)
+            const inputMessages = getRunMessages(currentInput)
+            messages = memoizeMessageAttachmentData(inputMessages)
+            if (messages !== inputMessages) currentInput = withMessages(currentInput, messages)
+          },
+          setMessages(value) {
+            messages = memoizeMessageAttachmentData(value)
+            currentInput = withMessages(currentInput, messages)
+          },
+        }
+        // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+        capabilityContext = {
+          ...metadataContext,
+          ...(invocationOptions.driver ? { agentDriver: invocationOptions.driver } : {}),
+          [workspaceOverrideSymbol](nextWorkspace: ReadonlyWorkspaceFacade<Name>) {
+            currentWorkspace = nextWorkspace
+            syncCapabilityWorkspaceContext(capabilityContext)
+          },
+          capability,
+          mode: capability.mode,
+          input,
+          invocation: { input, kind: invocationOptions.invocationKind || "run" },
+          delivery: {
+            effect(intent) {
+              if (!intent || !hasRuntimeType(intent, "object") || !hasRuntimeType(intent.kind, "string") || !intent.kind.trim()) {
+                throw agentDiagnostics.AGENT_R0334({ message: "[vitehub] delivery.effect() requires an effect intent with a non-empty kind." })
+              }
+              const next = [...registries.deliveryEffectIntents, intent]
+              registries.deliveryEffectIntents = next
+              invocationContext.set(channelDeliveryEffectsContextKey, next, { overwrite: true })
             },
+            finishEffect(effect) {
+              const effects = Array.isArray(effect) ? effect : [effect]
+              if (!hasRuntimeType(effect, "function") && effects.some(effect => !effect || !isRuntimeRecord(effect) || !hasRuntimeType(effect.kind, "string") || !effect.kind.trim())) {
+                throw agentDiagnostics.AGENT_R0335({ message: "[vitehub] delivery.finishEffect() requires an effect intent or resolver." })
+              }
+              const next = [...registries.finishDeliveryEffectProviders, effect]
+              registries.finishDeliveryEffectProviders = next
+              invocationContext.set(channelDeliveryFinishEffectsContextKey, next, { overwrite: true })
+            },
+          },
+          model: {
+            async resolve(model, options) {
+              const resolver = model ?? invocationOptions.model
+              if (resolver === undefined) {
+                throw agentDiagnostics.AGENT_R0336({ message: `[vitehub] ${capability.id}() requires a model option or an agent model.` })
+              }
+              const resolverContext = {
+                ...metadataContext,
+                ...(options?.abortSignal ? { abortSignal: options.abortSignal } : {}),
+                fs: currentWorkspace?.fs,
+                runtimeConfig: runtime.runtimeConfig,
+                workspace: currentWorkspace,
+                workspaceDefinition: currentWorkspaceDefinition,
+              }
+              // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+              const resolved = await resolveRuntimeValue(resolver as never, resolverContext as never)
+              // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+              return await materializeAgentModel(resolved as never, resolverContext)
+            },
+          },
+          modelExecution: {
+            instrument(instrumentation) {
+              registries.modelExecutionInstrumentation.push(instrumentation)
+            },
+          },
+          output: {
+            extensions: createAgentExtensionReader(new Map()),
+            final(renderer: AgentOutputRenderer, options?: { order?: "last" }) {
+              // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+              const resolved = ((result: unknown, extensions = createAgentExtensionReader(new Map())) => renderer(result, {
+                ...capabilityContext,
+                output: {
+                  ...capabilityContext.output,
+                  extensions,
+                },
+              })) as ResolvedAgentOutputRenderer
+              resolved.order = options?.order
+              resolved.providerCount = registries.outputExtensionProviders.length
+              registries.finalOutputRenderers.push(resolved)
+            },
+            provide(value) {
+              registries.outputExtensionProviders.push({
+                id: capability.id,
+                resolve: hasRuntimeType(value, "function")
+                  // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+                  ? value as AgentOutputExtensionProvider
+                  : () => value,
+              })
+            },
+            render(renderer: AgentOutputRenderer) {
+              // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+              const resolved = ((result: unknown, extensions = createAgentExtensionReader(new Map())) => renderer(result, {
+                ...capabilityContext,
+                output: {
+                  ...capabilityContext.output,
+                  extensions,
+                },
+              })) as ResolvedAgentOutputRenderer
+              resolved.providerCount = registries.outputExtensionProviders.length
+              registries.outputRenderers.push(resolved)
+            },
+          },
+          providerTools: {
+            add(tool) {
+              registries.providerTools.push(tool)
+              recordDriverContribution("provider tools", capability.id, [tool.name])
+            },
+          },
+          finish: {
+            provide(value) {
+              addFinishExtensionProvider(capability.id, value)
+            },
+          },
+          state: {
+            require(name, options) {
+              if (!registries.stateRequirements.some(requirement => requirement.name === name)) {
+                registries.stateRequirements.push({ name, optional: options?.optional })
+              }
+            },
+          },
+          telemetry: {
+            metadata(metadata) {
+              if (!metadata || !hasRuntimeType(metadata, "object") || Array.isArray(metadata)) {
+                throw agentDiagnostics.AGENT_R0337({ message: `[vitehub] Capability "${capability.id}" telemetry.metadata() requires a metadata object.` })
+              }
+              registries.telemetryMetadata.push({ capabilityId: capability.id, metadata })
+            },
+          },
+          inspection: {
+            async set(state) {
+              await setAgentCapabilityInspection(invocationContext, capability.id, {
+                label: capability.inspection?.label ?? capability.id,
+                ...capability.inspection,
+                state,
+              })
+            },
+          },
+          tools: {
+            add(value) {
+              if (!value) return
+              addCapabilityTools(value, capability.id)
+            },
+            transform(transform) {
+              toolTransforms.push(transform)
+            },
+          },
+          workspace: currentWorkspace,
+        } as AgentCapabilityRuntimeContext<TRuntimeConfig, Name> & WorkspaceOverrideRuntime<Name>
+        if (inspection) {
+          markCapabilityInspection(capabilityContext)
+        }
+        capabilityContexts.push({ capability, context: capabilityContext })
+        if (capability.telemetry) {
+          registries.telemetry.push({ capabilityId: capability.id, registration: capability.telemetry })
+        }
+        if (capability.finish) {
+          addFinishExtensionProvider(
+            capability.id,
+            capability.finish,
+            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+            (capability as InternalAgentCapabilityDefinition<TRuntimeConfig, Name>)[eagerFinishExtensionSymbol],
+          )
+        }
+
+        for (const [name, trigger] of Object.entries(capability.triggers || {})) {
+          assertTriggerName(name, capability.id)
           // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-          }, input as never),
-          name,
-          output: trigger.output,
-          source: "capability",
-        })
-      }
+          const id = `${capability.id}.${name}` as const
+          registries.triggers.push({
+            capabilityId: capability.id,
+            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+            definition: trigger as never,
+            id,
+            input: trigger.input,
+            invoke: input => trigger.invoke({
+              ...runtimeContext,
+              actor: invoker,
+              capability,
+              trigger: {
+                capabilityId: capability.id,
+                id,
+                name,
+                source: "capability",
+              },
+            // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+            }, input as never),
+            name,
+            output: trigger.output,
+            source: "capability",
+          })
+        }
 
-      if (capability.close || options?.hooks?.["capability:close"] || options?.hooks?.["capability:close:after"]) {
-        capabilityScope ??= await openAgentCapabilityScope()
-        await capabilityScope.add(async () => {
-          await callHooks("capability:close", capabilityContext, options?.hooks)
-          if (capability.close) await runCapabilityCallback(capability.id, "close", () => capability.close!(capabilityContext))
-          await callHooks("capability:close:after", capabilityContext, options?.hooks)
-        })
-      }
+        if (capability.close || options?.hooks?.["capability:close"] || options?.hooks?.["capability:close:after"]) {
+          capabilityScope ??= await openAgentCapabilityScope()
+          await capabilityScope.add(async () => {
+            await callHooks("capability:close", capabilityContext, options?.hooks)
+            if (capability.close) await runCapabilityCallback(capability.id, "close", () => capability.close!(capabilityContext))
+            await callHooks("capability:close:after", capabilityContext, options?.hooks)
+          })
+        }
 
-      for (const phase of phases) {
-        await callHooks(`capability:${phase}`, capabilityContext, options?.hooks)
-        const callback = capability[phase]
-        const result = callback
-          ? await runCapabilityCallback(capability.id, phase, () => callback.call(capability, capabilityContext))
-          : undefined
-        await callHooks(`capability:${phase}:after`, capabilityContext, options?.hooks)
-        if (result instanceof Response) {
-          return {
-            close: closeCapabilities,
-            driverContributions,
-            hasCloseCallbacks: Boolean(capabilityScope),
-            input: currentInput,
-            messages,
-            response: result,
-            registries,
-            start,
-            toolTransforms,
-            tools,
-            workspaceMaterializationPaths,
-            workspace: currentWorkspace,
+        for (const phase of phases) {
+          if (phase === "prepare" && invocationOptions.deferPreparation && !preparationDeferred
+            && (capability.prepare || options?.hooks?.["capability:prepare"] || options?.hooks?.["capability:prepare:after"])) {
+            preparationDeferred = true
+            yield resolved()
+          }
+          await callHooks(`capability:${phase}`, capabilityContext, options?.hooks)
+          const callback = capability[phase]
+          const result = callback
+            ? await runCapabilityCallback(capability.id, phase, () => callback.call(capability, capabilityContext))
+            : undefined
+          await callHooks(`capability:${phase}:after`, capabilityContext, options?.hooks)
+          if (result instanceof Response) {
+            return resolved(result)
           }
         }
       }
+      if (invocationOptions.deferPreparation && !preparationDeferred) yield resolved()
+      await resolveTools()
+      return resolved()
     }
+    catch (error) {
+      if (capabilityScope) return await capabilityScope.failSetup(error)
+      throw error
+    }
+  }
+
+  async function resolveTools() {
     await applyWorkspaceContributions()
     for (const { capability, context } of capabilityContexts) {
       let cli: AgentCapabilityCliContribution<TRuntimeConfig, Name> | undefined
@@ -1496,8 +1654,7 @@ export async function resolveAgentCapabilities<
           if (tools?.[cli.name]) {
             throw agentDiagnostics.AGENT_R0338({ message: `[vitehub] Capability CLI "${cli.name}" conflicts with an existing Agent tool.` })
           }
-          recordDriverContribution("Capability tools", capability.id, Object.keys(resolved))
-          tools = { ...tools, ...resolved }
+          addCapabilityTools(resolved, capability.id)
         }
       }
       if (invocationOptions.resolveTools !== false && capability.tools) {
@@ -1509,31 +1666,47 @@ export async function resolveAgentCapabilities<
               throw agentDiagnostics.AGENT_R0339({ message: `[vitehub] Capability tool "${name}" conflicts with an existing Capability CLI.` })
             }
           }
-          recordDriverContribution("Capability tools", capability.id, Object.keys(resolved))
-          tools = { ...tools, ...resolved }
+          addCapabilityTools(resolved, capability.id)
         }
       }
     }
   }
-  catch (error) {
-    if (capabilityScope) return await capabilityScope.failSetup(error)
-    throw error
+
+  function resolved(response?: Response): ResolvedAgentCapabilities {
+    return {
+      close: closeCapabilities,
+      driverContributions,
+      hasCloseCallbacks: Boolean(capabilityScope),
+      input: currentInput,
+      inputDataChanged,
+      messages,
+      setInputDataBaseline(input) {
+        currentInput = input
+        initialInputDataReference = currentInput.data
+        initialInputData = snapshotCapabilityData(currentInput.data)
+      },
+      response,
+      registries,
+      start,
+      toolTransforms,
+      tools,
+      workspaceMaterializationPaths,
+      workspace: currentWorkspace,
+      workspaceDefinition: currentWorkspaceDefinition,
+    }
   }
 
-  return {
-    close: closeCapabilities,
-    driverContributions,
-    hasCloseCallbacks: Boolean(capabilityScope),
-    input: currentInput,
-    messages,
-    registries,
-    start,
-    toolTransforms,
-    tools,
-    workspaceMaterializationPaths,
-    workspace: currentWorkspace,
-    workspaceDefinition: currentWorkspaceDefinition,
+  const resolution = resolve()
+  const first = await resolution.next()
+  const capabilitiesResult = first.value
+  if (!first.done) {
+    capabilitiesResult.prepare = async (input) => {
+      currentInput = input
+      const continued = await resolution.next()
+      return continued.value
+    }
   }
+  return capabilitiesResult
 }
 
 export async function resolveStaticCapabilityTools<

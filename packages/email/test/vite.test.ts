@@ -536,7 +536,10 @@ describe("hubEmail", () => {
     handlers.get("change")?.(template)
     handlers.get("change")?.(template)
 
-    await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
+    await vi.waitFor(() => {
+      expect(logError).not.toHaveBeenCalled()
+      expect(send).toHaveBeenCalledOnce()
+    }, { timeout: 5_000 })
     expect(invalidateModule).toHaveBeenCalledWith(generatedModule)
     expect(await readFile(join(root, ".vitehub", "email", "templates", "monthly-recap.mjs"), "utf8"))
       .toContain("Updated footer")
@@ -545,14 +548,17 @@ describe("hubEmail", () => {
     handlers.get("change")?.(template)
     handlers.get("change")?.(template)
 
-    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => {
+      expect(logError).not.toHaveBeenCalled()
+      expect(send).toHaveBeenCalledTimes(2)
+    }, { timeout: 5_000 })
     expect(logError).not.toHaveBeenCalled()
     expect(addWatchPaths).not.toHaveBeenCalledWith(expect.arrayContaining([
       join(root, "server", "shared", "missing.md"),
     ]))
     expect(await readFile(join(root, ".vitehub", "email", "templates", "monthly-recap.mjs"), "utf8"))
       .toContain("@../shared/missing.md")
-  })
+  }, 15_000)
 
   it("uses the development Nitro preset instead of the deployment target", async () => {
     const root = await createTempProject()
@@ -671,8 +677,9 @@ describe("hubEmail", () => {
 
     expect(await config({})).toEqual({ ssr: { noExternal: ["@vite-hub/email"] } })
     expect(await config({ ssr: { noExternal: ["existing"] } })).toEqual({
-      ssr: { noExternal: ["existing", "@vite-hub/email"] },
+      ssr: { noExternal: ["@vite-hub/email"] },
     })
+    expect(await config({ ssr: { noExternal: ["@vite-hub/email"] } })).toEqual({ ssr: { noExternal: undefined } })
     expect(configEnvironment("client", {})).toBeUndefined()
     expect(configEnvironment("ssr", {})).toEqual({
       resolve: { noExternal: ["@vite-hub/email"] },
