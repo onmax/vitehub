@@ -321,7 +321,7 @@ function clonePresetOption(value: unknown, memo = new WeakMap<object, unknown>()
   }
   if (Array.isArray(value)) {
     if (Object.getPrototypeOf(value) !== Array.prototype) return value
-    return finish(new Array(value.length))
+    return finish(Array.from({ length: value.length }))
   }
   if (value instanceof Date) {
     if (Object.getPrototypeOf(value) !== Date.prototype) return value
