@@ -491,17 +491,24 @@ describe("createTrustedHostRuntime", () => {
     await session.destroy?.();
   });
 
-  it("forwards an explicit kill signal and escalates default termination", async () => {
+  it.each(["SIGKILL", undefined])("terminates a SIGTERM-ignoring process with %s", async (signal) => {
+    if (process.platform === "win32") return;
     const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
-    const session = await boxProvider(box).createSession();
+    const session = await box.open();
     try {
-      const child = await session.spawn({
-        command: "node -e \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)\"",
-      });
-      await child.kill("SIGKILL");
+      const child = await session.spawn!(process.execPath, ["-e",
+        "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)",
+      ]);
+      const reader = child.stdout.getReader();
+      await reader.read();
+      reader.releaseLock();
+      await expect(Promise.race([
+        child.kill(signal).then(() => "killed"),
+        new Promise(resolve => setTimeout(resolve, 1_500, "still running")),
+      ])).resolves.toBe("killed");
       await expect(child.wait()).resolves.toMatchObject({ code: 1 });
     } finally {
-      await session.destroy?.();
+      await session.close();
     }
   });
 

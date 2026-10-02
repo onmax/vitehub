@@ -990,19 +990,24 @@ function processHandle(
     stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     wait: () => wait,
     async kill(signal?: string) {
-      const requested = (signal ?? "SIGTERM") as NodeJS.Signals;
-      signalProcessTree(child, requested);
-      if (signal !== undefined || requested !== "SIGTERM") {
-        await wait.catch(() => undefined);
+      signalProcessTree(child, (signal ?? "SIGTERM") as NodeJS.Signals);
+      const settled = wait.catch(() => undefined);
+      if (signal !== undefined) {
+        await settled;
         return;
       }
-      await Promise.race([
-        waitForExit(child),
-        new Promise((resolvePromise) => setTimeout(resolvePromise, 250)),
-      ]);
-      if (child.exitCode === null && child.signalCode === null)
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          settled,
+          new Promise((resolvePromise) => { timer = setTimeout(resolvePromise, 250); }),
+        ]);
+        // Descendants can survive even after the process-group leader exits.
         signalProcessTree(child, "SIGKILL");
-      await wait.catch(() => undefined);
+        await settled;
+      } finally {
+        clearTimeout(timer);
+      }
     },
   };
 }
