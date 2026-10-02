@@ -1,6 +1,7 @@
 import { defineFinishEffect } from "../src/delivery-effects.ts"
 import { describe, expectTypeOf, it } from "vitest"
 import type { LanguageModel } from "ai"
+import type { BoxRequirement } from "@vite-hub/box"
 
 import { ask, defineAgent, defineAgentInvoker, defineCapability, runAgent, runAgentInline, startAgentInvocation, type AgentActor, type AgentCallbackContext, type AgentCapabilityCliCommand, type AgentCapabilityCliResolver, type AgentCapabilityDefinition, type AgentChannelDeliveryEffectIntent, type AgentChannelDeliveryFinishEffect, type AgentChannelDeliveryFinishEffectContext, type AgentChannelDefinition, type AgentChannelDeliveryReplyPayload, type AgentChannelDeliveryReplyInput, type AgentChannelDeliveryStatusInput, type AgentChannelMessage, type AgentChannelMessageContext, type AgentChannelDeliveryReplyStream, type AgentChannelFactory, type AgentChannelInput, type AgentChannelInputs, type AgentDeliveryArtifact, type AgentDriverAdaptiveCapacityOptions, type AgentDriverCapacityOptions, type AgentDriverCapacityQueueOptions, type AgentErrorHookEvent, type AgentFinishEvent, type AgentFinishHookEvent, type AgentGatewayModel, type AgentHookObserverEvent, type AgentInvoker, type AgentMessageChannelSettings, type AgentMessageDeliveryKind, type AgentModelInput, type AgentModuleOptions, type AgentRunInput, type AgentRunResult, type AgentRuntimeConfig, type AgentRuntimeContext, type AgentTriggerInvokeResult, type AgentTriggerRunInvokeResult, type AgentUIMessageStreamProjection, type AgentUsageRecord, type ImagePart, type PublishedAgentDeliveryArtifact, type ResolvedAgentRuntimeContext } from "../src/index.ts"
 import { createProcessAgentCapacity, type ProcessAgentCapacityOptions } from "../src/runtime/process.ts"
@@ -2572,6 +2573,55 @@ describe("agent public types", () => {
       scenarios: [{ input: { prompt: "hello" }, name: "hello" }],
       // @ts-expect-error eval definitions do not expose test runner waitUntil plumbing
       waitUntil: () => {},
+    })
+  })
+
+  it("accepts a consumer-shaped Agent Box for a built-in provider Driver", () => {
+    interface PullRequestContext { head: { ref: string, repo?: { full_name: string }, sha: string }, number: number }
+    const pullRequestOf = (input: AgentRunInput) => {
+      // SAFETY: The fixture reads an application-owned invocation context value.
+      const value = input.context?.pullRequest as PullRequestContext | undefined
+      if (!value) throw new Error("missing pull request")
+      return value
+    }
+    const agent = defineAgent({
+      box: {
+        checkout: {
+          ref: ({ input }) => pullRequestOf(input).head.ref,
+          remote: async ({ input }) => `https://github.com/${pullRequestOf(input).head.repo?.full_name}.git`,
+          sha: ({ input }) => pullRequestOf(input).head.sha,
+        },
+        env: {
+          GIT_TERMINAL_PROMPT: "0",
+          GH_TOKEN: async ({ input }) => String(pullRequestOf(input).number),
+          PR_NUMBER: ({ input }) => String(pullRequestOf(input).number),
+        },
+        home: {
+          files: {
+            ".codex/auth.json": { contents: async () => new Uint8Array() },
+            "PULL_REQUEST.md": { contents: ({ input }) => `#${pullRequestOf(input).number}` },
+          },
+        },
+        requires: ["git", { args: ["auth", "status"], command: "gh" }, { args: ["-c", "true"], command: "sh", name: "setup", timeout: 60_000 }],
+        runtime: { kind: "crabbox", profile: "babysitter" },
+      },
+      driver: { instructions: "Review the pull request.", kind: "codex" },
+    })
+    expectTypeOf(agent.box?.requires).toEqualTypeOf<readonly BoxRequirement[] | undefined>()
+
+    defineAgent({
+      box: {
+        // @ts-expect-error Box callbacks receive the Agent invocation context, not arbitrary fields
+        cwd: ({ worktree }) => worktree,
+        runtime: "trusted-host",
+      },
+      driver: { kind: "claude-code" },
+    })
+
+    defineAgent({
+      // @ts-expect-error an Agent Box requires a runtime
+      box: { requires: ["git"] },
+      driver: { kind: "codex" },
     })
   })
 

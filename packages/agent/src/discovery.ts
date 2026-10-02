@@ -1582,6 +1582,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   function resolveReference(index: number, seen = new Set<number>(), preserveCalls = false): number {
     while (tokens[index] === "(" || tokens[index] === "<") {
       if (tokens[index] === "<") { index = skipTypeArguments(index); continue }
+      if (preserveCalls) {
+        let depth = 1
+        let close = index + 1
+        for (; close < tokens.length && depth > 0; close++) {
+          if (tokens[close] === "(") depth++
+          else if (tokens[close] === ")") depth--
+        }
+        if (depth === 0 && hasChannelContinuation(close)) return index
+      }
       let last = index + 1
       let depth = 1
       for (let i = index + 1; i < tokens.length && depth > 0; i++) {
@@ -1939,22 +1948,29 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       && !callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(tokens[index]))
   }
 
+  function hasChannelContinuation(index: number): boolean {
+    const token = tokens[index]
+    if (["(", "<", ".", "[", "?"].includes(token)) return true
+    if (token !== "!") return false
+    return ![undefined, ",", "}", ")", "]", ";"].includes(tokens[index + 1])
+  }
+
   function channelOwnsWorkspace(channel: number, channelId?: string): boolean {
     let channelOptions = resolveReference(channel, new Set(), true)
     const moduleNamespace = moduleNamespaces.get(tokens[channelOptions])
     if (moduleNamespace && isModuleBinding(channelOptions)) {
       const member = memberAccess(channelOptions)
-      if (!member || hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?", "!"].includes(tokens[member.end]) || mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
+      if (!member || hasLogicalOperator(channelOptions) || hasChannelContinuation(member.end) || mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleNamespace, member.name, channelId)
     }
     const moduleImport = moduleImports.get(tokens[channelOptions])
     const namespaceMember = memberAccess(channelOptions)
     if (moduleImport && namespaceMember && isModuleBinding(channelOptions)
       && !mutatedBindings.has(tokens[channelOptions]!)) {
-      if (hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?", "!"].includes(tokens[namespaceMember.end])) throw opaqueChannelError()
+      if (hasLogicalOperator(channelOptions) || hasChannelContinuation(namespaceMember.end)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId, namespaceMember.name)
     }
-    if (moduleImport && isModuleBinding(channelOptions) && !["(", "<", ".", "[", "?", "!"].includes(tokens[channelOptions + 1])) {
+    if (moduleImport && isModuleBinding(channelOptions) && !hasChannelContinuation(channelOptions + 1)) {
       if (mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId)
     }
