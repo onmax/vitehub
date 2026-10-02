@@ -7,17 +7,20 @@ export function parseShellCommand(command: string, mode: "execution" | "inspecti
   let quote: "'" | "\"" | undefined
   let escaped = false
 
-  for (const char of command) {
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]!
     if (escaped) {
-      current += char
-      wordStarted = true
+      if (char !== "\n") {
+        current += char
+        wordStarted = true
+      }
       escaped = false
       continue
     }
     if (quote) {
       if (char === quote) quote = undefined
       else {
-        if (char === "\\" && quote === '"') escaped = true
+        if (char === "\\" && quote === '"' && /[\\$`"\n]/.test(command[index + 1] ?? "")) escaped = true
         else current += char
       }
       wordStarted = true
@@ -25,7 +28,6 @@ export function parseShellCommand(command: string, mode: "execution" | "inspecti
     }
     if (char === "\\") {
       escaped = true
-      wordStarted = true
       continue
     }
     if (char === "'" || char === "\"") {
@@ -46,7 +48,10 @@ export function parseShellCommand(command: string, mode: "execution" | "inspecti
   }
 
   if (mode === "execution") {
-    if (escaped) current += "\\"
+    if (escaped) {
+      current += "\\"
+      wordStarted = true
+    }
     if (quote) throw shellErrorDiagnostics.SHELL_R0003({ message: "unterminated quote" })
   }
   if (wordStarted) words.push(current)
