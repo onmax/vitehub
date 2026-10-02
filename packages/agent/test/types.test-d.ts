@@ -336,7 +336,7 @@ describe("agent public types", () => {
         async "agent:finish"(event) {
           if (event.message?.channel === "support") {
             expectTypeOf(event.message.kind).toEqualTypeOf<"telegram">()
-            expectTypeOf(event.message.reply).toEqualTypeOf<(input: AgentChannelDeliveryReplyInput) => Promise<void>>()
+            expectTypeOf(event.message.reply).toEqualTypeOf<((input: AgentChannelDeliveryReplyInput) => Promise<void>) | undefined>()
           }
           if (event.message?.channel === "github") {
             expectTypeOf(event.message.status).toEqualTypeOf<((input: AgentChannelDeliveryStatusInput) => Promise<void>) | undefined>()
@@ -902,7 +902,7 @@ describe("agent public types", () => {
                 await context.message.react("eyes", { transient: true })
               },
               async "agent:finish"(context) {
-                if (context.error) await context.message.reply("failed")
+                if (context.error && context.message.reply) await context.message.reply("failed")
               },
             },
           },

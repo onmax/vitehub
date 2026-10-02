@@ -2270,13 +2270,15 @@ export type AgentChannelMessageCalls<TMethods> = {
 
 /** Message methods available when Discord, Slack, Teams, or Telegram has an adapter and messages are enabled. */
 export interface AgentChannelReplyCalls {
-  readonly reply: (input: AgentChannelDeliveryReplyInput) => Promise<void>
+  /** Present when the Channel has a delivery adapter. */
+  readonly reply?: (input: AgentChannelDeliveryReplyInput) => Promise<void>
 }
 
 /** Message methods that the GitHub Channel provides. They exist only when the Channel has a GitHub App. */
 export interface AgentGitHubMessageCalls {
   readonly reaction?: (input: AgentChannelDeliveryReactionInput) => Promise<void>
-  readonly reply: (input: AgentChannelDeliveryReplyInput) => Promise<void>
+  /** Present when the Channel has a GitHub App. */
+  readonly reply?: (input: AgentChannelDeliveryReplyInput) => Promise<void>
   readonly status?: (input: AgentChannelDeliveryStatusInput) => Promise<void>
 }
 
