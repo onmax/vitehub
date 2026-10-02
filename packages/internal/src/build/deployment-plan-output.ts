@@ -18,10 +18,13 @@ interface FinalizeDeploymentPlanOutputOptions {
 
 /**
  * Lists the Provider Output that a Deployment Plan writes, for `vitehub inspect provider-output`.
- * Paths use the preset's default output directory because the host output directory is only known during the build.
+ * Paths use the resolved Nitro output directory when the host provides one.
  */
-export function describeDeploymentPlanOutput(plan: DeploymentPlan, rootDir: string): ViteHubProviderOutputEntry[] {
-  const outputRoot = resolve(rootDir, plan.output.directory)
+export function describeDeploymentPlanOutput(plan: DeploymentPlan, rootDir: string, outputDir?: string): ViteHubProviderOutputEntry[] {
+  const nitroOutputRoot = resolve(rootDir, outputDir ?? plan.output.directory)
+  const outputRoot = plan.preset === "netlify" && basename(nitroOutputRoot) === "functions-internal"
+    ? dirname(nitroOutputRoot)
+    : nitroOutputRoot
   const entries: ViteHubProviderOutputEntry[] = [
     { description: "Deployment manifest with host, runtime, output, and services", owner: "vite-hub", path: resolve(outputRoot, "deployment.json") },
   ]

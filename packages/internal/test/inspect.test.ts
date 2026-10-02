@@ -177,6 +177,14 @@ describe("redactInspectionText", () => {
 })
 
 describe("describeDeploymentPlanOutput", () => {
+  it("uses the configured Nitro output directory", () => {
+    expect(describeDeploymentPlanOutput(resolveDeploymentPlan("cloudflare"), "/app", "custom").map(entry => entry.path)).toEqual([
+      "/app/custom/deployment.json", "/app/custom/server/wrangler.json",
+    ])
+    expect(describeDeploymentPlanOutput(resolveDeploymentPlan("netlify"), "/app", "/app/custom/functions-internal").map(entry => entry.path)).toEqual([
+      "/app/custom/deployment.json", "/app/custom/v1",
+    ])
+  })
   it.each([
     ["cloudflare", ["/app/.output/deployment.json", "/app/.output/server/wrangler.json"]],
     ["vercel", ["/app/.vercel/output/deployment.json", "/app/.vercel/output/config.json"]],

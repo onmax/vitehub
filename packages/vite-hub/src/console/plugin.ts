@@ -4,8 +4,9 @@ import { pathToFileURL } from "node:url"
 
 import { readColocatedAgentSkills } from "@vite-hub/agent/vite"
 
-import type { AgentInvocationsOptions } from "@vite-hub/agent/server"
+import type { AgentInvocationRetentionOptions, AgentInvocationsOptions } from "@vite-hub/agent/server"
 import type { ConsoleAgentEntry, ConsoleBuildCatalog } from "./build.ts"
+import type { ConsoleJournal } from "../storage-config.ts"
 import type { ConsoleSectionId } from "./runtime/sections.ts"
 
 import { consoleFixtureRevision, readConsoleFixture } from "./fixture.ts"
@@ -14,6 +15,14 @@ import { resolveConsoleProjectNameFromRoot } from "./project.ts"
 import { describeConsoleContributedSections, describeConsoleRuntimeReaders } from "./contributions.ts"
 import { installConsoleFixtureInvocations } from "./runtime/server/invocations.ts"
 
+function renderRetentionLimit(value: number | false | undefined): string {
+  if (value === undefined) return "undefined"
+  if (Number.isNaN(value)) return "NaN"
+  if (value === Number.POSITIVE_INFINITY) return "Infinity"
+  if (value === Number.NEGATIVE_INFINITY) return "-Infinity"
+  // Keep invalid non-serializable limits subject to runtime validation.
+  return JSON.stringify(value) ?? "null"
+}
 function renderConsoleNitroPlugin(
   projectRoot: string,
   sections: readonly ConsoleSectionId[],
@@ -26,8 +35,9 @@ function renderConsoleNitroPlugin(
   runtimeBinding?: string,
   invoke = false,
   observations?: AgentInvocationsOptions["observations"],
-  databaseUrl?: string,
-  independentAuth = false,
+  journal?: ConsoleJournal,
+  independentAuth: true | "cloudflare-access" | false = false,
+  retention?: AgentInvocationRetentionOptions,
 ): string {
   const definitions = agents.map((agent, index) => {
     const skills = readColocatedAgentSkills(agent.handler)
@@ -80,7 +90,7 @@ function renderConsoleNitroPlugin(
       : []),
     ...(sections.includes("env") ? [`import { describeServerEnv } from "#vitehub/env/description"`, `import { installConsoleEnv } from "vite-hub/console/env"`] : []),
     ...agents.map((agent, index) => `import * as vitehubConsoleAgent${index} from ${JSON.stringify(pathToFileURL(agent.handler).href)}`),
-    `installConsoleSections(${JSON.stringify(projectRoot)}, ${JSON.stringify(sections)}${independentAuth ? ", true" : ""})`,
+    `installConsoleSections(${JSON.stringify(projectRoot)}, ${JSON.stringify(sections)}${independentAuth ? `, ${JSON.stringify(independentAuth)}` : ""})`,
     ...(blobEnabled
       ? [`installConsoleBlob(${JSON.stringify(projectRoot)}, vitehubConsoleBlob, ${JSON.stringify(blobStores)})`]
       : []),
@@ -97,7 +107,7 @@ function renderConsoleNitroPlugin(
             `const vitehubConsoleInvocations = installConsoleFixtureInvocations(${JSON.stringify(projectRoot)}, ${JSON.stringify(fixture)}, ${fixtureSource}, ${JSON.stringify(revision)}, ${JSON.stringify(runtimeBinding)})`,
             `installConsoleAgentDefinitions([${definitions}], { invocations: vitehubConsoleInvocations })`,
           ]
-        : [`installConsoleAgentDefinitions([${definitions}], { projectRoot: ${JSON.stringify(projectRoot)}${invoke ? ", invoke: true" : ""}${observations !== undefined ? `, observations: ${JSON.stringify(observations)}` : ""}${databaseUrl !== undefined ? `, databaseUrl: ${JSON.stringify(databaseUrl)}` : ""} })`]
+        : [`installConsoleAgentDefinitions([${definitions}], { projectRoot: ${JSON.stringify(projectRoot)}${invoke ? ", invoke: true" : ""}${observations !== undefined ? `, observations: ${JSON.stringify(observations)}` : ""}${journal && "databaseUrl" in journal ? `, databaseUrl: ${JSON.stringify(journal.databaseUrl)}` : ""}${journal && "d1Binding" in journal ? `, d1: { binding: ${JSON.stringify(journal.d1Binding)}, env: async () => (await import("cloudflare:workers")).env }` : ""}${retention !== undefined ? `, retention: { maxAgeMs: ${renderRetentionLimit(retention.maxAgeMs)}, maxRecords: ${renderRetentionLimit(retention.maxRecords)} }` : ""} })`]
       : []),
     ...(kvEnabled
       ? [`installConsoleKV(${JSON.stringify(projectRoot)}, vitehubConsoleKV, ${JSON.stringify(kvStores)})`]
@@ -120,8 +130,9 @@ export async function writeConsoleNitroPlugin(
   invoke = false,
   observations: AgentInvocationsOptions["observations"] = undefined,
   active: () => boolean = () => true,
-  databaseUrl?: string,
-  independentAuth = false,
+  journal?: ConsoleJournal,
+  independentAuth: true | "cloudflare-access" | false = false,
+  retention?: AgentInvocationRetentionOptions,
 ): Promise<string> {
   const snapshot = fixture ? readConsoleFixture(fixture) : undefined
   const identity = createConsoleInvocationsIdentity(
@@ -131,7 +142,7 @@ export async function writeConsoleNitroPlugin(
     runtimeBinding,
   )
   if (!active()) return identity
-  const contents = renderConsoleNitroPlugin(projectRoot, sections, agents, catalog, blobStores, kvStores, fixture, snapshot, runtimeBinding, invoke, observations, databaseUrl, independentAuth)
+  const contents = renderConsoleNitroPlugin(projectRoot, sections, agents, catalog, blobStores, kvStores, fixture, snapshot, runtimeBinding, invoke, observations, journal, independentAuth, retention)
   if (await readFile(file, "utf8").catch(() => undefined) !== contents) {
     await mkdir(resolve(file, ".."), { recursive: true })
     await writeFile(file, contents, "utf8")

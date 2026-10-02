@@ -86,6 +86,7 @@ export function resolveConsoleSectionIds(options: { env?: unknown; connections?:
     && Boolean(options.workflow || (options.agent && options.preset !== "netlify"))
   return [
     ...(options.env ? ["env"] : []),
+    ...(options.connections ? ["connections"] : []),
     ...(options.agent ? ["agents", "usage"] : []),
     ...(options.blob ? ["blob"] : []),
     ...(options.database ? ["databases"] : []),

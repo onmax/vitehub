@@ -1,8 +1,9 @@
-import { consoleDatabaseUrl, withDataDir } from "./storage-config.ts"
+import { consoleD1Binding, consoleDatabaseUrl, resolveConsoleJournal, withDataDir, type ConsoleJournal } from "./storage-config.ts"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { resolveViteHubProjectRoot, VITEHUB_GENERATED_ROOT, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_PROJECT_ROOT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { describeDeploymentPlanOutput } from "@vite-hub/internal/build/deployment-plan-output"
 import { normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import hubAuthNuxt from "@vite-hub/auth/nuxt"
@@ -271,7 +272,7 @@ async function installConsole(
   invocationRootState?: ConsoleInvocationRootState,
   canDiscoverDefinitions: () => boolean = () => true,
   discoveryOptions: Pick<Parameters<typeof discoverConsoleBuildCatalog>[0], "databaseDiscoveryRoot" | "rateLimitDiscoveryRoot" | "rateLimitScanDirs" | "scheduleDiscoveryRoot" | "workspaceDiscoveryRoot"> = {},
-  databaseUrl?: string,
+  journal?: ConsoleJournal,
   independentAuth = false,
 ): Promise<string> {
   const uiModule = (await import("@vite-hub/ui/nuxt")).default
@@ -285,7 +286,9 @@ async function installConsole(
   const plugin = resolveGeneratedConsolePlugin(projectRoot, fixture, invocationRootState)
   installConsoleSections(projectRoot, sections, independentAuth)
   installConsoleProjectName(projectRoot, resolveConsoleProjectNameFromRoot(projectRoot))
-  if (installInvocations && nuxt.options.dev && sections.includes("agents") && !fixture) installConsoleInvocations(projectRoot, undefined, observations, databaseUrl)
+  if (installInvocations && nuxt.options.dev && sections.includes("agents") && !fixture) {
+    installConsoleInvocations(projectRoot, undefined, observations, journal && "databaseUrl" in journal ? journal.databaseUrl : undefined)
+  }
   const routeRules = (nuxt.options.routeRules ??= {})
   for (const route of ["/_vitehub", "/_vitehub/**"]) {
     const rule = (routeRules[route] ??= {})
@@ -400,7 +403,7 @@ async function installConsole(
       invoke,
       observations,
       () => !invocationRootState?.closed,
-      databaseUrl,
+      journal,
       independentAuth,
     )
     if (invocationRootState) {
@@ -827,6 +830,14 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         },
       }
     : options
+  const consoleDatabaseRoot = configuredOptions.database && configuredOptions.database !== true && configuredOptions.database.projectRoot !== undefined
+    ? rootDir
+    : projectRoot
+  const consoleJournal = resolveConsoleJournal(
+    consoleDatabaseUrl(options),
+    consoleD1Binding(plan.preset, configuredOptions.database, { root: consoleDatabaseRoot, serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined }),
+    !nuxt.options.dev,
+  )
   const secondaryProjectRoots = configuredProjectRoots(configuredOptions, rootDir, viteRoot)
     .filter(root => root !== projectRoot)
   const generatedTypes = [
@@ -855,6 +866,16 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   const consoleFixtureSnapshot = resolvedConsoleFixture ? readConsoleFixture(resolvedConsoleFixture) : undefined
   const plugins = [
     ...installedPlugins.filter(plugin => plugin.name !== "vite-hub/deployment-output"),
+    ...(nuxt.options.vitehubCliDiscovery ? [{
+      name: "vite-hub/deployment-inspect",
+      vitehub: {
+        inspect: () => {
+          // SAFETY: Nuxt's Nitro options use the public rootDir and output.dir configuration contract.
+          const nitro = nuxt.options.nitro as { rootDir?: string, output?: { dir?: string } } | undefined
+          return { providerOutput: describeDeploymentPlanOutput(plan, resolve(nitro?.rootDir ?? rootDir), nitro?.output?.dir) }
+        },
+      },
+    }] : []),
     ...(options.console
       ? [{
           name: "vite-hub/console-cli",
@@ -1095,6 +1116,20 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
       const resolvedReplayedBlob = replayedBlobEnabled
         ? resolveBlobViteConfig(replayedBlob === true ? undefined : replayedBlob, { hosting: plan.nitroPreset }).blob
         : false
+      const replayedDatabase = hasReplayedDatabaseDiscoveryRoot
+        ? replayConfig.database ?? configuredOptions.database
+        : configuredOptions.database
+      const replayedJournalDatabase = replayedDatabase && replayedDatabase !== true && hasReplayedDatabaseDiscoveryRoot
+        ? { ...replayedDatabase, projectRoot: replayedDatabaseDiscoveryRoot }
+        : replayedDatabase
+      const replayedConsoleJournal = resolveConsoleJournal(
+        consoleDatabaseUrl(options),
+        consoleD1Binding(plan.preset, replayedJournalDatabase, {
+          root: hasReplayedDatabaseDiscoveryRoot ? projectRoot : consoleDatabaseRoot,
+          serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined,
+        }),
+        !nuxt.options.dev,
+      )
       const resolvedSections = resolveConsoleSectionIds({
         ...options,
         env: options.env !== false,
@@ -1154,7 +1189,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         consoleInvokeEnabled && !resolvedConsoleFixture,
         options.console === true ? undefined : options.console.observations,
         () => !consoleInvocationRootState.closed,
-        consoleDatabaseUrl(options),
+        replayedConsoleJournal,
         Boolean(options.console !== true && options.console?.access === "auth" && options.console.auth),
       )
     }
@@ -1228,7 +1263,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         scheduleDiscoveryRoot: configuredProjectRoot(viteRoot, options.schedule),
         workspaceDiscoveryRoot: configuredProjectRoot(viteRoot, nuxt.options.vite.workspace ?? options.workspace),
       },
-      consoleDatabaseUrl(options),
+      consoleJournal,
       Boolean(options.console !== true && options.console.access === "auth" && options.console.auth),
     )
   }
