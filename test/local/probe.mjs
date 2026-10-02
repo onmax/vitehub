@@ -9,7 +9,13 @@ export async function waitForProbe(url, timeoutMs = 60_000) {
       const response = await fetch(new URL("/api/tests/probe", url), {
         signal: AbortSignal.timeout(remaining),
       })
-      await response.body?.cancel()
+      const bodyCancellation = response.body?.cancel()
+      if (bodyCancellation) {
+        await Promise.race([
+          Promise.resolve(bodyCancellation),
+          sleep(remaining),
+        ])
+      }
       if (response.ok) return
       lastError = new Error(`probe status ${response.status}`)
     }

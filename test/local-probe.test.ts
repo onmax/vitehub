@@ -26,3 +26,14 @@ it("returns on a healthy response", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response(null)))
   await expect(waitForProbe("http://localhost", 20)).resolves.toBeUndefined()
 })
+
+it("does not wait for response body cleanup past the deadline", async () => {
+  const body = { cancel: vi.fn(() => new Promise(() => {})) }
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, body })))
+  const result = await Promise.race([
+    waitForProbe("http://localhost", 20).then(() => "ready", (error: Error) => error.message),
+    new Promise(resolve => setTimeout(resolve, 250, "still waiting")),
+  ])
+  expect(result).toBe("ready")
+  expect(body.cancel).toHaveBeenCalledOnce()
+})
