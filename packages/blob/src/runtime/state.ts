@@ -13,7 +13,8 @@ import type { BlobStorage, ResolvedBlobModuleOptions } from "../types.ts"
 
 let runtimeConfig: false | ResolvedBlobModuleOptions | undefined
 let runtimeConfigPromise: Promise<false | ResolvedBlobModuleOptions> | undefined
-const runtimeStorages = new Map<string, BlobStorage>()
+let runtimeStorages = new Map<string, BlobStorage>()
+let pendingStorages = new Map<string, Promise<BlobStorage>>()
 
 export {
   clearActiveCloudflareEnv,
@@ -47,8 +48,10 @@ export async function getBlobRuntimeConfig(): Promise<false | ResolvedBlobModule
       return normalizeBlobOptions(undefined, { env, hosting }) || false
     }
   })()
-  runtimeConfig = await runtimeConfigPromise
-  return runtimeConfig
+  const pending = runtimeConfigPromise
+  const config = await pending
+  if (runtimeConfigPromise === pending) runtimeConfig = config
+  return config
 }
 
 export function getBlobRuntimeStorage(): BlobStorage | undefined {
@@ -60,8 +63,11 @@ export function getNamedBlobRuntimeStorage(name: string): BlobStorage | undefine
 }
 
 export function setBlobRuntimeConfig(config: false | ResolvedBlobModuleOptions | undefined): void {
+  if (config !== undefined && config === runtimeConfig) return
   runtimeConfig = config
   runtimeConfigPromise = undefined
+  runtimeStorages = new Map()
+  pendingStorages = new Map()
 }
 
 export function setBlobRuntimeStorage(storage: BlobStorage | undefined): void {
@@ -69,6 +75,33 @@ export function setBlobRuntimeStorage(storage: BlobStorage | undefined): void {
 }
 
 export function setNamedBlobRuntimeStorage(name: string, storage: BlobStorage | undefined): void {
+  pendingStorages.delete(name)
   if (storage) runtimeStorages.set(name, storage)
   else runtimeStorages.delete(name)
+}
+
+/** Shares one initialization per store and keeps completed work within its configuration lifetime. */
+export function resolveNamedBlobRuntimeStorage(
+  name: string,
+  create: (config: false | ResolvedBlobModuleOptions) => Promise<BlobStorage>,
+): Promise<BlobStorage> {
+  const existing = runtimeStorages.get(name)
+  if (existing) return Promise.resolve(existing)
+  const initializing = pendingStorages.get(name)
+  if (initializing) return initializing
+
+  const storages = runtimeStorages
+  const pending = pendingStorages
+  const initialization = getBlobRuntimeConfig().then(create).then((storage) => {
+    if (pending.get(name) === initialization) {
+      storages.set(name, storage)
+      pending.delete(name)
+    }
+    return storage
+  }, (error: unknown) => {
+    if (pending.get(name) === initialization) pending.delete(name)
+    throw error
+  })
+  pending.set(name, initialization)
+  return initialization
 }
