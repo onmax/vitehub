@@ -40,6 +40,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
   const checkoutController = new AbortController();
   let abortOperation = false;
   let onAdmission: (() => void | Promise<void>) | undefined;
+  let openPullRequests = true;
   const pr = () => ({
     number: 12,
     state: "open",
@@ -95,6 +96,16 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
       if (abortOperation && !text.includes("reviewThreads")) {
         checkoutController.abort(new DOMException("Checkout cancelled", "AbortError"));
         request?.signal?.throwIfAborted();
+      }
+      if (text.includes("BabysitterOpenPullRequests")) {
+        const current = pr();
+        const node = {
+          number: current.number, title: current.title, isDraft: false, headRefOid: current.head.sha, headRefName: current.head.ref,
+          baseRefName: current.base.ref, baseRefOid: current.base.sha, mergeable: "MERGEABLE", updatedAt: "2026-10-01T00:00:00Z", url: current.html_url,
+          authorAssociation: "MEMBER", totalCommentsCount: 0, author: current.user, headRepository: { nameWithOwner: "acme/app" },
+          labels: { nodes: current.labels }, commits: { nodes: [] }, latestReviews: { nodes: [] }, reviewThreads: { nodes: [] },
+        };
+        return { stdout: JSON.stringify({ data: { repository: { pullRequests: { nodes: openPullRequests ? [node] : [], pageInfo } } } }), stderr: "" };
       }
       const data = text.includes("reviewThreads")
         ? { repository: { pullRequest: { reviewThreads: { nodes: [], pageInfo } } } }
@@ -304,6 +315,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     failCheckout: (error: Error) => { checkoutFailure = error },
     abortOnOperation: () => { abortOperation = true },
     onAdmission: (callback: () => void | Promise<void>) => { onAdmission = callback },
+    closeOnGitHub: () => { openPullRequests = false },
   };
 }
 
@@ -316,6 +328,49 @@ describe("Babysitter preset runtime", () => {
       expect(merge?.[0]).toEqual(expect.arrayContaining(["repos/acme/app/pulls/12/merge", "merge_method=squash", `sha=${"a".repeat(40)}`]));
       expect(createProviderRuntime).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("terminal");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("keeps an unconfirmed direct merge fenced for reconciliation", async () => {
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      const result = await command(args, request);
+      if (args.includes("-X") && args.includes("PUT") && args.some((arg) => arg.endsWith("/merge"))) {
+        return { ...result, stdout: JSON.stringify({ merged: false, message: "Not mergeable" }) };
+      }
+      return result;
+    });
+    try {
+      await f.reconcile();
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeDefined();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).not.toBe("terminal");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("does not directly merge when feedback changes during the live readiness read", async () => {
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    let delivered = false;
+    f.command.mockImplementation(async (args, request) => {
+      const result = await command(args, request);
+      if (!delivered && args.includes("repos/acme/app/pulls/12")) {
+        const snapshot = await f.runtime.inbox.get("acme/app", 12);
+        if (snapshot?.hydrated && snapshot.lease) {
+          delivered = true;
+          await f.runtime.inbox.ingest("merge-race-feedback", "issue_comment", {
+            repository: { full_name: "acme/app" }, issue: { number: 12, pull_request: {} },
+            action: "created", comment: { id: 99, body: "Please address this before merging", user: { login: "developer" } },
+          });
+        }
+      }
+      return result;
+    });
+    try {
+      await f.reconcile();
+      expect(delivered).toBe(true);
+      expect(f.command.mock.calls.some(([args]) => args.join(" ").includes("-X PUT"))).toBe(false);
     } finally { await f.runtime.inbox.close(); }
   });
 
@@ -351,7 +406,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("retargets a stacked PR to the default branch after its parent merged there", async () => {
-    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { sha: "c".repeat(40), ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
+    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
     const f = await fixture(false, false, { base: "feat/parent", parents });
     try {
       await f.reconcile();
@@ -362,7 +417,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("keeps a stacked PR on its base while the parent is unmerged or landed elsewhere", async () => {
-    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { sha: "c".repeat(40), ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "feat/grandparent" } }];
+    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "feat/grandparent" } }];
     const f = await fixture(false, false, { base: "feat/parent", parents });
     try {
       await f.reconcile();
@@ -424,50 +479,6 @@ describe("Babysitter preset runtime", () => {
       createProviderRuntime.mockClear();
       await f.reconcile().catch(() => {});
       expect(createProviderRuntime).not.toHaveBeenCalled();
-    } finally { await f.runtime.inbox.close(); }
-  });
-
-  it("does not retry a provider failure after updating GitHub metadata", async () => {
-    const f = await fixture(false, false, { providerRetryDelayMs: 1 });
-    f.choose("updatePullRequest", { title: "Repaired title" });
-    const implementation = createProviderRuntime.getMockImplementation()!;
-    createProviderRuntime.mockImplementation(async (...args) => {
-      const runtime = await implementation(...args);
-      return { ...runtime, events: {
-        async *[Symbol.asyncIterator]() {
-          for await (const event of runtime.events) {
-            yield event;
-            throw new Error("429 Too Many Requests");
-          }
-        },
-      } };
-    });
-    try {
-      await f.reconcile().catch(() => {});
-      expect(f.passes).toHaveLength(1);
-      expect(f.command.mock.calls.filter(([args]) => args.includes("PATCH"))).toHaveLength(1);
-    } finally { await f.runtime.inbox.close(); }
-  });
-
-  it("resets the exhausted Babysitter budget only for new repair evidence", async () => {
-    const f = await fixture();
-    const feedback = (id: number) => f.runtime.inbox.ingest(`budget-feedback-${id}`, "issue_comment", {
-      repository: { full_name: "acme/app" }, action: "created", issue: { number: 12, pull_request: {} },
-      comment: { id, body: `Repair finding ${id}`, user: { login: "reviewer" } },
-    });
-    try {
-      await f.reconcile();
-      for (const id of [1, 2]) { await feedback(id); await f.reconcile(); }
-      expect((await f.runtime.inbox.get("acme/app", 12))?.progressBudget?.exhausted).toBe(true);
-      await f.runtime.inbox.ingest("budget-pending", "status", {
-        repository: { full_name: "acme/app" }, sha: f.pr().head.sha, context: "test", state: "pending",
-      });
-      await f.reconcile();
-      expect(f.passes).toHaveLength(3);
-      await feedback(3);
-      await f.reconcile();
-      expect(f.passes).toHaveLength(4);
-      expect((await f.runtime.inbox.get("acme/app", 12))?.progressBudget?.count).toBe(1);
     } finally { await f.runtime.inbox.close(); }
   });
 

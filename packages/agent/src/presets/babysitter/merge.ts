@@ -64,8 +64,7 @@ export function snapshotCheckEvidence(snapshot: Snapshot): GitHubCheckEvidence {
   const head = snapshot.pr?.head?.sha ?? "";
   const checkRuns = Object.values(snapshot.checks).flatMap((check) => {
     if (check.deleted || check.head_sha !== head || !hasRuntimeType(check.id, "number") || !hasRuntimeType(check.name, "string")) return [];
-    const app: unknown = check.app;
-    return [{ id: check.id, head_sha: head, name: check.name, app: isRuntimeRecord(app) && hasRuntimeType(app.id, "number") ? { id: app.id } : null,
+    return [{ id: check.id, head_sha: head, name: check.name, app: hasRuntimeType(check.app?.id, "number") ? { id: check.app.id } : null,
       status: String(check.status ?? ""), conclusion: check.conclusion === undefined || check.conclusion === null ? null : String(check.conclusion) }];
   });
   const statuses = Object.values(snapshot.statuses).flatMap((status, index) => {
@@ -91,11 +90,6 @@ export function directMergeReadiness(snapshot: Snapshot, requiredChecks: GitHubR
   if (evidence.statuses.some((status) => status.state !== "success")) return no("a current-head status is not successful");
   if (!snapshot.threadsHydrated) return no("review threads not loaded");
   if (snapshot.threads.some((thread) => thread.isResolved !== true)) return no("unresolved review threads");
-  const hasUnthreadedFeedback = snapshot.reasons.some((reason) =>
-    reason.startsWith("issue_comment:") || reason.startsWith("pull_request_review:") || reason.startsWith("pull_request_review_comment:"),
-  ) && [...Object.values(snapshot.comments), ...Object.values(snapshot.reviews), ...Object.values(snapshot.reviewComments)]
-    .some((feedback) => !feedback.deleted);
-  if (hasUnthreadedFeedback) return no("unhandled non-thread feedback");
   return { ready: true, head };
 }
 

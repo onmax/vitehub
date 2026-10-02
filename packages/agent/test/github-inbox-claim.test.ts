@@ -127,3 +127,13 @@ test('expired lease cancels before recovery changes its token', async () => {
     assert.equal(claimStopReason(claim, current), 'Pull request lease lost.')
   } finally { await inbox.close() }
 })
+
+test('durable claim fence rejects a released claim before an irreversible action', async () => {
+  const inbox = await fixture()
+  try {
+    const claim = (await inbox.claim(1))[0]!
+    assert.equal(await inbox.isClaimCurrent(claim), true)
+    await inbox.release(claim)
+    assert.equal(await inbox.isClaimCurrent(claim), false)
+  } finally { await inbox.close() }
+})

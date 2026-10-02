@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs"
-import { basename, dirname, join, relative, resolve } from "node:path"
+import { basename, dirname, relative, resolve } from "node:path"
 
 import {
   createDirectoryDefinitionSource,
@@ -240,15 +240,9 @@ export function usesProcessHostPreset(source: string): boolean {
   const { tokens } = tokenizeAgentSource(source)
   for (let index = 0; index < tokens.length; index++) {
     if (tokens[index] !== "import" || tokens[index + 1] === "(") continue
-    if (tokens[index + 1] === "type") continue
     for (let next = index + 1; next < tokens.length && tokens[next] !== ";" && tokens[next] !== "import"; next++) {
       if (!/^['"`]/.test(tokens[next] ?? "")) continue
-      if (processHostPresetModules.has(moduleSpecifier(tokens[next]))) {
-        const clause = tokens.slice(index + 1, next)
-        if (clause[0] === "type") return false
-        if (clause[0] === "{" && clause.slice(1, -1).every((token, i, list) => token === "," || token === "type" || list[i - 1] === "type")) return false
-        return true
-      }
+      if (processHostPresetModules.has(moduleSpecifier(tokens[next]))) return true
       break
     }
   }
@@ -257,29 +251,7 @@ export function usesProcessHostPreset(source: string): boolean {
 
 /** Discovered Agents whose definitions use a process host preset, by discovered name. */
 export function discoverProcessHostAgentNames(definitions: readonly DiscoveredAgentDefinition[]): string[] {
-  const hasPreset = (file: string, seen: Set<string>): boolean => {
-    if (seen.has(file)) return false
-    seen.add(file)
-    const source = readFileSync(file, "utf8")
-    if (usesProcessHostPreset(source)) return true
-    const { tokens } = tokenizeAgentSource(source)
-    for (let index = 0; index < tokens.length; index++) {
-      if (tokens[index] !== "import" || tokens[index + 1] === "(") continue
-      for (let next = index + 1; next < tokens.length; next++) {
-        if (!/^['"`]/.test(tokens[next] ?? "")) continue
-        const specifier = moduleSpecifier(tokens[next])
-        if (specifier.startsWith("./") || specifier.startsWith("../")) {
-          const base = resolve(dirname(file), specifier)
-          for (const candidate of [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.mjs`, join(base, "index.ts"), join(base, "index.js")]) {
-            try { if (hasPreset(candidate, seen)) return true } catch { /* unresolved imports are outside discovery's scope */ }
-          }
-        }
-        break
-      }
-    }
-    return false
-  }
-  return definitions.filter(definition => hasPreset(definition.handler, new Set())).map(definition => definition.name).sort()
+  return definitions.filter(definition => usesProcessHostPreset(readFileSync(definition.handler, "utf8"))).map(definition => definition.name).sort()
 }
 
 function isWorkspaceAgentDefinition(source: string, file: string): boolean {
@@ -1610,6 +1582,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   function resolveReference(index: number, seen = new Set<number>(), preserveCalls = false): number {
     while (tokens[index] === "(" || tokens[index] === "<") {
       if (tokens[index] === "<") { index = skipTypeArguments(index); continue }
+      if (preserveCalls) {
+        let depth = 1
+        let close = index + 1
+        for (; close < tokens.length && depth > 0; close++) {
+          if (tokens[close] === "(") depth++
+          else if (tokens[close] === ")") depth--
+        }
+        if (depth === 0 && hasChannelContinuation(close)) return index
+      }
       let last = index + 1
       let depth = 1
       for (let i = index + 1; i < tokens.length && depth > 0; i++) {
@@ -1967,22 +1948,29 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       && !callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(tokens[index]))
   }
 
+  function hasChannelContinuation(index: number): boolean {
+    const token = tokens[index]
+    if (["(", "<", ".", "[", "?"].includes(token)) return true
+    if (token !== "!") return false
+    return ![undefined, ",", "}", ")", "]", ";"].includes(tokens[index + 1])
+  }
+
   function channelOwnsWorkspace(channel: number, channelId?: string): boolean {
     let channelOptions = resolveReference(channel, new Set(), true)
     const moduleNamespace = moduleNamespaces.get(tokens[channelOptions])
     if (moduleNamespace && isModuleBinding(channelOptions)) {
       const member = memberAccess(channelOptions)
-      if (!member || hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?", "!"].includes(tokens[member.end]) || mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
+      if (!member || hasLogicalOperator(channelOptions) || hasChannelContinuation(member.end) || mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleNamespace, member.name, channelId)
     }
     const moduleImport = moduleImports.get(tokens[channelOptions])
     const namespaceMember = memberAccess(channelOptions)
     if (moduleImport && namespaceMember && isModuleBinding(channelOptions)
       && !mutatedBindings.has(tokens[channelOptions]!)) {
-      if (hasLogicalOperator(channelOptions) || ["(", "<", ".", "[", "?", "!"].includes(tokens[namespaceMember.end])) throw opaqueChannelError()
+      if (hasLogicalOperator(channelOptions) || hasChannelContinuation(namespaceMember.end)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId, namespaceMember.name)
     }
-    if (moduleImport && isModuleBinding(channelOptions) && !["(", "<", ".", "[", "?", "!"].includes(tokens[channelOptions + 1])) {
+    if (moduleImport && isModuleBinding(channelOptions) && !hasChannelContinuation(channelOptions + 1)) {
       if (mutatedBindings.has(tokens[channelOptions]!)) throw opaqueChannelError()
       return importedChannelOwnsWorkspace(moduleImport.specifier, moduleImport.name, channelId)
     }
