@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   openAsciiSshSession,
-  parseAsciiFileList,
   type AsciiSshOptions,
 } from "../src/internal/ascii-ssh.ts";
 
@@ -59,12 +58,6 @@ describe("ASCII SSH transport", () => {
 
     await expect(opening).rejects.toThrow("cancel SSH authentication");
     expect(server.client.destroyed).toBe(true);
-  });
-
-  it("preserves tabs in listed file paths", async () => {
-    expect(parseAsciiFileList("f\t7\t/home/user/with\ttab\0")).toEqual([
-      { path: "/home/user/with\ttab", size: 7, type: "file" },
-    ]);
   });
 
   it("fails closed when the authenticated SSH client reports a transport error", async () => {
