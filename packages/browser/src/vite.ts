@@ -229,6 +229,11 @@ export function hubBrowser(options?: BrowserModuleOptions | false): BrowserViteP
             label: "Browsers",
             list: () => inspectBrowserDefinitions({ projectRoot, rootDir: resolved?.root ?? projectRoot, serverDirs }),
           }],
+          providerOutput: [{
+            description: "Generated Cloudflare Browser worker config",
+            owner: "browser",
+            path: resolve(createDefaultCloudflareOutputRoot(resolved?.root ?? projectRoot), "wrangler.json"),
+          }],
         }
       },
     },
