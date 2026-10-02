@@ -29,6 +29,7 @@ export function defineInternalTool<TInput = unknown, TOutput = unknown>(
   if (!tool.name || typeof tool.name !== "string") {
     throw agentDiagnostics.AGENT_R0106({ message: "[vitehub] tool definitions require a tool name." })
   }
+  // SAFETY: The runtime validation above ensures the erased definition has a valid tool shape.
   return tool as AgentToolDefinition
 }
 
