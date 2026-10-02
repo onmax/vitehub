@@ -50,6 +50,7 @@ Available namespaces:
 | `vitehub agent invocations` | Available | Agent Package | List, inspect, or follow records in the application's Agent Invocation journal. |
 | `vitehub channels history` | Available | Agent Package | Download one deployed conversation and its attachments. |
 | `vitehub channels sync` | Available | Agent Package | Inspect or apply provider-owned webhook registrations for a deployed stage. |
+| `vitehub channels replay` | Available | Agent Package | Replay stored Channel history through an Agent from a development server. |
 | `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
 | `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
