@@ -6,7 +6,6 @@ import { existsSync, statSync } from "node:fs"
 import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { basename, dirname, extname, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { parseAst } from "vite"
 
 import { contributeProviderDeploymentOutput, createDefaultNetlifyOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, getProviderOutputCatalog, useProviderOutputCatalog, writeProviderDeploymentOutputs } from "@vite-hub/internal/build/deployment-output"
 import { encodeProviderOutputAliases, resolveViteHubBundleDefines } from "@vite-hub/internal/build/esbuild"
@@ -56,6 +55,13 @@ interface AgentCliContributingPlugin {
 }
 
 export type AgentVitePlugin = Plugin & AgentCliContributingPlugin
+
+// `vite` is an optional peer. Load its parser on demand so this entry stays
+// importable without it.
+async function parseTypeScript(): Promise<(source: string) => ReturnType<typeof import("vite").parseAst>> {
+  const { parseAst } = await import("vite")
+  return source => parseAst(source, { lang: "ts" })
+}
 
 const agentPackageName = "@vite-hub/agent"
 const mergeNoExternal = createNoExternalAddition(agentPackageName, "@t3tools/provider-runtime")
@@ -3032,7 +3038,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         projectModule
         && !normalizedId.includes("/node_modules/")
         && resolvesWorkerConditions(this.environment?.config.resolve.conditions)
-        && usesProviderAgentDriver(code)
+        && usesProviderAgentDriver(code, await parseTypeScript())
       ) {
         throw agentDiagnostics.AGENT_B0019({ files: [relative(resolved.root, normalizedId)] })
       }
@@ -3095,13 +3101,14 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       providerOutput: {
         async prepareSources(sources) {
           if (agent === false || !resolved) return
+          const parse = await parseTypeScript()
           for (const definition of discoverScheduledAgentDefinitions(resolved.root, serverDirs)) {
             const skills = readColocatedAgentSkills(definition.handler)
             if (!skills) continue
             const handler = sources.resolve(definition.handler)
             if (handler === definition.handler || !existsSync(handler)) continue
             const code = await readFile(handler, "utf8")
-            const transformed = transformDiscoveredAgentSkills(code, value => parseAst(value, { lang: "ts" }), skills, getAgentImportBase(agent, frameworkOptions))
+            const transformed = transformDiscoveredAgentSkills(code, parse, skills, getAgentImportBase(agent, frameworkOptions))
             if (transformed) await writeFile(handler, transformed, "utf8")
           }
         },

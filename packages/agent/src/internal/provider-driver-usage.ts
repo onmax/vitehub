@@ -1,4 +1,3 @@
-import { parseAst } from "vite"
 import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 
 const providerPackageNames = new Set(["@vite-hub/agent", "vite-hub/agent"])
@@ -307,8 +306,8 @@ function hasProviderDriverDefinition(
 }
 
 /** Reports whether a server module selects a provider Agent Driver from statically recognizable syntax. */
-export function usesProviderAgentDriver(source: string): boolean {
-  const parsed = parseAst(source, { lang: "ts" })
+export function usesProviderAgentDriver(source: string, parse: (source: string) => unknown): boolean {
+  const parsed = parse(source)
   if (!isPositionedNode(parsed)) return false
   const program = parsed
 
