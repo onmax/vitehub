@@ -550,6 +550,28 @@ describe("createTrustedHostRuntime", () => {
     }
   });
 
+  it("observes an aborted background process before wait is called", async () => {
+    const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
+    const session = await boxProvider(box).createSession();
+    const controller = new AbortController();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const child = await session.spawn({
+        abortSignal: controller.signal,
+        command: "node -e \"setInterval(() => {}, 1000)\"",
+      });
+      controller.abort(new Error("cancelled"));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+      await expect(child.wait()).rejects.toThrow("cancelled");
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      await session.destroy?.();
+    }
+  });
+
   it("force-kills commands that ignore abort termination", async () => {
     if (process.platform === "win32") return;
     const root = await temporaryRoot();
