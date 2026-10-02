@@ -74,6 +74,7 @@ export function apiKey<const TApis extends object = object>(options: ApiKeyProvi
   }
   if (scheme !== undefined) Object.assign(provider, { scheme })
   if (options.verify) provider.verify = options.verify
+  // SAFETY: The provider API map is constrained by the generic catalog contract.
   const catalogsSafe = (Object.values(provider.apis) as ConnectionApiCatalog[]).every(catalog => {
     try {
       const url = new URL(catalog.rootUrl)
