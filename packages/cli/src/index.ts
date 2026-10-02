@@ -11,7 +11,7 @@ import { resolve } from "pathe"
 import { createInspectNamespace } from "./inspect.ts"
 import { createProvisionNamespace } from "./provision.ts"
 
-import type { InlineConfig } from "vite"
+import type { ConfigEnv, InlineConfig } from "vite"
 import type { ViteHubCliCommandNamespace, ViteHubCliContext } from "@vite-hub/internal/cli"
 import { cliErrorDiagnostics } from "./error-diagnostics.ts"
 
@@ -57,8 +57,8 @@ export interface RunViteHubCliOptions {
   args?: string[]
   cwd?: string
   env?: NodeJS.ProcessEnv
-  loadConfig?: (rootDir: string) => Promise<ViteHubCliLoadedConfig>
-  loadNuxtViteConfig?: (rootDir: string) => Promise<{ plugins: readonly unknown[], root?: string } | undefined>
+  loadConfig?: (rootDir: string, command: ConfigEnv["command"]) => Promise<ViteHubCliLoadedConfig>
+  loadNuxtViteConfig?: (rootDir: string, command: ConfigEnv["command"]) => Promise<{ plugins: readonly unknown[], root?: string } | undefined>
   runtimeNamespaces?: ViteHubCliCommandNamespace[]
   spawn?: ViteHubCliSpawn
   stderr?: ViteHubCliStreams["stderr"]
@@ -70,7 +70,7 @@ export interface RunViteHubCliEntrypointOptions extends Omit<RunViteHubCliOption
   stdout?: ViteHubCliEntrypointStream
 }
 
-async function loadNuxtViteConfig(rootDir: string): Promise<{ plugins: readonly unknown[], root?: string } | undefined> {
+async function loadNuxtViteConfig(rootDir: string, command: ConfigEnv["command"]): Promise<{ plugins: readonly unknown[], root?: string } | undefined> {
   const hasNuxtConfig = ["nuxt.config.ts", "nuxt.config.mts", "nuxt.config.cts", "nuxt.config.js", "nuxt.config.mjs", "nuxt.config.cjs"]
     .some(file => existsSync(resolve(rootDir, file)))
   if (!hasNuxtConfig) return
@@ -85,7 +85,7 @@ async function loadNuxtViteConfig(rootDir: string): Promise<{ plugins: readonly 
   // SAFETY: vitehubCliDiscovery is an internal marker consumed by ViteHub's Nuxt module during config loading.
   const nuxt = await loadNuxt({
     cwd: rootDir,
-    dev: true,
+    dev: command === "serve",
     overrides: { vitehubCliDiscovery: true },
     ready: true,
   } as Parameters<typeof loadNuxt>[0])
@@ -100,7 +100,7 @@ async function loadNuxtViteConfig(rootDir: string): Promise<{ plugins: readonly 
         : nuxt.options.rootDir || rootDir,
       vitehubCliDiscovery: true,
     }
-    const config = await resolveConfig(inlineConfig, "serve", "development")
+    const config = await resolveConfig(inlineConfig, command, command === "build" ? "production" : "development")
     return {
       plugins: config.plugins,
       root: config.root,
@@ -128,13 +128,13 @@ function defaultSpawn(command: string, args: string[], options: ViteHubCliSpawnO
   })
 }
 
-async function loadViteConfig(rootDir: string): Promise<ViteHubCliLoadedConfig> {
+async function loadViteConfig(rootDir: string, command: ConfigEnv["command"]): Promise<ViteHubCliLoadedConfig> {
   const { resolveConfig } = await import("vite")
   const inlineConfig: InlineConfig & { vitehubCliDiscovery: true } = {
     root: rootDir,
     vitehubCliDiscovery: true,
   }
-  return await resolveConfig(inlineConfig, "serve", "development")
+  return await resolveConfig(inlineConfig, command, command === "build" ? "production" : "development")
 }
 
 /** Keeps at least two spaces between a help name and its description. */
@@ -217,14 +217,11 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
     }
     return await feature.run(args.slice(2), runtimeContext) ?? 0
   }
-  if ((args.length === 0 || isRootHelp(args)) && runtimeNamespaces.length) {
-    writeRootHelp(runtimeNamespaces, stdout)
-    return 0
-  }
-  const config = await (options.loadConfig || loadViteConfig)(cwd)
+  const command = args[0] === "inspect" && args[1] === "provider-output" ? "build" : "serve"
+  const config = await (options.loadConfig || loadViteConfig)(cwd, command)
   const nuxtConfig = config.vitehubConfigResolved
     ? undefined
-    : await (options.loadNuxtViteConfig || loadNuxtViteConfig)(cwd)
+    : await (options.loadNuxtViteConfig || loadNuxtViteConfig)(cwd, command)
   const plugins = nuxtConfig?.plugins ?? config.plugins
   const rootDir = resolve(nuxtConfig?.root || config.root || cwd)
   const namespaces = [
