@@ -237,7 +237,7 @@ async function runRateLimitCommand(
     stderr: { write: (chunk) => { discoveryError += chunk; return true } },
   })
   if (!server) {
-    return writeFailure(parsed, context, { message: `${discoveryError.trim()} ${rateLimitDevServerHint}`.trim() })
+    return writeFailure(parsed, context, { message: [discoveryError.trim(), rateLimitDevServerHint].filter(Boolean).join("\n") })
   }
   if (server.discovery.runtime !== "nitro") {
     return writeFailure(parsed, context, {

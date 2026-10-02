@@ -266,7 +266,7 @@ function devServerDisplayUrl(value: string): string {
     const fragmentStart = display.indexOf("#")
     const pathEnd = [queryStart, fragmentStart].filter(index => index >= 0).sort((a, b) => a - b)[0] ?? display.length
     const path = display.slice(0, pathEnd)
-    const query = queryStart >= 0 ? display.slice(queryStart, fragmentStart >= 0 ? fragmentStart : undefined) : ""
+    const query = queryStart >= 0 ? url.search.replace(/%5Bredacted%5D/gi, "[redacted]") : ""
     const fragment = fragmentStart >= 0 ? display.slice(fragmentStart) : ""
     const redactedPath = redactInspectionText(url.origin === "null" ? path.replace(/^[\s\S]+@/, "[redacted]@") : path)
     return `${redactedPath}${redactInspectionText(query)}${redactInspectionText(fragment)}`
