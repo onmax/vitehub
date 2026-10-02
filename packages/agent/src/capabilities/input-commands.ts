@@ -196,6 +196,22 @@ export function findInputCommandInvocation(
   }
 }
 
+function countInputCommandInvocations(
+  text: string,
+  trigger: string,
+  commands: Record<string, InputCommand>,
+): number {
+  let count = 0
+  let cursor = 0
+  while (cursor <= text.length) {
+    const invocation = findInputCommandInvocation(text, trigger, commands, cursor)
+    if (!invocation) break
+    count++
+    cursor = Math.max(invocation.end, invocation.start + 1)
+  }
+  return count
+}
+
 function latestUserMessageIndex(messages: Message[]): number {
   for (let index = messages.length - 1; index >= 0; index--) {
     if (messages[index]?.role === "user") return index
@@ -454,8 +470,16 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       let text = target.text
       let cursor = 0
       let runs = 0
-      const maxRuns = Math.max(1_000, text.length + 1)
+      let maxRuns = Math.max(1_000, text.length + 1)
+      const budgetedCommands = new Set<string>()
+      let budgetText: string | undefined
       while (cursor <= text.length) {
+        // Each registered command can credit newly introduced work only once.
+        // Repeated or alternating recursive handlers cannot keep raising the allowance.
+        if (budgetText !== undefined) {
+          maxRuns += Math.max(0, countInputCommandInvocations(text, trigger, commands) - countInputCommandInvocations(budgetText, trigger, commands))
+          budgetText = undefined
+        }
         const invocation = findInputCommandInvocation(text, trigger, commands, cursor)
         if (!invocation) break
         if (++runs > maxRuns) throw agentDiagnostics.AGENT_R0103({ message: "[vitehub] inputCommands exceeded the maximum command expansion depth." })
@@ -465,6 +489,10 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         if (!commandAllowsCurrentChannel(command, context as AgentCapabilityRuntimeContext)) {
           cursor = invocation.end
           continue
+        }
+        if (!budgetedCommands.has(invocation.name)) {
+          budgetedCommands.add(invocation.name)
+          budgetText = text
         }
         const result = await inputCommandCall(command)({
           args: invocation.args,

@@ -18,7 +18,7 @@ describe("inputCommands", () => {
     const capability = inputCommands({
       commands: {
         loop: {
-          call({ text }) {
+          call({ text, context }) {
             if (++calls > 1_500) throw new Error("Expansion did not stop")
             const prompt = `${text} x`
             if (mode === "replacement") return prompt
@@ -31,6 +31,51 @@ describe("inputCommands", () => {
     await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/loop" }))
       .rejects.toThrow("maximum command expansion depth")
     expect(calls).toBe(1_000)
+  })
+
+  it.each(["replacement", "result", "mutation"] as const)("allows a finite expansion through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        seed: {
+          call({ context }) {
+            const prompt = Array.from({ length: 1_001 }, () => "/mark").join(" ")
+            if (mode === "replacement") return prompt
+            if (mode === "mutation") {
+              context.input.set({ prompt })
+              return
+            }
+            return { prompt }
+          },
+        },
+        mark: { call() { calls++ } },
+      },
+    })
+
+    await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/seed" })
+    expect(calls).toBe(1_001)
+  })
+
+  it("bounds alternating handlers that introduce more commands", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const expand = (next: string) => () => {
+      if (++calls > 1_500) throw new Error("Expansion did not stop")
+      return `${next} ${next}`
+    }
+    const capability = inputCommands({
+      commands: {
+        first: { call: expand("/second") },
+        second: { call: expand("/first") },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/first" }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBe(1_002)
   })
 
   it("exposes resolved runtime primitives and can reply without running the driver", async () => {
