@@ -307,14 +307,18 @@ function consoleRecord(summary: RuntimeScheduleSummary, runs: readonly ScheduleR
  */
 export async function readScheduleConsoleRecords(): Promise<ViteHubConsoleRecord[]> {
   const now = new Date()
-  const state = await readRuntimeScheduleState()
+  const state = await readRuntimeScheduleState(consoleRunHistoryLimit, true)
   const automaticRuns = isScheduleWakeDriverActive()
   return state.schedules
-    .map(schedule => summarizeRuntimeSchedule(schedule, state.runs, now))
-    .filter(summary => summary.console.visible)
-    .map(summary => consoleRecord(
+    .map(schedule => {
+      const runs = state.runs.get(schedule.id) ?? []
+      const summary = summarizeRuntimeSchedule(schedule, runs, now)
+      return { runs, summary }
+    })
+    .filter(({ summary }) => summary.console.visible)
+    .map(({ runs, summary }) => consoleRecord(
       summary,
-      state.runs.filter(run => isRuntimeScheduleRun(run, summary.id)).sort(newestFirst).map(summarizeScheduleRun),
+      runs.filter(run => isRuntimeScheduleRun(run, summary.id)).sort(newestFirst).map(summarizeScheduleRun),
       automaticRuns,
     ))
 }
