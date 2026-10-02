@@ -277,8 +277,7 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
     : (() => {
         // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The unparsed discovery response is validated at this transport boundary.
         if (rawDiscovery === null || typeof rawDiscovery !== "object") return {} as TDiscovery
-        // SAFETY: The generic caller contract supplies the discovery shape after the transport boundary validates it is an object.
-        // SAFETY: The object check above guarantees this response satisfies the generic discovery contract.
+        // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The object check above guarantees this response satisfies the generic discovery contract.
         return rawDiscovery as TDiscovery
       })()
   if (options.signal?.aborted) {

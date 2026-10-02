@@ -605,6 +605,7 @@ describe("vitehub", () => {
       workspace: true,
     }))).toEqual([
       "@vite-hub/markdown-template/vite",
+      "vite-hub/agent-channel-env",
       "vite-hub/deployment-preset",
       "vite-hub/deployment-output",
       "vite-hub/public-url",

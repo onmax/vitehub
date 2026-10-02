@@ -238,7 +238,7 @@ describe("vitehub kv", () => {
     const [discovery, operation] = fetch.mock.calls
     expect(String(discovery?.[0])).toBe(`http://127.0.0.1:4321${kvDevRoute}`)
     expect(operation?.[1]).toMatchObject({
-      body: JSON.stringify({ limit: 2, operation: "list", prefix: "users:" }),
+      body: JSON.stringify({ operation: "list", limit: 2, prefix: "users:" }),
       headers: { "content-type": "application/json", [kvDevHeader]: kvDevHeaderValue },
       method: "POST",
     })
