@@ -76,6 +76,20 @@ function nitroRequest(init: { headers?: Record<string, string>, method?: string 
 }
 
 describe("Nitro dev forwarding", () => {
+  it("adds trusted runtime headers without forwarding incoming credentials", async () => {
+    const dispatchFetch = vi.fn(async (_request: Request) => new Response())
+    await forwardViteHubDevRequestToNitro({ environments: { nitro: { dispatchFetch } } }, incoming({ body: "{}", headers: { "x-runtime-token": "forged", authorization: "incoming-secret" }, method: "POST" }), {
+      ...guard,
+      runtimeRoute,
+      runtimeHeaders: { "x-runtime-token": "trusted", "content-type": "text/plain", [guard.header]: "forged" },
+    })
+    const headers = dispatchFetch.mock.calls[0]?.[0].headers
+    expect(headers?.get("x-runtime-token")).toBe("trusted")
+    expect(headers?.get("content-type")).toBe("application/json")
+    expect(headers?.get(guard.header)).toBe(guard.headerValue)
+    expect(headers?.get("authorization")).toBeNull()
+  })
+
   it("finds only a Nitro environment that can dispatch requests", () => {
     const nitro = { dispatchFetch: async () => new Response() }
     expect(findViteHubNitroDevEnvironment({ environments: { nitro } })).toBe(nitro)
@@ -228,6 +242,7 @@ describe("Nitro dev handler", () => {
       "export default defineEventHandler(event => handleViteHubDevRequest(event.req))",
       "",
     ].join("\n"))
+    expect(renderViteHubNitroDevHandler({ arguments: ['runtime-"key'], export: "handleTestDevRequest", module: "test" })).toContain('handleViteHubDevRequest(event.req, "runtime-\\\"key")')
     expect(() => renderViteHubNitroDevHandler({ export: "default; evil()", module: "x" })).toThrow(TypeError)
   })
 })

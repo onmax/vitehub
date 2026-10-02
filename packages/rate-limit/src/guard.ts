@@ -43,9 +43,29 @@ function getRequestKey(event: RateLimitRequestEvent, provider: "cloudflare" | "m
     : getRequestIP(event as HTTPEvent)
 }
 
+function memoryLimiterCacheKey(name: string, policy: RateLimitPolicy): string {
+  return JSON.stringify([name, policy.enforcement, policy.failure, policy.limit, policy.window])
+}
+
+function memoryLimiterCacheName(cacheKey: string): unknown {
+  const parsed: unknown = JSON.parse(cacheKey)
+  return Array.isArray(parsed) ? parsed[0] : undefined
+}
+
+/**
+ * Returns the memory Rate Limiters that `requireRateLimit()` created for `name` in this process. The list is empty
+ * until a request uses the Rate Limit. It has more than one entry only when calls use different policies.
+ */
+export async function listMemoryRateLimiters(name: string): Promise<RateLimiter[]> {
+  const pending = [...getRateLimitLimiterCache()]
+    .filter(([cacheKey]) => memoryLimiterCacheName(cacheKey) === name)
+    .map(([, limiter]) => limiter.catch(() => undefined))
+  return (await Promise.all(pending)).filter(limiter => limiter !== undefined)
+}
+
 function getMemoryRateLimiter(name: string, policy: RateLimitPolicy): Promise<RateLimiter> {
   const cache = getRateLimitLimiterCache()
-  const cacheKey = JSON.stringify([name, policy.enforcement, policy.failure, policy.limit, policy.window])
+  const cacheKey = memoryLimiterCacheKey(name, policy)
   const existing = cache.get(cacheKey)
   if (existing) return existing
   const pending = Promise.resolve(createRateLimiter({
