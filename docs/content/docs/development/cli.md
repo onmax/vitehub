@@ -82,6 +82,18 @@ Available namespaces:
 | `vitehub provision run` | Available | ViteHub CLI plus package Provision Steps | Create missing provider resources idempotently. |
 | `vitehub provision status` | Available | ViteHub CLI plus package Provision Steps | Inspect the latest provider provisioning result. |
 
+## Inspect the Email development outbox
+
+When a Vite development server has Email enabled, inspect the in-memory outbox from another terminal:
+
+```bash [Terminal]
+pnpm vitehub email outbox list
+pnpm vitehub email outbox show <id> --html
+pnpm vitehub email outbox clear
+```
+
+Use `--json` for machine-readable output. The outbox is available only in `vite dev` and is cleared when the server restarts. Use `vitehub email preview <template>` to render a `server/emails` template without sending it.
+
 ## Inspect Server Env
 
 The Env integration contributes commands that report the status of declared Server Env values without printing their values.

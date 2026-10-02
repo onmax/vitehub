@@ -92,6 +92,7 @@ vi.mock("@vite-hub/connections/vite", () => ({
 }))
 vi.mock("@vite-hub/database/vite", () => ({ hubDb: integrationMocks.hubDb }))
 vi.mock("@vite-hub/email/vite", () => ({
+  emailConsoleSection: integrationMocks.consoleSection("email"),
   hubEmail: integrationMocks.hubEmail,
   hubEmailOptionalPeerResolver: integrationMocks.hubEmailOptionalPeerResolver,
 }))
