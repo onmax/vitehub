@@ -109,6 +109,8 @@ The custom driver must implement atomic `consume()`. ViteHub does not provide a 
 | `onAllowed` | `function` | none | Callback after an allowed decision. |
 | `onRejected` | `function` | none | Callback after a rejected decision. |
 
+Decision callbacks receive a limiter with `consume()`, `peek()`, and `reset()`. A consume-only input remains supported. If that input omits `peek()` or `reset()`, the corresponding callback operation returns `status: "unsupported"` with a reason.
+
 ## Migrate from an inline store
 
 The Capability no longer owns `limit`, `window`, `action`, or `store`. Move policy into a direct `RateLimiter`, then replace `store` with `limiter`.

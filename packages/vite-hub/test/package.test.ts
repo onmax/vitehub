@@ -121,6 +121,7 @@ const generatedRuntimeOwnerExports = new Set([
   "@vite-hub/kv/runtime/upstash-driver",
   "@vite-hub/queue/runtime/hosted",
   "@vite-hub/rate-limit/runtime",
+  "@vite-hub/rate-limit/runtime/console",
   "@vite-hub/sandbox/runtime/empty-registry",
   "@vite-hub/sandbox/runtime/provider-loader",
   "@vite-hub/sandbox/runtime/state",
