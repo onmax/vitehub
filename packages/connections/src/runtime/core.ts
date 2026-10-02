@@ -363,16 +363,22 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     if (init.redirect && init.redirect !== "follow") return fetcher(url, { ...init, headers: withHeaders(url, init) })
     let target = url
     let request = init
+    let followed = false
     for (let hop = 0; ; hop += 1) {
-      const response = await fetcher(target, { ...request, headers: withHeaders(target, request), redirect: "manual" })
+      const headers = withHeaders(target, request)
+      const response = await fetcher(target, { ...request, credentials: crossed ? "omit" : request.credentials, headers, redirect: "manual" })
       const location = response.headers.get("location")
-      if (!redirectStatuses.has(response.status) || !location || hop === maxRedirects) return response
+      if (!redirectStatuses.has(response.status) || !location || hop === maxRedirects) {
+        if (followed) Object.defineProperty(response, "redirected", { configurable: true, value: true })
+        return response
+      }
       const method = (request.method ?? "GET").toUpperCase()
       // Fetch turns a 303, and a 301 or 302 after POST, into GET. Other redirects keep the method and the body.
       const toGet = (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) && method !== "GET" && method !== "HEAD"
       // A stream body was read by the first request and cannot be sent again.
       if (!toGet && request.body instanceof ReadableStream) return response
       await response.body?.cancel().catch(() => undefined)
+      followed = true
       if (toGet) {
         const headers = new Headers(request.headers)
         for (const name of bodyHeaders) headers.delete(name)

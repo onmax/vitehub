@@ -1,7 +1,7 @@
 import * as v from "valibot"
 
 import { connectionError } from "../errors.ts"
-import { assertConnectionOrigins, assertConnectionProviderId, matchesConnectionOrigin } from "../origins.ts"
+import { assertConnectionOrigins, matchesConnectionOrigin } from "../origins.ts"
 
 import type {
   ConnectionOAuthClient,
@@ -150,7 +150,7 @@ export function oauth2(options: OAuth2ProviderOptions): ConnectionOAuth2Provider
   }
 
   return {
-    id: assertConnectionProviderId(options.id ?? "oauth2"),
+    id: options.id ?? "oauth2",
     kind: "oauth2",
     origins,
     scopes: options.scopes,

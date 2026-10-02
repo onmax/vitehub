@@ -231,6 +231,16 @@ describe("API key credentials", () => {
     expect([...second.keys()].sort()).toEqual(["x-trace"])
   })
 
+  it("omits ambient credentials and preserves redirect metadata", async () => {
+    const upstream = redirecting("https://elsewhere.example/next", 307)
+    const { name, runtime } = setupRuntime({ definition: { provider: key({ header: "x-api-key" }) }, fetch: upstream.fetch })
+    await runtime.setKey(name, secretKey, { actor: owner })
+
+    const response = await runtime.fetch(name, "https://api.example/items", { credentials: "include" }, { actor: server })
+    expect(response.redirected).toBe(true)
+    expect(upstream.mock.mock.calls[1]?.[1]?.credentials).toBe("omit")
+  })
+
   it("keeps the credential removed after a redirect chain leaves the first origin", async () => {
     const upstream = mockFetch((url, _init, index) => index === 0
       ? new Response(null, { headers: { location: "https://elsewhere.example/hop" }, status: 307 })

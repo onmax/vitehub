@@ -92,6 +92,10 @@ function errorResponse(error: unknown, cookie?: string): Response {
   return response
 }
 
+function isLoopbackHost(host: string): boolean {
+  return host === "localhost" || host.endsWith(".localhost") || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host)
+}
+
 function readCookie(request: Request, key: string): string | undefined {
   for (const part of (request.headers.get("cookie") ?? "").split(";")) {
     const [cookieName, ...value] = part.trim().split("=")
@@ -122,6 +126,10 @@ export function createConnectionsHandler(options: ConnectionsHandlerOptions): (r
   const returnTo = options.returnTo ?? (() => "/")
 
   async function manage(request: Request, event: unknown): Promise<Response> {
+    const requestUrl = new URL(request.url)
+    if (requestUrl.protocol === "http:" && !isLoopbackHost(requestUrl.hostname.toLowerCase())) {
+      return json({ message: "Insecure Connections management requests are not allowed." }, 403)
+    }
     const origin = request.headers.get("origin")
     if (origin ? origin !== new URL(request.url).origin : !/^Bearer\s+\S+$/i.test(request.headers.get("authorization") ?? "")) {
       return json({ message: "Request origin is not allowed." }, 403)

@@ -44,7 +44,12 @@ export function defineConnection<TProvider extends ConnectionProvider>(
   if (!definition || typeof definition !== "object" || !definition.provider || (definition.provider.kind !== "oauth2" && definition.provider.kind !== "api-key")) {
     throw connectionError("invalid", { path: "provider" })
   }
-  assertConnectionProviderId(definition.provider.id)
+  if (definition.provider.kind === "api-key") assertConnectionProviderId(definition.provider.id)
+  // API-key grants retain the `api-key:<id>` storage identity. Keep that namespace
+  // unavailable to OAuth providers so a legacy OAuth id cannot collide with one.
+  else if (typeof definition.provider.id !== "string" || !definition.provider.id || /^api-key:[^\s:]+$/.test(definition.provider.id)) {
+    throw connectionError("invalid", { path: "provider.id" })
+  }
   assertConnectionOrigins(definition.provider.origins)
   assertApiKeyProvider(definition.provider)
   assertRule(definition.access?.server, "access.server")

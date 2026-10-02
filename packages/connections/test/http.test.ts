@@ -72,6 +72,18 @@ function callback(query: Record<string, string>, cookie?: string): Request {
 }
 
 describe("Connections management route", () => {
+  it("rejects insecure remote management requests", async () => {
+    const { handler, authenticate } = setup()
+    const request = new Request("http://public.example/_vitehub/connections/manage", {
+      body: JSON.stringify({ action: "list" }),
+      headers: { origin: "http://public.example" },
+      method: "POST",
+    })
+    const response = await handler(request)
+    expect(response.status).toBe(403)
+    expect(authenticate).not.toHaveBeenCalled()
+  })
+
   it("rejects cross-origin and unproven requests before authentication", async () => {
     const { authenticate, handler } = setup()
     const rejected: Array<Record<string, string>> = [{ origin: "https://attacker.example" }, {}, { authorization: "Basic abc" }, { origin: "null" }, { authorization: "Bearer token", origin: "https://attacker.example" }]
