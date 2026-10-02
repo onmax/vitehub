@@ -4,12 +4,12 @@ import { existsSync, readFileSync, realpathSync } from "node:fs"
 import process from "node:process"
 import { fileURLToPath } from "node:url"
 
-import { collectViteHubCliNamespaces } from "@vite-hub/internal/cli"
+import { collectViteHubCliNamespaces, collectViteHubProvisionSteps } from "@vite-hub/internal/cli"
 import { formatRuntimeDiagnosticError } from "@vite-hub/runtime"
 import { resolve } from "pathe"
 
 import { createInspectNamespace } from "./inspect.ts"
-import { createProvisionNamespace } from "./provision.ts"
+import { provisionUsage, runProvision, runProvisionStatus } from "./provision.ts"
 
 import type { ConfigEnv, InlineConfig } from "vite"
 import type { ViteHubCliCommandNamespace, ViteHubCliContext } from "@vite-hub/internal/cli"
@@ -136,6 +136,26 @@ async function loadViteConfig(rootDir: string, command: ConfigEnv["command"]): P
     vitehubCliDiscovery: true,
   }
   return await resolveConfig(inlineConfig, command, command === "build" ? "production" : "development")
+}
+
+// Built-in namespace that orchestrates package-contributed Provision Steps.
+function createProvisionNamespace(plugins: readonly unknown[]): ViteHubCliCommandNamespace {
+  const collectSteps = () => collectViteHubProvisionSteps(plugins)
+  return {
+    description: "Idempotently create missing provider resources.",
+    features: [{
+      description: "Create missing provider resources for the app's Definitions.",
+      name: "run",
+      run: (args, context) => runProvision(args, context, { collectSteps }),
+      usage: provisionUsage.run,
+    }, {
+      description: "Show recorded provider ids and pending plan actions.",
+      name: "status",
+      run: (args, context) => runProvisionStatus(args, context, { collectSteps }),
+      usage: provisionUsage.status,
+    }],
+    name: "provision",
+  }
 }
 
 /** Keeps at least two spaces between a help name and its description. */

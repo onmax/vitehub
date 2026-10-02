@@ -1,9 +1,8 @@
 import { assertConsoleRequest, consoleRequestURL } from "./request.ts"
-import { getConsoleSchedules } from "./definitions.ts"
-import { resolveConsoleDefinitions } from "../../internal.ts"
+import { copyConsoleRecords, getConsoleDefinitions, getConsoleSchedules } from "./definitions.ts"
 import { isConsoleSectionId } from "../sections.ts"
 
-import type { ConsoleSectionContent } from "../definitions.ts"
+import type { ConsoleRecord, ConsoleSectionContent } from "../definitions.ts"
 import type { ConsoleSectionId } from "../sections.ts"
 import type { ConsoleRequestEvent } from "./request.ts"
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
@@ -12,22 +11,42 @@ function requestError(statusCode: number, statusMessage: string): Error {
   return Object.assign(viteHubErrorDiagnostics.VITE_HUB_C0001({ message: statusMessage }), { statusCode, statusMessage })
 }
 
-export default function consoleDefinitionsHandler(event: ConsoleRequestEvent): ConsoleSectionContent & {
+async function readRuntimeRecords(reader: () => readonly ConsoleRecord[] | Promise<readonly ConsoleRecord[]>): Promise<ConsoleRecord[]> {
+  try {
+    return copyConsoleRecords(await reader())
+  }
+  catch {
+    // The reader error can hold runtime details. The Console shows a fixed message.
+    throw requestError(503, "Runtime records are unavailable.")
+  }
+}
+
+/** Build-time records come first. A runtime record replaces the build-time record with the same id. */
+function mergeRecords(build: readonly ConsoleRecord[], runtime: readonly ConsoleRecord[]): ConsoleRecord[] {
+  const runtimeIds = new Set(runtime.map(record => record.id))
+  return [...build.filter(record => !runtimeIds.has(record.id)), ...runtime]
+}
+
+export default async function consoleDefinitionsHandler(event: ConsoleRequestEvent): Promise<ConsoleSectionContent & {
   section: ConsoleSectionId
-} {
+}> {
   assertConsoleRequest(event)
   const section = consoleRequestURL(event).searchParams.get("section")
   if (!isConsoleSectionId(section)) {
     throw requestError(400, "A valid definition section is required.")
   }
-  const catalog = resolveConsoleDefinitions()?.content ?? {}
+  const { content: catalog, readers } = getConsoleDefinitions()
   const content = Object.hasOwn(catalog, section) ? catalog[section] : undefined
   if (!content) throw requestError(404, "Definition section not found.")
-  if (section !== "schedules" || content.kind !== "definition-catalog") return { ...content, section }
-  const runnable = getConsoleSchedules()
-  return {
-    ...content,
-    definitions: content.definitions.map(definition => Object.hasOwn(runnable, definition.name) ? { ...definition, runnable: true } : definition),
-    section,
+  if (section === "schedules" && content.kind === "definition-catalog") {
+    const runnable = getConsoleSchedules()
+    return {
+      definitions: content.definitions.map(definition => Object.hasOwn(runnable, definition.name) ? { ...definition, runnable: true } : definition),
+      kind: "definition-catalog",
+      section,
+    }
   }
+  const reader = readers && Object.hasOwn(readers, section) ? readers[section] : undefined
+  if (!reader || content.kind !== "record-table") return { ...content, section }
+  return { kind: "record-table", records: mergeRecords(content.records, await readRuntimeRecords(reader)), section }
 }

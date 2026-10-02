@@ -3,6 +3,7 @@ import { hasRuntimeType } from "../internal/runtime-type.ts"
 
 import { createGitHubWorkspaceStore } from "@vite-hub/workspace/internal/stores/github"
 import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { registerViteHubDevEndpoint } from "@vite-hub/internal/dev-endpoint"
 import { installHostedWorkspaceRuntime } from "@vite-hub/workspace/internal/runtime/hosted"
 import { installHostedVercelBlobWorkspaceRuntime } from "@vite-hub/workspace/internal/runtime/hosted-vercel-blob"
 import { getWorkspaceHostedStoreLoader, setWorkspaceHostedStoreLoader, setWorkspaceRuntimeRegistry } from "@vite-hub/workspace/runtime"
@@ -225,32 +226,6 @@ function withCliDeliveryPreviews(
   return {
     ...result,
     stderr: `${result.stderr || ""}${previews.map(formatCliDeliveryPreview).join("")}`,
-  }
-}
-
-function requestOrigin(server: ViteDevServer, req: IncomingMessage): string {
-  const host = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host
-  if (host) {
-    const fallback = server.resolvedUrls?.local?.[0] || "http://localhost/"
-    return new URL(`${new URL(fallback).protocol}//${host}`).origin
-  }
-  const base = server.resolvedUrls?.local?.[0] || `http://localhost:${server.config.server.port || 5173}/`
-  return new URL(base).origin
-}
-
-function validateDevLoopRequest(server: ViteDevServer, req: IncomingMessage): Response | undefined {
-  const header = req.headers[agentInvocationStreamHeader]
-  if ((Array.isArray(header) ? header[0] : header) !== agentInvocationStreamHeaderValue) {
-    return new Response("Forbidden Agent Dev Loop request.", { status: 403 })
-  }
-  const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin
-  if (origin && origin !== requestOrigin(server, req)) {
-    return new Response("Forbidden Agent Dev Loop origin.", { status: 403 })
-  }
-  if (req.method !== "POST") return
-  const contentType = Array.isArray(req.headers["content-type"]) ? req.headers["content-type"][0] : req.headers["content-type"]
-  if (!contentType?.toLowerCase().startsWith("application/json")) {
-    return new Response("Agent Dev Loop requests must use application/json.", { status: 415 })
   }
 }
 
@@ -795,10 +770,6 @@ async function handleAgentInvocationStreamRequest(server: ViteDevServer, req: In
   }, { timeout })
 }
 
-function routeMatches(req: IncomingMessage): boolean {
-  return new URL(req.url || "/", "http://localhost").pathname === agentInvocationStreamRoute
-}
-
 export { writeResponse }
 
 function errorResponse(error: unknown): Response {
@@ -811,25 +782,18 @@ function errorResponse(error: unknown): Response {
 export async function registerAgentInvocationStreamEndpoint(server: ViteDevServer, runtimeOptions: AgentDevRuntimeOptions = {}): Promise<void> {
   const tokenOptions = { serverId: workspaceDevTokenServerId(server.config.server.port) }
   await refreshWorkspaceDevToken(server.config.root, tokenOptions)
-  server.middlewares.use((req, res, next) => {
-    if (!routeMatches(req)) {
-      next()
-      return
-    }
-    if (req.method !== "GET" && req.method !== "POST") {
-      void writeResponse(res, new Response("Method not allowed.", { status: 405 }))
-      return
-    }
-    const blocked = validateDevLoopRequest(server, req)
-    if (blocked) {
-      void writeResponse(res, blocked)
-      return
-    }
-
-    const abort = createAbortSignalFromClose(res, "[vitehub] Agent Invocation Stream response closed.")
-    void handleAgentInvocationStreamRequest(server, req, tokenOptions, abort.signal, runtimeOptions)
-      .catch(errorResponse)
-      .then(response => writeResponse(res, response))
-      .finally(abort.dispose)
+  registerViteHubDevEndpoint(server, {
+    handle: (req, res) => {
+      const abort = createAbortSignalFromClose(res, "[vitehub] Agent Invocation Stream response closed.")
+      void handleAgentInvocationStreamRequest(server, req, tokenOptions, abort.signal, runtimeOptions)
+        .catch(errorResponse)
+        .then(response => writeResponse(res, response))
+        .finally(abort.dispose)
+    },
+    header: agentInvocationStreamHeader,
+    headerValue: agentInvocationStreamHeaderValue,
+    label: "Agent Dev Loop",
+    methods: ["GET", "POST"],
+    route: agentInvocationStreamRoute,
   })
 }

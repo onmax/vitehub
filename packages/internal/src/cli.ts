@@ -155,6 +155,7 @@ export interface ViteHubDevServerDiscoveryOptions {
   isCompatibleRoot?: (rootDir: string, serverRoot: string) => boolean
   rootDir: string
   serverUrl: string
+  signal?: AbortSignal
   stderr: ViteHubCliStreams["stderr"]
 }
 
@@ -169,8 +170,11 @@ export function resolveViteHubDevServerUrl(env: NodeJS.ProcessEnv): string {
 }
 
 function parseViteHubDevTimeout(value: string, error: (message: string) => Error): number {
-  const timeout = Number.parseInt(value, 10)
-  if (!Number.isFinite(timeout) || timeout <= 0) throw error("--timeout must be a positive number.")
+  const timeout = Number(value)
+  // JavaScript timers clamp larger durations to one millisecond.
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 2_147_483_647) {
+    throw error("--timeout must be an integer from 1 to 2147483647 milliseconds.")
+  }
   return timeout
 }
 
@@ -262,6 +266,7 @@ export async function discoverViteHubDevServer(
   try {
     response = await fetchViteHubDevEndpoint(options.fetch, url, options.endpoint, {
       headers: { accept: "application/json" },
+      signal: options.signal,
     })
   }
   catch {

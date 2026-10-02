@@ -3,7 +3,7 @@ import { relativeDefinitionFile } from "@vite-hub/internal/inspect"
 import { discoverScheduleDefinitions } from "./discovery.ts"
 import { readRuntimeDefinitionCrons } from "./internal/provider-output.ts"
 
-import type { ViteHubConsoleSectionContribution } from "@vite-hub/internal/console"
+import type { ViteHubConsoleRecord, ViteHubConsoleSectionContribution } from "@vite-hub/internal/console"
 import type { ViteHubDefinitionField, ViteHubDefinitionSummary } from "@vite-hub/internal/inspect"
 import type { DiscoveredScheduleDefinition } from "./types.ts"
 
@@ -62,15 +62,63 @@ export async function inspectScheduleDefinitions(options: ScheduleInspectionOpti
   return definitions.map(definition => summarizeScheduleDefinition(options.projectRoot, definition, crons))
 }
 
-/** Console section that lists discovered Schedule Definitions. `vitehub inspect definitions` reads the same data. */
+function definitionRecord(summary: ViteHubDefinitionSummary): ViteHubConsoleRecord {
+  const field = (label: string) => summary.fields.find(entry => entry.label === label)?.value
+  const target = field("Kind") === "Runtime target"
+  const cron = field("Cron")
+  return {
+    cells: {
+      enabled: target ? "-" : "Provider",
+      kind: target ? "Target" : "Definition",
+      lastRun: target ? "-" : "Not in this table",
+      nextRun: target ? "-" : "Set by the provider",
+      schedule: summary.name,
+      target: target ? summary.name : "-",
+      timing: cron ?? "-",
+    },
+    fields: [
+      ...summary.fields,
+      { label: "File", value: summary.file },
+      { label: "Source", value: summary.source },
+      {
+        label: "Runs",
+        value: target
+          ? "A Runtime Schedule that uses this target shows its runs in its own row."
+          : `Use \`vitehub schedule runs ${summary.name}\` to list runs that this runtime recorded.`,
+      },
+    ],
+    id: `definition:${summary.name}`,
+  }
+}
+
+/** Lists Schedule Definitions as Console records. The ids use the `definition:` prefix. */
+export async function inspectScheduleConsoleRecords(options: ScheduleInspectionOptions): Promise<ViteHubConsoleRecord[]> {
+  return (await inspectScheduleDefinitions(options)).map(definitionRecord)
+}
+
+/**
+ * Console section for Schedules. Build-time records list discovered Schedule Definitions. Runtime records list Runtime
+ * Schedules with next run, last run, and run history, read on each request. `vitehub schedule list` reads the same
+ * runtime data, and `vitehub inspect definitions` reads the same Definitions.
+ */
 export const scheduleConsoleSection: ViteHubConsoleSectionContribution<ScheduleInspectionOptions> = {
-  description: "Inspect discovered Schedule Definitions and static timing metadata.",
+  description: "Inspect Schedule Definitions, Runtime Schedules, and run history.",
   icon: "i-lucide-calendar-clock",
   id: "schedules",
   label: "Schedules",
-  read: inspectScheduleDefinitions,
+  read: inspectScheduleConsoleRecords,
+  runtime: { export: "readScheduleConsoleRecords", module: "@vite-hub/schedule/runtime/console" },
   view: {
-    kind: "definition-catalog",
-    notice: "Runtime-created Schedules and run history are not included in this build-time Definition catalog yet.",
+    columns: [
+      { key: "kind", label: "Kind" },
+      { key: "schedule", label: "Schedule" },
+      { key: "target", label: "Target" },
+      { key: "timing", label: "Cron" },
+      { key: "enabled", label: "Enabled" },
+      { key: "nextRun", label: "Next run" },
+      { key: "lastRun", label: "Last run" },
+    ],
+    kind: "record-table",
+    notice: "Runtime Schedules and runs come from the Schedule stores of this server runtime on each request. Memory stores lose data on restart. Schedules with `console.enabled: false` are hidden. The Console is read-only. Use `vitehub schedule run`, `enable`, or `disable` in development.",
   },
 }

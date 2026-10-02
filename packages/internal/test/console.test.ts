@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { describeViteHubConsoleSection, isViteHubConsoleSectionId, readViteHubConsoleSection } from "../src/console.ts"
+import { describeViteHubConsoleRuntimeReader, describeViteHubConsoleSection, isViteHubConsoleRuntimeSection, isViteHubConsoleSectionId, readViteHubConsoleSection } from "../src/console.ts"
 
 import type { ViteHubConsoleSectionContribution } from "../src/console.ts"
 
@@ -20,6 +20,16 @@ const table: ViteHubConsoleSectionContribution = {
   label: "Widget Runs",
   read: () => [{ cells: { status: "done" }, fields: [{ label: "Status", value: "done" }], id: "run-1" }],
   view: { columns: [{ key: "status", label: "Status" }], kind: "record-table", notice: "Only the last 50 runs are shown." },
+}
+
+const runtimeTable: ViteHubConsoleSectionContribution<{ rootDir: string }> = {
+  description: "Inspect widget jobs.",
+  icon: "i-ph-clock-light",
+  id: "widget-jobs",
+  label: "Widget Jobs",
+  read: ({ rootDir }) => [{ cells: { job: "static" }, fields: [{ label: "Root", value: rootDir }], id: "definition:static" }],
+  runtime: { export: "readWidgetJobRecords", module: "@vite-hub/widget/runtime/console" },
+  view: { columns: [{ key: "job", label: "Job" }], kind: "record-table", notice: "Runtime jobs are read on each request." },
 }
 
 describe("Console section contributions", () => {
@@ -60,5 +70,30 @@ describe("Console section contributions", () => {
       kind: "record-table",
       records: [{ cells: { status: "done" }, fields: [{ label: "Status", value: "done" }], id: "run-1" }],
     })
+  })
+
+  it("keeps the runtime reader out of the descriptor and the build-time content", async () => {
+    expect(isViteHubConsoleRuntimeSection(runtimeTable)).toBe(true)
+    expect(isViteHubConsoleRuntimeSection(table)).toBe(false)
+    expect(describeViteHubConsoleSection(runtimeTable)).toEqual({
+      description: "Inspect widget jobs.",
+      icon: "i-ph-clock-light",
+      id: "widget-jobs",
+      label: "Widget Jobs",
+      view: { columns: [{ key: "job", label: "Job" }], kind: "record-table", notice: "Runtime jobs are read on each request." },
+    })
+    expect(describeViteHubConsoleRuntimeReader(runtimeTable)).toEqual({ export: "readWidgetJobRecords", module: "@vite-hub/widget/runtime/console" })
+    expect(describeViteHubConsoleRuntimeReader(table)).toBeUndefined()
+    await expect(readViteHubConsoleSection(runtimeTable, { rootDir: "/app" })).resolves.toEqual({
+      kind: "record-table",
+      records: [{ cells: { job: "static" }, fields: [{ label: "Root", value: "/app" }], id: "definition:static" }],
+    })
+    const { read: _read, ...runtimeOnly } = runtimeTable
+    await expect(readViteHubConsoleSection(runtimeOnly, { rootDir: "/app" })).resolves.toEqual({ kind: "record-table", records: [] })
+  })
+
+  it("rejects runtime readers that the host cannot import safely", () => {
+    expect(() => describeViteHubConsoleRuntimeReader({ ...runtimeTable, runtime: { export: "read", module: "./local.ts" } })).toThrow(TypeError)
+    expect(() => describeViteHubConsoleRuntimeReader({ ...runtimeTable, runtime: { export: "read-records", module: "@vite-hub/widget" } })).toThrow(TypeError)
   })
 })

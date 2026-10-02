@@ -29,6 +29,7 @@ export type {
   ScheduleHandler,
   ScheduleRegistryDefinition,
   ScheduleRunContext,
+  ScheduleRunListOptions,
   ScheduleRunStore,
   ScheduleRunRecord,
   ScheduleRunAttemptRecord,

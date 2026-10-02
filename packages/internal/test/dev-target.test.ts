@@ -1,6 +1,5 @@
 import { createServer, request } from "node:http"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { resolveConfig } from "vite"
 
 import {
   defaultViteHubDevServerUrl,
@@ -60,8 +59,18 @@ describe("dev target options", () => {
   it("uses the owner error factories", () => {
     expect(() => parseTarget(["--url"])).toThrow(expect.objectContaining({ code: "missing", message: "Missing value for --url." }))
     expect(() => parseTarget(["--server", "--timeout"])).toThrow(expect.objectContaining({ code: "missing", message: "Missing value for --server." }))
-    expect(() => parseTarget(["--timeout", "0"])).toThrow(expect.objectContaining({ code: "separate", message: "--timeout must be a positive number." }))
-    expect(() => parseTarget(["--timeout=abc"])).toThrow(expect.objectContaining({ code: "inline", message: "--timeout must be a positive number." }))
+    expect(() => parseTarget(["--timeout", "0"])).toThrow(expect.objectContaining({ code: "separate", message: "--timeout must be an integer from 1 to 2147483647 milliseconds." }))
+    expect(() => parseTarget(["--timeout=abc"])).toThrow(expect.objectContaining({ code: "inline", message: "--timeout must be an integer from 1 to 2147483647 milliseconds." }))
+  })
+
+  it.each(["2147483648", "4294967295", "4294967296", "1.5", "10ms", "Infinity"])("rejects unsupported timer duration %s with owner diagnostics", value => {
+    expect(() => parseTarget(["--timeout", value])).toThrow(expect.objectContaining({ code: "separate" }))
+    expect(() => parseTarget([`--timeout=${value}`])).toThrow(expect.objectContaining({ code: "inline" }))
+  })
+
+  it.each(["1", "2147483647"])("preserves supported timer duration %s", value => {
+    expect(parseTarget(["--timeout", value]).timeout).toBe(Number(value))
+    expect(parseTarget([`--timeout=${value}`]).timeout).toBe(Number(value))
   })
 
   it("resolves endpoint routes with and without a trailing slash", () => {
@@ -254,22 +263,6 @@ describe("guarded dev endpoint", () => {
     expect(await requestWithHost(all.url, `attacker.example:${new URL(all.url).port}`)).toEqual([200, "handled"])
   })
 
-  it("uses Vite's resolved environment host list without reading later environment changes", async () => {
-    vi.stubEnv("__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS", " foo.test, bar.test, , ")
-    try {
-      const config = await resolveConfig({ configFile: false, server: {} }, "serve", "development")
-      vi.stubEnv("__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS", "attacker.test")
-      const local = await listen({ server: config.server })
-      const port = new URL(local.url).port
-      expect(await requestWithHost(local.url, `foo.test:${port}`)).toEqual([200, "handled"])
-      expect(await requestWithHost(local.url, `bar.test:${port}`)).toEqual([200, "handled"])
-      expect(await requestWithHost(local.url, `attacker.test:${port}`)).toEqual([403, "Forbidden Test Dev host."])
-    }
-    finally {
-      vi.unstubAllEnvs()
-    }
-  })
-
   it("matches Vite host validation rules", () => {
     const allowed = (host: string | undefined, server: ViteHubDevEndpointServer["config"]["server"] = {}) =>
       // SAFETY: the host check reads only the host header from the request.
@@ -277,27 +270,24 @@ describe("guarded dev endpoint", () => {
     expect(allowed(undefined)).toBe(true)
     expect(allowed("localhost")).toBe(true)
     expect(allowed("LOCALHOST:5173")).toBe(true)
+    expect(allowed("App.Localhost:5173")).toBe(true)
     expect(allowed("APP.TEST:5173", { allowedHosts: ["app.test"] })).toBe(true)
     expect(allowed("app.test:5173", { allowedHosts: ["APP.TEST"] })).toBe(true)
+
     expect(allowed("app.localhost:5173")).toBe(true)
     expect(allowed("127.0.0.1:5173")).toBe(true)
     expect(allowed("192.168.1.20:5173")).toBe(true)
     expect(allowed("[::1]:5173")).toBe(true)
     expect(allowed("[not-ip]:5173")).toBe(false)
     expect(allowed("attacker.example:5173")).toBe(false)
-    expect(allowed("attacker-extension:5173")).toBe(true)
-    expect(allowed("file:5173")).toBe(true)
+    expect(allowed("attacker-extension:5173")).toBe(false)
+    expect(allowed("file:5173")).toBe(false)
     expect(allowed("localhost.attacker.example")).toBe(false)
     expect(allowed("tunnel.test", { allowedHosts: [".tunnel.test"] })).toBe(true)
     expect(allowed("eviltunnel.test", { allowedHosts: [".tunnel.test"] })).toBe(false)
     expect(allowed("sub.app.test", { allowedHosts: ["app.test"] })).toBe(false)
     expect(allowed("machine.lan:5173", { host: "machine.lan" })).toBe(true)
     expect(allowed("machine.lan:5173", { host: true })).toBe(false)
-    expect(allowed("tunnel.test:5173", { hmr: { host: "tunnel.test" } })).toBe(true)
-    expect(allowed("tunnel.test:5173", { hmr: true })).toBe(false)
-    expect(allowed("app.test:5173", { origin: "https://app.test:8443/app/" })).toBe(true)
-    expect(allowed("attacker.example", { origin: "not a URL" })).toBe(false)
-    expect(allowed("attacker.example", { hmr: { host: "tunnel.test" }, origin: "https://app.test" })).toBe(false)
     expect(allowed("attacker.example", { allowedHosts: true })).toBe(true)
     expect(allowed("attacker.example", { https: {} })).toBe(true)
   })

@@ -54,6 +54,8 @@
     "./_internal/sandbox/runtime/state": "./dist/_internal/sandbox/runtime/state.js",
     "./_internal/schedule": "./dist/_internal/schedule.js",
     "./_internal/schedule/runtime": "./dist/_internal/schedule/runtime.js",
+    "./_internal/schedule/runtime/console": "./dist/_internal/schedule/runtime/console.js",
+    "./_internal/schedule/runtime/dev": "./dist/_internal/schedule/runtime/dev.js",
     "./_internal/schedule/runtime/driver": "./dist/_internal/schedule/runtime/driver.js",
     "./_internal/schedule/runtime/kv": "./dist/_internal/schedule/runtime/kv.js",
     "./_internal/schedule/runtime/process": "./dist/_internal/schedule/runtime/process.js",

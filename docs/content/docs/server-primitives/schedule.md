@@ -114,7 +114,7 @@ The Process Runtime requires exactly one long-lived process or replica. The KV r
 | --- | --- | --- |
 | Cloudflare | Cron trigger output and Cloudflare schedule runtime entry wiring. | Runtime Schedules still need Provider Wake output or a long-running runner. |
 | Vercel | Vercel cron-compatible output for static schedules. | Runtime Schedules still need Provider Wake output or a long-running runner. |
-| Deno | `Deno.cron` output loaded by generated Deno Agent server output. | Runtime Schedules still need Provider Wake output or a long-running runner. `vitehub({ preset: 'deno' })` rejects `schedule` because the cron output is not part of the deployed Nitro entrypoint. |
+| Deno | `Deno.cron` output loaded by generated Deno Agent server output. | Runtime Schedules still need Provider Wake output or a long-running runner. |
 
 ::warning
 Provider Wake output requires a static five-field UTC cron string compatible with generated provider output. Runtime Schedules still need an existing Provider Wake or a long-running host to execute due schedules.
@@ -175,7 +175,7 @@ pnpm vitehub schedule run sync
 pnpm vitehub schedule run sync --url https://app.example.com
 ```
 
-With `--url`, the command posts to the deployed [Console](/docs/development/console#start-agent-invocations), so the deployment needs `console.invoke` and a Console credential. Read [CLI](/docs/development/cli#run-a-schedule-on-demand) for the credential variables. The Console Schedules page shows a **Run now** button for the same definitions.
+With `--url`, the command posts to the deployed [Console](/docs/development/cli#run-a-schedule-on-demand), so the deployment needs `console.invoke` and a Console credential. Read [CLI](/docs/development/cli#run-a-schedule-on-demand) for the credential variables. The Console Schedules page shows a **Run now** button for the same definitions.
 
 Server code can use the Runtime Helper. In Vite server code, pass the generated registry:
 
@@ -249,6 +249,7 @@ export default defineEventHandler(async () => {
 | `enabled` | `boolean` | No | Whether the Runtime Schedule executes. Defaults to `true` on create. |
 | `input` | `unknown` | No | Opaque input passed to the target handler as `context.input`. |
 | `timeZone` | `string` | No | Named IANA time zone used to evaluate the cron expression. Numeric offsets such as `+01:00` are rejected. Defaults to UTC. |
+| `console` | `ScheduleConsoleOptions` | No | `enabled: false` hides the Runtime Schedule in the Console. `dispatch` is stored and shown, but the Console is read-only and does not run Schedules. |
 
 `RuntimeScheduleUpdateInput` accepts `cron`, `target`, `enabled`, `input`, and `timeZone`. Create stores an input snapshot. Providing `input` on update replaces the complete snapshot; omitting it preserves the existing value. Schedule does not merge or interpret input, and the configured store must support the value's serialization requirements. Omitting `timeZone` on update preserves the stored zone; set it explicitly to `UTC` to reset UTC evaluation.
 
@@ -271,6 +272,33 @@ Local cron matching follows conventional daylight-saving behavior: a local time 
 | `schedules.listAttempts(runId)` | Lists attempts for one Schedule Run. |
 
 One-time delayed execution is not part of the first-version Scheduling vocabulary; use a recurring cron schedule, Queue delay, or Workflow design when that matches the actual behavior.
+
+## Inspect Runtime Schedules during development
+
+`hubSchedule()` contributes the `vitehub schedule` CLI namespace. Start the Vite Development Server, then list, read, run, enable, or disable Runtime Schedules from another terminal.
+
+```bash [Terminal]
+pnpm vitehub schedule list
+pnpm vitehub schedule runs weekday-report --limit 5 --json
+pnpm vitehub schedule run-runtime weekday-report
+```
+
+Use `pnpm vitehub schedule get --json -- -daily` for an ID that starts with a hyphen. All options must precede `--`.
+
+The commands use the same Schedule stores and registry as the running server. The list shows the enabled state, the next due time in the Schedule time zone, and the last run. When no wake driver is installed, the output says that due times do not start runs in this runtime. Read [CLI](/docs/development/cli#inspect-and-control-runtime-schedules) for every command and option.
+
+The Console Schedules page shows the same Runtime Schedules and their run history, next to the discovered Schedule Definitions. It reads the stores on each request and is read-only. Set `console: { enabled: false }` on a Runtime Schedule to hide it in the Console.
+
+Both surfaces redact values under secret-named keys in Schedule input, and credentials in URLs, bearer tokens, and secret assignments in error names, error messages, and response status text.
+
+| Host | `vitehub schedule` | Console Schedules page |
+| --- | --- | --- |
+| Vite + Nitro | Supported. The endpoint forwards each operation into the Nitro dev environment. | Definitions and Runtime Schedules. |
+| Nuxt | Not supported. Nitro does not run in the Vite process. | Definitions and Runtime Schedules. |
+| Plain Vite without Nitro | Not supported. The endpoint returns status 501. | Not available. |
+| Deployed runtime | Not exposed. The endpoint exists only on the Development Server. | Definitions and Runtime Schedules, when the Console is enabled. |
+
+Memory stores lose Runtime Schedules and runs when the runtime restarts. Configure KV stores to keep them.
 
 ## Connect a Runtime Schedule wake driver
 
@@ -309,6 +337,8 @@ Static provider output remains build-time configuration; selecting the Process R
 | Memory Schedule Run Store | `createMemoryScheduleRunStore()` | Default in-process run history; useful for tests and local runtime only. |
 | KV Schedule Run Store | `createKVScheduleRunStore({ kvStore, prefix? })` | Persists Schedule Runs and attempts through KV-compatible storage. |
 | Custom Store | `setRuntimeScheduleStore(store)`, `setScheduleRunStore(store)` | Implement `RuntimeScheduleStore` or `ScheduleRunStore` directly. |
+
+Implement `ScheduleRunStore.listRuns({ scheduleId, runtimeOnly, limit })` with a filtered storage query. The Console requests ten runs per Runtime Schedule. CLI list and get request the latest run, and `runs --limit` passes its limit to the store. Built-in KV storage selects run keys through a persisted metadata index. When that index is unavailable, it reads at most 1,000 legacy records with at most 16 concurrent reads and throws `SCHEDULE_HISTORY_INCOMPLETE` if more unindexed records remain, rather than silently returning incomplete filtered or newest-run results. The store repairs these index entries when writes are available. Index publication is optional and a failed write preserves the authoritative run.
 
 Both KV factories require an explicit `ScheduleKVStorage`. To use ViteHub KV, pass `scheduleKVStorage` from `vite-hub/schedule/runtime/kv` (or `@vite-hub/schedule/runtime/kv` for standalone consumers). Standalone consumers must install `@vite-hub/kv` when using that adapter. Static schedules, memory stores, and custom storage do not need the package.
 
@@ -363,3 +393,7 @@ When an update changes `input`, also supply `target`. When an update changes `ta
 Use `schedules.dynamic.create()` and `schedules.dynamic.update()` when names or stored input come from external data. The dynamic methods validate target eligibility and Schedule fields. They do not validate a target's business input. Validate that data in the application and again in a target that reads durable records.
 
 This is a breaking change: include the generated declarations for typed application calls, and move operational calls with unknown names to `schedules.dynamic`. There is no permissive string overload on typed creation.
+
+The KV Run Store indexes attempts by run ID before reading their payloads. `listAttempts(runId)` reads only matching indexed attempts. Legacy attempts or failed index writes require a scan with at most 16 concurrent reads; successful backfill makes later queries read only matches. Each query uses fresh index keys and sees attempts written by other runtimes.
+
+The built-in KV Run Store supports `listRunsBatch()` for several filtered histories. CLI lists and Console inspection share one fresh key snapshot per request and read each unindexed record once. Each new request sees runs written by other runtimes. Custom Run Stores can implement this optional method or keep `listRuns()`.

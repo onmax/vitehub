@@ -1,5 +1,5 @@
 /** Sections that the Console UI in `vite-hub` renders with its own components. Owner packages contribute the others. */
-export const consoleBuiltinSectionIds = ["env", "connections", "agents", "usage", "blob", "databases", "kv"] as const
+export const consoleBuiltinSectionIds = ["env", "agents", "usage", "blob", "databases", "kv"] as const
 
 export type ConsoleBuiltinSectionId = (typeof consoleBuiltinSectionIds)[number]
 
@@ -16,12 +16,6 @@ export interface ConsoleSectionDetails {
 /** Details of built-in sections. Contributed sections get their details from the navigation response. */
 export const consoleSectionDetails: Readonly<Record<ConsoleBuiltinSectionId, ConsoleSectionDetails>> = {
   env: { description: "Inspect Server Env declarations and their providers.", icon: "i-ph-key-light", label: "Env", routeName: "vitehub-console-env" },
-  connections: {
-    description: "Connect OAuth accounts, review activity, and decide pending approvals.",
-    icon: "i-lucide-plug-zap",
-    label: "Connections",
-    routeName: "vitehub-console-connections",
-  },
   agents: {
     description: "Inspect Agent sessions and invocation details.",
     icon: "i-ph-robot-light",

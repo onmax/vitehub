@@ -1,54 +1,124 @@
+import { runScheduleRunCli } from "./cli-static.ts"
+export { parseScheduleRunArgs, runScheduleRunCli } from "./cli-static.ts"
+export { scheduleDevRunHeader, scheduleDevRunRoute, scheduleConsoleRunRoute } from "./dev.ts"
+
+import {
+  discoverViteHubDevServer,
+  fetchViteHubDevEndpoint,
+  readViteHubDevTargetOption,
+  resolveViteHubDevServerUrl,
+} from "@vite-hub/internal/cli"
+
+import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
+import { redactInspectionText } from "@vite-hub/internal/inspect"
+
+import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute, scheduleDevTokenNamespace, scheduleDevTokenServerHeader } from "./dev.ts"
 import { scheduleErrorDiagnostics } from "./error-diagnostics.ts"
 
-import type { ViteHubCliContext, ViteHubCliContributor } from "@vite-hub/internal/cli"
+import type { ViteHubCliContext, ViteHubCliContributor, ViteHubCliStreams } from "@vite-hub/internal/cli"
+import type { ScheduleDevOperation, ScheduleDevRequestBody } from "./dev.ts"
+import type {
+  RuntimeScheduleInspection,
+  RuntimeScheduleSummary,
+  ScheduleRunAttemptSummary,
+  ScheduleRunSummary,
+} from "./runtime/console.ts"
 
-/** Development Server route that runs a Static Schedule Definition for `vitehub schedule run`. */
-export const scheduleDevRunRoute = "/__vitehub/schedule/run"
-/** Header that marks a Development Server request as a CLI request, so browsers cannot send it cross-site. */
-export const scheduleDevRunHeader = "x-vitehub-schedule-run"
-/** Console route that runs a Static Schedule Definition on a deployment. */
-export const scheduleConsoleRunRoute = "_vitehub/schedules/run"
+export type ScheduleCliContext = Pick<ViteHubCliContext, "cwd" | "env" | "rootDir"> & ViteHubCliStreams
 
-interface ParsedScheduleRunArgs {
-  help: boolean
-  json: boolean
-  name?: string
-  server?: string
-  url?: string
+export interface ScheduleCliOptions {
+  fetch?: typeof fetch
 }
 
-interface ScheduleRunTarget {
-  headers: Headers
-  remote: boolean
+interface ScheduleCommand {
+  description: string
+  cliName?: string
+  id?: "schedule" | "run"
+  limit?: boolean
+  name: ScheduleDevOperation
+}
+
+interface ParsedScheduleArgs {
+  help: boolean
+  id?: string
+  json: boolean
+  limit?: number
+  timeout?: number
   url: string
 }
 
-const usage = "vitehub schedule run <name> [--url <console-url>] [--server <dev-server-url>] [--json]"
-
-function cliError(message: string): Error {
-  return scheduleErrorDiagnostics.SCHEDULE_R0036({ message })
+const scheduleDevEndpoint = {
+  header: scheduleDevHeader,
+  headerValue: scheduleDevHeaderValue,
+  route: scheduleDevRoute,
 }
 
-function writeUsage(context: Pick<ViteHubCliContext, "stdout">): void {
-  context.stdout.write([
-    `Usage: ${usage}`,
+const scheduleDevTargetErrors = {
+  invalidInlineTimeout: (message: string) => scheduleErrorDiagnostics.SCHEDULE_R0038({ message }),
+  invalidTimeout: (message: string) => scheduleErrorDiagnostics.SCHEDULE_R0037({ message }),
+  missingValue: (message: string) => scheduleErrorDiagnostics.SCHEDULE_R0036({ message }),
+}
+
+// Nuxt mounts Vite under `/_nuxt/`, so the Schedule dev endpoint is not reachable there.
+const scheduleDevServerHint = "`vitehub schedule` needs a running Vite + Nitro Development Server with `schedule` enabled. Nuxt and plain Vite are not supported."
+
+const scheduleCommands: readonly ScheduleCommand[] = [
+  { description: "List Runtime Schedules with next due time and last run.", name: "list" },
+  { description: "Show one Runtime Schedule.", id: "schedule", name: "get" },
+  { description: "List the runs of one Runtime Schedule, newest first.", id: "schedule", limit: true, name: "runs" },
+  { description: "List the attempts of one Schedule Run.", id: "run", name: "attempts" },
+  { description: "Run one Runtime Schedule now.", id: "schedule", name: "run", cliName: "run-runtime" },
+  { description: "Enable one Runtime Schedule.", id: "schedule", name: "enable" },
+  { description: "Disable one Runtime Schedule.", id: "schedule", name: "disable" },
+]
+
+function commandUsage(command: ScheduleCommand): string {
+  const id = command.id === "run" ? " <runId>" : command.id ? " <id>" : ""
+  return `vitehub schedule ${command.cliName ?? command.name}${id}${command.limit ? " [--limit <n>]" : ""} [--json] [--url <url>]`
+}
+
+function writeUsage(command: ScheduleCommand, stream: ViteHubCliStreams["stdout"]): void {
+  stream.write([
+    `Usage: ${commandUsage(command)}`,
     "",
-    "Run a Static Schedule Definition now. The definition must set manual: true.",
-    "Without --url, the command uses the running Vite Development Server.",
+    command.description,
+    "The command calls the Schedule runtime of a running Vite + Nitro Development Server.",
     "",
     "Options:",
-    "  --url <url>     Deployed Console URL. Requires console.invoke. Set VITEHUB_CONSOLE_AUTHORIZATION, VITEHUB_CONSOLE_COOKIE, or CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET to authenticate.",
-    "  --server <url>  Vite Development Server URL. Defaults to VITEHUB_DEV_SERVER_URL or http://localhost:5173.",
-    "  --json          Print the run as JSON.",
-    "  -h, --help      Show this help.",
+    ...(command.limit ? ["  --limit <n>       Show at most n runs."] : []),
+    "  --json            Print JSON.",
+    "  --url <url>       Compatible Vite Development Server URL. Defaults to http://localhost:5173.",
+    "  --timeout <ms>    Request timeout, from 1 to 2147483647 whole milliseconds.",
+    "  -h, --help        Show this help.",
+    "  --                End options before an ID that starts with a hyphen.",
     "",
   ].join("\n"))
 }
 
-export function parseScheduleRunArgs(args: string[]): ParsedScheduleRunArgs {
-  const parsed: ParsedScheduleRunArgs = { help: false, json: false }
-  for (let index = 0; index < args.length; index++) {
+function parseLimit(value: string | undefined): number {
+  const limit = Number(value)
+  if (!value || !Number.isInteger(limit) || limit < 1) {
+    throw scheduleErrorDiagnostics.SCHEDULE_R0036({ message: "--limit must be a positive integer." })
+  }
+  return limit
+}
+
+function parseArgs(command: ScheduleCommand, args: readonly string[], env: NodeJS.ProcessEnv): ParsedScheduleArgs {
+  const parsed: ParsedScheduleArgs = { help: false, json: false, url: resolveViteHubDevServerUrl(env) }
+  let positionalOnly = false
+  for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!
+    if (!positionalOnly && arg === "--") {
+      positionalOnly = true
+      continue
+    }
+    if (positionalOnly) {
+      if (command.id && parsed.id === undefined) {
+        parsed.id = arg
+        continue
+      }
+      throw scheduleErrorDiagnostics.SCHEDULE_R0036({ message: `Unexpected argument: ${arg}.` })
+    }
     if (arg === "-h" || arg === "--help") {
       parsed.help = true
       continue
@@ -57,153 +127,316 @@ export function parseScheduleRunArgs(args: string[]): ParsedScheduleRunArgs {
       parsed.json = true
       continue
     }
-    if (arg.startsWith("--")) {
-      const separator = arg.indexOf("=")
-      const option = separator === -1 ? arg : arg.slice(0, separator)
-      if (option !== "--url" && option !== "--server") throw cliError(`Unknown schedule run option: ${option}`)
-      const value = separator === -1 ? args[++index] : arg.slice(separator + 1)
-      if (!value || value.startsWith("--")) throw cliError(`${option} requires a value.`)
-      if (option === "--url") parsed.url = value
-      else parsed.server = value
+    const targetOption = readViteHubDevTargetOption(args, index, parsed, scheduleDevTargetErrors)
+    if (targetOption !== undefined) {
+      index += targetOption
       continue
     }
-    if (parsed.name) throw cliError(`Unexpected schedule run argument: ${arg}`)
-    parsed.name = arg
+    if (command.limit && arg === "--limit") {
+      parsed.limit = parseLimit(args[index + 1])
+      index += 1
+      continue
+    }
+    if (command.limit && arg.startsWith("--limit=")) {
+      parsed.limit = parseLimit(arg.slice("--limit=".length))
+      continue
+    }
+    if (arg.startsWith("-")) throw scheduleErrorDiagnostics.SCHEDULE_R0036({ message: `Unknown option: ${arg}.` })
+    if (command.id && parsed.id === undefined) {
+      parsed.id = arg
+      continue
+    }
+    throw scheduleErrorDiagnostics.SCHEDULE_R0036({ message: `Unexpected argument: ${arg}.` })
+  }
+  if (!parsed.help && command.id && !parsed.id) {
+    throw scheduleErrorDiagnostics.SCHEDULE_R0036({ message: `Missing ${command.id === "run" ? "Schedule Run" : "Schedule"} id.` })
   }
   return parsed
 }
 
-function baseUrl(value: string, label: string): URL {
-  let url: URL
-  try {
-    url = new URL(value)
-  }
-  catch {
-    throw cliError(`${label} must be a URL.`)
-  }
-  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]"
-  if (url.protocol !== "https:" && !(local && url.protocol === "http:")) throw cliError(`${label} must use HTTPS, except for localhost.`)
-  if (url.username || url.password || url.search || url.hash) throw cliError(`${label} must not contain credentials, a query, or a fragment.`)
-  return url
+function table(rows: readonly (readonly string[])[]): string {
+  const widths = rows[0]!.map((_, column) => Math.max(...rows.map(row => row[column]!.length)))
+  return rows.map(row => row.map((cell, column) => column === row.length - 1 ? cell : cell.padEnd(widths[column]!)).join("  ")).join("\n")
 }
 
-function runTarget(parsed: ParsedScheduleRunArgs, env: NodeJS.ProcessEnv): ScheduleRunTarget {
-  const headers = new Headers({ accept: "application/json", "content-type": "application/json" })
-  if (parsed.url) {
-    const base = baseUrl(parsed.url, "--url")
-    if (env.VITEHUB_CONSOLE_AUTHORIZATION) headers.set("authorization", env.VITEHUB_CONSOLE_AUTHORIZATION)
-    if (env.VITEHUB_CONSOLE_COOKIE) headers.set("cookie", env.VITEHUB_CONSOLE_COOKIE)
-    if (env.CF_ACCESS_CLIENT_ID) headers.set("cf-access-client-id", env.CF_ACCESS_CLIENT_ID)
-    if (env.CF_ACCESS_CLIENT_SECRET) headers.set("cf-access-client-secret", env.CF_ACCESS_CLIENT_SECRET)
-    return {
-      headers,
-      remote: true,
-      url: new URL(scheduleConsoleRunRoute, base.href.endsWith("/") ? base.href : `${base.href}/`).href,
+function runLabel(run: ScheduleRunSummary | undefined): string {
+  return run ? `${run.status} ${run.scheduledAt}` : "-"
+}
+
+function automaticRunsNotice(automaticRuns: boolean): string {
+  return automaticRuns
+    ? "Automatic runs: on. A wake driver runs due Schedules in this runtime."
+    : "Automatic runs: off. No wake driver is installed, so due times do not start runs in this runtime."
+}
+
+function formatScheduleList(result: RuntimeScheduleInspection): string {
+  if (result.schedules.length === 0) return `No Runtime Schedules.\n${automaticRunsNotice(result.automaticRuns)}\n`
+  return `${table([
+    ["ID", "TARGET", "CRON", "ENABLED", "NEXT RUN", "LAST RUN"],
+    ...result.schedules.map(schedule => [
+      schedule.id,
+      schedule.target,
+      schedule.timeZone === "UTC" ? schedule.cron : `${schedule.cron} (${schedule.timeZone})`,
+      schedule.enabled ? "yes" : "no",
+      schedule.nextRunAt ?? "-",
+      runLabel(schedule.lastRun),
+    ]),
+  ])}\n${automaticRunsNotice(result.automaticRuns)}\n`
+}
+
+function formatSchedule(schedule: RuntimeScheduleSummary, automaticRuns?: boolean): string {
+  return [
+    `Schedule: ${schedule.id}`,
+    `Target: ${schedule.target}`,
+    `Cron: ${schedule.cron}`,
+    `Time zone: ${schedule.timeZone}`,
+    `Enabled: ${schedule.enabled ? "yes" : "no"}`,
+    `Next run: ${schedule.nextRunAt ?? "-"}`,
+    `Last run: ${runLabel(schedule.lastRun)}`,
+    ...(schedule.input !== undefined ? [`Input: ${JSON.stringify(schedule.input)}`] : []),
+    `Console: ${schedule.console.visible ? "visible" : "hidden"}${schedule.console.dispatch ? ", dispatch allowed" : ""}`,
+    `Created: ${schedule.createdAt}`,
+    `Updated: ${schedule.updatedAt}`,
+    ...(automaticRuns === undefined ? [] : [automaticRunsNotice(automaticRuns)]),
+    "",
+  ].join("\n")
+}
+
+function formatRuns(runs: readonly ScheduleRunSummary[]): string {
+  if (runs.length === 0) return "No runs.\n"
+  return `${table([
+    ["RUN", "STATUS", "SCHEDULED AT", "ATTEMPTS", "ERROR"],
+    ...runs.map(run => [run.id, run.status, run.scheduledAt, String(run.attemptCount), run.error?.message ?? "-"]),
+  ])}\n`
+}
+
+function formatAttempts(run: ScheduleRunSummary, attempts: readonly ScheduleRunAttemptSummary[]): string {
+  const header = `Run: ${run.id} (${run.status})\n`
+  if (attempts.length === 0) return `${header}No attempts.\n`
+  return `${header}${table([
+    ["ATTEMPT", "STATUS", "STARTED AT", "COMPLETED AT", "ERROR"],
+    ...attempts.map(attempt => [attempt.id, attempt.status, attempt.startedAt, attempt.completedAt ?? "-", attempt.error?.message ?? "-"]),
+  ])}\n`
+}
+
+function formatRun(run: ScheduleRunSummary): string {
+  const response = run.response ? ` (HTTP ${run.response.status}${run.response.statusText ? ` ${run.response.statusText}` : ""})` : ""
+  return [
+    `Run ${run.id}: ${run.status}${response}`,
+    ...(run.error ? [`Error: ${run.error.name ? `${run.error.name}: ` : ""}${run.error.message}`] : []),
+    "",
+  ].join("\n")
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function stringFields(value: Record<string, unknown>, fields: string[]): boolean {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+  return fields.every(field => typeof value[field] === "string")
+}
+
+function optionalStrings(value: Record<string, unknown>, fields: string[]): boolean {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+  return fields.every(field => value[field] === undefined || typeof value[field] === "string")
+}
+
+function isRunError(value: unknown): boolean {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+  return value === undefined || (isRecord(value) && typeof value.message === "string" && optionalStrings(value, ["name"]))
+}
+
+function isRunSummary(value: unknown): value is ScheduleRunSummary {
+  return isRecord(value) && stringFields(value, ["id", "scheduleId", "scheduledAt", "target"])
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+    && typeof value.attemptCount === "number" && Number.isInteger(value.attemptCount) && value.attemptCount >= 0
+    && (value.status === "pending" || value.status === "running" || value.status === "succeeded" || value.status === "failed")
+    && optionalStrings(value, ["completedAt", "startedAt"]) && isRunError(value.error)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+    && (value.response === undefined || (isRecord(value.response) && typeof value.response.status === "number"
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+      && Number.isInteger(value.response.status) && typeof value.response.statusText === "string"))
+}
+
+function isScheduleSummary(value: unknown): value is RuntimeScheduleSummary {
+  return isRecord(value) && stringFields(value, ["id", "target", "cron", "timeZone", "createdAt", "updatedAt"])
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+    && typeof value.enabled === "boolean" && isRecord(value.console)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+    && typeof value.console.visible === "boolean" && typeof value.console.dispatch === "boolean"
+    && optionalStrings(value, ["nextRunAt"]) && (value.lastRun === undefined || isRunSummary(value.lastRun))
+}
+
+function isAttemptSummary(value: unknown): value is ScheduleRunAttemptSummary {
+  return isRecord(value) && stringFields(value, ["id", "runId", "startedAt"])
+    && (value.status === "running" || value.status === "succeeded" || value.status === "failed")
+    && optionalStrings(value, ["completedAt"]) && isRunError(value.error)
+}
+
+function formatResult(operation: ScheduleDevOperation, result: Record<string, unknown>): string | undefined {
+  switch (operation) {
+    case "list":
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+      if (typeof result.automaticRuns === "boolean" && Array.isArray(result.schedules) && result.schedules.every(isScheduleSummary)) {
+        return formatScheduleList({ automaticRuns: result.automaticRuns, schedules: result.schedules })
+      }
+      break
+    case "get":
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+      if (isScheduleSummary(result.schedule) && typeof result.automaticRuns === "boolean") return formatSchedule(result.schedule, result.automaticRuns)
+      break
+    case "runs":
+      if (Array.isArray(result.runs) && result.runs.every(isRunSummary)) return formatRuns(result.runs)
+      break
+    case "attempts":
+      if (isRunSummary(result.run) && Array.isArray(result.attempts) && result.attempts.every(isAttemptSummary)) return formatAttempts(result.run, result.attempts)
+      break
+    case "run":
+      if (isRunSummary(result.run)) return formatRun(result.run)
+      break
+    case "enable":
+    case "disable": {
+      if (!isScheduleSummary(result.schedule)) break
+      const schedule = result.schedule
+      return `${operation === "enable" ? "Enabled" : "Disabled"} Schedule ${schedule.id}.${schedule.nextRunAt ? ` Next run: ${schedule.nextRunAt}.` : ""}\n`
     }
   }
-  const server = baseUrl(parsed.server || env.VITEHUB_DEV_SERVER_URL || "http://localhost:5173", "--server")
-  headers.set(scheduleDevRunHeader, "1")
-  return { headers, remote: false, url: new URL(scheduleDevRunRoute.slice(1), server.href.endsWith("/") ? server.href : `${server.href}/`).href }
 }
 
-function record(value: unknown): Record<string, unknown> | undefined {
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate untrusted boundary values before use.
-  return value !== null && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : undefined
-}
-
-function stringField(value: Record<string, unknown> | undefined, key: string): string | undefined {
-  const field = value?.[key]
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate untrusted boundary values before use.
-  return typeof field === "string" ? field : undefined
-}
-
-function formatDuration(run: Record<string, unknown>): string | undefined {
-  const startedAt = Date.parse(stringField(run, "startedAt") ?? "")
-  const completedAt = Date.parse(stringField(run, "completedAt") ?? "")
-  if (Number.isNaN(startedAt) || Number.isNaN(completedAt)) return
-  const milliseconds = Math.max(0, completedAt - startedAt)
-  return milliseconds < 1_000 ? `${milliseconds} ms` : `${(milliseconds / 1_000).toFixed(1)} s`
-}
-
-async function sendRun(target: ScheduleRunTarget, name: string, fetchImpl: typeof fetch): Promise<Record<string, unknown>> {
-  let response: Response
-  try {
-    response = await fetchImpl(target.url, {
-      body: JSON.stringify({ name }),
-      headers: target.headers,
-      method: "POST",
-      redirect: "manual",
-    })
-  }
-  catch {
-    throw cliError(target.remote ? `Schedule run request to ${target.url} failed.` : `No Vite Development Server with Schedule found at ${new URL(target.url).origin}.`)
-  }
-  if (target.remote && (response.status === 401 || response.status === 403 || (response.status >= 300 && response.status < 400))) {
-    const text = response.status === 403 ? await response.text() : ""
-    const message = stringField(record(parseJSON(text)), "message")
-    throw cliError(message ?? `Console authentication failed with HTTP ${response.status}. Set VITEHUB_CONSOLE_AUTHORIZATION, VITEHUB_CONSOLE_COOKIE, or CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET.`)
-  }
+async function readFailure(response: Response): Promise<{ code?: string, message: string }> {
   const text = await response.text()
-  const json = record(parseJSON(text))
-  if (!response.ok) {
-    const message = stringField(json, "message") ?? text.slice(0, 500)
-    throw cliError(`Schedule run failed with HTTP ${response.status}${message ? `: ${message}` : "."}`)
-  }
-  const run = record(json?.run)
-  if (!run) throw cliError("Schedule run returned an invalid response.")
-  return run
-}
-
-function parseJSON(text: string): unknown {
   try {
-    return text ? JSON.parse(text) : undefined
+    const body: unknown = JSON.parse(text)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+    if (isRecord(body) && isRecord(body.error) && typeof body.error.message === "string") {
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+      return { ...(typeof body.error.code === "string" ? { code: body.error.code } : {}), message: body.error.message }
+    }
   }
   catch {
-    return undefined
+    // Guard rejections use plain text.
   }
+  return { message: text || `Schedule Dev request failed with HTTP ${response.status}.` }
 }
 
-export async function runScheduleRunCli(
+function writeFailure(parsed: Pick<ParsedScheduleArgs, "json">, context: ScheduleCliContext, failure: { code?: string, message: string }): number {
+  const redacted = { ...failure, message: redactInspectionText(failure.message) }
+  if (parsed.json) context.stdout.write(`${JSON.stringify({ error: redacted }, null, 2)}\n`)
+  else context.stderr.write(`${redacted.message}\n`)
+  return 1
+}
+
+function withTimeout(timeout: number | undefined): { signal?: AbortSignal } {
+  return timeout ? { signal: AbortSignal.timeout(timeout) } : {}
+}
+
+async function runScheduleCommand(
+  command: ScheduleCommand,
   args: string[],
-  context: Pick<ViteHubCliContext, "env" | "stderr" | "stdout">,
-  options: { fetch?: typeof fetch } = {},
+  context: ScheduleCliContext,
+  options: ScheduleCliOptions,
 ): Promise<number> {
+  let parsed: ParsedScheduleArgs
   try {
-    const parsed = parseScheduleRunArgs(args)
-    if (parsed.help) {
-      writeUsage(context)
-      return 0
-    }
-    if (!parsed.name) throw cliError("schedule run requires a Schedule Definition name.")
-    const run = await sendRun(runTarget(parsed, context.env), parsed.name, options.fetch ?? globalThis.fetch)
-    if (parsed.json) {
-      context.stdout.write(`${JSON.stringify(run, null, 2)}\n`)
-    }
-    else {
-      const duration = formatDuration(run)
-      const error = stringField(record(run.error), "message")
-      const line = `${String(run.status)} ${parsed.name}${duration ? ` in ${duration}` : ""}${error ? `: ${error}` : ""}\n`
-      context.stdout.write(line)
-      context.stdout.write(`Run ${String(run.id)}\n`)
-    }
-    return run.status === "succeeded" ? 0 : 1
+    parsed = parseArgs(command, args, context.env)
   }
   catch (error) {
+    const optionEnd = args.indexOf("--")
+    if (args.slice(0, optionEnd === -1 ? args.length : optionEnd).includes("--json")) return writeFailure({ json: true }, context, { message: error instanceof Error ? error.message : String(error) })
     context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+    writeUsage(command, context.stderr)
     return 1
   }
+  if (parsed.help) {
+    writeUsage(command, context.stdout)
+    return 0
+  }
+  const fetchImpl = options.fetch ?? globalThis.fetch
+  const timeout = withTimeout(parsed.timeout)
+  let discoveryFailure = ""
+  const server = await discoverViteHubDevServer({
+    endpoint: scheduleDevEndpoint,
+    fetch: fetchImpl,
+    rootDir: context.rootDir,
+    serverUrl: parsed.url,
+    stderr: { write: chunk => { discoveryFailure += String(chunk) } },
+    ...timeout,
+  })
+  if (!server) return writeFailure(parsed, context, { message: `${discoveryFailure.trim()}\n${scheduleDevServerHint}` })
+  if (server.discovery.runtime !== "nitro") {
+    return writeFailure(parsed, context, {
+      code: "SCHEDULE_DEV_RUNTIME_UNAVAILABLE",
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate primitive fields from the untrusted Schedule Dev response.
+      message: typeof server.discovery.message === "string"
+        ? server.discovery.message
+        : "This Vite Development Server cannot reach the Schedule runtime.",
+    })
+  }
+  const serverId = server.discovery.scheduleDevTokenServerId
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate public discovery metadata before selecting a local private credential.
+  if (typeof serverId !== "string" || !serverId) return writeFailure(parsed, context, { message: "The Schedule Dev server did not provide a token server ID. Restart the Compatible Vite Development Server." })
+  let token: string | undefined
+  try {
+    token = await readViteHubDevToken(context.rootDir, { namespace: scheduleDevTokenNamespace, serverId })
+  }
+  catch (error) {
+    return writeFailure(parsed, context, { message: `Could not read the private Schedule Dev token: ${error instanceof Error ? error.message : String(error)}` })
+  }
+  if (!token) return writeFailure(parsed, context, { message: "No private Schedule Dev token found. Start the Compatible Vite Development Server first." })
+  const body: ScheduleDevRequestBody = {
+    ...(parsed.id !== undefined ? { id: parsed.id } : {}),
+    ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
+    operation: command.name,
+  }
+  let response: Response
+  try {
+    response = await fetchViteHubDevEndpoint(fetchImpl, server.url, scheduleDevEndpoint, {
+      body: JSON.stringify(body),
+      headers: { accept: "application/json", "content-type": "application/json", [viteHubDevTokenHeader]: token, [scheduleDevTokenServerHeader]: serverId },
+      method: "POST",
+      ...timeout,
+    })
+    if (!response.ok) return writeFailure(parsed, context, await readFailure(response))
+  }
+  catch (error) {
+    return writeFailure(parsed, context, { message: `Schedule Dev request failed: ${error instanceof Error ? error.message : String(error)}` })
+  }
+  const result: unknown = await response.json().catch(() => undefined)
+  if (!isRecord(result)) return writeFailure(parsed, context, { message: "The Schedule Dev response is not valid JSON." })
+  const formatted = formatResult(command.name, result)
+  if (formatted === undefined) return writeFailure(parsed, context, { message: "The Schedule Dev response has an invalid result shape." })
+  context.stdout.write(parsed.json ? `${JSON.stringify(result, null, 2)}\n` : formatted)
+  // A failed manual run is a command failure, so scripts can check the exit code.
+  return command.name === "run" && isRecord(result.run) && result.run.status === "failed" ? 1 : 0
 }
 
-export function createScheduleCliContributor(): ViteHubCliContributor {
+/**
+ * Runs one `vitehub schedule` command against a running Vite + Nitro Development Server.
+ * `args[0]` is the command name, for example `list` or `run`.
+ */
+export async function runScheduleCli(args: string[], context: ScheduleCliContext, options: ScheduleCliOptions = {}): Promise<number> {
+  const [name, ...rest] = args
+  if (name === "run") return await runScheduleRunCli(rest, context, options)
+  const command = scheduleCommands.find(entry => (entry.cliName ?? entry.name) === name)
+  if (!command) {
+    context.stderr.write(`${name ? `Unknown schedule command: ${name}\n` : ""}Commands: ${["run", ...scheduleCommands.map(entry => entry.cliName ?? entry.name)].join(", ")}\n`)
+    return 1
+  }
+  return await runScheduleCommand(command, rest, context, options)
+}
+
+export function createScheduleCliContributor(options: ScheduleCliOptions = {}): ViteHubCliContributor {
   return {
     namespaces: [{
-      description: "Run Static Schedule Definitions on demand.",
-      features: [{
-        description: "Run a Static Schedule Definition that sets manual: true.",
-        name: "run",
-        run: async (args, context) => await runScheduleRunCli(args, context),
-        usage,
-      }],
+      description: "Run Static Schedule Definitions and inspect or control Runtime Schedules.",
+      features: [{ name: "run", description: "Run a Static Schedule Definition that sets manual: true.", usage: "vitehub schedule run <name> [--url <console-url>] [--server <dev-server-url>] [--json]", run: async (args: string[], context: ViteHubCliContext) => await runScheduleRunCli(args, context, options) }, ...scheduleCommands.map(command => ({
+        description: command.description,
+        name: command.cliName ?? command.name,
+        run: async (args: string[], context: ViteHubCliContext) => await runScheduleCommand(command, args, context, options),
+        usage: commandUsage(command),
+      }))],
       name: "schedule",
     }],
   }

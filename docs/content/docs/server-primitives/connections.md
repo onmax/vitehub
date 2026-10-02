@@ -216,7 +216,7 @@ Agent tools record every call, reads included. MCP protocol messages are recorde
 
 - Grants are sealed with AES-GCM and the encryption key. Each row stores the key id. With a different key, the status is `needs-reconnect`.
 - The connect flow uses PKCE (`S256`), a single-use ticket that expires after 10 minutes, and a `state` cookie. Tokens never go to the browser or the CLI.
-- Connect, callback, and management routes exist only when the Console is enabled. Console Auth protects them in production. With an explicit production access contract, the Console is read-only for Connections until you set `console: { manageConnections: true }`. See [Manage Connections](/docs/development/console#manage-connections).
+- Connect, callback, and management routes exist only when the Console is enabled. Console Auth protects them in production. With an explicit production access contract, the Console is read-only for Connections until you set `console: { manageConnections: true }`. See [Connections in the Console](/docs/development/console#enable-the-console).
 - The Console preserves the Vite `base` in management, connect, callback, and return URLs.
 - Concurrent refreshes use a database lease, so only one request refreshes a rotating refresh token.
 

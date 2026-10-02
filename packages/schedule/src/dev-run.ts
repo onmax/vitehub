@@ -1,6 +1,9 @@
 import { StringDecoder } from "node:string_decoder"
 
-import { scheduleDevRunHeader, scheduleDevRunRoute } from "./cli.ts"
+import { redactInspectionText } from "@vite-hub/internal/inspect"
+import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
+
+import { scheduleDevRunHeader, scheduleDevRunRoute, scheduleDevTokenNamespace, scheduleDevTokenServerHeader } from "./dev.ts"
 import { runSchedule } from "./runtime/execute.ts"
 
 import type { IncomingMessage, ServerResponse } from "node:http"
@@ -46,7 +49,7 @@ function isScheduleRegistry(value: unknown): value is ScheduleDefinitionRegistry
 export function scheduleRunResult(run: ScheduleRunRecord) {
   return {
     ...(run.completedAt ? { completedAt: run.completedAt.toISOString() } : {}),
-    ...(run.error ? { error: { message: run.error.message, ...(run.error.name ? { name: run.error.name } : {}) } } : {}),
+    ...(run.error ? { error: { message: redactInspectionText(run.error.message), ...(run.error.name ? { name: redactInspectionText(run.error.name) } : {}) } } : {}),
     id: run.id,
     scheduleId: run.scheduleId,
     ...(run.startedAt ? { startedAt: run.startedAt.toISOString() } : {}),
@@ -60,12 +63,16 @@ export function scheduleRunErrorStatus(error: unknown): number {
   return code === "SCHEDULE_DEFINITION_NOT_FOUND" ? 404 : code === "SCHEDULE_MANUAL_RUN_DISABLED" ? 403 : 500
 }
 
-async function handleScheduleDevRun(server: ViteDevServer, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleScheduleDevRun(server: ViteDevServer, req: IncomingMessage, res: ServerResponse, serverId: string): Promise<void> {
+  if (req.method === "GET" && header(req, scheduleDevRunHeader) === "1") return writeJSON(res, 200, { root: server.config.root, scheduleDevTokenServerId: serverId })
   // A custom header, a JSON body, and a same-origin check keep browsers from sending cross-site run requests.
   if (req.method !== "POST") return writeJSON(res, 405, { message: "Method not allowed." })
   if (header(req, scheduleDevRunHeader) !== "1") return writeJSON(res, 403, { message: "Forbidden Schedule run request." })
+  const requestedServerId = header(req, scheduleDevTokenServerHeader)
+  const token = header(req, viteHubDevTokenHeader)
+  if (requestedServerId !== serverId || !token || token !== await readViteHubDevToken(server.config.root, { namespace: scheduleDevTokenNamespace, serverId })) return writeJSON(res, 403, { message: "Forbidden Schedule run token." })
   const origin = header(req, "origin")
-  if (origin && URL.canParse(origin) && new URL(origin).host !== header(req, "host")) return writeJSON(res, 403, { message: "Forbidden Schedule run origin." })
+  if (origin && (!URL.canParse(origin) || new URL(origin).host !== header(req, "host"))) return writeJSON(res, 403, { message: "Forbidden Schedule run origin." })
   if (!header(req, "content-type")?.toLowerCase().startsWith("application/json")) return writeJSON(res, 415, { message: "Schedule run requires application/json." })
   let body: unknown
   try {
@@ -86,23 +93,29 @@ async function handleScheduleDevRun(server: ViteDevServer, req: IncomingMessage,
     writeJSON(res, 200, { run: scheduleRunResult(await runSchedule(name, { registry })) })
   }
   catch (error) {
-    writeJSON(res, scheduleRunErrorStatus(error), { message: error instanceof Error ? error.message : String(error) })
+    writeJSON(res, scheduleRunErrorStatus(error), { message: redactInspectionText(error instanceof Error ? error.message : String(error)) })
   }
 }
 
 /** Serves `vitehub schedule run` without `--url` from the Vite Development Server. */
-export function registerScheduleDevRunEndpoint(server: ViteDevServer): void {
+export function registerScheduleDevRunEndpoint(server: ViteDevServer, options: { serverId: string }): void {
   const configuredBase = new URL(server.config.base || "/", "http://localhost").pathname
   const baseRoute = configuredBase === "/"
     ? scheduleDevRunRoute
     : `${configuredBase.replace(/\/$/, "")}${scheduleDevRunRoute}`
+  let closed = false
+  server.httpServer?.once("close", () => { closed = true })
   server.middlewares.use((req, res, next) => {
     const pathname = new URL(req.url || "/", "http://localhost").pathname
     if (pathname !== scheduleDevRunRoute && pathname !== baseRoute) {
       next()
       return
     }
-    handleScheduleDevRun(server, req, res).catch((error: unknown) => {
+    if (closed) {
+      writeJSON(res, 403, { message: "Forbidden Schedule run token." })
+      return
+    }
+    handleScheduleDevRun(server, req, res, options.serverId).catch((error: unknown) => {
       if (!res.headersSent) writeJSON(res, 500, { message: error instanceof Error ? error.message : "Schedule run failed." })
     })
   })

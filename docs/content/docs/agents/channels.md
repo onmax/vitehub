@@ -155,7 +155,7 @@ export default defineAgent({
 })
 ```
 
-Set `history.trigger` when the Channel has more than one trigger. Replay the history from the terminal with [`vitehub channels replay`](/docs/development/cli#replay-channel-history):
+Set `history.trigger` when the Channel has more than one trigger. Replay the history from the terminal with [`vitehub channels replay`](/docs/development/cli#download-channel-history):
 
 ```sh
 pnpm vitehub channels replay --agent labeller --channel mailbox --folder archive --dry-run

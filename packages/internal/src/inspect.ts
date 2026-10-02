@@ -50,11 +50,8 @@ export interface ViteHubInspectionContributingPlugin {
 async function collectContributors(plugins: readonly unknown[]): Promise<ViteHubInspectionContributor[]> {
   const contributors: ViteHubInspectionContributor[] = []
   for (const plugin of plugins) {
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vite plugins are supplied as unknown values at this boundary.
     if (!plugin || typeof plugin !== "object") continue
-    // SAFETY: Vite plugin objects are structurally compatible with this optional inspection metadata at this boundary.
     const value = (plugin as ViteHubInspectionContributingPlugin).vitehub?.inspect
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The public metadata contract permits an object or a callable contributor factory.
     const contributor = typeof value === "function" ? await value() : value
     if (contributor) contributors.push(contributor)
   }
@@ -100,24 +97,75 @@ export function summarizeDefinitions(
 export const redactedInspectionValue = "[redacted]"
 
 const secretKeyPattern = /secret|token|passw(?:or)?d|credential|api[-_\s]?key|private[-_\s]?key|authorization|cookie|signature|dsn|connection[-_\s]?string/i
-const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s@]+@|bearer\s)/i
+const secretValuePattern = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/\s?#]*@|bearer\s)/i
+
+const embeddedUrlCredentialPattern = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s?#]*@/gi
+const embeddedCookiePattern = /\b([\w-]*cookie[\w-]*["']?\s*[:=]\s*)(?:"(?:\\[^\r\n]|[^"\\\r\n])*"(?:\s*;\s*[\w.-]+\s*=[^;\r\n]*)*|'(?:\\[^\r\n]|[^'\\\r\n])*'(?:\s*;\s*[\w.-]+\s*=[^;\r\n]*)*|[^\r\n]+?(?=\s*;\s*[^;=\r\n/]+\s*(?:\r?\n|$)|\r?\n|$))/gi
+const embeddedBearerPattern = /\bbearer\s+[^\s,;]+/gi
+const embeddedAuthorizationPattern = new RegExp(
+  String.raw`\b([\w-]*authorization[\w-]*["']?\s*[:=]\s*)(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|'(?:\\[^\r\n]|[^'\\\r\n])*'|[^\r\n]+?(?=\s*(?:[,;])?\s*(?:${secretKeyPattern.source})[\w-]*\s*[:=]|\s+rejected\b|$))`,
+  "gi",
+)
+
+const embeddedSecretAssignmentPattern = new RegExp(
+  String.raw`\b([\w-]*(?:${secretKeyPattern.source})[\w-]*["']?\s*[:=]\s*)(?!\[redacted\](?=$|[\s,;}&]))(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|'(?:\\[^\r\n]|[^'\\\r\n])*'|[^\s,;&]+)`,
+  "gi",
+)
+
+/**
+ * Removes credentials inside free text, for example an error message. URL credentials, bearer tokens, and
+ * `name=value` pairs with a secret name are replaced with `[redacted]`.
+ */
+export function redactInspectionText(value: string): string {
+  return value
+    .replace(embeddedUrlCredentialPattern, `$1${redactedInspectionValue}@`)
+    .replace(embeddedAuthorizationPattern, `$1${redactedInspectionValue}`)
+    .replace(embeddedCookiePattern, `$1${redactedInspectionValue}`)
+    .replace(embeddedBearerPattern, `Bearer ${redactedInspectionValue}`)
+    .replace(embeddedSecretAssignmentPattern, `$1${redactedInspectionValue}`)
+}
 
 /**
  * Removes values that can carry credentials before inspection output leaves the process.
  * Keys that name secrets, plaintext Worker `vars`, and URLs with embedded credentials are redacted.
  */
 export function redactInspectionValue(value: unknown, key?: string): unknown {
-  if (key && secretKeyPattern.test(key)) return redactedInspectionValue
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Inspection values are intentionally accepted as unknown JSON-like data.
-  if (typeof value === "string") return secretValuePattern.test(value) ? redactedInspectionValue : value
-  if (Array.isArray(value)) return value.map(entry => redactInspectionValue(entry))
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Inspection values are intentionally accepted as unknown JSON-like data.
-  if (!value || typeof value !== "object") return value
-  return Object.fromEntries(Object.entries(value).map(([entryKey, entry]) => [
-    entryKey,
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Unknown JSON-like Worker vars must be an object before enumerating keys for redaction.
-    entryKey === "vars" && entry && typeof entry === "object" && !Array.isArray(entry)
-      ? Object.fromEntries(Object.keys(entry).map(name => [name, redactedInspectionValue]))
-      : redactInspectionValue(entry, entryKey),
-  ]))
+  const seen = new WeakSet<object>()
+  let remaining = 1000
+  function visit(entry: unknown, entryKey?: string, depth = 0): unknown {
+    if (entryKey && secretKeyPattern.test(entryKey)) return redactedInspectionValue
+    if (--remaining < 0 || depth > 10) return "[truncated]"
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque inspection input before serializing it.
+    if (typeof entry === "string") {
+      const text = entry.slice(0, 10_000)
+      return secretValuePattern.test(text) ? redactedInspectionValue : redactInspectionText(text)
+    }
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- JSON cannot serialize an opaque BigInt input.
+    if (typeof entry === "bigint") return entry.toString()
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque numeric input before serializing it.
+    if (typeof entry === "number") return Number.isFinite(entry) ? entry : String(entry)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate opaque primitive input before serializing it.
+    if (entry === null || typeof entry === "boolean") return entry
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Reject opaque values that JSON cannot represent.
+    if (typeof entry !== "object") return entry === undefined ? null : "[unsupported]"
+    if (seen.has(entry)) return "[circular]"
+    seen.add(entry)
+    try {
+      if (entry instanceof Date) return Number.isNaN(entry.getTime()) ? "Invalid Date" : entry.toISOString()
+      if (Array.isArray(entry)) return entry.slice(0, 100).map(item => visit(item, undefined, depth + 1))
+      if (entry instanceof Set) return [...entry].slice(0, 100).map(item => visit(item, undefined, depth + 1))
+      const entries = entry instanceof Map ? [...entry].map(([name, item]) => [String(name), item] as const) : Object.entries(entry)
+      return Object.fromEntries(entries.slice(0, 100).map(([name, item]) => [
+        name,
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Worker vars are an opaque config boundary and all their values must be redacted.
+        name === "vars" && item && typeof item === "object" && !Array.isArray(item)
+          ? Object.fromEntries(Object.keys(item).slice(0, 100).map(variable => [variable, redactedInspectionValue]))
+          : visit(item, name, depth + 1),
+      ]))
+    }
+    finally {
+      seen.delete(entry)
+    }
+  }
+  return visit(value, key)
 }

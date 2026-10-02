@@ -47,6 +47,8 @@ const USAGE = {
   status: "vitehub provision status --provider <cloudflare|vercel> [--json]",
 } as const satisfies Record<ProvisionCommand, string>
 
+export const provisionUsage = USAGE
+
 function isProvisionProvider(value: string | undefined): value is ProvisionProvider {
   return PROVISION_PROVIDERS.some(provider => provider === value)
 }
@@ -171,7 +173,7 @@ function writeActions(actions: PlannedProvisionAction[], stdout: ProvisionFeatur
   }
 }
 
-async function runProvision(args: string[], context: ProvisionFeatureContext, options: ProvisionFeatureOptions): Promise<number> {
+export async function runProvision(args: string[], context: ProvisionFeatureContext, options: ProvisionFeatureOptions): Promise<number> {
   const parsed = parseArgs("run", args)
   const resolved = resolveProvider("run", parsed, context)
   if ("exitCode" in resolved) return resolved.exitCode
@@ -221,7 +223,7 @@ async function runProvision(args: string[], context: ProvisionFeatureContext, op
   return 0
 }
 
-async function runProvisionStatus(args: string[], context: ProvisionFeatureContext, options: ProvisionFeatureOptions): Promise<number> {
+export async function runProvisionStatus(args: string[], context: ProvisionFeatureContext, options: ProvisionFeatureOptions): Promise<number> {
   const parsed = parseArgs("status", args)
   const resolved = resolveProvider("status", parsed, context)
   if ("exitCode" in resolved) return resolved.exitCode

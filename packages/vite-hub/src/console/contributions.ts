@@ -1,4 +1,4 @@
-import { describeViteHubConsoleSection, readViteHubConsoleSection } from "@vite-hub/internal/console"
+import { describeViteHubConsoleRuntimeReader, describeViteHubConsoleSection, readViteHubConsoleSection } from "@vite-hub/internal/console"
 import { queueConsoleSection } from "@vite-hub/queue/vite"
 import { rateLimitConsoleSection } from "@vite-hub/rate-limit/vite"
 import { sandboxConsoleSection } from "@vite-hub/sandbox/vite"
@@ -24,9 +24,27 @@ export interface ConsoleSectionDiscoveryContext {
   workflowDiscoveryRoot?: string
 }
 
+/** Server module export that reads section records on each Console request. */
+export interface ConsoleRuntimeReader {
+  /** Named export that returns the runtime records. */
+  export: string
+  /** `vite-hub` module specifier that the generated Nitro plugin imports. */
+  module: string
+}
+
 export interface ConsoleRegisteredSection {
   readonly descriptor: ConsoleContributedSection
   read(context: ConsoleSectionDiscoveryContext): Promise<ConsoleSectionContent>
+  /** Request-time reader. The Console adds its records to the build-time content on each request. */
+  readonly runtime?: ConsoleRuntimeReader
+}
+
+/**
+ * Maps an owner runtime module to the `vite-hub/_internal` re-export. Applications depend on `vite-hub`, so the
+ * generated plugin cannot import owner packages directly.
+ */
+export function consoleRuntimeReaderModule(module: string): string {
+  return module.replace(/^@vite-hub\//, "vite-hub/_internal/")
 }
 
 function registerConsoleSection<TOptions>(
@@ -34,12 +52,14 @@ function registerConsoleSection<TOptions>(
   options: (context: ConsoleSectionDiscoveryContext) => TOptions,
 ): ConsoleRegisteredSection {
   const descriptor: ConsoleContributedSection = describeViteHubConsoleSection(section)
+  const runtime = describeViteHubConsoleRuntimeReader(section)
   return {
     descriptor,
     read: async (context) => {
       const content: ConsoleSectionContent = await readViteHubConsoleSection(section, options(context))
       return content
     },
+    ...(runtime ? { runtime: { export: runtime.export, module: consoleRuntimeReaderModule(runtime.module) } } : {}),
   }
 }
 
@@ -101,5 +121,13 @@ export function describeConsoleContributedSections(sections: readonly ConsoleSec
   return sections.flatMap((section) => {
     const registered = consoleContributedSections.get(section)
     return registered ? [registered.descriptor] : []
+  })
+}
+
+/** Returns the request-time readers of the enabled contributed sections in navigation order. */
+export function describeConsoleRuntimeReaders(sections: readonly ConsoleSectionId[]): Array<ConsoleRuntimeReader & { section: ConsoleSectionId }> {
+  return sections.flatMap((section) => {
+    const runtime = consoleContributedSections.get(section)?.runtime
+    return runtime ? [{ ...runtime, section }] : []
   })
 }

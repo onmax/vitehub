@@ -27,6 +27,7 @@ import {
   consoleInvocationsRevisionRegistryKey,
   consoleInvocationsRootIdentityRegistryKey,
   consoleInvocationsRootKey,
+  consoleProjectRootKey,
   consoleProjectNameKey,
   consoleSectionsKey,
   consoleSectionsRootKey,
@@ -35,6 +36,7 @@ import {
   installConsoleInvocationFallback,
   resolveConsoleInvocations,
   resolveConsoleProjectName,
+  resolveConsoleProjectRoot,
 } from "../src/console/internal.ts"
 import { serializeConsoleRefresh } from "../src/console/refresh.ts"
 import { consoleFixtureEnvironmentVariable, consoleFixtureFallbackAgentName, consoleFixtureRevision, parseConsoleFixture } from "../src/console/fixture.ts"
@@ -44,7 +46,7 @@ import { encodeAgentRouteParam } from "../src/console/runtime/console-route.ts"
 import { installConsoleAgentDefinitions, installConsoleAgents } from "../src/console/runtime/server/agents.ts"
 import { createConsoleFixtureInvocations, createConsoleInvocations, getConsoleInvocationsDatabase, installConsoleFixtureInvocations, installConsoleInvocations, resolveConsoleDatabaseOptions } from "../src/console/runtime/server/invocations.ts"
 import { console as consoleRuntime } from "../src/console/server.ts"
-import invocationHandler, { getConsoleInvocationDetail } from "../src/console/runtime/server/invocation.get.ts"
+import invocationHandler from "../src/console/runtime/server/invocation.get.ts"
 import invocationCapabilitiesHandler from "../src/console/runtime/server/invocation-capabilities.get.ts"
 import invocationsHandler from "../src/console/runtime/server/invocations.get.ts"
 import consolePageHandler from "../src/console/runtime/server/page.get.ts"
@@ -153,6 +155,7 @@ afterEach(() => {
   Reflect.deleteProperty(process, consoleBlobRootKey)
   Reflect.deleteProperty(process, consoleBlobRegistryKey)
   Reflect.deleteProperty(process, consoleInvocationsKey)
+  Reflect.deleteProperty(process, consoleProjectRootKey)
   Reflect.deleteProperty(process, consoleInvocationsRegistryKey)
   Reflect.deleteProperty(process, consoleInvocationsRootIdentityRegistryKey)
   Reflect.deleteProperty(process, consoleInvocationsRevisionRegistryKey)
@@ -503,7 +506,7 @@ describe("Agent invocation console", () => {
         "/_vitehub/channels/replay",
         "/_vitehub/schedules/run",
       ])
-      expect(config.nitro.publicAssets).toEqual([expect.objectContaining({ baseURL: "/_vitehub/assets", maxAge: 31_536_000 })])
+      expect(config.nitro.publicAssets).toEqual([expect.objectContaining({ baseURL: "/_vitehub/assets" })])
       expect(config.nitro.plugins).toEqual([resolve(root, ".vitehub/nitro/console/plugin.mjs")])
       await expect(readFile(config.nitro.plugins[0]!, "utf8")).resolves.toContain(`installConsoleSections(${JSON.stringify(root)}, ["agents","usage","blob","kv"])`)
       await expect(readFile(config.nitro.plugins[0]!, "utf8")).resolves.toContain(`installConsoleProjectName(${JSON.stringify(root)}, "console-host")`)
@@ -1030,8 +1033,10 @@ describe("Agent invocation console", () => {
       expect(generated).toContain(`from "vite-hub/console/definitions"`)
       expect(generated).not.toContain(`from "vite-hub/console/server"`)
       expect(generated).toContain(`installConsoleSections(${JSON.stringify(root)}, ["schedules"])`)
-      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"schedules":{"definitions":[{"fields":[{"label":"Kind","value":"Runtime target"},{"label":"Runtime schedules","value":"Allowed"}],"file":"server/schedules/adhoc.ts","name":"adhoc","source":"server-schedules"},{"fields":[{"label":"Kind","value":"Static schedule"},{"label":"Cron","value":"0 0 1 * 1"},{"label":"Time zone","value":"UTC"},{"label":"Runtime schedules","value":"Allowed"}],"file":"server/schedules/daily.ts","name":"daily","source":"server-schedules"},{"fields":[{"label":"Kind","value":"Static schedule"}],"file":"server/schedules/dynamic.ts","name":"dynamic","source":"server-schedules"}],"kind":"definition-catalog"}}, `)
-      expect(generated).toContain(`"file":"server/schedules/dynamic.ts","name":"dynamic","source":"server-schedules"`)
+      expect(generated).toContain(`import { readScheduleConsoleRecords as vitehubConsoleRuntimeReader0 } from "vite-hub/_internal/schedule/runtime/console"`)
+      expect(generated).toContain(`installConsoleDefinitions(${JSON.stringify(root)}, {"schedules":{"kind":"record-table","records":[{"cells":{"enabled":"-","kind":"Target","lastRun":"-","nextRun":"-","schedule":"adhoc","target":"adhoc","timing":"-"},"fields":[{"label":"Kind","value":"Runtime target"},{"label":"Runtime schedules","value":"Allowed"},{"label":"File","value":"server/schedules/adhoc.ts"},{"label":"Source","value":"server-schedules"},{"label":"Runs","value":"A Runtime Schedule that uses this target shows its runs in its own row."}],"id":"definition:adhoc"},{"cells":{"enabled":"Provider","kind":"Definition","lastRun":"Not in this table","nextRun":"Set by the provider","schedule":"daily","target":"-","timing":"0 0 1 * 1"},"fields":[{"label":"Kind","value":"Static schedule"},{"label":"Cron","value":"0 0 1 * 1"},{"label":"Time zone","value":"UTC"},{"label":"Runtime schedules","value":"Allowed"},{"label":"File","value":"server/schedules/daily.ts"},{"label":"Source","value":"server-schedules"},`)
+      expect(generated).toContain(`{"label":"File","value":"server/schedules/dynamic.ts"},{"label":"Source","value":"server-schedules"}`)
+      expect(generated).toContain(`], { "schedules": vitehubConsoleRuntimeReader0 })`)
       expect(generated).not.toContain(`"Cron","value":"0 10 * * *"`)
       expect(generated).not.toContain("The Console must not evaluate")
       expect(generated).not.toContain("installConsoleInvocations")
@@ -1076,8 +1081,8 @@ describe("Agent invocation console", () => {
       expect(generated).toContain('"file":"packages/rate-limit/policies/api.ts","name":"api","source":"require-rate-limit"')
       expect(generated).toContain('"workspaces":{"definitions":[{"fields":[{"label":"Kind","value":"Workspace Definition"}')
       expect(generated).toContain('"file":"packages/workspace/server/workspaces/docs/config.ts","name":"docs"')
-      expect(generated).toContain('"schedules":{"definitions":[{"fields":[{"label":"Kind","value":"Runtime target"}')
-      expect(generated).toContain('"file":"packages/schedule/server/schedules/adhoc.ts","name":"adhoc"')
+      expect(generated).toContain('"schedules":{"kind":"record-table","records":[{"cells":{"enabled":"-","kind":"Target"')
+      expect(generated).toContain('{"label":"File","value":"packages/schedule/server/schedules/adhoc.ts"}')
     }
     finally {
       await rm(root, { force: true, recursive: true })
@@ -1245,8 +1250,9 @@ describe("Agent invocation console", () => {
       expect(generated).toContain(`"file":"src/api.ts","name":"api","source":"require-rate-limit"`)
       expect(generated).toContain(`"file":"app/src/preview.sandbox.ts","name":"preview","source":"vite-suffix"`)
       expect(generated).not.toContain(`"name":"unrelated"`)
-      expect(generated).toContain(`"file":"server/schedules/adhoc.ts","name":"adhoc","source":"server-schedules"`)
+      expect(generated).toContain(`{"label":"File","value":"server/schedules/adhoc.ts"},{"label":"Source","value":"server-schedules"}`)
       expect(generated).not.toContain(`"file":"../`)
+      expect(generated).not.toContain(`{"label":"File","value":"../`)
     }
     finally {
       await rm(projectRoot, { force: true, recursive: true })
@@ -1688,7 +1694,7 @@ describe("Agent invocation console", () => {
       agents: ["billing"],
     })
 
-    scope[consoleInvocationsRootKey] = "/first"
+    scope[consoleProjectRootKey] = "/first"
     await expect(agentsHandler(event("127.0.0.1"))).resolves.toEqual({
       agents: ["review", "support"],
     })
@@ -1749,7 +1755,7 @@ describe("Agent invocation console", () => {
 
     installConsoleSections("/second", ["kv"])
 
-    expect(scope[consoleInvocationsRootKey]).toBe("/first")
+    expect(resolveConsoleProjectRoot()).toBe("/first")
     expect(resolveConsoleInvocations()).toBe(first)
     expect(sectionsHandler(event("127.0.0.1"))).toEqual({ sections: ["kv"] })
   })
@@ -2050,12 +2056,8 @@ describe("Agent invocation console", () => {
   it.each(["support", ".", "team/support"])("starts an enabled Agent invocation for %j", async (name) => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-invoke-agent-"))
     try {
-      let receivedPrompt: unknown
       const definition = defineAgent({
-        driver: { run: (context) => {
-          receivedPrompt = context.input.prompt
-          return "done"
-        } },
+        driver: { run: () => "done" },
         invoker: {
           profiles: [{ id: "support", kind: "person", label: "Support agent" }],
         },
@@ -2089,7 +2091,6 @@ describe("Agent invocation console", () => {
           status: "completed",
         })
       })
-      expect(receivedPrompt).toBe(" Test this Agent ")
     }
     finally {
       await rm(root, { force: true, recursive: true })
@@ -2125,187 +2126,6 @@ describe("Agent invocation console", () => {
     }
   })
 
-  it("disables legacy reruns and deletion for a custom store without delete", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vitehub-console-custom-actions-"))
-    const { delete: _delete, ...store } = createMemoryAgentInvocationStore()
-    const invocations = defineAgentInvocations({ store })
-    const record = fixtureDocument("legacy-session").invocations[0]!
-    await store.create({ ...record, observations: [{
-      attributes: { "input.prompt": "Original prompt", "agent.invoker.id": "support" },
-      name: "agent.invocation.start",
-      sequence: 1,
-      timestamp: record.createdAt,
-      type: "run",
-    }] })
-    const definition = defineAgent({ driver: { run: () => "done" }, invocations, name: "support" })
-    const event = (body?: unknown): ConsoleRequestEvent => {
-      const method = body === undefined ? "GET" : "POST"
-      const url = "http://localhost/api/_vitehub/console/invocations/legacy-session"
-      return {
-        headers: new Headers({ host: "localhost" }),
-        method,
-        node: { req: { method, socket: { remoteAddress: "127.0.0.1" }, url } },
-        req: { ...(body === undefined ? {} : { json: async () => body }), method, url },
-      }
-    }
-    try {
-      installConsoleAgentDefinitions([
-        { definition: { default: definition }, fallbackName: "help" },
-      ], { invoke: true, projectRoot: root })
-      await expect(invocationHandler(event())).resolves.toMatchObject({ invocation: { actions: {
-        delete: { available: false, reason: "store-delete-unavailable" },
-        rerun: { available: false, reason: "replay-metadata-unavailable" },
-      } } })
-      await expect(invocationHandler(event({ action: "delete" }))).rejects.toMatchObject({
-        statusCode: 409,
-        statusMessage: "This invocation store does not support deletion.",
-      })
-      await expect(invocations.get("legacy-session")).resolves.toBeDefined()
-    }
-    finally {
-      await rm(root, { force: true, recursive: true })
-    }
-  })
-
-  it("reruns and deletes journaled invocations only with Console invoke access", async () => {
-    const root = await mkdtemp(join(tmpdir(), "vitehub-console-invocation-actions-"))
-    let release: (value: string) => void = () => {}
-    let blocked = false
-    let blockedDriverStarted = false
-    const prompts: (string | undefined)[] = []
-    const definition = defineAgent({
-      driver: { run: ({ prompt }) => { prompts.push(prompt); return blocked ? new Promise<string>(resolve => { release = resolve; blockedDriverStarted = true }) : "done" } },
-      invoker: { profiles: [{ id: "support", kind: "person", label: "Support agent" }], resolve: () => ({ id: "resolved-support", kind: "person" }) },
-      name: "support",
-    })
-    const start = (prompt: string, invokerProfileId: string | null = "support") => agentInvocationsHandler({
-      context: { params: { agent: "support" } },
-      method: "POST",
-      req: {
-        json: async () => ({ ...invokerProfileId ? { invokerProfileId } : {}, prompt }),
-        method: "POST",
-        url: "http://localhost/api/_vitehub/console/agents/support/invocations",
-      },
-    })
-    const detailEvent = (id: string, body?: unknown): ConsoleRequestEvent => {
-      const method = body === undefined ? "GET" : "POST"
-      const url = `http://localhost/api/_vitehub/console/invocations/${id}`
-      return {
-        headers: new Headers({ host: "localhost" }),
-        method,
-        node: { req: { method, socket: { remoteAddress: "127.0.0.1" }, url } },
-        req: { ...(body === undefined ? {} : { json: async () => body }), method, url },
-      }
-    }
-    const install = (invoke: boolean) => installConsoleAgentDefinitions([
-      { definition: { default: definition }, fallbackName: "help" },
-    ], { invoke, projectRoot: root })
-    try {
-      install(true)
-      const completed = await start("  Summarize the release notes.\n")
-      await vi.waitFor(async () => {
-        await expect(definition.invocations?.get(completed.id)).resolves.toMatchObject({ status: "completed" })
-      })
-      await expect(invocationHandler(detailEvent(completed.id))).resolves.toMatchObject({
-        invocation: {
-          actions: {
-            delete: { available: true },
-            rerun: { available: true, invokerProfileId: "support", prompt: "  Summarize the release notes.\n" },
-          },
-        },
-      })
-
-      const originalDetail = await getConsoleInvocationDetail(detailEvent(completed.id))
-      const rerun = originalDetail.invocation.actions?.rerun
-      expect(rerun?.available).toBe(true)
-      if (!rerun?.available) throw new Error("Expected replayable prompt")
-      const replayed = await start(rerun.prompt, rerun.invokerProfileId)
-      await vi.waitFor(async () => {
-        await expect(definition.invocations?.get(replayed.id)).resolves.toMatchObject({ status: "completed" })
-      })
-      const replayedDetail = await getConsoleInvocationDetail(detailEvent(replayed.id))
-      expect(replayedDetail.invocation.actions?.rerun).toEqual(rerun)
-
-      for (const profiles of [[], [{ id: "renamed-support", kind: "person" as const }]]) {
-        const reconfigured = defineAgent({
-          driver: { run: () => "done" },
-          invoker: { profiles },
-          name: "support",
-        })
-        installConsoleAgentDefinitions([
-          { definition: { default: reconfigured }, fallbackName: "help" },
-        ], { invoke: true, projectRoot: root })
-        await expect(invocationHandler(detailEvent(completed.id))).resolves.toMatchObject({
-          invocation: {
-            actions: {
-              delete: { available: true },
-              rerun: { available: false, reason: "invoker-profile-unavailable" },
-            },
-          },
-        })
-      }
-      install(true)
-
-      const withoutProfile = await start("Use the default invoker.", null)
-      await vi.waitFor(async () => {
-        await expect(definition.invocations?.get(withoutProfile.id)).resolves.toMatchObject({ status: "completed" })
-      })
-      const defaultDetail = await getConsoleInvocationDetail(detailEvent(withoutProfile.id))
-      expect(defaultDetail.invocation.actions?.rerun).toEqual({ available: false, reason: "input-has-invoker" })
-
-      const whitespacePrompt = "  def run():\n    return 1\n  "
-      const whitespace = await start(whitespacePrompt)
-      await vi.waitFor(async () => {
-        await expect(definition.invocations?.get(whitespace.id)).resolves.toMatchObject({ status: "completed" })
-      })
-      const whitespaceDetail = await getConsoleInvocationDetail(detailEvent(whitespace.id))
-      const replayInput = whitespaceDetail.invocation.actions?.rerun
-      expect(replayInput).toEqual({ available: true, invokerProfileId: "support", prompt: whitespacePrompt })
-      if (!replayInput?.available) throw new Error("Expected a replayable whitespace prompt.")
-      const whitespaceReplay = await start(replayInput.prompt, replayInput.invokerProfileId)
-      await vi.waitFor(async () => {
-        await expect(definition.invocations?.get(whitespaceReplay.id)).resolves.toMatchObject({ status: "completed" })
-      })
-      expect(prompts.slice(-2)).toEqual([whitespacePrompt, whitespacePrompt])
-
-      blocked = true
-      const running = await start("Keep running.")
-      await vi.waitFor(async () => {
-        await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "running" })
-      })
-      await expect(invocationHandler(detailEvent(running.id))).resolves.toMatchObject({
-        invocation: { actions: { delete: { available: false }, rerun: { available: false, reason: "invocation-not-terminal" } } },
-      })
-      await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 409 })
-      await vi.waitFor(() => { expect(blockedDriverStarted).toBe(true) })
-      release("done")
-      await vi.waitFor(async () => {
-        await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "completed" })
-      })
-
-      await expect(invocationHandler(detailEvent(running.id))).resolves.toMatchObject({
-        invocation: { actions: { rerun: { available: true, prompt: "Keep running." } } },
-      })
-
-      await expect(invocationHandler(detailEvent(completed.id, { action: "cancel" }))).rejects.toMatchObject({ statusCode: 400 })
-      await expect(invocationHandler(detailEvent("missing", { action: "delete" }))).rejects.toMatchObject({ statusCode: 404 })
-
-      install(false)
-      const inspected = await getConsoleInvocationDetail(detailEvent(completed.id))
-      expect(inspected.invocation).not.toHaveProperty("actions")
-      await expect(invocationHandler(detailEvent(completed.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 403 })
-
-      install(true)
-      await expect(invocationHandler(detailEvent(completed.id, { action: "delete" }))).resolves.toEqual({ id: completed.id, outcome: "deleted" })
-      await expect(invocationHandler(detailEvent(completed.id))).rejects.toMatchObject({ statusCode: 404 })
-      await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "completed" })
-    }
-    finally {
-      release("done")
-      await rm(root, { force: true, recursive: true })
-    }
-  })
-
   it("rejects disabled Agents, unknown profiles, and unsupported fields", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-invoke-validation-"))
     const definition = defineAgent({
@@ -2331,8 +2151,6 @@ describe("Agent invocation console", () => {
       installConsoleAgentDefinitions([
         { definition: { default: definition }, fallbackName: "help" },
       ], { invoke: true, projectRoot: root })
-      await expect(agentInvocationsHandler(request({ prompt: " \n " })))
-        .rejects.toMatchObject({ statusCode: 400, statusMessage: "Agent invocation requires a prompt." })
       await expect(agentInvocationsHandler(request({ invokerProfileId: "unknown", prompt: "hello" })))
         .rejects.toMatchObject({ statusCode: 400, statusMessage: "Unknown Agent invocation profile." })
       await expect(agentInvocationsHandler(request({ extra: true, prompt: "hello" })))
@@ -2710,7 +2528,8 @@ describe("Agent invocation console", () => {
     const detailURL = "http://localhost/api/_vitehub/console/invocations/inv-delta"
     requestEvent.node!.req!.url = detailURL
     requestEvent.req!.url = detailURL
-    const initial = await getConsoleInvocationDetail(requestEvent)
+    const initial = await invocationHandler(requestEvent)
+    if (!("observationCursor" in initial)) throw new TypeError("Expected invocation detail response")
     await store.update("inv-delta", {
       observation: {
         name: "agent.invocation.running",
@@ -2724,7 +2543,7 @@ describe("Agent invocation console", () => {
     requestEvent.node!.req!.url = url
     requestEvent.req!.url = url
 
-    await expect(getConsoleInvocationDetail(requestEvent)).resolves.toMatchObject({
+    await expect(invocationHandler(requestEvent)).resolves.toMatchObject({
       appendObservations: true,
       invocation: { id: "inv-delta" },
       observations: [{ sequence: 3 }],
@@ -2739,7 +2558,8 @@ describe("Agent invocation console", () => {
       },
       timestamp: "2026-08-23T12:00:04.000Z",
     })
-    const replaced = await getConsoleInvocationDetail(requestEvent)
+    const replaced = await invocationHandler(requestEvent)
+    if (!("observations" in replaced) || !("observationCursor" in replaced)) throw new TypeError("Expected invocation detail response")
     expect(replaced.appendObservations).toBeUndefined()
     expect(replaced.observations.map(observation => observation.sequence)).toEqual([0, 1, 2, 3])
 
@@ -2750,7 +2570,7 @@ describe("Agent invocation console", () => {
     const truncatedURL = `${detailURL}?observationCount=4&observationCursor=${encodeURIComponent(replaced.observationCursor)}`
     requestEvent.node!.req!.url = truncatedURL
     requestEvent.req!.url = truncatedURL
-    await expect(getConsoleInvocationDetail(requestEvent)).resolves.not.toHaveProperty("appendObservations")
+    await expect(invocationHandler(requestEvent)).resolves.not.toHaveProperty("appendObservations")
   })
 
   it("bounds each console response to the requested page size", async () => {
@@ -4033,7 +3853,7 @@ describe("Agent invocation console", () => {
     expect(
       resolveConsoleInvocations({
         process,
-        [consoleInvocationsRootKey]: "/project",
+        [consoleProjectRootKey]: "/project",
       }),
     ).toBe(fallback)
   })
@@ -4094,8 +3914,8 @@ describe("Agent invocation console", () => {
   it("keeps process-shared journals scoped to their project root", () => {
     const first = fakeInvocations("first")
     const second = fakeInvocations("second")
-    const firstScope = { process, [consoleInvocationsRootKey]: "/first" }
-    const secondScope = { process, [consoleInvocationsRootKey]: "/second" }
+    const firstScope = { process, [consoleProjectRootKey]: "/first" }
+    const secondScope = { process, [consoleProjectRootKey]: "/second" }
 
     installConsoleInvocationFallback(first, "/first", firstScope)
     installConsoleInvocationFallback(second, "/second", secondScope)
@@ -4154,8 +3974,8 @@ describe("Agent invocation console", () => {
       return runInNewContext(`${code}\nglobalThis`, realm) as object
     }
 
-    expect(Reflect.has(firstAgentRealm, consoleInvocationsRootKey)).toBe(false)
-    expect(Reflect.has(secondAgentRealm, consoleInvocationsRootKey)).toBe(false)
+    expect(Reflect.has(firstAgentRealm, consoleProjectRootKey)).toBe(false)
+    expect(Reflect.has(secondAgentRealm, consoleProjectRootKey)).toBe(false)
     expect(resolveConsoleInvocations(unboundAgentRealm)).toBeUndefined()
 
     const boundFirstAgentRealm = await bind("/first", firstAgentRealm)

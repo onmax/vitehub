@@ -923,6 +923,307 @@ describe("Manual Schedule runs", () => {
 })
 
 describe("KV Schedule Run Store", () => {
+  it("reads only attempts for the requested run and sees another store's writes", async () => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    const createdAt = new Date("2026-05-23T09:00:00Z")
+    for (let index = 0; index < 200; index++) {
+      await store.createAttempt({ id: `opaque/attempt%_${index}`, runId: index < 2 ? "target/run%" : `other_${index}`,
+        createdAt, startedAt: createdAt, updatedAt: createdAt, status: "running" })
+    }
+    const get = vi.spyOn(kvStore, "get")
+    expect((await store.listAttempts("target/run%")).map(attempt => attempt.id)).toEqual(["opaque/attempt%_0", "opaque/attempt%_1"])
+    expect(get).toHaveBeenCalledTimes(2)
+    await createKVScheduleRunStore({ kvStore }).createAttempt({ id: "external/attempt%", runId: "target/run%",
+      createdAt, startedAt: createdAt, updatedAt: createdAt, status: "running" })
+    get.mockClear()
+    expect(await store.listAttempts("target/run%")).toHaveLength(3)
+    expect(get).toHaveBeenCalledTimes(3)
+    get.mockClear()
+    expect(await store.listAttempts("target/run")).toEqual([])
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])("preserves legacy attempts when index writes are available: %s", async (indexAvailable) => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore, prefix: "attempt-tests/custom" })
+    const createdAt = new Date("2026-05-23T09:00:00Z")
+    for (let index = 0; index < 40; index++) {
+      await store.createAttempt({ id: `legacy/opaque%_${index}`, runId: index < 2 ? "target" : "other",
+        createdAt, startedAt: createdAt, updatedAt: createdAt, status: "running" })
+    }
+    for (const key of await kvStore.keys("attempt-tests/custom/schedule-run-attempt-index/")) await kvStore.del(key)
+    if (!indexAvailable) {
+      const set = kvStore.set.bind(kvStore)
+      vi.spyOn(kvStore, "set").mockImplementation(async (key, value) => {
+        if (key.includes("/schedule-run-attempt-index/")) throw new Error("index unavailable")
+        return set(key, value)
+      })
+    }
+    const get = vi.spyOn(kvStore, "get")
+    expect(await store.listAttempts("target")).toHaveLength(2)
+    expect(get).toHaveBeenCalledTimes(40)
+    get.mockClear()
+    expect(await store.listAttempts("target")).toHaveLength(2)
+    expect(get).toHaveBeenCalledTimes(indexAvailable ? 2 : 40)
+    expect(await store.getAttempt("legacy/opaque%_0")).toMatchObject({ runId: "target" })
+  })
+
+  it("limits provider reads to the newest matching indexed run keys", async () => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    for (let index = 0; index < 100; index++) {
+      const scheduledAt = new Date(Date.UTC(2026, 0, 1, 0, index))
+      for (const scheduleId of ["digest_with_underscore", "other"]) {
+        await store.createRun({
+          id: `srun_runtime_${encodeURIComponent(scheduleId)}_${scheduledAt.toISOString()}`,
+          scheduleId, target: "report", scheduledAt, createdAt: scheduledAt, updatedAt: scheduledAt,
+          status: "pending", attemptCount: 0,
+        })
+      }
+    }
+    const get = vi.spyOn(kvStore, "get")
+    const runs = await store.listRuns({ scheduleId: "digest_with_underscore", runtimeOnly: true, limit: 10 })
+    expect(runs).toHaveLength(10)
+    expect(get).toHaveBeenCalledTimes(10)
+    expect(runs[0]?.scheduledAt.toISOString()).toBe("2026-01-01T01:39:00.000Z")
+    expect(runs.every(run => run.scheduleId === "digest_with_underscore")).toBe(true)
+  })
+
+  it.each([true, false])("preserves newest opaque fallback history when index writes are available: %s", async (indexAvailable) => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    for (let index = 0; index < 30; index++) {
+      const scheduledAt = new Date(Date.UTC(2026, 0, 1, 0, index))
+      for (const scheduleId of ["actual", "other"]) {
+        await store.createRun({ id: `srun_runtime_${scheduleId}_opaque%_${index}`, scheduleId, target: "report", scheduledAt,
+          createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+      }
+    }
+    for (const key of await kvStore.keys("vitehub:schedule/schedule-run-index")) await kvStore.del(key)
+    if (!indexAvailable) {
+      const set = kvStore.set.bind(kvStore)
+      vi.spyOn(kvStore, "set").mockImplementation(async (key, value) => {
+        if (key.includes("/schedule-run-index/")) throw new Error("index unavailable")
+        return set(key, value)
+      })
+    }
+    const get = vi.spyOn(kvStore, "get")
+    const latest = await store.listRuns({ scheduleId: "actual", limit: 1 })
+    expect(latest[0]?.id).toBe("srun_runtime_actual_opaque%_29")
+    expect(get).toHaveBeenCalledTimes(60)
+    get.mockClear()
+    const other = await store.listRuns({ scheduleId: "other", runtimeOnly: true, limit: 10 })
+    expect(other).toHaveLength(10)
+    expect(other[0]?.id).toBe("srun_runtime_other_opaque%_29")
+    expect(get).toHaveBeenCalledTimes(indexAvailable ? 10 : 60)
+    expect(await store.getRun("srun_runtime_actual_opaque%_29")).toEqual(latest[0])
+  })
+
+  it("reports incomplete history when the unindexed fallback exceeds its safety bound", async () => {
+    const kvStore = createTestKVStore()
+    const set = kvStore.set.bind(kvStore)
+    vi.spyOn(kvStore, "set").mockImplementation(async (key, value) => {
+      if (key.includes("/schedule-run-index/")) throw new Error("index unavailable")
+      return set(key, value)
+    })
+    const store = createKVScheduleRunStore({ kvStore })
+    const get = vi.spyOn(kvStore, "get")
+    const scheduledAt = new Date("2026-01-01T00:00:00.000Z")
+    for (let index = 0; index < 1001; index++) {
+      await store.createRun({ id: `legacy_${index}`, scheduleId: "legacy", target: "report", scheduledAt,
+        createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+    }
+    for (const options of [{ limit: 1 }, { scheduleId: "legacy" }, { runtimeOnly: true }]) {
+      await expect(store.listRuns(options)).rejects.toMatchObject({
+        code: "SCHEDULE_HISTORY_INCOMPLETE",
+        name: "ScheduleHistoryIncompleteError",
+      })
+    }
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it("parses each indexed key once for a multi-Schedule history batch", async () => {
+    const store = createKVScheduleRunStore({ kvStore: createTestKVStore() })
+    const scheduledAt = new Date("2026-05-23T09:00:00.000Z")
+    for (const scheduleId of ["alpha", "beta", "gamma"]) {
+      await store.createRun({ id: `srun_runtime_${scheduleId}`, scheduleId, target: "report", scheduledAt,
+        createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+    }
+    const decode = vi.spyOn(globalThis, "decodeURIComponent")
+    try {
+      const results = await store.listRunsBatch!(["alpha", "beta", "gamma"].map(scheduleId => ({ scheduleId, runtimeOnly: true, limit: 1 })))
+      expect(results.map(runs => runs[0]?.scheduleId)).toEqual(["alpha", "beta", "gamma"])
+      expect(decode).toHaveBeenCalledTimes(12)
+    }
+    finally {
+      decode.mockRestore()
+    }
+  })
+
+  it.each([true, false])("groups legacy run payloads once per batch when indexes are available: %s", async indexAvailable => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    const response = await serializeResponse(new Response("retained legacy payload"))
+    for (const scheduleId of ["alpha", "beta", "gamma", "delta"]) {
+      for (let index = 0; index < 8; index++) {
+        const scheduledAt = new Date(Date.UTC(2026, 0, 1, 0, index))
+        await store.createRun({ id: `${index % 2 ? "srun_runtime_" : "manual_"}${scheduleId}_opaque%_${index}`,
+          scheduleId, target: "report", scheduledAt, createdAt: scheduledAt, updatedAt: scheduledAt,
+          status: "failed", attemptCount: 1, error: { name: "Error", message: "retained" }, response })
+      }
+    }
+    for (const key of await kvStore.keys("vitehub:schedule/schedule-run-index")) await kvStore.del(key)
+    if (!indexAvailable) {
+      const set = kvStore.set.bind(kvStore)
+      vi.spyOn(kvStore, "set").mockImplementation(async (key, value) => {
+        if (key.includes("/schedule-run-index/")) throw new Error("index unavailable")
+        return set(key, value)
+      })
+    }
+    const get = vi.spyOn(kvStore, "get")
+    const clone = vi.spyOn(globalThis, "structuredClone")
+    try {
+      const results = await store.listRunsBatch!([
+        ...["alpha", "beta", "gamma", "delta"].map(scheduleId => ({ scheduleId, limit: 1 })),
+        { scheduleId: "alpha", runtimeOnly: true, limit: 1 },
+        { runtimeOnly: true, limit: 3 }, {}, { scheduleId: "alpha" }, { runtimeOnly: true }, { limit: 0 },
+      ])
+      expect(results.slice(0, 4).map(runs => runs[0]?.scheduleId)).toEqual(["alpha", "beta", "gamma", "delta"])
+      expect(results[4]?.[0]?.id).toBe("srun_runtime_alpha_opaque%_7")
+      expect(results[5]).toHaveLength(3)
+      expect(results[5]?.every(run => run.id.startsWith("srun_runtime_") && run.scheduledAt.getUTCMinutes() === 7)).toBe(true)
+      expect(results.slice(6).map(runs => runs.length)).toEqual([32, 8, 16, 0])
+      expect(get).toHaveBeenCalledTimes(32)
+      // Retained payloads are decoded once, then copied only for matching output records.
+      expect(clone.mock.calls.length).toBeLessThanOrEqual(32 + results.flat().length)
+      results[0]![0]!.error!.message = "changed"
+      results[0]![0]!.scheduledAt.setUTCFullYear(2000)
+      expect(results[4]?.[0]?.error?.message).toBe("retained")
+      expect(results[4]?.[0]?.scheduledAt.getUTCFullYear()).toBe(2026)
+      get.mockClear()
+      expect((await store.listRunsBatch!([{ scheduleId: "alpha", limit: 1 }]))[0]?.[0]?.id).toBe("srun_runtime_alpha_opaque%_7")
+      expect(get).toHaveBeenCalledTimes(indexAvailable ? 1 : 32)
+    }
+    finally {
+      clone.mockRestore()
+    }
+  })
+
+  it("shares key enumeration and opaque legacy reads within each history batch", async () => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    for (let index = 0; index < 20; index++) {
+      const scheduledAt = new Date(Date.UTC(2026, 0, 1, 0, index))
+      for (const scheduleId of ["alpha", "beta"]) {
+        await store.createRun({ id: `opaque%_${scheduleId}_${index}`, scheduleId, target: "report", scheduledAt,
+          createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+      }
+    }
+    for (const key of await kvStore.keys("vitehub:schedule/schedule-run-index")) await kvStore.del(key)
+    const keys = vi.spyOn(kvStore, "keys")
+    const get = vi.spyOn(kvStore, "get")
+    const queries = ["alpha", "beta"].map(scheduleId => ({ scheduleId, limit: 1 }))
+    const results = await store.listRunsBatch!(queries)
+    expect(results.map(runs => runs[0]?.id)).toEqual(["opaque%_alpha_19", "opaque%_beta_19"])
+    expect(keys).toHaveBeenCalledTimes(2)
+    expect(get).toHaveBeenCalledTimes(40)
+    keys.mockClear()
+    get.mockClear()
+    await store.listRunsBatch!(queries)
+    expect(keys).toHaveBeenCalledTimes(2)
+    expect(get).toHaveBeenCalledTimes(2)
+    const scheduledAt = new Date("2026-02-01T00:00:00Z")
+    await createKVScheduleRunStore({ kvStore }).createRun({ id: "external_newest", scheduleId: "alpha", target: "report", scheduledAt,
+      createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+    expect((await store.listRunsBatch!(queries))[0]?.[0]?.id).toBe("external_newest")
+  })
+
+  it("rereads legacy records after an external update when index writes fail", async () => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    const run = await store.createRun({ id: "legacy-external", scheduleId: "alpha", target: "report",
+      scheduledAt: new Date("2026-01-01T00:00:00Z"), createdAt: new Date("2026-01-01T00:00:00Z"),
+      updatedAt: new Date("2026-01-01T00:00:00Z"), status: "pending", attemptCount: 0 })
+    for (const key of await kvStore.keys("vitehub:schedule/schedule-run-index")) await kvStore.del(key)
+    const set = kvStore.set.bind(kvStore)
+    vi.spyOn(kvStore, "set").mockImplementation(async (key, value) => {
+      if (key.includes("/schedule-run-index/")) throw new Error("index unavailable")
+      return set(key, value)
+    })
+    expect((await store.listRuns({ scheduleId: "alpha" }))[0]).toMatchObject({ id: run.id, status: "pending" })
+
+    const externalStore = createKVScheduleRunStore({ kvStore })
+    await externalStore.updateRun(run.id, { status: "succeeded", updatedAt: new Date("2026-01-02T00:00:00Z") })
+    expect((await store.listRuns({ scheduleId: "alpha" }))[0]).toMatchObject({ id: run.id, status: "succeeded" })
+    await kvStore.del((await kvStore.keys("vitehub:schedule/schedule-runs"))[0]!)
+    expect(await store.listRuns({ scheduleId: "alpha" })).toEqual([])
+  })
+
+  it("keeps all indexed matches when a filter has no limit", async () => {
+    const store = createKVScheduleRunStore({ kvStore: createTestKVStore() })
+    const scheduledAt = new Date("2026-05-23T09:00:00.000Z")
+    for (const scheduleId of ["actual", "other"]) {
+      for (const id of ["first", "second"]) {
+        await store.createRun({ id: `srun_runtime_${scheduleId}_${id}`, scheduleId, target: "report", scheduledAt,
+          createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+      }
+    }
+    expect((await store.listRuns({ scheduleId: "actual" })).map(run => run.id).sort()).toEqual(["srun_runtime_actual_first", "srun_runtime_actual_second"])
+    expect(await store.listRuns({ runtimeOnly: true })).toHaveLength(4)
+  })
+
+  it.each(["memory", "kv"])("preserves opaque generated-shaped IDs in the %s store", async (kind) => {
+    const kvStore = createTestKVStore()
+    const store = kind === "memory" ? createMemoryScheduleRunStore() : createKVScheduleRunStore({ kvStore })
+    const scheduledAt = new Date("2026-05-23T09:00:00.000Z")
+    const ids = ["srun_runtime_%_2026-05-23T09:00:00.000Z", "srun_runtime_other_2026-05-23T09:00:00.000Z"]
+    for (const id of ids) {
+      await store.createRun({ id, scheduleId: "actual", target: "report", scheduledAt, createdAt: scheduledAt,
+        updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
+    }
+    expect((await store.listRuns({ scheduleId: "actual", runtimeOnly: true, limit: 10 })).map(run => run.id)).toEqual(ids)
+    if (kind === "kv") {
+      // Existing records remain readable when they predate the index.
+      for (const key of await kvStore.keys("vitehub:schedule/schedule-run-index")) await kvStore.del(key)
+      expect((await store.listRuns({ scheduleId: "actual", limit: 10 })).map(run => run.id).sort()).toEqual(ids.toSorted())
+    }
+  })
+
+  it.each([false, true])("keeps history authoritative when index publication fails after writing %s", async (published) => {
+    const kvStore = createTestKVStore()
+    const store = createKVScheduleRunStore({ kvStore })
+    const scheduledAt = new Date("2026-05-23T09:00:00.000Z")
+    const run = { id: "older", scheduleId: "actual", target: "report", scheduledAt,
+      createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending" as const, attemptCount: 0 }
+    await store.createRun(run)
+    const originalSet = kvStore.set.bind(kvStore)
+    const set = vi.spyOn(kvStore, "set")
+    set.mockImplementation(async (key, value) => {
+      if (key.includes("/schedule-run-index/")) {
+        if (published) await originalSet(key, value)
+        throw new Error("index unavailable")
+      }
+      await originalSet(key, value)
+    })
+    const newer = { ...run, id: "index-failure", scheduledAt: new Date("2026-05-24T09:00:00.000Z") }
+    await expect(store.createRun(newer)).resolves.toEqual(newer)
+    expect(await store.getRun(newer.id)).toEqual(newer)
+    expect(await store.listRuns({ scheduleId: "actual", limit: 1 })).toEqual([newer])
+    set.mockImplementation(async (key, value) => {
+      if (key.includes("/schedule-runs/")) throw new Error("record unavailable")
+      await originalSet(key, value)
+    })
+    await expect(store.createRun({ ...run, id: "record-failure", scheduledAt: new Date("2026-05-25T09:00:00.000Z") })).rejects.toThrow("record unavailable")
+    expect(await store.getRun("record-failure")).toBeUndefined()
+    expect(await kvStore.keys("vitehub:schedule/schedule-run-index/record-failure/")).toEqual([])
+    set.mockRestore()
+    const retried = { ...run, id: "record-failure", scheduleId: "other", scheduledAt: new Date("2026-05-26T09:00:00.000Z") }
+    await store.createRun(retried)
+    expect(await store.listRuns({ scheduleId: "actual", limit: 1 })).toEqual([newer])
+    expect(await store.listRuns({ scheduleId: "other", limit: 1 })).toEqual([retried])
+  })
+
   it("matches the ScheduleRunStore run and attempt contract and round-trips dates and errors", async () => {
     const store = createKVScheduleRunStore({ kvStore: createTestKVStore(), prefix: "tests/runs" })
     const createdAt = new Date("2026-05-23T09:00:00.000Z")

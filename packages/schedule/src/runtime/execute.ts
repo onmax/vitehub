@@ -60,7 +60,8 @@ function normalizeRunSource(source: ExecuteScheduleOptions["source"]): NonNullab
   return source ?? "direct"
 }
 
-function toRunId(source: ExecuteScheduleOptions["source"], scheduleId: string, scheduledAt: Date, runIdSuffix?: string): string {
+/** Returns the Schedule Run id for one scheduled occurrence, with an optional unique suffix. */
+export function toRunId(source: ExecuteScheduleOptions["source"], scheduleId: string, scheduledAt: Date, runIdSuffix?: string): string {
   return `srun_${normalizeRunSource(source)}_${encodeURIComponent(scheduleId)}_${scheduledAt.toISOString()}${runIdSuffix ? `_${runIdSuffix}` : ""}`
 }
 

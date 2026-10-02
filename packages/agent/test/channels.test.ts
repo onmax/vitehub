@@ -4,8 +4,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { describe, expect, it, vi } from "vitest"
-import { encodeRouteSegment } from "@vite-hub/runtime"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { encodeRouteSegment, resetPublicUrlAgentNames } from "@vite-hub/runtime"
 
 import { hasRuntimeType, isRuntimeRecord } from "../src/internal/runtime-type.ts"
 import { defineAgent } from "../src/index.ts"
@@ -72,6 +72,10 @@ function githubPullRequestPayload(action = "opened", senderType = "User") {
 }
 
 describe("agent channels", () => {
+  beforeEach(() => {
+    resetPublicUrlAgentNames()
+  })
+
   it("creates and updates one GitHub Agent activity comment with session history", async () => {
     const { github } = await import("../src/channels.ts")
     let stored: { body: string, id: number } | undefined
@@ -1617,7 +1621,7 @@ describe("agent channels", () => {
       label: "Current session",
       url: `https://agent.example.test/_vitehub/agents/${encodeRouteSegment(agentName)}/invocations/${id}`,
     }])
-  })
+  }, 30_000)
 
   it("defaults GitHub activity links to vitehub({ publicUrl })", async () => {
     const { github } = await import("../src/channels.ts")

@@ -1,9 +1,3 @@
-import type { ConsoleSectionId } from "./sections.ts"
-
-export const consoleDefinitionSectionIds: readonly ["databases", "rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"] = ["databases", "rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"] as const satisfies readonly ConsoleSectionId[]
-
-export type ConsoleDefinitionSectionId = (typeof consoleDefinitionSectionIds)[number]
-
 // These types mirror `@vite-hub/internal/console`. Console runtime files ship as source, so they cannot import the
 // private internal package. `console/contributions.ts` checks that owner contributions stay assignable to them.
 
@@ -49,9 +43,16 @@ export type ConsoleSectionContent =
   | { definitions: readonly ConsoleDefinitionSummary[], kind: "definition-catalog" }
   | { kind: "record-table", records: readonly ConsoleRecord[] }
 
-/** Build-time section data for one project: descriptors of contributed sections and the content of each section. */
+/** Reads the records of one section on each Console request. It mirrors `ViteHubConsoleRuntimeRecordReader`. */
+export type ConsoleRuntimeRecordReader = () => readonly ConsoleRecord[] | Promise<readonly ConsoleRecord[]>
+
+/**
+ * Section data for one project: descriptors of contributed sections, the build-time content of each section, and the
+ * request-time readers of record-table sections.
+ */
 export interface ConsoleSectionCatalog {
   content: Readonly<Record<string, ConsoleSectionContent>>
+  readers?: Readonly<Record<string, ConsoleRuntimeRecordReader>>
   sections: readonly ConsoleContributedSection[]
 }
 

@@ -103,14 +103,10 @@ afterEach(() => {
 })
 
 describe("Console definition inspection", () => {
-  it("returns 404 for an absent section when no catalog is installed", () => {
-    expect(() => definitionsHandler(event("?section=future"))).toThrow(expect.objectContaining({ statusCode: 404 }))
-  })
-
-  it("returns the installed read-only Workflow Definition catalog", () => {
+  it("returns the installed read-only Workflow Definition catalog", async () => {
     installConsoleDefinitions("/project", catalog("release"))
 
-    expect(definitionsHandler(event("?section=workflows"))).toEqual({
+    expect(await definitionsHandler(event("?section=workflows"))).toEqual({
       definitions: [{
         fields: [{ label: "Steps", value: "prepare, publish" }],
         file: "server/workflows/release.workflow.ts",
@@ -120,7 +116,7 @@ describe("Console definition inspection", () => {
       kind: "definition-catalog",
       section: "workflows",
     })
-    expect(definitionsHandler(event("?section=databases"))).toEqual({
+    expect(await definitionsHandler(event("?section=databases"))).toEqual({
       definitions: [{
         fields: [
           { label: "Mode", value: "Default" },
@@ -133,7 +129,7 @@ describe("Console definition inspection", () => {
       kind: "definition-catalog",
       section: "databases",
     })
-    expect(definitionsHandler(event("?section=rate-limits"))).toEqual({
+    expect(await definitionsHandler(event("?section=rate-limits"))).toEqual({
       definitions: [{
         fields: [
           { label: "Limit", value: "10" },
@@ -149,7 +145,7 @@ describe("Console definition inspection", () => {
       kind: "definition-catalog",
       section: "rate-limits",
     })
-    expect(definitionsHandler(event("?section=workspaces"))).toEqual({
+    expect(await definitionsHandler(event("?section=workspaces"))).toEqual({
       definitions: [{
         fields: [
           { label: "Kind", value: "Workspace Definition" },
@@ -162,7 +158,7 @@ describe("Console definition inspection", () => {
       kind: "definition-catalog",
       section: "workspaces",
     })
-    expect(definitionsHandler(event("?section=queues"))).toEqual({
+    expect(await definitionsHandler(event("?section=queues"))).toEqual({
       definitions: [{
         fields: [],
         file: "server/queues/release.ts",
@@ -172,7 +168,7 @@ describe("Console definition inspection", () => {
       kind: "definition-catalog",
       section: "queues",
     })
-    expect(definitionsHandler(event("?section=schedules"))).toEqual({
+    expect(await definitionsHandler(event("?section=schedules"))).toEqual({
       definitions: [{
         fields: [
           { label: "Kind", value: "Static schedule" },
@@ -186,7 +182,7 @@ describe("Console definition inspection", () => {
       kind: "definition-catalog",
       section: "schedules",
     })
-    expect(definitionsHandler(event("?section=sandboxes"))).toEqual({
+    expect(await definitionsHandler(event("?section=sandboxes"))).toEqual({
       definitions: [{
         fields: [{ label: "Kind", value: "Definition" }],
         file: "src/release.sandbox.ts",
@@ -198,14 +194,63 @@ describe("Console definition inspection", () => {
     })
   })
 
-  it("validates methods and definition sections", () => {
+  it("validates methods and definition sections", async () => {
     installConsoleDefinitions("/project", { workflows: { definitions: [], kind: "definition-catalog" } })
 
-    expect(() => definitionsHandler(event("", "POST"))).toThrow(expect.objectContaining({ statusCode: 405 }))
-    expect(() => definitionsHandler(event())).toThrow(expect.objectContaining({ statusCode: 400 }))
-    expect(() => definitionsHandler(event("?section=Future"))).toThrow(expect.objectContaining({ statusCode: 400 }))
-    expect(() => definitionsHandler(event("?section=future"))).toThrow(expect.objectContaining({ statusCode: 404 }))
-    expect(() => definitionsHandler(event("?section=constructor"))).toThrow(expect.objectContaining({ statusCode: 404 }))
+    await expect(definitionsHandler(event("", "POST"))).rejects.toThrow(expect.objectContaining({ statusCode: 405 }))
+    await expect(definitionsHandler(event())).rejects.toThrow(expect.objectContaining({ statusCode: 400 }))
+    await expect(definitionsHandler(event("?section=Future"))).rejects.toThrow(expect.objectContaining({ statusCode: 400 }))
+    await expect(definitionsHandler(event("?section=future"))).rejects.toThrow(expect.objectContaining({ statusCode: 404 }))
+    await expect(definitionsHandler(event("?section=constructor"))).rejects.toThrow(expect.objectContaining({ statusCode: 404 }))
+  })
+
+  it("merges request-time records into record-table sections", async () => {
+    let runtimeRecords = [{ cells: { schedule: "digest" }, fields: [{ label: "State", value: "Enabled" }], id: "runtime:digest" }]
+    installConsoleDefinitions("/project", {
+      schedules: {
+        kind: "record-table",
+        records: [
+          { cells: { schedule: "daily" }, fields: [], id: "definition:daily" },
+          { cells: { schedule: "stale" }, fields: [], id: "runtime:digest" },
+        ],
+      },
+      workflows: { definitions: [], kind: "definition-catalog" },
+    }, [], {
+      schedules: () => runtimeRecords,
+      workflows: () => [{ cells: {}, fields: [], id: "ignored" }],
+    })
+
+    expect(await definitionsHandler(event("?section=schedules"))).toEqual({
+      kind: "record-table",
+      records: [
+        { cells: { schedule: "daily" }, fields: [], id: "definition:daily" },
+        { cells: { schedule: "digest" }, fields: [{ label: "State", value: "Enabled" }], id: "runtime:digest" },
+      ],
+      section: "schedules",
+    })
+    expect(await definitionsHandler(event("?section=workflows"))).toEqual({ definitions: [], kind: "definition-catalog", section: "workflows" })
+
+    runtimeRecords = []
+    expect(await definitionsHandler(event("?section=schedules"))).toEqual({
+      kind: "record-table",
+      records: [
+        { cells: { schedule: "daily" }, fields: [], id: "definition:daily" },
+        { cells: { schedule: "stale" }, fields: [], id: "runtime:digest" },
+      ],
+      section: "schedules",
+    })
+  })
+
+  it("hides request-time reader errors", async () => {
+    installConsoleDefinitions("/project", { schedules: { kind: "record-table", records: [] } }, [], {
+      schedules: async () => {
+        throw new Error("postgres://user:secret@example.test failed")
+      },
+    })
+
+    const failure = definitionsHandler(event("?section=schedules"))
+    await expect(failure).rejects.toThrow(expect.objectContaining({ statusCode: 503, statusMessage: "Runtime records are unavailable." }))
+    await expect(failure).rejects.not.toThrow(/secret/)
   })
 
   it("isolates concurrent project catalogs across runtime realms", () => {

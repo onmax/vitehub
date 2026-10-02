@@ -4,7 +4,7 @@ import { installConsoleDefinitionScope, installConsoleSchedulesScope, resolveCon
 import { isConsoleSectionId } from "../sections.ts"
 
 import type { ScheduleDefinitionRegistry } from "@vite-hub/schedule"
-import type { ConsoleContributedSection, ConsoleDefinitionField, ConsoleSectionCatalog, ConsoleSectionContent } from "../definitions.ts"
+import type { ConsoleContributedSection, ConsoleDefinitionField, ConsoleRecord, ConsoleSectionCatalog, ConsoleSectionContent } from "../definitions.ts"
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
 
 function copyFields(fields: readonly ConsoleDefinitionField[]): ConsoleDefinitionField[] {
@@ -19,8 +19,13 @@ function copyContent(content: ConsoleSectionContent): ConsoleSectionContent {
       }
     : {
         kind: "record-table",
-        records: content.records.map(record => ({ cells: { ...record.cells }, fields: copyFields(record.fields), id: record.id })),
+        records: copyConsoleRecords(content.records),
       }
+}
+
+/** Copies request-time records so that the reader cannot change the response after it returns. */
+export function copyConsoleRecords(records: readonly ConsoleRecord[]): ConsoleRecord[] {
+  return records.map(record => ({ cells: { ...record.cells }, fields: copyFields(record.fields), id: record.id }))
 }
 
 function copySection(section: ConsoleContributedSection): ConsoleContributedSection {
@@ -33,13 +38,15 @@ function copySection(section: ConsoleContributedSection): ConsoleContributedSect
 }
 
 /**
- * Installs the build-time section catalog for one project. `content` holds the data of each section. `sections` holds
- * the descriptors of the sections that owner packages contribute.
+ * Installs the section catalog for one project. `content` holds the build-time data of each section. `sections` holds
+ * the descriptors of the sections that owner packages contribute. `readers` holds the request-time readers of
+ * record-table sections. The Console calls them on each definitions request.
  */
 export function installConsoleDefinitions(
   projectRoot: string,
   content: ConsoleSectionCatalog["content"],
   sections: ConsoleSectionCatalog["sections"] = [],
+  readers: NonNullable<ConsoleSectionCatalog["readers"]> = {},
 ): ConsoleSectionCatalog {
   const installed: ConsoleSectionCatalog = {
     content: Object.fromEntries(
@@ -47,6 +54,7 @@ export function installConsoleDefinitions(
         .filter(([section]) => isConsoleSectionId(section))
         .map(([section, value]) => [section, copyContent(value)]),
     ),
+    readers: Object.fromEntries(Object.entries(readers).filter(([section]) => isConsoleSectionId(section))),
     sections: sections.filter(section => isConsoleSectionId(section.id)).map(copySection),
   }
   return installConsoleDefinitionScope(resolve(projectRoot), installed)
