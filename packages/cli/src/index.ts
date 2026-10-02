@@ -225,8 +225,9 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
     : await (options.loadNuxtViteConfig || loadNuxtViteConfig)(cwd, command)
   const plugins = nuxtConfig?.plugins ?? config.plugins
   const rootDir = resolve(nuxtConfig?.root || config.root || cwd)
+  const contributedNamespaces = await collectViteHubCliNamespaces(plugins)
   const namespaces = [
-    ...await collectViteHubCliNamespaces(plugins),
+    ...contributedNamespaces.filter(namespace => namespace.name !== "inspect"),
     createInspectNamespace(plugins),
     createProvisionNamespace(plugins),
     ...(options.runtimeNamespaces ?? []).filter(namespace => namespace.name !== "inspect"),
