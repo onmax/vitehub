@@ -25,6 +25,8 @@ export interface PublicPackageBinContract {
 
 const optionalPeerExports = new Map<string, readonly string[]>([
   ["@vite-hub/agent", ["@vite-hub/workflow"]],
+  ["@vite-hub/agent/evlog", ["evlog"]],
+  ["@vite-hub/agent/evlog/posthog", ["evlog", "posthog-node"]],
   ["@vite-hub/agent/observability", ["evlog"]],
   ["@vite-hub/agent/observability/host", ["evlog"]],
   ["@vite-hub/agent/observability/posthog", ["evlog", "posthog-node"]],
@@ -35,6 +37,9 @@ const optionalPeerExports = new Map<string, readonly string[]>([
   ["@vite-hub/browser/controllers/playwright", ["playwright-core"]],
   ["@vite-hub/browser/internal/chromium", ["playwright-core"]],
   ["@vite-hub/browser/internal/chromium.workerd", ["playwright-core"]],
+  ["@vite-hub/connections/agent", ["drizzle-orm"]],
+  ["@vite-hub/connections/server", ["drizzle-orm"]],
+  ["@vite-hub/env/database", ["drizzle-orm"]],
   ["@vite-hub/kv/runtime/upstash-driver", ["@upstash/redis"]],
   ["@vite-hub/source/client", ["vue"]],
   ["@vite-hub/ui/vite", ["@nuxt/ui"]],
@@ -43,6 +48,8 @@ const optionalPeerExports = new Map<string, readonly string[]>([
   ["@vite-hub/workflow/runtime/openworkflow", ["openworkflow"]],
   ["@vite-hub/workflow/runtime/openworkflow-worker", ["openworkflow"]],
   ["vite-hub", ["vite"]],
+  ["vite-hub/agent/evlog", ["evlog"]],
+  ["vite-hub/agent/evlog/posthog", ["evlog", "posthog-node"]],
   ["vite-hub/agent/observability", ["evlog"]],
   ["vite-hub/agent/eval", ["evalite", "vitest"]],
   ["vite-hub/browser/controllers/playwright", ["playwright-core"]],
