@@ -455,9 +455,13 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
       }
       groupRun(key, metadata)
     }
+    // Refuse an over-cap legacy namespace before reading an arbitrary provider-
+    // ordered prefix. Callers receive an explicit incomplete-history result,
+    // so no partial set can be mistaken for the newest or complete history.
+    if (unknown.length > maxLegacyHistoryRecords) {
+      return { keys, known, runtime, bySchedule, recordsByKey, unknown }
+    }
     // Group legacy records once per snapshot, even when their index cannot be published.
-    // A provider that cannot publish indexes must not turn every inspection
-    // request into an unbounded read of the complete run namespace.
     const legacyKeys = unknown.slice(0, maxLegacyHistoryRecords)
     for (let offset = 0; offset < legacyKeys.length; offset += 16) {
       const batch = await Promise.all(legacyKeys.slice(offset, offset + 16).map(async key => {

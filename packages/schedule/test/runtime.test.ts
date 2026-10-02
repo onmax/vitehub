@@ -1028,6 +1028,7 @@ describe("KV Schedule Run Store", () => {
       return set(key, value)
     })
     const store = createKVScheduleRunStore({ kvStore })
+    const get = vi.spyOn(kvStore, "get")
     const scheduledAt = new Date("2026-01-01T00:00:00.000Z")
     for (let index = 0; index < 1001; index++) {
       await store.createRun({ id: `legacy_${index}`, scheduleId: "legacy", target: "report", scheduledAt,
@@ -1039,6 +1040,7 @@ describe("KV Schedule Run Store", () => {
         name: "ScheduleHistoryIncompleteError",
       })
     }
+    expect(get).not.toHaveBeenCalled()
   })
 
   it("parses each indexed key once for a multi-Schedule history batch", async () => {
