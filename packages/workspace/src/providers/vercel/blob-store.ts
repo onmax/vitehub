@@ -1,7 +1,7 @@
 import { workspaceConflict, workspaceError } from "../../core/errors.ts"
 import { contentToBytes, isExcludedWorkspacePath, matchesAny, normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern, normalizeWorkspacePath, sha256 } from "../../core/path.ts"
 import { resolveRuntimeVercelBlobWorkspaceStore } from "../../storage/provider.ts"
-import { createSnapshotFromEntries, diffSnapshots } from "../../storage/utils.ts"
+import { createCurrentSnapshotFromStore, diffSnapshots } from "../../storage/utils.ts"
 import * as bundledVercelBlob from "@vercel/blob"
 
 import type {
@@ -254,7 +254,7 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
   }
 
   async snapshot(options: SnapshotOptions = {}): Promise<WorkspaceSnapshot> {
-    const snapshot = await createSnapshotFromEntries(await this.list("", { recursive: true }), options.name)
+    const snapshot = await createCurrentSnapshotFromStore(this, options.name)
     await (await this.#client()).upload(this.#snapshotKey(snapshot.id), JSON.stringify(snapshot), {
       contentType: "application/json; charset=utf-8",
     })
@@ -264,7 +264,7 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
 
   async diff(options: DiffOptions = {}): Promise<WorkspaceDiff> {
     const from = options.from || this.#baseline
-    const to = await createSnapshotFromEntries(await this.list("", { recursive: true }))
+    const to = await createCurrentSnapshotFromStore(this)
     return diffSnapshots(from, to)
   }
 

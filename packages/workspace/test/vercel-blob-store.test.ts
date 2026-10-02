@@ -73,6 +73,21 @@ afterEach(() => {
 })
 
 describe("Vercel Blob workspace store", () => {
+  it("detects equal-size content changes in snapshot diffs", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "token" }, "docs")
+    await store.writeFile("readme.md", { path: "readme.md", content: "before" })
+    const snapshot = await store.snapshot()
+
+    await expect(store.diff({ from: snapshot })).resolves.toMatchObject({ entries: [] })
+    await store.writeFile("readme.md", { path: "readme.md", content: "after!" })
+
+    await expect(store.diff({ from: snapshot })).resolves.toMatchObject({
+      entries: [{ path: "readme.md", type: "modified" }],
+    })
+  })
+
   it("stores files, metadata, snapshots, and diffs in Blob", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "token"
     const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
