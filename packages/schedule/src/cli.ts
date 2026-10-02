@@ -24,6 +24,13 @@ import type {
   ScheduleRunSummary,
 } from "./runtime/console.ts"
 
+interface ScheduleDevDiscovery {
+  message?: unknown
+  root?: unknown
+  runtime?: unknown
+  scheduleDevTokenServerId?: unknown
+}
+
 export type ScheduleCliContext = Pick<ViteHubCliContext, "cwd" | "env" | "rootDir"> & ViteHubCliStreams
 
 export interface ScheduleCliOptions {
@@ -356,9 +363,14 @@ async function runScheduleCommand(
   const fetchImpl = options.fetch ?? globalThis.fetch
   const timeout = withTimeout(parsed.timeout)
   let discoveryFailure = ""
-  const server = await discoverViteHubDevServer({
+  const server = await discoverViteHubDevServer<ScheduleDevDiscovery>({
     endpoint: scheduleDevEndpoint,
     fetch: fetchImpl,
+    parseDiscovery: (value) => {
+      if (!value || typeof value !== "object") return {}
+      const record = value as Record<string, unknown>
+      return { message: record.message, root: record.root, runtime: record.runtime, scheduleDevTokenServerId: record.scheduleDevTokenServerId }
+    },
     rootDir: context.rootDir,
     serverUrl: parsed.url,
     stderr: { write: chunk => { discoveryFailure += String(chunk) } },
