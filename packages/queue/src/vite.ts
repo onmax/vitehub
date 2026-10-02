@@ -181,6 +181,18 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
   let nuxtServerQueueDirs: string[] = []
   let nuxtOwnsCloudflareWorker = false
   let providerOutput: ProviderOutputCatalog | undefined
+  const buildStates = new WeakMap<ResolvedConfig, {
+    configuredDefinitions: DiscoveredQueueDefinition[]
+    hosting: string
+    cloudflareQueues: boolean
+    localDevelopment: boolean
+    nitroOwnsCloudflareWorker: boolean
+    nitroQueue: QueueModuleOptions | undefined
+    nuxtOwnsCloudflareWorker: boolean
+    providerOutput: ProviderOutputCatalog | undefined
+    resolved: ResolvedConfig
+    validatesNitroDefinitions: boolean
+  }>()
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   let validatesNitroDefinitions = false
   let serverDirs: string[] | undefined
@@ -254,6 +266,7 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
       validatesNitroDefinitions = hasNitroConfigContext(config) && nitroQueue !== false
       localDevelopment = config.command === "serve"
       await writeQueueNitroIntegration(config.root, nitroQueue, hosting, cloudflareQueues, configuredDefinitions, localDevelopment, internalOptions?.importBase)
+      buildStates.set(config, { configuredDefinitions, hosting, cloudflareQueues, localDevelopment, nitroOwnsCloudflareWorker, nitroQueue, nuxtOwnsCloudflareWorker, providerOutput, resolved: config, validatesNitroDefinitions })
     },
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) {
@@ -272,9 +285,17 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
       await writeQueueNitroIntegration(nuxtProjectRoot || resolved.root, nitroQueue, hosting, cloudflareQueues, resolveNuxtDefinitions?.(), localDevelopment, internalOptions?.importBase)
     },
     buildStart() {
+      const state = buildStates.get((this.environment?.config as ResolvedConfig | undefined) ?? resolved)
+      if (state) {
+        ({ configuredDefinitions, hosting, cloudflareQueues, localDevelopment, nitroOwnsCloudflareWorker, nitroQueue, nuxtOwnsCloudflareWorker, providerOutput, resolved, validatesNitroDefinitions } = state)
+      }
       providerOutputGenerations.capture(this, providerOutput)
     },
     async buildEnd(error) {
+      const state = buildStates.get((this.environment?.config as ResolvedConfig | undefined) ?? resolved)
+      if (state) {
+        ({ configuredDefinitions, hosting, cloudflareQueues, localDevelopment, nitroOwnsCloudflareWorker, nitroQueue, nuxtOwnsCloudflareWorker, providerOutput, resolved, validatesNitroDefinitions } = state)
+      }
       if (error) {
         await providerOutputGenerations.reset(this, providerOutput, error)
         return
@@ -340,6 +361,7 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
             const typedRetainedRuntimeAliases = retainedRuntimeAliases as QueueProviderRuntimeInputs["aliases"]
             await generateProviderOutputs({
               artifactDir: resolve(contributionArtifactDir, "output"),
+              bundleDefines: providerOutput?.bundleDefines,
               clientOutDir: config.build.outDir,
               cloudflareOwnedByNitro: nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker,
               definitions: retainedDefinitions,

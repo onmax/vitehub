@@ -59,6 +59,7 @@ export interface RunViteHubCliOptions {
   env?: NodeJS.ProcessEnv
   loadConfig?: (rootDir: string) => Promise<ViteHubCliLoadedConfig>
   loadNuxtViteConfig?: (rootDir: string) => Promise<{ plugins: readonly unknown[], root?: string } | undefined>
+  runtimeNamespaces?: ViteHubCliCommandNamespace[]
   spawn?: ViteHubCliSpawn
   stderr?: ViteHubCliStreams["stderr"]
   stdout?: ViteHubCliStreams["stdout"]
@@ -192,6 +193,34 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
   const cwd = options.cwd || process.cwd()
   const env = options.env || process.env
   const stderr = options.stderr || process.stderr
+  const runtimeNamespaces = options.runtimeNamespaces || []
+  const runtimeContext: ViteHubCliContext = {
+    cwd,
+    env,
+    rootDir: cwd,
+    spawn: options.spawn || defaultSpawn,
+    stderr,
+    stdout,
+  }
+  const runtimeNamespace = runtimeNamespaces.find(namespace => namespace.name === args[0])
+  if (runtimeNamespace) {
+    const featureName = args[1]
+    if (!featureName || featureName === "-h" || featureName === "--help") {
+      writeNamespaceHelp(runtimeNamespace, stdout)
+      return 0
+    }
+    const feature = runtimeNamespace.features.find(item => item.name === featureName)
+    if (!feature) {
+      stderr.write(`Unknown ViteHub CLI feature: ${runtimeNamespace.name} ${featureName}\n`)
+      writeNamespaceHelp(runtimeNamespace, stderr)
+      return 1
+    }
+    return await feature.run(args.slice(2), runtimeContext) ?? 0
+  }
+  if ((args.length === 0 || isRootHelp(args)) && runtimeNamespaces.length) {
+    writeRootHelp(runtimeNamespaces, stdout)
+    return 0
+  }
   const config = await (options.loadConfig || loadViteConfig)(cwd)
   const nuxtConfig = config.vitehubConfigResolved
     ? undefined
@@ -199,6 +228,7 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
   const plugins = nuxtConfig?.plugins ?? config.plugins
   const rootDir = resolve(nuxtConfig?.root || config.root || cwd)
   const namespaces = [
+    ...runtimeNamespaces,
     ...await collectViteHubCliNamespaces(plugins),
     createInspectNamespace(plugins),
     createProvisionNamespace(plugins),
