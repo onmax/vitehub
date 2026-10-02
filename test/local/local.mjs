@@ -8,6 +8,8 @@ import { parseArgs } from "node:util"
 import { resolve } from "node:path"
 import { setTimeout as sleep } from "node:timers/promises"
 
+import { stopChild } from "./process.mjs"
+
 import { buildPlayground } from "./build-playground.mjs"
 
 const repoRoot = resolve(import.meta.dirname, "..", "..")
@@ -16,17 +18,6 @@ const log = message => console.log(`[e2e:local] ${message}`)
 const CLOUDFLARE_PORT = 8788
 const VERCEL_PORT = 8789
 
-async function stopChild(child, graceMs = 500) {
-  if (child.exitCode !== null || child.signalCode !== null) return
-  child.kill("SIGTERM")
-  await Promise.race([
-    new Promise(resolve => child.once("close", resolve)),
-    sleep(graceMs),
-  ])
-  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
-  if (child.exitCode === null && child.signalCode === null)
-    await new Promise(resolve => child.once("close", resolve))
-}
 
 async function waitForProbe(url, timeoutMs = 60_000) {
   const startedAt = Date.now()
@@ -73,6 +64,7 @@ async function runCloudflare() {
   log(`starting wrangler dev on ${url}`)
   const dev = spawn("vp", ["dlx", "wrangler", "dev", "--config", "wrangler.json", "--port", String(CLOUDFLARE_PORT), "--test-scheduled", "--enable-containers=false"], {
     cwd: distDir,
+    detached: process.platform !== "win32",
     env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
     stdio: ["ignore", "inherit", "inherit"],
   })
@@ -119,6 +111,7 @@ async function runVercel() {
   const url = `http://127.0.0.1:${VERCEL_PORT}`
   log(`starting vercel function bridge on ${url}`)
   const bridge = spawn("node", [resolve(import.meta.dirname, "vercel-bridge-server.mjs"), "--output-dir", outputDir, "--port", String(VERCEL_PORT)], {
+    detached: process.platform !== "win32",
     env: { ...process.env, ...bridgeEnv },
     stdio: ["ignore", "inherit", "inherit"],
   })
