@@ -73,7 +73,7 @@ describe("redactInspectionValue", () => {
 describe("redactInspectionText", () => {
   it("redacts credentials inside free text", () => {
     expect(redactInspectionText("GET https://user:hunter2@example.test/db failed, Authorization: Bearer abc.def; api_key=sk_live token: t1 done"))
-      .toBe("GET https://[redacted]@example.test/db failed, Authorization: [redacted] [redacted]; api_key=[redacted] token: [redacted] done")
+      .toBe("GET https://[redacted]@example.test/db failed, Authorization: [redacted]; api_key=[redacted] token: [redacted] done")
     expect(redactInspectionText("Target report failed after 3 attempts.")).toBe("Target report failed after 3 attempts.")
   })
 })
