@@ -122,7 +122,7 @@ export function summarizeScheduleRun(run: ScheduleRunRecord): ScheduleRunSummary
   if (run.response) {
     summary.response = {
       status: run.response.status,
-      ...(run.response.statusText ? { statusText: redactInspectionText(run.response.statusText) } : {}),
+      statusText: redactInspectionText(run.response.statusText),
     }
   }
   if (startedAt) summary.startedAt = startedAt

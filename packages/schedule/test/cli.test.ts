@@ -3,6 +3,11 @@ import { Readable } from "node:stream"
 
 import { describe, expect, it, vi } from "vitest"
 
+vi.mock("@vite-hub/internal/dev-token", async importOriginal => {
+  const actual = await importOriginal<typeof import("@vite-hub/internal/dev-token")>()
+  return { ...actual, readViteHubDevToken: async () => "test-schedule-token" }
+})
+
 import { createScheduleCliContributor, runScheduleCli } from "../src/cli.ts"
 import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute, scheduleDevRuntimeRoute } from "../src/dev.ts"
 import { registerScheduleDevEndpoint, scheduleDevRuntimeUnavailableMessage } from "../src/vite-dev.ts"
@@ -47,7 +52,7 @@ const digest = {
 function devServer(result: unknown, init: { discovery?: Record<string, unknown>, status?: number } = {}) {
   return vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST"
     ? Response.json(result, { status: init.status ?? 200 })
-    : Response.json(init.discovery ?? { root: rootDir, runtime: "nitro" }))
+    : Response.json(init.discovery ?? { root: rootDir, runtime: "nitro", scheduleDevTokenServerId: "test-server" }))
 }
 
 describe("vitehub schedule", () => {
@@ -227,7 +232,7 @@ const guard = { [scheduleDevHeader]: scheduleDevHeaderValue }
 describe("Schedule dev endpoint", () => {
   it("rejects requests without the guard header or from another origin", async () => {
     const { middlewares, server } = fakeServer()
-    registerScheduleDevEndpoint(server)
+    await registerScheduleDevEndpoint(server)
 
     expect(await call(middlewares[0]!, { method: "GET" })).toMatchObject({ body: "Forbidden Schedule Dev request.", status: 403 })
     expect(await call(middlewares[0]!, { headers: { ...guard, origin: "https://attacker.test" }, method: "GET" })).toMatchObject({ status: 403 })
@@ -237,10 +242,10 @@ describe("Schedule dev endpoint", () => {
 
   it("reports hosts without an in-process Nitro environment", async () => {
     const { middlewares, server } = fakeServer()
-    registerScheduleDevEndpoint(server)
+    await registerScheduleDevEndpoint(server)
 
     const discovery = await call(middlewares[0]!, { headers: guard, method: "GET" })
-    expect(JSON.parse(discovery.body)).toEqual({ message: scheduleDevRuntimeUnavailableMessage, root: rootDir, runtime: "unavailable" })
+    expect(JSON.parse(discovery.body)).toMatchObject({ message: scheduleDevRuntimeUnavailableMessage, root: rootDir, runtime: "unavailable" })
     const operation = await call(middlewares[0]!, { body: "{\"operation\":\"list\"}", headers: { ...guard, "content-type": "application/json" }, method: "POST" })
     expect(operation.status).toBe(501)
     expect(JSON.parse(operation.body)).toMatchObject({ error: { code: "SCHEDULE_DEV_RUNTIME_UNAVAILABLE" } })
@@ -249,9 +254,9 @@ describe("Schedule dev endpoint", () => {
   it("forwards operations into the Nitro environment under the Nitro base URL", async () => {
     const dispatchFetch = vi.fn(async (request: Request) => Response.json({ body: await request.text(), url: request.url }))
     const { middlewares, server } = fakeServer({ nitro: { dispatchFetch } })
-    registerScheduleDevEndpoint(server, { nitroBaseURL: () => "/app/" })
+    await registerScheduleDevEndpoint(server, { nitroBaseURL: () => "/app/" })
 
-    expect(JSON.parse((await call(middlewares[0]!, { headers: guard, method: "GET" })).body)).toEqual({ root: rootDir, runtime: "nitro" })
+    expect(JSON.parse((await call(middlewares[0]!, { headers: guard, method: "GET" })).body)).toMatchObject({ root: rootDir, runtime: "nitro" })
     const operation = await call(middlewares[0]!, { body: "{\"operation\":\"list\"}", headers: { ...guard, "content-type": "application/json" }, method: "POST" })
 
     expect(operation.status).toBe(200)
