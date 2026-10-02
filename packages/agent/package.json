@@ -175,7 +175,11 @@
       "types": "./dist/vue.d.ts",
       "import": "./dist/vue.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./runtime/invocations-dev": {
+      "types": "./dist/runtime/invocations-dev.d.ts",
+      "import": "./dist/runtime/invocations-dev.js"
+    }
   },
   "scripts": {
     "build": "vp pack",
