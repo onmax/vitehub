@@ -204,8 +204,8 @@ Every command accepts `--store <name>`, `--json`, `--url <url>` when Vite does n
 - `list` prints a table of pathname, size, content type, and upload time. `--limit` defaults to 100 and has a maximum of 250. When more blobs exist, stderr shows the `--cursor` value for the next page.
 - `head` prints the metadata of one blob. A missing blob exits with status 1.
 - `get` writes the file bytes unchanged. Without `--output`, the bytes go to stdout, so redirect them to a file or a pipe. With `--output <file>`, the command writes the file and prints a summary. `--json` needs `--output`, because stdout carries the file bytes otherwise.
-- `put` uploads a file relative to the current directory. Without `--content-type`, the Blob storage detects the type from the pathname. The output says if the blob was created or replaced.
-- `del` says if the blob existed. Deleting a missing blob changes nothing and exits with status 0.
+- `put` uploads a file relative to the current directory. Without `--content-type`, the Blob storage detects the type from the pathname. The output says if the blob was created or replaced. The created/replaced label is best-effort because it is based on a metadata read immediately before the write; eventual consistency and concurrent writers can make it stale.
+- `del` says if the blob existed. Deleting a missing blob changes nothing and exits with status 0. The existed/missing label is best-effort for the same reason, and a concurrent writer can change the object between the metadata read and delete.
 
 The Vite dev endpoint forwards a JSON request body, so `put` sends the file as base64 and accepts files up to 8 MiB. The CLI checks the size before it reads the file. `get` returns the raw bytes, but the dev endpoint holds the whole file in memory. Use the application or the provider tools for larger files. There is no `sign` command.
 

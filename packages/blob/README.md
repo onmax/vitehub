@@ -197,7 +197,7 @@ blob: {
 
 ## CLI
 
-`hubBlob()` contributes the `vitehub blob` CLI namespace: `list [--prefix] [--limit] [--cursor]`, `head <pathname>`, `get <pathname> [--output <file>]`, `put <pathname> <file> [--content-type]`, and `del <pathname>`. Each command accepts `--store <name>` and `--json`. Write commands print what they changed. There is no `sign` command.
+`hubBlob()` contributes the `vitehub blob` CLI namespace: `list [--prefix] [--limit] [--cursor]`, `head <pathname>`, `get <pathname> [--output <file>]`, `put <pathname> <file> [--content-type]`, and `del <pathname>`. Each command accepts `--store <name>` and `--json`. Write commands print what they changed. The `created` and `deleted` labels are best-effort metadata observations before each mutation. They can be stale with eventual consistency or concurrent writers. Deletion is unconditional and can remove an object replaced concurrently. There is no `sign` command.
 
 The commands call a guarded endpoint that exists only on the Vite Development Server. The endpoint forwards each operation into the Nitro dev environment, so it uses the same Blob storage as the running app. `get` returns the raw bytes. `put` sends the file as base64 JSON, so it accepts files up to 8 MiB. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 there. `handleBlobDevRequest()` from `@vite-hub/blob/runtime/dev` is the Nitro handler; it is not a public runtime API.
 

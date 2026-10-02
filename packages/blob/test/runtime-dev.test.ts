@@ -51,6 +51,19 @@ async function run(body: unknown): Promise<{ body: Record<string, unknown>, stat
 const binary = Uint8Array.from([0, 255, 1, 128, 10, 13, 0xef, 0xbb, 0xbf, 0xc3, 0x28])
 
 describe("Blob dev runtime handler", () => {
+  it("reports the pre-write metadata result even when it is stale", async () => {
+    await run({ operation: "put", pathname: "recent.txt", data: Buffer.from("original").toString("base64") })
+    const missing = await blob.head("absent.txt")
+    const head = vi.spyOn(blob, "head").mockResolvedValue(missing)
+    try {
+      expect(await run({ operation: "put", pathname: "recent.txt", data: Buffer.from("replacement").toString("base64") })).toMatchObject({ status: 200, body: { created: true } })
+    }
+    finally { head.mockRestore() }
+    const [error, file] = await blob.get("recent.txt")
+    expect(error).toBeNull()
+    expect(await file?.text()).toBe("replacement")
+  })
+
   it("deletes even when metadata temporarily reports a missing blob", async () => {
     await run({ operation: "put", pathname: "recent.txt", data: Buffer.from("recent").toString("base64") })
     const missing = await blob.head("absent.txt")

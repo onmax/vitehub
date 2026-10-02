@@ -58,14 +58,20 @@ export interface BlobDevHeadResult {
 }
 
 export interface BlobDevPutResult {
-  /** `true` when no blob existed at the pathname before the write. */
+  /**
+   * Whether the metadata read immediately before the write found no blob.
+   * This is best-effort: eventually consistent providers and concurrent writers can make it stale.
+   */
   created: boolean
   object: BlobDevObject
   store: string
 }
 
 export interface BlobDevDeleteResult {
-  /** `true` when the blob existed before the delete. */
+  /**
+   * Whether the metadata read immediately before the delete found a blob.
+   * This is best-effort: eventually consistent providers and concurrent writers can make it stale.
+   */
   deleted: boolean
   pathname: string
   store: string
