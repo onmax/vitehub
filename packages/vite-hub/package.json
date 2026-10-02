@@ -171,6 +171,7 @@
     "./workspace/server": "./dist/workspace/server.js",
     "./package.json": "./package.json",
     "./console/auth/client": "./dist/console/auth-client.js",
+    "./console/auth/cloudflare-access": "./dist/console/auth-cloudflare-access.js",
     "./console/auth/inline": "./dist/console/auth-inline.js",
     "./console/blob": "./dist/console/runtime/server/blob.js",
     "./console/database": "./dist/console/runtime/server/database.js",

@@ -117,8 +117,11 @@ type ConsoleInvocationIdentitiesByRoot = {
   values(): IterableIterator<string>
 }
 
+/** Independent Console Auth that serves the Console: a Better Auth session (`true`) or Cloudflare Access. */
+export type ConsoleAuthMode = true | "cloudflare-access"
+
 interface ConsoleSectionRegistration {
-  auth?: boolean
+  auth?: ConsoleAuthMode | false
   projectName?: string
   sections: readonly ConsoleSectionId[]
 }
@@ -159,7 +162,7 @@ export type ConsoleInvocationScope = {
   [consoleProjectRootKey]?: string
   [consoleInvocationsRootIdentityRegistryKey]?: ConsoleInvocationIdentitiesByRoot
   [consoleSectionsKey]?: readonly ConsoleSectionId[]
-  [consoleAuthKey]?: boolean
+  [consoleAuthKey]?: ConsoleAuthMode | false
   [consoleProjectNameKey]?: string
   [consoleSectionsRootKey]?: string
   [consoleSectionsAmbiguousRootKey]?: boolean
