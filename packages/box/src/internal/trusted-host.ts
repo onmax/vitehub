@@ -989,8 +989,19 @@ function processHandle(
     },
     stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     wait: () => wait,
-    async kill() {
-      signalProcessTree(child, "SIGTERM");
+    async kill(signal?: string) {
+      const requested = (signal ?? "SIGTERM") as NodeJS.Signals;
+      signalProcessTree(child, requested);
+      if (signal !== undefined || requested !== "SIGTERM") {
+        await wait.catch(() => undefined);
+        return;
+      }
+      await Promise.race([
+        waitForExit(child),
+        new Promise((resolvePromise) => setTimeout(resolvePromise, 250)),
+      ]);
+      if (child.exitCode === null && child.signalCode === null)
+        signalProcessTree(child, "SIGKILL");
       await wait.catch(() => undefined);
     },
   };

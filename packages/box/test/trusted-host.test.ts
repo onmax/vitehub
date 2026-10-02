@@ -491,6 +491,20 @@ describe("createTrustedHostRuntime", () => {
     await session.destroy?.();
   });
 
+  it("forwards an explicit kill signal and escalates default termination", async () => {
+    const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
+    const session = await boxProvider(box).createSession();
+    try {
+      const child = await session.spawn({
+        command: "node -e \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)\"",
+      });
+      await child.kill("SIGKILL");
+      await expect(child.wait()).resolves.toMatchObject({ code: 1 });
+    } finally {
+      await session.destroy?.();
+    }
+  });
+
   it("does not start commands cancelled during working-directory resolution", async () => {
     const root = await temporaryRoot();
     const marker = join(root, "started");
