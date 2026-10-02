@@ -187,25 +187,29 @@ export function summarizeRuntimeSchedule(
 }
 
 interface RuntimeScheduleState {
-  runs: ScheduleRunRecord[]
+  runs: Map<string, ScheduleRunRecord[]>
   schedules: RuntimeScheduleRecord[]
 }
 
-async function readRuntimeScheduleState(): Promise<RuntimeScheduleState> {
-  const [records, runs] = await Promise.all([
-    getRuntimeScheduleStore().list(),
-    getScheduleRunStore().listRuns(),
-  ])
+async function readRuntimeScheduleState(limit: number, visibleOnly = false): Promise<RuntimeScheduleState> {
+  const records = (await getRuntimeScheduleStore().list()).filter(schedule => !visibleOnly || schedule.console?.enabled !== false)
+  const runs = new Map<string, ScheduleRunRecord[]>()
+  const store = getScheduleRunStore()
+  const queries = records.map(schedule => ({ scheduleId: schedule.id, runtimeOnly: true, limit }))
+  const histories = store.listRunsBatch
+    ? await store.listRunsBatch(queries)
+    : await Promise.all(queries.map(query => store.listRuns(query)))
+  for (const [index, schedule] of records.entries()) runs.set(schedule.id, histories[index] ?? [])
   return { runs, schedules: [...records].sort((left, right) => left.id.localeCompare(right.id)) }
 }
 
 /** Lists Runtime Schedules of this runtime with their next due time and last run. */
 export async function inspectRuntimeSchedules(options: RuntimeScheduleInspectionOptions = {}): Promise<RuntimeScheduleInspection> {
   const now = options.now ?? new Date()
-  const state = await readRuntimeScheduleState()
+  const state = await readRuntimeScheduleState(1)
   return {
     automaticRuns: isScheduleWakeDriverActive(),
-    schedules: state.schedules.map(schedule => summarizeRuntimeSchedule(schedule, state.runs, now)),
+    schedules: state.schedules.map(schedule => summarizeRuntimeSchedule(schedule, state.runs.get(schedule.id) ?? [], now)),
   }
 }
 
@@ -213,7 +217,7 @@ export async function inspectRuntimeSchedules(options: RuntimeScheduleInspection
 export async function inspectRuntimeSchedule(id: string, options: RuntimeScheduleInspectionOptions = {}): Promise<RuntimeScheduleSummary | undefined> {
   const schedule = await getRuntimeScheduleStore().get(id)
   if (!schedule) return
-  return summarizeRuntimeSchedule(schedule, await getScheduleRunStore().listRuns(), options.now)
+  return summarizeRuntimeSchedule(schedule, await getScheduleRunStore().listRuns({ scheduleId: id, runtimeOnly: true, limit: 1 }), options.now)
 }
 
 /**
@@ -221,7 +225,7 @@ export async function inspectRuntimeSchedule(id: string, options: RuntimeSchedul
  * Schedule Definition with the same name.
  */
 export async function listRuntimeScheduleRuns(scheduleId: string, options: { limit?: number } = {}): Promise<ScheduleRunSummary[]> {
-  const runs = (await getScheduleRunStore().listRuns())
+  const runs = (await getScheduleRunStore().listRuns({ scheduleId, limit: options.limit }))
     .filter(run => run.scheduleId === scheduleId)
     .sort(newestFirst)
   return (options.limit === undefined ? runs : runs.slice(0, options.limit)).map(summarizeScheduleRun)
