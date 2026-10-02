@@ -134,12 +134,22 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
     const catalog = getProviderOutputCatalog(config)
     // SAFETY: configResolved installs this private token on build options so Vite clones retain their owner.
     const association = config.build && (config.build as typeof config.build & { [workflowBuildAssociation]?: object })[workflowBuildAssociation]
-    const matches = catalog
-      ? candidates.filter(candidate => candidate.providerOutput === catalog)
-      : candidates.filter(candidate => candidate.config.build === config.build || (association && (
-          // SAFETY: configResolved installs this private token on registered build options.
-          (candidate.config.build as typeof candidate.config.build & { [workflowBuildAssociation]?: object })[workflowBuildAssociation] === association
-        )))
+    const publicDefine = JSON.stringify({
+      publicUrl: config.define?.__VITEHUB_PUBLIC_URL__,
+      base: config.define?.__VITEHUB_APP_BASE_URL__,
+    })
+    const matches = candidates.filter(candidate => {
+      if (catalog && candidate.providerOutput !== catalog) return false
+      if (candidate.config.build.outDir !== config.build.outDir) return false
+      const candidatePublicDefine = JSON.stringify({
+        publicUrl: candidate.config.define?.__VITEHUB_PUBLIC_URL__,
+        base: candidate.config.define?.__VITEHUB_APP_BASE_URL__,
+      })
+      if (candidatePublicDefine !== publicDefine) return false
+      if (!association) return candidate.config.build === config.build
+      // SAFETY: configResolved installs this private token on registered build options.
+      return (candidate.config.build as typeof candidate.config.build & { [workflowBuildAssociation]?: object })[workflowBuildAssociation] === association
+    })
     if (matches.length !== 1) throw workflowErrorDiagnostics.WORKFLOW_B0002({ root: config.root })
     const match = matches[0]!
     scheduleBuildConfigs.set(config, match)
