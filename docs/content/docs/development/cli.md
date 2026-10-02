@@ -29,7 +29,10 @@ The Agent Package contributes `agent` and `channels` when `hubAgent()` is active
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
+
 Available namespaces:
+  workspace   Workspace development workflows.
+  console     Console development workflows.
   agent       Agent development workflows.
   channels    External Channel registration workflows.
   db          Database development workflows.
@@ -38,6 +41,7 @@ Available namespaces:
   types       Generate ViteHub TypeScript declarations.
   inspect     Inspect discovered Definitions and generated Provider Output.
   provision   Idempotently create missing provider resources.
+  box         Serve and check an SSH Box runner. Does not load the project config.
 ```
 
 ## Commands
@@ -50,7 +54,11 @@ Available namespaces:
 | `vitehub agent invocations` | Available | Agent Package | List, inspect, follow, or cancel records in the application's Agent Invocation journal. |
 | `vitehub channels history` | Available | Agent Package | Download one deployed conversation and its attachments. |
 | `vitehub channels sync` | Available | Agent Package | Inspect or apply provider-owned webhook registrations for a deployed stage. |
+| `vitehub channels replay` | Available | Agent Package | Replay stored Channel history through an Agent from a development server. |
 | `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
+| `vitehub connections` | Available | Connections Package | Connect OAuth accounts, set API keys, list Connections, read activity, and approve or deny writes. |
+| `vitehub env inspect` | Available | Env Package | List declared Server Env variables and their status without values. |
+| `vitehub env check` | Available | Env Package | Fail CI or a deploy step when Server Env would not load for a stage. |
 | `vitehub db generate` | Available | Database Package | Refresh generated Database artifacts and generate Drizzle migrations. |
 | `vitehub db migrate` | Available | Database Package | Refresh generated Database artifacts and apply Drizzle migrations. |
 | `vitehub schedule list` | Available | Schedule Package | List Runtime Schedules with enabled state, next due time, and last run. |
@@ -65,6 +73,52 @@ Available namespaces:
 | `vitehub inspect definitions` | Available | ViteHub CLI plus package inspection contributors | List the Definitions that each active package discovered. |
 | `vitehub inspect provider-output` | Available | ViteHub CLI plus package inspection contributors | List generated Provider Output files with secrets redacted. |
 | `vitehub provision run` | Available | ViteHub CLI plus package Provision Steps | Create missing provider resources idempotently. |
+| `vitehub provision status` | Available | ViteHub CLI plus package Provision Steps | Inspect the latest provider provisioning result. |
+
+## Inspect Server Env
+
+The Env integration contributes commands that report the status of declared Server Env values without printing their values.
+
+```bash [Terminal]
+pnpm vitehub env inspect [--stage <name>] [--json]
+pnpm vitehub env check [--stage <name>] [--json]
+```
+
+Both commands load the Vite config in the selected stage mode, including `.env.<stage>` files, with process environment values taking precedence. They list each declared variable with its status, source, required, and secret flags. `env check` exits with status `1` when loading Server Env would fail, so it can gate CI or deployment steps.
+
+## Inspect Definitions and Provider Output
+
+`vitehub inspect` reads the same package-owned summaries that the Console shows. It does not start a server or call a provider. Each active package contributes its own kind: `agent`, `auth`, `browser`, `channel`, `database`, `queue`, `rate-limit`, `realtime`, `sandbox`, `schedule`, `workflow`, and `workspace`.
+
+```bash [Terminal]
+pnpm vitehub inspect definitions
+pnpm vitehub inspect definitions --kind rate-limit
+pnpm vitehub inspect definitions --json
+```
+
+```txt [Output]
+Rate Limits (rate-limit): 1
+  checkout  server/api/checkout.post.ts  [require-rate-limit]
+    Limit: 10
+    Window: 1m
+    Enforcement: Strict
+    Provider failure: Deny
+    Source location: 4:9
+```
+
+`--json` prints `{ "definitions": [{ "kind", "label", "definitions": [...] }] }`. Each Definition has `name`, `file` relative to the project root, `source`, and `fields`. An unknown `--kind` exits with status 1 and lists the available kinds.
+
+`inspect provider-output` lists the Provider Output files that active packages and the deployment preset write, and shows which ones exist. Deployment paths use the preset's default output directory, for example `.output` or `.vercel/output`. Run a production build first to generate deployment output.
+
+```bash [Terminal]
+pnpm build
+pnpm vitehub inspect provider-output
+pnpm vitehub inspect provider-output --json
+```
+
+`--json` includes the parsed content of each JSON file. The CLI redacts values under keys that name secrets, such as `token`, `secret`, `password`, or `apiKey`, every Worker `vars` value, and URLs with embedded credentials. Read [Provider output](/docs/reference/provider-output) for each file's owner and purpose.
+
+Packages contribute inspection through `vitehub.inspect` on their Vite plugin. The owner package defines the summary; the CLI and the Console only render it.
 
 ## Inspect Definitions and Provider Output
 

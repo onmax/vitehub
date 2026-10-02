@@ -84,6 +84,18 @@ Open Env to search declared Server Env variables and filter by source. Select a 
 
 This view does not read secret values, call external providers, or check credential validity. It does not enumerate undeclared host variables. Values and defaults remain hidden. Update host values through the deployment configuration and provider values in their connected store. Set `env: false` in ViteHub options to disable Env and its Console section.
 
+## Manage Connections
+
+Open Connections to see each [Connection](/docs/server-primitives/connections) from `server/connections/`, with its provider, account, status, and token expiry. Select a Connection to open its details:
+
+- **Connection** shows the account, scopes, and last error. **Connect** or **Reconnect** starts the provider consent flow and returns to the Console. For an API key Connection, **Set key** or **Replace key** stores a new key. The Console sends it only over HTTPS or to a loopback host. **Refresh token** refreshes the access token. **Disconnect** deletes the grant. It also revokes the grant at the provider when the provider supports revocation.
+- **Access** shows the rules from the Connection Definition for server code, routes, and Agents.
+- **Activity** lists Agent calls, writes, denials, failures, and account changes, newest first. Agent calls link to their Invocation. Activity has no request or response bodies or headers.
+
+The Console registers `POST /_vitehub/connections/manage`, `GET /_vitehub/connections/:name/connect`, and `GET /_vitehub/connections/:name/callback` only when Connections is enabled. Console Auth protects these routes in production. The Console records its actions with the actor `console`. The Connections section is not available in Nuxt apps.
+
+Starting Connect creates a single-use OAuth ticket in the Connections store. The browser opens the GET connect route with that ticket, receives a state cookie, and follows a redirect to the provider. The provider redirects back to the GET callback route, which validates the stored OAuth state and browser cookie before saving the grant and returning to the Console. Proxies must forward both GET routes, their query strings, and cookies, as well as the management POST route. When Vite `base` is set, these routes use that mount prefix.
+
 ## Develop against a fixture
 
 Use `vitehub console dev` when Console work needs the same Agent Invocations on every restart. The command validates a versioned JSON fixture, then starts the development command after `--` with an in-memory Console journal. It does not write `.vitehub/data/console.sqlite`.
@@ -262,6 +274,16 @@ console: { access: 'auth', invoke: true }
 ```
 
 For `host-managed`, your middleware must authenticate and authorize all `/_vitehub/**` and `/api/_vitehub/console/**` routes, including the RPC transport, before it allows a request through. The build cannot verify this policy. Setting `invoke: false` keeps inspection available and disables Agent Invocation creation. The development shorthand `console: true` enables invocation; fixture mode always disables it.
+
+### Manage Connections
+
+Explicit `access` and `exposure` configurations also keep [Connections](/docs/server-primitives/connections) read-only. Console users can list Connections, access rules, and activity. Set `manageConnections: true` to let them connect, set API keys, refresh, and disconnect:
+
+```ts
+console: { access: 'auth', manageConnections: true }
+```
+
+Every user that passes the Console access policy can then manage every Connection. Restrict the policy to the people who own the provider accounts. The development shorthand `console: true` enables management; fixture mode always disables it.
 
 Console RPC requests must come from the same origin. The transport rejects opaque origins and browser requests marked `same-site` or `cross-site`. Browser Fetch Metadata permits same-origin requests through reverse proxies. When that metadata is absent, the transport compares the `Origin` header with the request URL. Hosts must reconstruct the public request origin for older browsers that send `Origin` without Fetch Metadata.
 

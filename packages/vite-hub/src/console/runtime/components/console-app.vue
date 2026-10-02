@@ -444,6 +444,33 @@ async function selectStartedInvocation(invocation: { agent: string; id: string }
   scheduleInvocationListRefresh();
 }
 
+const deletedInvocations = createConsoleInvocationDeletion();
+
+async function removeDeletedInvocation(id: string): Promise<void> {
+  const agentName = selectedAgentName.value;
+  const selected = selectedInvocationId.value === id || routeInvocation.value === id;
+  await deletedInvocations.remove(id, {
+    clearSelection() {
+      if (selected) {
+        selectedInvocationId.value = undefined;
+        closeDetails();
+      }
+    },
+    async navigate() {
+      if (selected && agentName) {
+        await router.replace({
+          name: resolveConsoleRouteName(route.name, "vitehub-console-agent"),
+          params: { agent: encodeAgentRouteParam(agentName) },
+        });
+      }
+    },
+    removeFromList() {
+      list.invocations.value = deletedInvocations.exclude(list.invocations.value);
+    },
+    refresh: () => list.refresh().catch(() => undefined),
+  });
+}
+
 async function startNewChat(): Promise<void> {
   const agentName = newChatTargetName.value;
   if (!agentName) return;
@@ -673,11 +700,15 @@ function updatePageVisibility(): void {
 }
 
 watch(
-  [routeInvocation, routeAgent, () => list.invocations.value[0], selectedAgentName, isUsageRoute],
+  [routeInvocation, routeAgent, () => list.invocations.value.find(invocation => !deletedInvocations.has(invocation.id)), selectedAgentName, isUsageRoute],
   async (
     [requestedInvocation, requestedAgent, firstInvocation, agentName, usageRoute],
     previous,
   ) => {
+    if (requestedInvocation && deletedInvocations.has(requestedInvocation)) {
+      selectedInvocationId.value = undefined;
+      return;
+    }
     if (usageRoute) {
       newChatAgentName.value = undefined;
       initialBootstrapPending.value = false;
@@ -835,7 +866,8 @@ watch(
 watch(
   selectedAgentName,
   () => {
-    void loadCapabilityIds();
+    // Filter values scan every Invocation of the Agent. Load them for the open menu or to validate an active filter.
+    if (filterOpen.value || selectedCapabilityId.value || selectedTriggeredBy.value) void loadCapabilityIds();
   },
   { immediate: true },
 );

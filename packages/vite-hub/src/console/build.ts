@@ -9,6 +9,9 @@ import type { ConsoleSectionId } from "./runtime/sections.ts"
 
 export type ConsoleAgentEntry = { handler: string; name: string }
 
+/** A Static Schedule Definition that sets `manual: true`. */
+export type ConsoleScheduleEntry = { handler: string; name: string }
+
 export interface ConsoleBuildCatalog {
   agents: readonly ConsoleAgentEntry[]
   /** Content of the `databases` section and of each enabled contributed section, keyed by section id. */

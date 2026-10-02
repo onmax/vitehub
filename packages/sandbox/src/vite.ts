@@ -202,7 +202,7 @@ export function hubSandbox(options?: SandboxPublicOptions): SandboxVitePlugin {
   const integrationOptions = internalOptions
     ? publicSandboxOptions(internalOptions)
     : internalOptions
-  const mergeSandboxNoExternal = createNoExternalMerger('@vite-hub/sandbox')
+  const mergeSandboxNoExternal = createNoExternalAddition('@vite-hub/sandbox')
   let generatedAliases: AliasMap = {}
   let generatedFiles: string[] = []
   let watchFiles: string[] = []
@@ -212,6 +212,7 @@ export function hubSandbox(options?: SandboxPublicOptions): SandboxVitePlugin {
   let rawConfig: Record<string, unknown> = {}
   let rawEnv: ConfigEnv = { command: 'serve', mode: 'development' }
   let resolvedConfig: ResolvedConfig | undefined
+  let sandboxEnabled = integrationOptions !== false
   let selectedProvider: SandboxHostingProvider | undefined
   let earlyNitroTarget: Record<string, unknown> | undefined
   let earlyNitroSnapshot: Record<string, unknown> | undefined
@@ -333,6 +334,7 @@ export function hubSandbox(options?: SandboxPublicOptions): SandboxVitePlugin {
       rawConfig = config as Record<string, unknown>
       rawEnv = env
       const prepared = await prepareCurrentSandboxRuntime(false)
+      sandboxEnabled = rawConfig.sandbox !== false && integrationOptions !== false
       generatedAliases = prepared.aliases
       generatedFiles = prepared.files
       watchFiles = prepared.watchFiles
@@ -370,6 +372,7 @@ export function hubSandbox(options?: SandboxPublicOptions): SandboxVitePlugin {
     async configResolved(config) {
       resolvedConfig = config
       const prepared = await refreshSandboxRuntime()
+      sandboxEnabled = rawConfig.sandbox !== false && integrationOptions !== false
       selectedProvider = prepared.provider
       const composed = await composeCloudflareSandbox(config, prepared, true)
       if (!composed && composedCloudflareEarly && earlyNitroTarget && earlyNitroSnapshot) {

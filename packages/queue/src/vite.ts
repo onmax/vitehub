@@ -1,7 +1,8 @@
+import { resolveViteHubBundleDefines } from "@vite-hub/internal/build/esbuild"
 import { randomUUID } from "node:crypto"
 
 import { getViteMode } from "@vite-hub/internal/build/mode"
-import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, contributeProviderDeploymentOutput, createDefaultCloudflareOutputRoot, createDefaultVercelOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
 import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
@@ -52,7 +53,7 @@ type QueueViteInternalOptions = {
 
 export { createCloudflareQueueConfig, type CloudflareQueueConfig, type CloudflareQueueConfigOptions } from "./internal/vite-build.ts"
 
-const mergeNoExternal = createNoExternalMerger(queuePackageName)
+const mergeNoExternal = createNoExternalAddition(queuePackageName)
 
 export async function createQueueNitroConfig(plugin: QueueVitePlugin, options: QueueNitroConfigOptions): Promise<Record<string, unknown>> {
   const createNitroConfig = plugin.vitehub?.queue?.createNitroConfig
@@ -180,7 +181,7 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
   let resolveNuxtDefinitions: (() => DiscoveredQueueDefinition[]) | undefined
   let nuxtServerQueueDirs: string[] = []
   let nuxtOwnsCloudflareWorker = false
-  let providerOutput: ProviderOutputCatalog | undefined
+  let resolvedProviderOutput: ProviderOutputCatalog | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   let validatesNitroDefinitions = false
   let serverDirs: string[] | undefined
@@ -239,20 +240,21 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
     },
     async configResolved(config) {
       resolved = config
-      queue = config.queue ?? queue
+      queue = config.queue ?? options
       const configuredNitro = (config as { nitro?: unknown }).nitro
       const configuredNitroConfig = cloneNitroConfig(configuredNitro)
       nitroOwnsCloudflareWorker = hasNitroConfigContext(config) && resolveNitroHosting(configuredNitroConfig) === "cloudflare" && supportsCloudflareQueues(configuredNitroConfig)
       configuredDefinitions = discoverQueueDefinitions({ rootDir: config.root })
       const nitro = mergeNitroConfig(config, configuredNitro, queue, config.root, configuredDefinitions)
       ;(config as { nitro?: unknown }).nitro = nitro
-      providerOutput = useProviderOutputCatalog(config)
+      resolvedProviderOutput = useProviderOutputCatalog(config)
       hosting = resolveQueueHosting(queue, nitro)
       cloudflareQueues = supportsCloudflareQueues(nitro)
       const nitroHosting = resolveNitroHosting(nitro)
       nitroQueue = queue !== false && queue?.provider && nitroHosting && queue.provider !== nitroHosting ? false : queue
       validatesNitroDefinitions = hasNitroConfigContext(config) && nitroQueue !== false
       localDevelopment = config.command === "serve"
+      buildOptions.set(resolvedProviderOutput, captureBuildOptions())
       await writeQueueNitroIntegration(config.root, nitroQueue, hosting, cloudflareQueues, configuredDefinitions, localDevelopment, internalOptions?.importBase)
     },
     configEnvironment(name, config) {
@@ -272,16 +274,25 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
       await writeQueueNitroIntegration(nuxtProjectRoot || resolved.root, nitroQueue, hosting, cloudflareQueues, resolveNuxtDefinitions?.(), localDevelopment, internalOptions?.importBase)
     },
     buildStart() {
+      const providerOutput = this?.environment ? useProviderOutputCatalog(this.environment.config) : resolvedProviderOutput
       providerOutputGenerations.capture(this, providerOutput)
     },
     async buildEnd(error) {
+      const config = this?.environment?.config ?? resolved
+      const providerOutput = this?.environment ? useProviderOutputCatalog(this.environment.config) : resolvedProviderOutput
       if (error) {
         await providerOutputGenerations.reset(this, providerOutput, error)
         return
       }
-      if (!resolved || shouldSkipViteProviderBuild(resolved.command, getViteMode())) {
+      if (!config || shouldSkipViteProviderBuild(config.command, getViteMode())) {
         return
       }
+      const {
+        queue, hosting, configuredDefinitions, nitroOwnsCloudflareWorker,
+        nuxtConfiguredDefinitions, nuxtProjectRoot, resolveNuxtDefinitions,
+        nuxtOwnsCloudflareWorker, validatesNitroDefinitions,
+      } = (this?.environment && providerOutput && buildOptions.get(providerOutput)) || captureBuildOptions()
+      const bundleDefines = resolveViteHubBundleDefines(config)
       let artifactDir: string | undefined
       try {
         let definitions: DiscoveredQueueDefinition[] | undefined
@@ -290,15 +301,14 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
         }
         else if (validatesNitroDefinitions) {
           definitions = resolveStableQueueDefinitions(
-            () => discoverQueueDefinitions({ rootDir: resolved!.root }),
+            () => discoverQueueDefinitions({ rootDir: config.root }),
             configuredDefinitions,
             "Nitro Cloudflare",
           )
         }
         else {
-          definitions = discoverQueueDefinitions({ rootDir: resolved.root })
+          definitions = discoverQueueDefinitions({ rootDir: config.root })
         }
-        const config = resolved
         const rootDir = nuxtProjectRoot || config.root
         artifactDir = resolve(rootDir, ".vitehub/queue-generations", randomUUID())
         const contributionArtifactDir = artifactDir
@@ -339,6 +349,7 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
             // SAFETY: The outer entries preserve provider keys and each inner entry preserves string alias targets.
             const typedRetainedRuntimeAliases = retainedRuntimeAliases as QueueProviderRuntimeInputs["aliases"]
             await generateProviderOutputs({
+              bundleDefines,
               artifactDir: resolve(contributionArtifactDir, "output"),
               clientOutDir: config.build.outDir,
               cloudflareOwnedByNitro: nitroOwnsCloudflareWorker || nuxtOwnsCloudflareWorker,
@@ -368,13 +379,16 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
       }
     },
     async renderError(error) {
+      const providerOutput = this?.environment ? useProviderOutputCatalog(this.environment.config) : resolvedProviderOutput
       await providerOutputGenerations.reset(this, providerOutput, error)
     },
     closeBundle: {
       order: "post",
       sequential: true,
       async handler() {
-        if (!resolved || shouldSkipViteProviderBuild(resolved.command, getViteMode())) return
+        const config = this?.environment?.config ?? resolved
+        const providerOutput = this?.environment ? useProviderOutputCatalog(this.environment.config) : resolvedProviderOutput
+        if (!config || shouldSkipViteProviderBuild(config.command, getViteMode())) return
         await finalizeProviderDeploymentOutputs(providerOutput)
       },
     },

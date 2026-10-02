@@ -56,9 +56,10 @@ describe("storage capabilities", () => {
   it("keeps Runtime Schedule primitives explicit outside hosted route contexts", async () => {
     const { schedule } = await import("../src/capabilities.ts")
 
-    await expect(resolveTools([schedule({ mode: "read" })], {})).rejects.toThrow(
-      'Capability "schedule" requires the schedule primitive to be configured.',
-    )
+    await expect(resolveTools([schedule({ mode: "read" })], {})).rejects.toMatchObject({
+      code: "AGENT_R0104",
+      message: expect.stringContaining('Capability "schedule" requires the schedule primitive to be configured.'),
+    })
   })
 
   it("exposes scoped Runtime Schedule read and edit tools", async () => {

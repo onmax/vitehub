@@ -1,0 +1,31 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "types": [
+      "node",
+      "vitest/globals"
+    ],
+    "baseUrl": "../..",
+    "paths": {
+      "#vitehub/connections/registry": [
+        "packages/connections/src/runtime/empty-registry.ts"
+      ],
+      "@vite-hub/internal/*": [
+        "packages/internal/src/*.ts"
+      ],
+      "@vite-hub/runtime": [
+        "packages/runtime/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "test/**/*.test-d.ts"
+  ],
+  "exclude": [
+    "dist",
+    "scripts"
+  ]
+}

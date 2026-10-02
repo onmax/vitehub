@@ -49,6 +49,8 @@ export type EnvSource =
     label: string
     name: string
     names?: string[]
+    /** Treat empty host values as missing when reading the ordered names. */
+    skipEmpty?: boolean
     serializable: true
   }
   | {
@@ -119,6 +121,18 @@ export interface EnvVariableOptions {
   type?: string
 }
 
+/** Options for `env.boolean()`, `env.number()`, and `env.enum()`. The helper owns the parser and type. */
+export interface EnvTypedVariableOptions<TValue> extends Omit<EnvVariableOptions, "default" | "schema" | "type"> {
+  default?: TValue
+}
+
+/** Serializable parser for one Server Env value. Host and provider values are strings before parsing. */
+export type EnvValueSchema =
+  | { kind: "boolean" }
+  | { kind: "enum", values: readonly string[] }
+  | { kind: "number" }
+  | { kind: "string" }
+
 export type EnvBuildStaticValue = null | string | number | boolean | EnvBuildStaticValue[]
 
 type EnvBuildConfigValue = EnvBuildConfigOptions | EnvBuildStaticValue | EnvVariableDeclaration
@@ -169,14 +183,9 @@ export interface ResolvedEnvEntry {
 interface EnvRegistryEntry {
   default?: unknown
   required: boolean
-  schema?: EnvRuntimeSchema
+  schema?: EnvValueSchema
   secret: boolean
   source: Extract<EnvSource, { kind: "env" | "provider" }>
-  type?: string
-}
-
-interface EnvRuntimeSchema {
-  kind: "string"
 }
 
 interface EnvRuntimeLiteralEntry {
@@ -230,8 +239,12 @@ export type DeepReadonly<T> = T extends SecretEnv<unknown>
 export type ServerEnvInspectionStatus = "available" | "defaulted" | "error" | "invalid" | "missing"
 
 export interface ServerEnvInspectionEntry {
+  /** The declaration is secret. Inspection never returns values. */
   masked: boolean
   path?: string
+  /** Provider alias for provider-backed declarations. */
+  provider?: string
+  required: boolean
   source: "env" | "literal" | "provider"
   status: ServerEnvInspectionStatus
 }
@@ -243,6 +256,8 @@ export interface ServerEnvDescriptionEntry {
   secret: boolean
   required: boolean
   hasDefault: boolean
+  /** TypeScript type of the parsed value, for example `boolean` or `"draft" | "send"`. Omitted for literals. */
+  type?: string
 }
 
 export interface ServerEnvDescription {

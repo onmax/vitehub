@@ -1,3 +1,12 @@
+import { isPlainObject } from "@vite-hub/internal/object"
+
+import {
+  discoverViteHubDevServer,
+  fetchViteHubDevEndpoint,
+  readViteHubDevTargetOption,
+  resolveViteHubDevServerUrl,
+} from "@vite-hub/internal/cli"
+
 import {
   discoverViteHubDevServer,
   fetchViteHubDevEndpoint,
@@ -51,11 +60,6 @@ interface WorkspaceDevCliOptions {
   fetch?: typeof fetch
 }
 
-interface WorkspaceDevDiscovery {
-  root?: unknown
-  workspaceDevTokenServerId?: unknown
-  workspaces?: Array<{ name?: unknown }>
-}
 
 interface WorkspaceDevTarget {
   tokenOptions: WorkspaceDevTokenOptions

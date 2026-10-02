@@ -1,3 +1,5 @@
+import { isPlainObject } from "./object.ts"
+
 import type { ProvisionStep } from "./provision.ts"
 
 export interface ViteHubCliStreams {

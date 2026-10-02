@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path"
 
-import { createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { createDefaultCloudflareOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { copyVercelFunctionRuntimePackages } from "@vite-hub/internal/build/vercel-runtime-packages"
 import { createNoExternalMerger, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
@@ -43,7 +43,7 @@ const RESOLVED_WORKSPACE_REGISTRY_ID = `\0${WORKSPACE_REGISTRY_ID}`
 const generatedNitroWorkspacePlugin = ".vitehub/nitro/workspace/plugin.ts"
 const generatedNitroWorkspaceRegistry = ".vitehub/nitro/workspace/registry.js"
 const cloudflareArtifactsBindingsFileName = ".vitehub-workspace-artifacts-bindings.json"
-const mergeNoExternal = createNoExternalMerger(WORKSPACE_PACKAGE_NAME)
+const noExternalAddition = createNoExternalAddition(WORKSPACE_PACKAGE_NAME)
 const workspacesDirSegment = /[\\/](?:server[\\/])?workspaces(?:[\\/]|$)/
 
 const sourceModuleExtensions = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs", ".tsx", ".jsx"]
@@ -1219,9 +1219,8 @@ type WorkspacePluginRoots = {
   viteRoot: string
 }
 
-function mergeDedupe(current: string[] | undefined): string[] {
-  if (!current) return [WORKSPACE_PACKAGE_NAME]
-  return current.includes(WORKSPACE_PACKAGE_NAME) ? current : [...current, WORKSPACE_PACKAGE_NAME]
+function dedupeAddition(current: string[] | undefined): string[] | undefined {
+  return current?.includes(WORKSPACE_PACKAGE_NAME) ? undefined : [WORKSPACE_PACKAGE_NAME]
 }
 
 function isWorkspaceFile(file: string) {
@@ -1666,7 +1665,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
   let resolved: ResolvedConfig | undefined
   let providerOutput: ReturnType<typeof useProviderOutputCatalog> | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
-  let resolvedOptions: ReturnType<typeof normalizeWorkspaceOptions> = false
+  let resolvedOptions: ReturnType<typeof normalizeWorkspaceOptions> | undefined
   let projectRoot: string | undefined
   let viteRoot: string | undefined
   let assetsRegistryFile: string | undefined
@@ -1729,7 +1728,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
       const viteConfig: ViteConfigWithWorkspaceNitro = {
         server: {
           watch: {
-            ignored: mergeGeneratedViteHubWatchIgnored(config.server?.watch?.ignored),
+            ignored: generatedViteHubWatchIgnoredAddition(config.server?.watch?.ignored),
           },
         },
       }
@@ -1749,8 +1748,8 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
         const nitro = mergeNitroWorkspaceConfig((config as ViteConfigWithWorkspaceNitro).nitro)
         for (const artifactConfig of artifacts) configureCloudflareArtifacts(nitro, artifactConfig)
         if (usesCloudflareRuntime) configureCloudflareNitroRuntime(nitro)
+        // Replace the Nitro config in place. A returned Nitro config would repeat its arrays when Vite merges it.
         ;(config as ViteConfigWithWorkspaceNitro).nitro = nitro
-        viteConfig.nitro = nitro
       }
       return viteConfig
     },
@@ -1785,14 +1784,14 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
       if (!isServerEnvironment(name, config)) return
       return {
         resolve: {
-          dedupe: mergeDedupe(config.resolve?.dedupe),
-          noExternal: mergeNoExternal(config.resolve?.noExternal),
+          dedupe: dedupeAddition(config.resolve?.dedupe),
+          noExternal: noExternalAddition(config.resolve?.noExternal),
         },
       }
     },
     async buildStart() {
       providerOutputGenerations.capture(this, providerOutput)
-      if (!resolved) return
+      if (!resolved || !resolvedOptions) return
       const roots = {
         projectRoot: projectRoot || resolveViteHubProjectRoot(resolved.root),
         viteRoot: viteRoot || resolve(resolved.root),
@@ -1808,7 +1807,8 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
         await providerOutputGenerations.reset(this, providerOutput, error)
         return
       }
-      if (!resolved || shouldSkipViteProviderBuild(resolved.command, getViteMode())) return
+      if (!resolved || !resolvedOptions || shouldSkipViteProviderBuild(resolved.command, getViteMode())) return
+      const workspaceOptions = resolvedOptions
       const roots = {
         projectRoot: projectRoot || resolveViteHubProjectRoot(resolved.root),
         viteRoot: viteRoot || resolve(resolved.root),
@@ -1826,7 +1826,7 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
           await writeCloudflareArtifactsProviderOutput(
             roots.projectRoot,
             resolved!.build?.outDir ?? "dist/client",
-            resolvedOptions,
+            workspaceOptions,
             definitions,
             readCloudflareState,
             write,

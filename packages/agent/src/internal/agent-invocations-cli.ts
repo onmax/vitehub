@@ -1,3 +1,7 @@
+import { existsSync } from "node:fs"
+import { resolve } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import { resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 import { discoverViteHubDevServer, fetchViteHubDevEndpoint, readViteHubDevTargetOption, resolveViteHubDevServerUrl } from "@vite-hub/internal/cli"
 import { agentInvocationsDevGuard, agentInvocationsDevRoute, agentInvocationsDevRuntimeUnavailableMessage } from "../invocations-dev.ts"
@@ -22,6 +26,14 @@ export interface AgentInvocationsCliOptions {
   timeout?: number
 }
 
+type Action = "delete" | "list" | "prune" | "show" | "tail"
+
+const actions = new Set<string>(["delete", "list", "prune", "show", "tail"] satisfies Action[])
+
+function isAction(value: string): value is Action {
+  return actions.has(value)
+}
+
 interface ParsedArgs {
   action?: "cancel" | "list" | "show" | "tail"
   help: boolean
@@ -29,6 +41,7 @@ interface ParsedArgs {
   interval: number
   json: boolean
   limit?: number
+  olderThanMs?: number
   status?: string
   timeout?: number
   url: string
@@ -56,6 +69,9 @@ const devTargetErrors = {
   invalidTimeout: (message: string) => agentDiagnostics.AGENT_R0503({ message }),
   missingValue: (message: string) => agentDiagnostics.AGENT_R0502({ message }),
 }
+
+const defaultPruneAgeMs = 30 * 24 * 60 * 60 * 1000
+const durationUnits: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000, ms: 1, s: 1_000, w: 604_800_000 }
 
 function usage(context: AgentInvocationsCliContext): void {
   context.stdout.write([
@@ -89,8 +105,34 @@ function positiveInteger(value: string, flag: string): number {
   return result
 }
 
+function duration(value: string, flag: string): number {
+  const match = /^(\d+)(ms|s|m|h|d|w)$/.exec(value.trim())
+  const result = match ? Number(match[1]) * durationUnits[match[2]!]! : Number.NaN
+  if (!Number.isSafeInteger(result)) throw agentDiagnostics.AGENT_R0930({ message: `${flag} requires a duration such as 90m, 12h, or 30d.` })
+  return result
+}
+
+function redactCliArgument(argument: string): string {
+  const separator = argument.startsWith("-") ? argument.indexOf("=") : -1
+  const prefix = separator === -1 ? "" : argument.slice(0, separator + 1)
+  const value = separator === -1 ? argument : argument.slice(separator + 1)
+  if (!/^[a-z][a-z\d+.-]*:/i.test(value)) return argument
+  try {
+    const url = new URL(value)
+    url.username = ""
+    url.password = ""
+    url.search = ""
+    url.hash = ""
+    return `${prefix}${url.href}`
+  }
+  catch {
+    return `${prefix}[redacted]`
+  }
+}
+
 function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
   const parsed: ParsedArgs = {
+    dryRun: false,
     help: false,
     interval: 1_000,
     json: false,
@@ -282,6 +324,138 @@ function writeRecord(context: AgentInvocationsCliContext, record: AgentInvocatio
       context.stdout.write(`  ${observation.sequence} ${observation.timestamp} ${observation.name}\n`)
     }
   }
+}
+
+interface JournalDatabase {
+  authToken?: string
+  /** Location without credentials, query, or fragment. Safe to print. */
+  label: string
+  path?: string
+  /** Credentials from the URL and environment. Removed from every printed error. */
+  secrets: string[]
+  url: string
+}
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  }
+  catch {
+    return value
+  }
+}
+
+function journalDatabase(parsed: ParsedArgs, context: AgentInvocationsCliContext): JournalDatabase {
+  const root = resolveViteHubProjectRoot(context.rootDir ?? process.cwd())
+  const explicit = parsed.database?.trim() || context.env.VITEHUB_AGENT_INVOCATIONS_DATABASE_URL?.trim()
+  const configured = explicit || context.env.VITEHUB_CONSOLE_DATABASE_URL?.trim()
+  const authToken = explicit
+    ? context.env.VITEHUB_AGENT_INVOCATIONS_DATABASE_AUTH_TOKEN
+    : context.env.VITEHUB_CONSOLE_DATABASE_AUTH_TOKEN
+  const token = authToken ? { authToken } : {}
+  const secrets = authToken ? [authToken] : []
+  const isWindowsPath = /^[a-z]:[\\/]/i.test(configured ?? "")
+  if (configured && !isWindowsPath && !/^file:/i.test(configured) && /^[a-z][a-z\d+.-]+:/i.test(configured)) {
+    let location: URL
+    try {
+      location = new URL(configured)
+    }
+    catch {
+      throw agentDiagnostics.AGENT_R0931({ message: "The Agent Invocation journal database URL is invalid." })
+    }
+    for (const value of [location.username, location.password]) {
+      if (value) secrets.push(value, safeDecode(value))
+    }
+    for (const value of location.searchParams.values()) {
+      if (value) secrets.push(value, encodeURIComponent(value))
+    }
+    return { ...token, label: `${location.protocol}//${location.host}${location.pathname === "/" ? "" : location.pathname}`, secrets, url: configured }
+  }
+  const target = configured || resolve(root, ".vitehub/data/console.sqlite")
+  const withoutFragment = target.split("#", 1)[0]!
+  const queryIndex = withoutFragment.indexOf("?")
+  const location = queryIndex === -1 ? withoutFragment : withoutFragment.slice(0, queryIndex)
+  const query = queryIndex === -1 ? "" : withoutFragment.slice(queryIndex)
+  const path = /^file:\//i.test(location)
+    ? fileURLToPath(location)
+    : resolve(root, /^file:/i.test(location) ? decodeURIComponent(location.slice(5)) : location)
+  for (const value of new URLSearchParams(query).values()) {
+    if (value) secrets.push(value)
+  }
+  return { ...token, label: path, path, secrets, url: `${pathToFileURL(path).href}${query}` }
+}
+
+async function withJournalStore<T>(parsed: ParsedArgs, context: AgentInvocationsCliContext, use: (store: AgentInvocationStore) => Promise<T>): Promise<T> {
+  const database = journalDatabase(parsed, context)
+  if (database.path !== undefined && !existsSync(database.path)) {
+    throw agentDiagnostics.AGENT_R0931({ message: `No Agent Invocation journal exists at ${database.label}. Pass --database with the journal URL.` })
+  }
+  const [{ createClient }, { createLibsqlAgentInvocationStore }] = await Promise.all([
+    import("@libsql/client"),
+    import("../invocations/sqlite.ts"),
+  ])
+  let client: ReturnType<typeof createClient>
+  try {
+    client = createClient({ ...(database.authToken ? { authToken: database.authToken } : {}), url: database.url })
+  }
+  catch (error) {
+    throw redactedJournalError(error, database)
+  }
+  try {
+    const table = `${parsed.tablePrefix ?? "vitehub_agent_"}invocations`
+    const store = createLibsqlAgentInvocationStore({ client, maxAgeMs: false, maxRecords: false, ...(parsed.tablePrefix === undefined ? {} : { tablePrefix: parsed.tablePrefix }) })
+    const existing = await client.execute({ args: [table], sql: "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?" })
+    if (!existing.rows.length) {
+      throw agentDiagnostics.AGENT_R0931({ message: `No Agent Invocation journal table ${table} exists in ${database.label}.` })
+    }
+    return await use(store)
+  }
+  catch (error) {
+    throw redactedJournalError(error, database)
+  }
+  finally {
+    client.close()
+  }
+}
+
+// Database clients can echo the connection URL or token. Print only the redacted location.
+function redactedJournalError(error: unknown, database: JournalDatabase): unknown {
+  if (!(error instanceof Error)) return error
+  let message = error.message.split(database.url).join(database.label)
+  for (const secret of database.secrets) message = message.split(secret).join("[redacted]")
+  if (message === error.message) return error
+  return agentDiagnostics.AGENT_R0931({ message })
+}
+
+async function deleteInvocation(parsed: ParsedArgs, context: AgentInvocationsCliContext, id: string): Promise<number> {
+  const outcome = await withJournalStore(parsed, context, async store => await store.delete!(id))
+  if (parsed.json) context.stdout.write(`${JSON.stringify({ id, outcome })}\n`)
+  else if (outcome === "deleted") context.stdout.write(`Deleted ${id}.\n`)
+  if (outcome === "deleted") return 0
+  if (!parsed.json) {
+    context.stderr.write(outcome === "not-found"
+      ? `Agent Invocation ${id} was not found.\n`
+      : `Agent Invocation ${id} is pending or running. Wait until it completes, fails, or is cancelled.\n`)
+  }
+  return 1
+}
+
+async function pruneInvocations(parsed: ParsedArgs, context: AgentInvocationsCliContext): Promise<number> {
+  const olderThanMs = parsed.olderThanMs ?? defaultPruneAgeMs
+  const cutoff = new Date(Date.now() - olderThanMs)
+  if (Number.isNaN(cutoff.getTime())) {
+    throw agentDiagnostics.AGENT_R0930({ message: "--older-than must produce a cutoff within JavaScript's Date range." })
+  }
+  const updatedBefore = cutoff.toISOString()
+  const result = await withJournalStore(parsed, context, async store => await store.prune!({ ...(parsed.dryRun ? { dryRun: true } : {}), updatedBefore }))
+  if (parsed.json) {
+    context.stdout.write(`${JSON.stringify({ dryRun: result.dryRun, ids: result.ids, olderThanMs, updatedBefore }, null, 2)}\n`)
+    return 0
+  }
+  for (const id of result.ids) context.stdout.write(`${id}\n`)
+  const count = `${result.ids.length} terminal Agent Invocation${result.ids.length === 1 ? "" : "s"}`
+  context.stdout.write(`${result.dryRun ? "Would delete" : "Deleted"} ${count} last updated before ${updatedBefore}.\n`)
+  return 0
 }
 
 function detailRecord(result: AgentInvocationDetailResult): AgentInvocationRecord {
