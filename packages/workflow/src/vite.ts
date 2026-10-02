@@ -6,7 +6,7 @@ import { getViteMode } from "@vite-hub/internal/build/mode"
 import { encodeProviderOutputAliases } from "@vite-hub/internal/build/esbuild"
 import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, getProviderRuntimeModule, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
-import { collectViteHubProviderImportAliases, createNoExternalAddition, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { collectViteHubProviderImportAliases, createNoExternalAddition, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_PROJECT_ROOT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { normalizeHosting } from "@vite-hub/internal/hosting"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
@@ -211,7 +211,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
         // SAFETY: Vite config permits the shared server-directory symbol added by ViteHub discovery.
         serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
         if (env.command !== "serve") return
-        const rootDir = resolve(config.root || process.cwd())
+        const rootDir = resolve(((config as typeof config & { [VITEHUB_PROJECT_ROOT]?: string })[VITEHUB_PROJECT_ROOT] ?? config.root) || process.cwd())
         const state = devGeneratedState()
         // SAFETY: Nitro extends Vite config with an opaque nitro value that the server kit validates.
         const kit = createNitroServerKit((config as { nitro?: unknown }).nitro)
@@ -266,7 +266,7 @@ export function hubWorkflow(options?: WorkflowModuleOptions, internalOptions: In
       // SAFETY: ViteHub attaches this symbol to its extended config; the intersection reflects that optional property.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       if (devRegistryRootDir) {
-        devRegistryRootDir = resolve(config.root)
+        devRegistryRootDir = resolve((config as typeof config & { [VITEHUB_PROJECT_ROOT]?: string })[VITEHUB_PROJECT_ROOT] ?? config.root)
         await writeDevRegistry(devRegistryRootDir)
       }
     },
