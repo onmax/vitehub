@@ -302,7 +302,7 @@ export function createGitHubPullRequests(
       collect("reviews", collected.reviews, node.reviews)
       collect("threads", collected.threads, node.reviewThreads)
       if (!more) break;
-    } while (true);
+    }
     for (const thread of collected.threads.values()) {
       while (thread.comments.pageInfo.hasNextPage) {
         const query =

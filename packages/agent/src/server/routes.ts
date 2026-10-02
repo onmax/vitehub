@@ -4081,7 +4081,7 @@ function attachmentPartFromAttachment(attachment: Attachment, index: number): At
           return resolved
         } catch (cause) {
           if (cause instanceof Error && cause.message.startsWith("[vitehub] Chat attachment fetchData()")) throw cause
-          throw agentDiagnostics.AGENT_R0817({ message: "[vitehub] Chat attachment fetchData() failed.", ...{ cause } })
+          throw agentDiagnostics.AGENT_R0817({ message: "[vitehub] Chat attachment fetchData() failed.", cause })
         }
       }
     : undefined
@@ -4558,7 +4558,7 @@ async function deleteManualDeliveryPlaceholder(placeholder: unknown): Promise<vo
     await (placeholder as { delete: () => Promise<unknown> }).delete()
     // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
   } catch (cause) {
-    throw agentDiagnostics.AGENT_R0819({ message: message, ...{ cause } })
+    throw agentDiagnostics.AGENT_R0819({ message: message, cause })
   }
 }
 
