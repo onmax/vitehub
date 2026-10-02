@@ -216,11 +216,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isKVDevListResult(value: unknown): value is KVDevListResult {
-  return isRecord(value) && Array.isArray(value.keys) && typeof value.limit === "number" && typeof value.prefix === "string" && typeof value.store === "string" && Array.isArray(value.stores)
+  return isRecord(value)
+    && Array.isArray(value.keys) && value.keys.every(key => typeof key === "string")
+    && typeof value.limit === "number" && Number.isSafeInteger(value.limit)
+    && typeof value.prefix === "string"
+    && typeof value.store === "string"
+    && Array.isArray(value.stores) && value.stores.every(store => typeof store === "string")
+    && (value.cursor === undefined || typeof value.cursor === "string")
 }
 
 function isKVDevGetResult(value: unknown): value is KVDevGetResult {
-  return isRecord(value) && typeof value.found === "boolean" && typeof value.key === "string" && typeof value.store === "string"
+  if (!isRecord(value) || typeof value.found !== "boolean" || typeof value.key !== "string" || typeof value.store !== "string") return false
+  if (!value.found) return true
+  if (!("value" in value)) return false
+  if (value.encoding !== undefined && value.encoding !== "base64") return false
+  if (value.encoding === "base64") {
+    if (typeof value.value !== "string" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.value)) return false
+  }
+  return true
+}
+
+function isKVDevResult(operation: KVDevOperation, value: unknown): boolean {
+  if (operation === "list") return isKVDevListResult(value)
+  if (operation === "get") return isKVDevGetResult(value)
+  return isRecord(value)
 }
 
 function formatValue(result: KVDevGetResult): string | Uint8Array {
@@ -230,11 +249,17 @@ function formatValue(result: KVDevGetResult): string | Uint8Array {
 }
 
 function writeResult(operation: KVDevOperation, result: unknown, context: KVCliContext): number {
-  if (!isRecord(result)) return 1
+  if (!isRecord(result)) {
+    context.stderr.write("The KV Dev response has an invalid shape.\n")
+    return 1
+  }
   // SAFETY: the KV dev handler of the same package version writes these shapes.
   switch (operation) {
     case "list": {
-      if (!isKVDevListResult(result)) return 1
+      if (!isKVDevListResult(result)) {
+        context.stderr.write("The KV Dev list response has an invalid shape.\n")
+        return 1
+      }
       const page = result
       // Some drivers scan a fixed number of entries per page, so a page can be empty while more keys exist.
       if (page.keys.length === 0 && page.cursor) context.stdout.write("No keys on this page.\n")
@@ -245,7 +270,10 @@ function writeResult(operation: KVDevOperation, result: unknown, context: KVCliC
       return 0
     }
     case "get": {
-      if (!isKVDevGetResult(result)) return 1
+      if (!isKVDevGetResult(result)) {
+        context.stderr.write("The KV Dev get response has an invalid shape.\n")
+        return 1
+      }
       const value = result
       if (!value.found) {
         context.stderr.write(`Key ${value.key} was not found in store ${value.store}.\n`)
@@ -369,6 +397,9 @@ async function runKVCommand(command: KVCommand, args: string[], context: KVCliCo
   if (!response.ok) return writeFailure(parsed, context, await readFailure(response))
   const result: unknown = await response.json().catch(() => undefined)
   if (!isRecord(result)) return writeFailure(parsed, context, { message: "The KV Dev response is not valid JSON." })
+  if (!isKVDevResult(command.name, result)) {
+    return writeFailure(parsed, context, { message: `The KV Dev ${command.name} response has an invalid shape.` })
+  }
   if (!parsed.json) return writeResult(command.name, result, context)
   context.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
   return exitCode(command.name, result)
