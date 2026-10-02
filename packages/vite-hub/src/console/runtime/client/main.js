@@ -19,6 +19,7 @@ import {
 } from "../console-route";
 import { consoleSectionRouteName, isConsoleSectionId } from "../sections";
 import App from "./app.vue";
+import { deferLucideIcons } from "./icons";
 import { createConsoleSectionLoader, loadConsoleNavigation, subscribeConsoleNavigation } from "./sections";
 
 const sectionsBase = "/api/_vitehub/console/sections";
