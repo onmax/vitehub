@@ -16,6 +16,7 @@ export type ChatFinishDeliveryCallback = (capture: ChatFinishDeliveryCapture) =>
 export interface ChatFinishDeliveryOptions {
   shouldSkip?: () => boolean
   continueOnError?: boolean
+  onError?: () => void
 }
 
 export interface ChatFinishDeliveryRegistrar {
@@ -104,6 +105,10 @@ const chatFinalReplyTexts = new WeakMap<AgentInvocationContextStore, string>()
 /** Remember the delivered final text of one Invocation so a finish hook reply with the same text is not posted twice. */
 export function setChatFinalReplyText(store: AgentInvocationContextStore, text: string): void {
   chatFinalReplyTexts.set(store, text)
+}
+
+export function clearChatFinalReplyText(store: AgentInvocationContextStore): void {
+  chatFinalReplyTexts.delete(store)
 }
 
 export function chatFinalReplyText(store: AgentInvocationContextStore): string | undefined {

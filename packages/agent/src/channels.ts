@@ -57,7 +57,7 @@ import type {
   PublishedAgentDeliveryArtifact,
 } from "./types.ts"
 import { defineMessageChannelInstructions } from "./internal/channels.ts"
-import { chatFinishDeliveryRegistrarKey, setMessageChannelDeferredReplyTrace } from "./internal/chat-finish-delivery.ts"
+import { chatFinalReplyIntent, chatFinalReplyText, chatFinishDeliveryRegistrarKey, clearChatFinalReplyText, setChatFinalReplyText, setMessageChannelDeferredReplyTrace } from "./internal/chat-finish-delivery.ts"
 import type { ChatFinishDeliveryRegistrar } from "./internal/chat-finish-delivery.ts"
 import { withAgentChannelSyncDefinition } from "./internal/channel-sync.ts"
 import { channelDeliveryHandlers } from "./internal/channel-delivery-handlers.ts"
@@ -2188,6 +2188,18 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     return
   }
   let body = messageChannelReplyBody(context)
+  // ViteHub posts the final text once. A finish hook reply with the same text is skipped.
+  const finalText = context.effect.intent === chatFinalReplyIntent ? undefined : chatFinalReplyText(context.context)
+  const payload = context.effect.payload
+  const textOnly = !artifacts.length && (!isRecord(payload) || (payload.attachments === undefined && payload.files === undefined))
+  if (!stream && textOnly && finalText !== undefined && body?.trim() === finalText) {
+    setMessageChannelDeliveredReplyBody(context, body)
+    setMessageChannelDeferredReplyTrace(context, (callback) => {
+      void callback({ content: finalText.slice(0, 16 * 1024), skipped: "Same text as the final reply.", truncated: finalText.length > 16 * 1024 }).catch(() => undefined)
+      return true
+    })
+    return
+  }
   if (stream) {
     for await (const chunk of stream) body = `${body || ""}${chunk}`
   }
@@ -2207,7 +2219,15 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     // SAFETY: Chat finish extensions are created by the route boundary, which also owns the optional delivery registrar.
     const registrar = chat as AgentChatFinishExtension & ChatFinishDeliveryRegistrar
     if (registrar[chatFinishDeliveryRegistrarKey]) {
-      setMessageChannelDeferredReplyTrace(context, callback => registrar[chatFinishDeliveryRegistrarKey]?.(message, callback) ?? false)
+      setMessageChannelDeferredReplyTrace(context, callback => registrar[chatFinishDeliveryRegistrarKey]?.(message, async (capture) => {
+        if (context.effect.intent === chatFinalReplyIntent && body && !capture.error && !capture.skipped) setChatFinalReplyText(context.context, body.trim())
+        else if (context.effect.intent === chatFinalReplyIntent && (capture.error || capture.skipped)) clearChatFinalReplyText(context.context)
+        await callback(capture)
+      }, {
+        continueOnError: context.effect.intent === chatFinalReplyIntent,
+        onError: context.effect.intent === chatFinalReplyIntent ? () => clearChatFinalReplyText(context.context) : undefined,
+        shouldSkip: () => !stream && context.effect.intent !== chatFinalReplyIntent && textOnly && body?.trim() === chatFinalReplyText(context.context),
+      }) ?? false)
     }
     return
   }
@@ -2216,7 +2236,14 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     ? await resolveEffectOption(context.channel.adapter as MaybeResolvable<Adapter, AgentChannelDeliveryEffectContext<TRuntimeConfig>>, context)
     : undefined
   if (adapter && context.run?.threadId) {
-    await adapter.postMessage(adapter.channelIdFromThreadId(context.run.threadId), message)
+    try {
+      await adapter.postMessage(adapter.channelIdFromThreadId(context.run.threadId), message)
+    }
+    catch (error) {
+      if (context.effect.intent === chatFinalReplyIntent) clearChatFinalReplyText(context.context)
+      throw error
+    }
+    if (context.effect.intent === chatFinalReplyIntent && body) setChatFinalReplyText(context.context, body.trim())
   }
 }
 

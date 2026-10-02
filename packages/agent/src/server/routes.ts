@@ -343,6 +343,7 @@ interface QueuedChatFinishMessage {
   message: AgentChatMessage
   shouldSkip?: () => boolean
   continueOnError?: boolean
+  onError?: () => void
 }
 
 type AgentChatQueuedFinishExtension = AgentChatFinishExtension & ChatFinishDeliveryRegistrar & {
@@ -4671,6 +4672,7 @@ function createChatFinishExtension(
       queued.callbacks.push(callback)
       queued.shouldSkip = options?.shouldSkip
       queued.continueOnError = options?.continueOnError
+      queued.onError = options?.onError
       return true
     },
     provider: chatRegistrationOrigin(registration),
@@ -4888,6 +4890,7 @@ async function flushChatFinishExtensionMessages(
     }
     catch (error) {
       capture.error = error instanceof Error ? error.message : String(error)
+      queued.onError?.()
       await settleChatFinishDeliveryCallbacks(callbacks, capture)
       // A failed automatic final reply must leave the queued finish-hook fallback deliverable.
       if (queued.continueOnError && index + 1 < messages.length && !abortSignal?.aborted) continue

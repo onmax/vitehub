@@ -6,6 +6,7 @@ import { getConsoleAgentDefinition } from "./agents.ts"
 import { consoleRequestJSON, consoleRequestURL, setConsoleResponseHeaders } from "./request.ts"
 
 import type { ConsoleRequestEvent } from "./request.ts"
+import type { AgentRuntimeContext } from "@vite-hub/agent"
 
 /** Items per request. The CLI continues with the returned cursor. */
 const maximumReplayItemsPerRequest = 100
@@ -56,11 +57,12 @@ export default async function channelReplayHandler(event: ConsoleRequestEvent): 
   const agentName = replayBody.agent
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The agent field is untyped request JSON until validated here.
   if (typeof agentName !== "string" || !agentName.trim()) return replayError("Channel replay requires an Agent name.", 400)
-  const { agent: name, ...replay } = replayBody
+  const name = agentName
+  const { agent: _, ...replay } = replayBody
   const agent = getConsoleAgentDefinition(name)
   if (!agent) return replayError("Channel replay is not available. Enable Console invocation for this Agent.", 404)
   const tasks = createRuntimeWaitUntilController({ forward: event.waitUntil })
-  const context = createExecutionContext({
+  const context = createExecutionContext<AgentRuntimeContext>({
     agentIdentity: { name },
     capabilities: { console },
     memo: memo(),
