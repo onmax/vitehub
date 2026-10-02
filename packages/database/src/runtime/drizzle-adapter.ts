@@ -175,6 +175,7 @@ export function createDrizzleSqliteAdapter<TSchema extends Record<string, unknow
   let d1HttpInstanceToken: string | undefined
   let d1HttpInstanceUrl: string | undefined
   let libsqlInstance: RuntimeDrizzleDatabase<TSchema> | undefined
+  let libsqlInstanceToken: string | undefined
   let libsqlInstanceUrl: string | undefined
 
   function getDb() {
@@ -221,18 +222,20 @@ export function createDrizzleSqliteAdapter<TSchema extends Record<string, unknow
       throw databaseErrorDiagnostics.DATABASE_R0014({ message: options.missingConnectionMessage(config) })
     }
 
-    if (libsqlInstance && libsqlInstanceUrl === url) {
+    const authToken = resolveConfigValue(config.connection?.authToken)
+    if (libsqlInstance && libsqlInstanceUrl === url && libsqlInstanceToken === authToken) {
       return libsqlInstance
     }
 
     libsqlInstance = options.libsql.drizzle({
       casing: config.drizzle.casing,
       client: options.libsql.createClient({
-        authToken: resolveConfigValue(config.connection?.authToken),
+        authToken,
         url: options.resolveLocalUrl ? options.resolveLocalUrl(url) : url,
       }),
       schema,
     }) as RuntimeDrizzleDatabase<TSchema>
+    libsqlInstanceToken = authToken
     libsqlInstanceUrl = url
 
     return libsqlInstance
