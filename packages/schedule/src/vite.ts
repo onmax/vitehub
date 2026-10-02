@@ -1,6 +1,7 @@
 import { writeScheduleTypes } from "./registry-types.ts"
 import { randomUUID } from "node:crypto"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, normalize } from "node:path"
 
 import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
@@ -48,7 +49,7 @@ const generatedNitroProviderRegistry = ".vitehub/nitro/schedule/provider-registr
 const generatedNitroRuntimeRegistry = ".vitehub/nitro/schedule/runtime-registry.js"
 const generatedNitroStaticRegistry = ".vitehub/nitro/schedule/static-registry.js"
 const generatedNitroCloudflareModule = "./.vitehub/nitro/schedule/module.mjs"
-const generatedNitroDevHandler = ".vitehub/nitro/schedule/dev-handler.ts"
+const generatedNitroDevHandlerDirectory = ".vitehub/nitro/schedule/dev-handlers"
 const mergeNoExternal = createNoExternalMerger(schedulePackageName)
 
 export interface ScheduleProcessRuntimeOptions {
@@ -218,10 +219,11 @@ function mergeNitroScheduleConfig(value: unknown, options: { crons: string[], mo
   return configured
 }
 
-async function addNitroScheduleDevHandler(value: unknown, root: string, importBase?: string): Promise<NitroConfig> {
-  const handler = resolve(root, generatedNitroDevHandler)
+async function addNitroScheduleDevHandler(value: unknown, roots: ReturnType<typeof resolveSchedulePluginRoots>, serverId: string, importBase?: string): Promise<NitroConfig> {
+  const handler = resolve(roots.projectRoot, generatedNitroDevHandlerDirectory, `${serverId}.ts`)
   await mkdir(dirname(handler), { recursive: true })
-  await writeFile(handler, renderViteHubNitroDevHandler({ export: "handleScheduleDevRequest", module: `${importBase ?? schedulePackageName}/runtime/console` }), "utf8")
+  const contents = renderViteHubNitroDevHandler({ context: { rootDir: roots.viteRoot, serverId }, export: "handleScheduleDevRequest", module: `${importBase ?? schedulePackageName}/runtime/dev` })
+  if (!existsSync(handler) || await readFile(handler, "utf8") !== contents) await writeFile(handler, contents, "utf8")
   const kit = createNitroServerKit(cloneNitroConfig(value))
   kit.addHandler({ handler, route: scheduleDevRuntimeRoute })
   return kit.config as NitroConfig
@@ -547,6 +549,8 @@ export async function createScheduleNitroConfig(options: ScheduleNitroConfigOpti
 
 export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVitePlugin {
   const internalOptions = options as InternalScheduleVitePluginOptions
+  const devServerId = globalThis.crypto.randomUUID()
+  let closeDevEndpoint: (() => Promise<void>) | undefined
   let resolved: ResolvedConfig | undefined
   let emitStandaloneProviderOutput = true
   let projectRoot: string | undefined
@@ -613,19 +617,22 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
         serverDirs,
       })
       if (env.command === "serve") {
-        ;(config as ViteConfigWithNitro).nitro = await addNitroScheduleDevHandler(nitro ?? (config as { nitro?: unknown }).nitro, roots.projectRoot, internalOptions.importBase)
+        ;(config as ViteConfigWithNitro).nitro = await addNitroScheduleDevHandler(nitro ?? (config as { nitro?: unknown }).nitro, roots, devServerId, internalOptions.importBase)
         return
       }
       if (!nitro) return null
       ;(config as ViteConfigWithNitro).nitro = nitro
     },
-    configureServer(server) {
-      registerScheduleDevEndpoint(server, {
+    async configureServer(server) {
+      closeDevEndpoint = await registerScheduleDevEndpoint(server, {
+        serverId: devServerId,
         nitroBaseURL: () => {
           const baseURL = (resolved as (ResolvedConfig & { nitro?: { baseURL?: unknown } }) | undefined)?.nitro?.baseURL
           return typeof baseURL === "string" ? baseURL : process.env.NITRO_APP_BASE_URL
         },
       })
+      const { registerScheduleDevRunEndpoint } = await import("./dev-run.ts")
+      registerScheduleDevRunEndpoint(server, { serverId: devServerId })
     },
     async configResolved(config) {
       resolved = config
@@ -770,6 +777,8 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
       order: "post",
       sequential: true,
       async handler() {
+        await closeDevEndpoint?.()
+        closeDevEndpoint = undefined
         if (!resolved || shouldSkipViteProviderBuild(resolved.command, getViteMode())) return
         await finalizeProviderDeploymentOutputs(providerOutput)
       },
