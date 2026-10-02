@@ -77,6 +77,17 @@ try {
 
 Binary file reads and writes, directory operations, recursive listing, removal, and command execution are required across runtimes. Long-running processes and exposed ports are explicit optional capabilities through `session.spawn` and `session.ports`. `close()` is idempotent, and every operation rejects after closure.
 
+A spawned `BoxProcess` can also expose `stdin` as a `WritableStream<Uint8Array>`. The `trusted-host` and `crabbox` runtimes forward it to the process. Close the writer to end the process input. Runtimes that cannot forward input leave `stdin` undefined:
+
+```ts
+const child = await session.spawn!("node", ["workspace/filter.mjs"]);
+const writer = child.stdin?.getWriter();
+if (!writer) throw new Error("This Box runtime does not forward process input.");
+await writer.write(new TextEncoder().encode("input\n"));
+await writer.close();
+console.log(await new Response(child.stdout).text(), await child.wait());
+```
+
 Hosted runtimes use tagged values from the same root API:
 
 ```ts
@@ -190,7 +201,7 @@ Crabbox requires either `cwd` or `checkout` and targets Linux/POSIX Static SSH h
 
 Commands must remain owned by their Box session. ViteHub adds the reserved `VITEHUB_BOX_SESSION` environment marker to commands and reclaims marked processes on the SSH target when the session closes, including children adopted by supervisors. Commands cannot override this marker through the `env` option. Supervisors that launch replacement processes must preserve it.
 
-Processes that discard the marker, such as children started with `env -i`, can escape cleanup and remain outside the v1 concurrency guarantee. A process that only references the Box directory is not owned by that Box. This cleanup does not add process isolation.
+The marker is read from each process's environment at launch. A process that starts with the marker remains owned by that Box, even if it later changes its environment. A process started without the marker is not owned by that Box, even if it references the Box directory. This cleanup does not add process isolation.
 
 ## Security boundary
 

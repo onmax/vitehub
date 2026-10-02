@@ -1,7 +1,8 @@
 import { describe, expectTypeOf, it } from "vitest"
 import type { LanguageModel } from "ai"
+import type { BoxRequirement } from "@vite-hub/box"
 
-import { defineAgent, defineAgentInvoker, defineCapability, defineFinishEffect, runAgent, runAgentInline, startAgentInvocation, type AgentActor, type AgentCallbackContext, type AgentCapabilityCliCommand, type AgentCapabilityCliResolver, type AgentCapabilityDefinition, type AgentChannelDeliveryEffectContext, type AgentChannelDeliveryEffectIntent, type AgentChannelDeliveryEffectKind, type AgentChannelDeliveryFinishEffect, type AgentChannelDeliveryFinishEffectContext, type AgentChannelDefinition, type AgentChannelDeliveryReplyPayload, type AgentChannelDeliveryReplyStream, type AgentChannelFactory, type AgentChannelInput, type AgentChannelInputs, type AgentDeliveryArtifact, type AgentDriverAdaptiveCapacityOptions, type AgentDriverCapacityOptions, type AgentDriverCapacityQueueOptions, type AgentErrorHookEvent, type AgentFinishEvent, type AgentFinishHookEvent, type AgentGatewayModel, type AgentHookObserverEvent, type AgentInvoker, type AgentMessageChannelSettings, type AgentMessageDeliveryKind, type AgentModelInput, type AgentModuleOptions, type AgentRunInput, type AgentRunResult, type AgentRuntimeConfig, type AgentRuntimeContext, type AgentTriggerInvokeResult, type AgentTriggerRunInvokeResult, type AgentUIMessageStreamProjection, type AgentUsageRecord, type ImagePart, type PublishedAgentDeliveryArtifact, type ResolvedAgentRuntimeContext } from "../src/index.ts"
+import { defineAgent, defineAgentInvoker, defineCapability, defineFinishEffect, runAgent, runAgentInline, startAgentInvocation, type AgentActor, type AgentCallbackContext, type AgentCapabilityCliCommand, type AgentCapabilityCliResolver, type AgentCapabilityDefinition, type AgentChannelDeliveryEffectContext, type AgentChannelDeliveryEffectIntent, type AgentChannelDeliveryEffectKind, type AgentChannelDeliveryFinishEffect, type AgentChannelDeliveryFinishEffectContext, type AgentChannelDefinition, type AgentChannelDeliveryReplyPayload, type AgentChannelDeliveryReplyInput, type AgentChannelDeliveryStatusInput, type AgentChannelMessage, type AgentChannelMessageContext, type AgentChannelDeliveryReplyStream, type AgentChannelFactory, type AgentChannelInput, type AgentChannelInputs, type AgentDeliveryArtifact, type AgentDriverAdaptiveCapacityOptions, type AgentDriverCapacityOptions, type AgentDriverCapacityQueueOptions, type AgentErrorHookEvent, type AgentFinishEvent, type AgentFinishHookEvent, type AgentGatewayModel, type AgentHookObserverEvent, type AgentInvoker, type AgentMessageChannelSettings, type AgentMessageDeliveryKind, type AgentModelInput, type AgentModuleOptions, type AgentRunInput, type AgentRunResult, type AgentRuntimeConfig, type AgentRuntimeContext, type AgentTriggerInvokeResult, type AgentTriggerRunInvokeResult, type AgentUIMessageStreamProjection, type AgentUsageRecord, type ImagePart, type PublishedAgentDeliveryArtifact, type ResolvedAgentRuntimeContext } from "../src/index.ts"
 import { createProcessAgentCapacity, type ProcessAgentCapacityOptions } from "../src/runtime/process.ts"
 import { access, chat, email, getTranscriptionResults, git, gmail, inputCommands, kv, mcp, modelsDevPricing, openapi, sandbox, schedule, skills, streamTranscription, transcribe, usage, webSearch, workspaceShell, type AgentUsagePricing, type EmailCapabilityOptions, type EmailCapabilityToolPolicy, type ModelsDevPricingOptions, type UsageOptions } from "../src/capabilities.ts"
 import { defineChannel, github, http, pullRequest, teams, telegram, webChat, type GitHubPullRequestCommand, type GitHubPullRequestFilter, type GitHubPullRequestFilterContext, type GitHubPullRequestRunContext } from "../src/channels.ts"
@@ -11,9 +12,10 @@ import { stdioMcpServer } from "../src/mcp/stdio.ts"
 import { streamAgentOutputToEvents, toAgentRunResult } from "../src/output.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations, defineAgentRunEvents, type AgentRunEventPublisher } from "../src/server.ts"
 import { registerWorkspaceAgent } from "../src/server/workspace.ts"
-import type { AgentInvocationSummary, AgentInvocationContextStore, AgentInvokerProfile, AgentOutputExtensionProvider, AgentPublicError, AgentToolDefinition, AgentToolSchema, StreamEvent } from "../src/index.ts"
-import type { AgentCapabilitiesInput, AgentDefinition, AgentInvocationContextValues } from "../src/types.ts"
+import type { AgentDefinition, AgentInvocationContextValues } from "../src/types.ts"
 import type { WorkspaceAgentDefinition } from "../src/workspace-agent.ts"
+import type { AgentInvocationSummary, AgentInvocationContextStore, AgentInvokerProfile, AgentOutputExtensionProvider, AgentPublicError, AgentToolDefinition, AgentToolSchema, StreamEvent } from "../src/index.ts"
+import type { AgentCapabilitiesInput } from "../src/types.ts"
 import type { MCPClient } from "@ai-sdk/mcp"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import githubExtension from "@github-tools/eve-extension"
@@ -263,6 +265,89 @@ describe("agent public types", () => {
         },
       },
     })
+  })
+
+  it("types event.message from the Agent's Channels", () => {
+    const mailSchema = {
+      "~standard": {
+        // SAFETY: This compile-time fixture intentionally supplies the exact asserted public contract.
+        validate: (input: unknown) => ({ value: input as { id: string } }),
+        vendor: "test",
+        // SAFETY: This compile-time fixture intentionally supplies the exact asserted public contract.
+        version: 1 as const,
+      },
+    } satisfies StandardSchemaV1<unknown, { id: string }>
+    const mail = defineChannel("mail", {
+      message: {
+        data: mailSchema,
+        methods: {
+          async label(context, input: { add: string[] }) {
+            expectTypeOf(context.message).toEqualTypeOf<{ id: string }>()
+            return { applied: input.add.length }
+          },
+          subject: {
+            read: true,
+            handler: context => `subject:${context.message.id}`,
+          },
+        },
+      },
+    })
+    expectTypeOf(mail.kind).toEqualTypeOf<"mail">()
+
+    defineAgent({
+      channels: { mail },
+      driver: { run: () => "ok" },
+      hooks: {
+        async "agent:finish"(event) {
+          expectTypeOf(event.reply).toBeFunction()
+          if (!event.message) return
+          expectTypeOf(event.message.channel).toEqualTypeOf<"mail">()
+          expectTypeOf(event.message.kind).toEqualTypeOf<"mail">()
+          expectTypeOf(event.message.data).toEqualTypeOf<{ id: string }>()
+          expectTypeOf(event.message.label).toEqualTypeOf<(input: { add: string[] }) => Promise<{ applied: number } | undefined>>()
+          expectTypeOf(event.message.subject).toEqualTypeOf<() => Promise<string>>()
+          // @ts-expect-error The mail Channel declares no reply method.
+          void event.message.reply
+          await event.message.label({ add: ["Receipts"] })
+        },
+        "agent:error"(event) {
+          expectTypeOf(event.message?.data).toEqualTypeOf<{ id: string } | undefined>()
+        },
+      },
+    })
+
+    defineAgent({
+      channels: { mail, support: telegram(), github: github() },
+      driver: { run: () => "ok" },
+      hooks: {
+        async "agent:finish"(event) {
+          if (event.message?.channel === "support") {
+            expectTypeOf(event.message.kind).toEqualTypeOf<"telegram">()
+            expectTypeOf(event.message.reply).toEqualTypeOf<((input: AgentChannelDeliveryReplyInput) => Promise<void>) | undefined>()
+          }
+          if (event.message?.channel === "github") {
+            expectTypeOf(event.message.status).toEqualTypeOf<((input: AgentChannelDeliveryStatusInput) => Promise<void>) | undefined>()
+          }
+          if (event.message?.channel === "mail") {
+            expectTypeOf(event.message.data).toEqualTypeOf<{ id: string }>()
+          }
+        },
+      },
+    })
+
+    defineAgent({
+      driver: { run: () => "ok" },
+      hooks: {
+        "agent:finish"(event) {
+          expectTypeOf(event.message).toEqualTypeOf<undefined>()
+        },
+      },
+    })
+
+    expectTypeOf<AgentFinishHookEvent["message"]>().toEqualTypeOf<AgentChannelMessage | undefined>()
+    expectTypeOf<AgentRunInput["dryRun"]>().toEqualTypeOf<boolean | undefined>()
+    // @ts-expect-error Message methods cannot use the handle's reserved names.
+    defineChannel("bad", { message: { methods: { data: () => undefined } } })
   })
 
   it("types static and per-invocation UI message stream projection", () => {
@@ -1218,7 +1303,7 @@ describe("agent public types", () => {
                 await context.message.react("eyes", { transient: true })
               },
               async "agent:finish"(context) {
-                if (context.error) await context.message.reply("failed")
+                if (context.error && context.message.reply) await context.message.reply("failed")
               },
             },
           },
@@ -2206,6 +2291,55 @@ describe("agent public types", () => {
       scenarios: [{ input: { prompt: "hello" }, name: "hello" }],
       // @ts-expect-error eval definitions do not expose test runner waitUntil plumbing
       waitUntil: () => {},
+    })
+  })
+
+  it("accepts a consumer-shaped Agent Box for a built-in provider Driver", () => {
+    interface PullRequestContext { head: { ref: string, repo?: { full_name: string }, sha: string }, number: number }
+    const pullRequestOf = (input: AgentRunInput) => {
+      // SAFETY: The fixture reads an application-owned invocation context value.
+      const value = input.context?.pullRequest as PullRequestContext | undefined
+      if (!value) throw new Error("missing pull request")
+      return value
+    }
+    const agent = defineAgent({
+      box: {
+        checkout: {
+          ref: ({ input }) => pullRequestOf(input).head.ref,
+          remote: async ({ input }) => `https://github.com/${pullRequestOf(input).head.repo?.full_name}.git`,
+          sha: ({ input }) => pullRequestOf(input).head.sha,
+        },
+        env: {
+          GIT_TERMINAL_PROMPT: "0",
+          GH_TOKEN: async ({ input }) => String(pullRequestOf(input).number),
+          PR_NUMBER: ({ input }) => String(pullRequestOf(input).number),
+        },
+        home: {
+          files: {
+            ".codex/auth.json": { contents: async () => new Uint8Array() },
+            "PULL_REQUEST.md": { contents: ({ input }) => `#${pullRequestOf(input).number}` },
+          },
+        },
+        requires: ["git", { args: ["auth", "status"], command: "gh" }, { args: ["-c", "true"], command: "sh", name: "setup", timeout: 60_000 }],
+        runtime: { kind: "crabbox", profile: "babysitter" },
+      },
+      driver: { instructions: "Review the pull request.", kind: "codex" },
+    })
+    expectTypeOf(agent.box?.requires).toEqualTypeOf<readonly BoxRequirement[] | undefined>()
+
+    defineAgent({
+      box: {
+        // @ts-expect-error Box callbacks receive the Agent invocation context, not arbitrary fields
+        cwd: ({ worktree }) => worktree,
+        runtime: "trusted-host",
+      },
+      driver: { kind: "claude-code" },
+    })
+
+    defineAgent({
+      // @ts-expect-error an Agent Box requires a runtime
+      box: { requires: ["git"] },
+      driver: { kind: "codex" },
     })
   })
 

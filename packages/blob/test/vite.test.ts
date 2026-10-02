@@ -9,6 +9,7 @@ import { promisify } from "node:util"
 import { build as bundle } from "esbuild"
 import { H3Event, toResponse } from "h3"
 import { describe, expect, it, vi } from "vitest"
+import { collectViteHubProviderOutputEntries } from "@vite-hub/internal/inspect"
 import { toSafeAppName } from "@vite-hub/internal/build/user-entry"
 import { VITEHUB_NITRO_CONFIG_CONTEXT, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 
@@ -29,6 +30,21 @@ async function runProviderOutputHooks(plugin: ReturnType<typeof hubBlob>) {
 }
 
 describe("hubBlob", () => {
+  it.each([undefined, "custom-output"])("omits standalone artifacts when Nitro owns Cloudflare output %s", async (outputDir) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-blob-inspection-output-"))
+    try {
+      const plugin = hubBlob({ driver: "cloudflare-r2", bucketName: "assets" }, { nitroOwned: true })
+      await (plugin.configResolved as (config: unknown) => Promise<void>)({
+        root, build: { outDir: "dist" }, command: "build",
+        nitro: { preset: "cloudflare_module", output: { dir: outputDir } },
+      })
+      expect(await collectViteHubProviderOutputEntries([plugin])).toEqual([])
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
   it.each([undefined, { authorize: false }, { authorize: true }])("only restarts authorized Blob serving for Auth discovery changes (%j)", async (serve) => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-blob-auth-watcher-"))
     try {

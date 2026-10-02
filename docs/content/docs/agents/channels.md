@@ -27,9 +27,189 @@ export default defineAgent({
 })
 ```
 
-Built-in helpers include `discord()`, `github()`, `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` from `vite-hub/agent/channels` for an application-owned Channel Kind. To send ordinary outbound messages without an Agent, use [`defineOutboundChannel()`](/docs/reference/channels) from `vite-hub/channels`.
+Built-in helpers include `discord()`, `github()`, [`gmail()`](/docs/agents/gmail), `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` for an application-owned Channel Kind.
 
 `webChat()` enables a generated AI SDK chat route by default. `http()` is a generic HTTP Channel and keeps its route disabled unless you pass `http({ route: true })`.
+
+## Act on the Channel message in hooks
+
+The Channel defines the connector. The Agent reacts in its hooks. `agent:finish` and `agent:error` hooks receive `event.message`, a handle for the Channel message that started the Invocation.
+
+Declare the handle's methods with `defineChannel(kind, { message })`. The Trigger returns JSON `message` data that identifies the provider message. Each method receives the Channel context first. `context.message` is the Trigger's data, validated by the `message.data` Standard Schema when you set one.
+
+```ts [server/agents/labeller.ts]
+import { defineAgent } from 'vite-hub/agent'
+import { defineChannel, defineChannelTrigger } from 'vite-hub/agent/channels'
+import * as v from 'valibot'
+import { applyLabels, readEmail } from '../lib/mailbox'
+
+const mailbox = defineChannel('mailbox', {
+  message: {
+    data: v.object({ id: v.string() }),
+    methods: {
+      label: (context, labels: string[]) => applyLabels(context.message.id, labels),
+      subject: {
+        read: true,
+        handler: async context => (await readEmail(context.message.id)).subject,
+      },
+    },
+  },
+  messages: false,
+  triggers: {
+    received: defineChannelTrigger({
+      input: v.object({ id: v.string(), subject: v.string() }),
+      invoke(context, email) {
+        return {
+          input: { prompt: `Choose one label for: ${email.subject}` },
+          message: { id: email.id },
+          run: { channelId: context.trigger.channelId, origin: 'mailbox', runId: `mailbox:${email.id}` },
+        }
+      },
+    }),
+  },
+})
+
+export default defineAgent({
+  channels: { mailbox },
+  driver: { model: 'openai/gpt-5.1-mini' },
+  hooks: {
+    async 'agent:finish'(event) {
+      if (event.message?.channel !== 'mailbox' || !event.text) return
+      await event.message.label([event.text.trim()])
+    },
+  },
+})
+```
+
+`event.message` has these properties:
+
+| Property | Value |
+| --- | --- |
+| `channel` | The Channel name in the Agent's `channels` map. |
+| `kind` | The Channel Kind, such as `'mailbox'` or `'telegram'`. |
+| `data` | The Trigger's `message` data, typed by `message.data`. |
+| Methods | One async function per method, without the context argument. |
+
+TypeScript infers the handle from the Agent's `channels`. With several Channels, `event.message` is a union that `event.message.channel` narrows. Invocations without a Channel have `event.message` set to `undefined`. The names `channel`, `data`, and `kind` are reserved.
+
+Built-in Channels add the methods that their provider adapter supports. `discord()`, `slack()`, `teams()`, and `telegram()` provide `reply()` when an adapter is configured and messages are enabled. `github()` provides `reply()`, `reaction()`, and `status()` when it has a GitHub App. `event.reply()` still returns a reply that ViteHub delivers after the hook. For a custom Channel, a `reply` method handles it.
+
+### Dry run
+
+Set `dryRun: true` in the Invocation input to run an Agent against real messages without changing them. A Trigger can set it in its returned `input`; a direct caller passes it to `runAgent()`.
+
+A method declared as a function is a write. In a dry run, ViteHub does not call write methods or built-in delivery, including the automatic reply. It records each call as a skipped delivery in the Invocation trace, and the call returns `undefined`. Methods declared as `{ read: true, handler }` still run.
+
+The Console shows the recorded call, such as `label(["Receipts"])`. The call text is Invocation content. A stored Invocation keeps it only with `content: 'content'` or when `metadataContent` lists `channel.effect.content`. The Console store lists it.
+
+## Replay Channel history
+
+Add `history` to a Channel to run an Agent on messages that arrived before the Agent existed, or to run them again after a change. `history.collection` is a [Collection](/docs/server-primitives/source#expose-a-typed-collection). Each item has the shape of the Channel trigger input, so a replayed message takes the same trigger path as a live one. `history.key` returns a stable key for each item, such as the provider message ID.
+
+```ts [server/agents/labeller.ts]
+import { defineAgent } from 'vite-hub/agent'
+import { defineChannel, defineChannelTrigger } from 'vite-hub/agent/channels'
+import { defineCollection } from 'vite-hub/source'
+import * as v from 'valibot'
+import { applyLabels, listEmails } from '../lib/mailbox'
+
+const email = v.object({ id: v.string(), subject: v.string() })
+
+// Keep history Collections out of server/collections. That directory is a public read model.
+const inbox = defineCollection(async ({ cursor, limit, query }) => {
+  return await listEmails({ after: cursor, folder: query.folder, limit })
+}, {
+  cursor: message => message.id,
+  cursorSchema: v.string(),
+  querySchema: v.object({ folder: v.optional(v.picklist(['archive', 'inbox']), 'inbox') }),
+})
+
+const mailbox = defineChannel('mailbox', {
+  history: { collection: inbox, key: message => message.id },
+  message: {
+    data: v.object({ id: v.string() }),
+    methods: {
+      label: (context, labels: string[]) => applyLabels(context.message.id, labels),
+    },
+  },
+  messages: false,
+  triggers: {
+    received: defineChannelTrigger({
+      input: email,
+      invoke: (context, message) => ({
+        input: { prompt: `Choose one label for: ${message.subject}` },
+        message: { id: message.id },
+      }),
+    }),
+  },
+})
+
+export default defineAgent({
+  channels: { mailbox },
+  driver: { model: 'openai/gpt-5.1-mini' },
+  hooks: {
+    async 'agent:finish'(event) {
+      if (event.message?.channel === 'mailbox' && event.text) await event.message.label([event.text.trim()])
+    },
+  },
+})
+```
+
+Set `history.trigger` when the Channel has more than one trigger. Replay the history from the terminal with [`vitehub channels replay`](/docs/development/cli#replay-channel-history):
+
+```sh
+pnpm vitehub channels replay --agent labeller --channel mailbox --folder archive --dry-run
+```
+
+Or call `replayChannel()` from trusted server code:
+
+```ts [server/api/backfill.post.ts]
+import { replayChannel } from 'vite-hub/agent/server'
+import { getRuntimeContext } from 'vite-hub/runtime/h3'
+import labeller from '../agents/labeller'
+
+export default defineEventHandler(async (event) => {
+  await requireAdmin(event)
+  const { cursor } = await readBody<{ cursor?: string }>(event)
+  return await replayChannel(labeller, 'mailbox', {
+    cursor,
+    limit: 50,
+    query: { folder: 'inbox' },
+    runtime: getRuntimeContext(event),
+  })
+})
+```
+
+`replayChannel()` validates `query` with the Collection's query schema, then reads pages until it reaches `limit` or the end of the history. It returns `processed`, `skipped`, and `failed` counts, one entry per item, and `nextCursor`. Pass `nextCursor` as `cursor` to continue. It is `null` when no history remains.
+
+An unconfirmed pending Invocation held by another claim reports a retryable failure. Workflow dispatch records its attempt before calling the provider. If recovery cannot observe that run, the Invocation stays pending and reports a retryable failure; a later replay checks the provider again. A provider status of `unknown` does not prove that an attempted dispatch was rejected. A reservation that records no dispatch attempt can be recovered after its claim expires. Older journals without this marker remain pending while provider status is unknown. Use `force` only when you intend to start a separate Invocation with a fresh ID. Running Invocations and confirmed Workflow dispatches are skipped. Replay also checks journals created with the earlier `channel-replay:<channel>:<key>` IDs before starting a new Invocation.
+
+Each item gets the Invocation run ID `channel:<channel>:<key>`; percent signs and colons in each component are escaped. Replay skips terminal Invocations and confirmed Workflow dispatches. An active claim prevents concurrent execution of the same item. Inline runs remain recoverable until their terminal status is stored; after process loss, a retry can claim the item when the lease expires. A live message that a trigger [dispatches](#start-several-invocations-from-one-webhook) with the same key has the same ID. This needs an Invocation journal: configure `invocations` or enable the [Console](/docs/development/console). Pass `force: true` to replay handled items again; each forced item gets a new ID. Pass `dryRun: true` to [record Channel message writes](#dry-run) instead of sending them. Dry runs use `channel-dry-run:` IDs, so they never block a later live replay.
+
+An inline Agent runs each item before it reads the next one and reports it as `completed`. An Agent with a [Workflow runtime](/docs/agents/invocations) starts one durable Workflow run per item and reports it as `started`. A trigger error, such as invalid item input, marks that item `failed`, and replay continues.
+
+[`gmail()`](/docs/agents/gmail#replay-past-mail) provides `history` from a Gmail search. The other built-in Channels do not. The Telegram Bot API cannot read past messages. Slack, Discord, Teams, and GitHub history are not built in; define a custom Channel with a history Collection when you need them.
+
+### Start several Invocations from one webhook
+
+Some providers send one webhook for several messages. A Channel trigger can answer the webhook itself and call `context.dispatch(items, { trigger })` to start one Invocation per item through another trigger of the same Channel. Each item has an `input` for that trigger and a `key`. Dispatched items get the same Invocation IDs as a replay, so an item that already has an Invocation is skipped.
+
+On a webhook delivery, `context.channelState` gives the trigger the Channel's State Adapter. Store provider cursors under `context.channelState.keyPrefix`.
+
+```ts
+triggers: {
+  push: defineChannelTrigger({
+    async invoke(context, input: { messageIds: string[] }) {
+      const messages = await readMessages(input.messageIds)
+      context.waitUntil(context.dispatch(messages.map(message => ({ input: message, key: message.id })), { trigger: 'received' }))
+      return new Response(null, { status: 204 })
+    },
+  }),
+  received: defineChannelTrigger({ input: email, invoke: (context, message) => ({ input: { prompt: message.subject }, message: { id: message.id } }), webhooks: [] }),
+},
+```
+
+Set `webhooks: []` on the trigger that only receives dispatched items, so the Channel's webhook route does not reach it.
 
 ## Publish Agent activity without opening a chat
 
@@ -113,40 +293,7 @@ Reconciled deliveries use `pullRequest.reconcile.concurrencyLimit` concurrent in
 
 Set `pullRequest.workspace.mount` to the repository path inside the Workspace. Omitting `workspace` mounts at `portal`. Both `workspace: true` and `workspace: {}` mount at the Workspace root. Set `workspace: false` to disable the pull request Workspace contribution.
 
-When a declared GitHub Source uses the same repository, root, include, and ignore at the same non-root mount, the pull request checkout replaces it for that Invocation. Reads use the pull request head SHA; the declared Source remains unchanged for other Invocations. A different repository or scope at the same mount fails the Invocation with an error that names the Source. Overlapping parent or child mounts and Sources contributed by other Capabilities also produce a conflict.
-
-For provider Drivers such as Codex and Claude Code, the mount is a real Git checkout of the exact head SHA before the Driver starts. `origin` points to the base repository, the base branch is fetched as `origin/<base>`, and a local branch named after the head branch tracks it. The Driver's own shell can run `git fetch`, `git commit`, and `git push` with the Agent GitHub identity. No token is written to the repository configuration. Checkout setup rejects a head branch without an explicit head repository, including pull requests from deleted forks.
-
-### Share one GitHub identity
-
-Pass a GitHub identity, such as `createGitHubHost()`, as `app`. The Channel uses it for API calls, and the Agent uses it as `defineAgent({ github })` when that option is not set. Provider Drivers receive its `access().env`: `GH_TOKEN`, `GITHUB_TOKEN`, a Git credential helper, and the commit author and committer. The pull request checkout and `git()` use the same credentials.
-
-```ts [server/agents/reviewer.ts]
-import { defineAgent } from 'vite-hub/agent'
-import { github } from 'vite-hub/agent/channels'
-import { createGitHubHost } from 'vite-hub/agent/server/github'
-
-const githubApp = createGitHubHost({
-  identity: { login: 'reviewer[bot]', email: '123+reviewer[bot]@users.noreply.github.com' },
-  credentials: () => ({
-    owner: 'acme',
-    appId: process.env.GITHUB_APP_ID,
-    installationId: process.env.GITHUB_APP_INSTALLATION_ID,
-    privateKey: process.env.GITHUB_APP_PRIVATE_KEY,
-  }),
-})
-
-export default defineAgent({
-  github: githubApp,
-  channels: {
-    github: github({ app: githubApp, pullRequest: { workspace: { mount: 'storefront' } } }),
-  },
-  driver: { kind: 'codex', permissions: 'allow-all' },
-  workspace: { mode: 'write' },
-})
-```
-
-`driver.env` values override keys from the GitHub identity. Without a GitHub identity, the checkout fetches without credentials, which works only for public repositories.
+When a declared GitHub Source uses the same repository and the same non-root mount, the pull request checkout replaces it for that Invocation. Reads use the pull request head SHA; the declared Source remains unchanged for other Invocations. Different repositories, overlapping parent or child mounts, and Sources contributed by other Capabilities still produce a conflict.
 
 ## Connect a web chat
 
@@ -257,6 +404,12 @@ export default defineAgent({
 
 Install the matching `@chat-adapter/*` package when a built-in Channel uses provider adapter options. Keep provider credentials in Server Env.
 
+### Channel Env
+
+Built-in Channels read credentials from Server Env under `env.server.<channel>`. ViteHub discovers built-in Channel factories in Agent definitions and declares their fields automatically, so applications usually need no separate Env declaration. Explicit Channel options take precedence over Env values. Declare a field yourself when the host variable name or provider differs from the default.
+
+Use [Server Env](/docs/server-primitives/env) to inspect the discovered fields and their required or secret status. When a Channel is defined outside a discovered Agent file, declare its Env fields explicitly.
+
 For Telegram, ViteHub can own the verified webhook route and synchronize it after deployment:
 
 ```ts [server/agents/support.ts]
@@ -304,11 +457,9 @@ export default defineAgent({
 
 Set `messages.commentary: 'message'` only when the Driver emits explicit commentary phases for public progress. Commentary is hidden by default; ViteHub never publishes reasoning as progress.
 
-ViteHub posts the Agent's final text by default. An `agent:finish` hook may add more replies with `event.reply()`. After successful final delivery, ViteHub skips a non-streaming, text-only hook reply whose trimmed text is the same as the final text. Streamed hook replies and replies with artifacts, attachments, or files still post. ViteHub does not buffer a hook reply stream to compare its text. If automatic final delivery fails, the hook reply remains available as a fallback. Use `messages.delivery: 'manual'` when finish hooks own all replies; ViteHub then posts no final text.
+Use `messages.delivery: 'manual'` when finish hooks own replies. A generated Workflow may carry manual delivery across a durable boundary when the Channel and host support it. An explicit `messages.timeout` bounds inline execution and the durable handoff's typing indicator, but it does not cap the durable Agent Workflow. `steer` queues overlapping messages and preserves that Workflow handoff. Other overlap policies such as `serial`, `drop`, `queue`, and `reject` remain inline and cannot be combined with required durable delivery.
 
-With `messages.loading` or manual delivery, a generated Workflow may carry the reply across a durable boundary when the Channel and host support it. An explicit `messages.timeout` bounds inline execution and the durable handoff's typing indicator, but it does not cap the durable Agent Workflow. `steer` queues overlapping messages and preserves that Workflow handoff. Other overlap policies such as `serial`, `drop`, `queue`, and `reject` remain inline and cannot be combined with required durable delivery.
-
-For a progress message that is edited while the Agent works, configure `messages.loading`. Its required `text` accepts a string, rotating string array, callback, or `null`; `intervalMs` controls the minimum update interval. Set `updates: 'commentary'` to project explicit commentary text into that message. The loading message holds the reply until the Agent finishes, so it cannot be combined with `messages.stream` or `messages.commentary`. Then ViteHub replaces the loading message with the final text: it deletes the loading message and posts the reply, or edits the loading message when it cannot delete it. Set `messages.final.delivery: 'new-message'` to post the final text first and then remove the loading message. Finish hook replies follow the final text. With `messages.delivery: 'manual'`, the first hook reply takes the place of the loading message.
+For a progress message that is edited while the Agent works, configure `messages.loading`. Its required `text` accepts a string, rotating string array, callback, or `null`; `intervalMs` controls the minimum update interval. Set `updates: 'commentary'` to project explicit commentary text into that message. `messages.loading` selects manual delivery, so it cannot be combined with `messages.stream` or `messages.commentary`. Set `messages.final.delivery: 'new-message'` to post the final answer separately and then remove the loading placeholder.
 
 ```ts
 messages: {
@@ -378,3 +529,17 @@ Provider-backed Drivers materialize inline data and application-owned `fetchData
 | User-authored command parsing | Input Commands Capability |
 | Prior conversational messages | Chat History and sessions |
 | Product event to Agent input | Trigger |
+
+## Channels and Invocations
+
+A Channel and an Agent Invocation are separate records. One Agent Definition can run behind several Channels because of this split.
+
+| | Channel | Agent Invocation |
+| --- | --- | --- |
+| Describes | Message origin and delivery | Actor, Capabilities, execution, and result |
+| Lifetime | Can contain many messages and Invocations | One request |
+| Can exist alone | Yes. A Channel can receive a message without starting an Agent. | Yes. A route or schedule can start an Invocation without a Channel. |
+
+Use verified Channel metadata to identify the Agent Actor, choose a Capability, or select a Workspace Scope. When a message reaches the wrong Agent, carries the wrong identity, or loses delivery data, inspect the Channel and the [Invocation](/docs/agents/invocations) together.
+
+To send an application message without an Agent, use the [Channels Server Primitive](/docs/server-primitives/channels).

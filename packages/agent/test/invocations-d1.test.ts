@@ -168,6 +168,22 @@ describe("D1 Agent Invocation store", () => {
     expect(await journal.claim("missing", "new", 30_000)).toBe(false)
   })
 
+  it("rotates only expected claim generations and ignores stale releases", async () => {
+    const journal = store()
+    await journal.create(invocation("one"))
+    expect(await journal.claim("one", "first", 30_000)).toBe(true)
+    expect(await journal.claim("one", "second", 30_000, { expectedClaimIds: ["first"] })).toBe(true)
+    const token = await journal.getClaimToken("one")
+    await journal.release("one", "first")
+    expect(await journal.getClaimToken("one")).toBe(token)
+    expect(await journal.claim("one", "late-first", 30_000, { expectedClaimIds: ["first"] })).toBe(false)
+    await database.prepare(`UPDATE ${tablePrefix}invocations SET claim_expires_at = 0 WHERE id = ?`).bind("one").all()
+    expect(await journal.claim("one", "foreign", 30_000, { expectedClaimIds: ["foreign"] })).toBe(false)
+    expect(await journal.claim("one", "third", 30_000, { expectedClaimIds: ["second"] })).toBe(true)
+    await journal.release("one", "third")
+    expect(await journal.claim("one", "unclaimed", 30_000, { expectedClaimIds: [] })).toBe(true)
+  })
+
   it("takes over expired leases and supports explicit forced takeover", async () => {
     const journal = store()
     await journal.create(invocation("one"))
@@ -184,6 +200,18 @@ describe("D1 Agent Invocation store", () => {
     const result = await store().get("one")
     expect(result?.observations.map(event => event.sequence)).toEqual(Array.from({ length: 4 }, (_, id) => id))
     expect(result?.capabilityIds).toEqual(["search"])
+  })
+
+  it("persists claimed run metadata in D1 and fences a stale metadata writer", async () => {
+    const journal = store()
+    await journal.create(invocation("metadata", { channelId: "host-channel", origin: "dev", threadId: "host-thread" }))
+    expect(await journal.claim("metadata", "owner", 30000)).toBe(true)
+    const metadata = { workflow: { name: "native", provider: "vercel", id: "physical-id" }, annotations: { trigger: "history" }, channelId: "mailbox", origin: "history-trigger", threadId: "message-thread", timestamp }
+    expect(await journal.update("metadata", metadata, "stale-owner")).toBeUndefined()
+    expect(await journal.getSummary("metadata")).toMatchObject({ channelId: "host-channel", origin: "dev", threadId: "host-thread" })
+    expect((await journal.getSummary("metadata"))?.workflow).toBeUndefined()
+    expect(await journal.update("metadata", metadata, "owner")).toMatchObject({ workflow: metadata.workflow, annotations: metadata.annotations, channelId: metadata.channelId, origin: metadata.origin, threadId: metadata.threadId })
+    expect(await journal.getSummary("metadata")).toMatchObject({ workflow: metadata.workflow, annotations: metadata.annotations, channelId: metadata.channelId, origin: metadata.origin, threadId: metadata.threadId })
   })
 
   it("fences an update when ownership changes between its read and write", async () => {
@@ -400,10 +428,35 @@ describe("D1 Agent Invocation store", () => {
     expect(saved?.observations).toEqual([accepted])
   }, 20_000)
 
+  it("deletes terminal records and prunes by cutoff or configured retention", async () => {
+    const day = 24 * 60 * 60 * 1000
+    const ago = (milliseconds: number) => new Date(Date.now() - milliseconds).toISOString()
+    const unbounded = store({ maxAgeMs: false, maxRecords: false })
+    await unbounded.create(invocation("old-completed", { status: "completed", updatedAt: ago(40 * day) }))
+    await unbounded.create(invocation("old-failed", { status: "failed", updatedAt: ago(35 * day) }))
+    await unbounded.create(invocation("old-running", { status: "running", updatedAt: ago(40 * day) }))
+    await unbounded.create(invocation("recent", { status: "cancelled", updatedAt: ago(day) }))
+    const invocations = defineAgentInvocations({ store: unbounded })
+
+    await expect(invocations.delete("old-running")).resolves.toBe("not-terminal")
+    await expect(invocations.delete("missing")).resolves.toBe("not-found")
+    expect(await invocations.prune({ dryRun: true, olderThanMs: 36 * day })).toEqual({ dryRun: true, ids: ["old-completed"] })
+    expect(await invocations.prune({ olderThanMs: 36 * day })).toEqual({ dryRun: false, ids: ["old-completed"] })
+    await expect(invocations.prune()).resolves.toEqual({ dryRun: false, ids: [] })
+    expect(await defineAgentInvocations({ store: store({ maxAgeMs: 30 * day, maxRecords: false }) }).prune()).toEqual({ dryRun: false, ids: ["old-failed"] })
+    await expect(invocations.delete("recent")).resolves.toBe("deleted")
+    expect((await invocations.list()).invocations.map(record => record.id)).toEqual(["old-running"])
+  })
+
   it("validates table identifiers, retention, paging and leases", async () => {
     expect(() => d1AgentInvocationSchema({ tablePrefix: "unsafe;" })).toThrow(/identifier/)
     expect(() => store({ maxRecords: 0 })).toThrow(/retention/)
     expect(() => store({ maxAgeMs: Infinity })).toThrow(/retention/)
+    for (const limit of ["maxAgeMs", "maxRecords"] as const) {
+      const options: Partial<D1AgentInvocationStoreOptions> = {}
+      Reflect.set(options, limit, null)
+      expect(() => store(options)).toThrow(/retention/)
+    }
     await expect(store().list({ cursor: "01" })).rejects.toThrow(/cursor/)
     await expect(store().list({ limit: 0 })).rejects.toThrow(/limit/)
     await expect(store().list({ search: "x".repeat(257) })).rejects.toThrow(/search/)

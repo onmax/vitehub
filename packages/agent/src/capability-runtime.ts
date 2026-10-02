@@ -1,8 +1,10 @@
+import { copyAgentInvocationCallerAbortSignal } from "./internal/invocation-input.ts"
 import { supportsSkillPersistence } from "./internal/skill-persistence.ts"
 import { markCapabilityInspection } from "./internal/capability-inspection.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
+import { hostObservability, isHostObservabilityCapability } from "./internal/observability-host.ts"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
-import { resolveRuntimeValue } from "@vite-hub/runtime"
+import { resolveRuntimeValue, ViteHubError } from "@vite-hub/runtime"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 
 import { applyWorkspaceAccessWrapper, hasTrustedWorkspaceAccessScope, hasTrustedWorkspaceSourceResolutionDefinition, isTrustedSourceFreeInspection, workspaceOverrideSymbol } from "./access-runtime.ts"
@@ -75,6 +77,8 @@ type ResolvedAgentOutputRenderer = ((result: unknown, extensions?: AgentOutputEx
   providerCount: number
 }
 export const workspacePersistencePathsSymbol: unique symbol = Symbol("vitehub.agent.workspacePersistencePaths")
+/** Paths previously owned by a capability that should be retired during persistence migration. */
+export const workspaceRetirementPathsSymbol: unique symbol = Symbol("vitehub.agent.workspaceRetirementPaths")
 export const workspaceMaterializationPathsSymbol: unique symbol = Symbol("vitehub.agent.workspaceMaterializationPaths")
 export const capabilityInvocationStartSymbol: unique symbol = Symbol("vitehub.agent.capabilityInvocationStart")
 const trustedGitHubPullRequestWorkspaceCapabilities = new WeakSet<object>()
@@ -82,15 +86,18 @@ export function trustGitHubPullRequestWorkspaceCapability<T extends object>(capa
   trustedGitHubPullRequestWorkspaceCapabilities.add(capability)
   return capability
 }
+export const capabilityFinishDeliveryEffectSymbol: unique symbol = Symbol("vitehub.agent.capabilityFinishDeliveryEffect")
 export const eagerFinishExtensionSymbol: unique symbol = Symbol("vitehub.agent.eagerFinishExtension")
 type InternalAgentCapabilityDefinition<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
   Name extends WorkspaceName = WorkspaceName,
 > = AgentCapabilityDefinition<TRuntimeConfig, Name> & {
   [capabilityInvocationStartSymbol]?: (context: AgentCapabilityRuntimeContext<TRuntimeConfig, Name>) => MaybePromise<void>
+  [capabilityFinishDeliveryEffectSymbol]?: AgentChannelDeliveryFinishEffect
   [eagerFinishExtensionSymbol]?: boolean
   [workspaceMaterializationPathsSymbol]?: readonly string[]
   [workspacePersistencePathsSymbol]?: readonly string[]
+  [workspaceRetirementPathsSymbol]?: readonly string[]
 }
 type ExactOptions<TInput, TShape> = TInput & Record<Exclude<keyof TInput, keyof TShape>, never>
 type AgentCapabilityDefinitionInput<
@@ -122,7 +129,6 @@ const defaultCapabilityRuntimePhases = ["configure", "prepare", "bind", "input",
 export const channelDeliveryEffectsContextKey = "channel.delivery.effects"
 export const channelDeliveryFinishEffectsContextKey = "channel.delivery.finishEffects"
 type AgentCapabilityRuntimePhase = typeof defaultCapabilityRuntimePhases[number]
-export const optionalWorkspaceCapabilitySymbol: unique symbol = Symbol("vitehub.agent.optionalWorkspaceCapability")
 
 export interface ResolvedAgentFinishExtensionProvider {
   eager?: boolean
@@ -282,9 +288,8 @@ export function normalizeMode(value: unknown, label: string): AgentCapabilityMod
 }
 
 export function normalizeCapabilities(
-  capabilities: AgentStaticCapabilitiesList | undefined,
+  capabilities: AgentStaticCapabilitiesList | undefined = [],
 ): AgentCapabilityDefinition[] {
-  if (capabilities === undefined) return []
   if (!Array.isArray(capabilities)) {
     throw agentDiagnostics.AGENT_C0008()
   }
@@ -292,13 +297,16 @@ export function normalizeCapabilities(
   if (capabilities.some(capability => (capability as Record<symbol, unknown>)?.[Symbol.for("eve.mounted-extension")] === true)) {
     throw agentDiagnostics.AGENT_B0001()
   }
+  // Remove host-injected copies retained by definitions from an earlier host.
+  const observability = hostObservability()?.capability
   // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-  const explicit = capabilities.map(capability => defineCapability(capability as AgentCapabilityDefinition))
+  const explicit = capabilities.filter(capability => !isHostObservabilityCapability(capability as AgentCapabilityDefinition)).map(capability => defineCapability(capability as AgentCapabilityDefinition))
   const explicitById = new Map<string, AgentCapabilityDefinition>()
   for (const capability of explicit) {
     if (explicitById.has(capability.id)) {
       throw agentDiagnostics.AGENT_C0009({ id: capability.id })
     }
+    if (observability && capability.id === observability.id) throw agentDiagnostics.AGENT_C0009({ id: capability.id })
     explicitById.set(capability.id, capability)
   }
 
@@ -317,6 +325,10 @@ export function normalizeCapabilities(
   }
 
   for (const capability of explicit) add(capability)
+  if (observability) {
+    if (seen.has(observability.id)) throw agentDiagnostics.AGENT_C0009({ id: observability.id })
+    add(observability)
+  }
   return normalized
 }
 
@@ -367,10 +379,6 @@ function validateSandboxCommands(commands: unknown): void {
 
 function capabilityRequiresWorkspace(capability: AgentCapabilityDefinition): boolean {
   const metadata = capability.metadata
-  const optionalWorkspace = hasRuntimeType(metadata, "object")
-    && metadata !== null
-    // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
-    && (metadata as { [optionalWorkspaceCapabilitySymbol]?: unknown })[optionalWorkspaceCapabilitySymbol] === true
   const accessWorkspace = capability.id === "access"
     && hasRuntimeType(metadata, "object")
     && metadata !== null
@@ -379,7 +387,7 @@ function capabilityRequiresWorkspace(capability: AgentCapabilityDefinition): boo
   const sandboxCommands = capability.id === "sandbox"
     // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
     && Array.isArray((metadata as { commands?: unknown } | undefined)?.commands)
-  return capability.workspace && !optionalWorkspace
+  return Boolean(capability.workspace)
     || capability.id === "workspace-shell"
     || sandboxCommands
     || accessWorkspace
@@ -444,13 +452,13 @@ function getRunMessages(input: AgentRunInput): Message[] {
 function normalizeRunInput(input: AgentRunInput): AgentRunInput {
   if (input.messages || Array.isArray(input.prompt) || input.message === undefined) return input
   const { message: _message, ...next } = input
-  return { ...next, messages: getRunMessages(input) }
+  return copyAgentInvocationCallerAbortSignal(input, { ...next, messages: getRunMessages(input) })
 }
 
 function withMessages(input: AgentRunInput, messages: Message[]): AgentRunInput {
-  if (input.messages) return { ...input, messages }
-  if (Array.isArray(input.prompt)) return { ...input, prompt: messages }
-  return { ...input, messages }
+  if (input.messages) return copyAgentInvocationCallerAbortSignal(input, { ...input, messages })
+  if (Array.isArray(input.prompt)) return copyAgentInvocationCallerAbortSignal(input, { ...input, prompt: messages })
+  return copyAgentInvocationCallerAbortSignal(input, { ...input, messages })
 }
 
 async function callHooks<
@@ -947,6 +955,7 @@ async function applyCapabilityWorkspaceContributions<
     workspaceDefinition: WorkspaceDefinition
     workspaceMaterializationPaths?: readonly string[]
     workspacePersistencePaths?: readonly { capabilityId: string, path: string }[]
+    workspaceRetirementPaths?: readonly { capabilityId: string, path: string }[]
     persistWorkspaceContributions: boolean
   },
   workspaceMode: AgentCapabilityMode,
@@ -959,7 +968,8 @@ async function applyCapabilityWorkspaceContributions<
   const workspaceRuntime = await import("@vite-hub/workspace/runtime")
 
   for (const capability of capabilities) {
-    if (!capability.workspace) continue
+    // SAFETY: Capability registration exposes the private retirement-path registry symbol.
+    if (!capability.workspace && !((capability as InternalAgentCapabilityDefinition)[workspaceRetirementPathsSymbol]?.length)) continue
     // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
     await validateCapabilityRuntimeRequirement(capability as AgentCapabilityDefinition, context.workspace, workspaceMode)
     const resolved = hasRuntimeType(capability.workspace, "function")
@@ -967,7 +977,7 @@ async function applyCapabilityWorkspaceContributions<
           ...context,
           mode: capability.mode,
         })
-      : capability.workspace
+      : capability.workspace || {}
     if (!resolved) continue
 
     if (trustedGitHubPullRequestWorkspaceCapabilities.has(capability) && resolved.sources?.vitehubGitHubPullRequest) {
@@ -1016,7 +1026,7 @@ async function applyCapabilityWorkspaceContributions<
 
   let selectedWorkspaceScope = mergeSelectedWorkspaceScopePaths(selectedWorkspaceScopeFromContext(context.context), context.workspaceMaterializationPaths || [])
   assertSelectedWorkspaceSourceGrants(selectedWorkspaceScope, [definition, declaredWorkspaceDefinition])
-  if (!registries.length) return
+  if (!registries.length && !context.workspaceRetirementPaths?.length) return
   assertStaticWorkspaceContributionSourcesInScope(registries, definition, selectedWorkspaceScope, workspaceRuntime)
   if (isTrustedSourceFreeInspection(context.context)) {
     return { definition, registries, workspace: context.workspace }
@@ -1055,13 +1065,22 @@ async function applyCapabilityWorkspaceContributions<
     capabilities?(): Promise<{ conditionalWrites: boolean }>
     fs: ReadonlyWorkspaceFacade<Name>["fs"] & {
       writeFile(path: string, content: string | Uint8Array, options?: { ifDigest?: string | null, mediaType?: string, metadata?: Record<string, unknown> }): Promise<string>
+      rm(path: string, options?: { force?: boolean, recursive?: boolean, ifDigest?: string | null }): Promise<void>
     }
   }
-  if (context.persistWorkspaceContributions && persistencePaths.length && await supportsSkillPersistence(retainedWorkspace)) {
-    await Promise.all(persistencePaths.map(({ path }) => sourceResolution.workspace.fs.materializeSources?.({ path })))
+  const retirementPaths = context.workspaceRetirementPaths || []
+  const conditionalWorkspacePersistence = Boolean(context.persistWorkspaceContributions
+    && (persistencePaths.length || retirementPaths.length)
+    && await supportsSkillPersistence(retainedWorkspace))
+  // Retirement must use the same conditional-write capability as persistence.
+  // A read-then-unconditional-delete fallback can remove a concurrent replacement.
+  const canRetireWorkspaceContributions = conditionalWorkspacePersistence
+    && retirementPaths.length > 0
+  if (conditionalWorkspacePersistence || canRetireWorkspaceContributions) {
+    if (conditionalWorkspacePersistence) await Promise.all(persistencePaths.map(({ path }) => sourceResolution.workspace.fs.materializeSources?.({ path })))
     const pending: Array<{ capabilityId: string, path: string, ifDigest: string | null }> = []
     const desired = new Map<string, { content: string | Uint8Array, digest: string }>()
-    for (const item of persistencePaths) {
+    for (const item of conditionalWorkspacePersistence ? persistencePaths : []) {
       if (!await sourceResolution.workspace.fs.exists(item.path)) continue
       const content = await sourceResolution.workspace.fs.readFile(item.path, { encoding: "binary" })
       const digest = await capabilityContributionDigest(content)
@@ -1112,6 +1131,29 @@ async function applyCapabilityWorkspaceContributions<
             || !isRuntimeRecord(afterMetadata) || afterMetadata.capabilityId !== capabilityId
             || afterMetadata.digest !== digest) throw error
         }
+      }
+    }
+    // Remove files owned by an older version of a capability. Ownership metadata
+    // and the recorded digest protect user-edited files from migration cleanup.
+    for (const { capabilityId, path } of retirementPaths) {
+      // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+      if (!await retainedWorkspace.fs.exists(path as never)) continue
+      // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+      const stat = await retainedWorkspace.fs.stat(path as never)
+      const metadata = stat.metadata?.capabilityWorkspaceContribution
+      if (!isRuntimeRecord(metadata) || metadata.capabilityId !== capabilityId || metadata.path !== path || !hasRuntimeType(metadata.digest, "string")) continue
+      // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+      const current = await retainedWorkspace.fs.readFile(path as never, { encoding: "binary" })
+      if (await capabilityContributionDigest(current) !== metadata.digest) continue
+      try {
+        const removeOptions: { force: true, ifDigest?: string | null } = { force: true }
+        if (conditionalWorkspacePersistence) removeOptions.ifDigest = stat.digest
+        // SAFETY: Retirement paths are normalized workspace asset paths from capability resolution.
+        await retainedWorkspace.fs.rm(path as never, removeOptions)
+      }
+      catch (error) {
+        // A concurrent edit or invocation won the conditional removal.
+        if (Reflect.get(Object(error), "code") !== "WORKSPACE_CONFLICT") throw error
       }
     }
   }
@@ -1196,8 +1238,16 @@ export async function resolveAgentCapabilities<
           .map(path => ({ capabilityId: capability.id, path })),
       )
     : []
+  const workspaceRetirementPaths = driverKind === "provider"
+    ? capabilities.flatMap(capability =>
+        // SAFETY: Capability registration exposes the private retirement-path registry symbol.
+        ((capability as InternalAgentCapabilityDefinition)[workspaceRetirementPathsSymbol] || [])
+          .map(path => ({ capabilityId: capability.id, path })),
+      )
+    : []
   let currentInput = normalizeRunInput(input)
   // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+  // SAFETY: The workspace is the facade created for this invocation's declared workspace name.
   let currentWorkspace = workspace as ReadonlyWorkspaceFacade<Name> | undefined
   let currentWorkspaceDefinition = invocationOptions.workspaceDefinition
   const inputMessages = getRunMessages(currentInput)
@@ -1214,7 +1264,14 @@ export async function resolveAgentCapabilities<
   const initialFinishDeliveryEffectProviders = invocationContext.get(channelDeliveryFinishEffectsContextKey) || []
   const registries: AgentCapabilityRegistries = {
     deliveryEffectIntents: [...initialDeliveryEffectIntents],
-    finishDeliveryEffectProviders: [...initialFinishDeliveryEffectProviders],
+    finishDeliveryEffectProviders: [
+      ...initialFinishDeliveryEffectProviders,
+      ...capabilities.flatMap(capability => {
+        // SAFETY: Internal Capabilities register completion requirements before input handling can return a Response.
+        const effect = (capability as InternalAgentCapabilityDefinition<TRuntimeConfig, Name>)[capabilityFinishDeliveryEffectSymbol]
+        return effect ? [effect] : []
+      }),
+    ],
     finishExtensionProviders: [],
     finalOutputRenderers: [],
     modelExecutionInstrumentation: [],
@@ -1239,6 +1296,16 @@ export async function resolveAgentCapabilities<
       kind,
       ...(uniqueNames.length ? { names: uniqueNames } : {}),
     })
+  }
+
+  function addCapabilityTools(value: AgentToolSet, capabilityId: string) {
+    for (const name of Object.keys(value)) {
+      if (tools && Object.hasOwn(tools, name) && (tools[name].metadata?.vitehubChannelDelivery === true || value[name]?.metadata?.vitehubChannelDelivery === true)) {
+        throw new ViteHubError("CHANNEL_DELIVERY_TOOL_CONFLICT", `[vitehub] Channel delivery tool "${name}" conflicts with an existing Capability tool.`, { details: { tool: name } })
+      }
+    }
+    recordDriverContribution("Capability tools", capabilityId, Object.keys(value))
+    tools = { ...tools, ...value }
   }
 
   function addFinishExtensionProvider(capabilityId: string, value: unknown | AgentFinishExtensionProvider, eager?: boolean) {
@@ -1302,6 +1369,7 @@ export async function resolveAgentCapabilities<
       workspaceDefinition: currentWorkspaceDefinition,
       workspaceMaterializationPaths,
       workspacePersistencePaths,
+      workspaceRetirementPaths,
       // Inspection needs retained ownership for conflict validation, but must
       // never publish generated contributions to the underlying workspace.
       persistWorkspaceContributions: !inspection
@@ -1484,8 +1552,7 @@ export async function resolveAgentCapabilities<
           tools: {
             add(value) {
               if (!value) return
-              recordDriverContribution("Capability tools", capability.id, Object.keys(value))
-              tools = { ...tools, ...value }
+              addCapabilityTools(value, capability.id)
             },
             transform(transform) {
               toolTransforms.push(transform)
@@ -1587,8 +1654,7 @@ export async function resolveAgentCapabilities<
           if (tools?.[cli.name]) {
             throw agentDiagnostics.AGENT_R0338({ message: `[vitehub] Capability CLI "${cli.name}" conflicts with an existing Agent tool.` })
           }
-          recordDriverContribution("Capability tools", capability.id, Object.keys(resolved))
-          tools = { ...tools, ...resolved }
+          addCapabilityTools(resolved, capability.id)
         }
       }
       if (invocationOptions.resolveTools !== false && capability.tools) {
@@ -1600,8 +1666,7 @@ export async function resolveAgentCapabilities<
               throw agentDiagnostics.AGENT_R0339({ message: `[vitehub] Capability tool "${name}" conflicts with an existing Capability CLI.` })
             }
           }
-          recordDriverContribution("Capability tools", capability.id, Object.keys(resolved))
-          tools = { ...tools, ...resolved }
+          addCapabilityTools(resolved, capability.id)
         }
       }
     }
