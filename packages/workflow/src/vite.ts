@@ -25,7 +25,7 @@ import type { Plugin, ResolvedConfig } from "vite"
 import { workflowErrorDiagnostics } from "./error-diagnostics.ts"
 
 export { discoverWorkflowDefinitions } from "./discovery.ts"
-export { inspectWorkflowDefinitions, type WorkflowInspectionOptions } from "./inspect.ts"
+export { inspectWorkflowDefinitions, type WorkflowInspectionOptions, workflowConsoleSection } from "./inspect.ts"
 
 interface WorkflowNitroConfigOptions {
   nitro: Record<string, unknown>

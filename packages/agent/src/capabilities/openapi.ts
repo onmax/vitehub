@@ -1,5 +1,8 @@
 import { executeHttpRequest } from "@vite-hub/internal/http-request"
+import { getViteHubErrorShape } from "@vite-hub/runtime"
+import * as v from "valibot"
 import { defineCapability } from "../capability-runtime.ts"
+import { connectionNameSchema, useAgentConnection } from "./connection.ts"
 import { defineInternalTool } from "./internal.ts"
 
 import type {
@@ -12,6 +15,7 @@ import type {
   AgentToolSet,
   MaybePromise,
 } from "../types.ts"
+import type { AgentConnection } from "./connection.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
@@ -154,6 +158,11 @@ export interface OpenAPICapabilityOptions<
   Name extends WorkspaceName = WorkspaceName,
 > {
   cli?: OpenAPIContextValue<false | OpenAPICliOptions | undefined, TRuntimeConfig, Name>
+  /**
+   * Name of a Connection in `server/connections/`. The Connection adds its credentials to each request,
+   * checks access for `openapi.<operationId>`, and records each call as Connection activity.
+   */
+  connection?: string
   description?: string
   hooks?: OpenAPIHooks<TRuntimeConfig, Name>
   maxResponseBytes?: number
@@ -174,6 +183,8 @@ export function openapi<
   Name extends WorkspaceName = WorkspaceName,
 >(options: OpenAPICapabilityOptions<TRuntimeConfig, Name>): AgentCapabilityDefinition<TRuntimeConfig, Name> {
   assertOpenAPIOptions(options)
+  // The schema trims the name, so lookup and metadata use the parsed value.
+  const connectionName = options.connection === undefined ? undefined : v.parse(connectionNameSchema, options.connection)
   let operations: Promise<{ baseUrl: URL, tools: OpenAPIOperationTool[] }> | undefined
   const dynamicOperations = typeof options.spec === "function" || typeof options.server === "function"
   const loadOperations = (context: AgentCapabilityContext<TRuntimeConfig, Name>) => {
@@ -187,9 +198,14 @@ export function openapi<
     return pending
   }
 
+  const connection = (context: AgentCapabilityContext<TRuntimeConfig, Name>) => connectionName
+    ? useAgentConnection(context, connectionName, "openapi")
+    : undefined
+
   return defineCapability({
     id: "openapi",
     metadata: {
+      ...(connectionName ? { connection: connectionName } : {}),
       operations: [...options.operations],
       spec: dynamicOperations
         ? "dynamic"
@@ -200,17 +216,20 @@ export function openapi<
           const cli = await resolveContextValue(options.cli, context)
           if (!cli) return undefined
           const resolved = await loadOperations(context)
-          return createOpenAPICli(cli, resolved.tools, resolved.baseUrl, options, context)
+          return createOpenAPICli(cli, resolved.tools, resolved.baseUrl, options, context, connection(context))
         }
       : undefined,
     async tools(context) {
       if (options.cli) return undefined
       const resolved = await loadOperations(context)
+      const bound = connection(context)
+      // SAFETY: Each entry is an AgentTool built by createOpenAPITool, keyed by its unique operationId.
       return Object.fromEntries(resolved.tools.map(operation => [
         operation.operationId,
-        createOpenAPITool(operation, resolved.baseUrl, options, context),
+        createOpenAPITool(operation, resolved.baseUrl, options, context, bound),
       ])) as AgentToolSet
     },
+    ...(connectionName ? { requires: [{ primitive: "connections" }] } : {}),
   })
 }
 
@@ -219,6 +238,9 @@ function assertOpenAPIOptions(options: OpenAPICapabilityOptions): void {
   if (!options.spec) throw agentDiagnostics.AGENT_R0127({ message: "[vitehub] openapi({ spec }) requires an OpenAPI document URL or object." })
   if (!Array.isArray(options.operations) || !options.operations.length) {
     throw agentDiagnostics.AGENT_R0128({ message: "[vitehub] openapi({ operations }) requires at least one allowed operationId." })
+  }
+  if (options.connection !== undefined && !v.is(connectionNameSchema, options.connection)) {
+    throw agentDiagnostics.AGENT_R0126({ message: "[vitehub] openapi({ connection }) must be a Connection name." })
   }
 }
 
@@ -349,14 +371,18 @@ function createOpenAPITool<
   baseUrl: URL,
   options: OpenAPICapabilityOptions<TRuntimeConfig, Name>,
   context: AgentCapabilityContext<TRuntimeConfig, Name>,
+  connection: AgentConnection | undefined,
 ): AgentToolDefinition {
+  const connectionOperation = openAPIConnectionOperation(operation)
   return defineInternalTool({
     description: [options.description, operation.description].filter(Boolean).join(" "),
     async execute(input, execution) {
-      return executeOpenAPIOperation(operation, baseUrl, options, context, input, execution?.abortSignal)
+      const approved = connection?.approval(input).has(connectionOperation.id) === true
+      return executeOpenAPIOperation(operation, baseUrl, options, context, input, execution?.abortSignal, connection, approved)
     },
     inputSchema: operationInputSchema(operation, openAPIRequestProvidedInput(options)),
     metadata: {
+      ...(connection ? { connection: { name: connection.name, operation: connectionOperation.id } } : {}),
       openapi: {
         method: operation.method,
         operationId: operation.operationId,
@@ -364,7 +390,15 @@ function createOpenAPITool<
       },
     },
     name: operation.operationId,
+    ...(connection ? { policy: connection.policy(operation.operationId, [connectionOperation]) } : {}),
   })
+}
+
+function openAPIConnectionOperation(operation: OpenAPIOperationTool): { effect: "read" | "write", id: string } {
+  return {
+    effect: operation.method === "GET" || operation.method === "HEAD" ? "read" : "write",
+    id: `openapi.${operation.operationId}`,
+  }
 }
 
 function createOpenAPICli<
@@ -376,6 +410,7 @@ function createOpenAPICli<
   baseUrl: URL,
   options: OpenAPICapabilityOptions<TRuntimeConfig, Name>,
   context: AgentCapabilityContext<TRuntimeConfig, Name>,
+  connection: AgentConnection | undefined,
 ): AgentCapabilityCliContribution<TRuntimeConfig, Name> {
   const commands: AgentCapabilityCliContribution<TRuntimeConfig, Name>["commands"] = {}
   for (const operation of operations) {
@@ -390,7 +425,7 @@ function createOpenAPICli<
       examples: [`${cli.name} ${name}${outputFormat === "json" ? " --json" : ""}`],
       input: openAPICliInputSchema(operation, openAPIRequestProvidedInput(options)),
       output: { format: outputFormat },
-      run: ({ input }) => executeOpenAPIOperation(operation, baseUrl, options, context, input),
+      run: ({ input }) => executeOpenAPIOperation(operation, baseUrl, options, context, input, undefined, connection),
     }
   }
   return {
@@ -436,6 +471,8 @@ async function executeOpenAPIOperation<
   context: AgentCapabilityContext<TRuntimeConfig, Name>,
   input: unknown,
   abortSignal?: AbortSignal,
+  connection?: AgentConnection,
+  approved = false,
 ): Promise<unknown> {
   const rawInput = applyOpenAPIProvidedInput(normalizeRawToolInput(operation, input), openAPIRequestProvidedInput(options))
   const rawUrl = operationTemplateUrl(baseUrl, operation.path)
@@ -454,6 +491,7 @@ async function executeOpenAPIOperation<
   assertValidOpenAPIRequest(operation, draft)
   const requestInput = normalizeToolInput(operation, draft)
   const url = operationUrl(baseUrl, operation, requestInput.path)
+  const connectionOperation = openAPIConnectionOperation(operation)
   const result = await executeHttpRequest({
     body: requestInput.body,
     cookies: Object.keys(draft.cookies).length ? draft.cookies : undefined,
@@ -464,6 +502,14 @@ async function executeOpenAPIOperation<
     timeout: draft.timeout,
     url,
   }, {
+    // The Connection adds credentials after the request hook, so hooks never see the token.
+    ...(connection ? {
+      fetch: (target: string, init: RequestInit) => connection.fetch({ ...(approved ? { approved } : {}), effect: connectionOperation.effect, operation: connectionOperation.id, tool: operation.operationId }, target, init),
+      retryFetchError: (error: unknown) => {
+        const code = getViteHubErrorShape(error)?.code
+        return code !== "CONNECTIONS_DENIED" && code !== "CONNECTIONS_APPROVAL_REQUIRED"
+      },
+    } : {}),
     responseType: options.responseType || "json",
     signal: abortSignal ?? context.abortSignal,
   })

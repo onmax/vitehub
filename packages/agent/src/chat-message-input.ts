@@ -61,10 +61,6 @@ export function markDerivedChatTriggerInvoker(invoker: unknown, source?: AgentIn
   if (typeof invoker === "object" && invoker !== null) derivedChatInvokers.set(invoker, source || invoker as AgentInvoker)
 }
 
-export function hasDerivedChatTriggerInvoker(invoker: unknown): boolean {
-  return derivedChatTriggerInvoker(invoker) !== undefined
-}
-
 export function derivedChatTriggerInvoker(invoker: unknown): AgentInvoker | undefined {
   return invoker !== null && Object(invoker) === invoker ? derivedChatInvokers.get(Object(invoker)) : undefined
 }

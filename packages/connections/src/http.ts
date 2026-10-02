@@ -14,7 +14,8 @@ const STATE_COOKIE = "vitehub_connection_state";
 
 export interface ConnectionsHandlerOptions {
   /** Identify the person who manages Connections, from an authenticated session. Missing or invalid identities are denied. */
-  actor?: (request: Request) => string | undefined | Promise<string | undefined>;
+  actor?: (request: Request, event?: unknown) => string | undefined | Promise<string | undefined>;
+  basePath?: string;
   runtime?: () => ConnectionsRuntime;
 }
 
@@ -35,9 +36,17 @@ const actionSchema = v.variant("action", [
   v.object({ action: v.literal("activity"), before: v.optional(id), name }),
   v.object({
     action: v.literal("approvals"),
+    before: v.optional(id),
     name: v.optional(name),
     status: v.optional(v.picklist(["approved", "denied", "executed", "failed", "pending"])),
   }),
+  v.object({
+    action: v.literal("approval-summaries"),
+    before: v.optional(id),
+    name: v.optional(name),
+    status: v.optional(v.picklist(["approved", "denied", "executed", "failed", "pending"])),
+  }),
+  v.object({ action: v.literal("approval-counts") }),
   v.object({ action: v.literal("approve"), id }),
   v.object({ action: v.literal("deny"), id }),
 ]);
@@ -54,6 +63,7 @@ function errorResponse(error: unknown): Response {
     const status = {
       approval_required: 409,
       denied: 403,
+      execution_unknown: 409,
       invalid: 400,
       provider: 502,
       reauth_required: 409,
@@ -104,29 +114,26 @@ function sameOrigin(request: Request, url: URL): boolean {
 }
 
 async function readBody(request: Request): Promise<unknown> {
-  if (!request.body) return undefined
-  const reader = request.body.getReader()
-  const decoder = new TextDecoder()
-  let size = 0
-  let text = ""
+  if (!request.body) return undefined;
+  const reader = request.body.getReader();
+  const bytes = new Uint8Array(MAX_BODY_BYTES);
+  let size = 0;
   try {
-    while (true) {
-      const chunk = await reader.read()
-      if (chunk.done) break
-      size += chunk.value.byteLength
-      if (size > MAX_BODY_BYTES) {
-        await reader.cancel()
-        return undefined
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.byteLength > MAX_BODY_BYTES - size) {
+        await reader.cancel().catch(() => undefined);
+        return undefined;
       }
-      text += decoder.decode(chunk.value, { stream: true })
+      bytes.set(value, size);
+      size += value.byteLength;
     }
-    text += decoder.decode()
-  }
-  finally {
-    reader.releaseLock()
+  } finally {
+    reader.releaseLock();
   }
   try {
-    return JSON.parse(text);
+    return JSON.parse(new TextDecoder().decode(bytes.subarray(0, size)));
   } catch {
     return undefined;
   }
@@ -135,8 +142,9 @@ async function readBody(request: Request): Promise<unknown> {
 async function managementActor(
   options: ConnectionsHandlerOptions,
   request: Request,
+  event?: unknown,
 ): Promise<string | undefined> {
-  const actor = await options.actor?.(request);
+  const actor = await options.actor?.(request, event);
   return actor && /^user:[^\s]{1,256}$/.test(actor) ? actor : undefined;
 }
 
@@ -150,13 +158,14 @@ async function managementActor(
  */
 export function createConnectionsHandler(
   options: ConnectionsHandlerOptions = {},
-): (request: Request) => Promise<Response> {
+): (request: Request, event?: unknown) => Promise<Response> {
   const runtime = () => (options.runtime ?? getConnectionsRuntime)();
-  return async (request) => {
+  const route = options.basePath?.replace(/\/+$/, "") || CONNECTIONS_ROUTE;
+  return async (request, event) => {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "");
     try {
-      const actor = await managementActor(options, request);
+      const actor = await managementActor(options, request, event);
       if (!actor)
         return json(
           {
@@ -167,31 +176,31 @@ export function createConnectionsHandler(
           },
           403,
         );
-      if (request.method === "GET" && path.startsWith(`${CONNECTIONS_ROUTE}/connect/`)) {
+      if (request.method === "GET" && path.startsWith(`${route}/connect/`)) {
         const connection = v.safeParse(
           name,
-          decodeURIComponent(path.slice(`${CONNECTIONS_ROUTE}/connect/`.length)),
+          decodeURIComponent(path.slice(`${route}/connect/`.length)),
         );
         if (!connection.success)
           return page("Connection failed", "The Connection name is invalid.", 400);
         const authorization = await runtime().authorize({
           actor,
           name: connection.output,
-          redirectUri: `${url.origin}${CONNECTIONS_ROUTE}/callback`,
+          redirectUri: `${url.origin}${route}/callback`,
         });
         return new Response(null, {
           headers: {
             "cache-control": "no-store",
             location: authorization.url,
-            "set-cookie": `${STATE_COOKIE}=${authorization.state}; Path=${CONNECTIONS_ROUTE}; HttpOnly; SameSite=Lax; Max-Age=600${url.protocol === "https:" ? "; Secure" : ""}`,
+            "set-cookie": `${STATE_COOKIE}=${authorization.state}; Path=${route}; HttpOnly; SameSite=Lax; Max-Age=600${url.protocol === "https:" ? "; Secure" : ""}`,
           },
           status: 302,
         });
       }
-      if (request.method === "GET" && path === `${CONNECTIONS_ROUTE}/callback`) {
+      if (request.method === "GET" && path === `${route}/callback`) {
         const state = url.searchParams.get("state");
         const code = url.searchParams.get("code");
-        const clear = `${STATE_COOKIE}=; Path=${CONNECTIONS_ROUTE}; HttpOnly; SameSite=Lax; Max-Age=0`;
+        const clear = `${STATE_COOKIE}=; Path=${route}; HttpOnly; SameSite=Lax; Max-Age=0`;
         if (url.searchParams.get("error"))
           return page("Connection cancelled", "The provider did not grant access.", 400);
         if (!state || !code || cookie(request, STATE_COOKIE) !== state)
@@ -209,7 +218,7 @@ export function createConnectionsHandler(
         response.headers.append("set-cookie", clear);
         return response;
       }
-      if (path !== CONNECTIONS_ROUTE)
+      if (path !== route)
         return json({ error: { code: "CONNECTION_NOT_FOUND", message: "Not found." } }, 404);
       if (request.method !== "POST")
         return json({ error: { code: "CONNECTION_METHOD", message: "Use POST." } }, 405, {
@@ -237,6 +246,10 @@ export function createConnectionsHandler(
         );
       const input = parsed.output;
       const connections = runtime();
+      const approvalSummary = (approval: Awaited<ReturnType<ConnectionsRuntime["approvals"]>>["approvals"][number]) => {
+        const { input: _input, ...summary } = approval;
+        return summary;
+      };
       switch (input.action) {
         case "list":
           return json({ connections: await connections.list() });
@@ -257,7 +270,25 @@ export function createConnectionsHandler(
         case "activity":
           return json({ activity: await connections.activity(input) });
         case "approvals":
-          return json({ approvals: await connections.approvals(input) });
+          return json(await connections.approvals(input));
+        case "approval-summaries": {
+          const page = await connections.approvals(input);
+          return json({ ...page, approvals: page.approvals.map(approvalSummary) });
+        }
+        case "approval-counts": {
+          const counts: Record<string, number> = {};
+          for (const connection of await connections.list()) {
+            let before: string | undefined;
+            let count = 0;
+            do {
+              const page = await connections.approvals({ name: connection.name, status: "pending", before });
+              count += page.approvals.length;
+              before = page.nextCursor;
+            } while (before);
+            counts[connection.name] = count;
+          }
+          return json({ counts });
+        }
         case "approve":
           return json(await connections.approve({ actor, id: input.id }));
         case "deny":

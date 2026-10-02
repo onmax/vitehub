@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises"
 
 import { check, fallback, literal, object, optional, pipe, record, safeParse, string, unknown } from "valibot"
 
-import { assertWorkspaceDigest, workspaceError } from "../core/errors.ts"
+import { assertWorkspaceDigest, workspaceConflictError, workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata } from "../core/file-metadata.ts"
 import { contentStreamChunks, contentToBytes, isExcludedWorkspacePath, matchesAny, normalizeWorkspacePath, resolveInside, sha256 } from "../core/path.ts"
 import { workspaceStoreTarget } from "./target.ts"
@@ -17,6 +17,7 @@ import type {
   DiffOptions,
   GlobOptions,
   ListOptions,
+  LocalWorkspaceStoreOptions,
   MkdirOptions,
   RmOptions,
   SnapshotOptions,
@@ -546,6 +547,158 @@ async function withWorkspacePathLock<T>(root: string, path: string, operation: (
   return await lock(0)
 }
 
+type LocalWorkspaceStoreLockOptions = Pick<LocalWorkspaceStoreOptions, "ignore" | "locks">
+
+function isGitMetadataName(name: string): boolean {
+  return name === ".git" || (process.platform === "win32" && name.toLowerCase() === ".git")
+}
+
+/** Check whether a path belongs to a Git worktree before classifying Git errors. */
+async function hasGitMetadata(root: string): Promise<boolean> {
+  let current = resolve(root)
+  while (true) {
+    const metadata = await lstat(join(current, ".git")).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined
+      throw error
+    })
+    if (metadata) return true
+    const parent = resolve(current, "..")
+    if (parent === current) return false
+    current = parent
+  }
+}
+
+/** Paths that Git ignores under a checkout root. Ignored directories are listed once, not descended. */
+async function gitIgnoredWorkspacePaths(root: string): Promise<string[]> {
+  const { execFile } = await import("node:child_process")
+  const gitMetadata = await hasGitMetadata(root)
+  const output = await new Promise<string>((resolveOutput, reject) => execFile(
+    "git",
+    ["-C", root, "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+    { encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, maxBuffer: 64 * 1024 * 1024 },
+    (error, stdout, stderr) => {
+      // `ignore: "git"` is also valid for ordinary directories. Treat a
+      // non-repository root as having no Git exclusions, while preserving
+      // failures from an unavailable or unreadable Git checkout.
+      if (error) {
+        const code = Reflect.get(Object(error), "code")
+        if (code === 128 && /not a git repository/i.test(stderr) && !gitMetadata) {
+          resolveOutput("")
+          return
+        }
+        reject(error)
+        return
+      }
+      resolveOutput(stdout)
+    },
+  ))
+  return [".git", ...output.split("\0").filter(Boolean).map(path => path.replace(/\/$/, ""))]
+}
+
+/** Include ignore rules from Git roots that contain a non-root listing prefix. */
+async function gitIgnoredWorkspacePathsForPrefix(root: string, current: string, excluded: readonly string[]): Promise<string[]> {
+  const { relative, sep } = await import("node:path")
+  const relativePrefix = relative(root, current)
+  if (!relativePrefix || relativePrefix === "." || relativePrefix.startsWith(`..${sep}`)) return [...excluded]
+  const result = [...excluded]
+  let ancestor = root
+  let prefix = ""
+  for (const segment of relativePrefix.split(sep)) {
+    ancestor = `${ancestor}/${segment}`
+    prefix = prefix ? `${prefix}/${segment}` : segment
+    const dirents = await readdir(ancestor, { withFileTypes: true }).catch(() => [])
+    if (dirents.some(dirent => isGitMetadataName(dirent.name))) {
+      const nestedExcluded = await gitIgnoredWorkspacePaths(ancestor)
+      result.push(...nestedExcluded.map(path => `${prefix}/${path}`))
+    }
+  }
+  return result
+}
+
+interface ProcessPathLockState {
+  pendingWriters: number
+  readers: number
+  writer: boolean
+  waiters: Array<() => void>
+}
+
+const processPathLocks = new Map<string, ProcessPathLockState>()
+const processMetadataRoots = new Map<string, Promise<void>>()
+
+async function withProcessLock<T>(key: string, exclusive: boolean, operation: () => Promise<T>): Promise<T> {
+  let state = processPathLocks.get(key)
+  if (!state) processPathLocks.set(key, state = { pendingWriters: 0, readers: 0, writer: false, waiters: [] })
+  const current = state
+  // Waiting writers block new readers, as pending writer intents do in filesystem mode.
+  if (exclusive) current.pendingWriters++
+  try {
+    while (current.writer || (exclusive ? current.readers > 0 : current.pendingWriters > 0)) {
+      await new Promise<void>(resolve => current.waiters.push(resolve))
+    }
+  }
+  finally {
+    if (exclusive) current.pendingWriters--
+  }
+  if (exclusive) current.writer = true
+  else current.readers++
+  try {
+    return await operation()
+  }
+  finally {
+    if (exclusive) current.writer = false
+    else current.readers--
+    const waiters = current.waiters.splice(0)
+    if (!current.writer && current.readers === 0 && current.pendingWriters === 0 && waiters.length === 0) processPathLocks.delete(key)
+    for (const resolve of waiters) resolve()
+  }
+}
+
+async function prepareProcessMetadataRoot(root: string): Promise<void> {
+  const { lstat, mkdir, stat } = await import("node:fs/promises")
+  const previous = processMetadataRoots.get(root)
+  if (previous) {
+    // A reused root, such as a reset checkout, can lose .vitehub between stores.
+    // Prepare it again when it is missing.
+    const ready = await previous.then(() => lstat(`${root}/.vitehub`).then(() => true, () => false), () => false)
+    if (ready) return
+    if (processMetadataRoots.get(root) === previous) processMetadataRoots.delete(root)
+  }
+  let prepared = processMetadataRoots.get(root)
+  if (!prepared) {
+    prepared = (async () => {
+      await mkdir(root, { recursive: true })
+      const permissions = await stat(root)
+      await ensureLockDirectory(`${root}/.vitehub`)
+      if (process.platform !== "win32") await applyMetadataPermissions(`${root}/.vitehub`, permissions.mode & 0o770, permissions.gid)
+    })()
+    processMetadataRoots.set(root, prepared)
+    const current = prepared
+    current.catch(() => {
+      if (processMetadataRoots.get(root) === current) processMetadataRoots.delete(root)
+    })
+  }
+  await prepared
+}
+
+/**
+ * Keeps the lock order of withWorkspacePathLock in memory: shared reads on
+ * each parent path and an exclusive lock on the target path for a write. Use
+ * it only for a store root that one process owns.
+ */
+async function withProcessPathLock<T>(root: string, path: string, operation: () => Promise<T>, readOnly = false): Promise<T> {
+  const parts = normalizeWorkspacePath(path).split("/").filter(Boolean)
+  const paths = parts.map((_, index) => parts.slice(0, index + 1).join("/"))
+  if (paths.length === 0) return await operation()
+  const key = resolve(root)
+  // Metadata directories keep the root permissions, as in filesystem lock mode.
+  await prepareProcessMetadataRoot(key)
+  const lock = async (index: number): Promise<T> => {
+    if (index === paths.length) return await operation()
+    return await withProcessLock(`${key}\0${paths[index]}`, !readOnly && index === paths.length - 1, () => lock(index + 1))
+  }
+  return await lock(0)
+}
+
 async function walk(
   root: string,
   current: string,
@@ -563,6 +716,15 @@ async function walk(
     if (error.code === "ENOENT" || error.code === "ENOTDIR") return []
     throw error
   })
+  let currentExcluded = excluded
+  // The outer repository's Git query does not apply ignore rules from a
+  // nested repository. Discover those rules before descending into it so
+  // ignored dependencies and build output remain hidden at every boundary.
+  if (current !== root && dirents.some(dirent => isGitMetadataName(dirent.name))) {
+    const nestedExcluded = await gitIgnoredWorkspacePaths(current)
+    const prefix = normalizeWorkspacePath(relative(root, current))
+    currentExcluded = [...excluded, ...nestedExcluded.map(path => prefix ? `${prefix}/${path}` : path)]
+  }
 
   for (const dirent of dirents) {
     if (dirent.isSymbolicLink()) continue
@@ -570,7 +732,11 @@ async function walk(
     if (privatePaths.some(path => !relative(path, absolute))) continue
     const path = normalizeWorkspacePath(relative(root, absolute))
     if (path.split("/")[0]?.toLowerCase() === ".vitehub") continue
-    if (isExcludedWorkspacePath(path, excluded)) continue
+    // Git metadata is private at every depth, including nested repositories.
+    // `git ls-files --ignored` only reports ignored paths, so nested `.git`
+    // directories need an explicit traversal guard.
+    if (path.split("/").some(component => isGitMetadataName(component))) continue
+    if (isExcludedWorkspacePath(path, currentExcluded)) continue
     const info = await stat(absolute).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined
       throw error
@@ -578,7 +744,7 @@ async function walk(
     if (!info) continue
     if (dirent.isDirectory()) {
       entries.push({ path, type: "directory", mtime: info.mtimeMs })
-      if (recursive) entries.push(...await walk(root, absolute, privatePaths, excluded, true))
+      if (recursive) entries.push(...await walk(root, absolute, privatePaths, currentExcluded, true))
       continue
     }
     if (dirent.isFile()) {
@@ -613,10 +779,20 @@ class LocalWorkspaceStore implements WorkspaceStore {
   #files = new Map<string, { version: string, value: Pick<WorkspaceFile, "mediaType" | "metadata"> }>()
   #fileMetadataRoot: string
   #metaPath: string
+  #ignoreGit: boolean
+  #processLocks: boolean
 
-  constructor(public root: string) {
+  constructor(public root: string, options: LocalWorkspaceStoreLockOptions = {}) {
+    this.#ignoreGit = options.ignore === "git"
+    this.#processLocks = options.locks === "process"
     this.#fileMetadataRoot = `${root}/.vitehub/file-metadata`
     this.#metaPath = `${root}.meta.json`
+  }
+
+  async #pathLock<T>(root: string, path: string, operation: () => Promise<T>, readOnly = false): Promise<T> {
+    return this.#processLocks
+      ? await withProcessPathLock(root, path, operation, readOnly)
+      : await withWorkspacePathLock(root, path, operation, readOnly)
   }
 
   #removalMarker(path: string) {
@@ -758,7 +934,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async readFile(path: string): Promise<WorkspaceFile | undefined> {
-    return await withWorkspacePathLock(this.root, path, () => this.#readFile(path), true)
+    return await this.#pathLock(this.root, path, () => this.#readFile(path), true)
   }
 
   async #readFile(path: string): Promise<WorkspaceFile | undefined> {
@@ -780,11 +956,11 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async writeFile(path: string, file: WorkspaceFile): Promise<void> {
-    await withWorkspacePathLock(this.root, path, () => this.#writeFile(path, file))
+    await this.#pathLock(this.root, path, () => this.#writeFile(path, file))
   }
 
   async writeFileConditional(path: string, file: WorkspaceFile, ifDigest: string | null): Promise<void> {
-    await withWorkspacePathLock(this.root, path, async () => {
+    await this.#pathLock(this.root, path, async () => {
       const normalized = normalizeWorkspacePath(path)
       const current = await this.#stat(normalized)
       assertWorkspaceDigest(normalized, ifDigest, current?.type === "file" ? current.digest : undefined)
@@ -864,7 +1040,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async writeFileStream(path: string, file: WorkspaceStreamFile): Promise<WorkspaceStat & { digest: string }> {
-    return await withWorkspacePathLock(this.root, path, () => this.#writeFileStream(path, file))
+    return await this.#pathLock(this.root, path, () => this.#writeFileStream(path, file))
   }
 
   async #writeFileStream(path: string, file: WorkspaceStreamFile): Promise<WorkspaceStat & { digest: string }> {
@@ -954,7 +1130,10 @@ class LocalWorkspaceStore implements WorkspaceStore {
     const normalizedPrefix = normalizeWorkspacePath(prefix)
     const current = normalizedPrefix ? resolveInside(this.root, normalizedPrefix) : this.root
     const privatePaths = [this.#fileMetadataRoot, this.#metaPath]
-    const all = await walk(this.root, current, privatePaths, options.exclude, options.recursive === true)
+    // ignore: "git" hides .git and Git-ignored output such as dependencies from listings and snapshots.
+    let excluded = this.#ignoreGit ? [...options.exclude ?? [], ...await gitIgnoredWorkspacePaths(this.root)] : options.exclude
+    if (this.#ignoreGit) excluded = await gitIgnoredWorkspacePathsForPrefix(this.root, current, excluded ?? [])
+    const all = await walk(this.root, current, privatePaths, excluded, options.recursive === true)
     const filtered = all
       .filter((entry) => {
         if (!normalizedPrefix) return options.recursive || !entry.path.includes("/")
@@ -974,9 +1153,17 @@ class LocalWorkspaceStore implements WorkspaceStore {
       group.push(entry)
       groups.set(key, group)
     }
-    const independent = [...groups.values()]
+    // Process locks share parent reads in memory, so entries of one folder do not contend.
+    const independent = this.#processLocks ? filtered.map(entry => [entry]) : [...groups.values()]
     for (let index = 0; index < independent.length; index += 64) {
       await Promise.all(independent.slice(index, index + 64).map(async (group) => {
+        if (this.#processLocks) {
+          for (const entry of group) {
+            const info = await this.#pathLock(this.root, entry.path, () => this.#stat(entry.path, includeDigest), true)
+            if (info) entries.push(info)
+          }
+          return
+        }
         const heldReadPrefix = normalizedPrefix || group[0]!.path.split("/")[0]!
         let offset = 0
         while (offset < group.length) {
@@ -1001,7 +1188,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async stat(path: string): Promise<WorkspaceStat | undefined> {
-    return await withWorkspacePathLock(this.root, path, () => this.#stat(path), true)
+    return await this.#pathLock(this.root, path, () => this.#stat(path), true)
   }
 
   async #stat(path: string, includeDigest = true): Promise<WorkspaceStat | undefined> {
@@ -1028,14 +1215,14 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async mkdir(path: string, options: MkdirOptions = {}): Promise<void> {
-    await withWorkspacePathLock(this.root, path, async () => {
+    await this.#pathLock(this.root, path, async () => {
       await this.#assertPathComponents(path)
       await mkdir(resolveInside(this.root, path), { recursive: options.recursive ?? true })
     })
   }
 
   async removeEmptyDirectory(path: string): Promise<void> {
-    await withWorkspacePathLock(this.root, path, async () => {
+    await this.#pathLock(this.root, path, async () => {
       await this.#assertPathComponents(path, false)
       const absolute = resolveInside(this.root, path)
       const info = await lstat(absolute).catch((error: NodeJS.ErrnoException) => {
@@ -1050,12 +1237,18 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async rm(path: string, options: RmOptions = {}): Promise<void> {
-    await withWorkspacePathLock(this.root, path, () => this.#rm(path, options))
+    await this.#pathLock(this.root, path, () => this.#rm(path, options))
   }
 
   async #rm(path: string, options: RmOptions = {}): Promise<void> {
     await this.#assertPathComponents(path, false)
     const normalized = normalizeWorkspacePath(path)
+    if (options.ifDigest !== undefined) {
+      const current = await this.#stat(normalized)
+      if (options.ifDigest === null ? current !== undefined : current?.digest !== options.ifDigest) {
+        throw workspaceConflictError(path, options.ifDigest, current?.digest)
+      }
+    }
     const metadata = await this.#prepareMetadataDirectories(normalized, false)
     const marker = this.#removalMarker(normalized)
     let createdMarker = false
@@ -1135,7 +1328,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async setMeta(key: string, value: unknown): Promise<void> {
-    await withWorkspacePathLock(this.root, ".vitehub/metadata", async () => {
+    await this.#pathLock(this.root, ".vitehub/metadata", async () => {
       const metadata = await this.#readMeta()
       metadata.set(key, value)
       await this.#writeMeta(metadata)
@@ -1186,7 +1379,13 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 }
 
-export function createLocalWorkspaceStore(root: string): WorkspaceStore {
+export function createLocalWorkspaceStore(root: string, options: LocalWorkspaceStoreLockOptions = {}): WorkspaceStore {
   if (!root) throw workspaceError("[vitehub] Local workspace store requires a root directory.")
-  return new LocalWorkspaceStore(root)
+  if (options.locks !== undefined && options.locks !== "filesystem" && options.locks !== "process") {
+    throw workspaceError("[vitehub] Local workspace store locks must be \"filesystem\" or \"process\".")
+  }
+  if (options.ignore !== undefined && options.ignore !== "git") {
+    throw workspaceError("[vitehub] Local workspace store ignore must be \"git\".")
+  }
+  return new LocalWorkspaceStore(root, options)
 }

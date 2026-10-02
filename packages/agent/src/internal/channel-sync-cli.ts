@@ -40,7 +40,7 @@ export interface LoadedChannelTarget {
   agent: string
   channel: string
   defaultThreadId?: string
-  mode: "disabled" | "webhook"
+  mode: "account" | "disabled" | "webhook"
   provider: string
   registration?: {
     id: string
@@ -74,10 +74,12 @@ interface ChannelSyncResultRegistration {
   action: AgentChannelSyncPlan["action"]
   agent: string
   applied: boolean
+  changes: string[]
   channel: string
   current: Record<string, unknown>
   destructive: boolean
   desired: Record<string, unknown>
+  mode: LoadedChannelTarget["mode"]
   preflight: "not-required" | "verified"
   provider: string
   result?: Record<string, unknown>
@@ -115,13 +117,14 @@ function writeChannelSyncUsage(context: ChannelSyncCliContext): void {
     [
       "Usage: vitehub channels sync --stage <name> --url <https-origin> [--agent <name>] [--channel <id>] [--json]",
       "       vitehub channels sync --stage <name> --url <https-origin> --apply --confirm-origin <https-origin> [--allow-delete]",
+      "       vitehub channels sync --stage <name> --channel <id> [--apply]",
       "",
-      "Inspect and synchronize provider-owned Channel webhooks for one deployed stage.",
-      "The command is a dry run unless --apply is present.",
+      "Inspect and synchronize provider-owned Channel webhooks and account resources for one deployed stage.",
+      "The command is a dry run unless --apply is present. --url is required only for webhook Channels.",
       "",
       "Options:",
       "  --stage <name>             Load stage-specific Vite environment files.",
-      "  --url <https-origin>       Public origin of the deployed application.",
+      "  --url <https-origin>       Public origin of the deployed application. Not used by account Channels such as Gmail.",
       "  --agent <name>             Limit synchronization to one Agent.",
       "  --channel <id>             Limit synchronization to one Channel.",
       "  --apply                    Apply the complete validated plan.",
@@ -207,7 +210,7 @@ function desiredWebhookUrl(
   origin: string,
   webhookRoute: false | string,
 ): string | undefined {
-  if (target.mode === "disabled") return
+  if (target.mode !== "webhook") return
   if (!target.registration)
     throw agentDiagnostics.AGENT_R0540({ message: `Channel ${target.agent}/${target.channel} has no webhook registration.` })
   const configured = target.registration.url || target.registration.path
@@ -380,19 +383,26 @@ async function verifyDeployedWebhook(
 function writeHumanResult(
   result: {
     mode: "apply" | "dry-run"
-    origin: string
+    origin?: string
     registrations: ChannelSyncResultRegistration[]
     stage: string
   },
   context: ChannelSyncCliContext,
 ): void {
   context.stdout.write(
-    `Channel sync ${result.mode} for stage ${result.stage} at ${result.origin}\n`,
+    `Channel sync ${result.mode} for stage ${result.stage}${result.origin ? ` at ${result.origin}` : ""}\n`,
   )
   for (const registration of result.registrations) {
     context.stdout.write(
       `  ${registration.agent}/${registration.channel} (${registration.provider}): ${registration.action}${registration.applied ? " applied" : ""}\n`,
     )
+    for (const change of registration.changes) context.stdout.write(`    ${change}\n`)
+    if (registration.mode === "account") {
+      if (registration.unverifiable.length) {
+        context.stdout.write(`    Provider cannot verify: ${registration.unverifiable.join(", ")}\n`)
+      }
+      continue
+    }
     context.stdout.write(
       `    Current URL: ${typeof registration.current.url === "string" && registration.current.url ? registration.current.url : "<none>"}\n`,
     )
@@ -419,11 +429,10 @@ export async function runAgentChannelSyncCli(
       return 0
     }
     if (!parsed.stage) throw agentDiagnostics.AGENT_R0547({ message: "channels sync requires --stage <name>." })
-    if (!parsed.origin) throw agentDiagnostics.AGENT_R0548({ message: "channels sync requires --url <https-origin>." })
     if (parsed.apply && parsed.dryRun)
       throw agentDiagnostics.AGENT_R0549({ message: "--apply and --dry-run cannot be used together." })
-    const origin = normalizeOrigin(parsed.origin, "--url")
-    if (parsed.apply) {
+    const origin = parsed.origin ? normalizeOrigin(parsed.origin, "--url") : undefined
+    if (parsed.apply && origin) {
       if (!parsed.confirmOrigin)
         throw agentDiagnostics.AGENT_R0550({ message: "--apply requires --confirm-origin <https-origin>." })
       const confirmedOrigin = normalizeOrigin(parsed.confirmOrigin, "--confirm-origin")
@@ -446,6 +455,11 @@ export async function runAgentChannelSyncCli(
     )
     if (!targets.length)
       throw agentDiagnostics.AGENT_R0552({ message: "No synchronizable Channels matched the selected Agent and Channel filters." })
+    // Webhook registration and removal depend on the deployment origin. Account resources do not.
+    const originTarget = targets.find(target => target.sync.mode !== "account")
+    if (originTarget && !origin) {
+      throw agentDiagnostics.AGENT_R0548({ message: `channels sync requires --url <https-origin> for ${originTarget.provider} Channel ${originTarget.agent}/${originTarget.channel}.` })
+    }
 
     const providerResources = new Map<unknown, LoadedChannelSyncTarget>()
     for (const target of targets) {
@@ -460,13 +474,13 @@ export async function runAgentChannelSyncCli(
     const fetchImpl = options.fetch || globalThis.fetch
     const planned: PlannedChannelSyncTarget[] = []
     for (const target of targets) {
-      const desiredUrl = desiredWebhookUrl(target, origin, defaultWebhookRoute)
+      const desiredUrl = origin ? desiredWebhookUrl(target, origin, defaultWebhookRoute) : undefined
       if (desiredUrl) await verifyDeployedWebhook(desiredUrl, target.provider, fetchImpl)
       const plan = await target.sync.plan({ desiredUrl, fetch: fetchImpl, force: parsed.force })
       planned.push({ plan, preflight: desiredUrl ? "verified" : "not-required", target })
     }
     const deletions = planned.filter((item) => item.plan.action === "delete")
-    if (parsed.apply) for (const item of planned) {
+    if (parsed.apply && origin) for (const item of planned) {
       if (item.plan.action !== "delete" && item.plan.action !== "update") continue
       const currentUrl =
         typeof item.plan.current.url === "string" ? item.plan.current.url : ""
@@ -497,12 +511,14 @@ export async function runAgentChannelSyncCli(
         action: item.plan.action,
         agent: item.target.agent,
         applied: parsed.apply && item.plan.action !== "none",
+        changes: item.plan.changes || [],
         channel: item.target.channel,
         current: sanitizedProviderState(item.plan.current),
         destructive: item.plan.destructive === true,
         desired: item.target.registration?.url || item.target.registration?.path
           ? sanitizedProviderState(item.plan.desired)
           : item.plan.desired,
+        mode: item.target.sync.mode,
         preflight: item.preflight,
         provider: item.target.provider,
         ...(result ? { result: sanitizedProviderState(result) } : {}),
@@ -511,7 +527,7 @@ export async function runAgentChannelSyncCli(
     }
     const output = {
       mode: parsed.apply ? ("apply" as const) : ("dry-run" as const),
-      origin,
+      ...(origin ? { origin } : {}),
       registrations,
       schemaVersion: 1,
       stage: parsed.stage,
