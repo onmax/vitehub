@@ -238,6 +238,7 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
       if ((body.prefix?.length ?? 0) > maximumKeyLength) throw new KVDevRequestError("The prefix is too long.", 400)
       const page = unwrap(await selected.storage.list({ ...(body.cursor ? { cursor: body.cursor } : {}), limit, prefix: body.prefix ?? "" }))
       const result: KVDevListResult = {
+        // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Cursor is optional and must be omitted when absent.
         ...(page.cursor ? { cursor: page.cursor } : {}),
         keys: page.keys,
         limit,
