@@ -464,7 +464,7 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
     for (const entries of [known, runtime, ...[...bySchedule.values()].flatMap(group => [group.all, group.runtime])]) {
       entries.sort((left, right) => right.scheduledAt - left.scheduledAt)
     }
-    return { keys, known, runtime, bySchedule, recordsByKey }
+    return { keys, known, runtime, bySchedule, recordsByKey, unknown }
   }
 
   async function listRuns(options: ScheduleRunListOptions, snapshot: Awaited<ReturnType<typeof readSnapshot>>) {
@@ -475,9 +475,15 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
       : (options.runtimeOnly ? group?.runtime : group?.all) ?? []
     // Read selected indexed records with bounded concurrency; legacy records are already cached.
     const records: ScheduleRunRecord[] = []
+    const needsCompleteLegacy = options.scheduleId !== undefined || options.runtimeOnly
     const selectedKeys = options.scheduleId === undefined && options.limit === undefined && !options.runtimeOnly
       ? keys
-      : known.slice(0, options.limit ?? known.length).map(entry => entry.key)
+      : needsCompleteLegacy
+        // Legacy keys have no authoritative ordering. Read the uncapped tail
+        // for filtered queries so an arbitrary key enumeration cannot hide a
+        // matching record that falls after the bounded snapshot prefix.
+        ? [...known.map(entry => entry.key), ...snapshot.unknown.slice(maxLegacyHistoryRecords)]
+        : known.slice(0, options.limit ?? known.length).map(entry => entry.key)
     for (let index = 0; index < selectedKeys.length; index += 16) {
       const batch = await Promise.all(selectedKeys.slice(index, index + 16).map(async (key) => {
         if (recordsByKey.has(key)) return recordsByKey.get(key)
