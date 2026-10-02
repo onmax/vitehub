@@ -38,7 +38,6 @@ const optionalPeerExports = new Map<string, readonly string[]>([
   ["@vite-hub/browser/internal/chromium", ["playwright-core"]],
   ["@vite-hub/browser/internal/chromium.workerd", ["playwright-core"]],
   ["@vite-hub/connections/agent", ["drizzle-orm"]],
-  ["@vite-hub/connections/http", ["drizzle-orm"]],
   ["@vite-hub/connections/server", ["drizzle-orm"]],
   ["@vite-hub/env/database", ["drizzle-orm"]],
   ["@vite-hub/kv/runtime/upstash-driver", ["@upstash/redis"]],
