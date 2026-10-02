@@ -16,30 +16,9 @@ interface FinalizeDeploymentPlanOutputOptions {
   services?: object
 }
 
-/**
- * Lists the Provider Output that a Deployment Plan writes, for `vitehub inspect provider-output`.
- * Paths use the preset's default output directory because the host output directory is only known during the build.
- */
-export function describeDeploymentPlanOutput(plan: DeploymentPlan, rootDir: string): ViteHubProviderOutputEntry[] {
-  const outputRoot = resolve(rootDir, plan.output.directory)
-  const entries: ViteHubProviderOutputEntry[] = [
-    { description: "Deployment manifest with host, runtime, output, and services", owner: "vite-hub", path: resolve(outputRoot, "deployment.json") },
-  ]
-  if (plan.preset === "cloudflare") {
-    entries.push({ description: "Generated Cloudflare Worker config", owner: "vite-hub", path: resolve(outputRoot, "server/wrangler.json") })
-  }
-  if (plan.preset === "vercel") {
-    entries.push({ description: "Vercel Build Output config", owner: "vite-hub", path: resolve(outputRoot, "config.json") })
-  }
-  if (plan.preset === "netlify") {
-    entries.push({ description: "Netlify function and static config output", owner: "vite-hub", path: resolve(outputRoot, "v1") })
-  }
-  return entries
-}
-
-export async function finalizeDeploymentPlanOutput(options: FinalizeDeploymentPlanOutputOptions): Promise<void> {
-  const nitroOutputRoot = resolve(options.rootDir, options.outputDir ?? options.plan.output.directory)
-  const outputRoot = options.plan.preset === "netlify" && basename(nitroOutputRoot) === "functions-internal"
+function resolveDeploymentOutputRoot(plan: DeploymentPlan, rootDir: string, outputDir = plan.output.directory): string {
+  const nitroOutputRoot = resolve(rootDir, outputDir)
+  return plan.preset === "netlify" && basename(nitroOutputRoot) === "functions-internal"
     ? dirname(nitroOutputRoot)
     : nitroOutputRoot
 }

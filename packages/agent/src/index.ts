@@ -7975,8 +7975,9 @@ async function executeAgentInvocation<
       )
     }
     if (preparedInvocation?.handledResponse) {
-      await invocationJournal?.running()
+      const runningPersisted = await invocationJournal?.running()
       input.abortSignal?.throwIfAborted()
+      if (invocationJournal && !runningPersisted) throw new Error("Could not persist the Invocation running state.")
       await activity?.update("running")
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
     }
@@ -7997,7 +7998,9 @@ async function executeAgentInvocation<
   }
   if (!release) {
     try {
-      await invocationJournal?.running()
+      const runningPersisted = await invocationJournal?.running()
+      input.abortSignal?.throwIfAborted()
+      if (invocationJournal && !runningPersisted) throw new Error("Could not persist the Invocation running state.")
       await activity?.update("running")
       input.abortSignal?.throwIfAborted()
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
@@ -8017,8 +8020,9 @@ async function executeAgentInvocation<
     release()
   }
   try {
-    await invocationJournal?.running()
+    const runningPersisted = await invocationJournal?.running()
     input.abortSignal?.throwIfAborted()
+    if (invocationJournal && !runningPersisted) throw new Error("Could not persist the Invocation running state.")
     await activity?.update("running")
     return await executeAgentInvocationWithCapacityLease(agent, context, input, {
       ...options,
