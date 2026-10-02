@@ -422,8 +422,11 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
     const usage = invocationUsage(record)
     // The playground acts as a Console with invoke access for every Agent.
     const actions = { cancel: { available: record.status === "pending" || record.status === "running" } }
+    const invocationData = usage
+      ? { ...invocation, actions, usage }
+      : { ...invocation, actions }
     json(response, {
-      invocation: { ...invocation, actions, ...(usage ? { usage } : {}) },
+      invocation: invocationData,
       observations: record.observations,
     })
     return true
