@@ -308,6 +308,7 @@ export interface AgentInvocations {
    * A run in another process reads the journal flag at its next claim renewal.
    */
   cancel(id: string): Promise<AgentInvocationCancelResult>
+  readonly supportsDelete: boolean
   get(id: string, options?: { observationNames?: readonly string[] }): Promise<AgentInvocationRecord | undefined>
   getByRunId(runId: string, agentName?: string): Promise<AgentInvocationRecord | undefined>
   /** Reads invocation metadata without observation payloads. */
@@ -2506,7 +2507,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             }
           })
           terminalRetry = retry
-          registerAgentInvocationRecovery(context, retry)
+          registerAgentInvocationRecovery(context, retry.then(() => undefined))
         },
         async running() {
           if (finished) return false
@@ -2668,6 +2669,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         const summary = await boundedStoreOperation(() => store.getSummary(id), Math.min(STORE_OPERATION_TIMEOUT_MS, Math.max(0, verificationDeadline - Date.now())))
         if (summary && summary !== storeOperationTimedOut) current = summary
       }
+      if (!current) return { id, outcome: "not-found" }
       if (terminalStatus(current.status)) return terminalResult(current, local)
       if (!current.cancelRequestedAt) return { id, outcome: "unavailable", status: current.status }
       return {

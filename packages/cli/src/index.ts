@@ -9,7 +9,7 @@ import { formatRuntimeDiagnosticError } from "@vite-hub/runtime"
 import { resolve } from "pathe"
 
 import { createInspectNamespace } from "./inspect.ts"
-import { runProvision } from "./provision.ts"
+import { provisionUsage, runProvision, runProvisionStatus } from "./provision.ts"
 
 import type { ConfigEnv, InlineConfig } from "vite"
 import type { ViteHubCliCommandNamespace, ViteHubCliContext } from "@vite-hub/internal/cli"

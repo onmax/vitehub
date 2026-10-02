@@ -85,6 +85,11 @@ const workspaceDevEndpoint = {
   route: workspaceDevRoute,
 }
 
+interface WorkspaceDevDiscovery {
+  workspaceDevTokenServerId?: unknown
+  workspaces?: Array<{ name?: unknown }>
+}
+
 const workspaceDevTargetErrors = {
   invalidInlineTimeout: (message: string) => workspaceErrorDiagnostics.WORKSPACE_R0006({ message }),
   invalidTimeout: (message: string) => workspaceErrorDiagnostics.WORKSPACE_R0005({ message }),

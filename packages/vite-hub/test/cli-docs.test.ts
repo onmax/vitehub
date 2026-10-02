@@ -54,7 +54,6 @@ describe("CLI documentation contract", () => {
     if (!agent || !database) throw new TypeError("Expected the default CLI contributors.");
     const schedulePlugin: unknown = hubSchedule();
     const workspacePlugin: unknown = hubWorkspace();
-    const schedulePlugin: unknown = hubSchedule();
     const typesPlugin: unknown = viteHubTypesPlugin();
     const plugins: unknown[] = [
       { vitehub: { cli: agent } },
