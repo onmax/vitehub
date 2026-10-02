@@ -7,6 +7,9 @@ import {
   fetchViteHubDevEndpoint,
   readViteHubDevTargetOption,
   resolveViteHubDevServerUrl,
+  type ViteHubCliContext,
+  type ViteHubCliContributor,
+  type ViteHubCliStreams,
 } from "@vite-hub/internal/cli"
 
 import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
@@ -15,7 +18,6 @@ import { redactInspectionText } from "@vite-hub/internal/inspect"
 import { scheduleDevHeader, scheduleDevHeaderValue, scheduleDevRoute, scheduleDevTokenNamespace, scheduleDevTokenServerHeader } from "./dev.ts"
 import { scheduleErrorDiagnostics } from "./error-diagnostics.ts"
 
-import type { ViteHubCliContext, ViteHubCliContributor, ViteHubCliStreams } from "@vite-hub/internal/cli"
 import type { ScheduleDevOperation, ScheduleDevRequestBody } from "./dev.ts"
 import type {
   RuntimeScheduleInspection,
