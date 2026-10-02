@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { resolve } from "node:path"
 
 import { getViteMode } from "@vite-hub/internal/build/mode"
-import { contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { contributeProviderDeploymentOutput, createDefaultCloudflareOutputRoot, createDefaultVercelOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
 import { createNoExternalAddition, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { normalize } from "pathe"
@@ -11,7 +11,8 @@ import { createDbCliContributor } from "./cli.ts"
 import { resolveDBViteConfig } from "./config.ts"
 import { removeGeneratedDatabaseTypes, writeGeneratedDatabaseArtifacts } from "./internal/generated.ts"
 import { renderDatabaseConfigExpression } from "./internal/runtime-config-expression.ts"
-import { dbPackageName, generateProviderOutputs, prepareProviderOutputs } from "./internal/vite-build.ts"
+import { dbPackageName, generateProviderOutputs, prepareProviderOutputs, shouldCreateCloudflareOutput, shouldCreateVercelOutput } from "./internal/vite-build.ts"
+import { readProvisionStateSync } from "@vite-hub/internal/provision-state"
 import { inspectDatabaseDefinitions } from "./inspect.ts"
 import { createDatabaseProvisionStep } from "./provision.ts"
 
@@ -151,6 +152,9 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
       },
       inspect: () => {
         if (resolvedOptions() === false) return
+        const runtime = runtimeConfig
+        const rootDir = resolveViteHubProjectRoot(resolved?.root ?? process.cwd())
+        const provisionState = readProvisionStateSync(databaseRoot())
         return {
           definitions: [{
             kind: "database",
@@ -161,6 +165,10 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
               serverDirs: databaseServerDirs(),
             }),
           }],
+          providerOutput: runtime ? [
+            ...(shouldCreateCloudflareOutput(runtime, provisionState) ? [{ description: "Generated Cloudflare Database worker", owner: "database", path: resolve(createDefaultCloudflareOutputRoot(rootDir), "index.js") }] : []),
+            ...(shouldCreateVercelOutput(runtime) ? [{ description: "Generated Vercel Database function", owner: "database", path: resolve(createDefaultVercelOutputRoot(rootDir), "functions", resolveNitroVercelFunctionName(resolved ?? {}, "database") ?? "__server.func", "index.mjs") }] : []),
+          ] : [],
         }
       },
     },

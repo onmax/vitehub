@@ -317,7 +317,7 @@ export function hubSandbox(options?: SandboxPublicOptions): SandboxVitePlugin {
     enforce: 'pre',
     nitro: { name: '@vite-hub/sandbox/provider-runtime', setup: sandboxNitroModule },
     vitehub: {
-      inspect: () => ({
+      inspect: () => (rawConfig.sandbox ?? integrationOptions) === false ? undefined : ({
         definitions: [{
           kind: 'sandbox',
           label: 'Sandboxes',
