@@ -92,7 +92,7 @@ export default defineAgent({
 
 TypeScript infers the handle from the Agent's `channels`. With several Channels, `event.message` is a union that `event.message.channel` narrows. Invocations without a Channel have `event.message` set to `undefined`. The names `channel`, `data`, and `kind` are reserved.
 
-Built-in Channels add the methods that their provider adapter supports. `discord()`, `slack()`, `teams()`, and `telegram()` provide `reply()`. `github()` provides `reply()`, `reaction()`, and `status()` when it has a GitHub App. `event.reply()` still returns a reply that ViteHub delivers after the hook. For a custom Channel, a `reply` method handles it.
+Built-in Channels add the methods that their provider adapter supports. `discord()`, `slack()`, `teams()`, and `telegram()` provide `reply()` when an adapter is configured and messages are enabled. `github()` provides `reply()`, `reaction()`, and `status()` when it has a GitHub App. `event.reply()` still returns a reply that ViteHub delivers after the hook. For a custom Channel, a `reply` method handles it.
 
 ### Dry run
 
