@@ -26,7 +26,7 @@ can install `@vite-hub/cli` directly.
 
 Expected help lists available namespaces.
 The CLI owns the `inspect` namespace. Plugin command contributions with that name are ignored.
-The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Env contributes `env` when `hubEnv()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, and the Console integration contributes `console` when `console` is enabled. The framework contributes `types` and `box`, and the CLI includes the built-in `inspect` and `provision` namespaces. `box` does not load the project config, so it also runs in a deployed container without Vite.
+The Agent Package contributes `agent` and `channels` when `hubAgent()` is active, Database contributes `db` when `hubDb()` is active, Env contributes `env` when `hubEnv()` is active, Schedule contributes `schedule` when `hubSchedule()` is active, Workflow contributes `workflow` when `hubWorkflow()` is active, Workspace contributes `workspace` when `hubWorkspace()` is active, and the Console integration contributes `console` when `console` is enabled. The framework contributes `types` and `box`, and the CLI includes the built-in `inspect` and `provision` namespaces. `box` does not load the project config, so it also runs in a deployed container without Vite.
 
 ```txt [Output]
 Usage: vitehub <namespace> <feature> [args...]
@@ -40,6 +40,7 @@ Available namespaces:
   env         Server Env inspection workflows.
   email       Inspect and preview development Email messages.
   schedule    Run Static Schedule Definitions and inspect or control Runtime Schedules.
+  workflow    Start and inspect Workflow runs in development.
   types       Generate ViteHub TypeScript declarations.
   inspect     Inspect discovered Definitions and generated Provider Output.
   provision   Idempotently create missing provider resources.
@@ -75,6 +76,10 @@ Available namespaces:
 | `vitehub schedule disable` | Available | Schedule Package | Disable one Runtime Schedule. |
 | `vitehub box check` | Available | Box Package | Start the provider Driver through the SSH runner and report readiness. |
 | `vitehub box serve` | Available | Box Package | Serve authenticated SSH commands from this machine. |
+| `vitehub workflow start` | Available | Workflow Package | Start a discovered Workflow in the local development runtime. |
+| `vitehub workflow get` | Available | Workflow Package | Read a Workflow run. |
+| `vitehub workflow cancel` | Available | Workflow Package | Cancel a run when the provider supports it. |
+| `vitehub workflow resume` | Available | Workflow Package | Resume a Workflow signal by hook token. |
 | `vitehub workspace dev` | Available | Workspace Package | Run commands through a Workspace Session exposed by a Compatible Vite Development Server. |
 | `vitehub types prepare` | Available | ViteHub Framework | Prepare generated TypeScript declarations for editors and type checking. |
 | `vitehub inspect definitions` | Available | ViteHub CLI plus package inspection contributors | List the Definitions that each active package discovered. |
@@ -477,3 +482,18 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 - Use [Workspace](/docs/server-primitives/workspace) for Workspace Sessions and write access.
 - Use [Provisioning](/docs/development/provisioning) for provider resource ids.
 - Use [Config options](/docs/reference/config-options) for package integration switches.
+
+## Run Workflows in development
+
+Activate `hubWorkflow()` and start the app's Vite Development Server.
+
+```bash [Terminal]
+pnpm vitehub workflow start welcome --input '{"name":"Ada"}'
+pnpm vitehub workflow get <runId> --workflow welcome
+pnpm vitehub workflow cancel <runId> --workflow welcome
+pnpm vitehub workflow resume <token> --payload '{"approved":true}'
+```
+
+The commands use the local Nitro development runtime, so app and CLI runs share state. Plain Vite and Nuxt hosts return `WORKFLOW_DEV_RUNTIME_UNAVAILABLE`. Input and payload accept JSON or `@file`. All commands accept `--json`, `--url`, and `--timeout`. Runs started by app code need `--workflow` for `get` and `cancel`.
+
+Inline runs can be read for five minutes. Inline cancellation, Cloudflare cancellation and resume, and OpenWorkflow cancellation and resume return unsupported-operation errors. OpenWorkflow starts enqueue work and require a worker to execute it. Resume uses an opaque hook token, not a run ID or signal name. Workflow inspection lists Definitions; this CLI adds no run list, replay, or Console run view.

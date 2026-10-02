@@ -7,6 +7,7 @@ import { runViteHubCli } from "@vite-hub/cli";
 import { createDbCliContributor } from "@vite-hub/database/cli";
 import { hubEmail } from "@vite-hub/email/vite";
 import { hubEnv } from "@vite-hub/env/vite";
+import { hubWorkflow } from "@vite-hub/workflow/vite";
 import { hubSchedule } from "@vite-hub/schedule/vite";
 import { hubWorkspace } from "@vite-hub/workspace/vite";
 import { describe, expect, it } from "vitest";
@@ -57,6 +58,7 @@ describe("CLI documentation contract", () => {
     const emailPlugin: unknown = hubEmail({ driver: "resend" });
     const schedulePlugin: unknown = hubSchedule();
     const workspacePlugin: unknown = hubWorkspace();
+    const workflowPlugin: unknown = hubWorkflow();
     const typesPlugin: unknown = viteHubTypesPlugin();
     const plugins: unknown[] = [
       { vitehub: { cli: agent } },
@@ -65,6 +67,7 @@ describe("CLI documentation contract", () => {
       hubEnv(),
       emailPlugin,
       schedulePlugin,
+      workflowPlugin,
       workspacePlugin,
       typesPlugin,
     ];

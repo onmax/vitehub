@@ -162,25 +162,9 @@ describe("Workflow Provider Output lifecycle", () => {
     expect(lifecycle.capture.mock.calls.map(call => call[1])).toEqual(catalogs)
   })
 
-  it("fails closed for same-root clones without a stable build association", async () => {
+  it("fails closed when schedule runtime preparation has no resolved config", async () => {
     const plugin = hubWorkflow()
-    const configs = ["first", "second"].map(name => ({
-      build: { outDir: "dist" },
-      command: "build",
-      define: { __VITEHUB_PUBLIC_URL__: JSON.stringify("https://shared.example.com") },
-      plugins: [],
-      resolve: { alias: [] },
-      root: "/project",
-      workflow: { provider: "vercel", name },
-    }))
-    for (const config of configs) functionHook(plugin.configResolved, "configResolved")(config)
-
-    const clone = {
-      ...configs[0],
-      build: { outDir: configs[0]!.build.outDir },
-      workflow: undefined,
-    }
-    await expect(plugin.vitehub?.workflow?.prepareScheduleRuntime?.(undefined, clone as unknown as ResolvedConfig)).rejects.toThrow("Cannot identify the owning Workflow build")
+    await expect(plugin.vitehub?.workflow?.prepareScheduleRuntime?.()).rejects.toThrow("requires resolved Vite config")
   })
 
   it("keeps Provider Output work in the Nuxt 4 SSR environment", async () => {

@@ -164,4 +164,24 @@ describe("Workflow preparation for Schedule", () => {
     }
   })
 
+  it("resolves a cloned Workflow environment by its build association and public definition", async () => {
+    const plugin = hubWorkflow({ provider: "vercel" })
+    const root = await mkdtemp(join(tmpdir(), "vitehub-workflow-associated-build-"))
+    try {
+      const configs = ["first", "second"].map(name => ({
+        root, command: "build", plugins: [], build: { outDir: "dist" },
+        resolve: { alias: [{ find: "build-alias", replacement: join(root, name) }] },
+        workflow: { provider: "vercel" },
+        define: { __VITEHUB_PUBLIC_URL__: JSON.stringify(`https://${name}.example.com`) },
+      } as unknown as ResolvedConfig))
+      for (const config of configs) await (plugin.configResolved as (config: ResolvedConfig) => Promise<void>)(config)
+      for (const config of configs) useProviderOutputCatalog(config).replaceDeploymentContribution({ owner: "workflow", rootDir: root, write: async () => undefined })
+      const clone = { ...Object.fromEntries(Object.entries(configs[1]!)), build: { ...configs[1]!.build }, define: configs[1]!.define }
+      const context = { environment: { config: clone } }
+      expect(() => (plugin.buildStart as (this: typeof context) => void).call(context)).not.toThrow()
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
 })
