@@ -11,6 +11,7 @@ import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { createNoExternalAddition, isServerEnvironment, resolveViteHubGeneratedRoot, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
+import { renderViteHubNitroDevHandler } from "@vite-hub/internal/dev-endpoint"
 
 import type { EnvRuntimeConfigOptions, EnvRuntimeRegistry } from "@vite-hub/env"
 import type { ViteHubProviderImportContributor } from "@vite-hub/internal/build/vite"

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createAgentCliContributor } from "@vite-hub/agent/cli";
 import { runViteHubCli } from "@vite-hub/cli";
 import { createDbCliContributor } from "@vite-hub/database/cli";
+import { hubEmail } from "@vite-hub/email/vite";
 import { hubEnv } from "@vite-hub/env/vite";
 import { hubSchedule } from "@vite-hub/schedule/vite";
 import { hubWorkspace } from "@vite-hub/workspace/vite";
@@ -56,13 +57,13 @@ describe("CLI documentation contract", () => {
     const emailPlugin: unknown = hubEmail({ driver: "resend" });
     const schedulePlugin: unknown = hubSchedule();
     const workspacePlugin: unknown = hubWorkspace();
-    const schedulePlugin: unknown = hubSchedule();
     const typesPlugin: unknown = viteHubTypesPlugin();
     const plugins: unknown[] = [
       { vitehub: { cli: agent } },
       { vitehub: { cli: database } },
       { vitehub: { cli: { namespaces: [createConsoleCliNamespace()] } } },
       hubEnv(),
+      emailPlugin,
       schedulePlugin,
       workspacePlugin,
       typesPlugin,
