@@ -34,6 +34,16 @@ type StoredScheduleRunAttemptRecord = Omit<ScheduleRunAttemptRecord, "completedA
 // usable index, while indexed records continue to support complete queries.
 const maxLegacyHistoryRecords = 1000
 
+/** Raised when the metadata index cannot provide a complete history safely. */
+export class ScheduleHistoryIncompleteError extends Error {
+  readonly code = "SCHEDULE_HISTORY_INCOMPLETE"
+
+  constructor(readonly recordCount: number, readonly maxRecords: number) {
+    super(`Schedule run history is incomplete because ${recordCount} records have no usable metadata index (maximum fallback is ${maxRecords}). Rebuild the schedule run index before listing history.`)
+    this.name = "ScheduleHistoryIncompleteError"
+  }
+}
+
 function trimPrefix(prefix: string): string {
   return prefix.replace(/^\/+|\/+$/g, "")
 }
@@ -469,7 +479,10 @@ export function createKVScheduleRunStore(options: KVScheduleStoreOptions): Sched
 
   async function listRuns(options: ScheduleRunListOptions, snapshot: Awaited<ReturnType<typeof readSnapshot>>) {
     if (snapshot.unknown.length > maxLegacyHistoryRecords) {
-      throw new Error(`Schedule run history is incomplete because more than ${maxLegacyHistoryRecords} records have no usable metadata index. Rebuild the schedule run index before listing history.`)
+      // KV key order is not an ordering contract. Once the bounded fallback is
+      // exceeded, any filtered or limit-only result could silently omit a
+      // matching record, so fail explicitly instead of returning partial data.
+      throw new ScheduleHistoryIncompleteError(snapshot.unknown.length, maxLegacyHistoryRecords)
     }
     const { keys, recordsByKey } = snapshot
     const group = options.scheduleId === undefined ? undefined : snapshot.bySchedule.get(options.scheduleId)

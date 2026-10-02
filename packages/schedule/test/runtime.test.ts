@@ -1033,7 +1033,12 @@ describe("KV Schedule Run Store", () => {
       await store.createRun({ id: `legacy_${index}`, scheduleId: "legacy", target: "report", scheduledAt,
         createdAt: scheduledAt, updatedAt: scheduledAt, status: "pending", attemptCount: 0 })
     }
-    await expect(store.listRuns({ limit: 1 })).rejects.toThrow("history is incomplete")
+    for (const options of [{ limit: 1 }, { scheduleId: "legacy" }, { runtimeOnly: true }]) {
+      await expect(store.listRuns(options)).rejects.toMatchObject({
+        code: "SCHEDULE_HISTORY_INCOMPLETE",
+        name: "ScheduleHistoryIncompleteError",
+      })
+    }
   })
 
   it("parses each indexed key once for a multi-Schedule history batch", async () => {
