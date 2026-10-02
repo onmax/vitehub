@@ -14,6 +14,19 @@ A Capability is not a server primitive.
 Server primitives give trusted app code authority.
 Capabilities decide which operations an Agent Invocation can use.
 
+## Choose the API by its caller
+
+Installing a Server Primitive does not give an Agent access to it. Attach a Capability when the Agent needs that operation.
+
+| | Server Primitive | Capability |
+| --- | --- | --- |
+| Caller | Application server code | An Agent during an Invocation |
+| Access | A documented server import | Selected tools, policy, requirements, or context |
+| Selection | Application code calls it | The Agent Definition or invocation selects it |
+| Model access | None | Only the operations the Capability contributes |
+
+A Capability does not expose the full Runtime Context or unrestricted host access. Its tools, requirements, policy, and metadata define what the Agent can inspect and use. Application code can still call the same Server Primitives through their server APIs.
+
 ## Capability lifecycle
 
 ViteHub applies Capabilities in the order listed or returned by the Agent Definition.
@@ -98,6 +111,20 @@ Capability metadata appears under the Capability id in Agent inspection output. 
 
 Use `defineCapability({ finish })` for metadata read by evals, finish hooks, or channel delivery code after an invocation.
 Agent Evals expose those values through `observation.extensions.get(capabilityId)` and the `hasCapabilityExtension(capabilityId)` scorer.
+
+## Finish without the Driver
+
+A Capability `input` phase can finish an Invocation only with a `Response`. When app code decides the result for some inputs, such as mail rules that label an email before a model runs, use `defineAgent({ data, intercept })` instead. `intercept` returns a typed value that becomes the Invocation output, and `runAgent()` types its output as the union of that value and the Driver output.
+
+```ts [server/agents/labeller.ts]
+export default defineAgent({
+  data: email,
+  intercept: ({ data }) => data.from.endsWith('@github.com') ? { source: 'rule' as const, label: 'GitHub' } : undefined,
+  driver: { model, output: { schema: modelLabel } },
+})
+```
+
+Read [Finish before the Driver](/docs/agents/agent-definitions#finish-before-the-driver) for hooks, traces, and layer rules.
 
 ## Driver support
 

@@ -3,12 +3,15 @@ import * as v from "valibot";
 import type { SQL } from "drizzle-orm";
 import { envBridgeError } from "./bridge-error.ts";
 import type { EnvAccessStore, EnvSecretStore } from "./bridge.ts";
+import { importSealKey, seal, sealedPayloadPattern, unseal } from "./seal.ts";
 
 export interface EnvDatabase {
   run(query: SQL): unknown;
   all(query: SQL): unknown[] | PromiseLike<unknown[]>;
 }
 export interface DatabaseEnvStore {
+  /** SQL predicate for atomically updating related records at a secret revision. */
+  revisionCondition(key: string, revision: string | null): Promise<SQL>;
   secrets: EnvSecretStore;
   access: EnvAccessStore;
 }
@@ -42,7 +45,7 @@ const grant = v.object({
   permissions: v.pipe(v.array(permission), v.minLength(1)),
 });
 const secretRow = v.object({
-  payload: v.pipe(v.string(), v.regex(/^[a-f0-9]{24}:(?:[a-f0-9]{2}){16,}$/)),
+  payload: v.pipe(v.string(), v.regex(sealedPayloadPattern)),
   revision: identifier,
   updated_at: timestamp,
   preview: v.nullable(v.string()),
@@ -63,14 +66,6 @@ function parseStoredJson(payload: string): unknown {
   }
 }
 
-function hex(value: Uint8Array): string {
-  return Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-function bytes(value: string): Uint8Array<ArrayBuffer> {
-  if (!/^(?:[a-f0-9]{2})+$/.test(value)) throw envBridgeError("invalid");
-  return Uint8Array.from(value.match(/../g)!, (byte) => Number.parseInt(byte, 16));
-}
-
 /** Persistent encrypted values, activity, and grants on a ViteHub SQLite/Drizzle database. */
 export function createDatabaseEnvStore(options: {
   db: EnvDatabase;
@@ -80,13 +75,7 @@ export function createDatabaseEnvStore(options: {
 }): DatabaseEnvStore {
   if (options.encryptionKey.byteLength !== 32) throw envBridgeError("invalid");
   const namespace = options.namespace ?? "default";
-  const encryptionKey = crypto.subtle.importKey(
-    "raw",
-    new Uint8Array(options.encryptionKey),
-    "AES-GCM",
-    false,
-    ["encrypt", "decrypt"],
-  );
+  const encryptionKey = importSealKey(options.encryptionKey);
   let ready: Promise<void> | undefined;
   const initialize = () =>
     (ready ??= (async () => {
@@ -119,6 +108,12 @@ export function createDatabaseEnvStore(options: {
     return new TextEncoder().encode(JSON.stringify([namespace, key, revision]));
   }
   return {
+    async revisionCondition(key, revision) {
+      await initialize();
+      return revision === null
+        ? sql`NOT EXISTS (SELECT 1 FROM vitehub_env_secrets WHERE namespace = ${namespace} AND key = ${key})`
+        : sql`EXISTS (SELECT 1 FROM vitehub_env_secrets WHERE namespace = ${namespace} AND key = ${key} AND revision = ${revision})`;
+    },
     secrets: {
       async inspect(key) {
         const stored = await row(key);
@@ -133,25 +128,14 @@ export function createDatabaseEnvStore(options: {
       async read(key) {
         const stored = await row(key);
         if (!stored) return;
-        const [iv, ciphertext] = stored.payload.split(":");
-        const value = await crypto.subtle.decrypt(
-          { name: "AES-GCM", iv: bytes(iv!), additionalData: aad(key, stored.revision) },
-          await encryptionKey,
-          bytes(ciphertext!),
-        );
-        return { value: new TextDecoder().decode(value), revision: stored.revision };
+        const value = await unseal(await encryptionKey, aad(key, stored.revision), stored.payload);
+        return { value, revision: stored.revision };
       },
       async replace({ key, value, expectedRevision }) {
         await initialize();
         const revision = crypto.randomUUID();
         const updatedAt = new Date().toISOString();
-        const iv = crypto.getRandomValues(new Uint8Array(12));
-        const encrypted = await crypto.subtle.encrypt(
-          { name: "AES-GCM", iv, additionalData: aad(key, revision) },
-          await encryptionKey,
-          new TextEncoder().encode(value),
-        );
-        const payload = `${hex(iv)}:${hex(new Uint8Array(encrypted))}`;
+        const payload = await seal(await encryptionKey, aad(key, revision), value);
         const preview =
           options.previews && value.length > 12 && /^[A-Za-z0-9_.-]+$/.test(value)
             ? `${value.slice(0, 4)}••••${value.slice(-4)}`

@@ -16,7 +16,8 @@ The `Inspect MCP tools and title` session provides synthetic server groups, tool
 The Agent Invocation records live in `console.fixture.json`. `mock-api.ts` adds
 the read-only Usage, KV, Workflow, Queue, and search responses needed by the
 Console. `rpc.ts` connects the Console's SSE RPC transport to those local fixture
-routes. Usage filters and pagination use the real usage aggregation code.
+routes. It also serves a synthetic Connections management API
+with three OAuth Connections, one API key Connection, their activity, and one pending approval. Usage filters and pagination use the real usage aggregation code.
 This playground does not change the Console routes generated for Vite
 or Nuxt applications.
 

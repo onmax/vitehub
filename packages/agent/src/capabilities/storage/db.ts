@@ -1,11 +1,7 @@
 import { defineCapability, normalizeMode } from "../../capability-runtime.ts"
 import { loadAgentWorkflowDatabasePrimitive } from "../../internal/workflow-runtime-loaders.ts"
-import {
-  assertString,
-  createTool,
-  jsonObjectSchema,
-  requirePrimitive,
-} from "./shared.ts"
+import { defineInternalTool, jsonObjectSchema, requirePrimitive } from "../internal.ts"
+import { assertString } from "./shared.ts"
 import {
   normalizeReadSql,
   splitSingleSqlStatement,
@@ -113,8 +109,9 @@ function dbTools(mode: AgentCapabilityMode, schemaMode: AgentCapabilityMode, opt
     const databaseName = options.database || "default"
     const database = selectAgentDatabase(await resolveDatabasePrimitive(context as never), databaseName)
     const tools: AgentToolSet = {
-      db_query: createTool<DbSqlInput>({
+      db_query: defineInternalTool<DbSqlInput>({
         description: "Run one read-only SQL query against the configured ViteHub database.",
+        icon: "i-lucide-database",
         execute: async ({ statement }) => {
           const sql = normalizeReadSql(statement)
           if (!sql) throw agentDiagnostics.AGENT_R0217({ message: "[vitehub] db_query only accepts one SELECT, WITH ... SELECT, or read-only introspection PRAGMA statement." })
@@ -122,15 +119,18 @@ function dbTools(mode: AgentCapabilityMode, schemaMode: AgentCapabilityMode, opt
         },
         inputSchema: dbQueryInputSchema,
         name: "db_query",
+        title: "Queried database",
       }),
-      db_schema: createTool({
+      db_schema: defineInternalTool({
         description: "Describe the configured ViteHub database schema.",
         execute: async () => await readDatabaseSchema(database, databaseName),
+        icon: "i-lucide-table-properties",
         name: "db_schema",
+        title: "Read database schema",
       }),
     }
     if (mode === "write" || schemaMode === "write") {
-      tools.db_exec = createTool<DbExecInput>({
+      tools.db_exec = defineInternalTool<DbExecInput>({
         description: "Run one SQL mutation against the configured ViteHub database. Requires rationale; DDL requires schema write mode.",
         execute: async ({ rationale, statement }) => {
           if (!rationale?.trim()) throw agentDiagnostics.AGENT_R0218({ message: "[vitehub] db_exec requires a rationale." })
@@ -143,9 +143,11 @@ function dbTools(mode: AgentCapabilityMode, schemaMode: AgentCapabilityMode, opt
           if (!kind) throw agentDiagnostics.AGENT_R0223({ message: "[vitehub] db_exec only accepts data mutation or DDL SQL statements." })
           return await executeSql(database, sql)
         },
+        icon: "i-lucide-database-zap",
         inputSchema: dbExecInputSchema,
         name: "db_exec",
         policy: options.policy,
+        title: "Changed database",
       })
     }
     return tools

@@ -44,10 +44,8 @@ export async function resolveAgentHealth(agent: AgentHealthTarget, options: Agen
   const workspaceConfigured = Boolean(agent.workspace || settings?.workspace)
   checks.workspace = { status: workspaceConfigured ? "ready" : "unsupported" }
   const box = agent.box || settings?.box
+  if (box) checks.box = { status: "ready" }
   const integrations: AgentHealthReport["integrations"] = {}
-  if (box && hasRuntimeType(box, "object")) {
-    for (const key of Object.keys(box)) integrations[key] = { configured: true, status: "ready" }
-  }
   const capacity = inspectAgentCapacity(agent)
   if (capacity && capacity.queue && capacity.pending >= capacity.queue.maxPending) {
     checks.capacity = { status: "quota-exhausted" }

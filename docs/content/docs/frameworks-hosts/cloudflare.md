@@ -6,8 +6,27 @@ navigation.group: Deployment hosts
 icon: i-simple-icons-cloudflare
 ---
 
-Cloudflare is a Provider Selection for packages that can generate Workers, bindings, queues, workflows, schedules, storage, or sandbox output.
-Keep the Definition and Runtime Helper host-neutral. Put Cloudflare details in Integration Options and Provider Output.
+Use the `cloudflare` preset to deploy a ViteHub application as a Cloudflare
+Worker. A production build writes the Worker and its `wrangler.json` under
+`.output/server`, with the bindings that the enabled features need. Definitions
+and Runtime Helpers stay host-neutral; Cloudflare details stay in the config and
+the generated output.
+
+| Feature | Default on the `cloudflare` preset |
+| --- | --- |
+| Blob | R2 bucket named after the application |
+| KV | Workers KV binding `KV` |
+| Database | D1 binding from the Database Definition |
+| Queue | Cloudflare Queues with an application name prefix |
+| Rate Limit | Rate Limiting binding with the application name as namespace |
+| Sandbox | Cloudflare Sandbox |
+| Workflow | Cloudflare Workflows |
+| Workspace | `memory` Store unless you select Cloudflare Artifacts |
+| Browser and `email: true` | Browser Run and Cloudflare Email. Both require this preset. |
+
+The application name comes from `vitehub({ name })`, then
+`WRANGLER_CI_OVERRIDE_NAME` in Workers Builds, then the `package.json` name.
+It also becomes the Worker name unless `nitro.cloudflare.wrangler.name` is set.
 
 ## Cloudflare boundaries
 
@@ -20,9 +39,9 @@ Keep the Definition and Runtime Helper host-neutral. Put Cloudflare details in I
 | Agent state | Agent Package state provider configuration when Cloudflare-backed state is selected. |
 | Cloudflare Computer Boxes | App-owned Computer Durable Object, backend, bindings, migrations, and compatibility flags; ViteHub adapts the configured namespace at runtime. |
 
-## Provider-owned configuration
+## Configure the preset
 
-Select the Cloudflare preset in the framework integration. Each primitive still owns its Definitions and Runtime Helpers.
+Select the `cloudflare` preset and enable the features the application uses.
 
 ```ts [vite.config.ts]
 import { nitro } from 'nitro/vite'
@@ -45,7 +64,7 @@ export default defineConfig({
 Database D1 metadata belongs to each Database Definition because a Vite app can have multiple Named Databases.
 
 ```ts [src/database.ts]
-import { defineDatabase } from '@vite-hub/database'
+import { defineDatabase } from 'vite-hub/database'
 import { notes } from './schema'
 
 export default defineDatabase({
@@ -58,6 +77,8 @@ export default defineDatabase({
 ```
 
 The Nuxt-only `database.driver: 'd1'` option configures one Nuxt Content and Nitro host resource; it is not a Vite Database Definition shortcut.
+
+When the Console is enabled with Agents, a Cloudflare build stores the Console invocation journal in this D1 binding. The journal creates its `vitehub_agent_invocations` table on first use. See [Cloudflare journal](/docs/development/console#know-what-the-console-stores).
 
 ## Provision boundary
 
@@ -94,14 +115,19 @@ When Sandbox is enabled, ViteHub writes an explicit gradual Container rollout in
 
 ### Rate Limiting bindings
 
-Register the Rate Limit integration. A Cloudflare Nitro preset infers the provider, and each handler-local `requireRateLimit()` policy contributes one `ratelimits` entry to Nitro's Wrangler config. Do not repeat those bindings in `nitro.cloudflare.wrangler`; plain Vite builds continue to write them to generated `wrangler.json`.
+With `vitehub({ preset: 'cloudflare', rateLimit: true })`, ViteHub selects the Cloudflare provider and uses the application name as the namespace. Each handler-local `requireRateLimit()` policy contributes one `ratelimits` entry to Nitro's Wrangler config. Do not repeat those bindings in `nitro.cloudflare.wrangler`.
+
+When you compose the owner integration directly, set the Cloudflare provider and namespace yourself. If no Nitro or hosting environment signal selects a provider, plain Vite builds cannot infer one, so the explicit provider is required before Vite writes bindings to the generated `wrangler.json`. An explicit provider and namespace keep standalone builds predictable even when a hosting signal is present.
 
 ```ts [vite.config.ts]
 import { hubRateLimit } from '@vite-hub/rate-limit/vite'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  plugins: [hubRateLimit({ namespace: 'acme-image-service-production' })],
+  plugins: [hubRateLimit({
+    provider: 'cloudflare',
+    namespace: 'acme-image-service-production',
+  })],
 })
 ```
 
@@ -164,6 +190,12 @@ Cloudflare Provider Output can require real Worker bindings such as D1, R2, KV, 
 ::
 
 Agent Definitions run on Cloudflare through generated host output where the Agent integration owns the route. Keep model keys, Durable Object state bindings, and other Runtime Env in Worker bindings.
+
+### Console on Workers
+
+Cloudflare can send consecutive requests from one browser to different Worker instances. The [Console](/docs/development/console) sends each operation as one stateless `POST /_vitehub/rpc/__call` request, so it does not need session affinity or in-memory state. With `access: 'auth'`, the access policy checks the session cookie on each call. Agent invocations started from the Console pass background work to the Worker's `waitUntil`. Configure a durable hosted invocation journal, as the [Console guide](/docs/development/console) describes.
+
+Protect a production Console with `console: { access: 'auth', auth: { provider: 'cloudflare-access' } }` and a Cloudflare Access application. The Worker verifies the Access token on each Console request with `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD`. Inline GitHub Console Auth needs `node:sqlite` and is not available on Workers. See [Cloudflare Access](/docs/development/console#protect-the-console-route).
 
 ## Next steps
 

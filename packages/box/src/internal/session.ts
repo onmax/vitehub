@@ -12,6 +12,7 @@ import { boxErrorDiagnostics } from "../error-diagnostics.ts"
 export interface RuntimeProcess {
   readonly pid?: number;
   readonly stderr: ReadableStream<Uint8Array>;
+  readonly stdin?: WritableStream<Uint8Array>;
   readonly stdout: ReadableStream<Uint8Array>;
   kill(signal?: string): Promise<void>;
   wait(): Promise<{ exitCode: number }>;
@@ -257,7 +258,12 @@ export function createBoxSession(
       if (closePromise) return await closePromise;
       closed = true;
       closePromise = runtime.destroy ? runtime.destroy() : runtime.stop();
-      return await closePromise;
+      try {
+        await closePromise;
+      } catch (error) {
+        closePromise = undefined;
+        throw error;
+      }
     },
     async exec(command, args = [], options) {
       const result = await runtime.run({
@@ -282,6 +288,9 @@ function adaptProcess(process: RuntimeProcess): BoxProcess {
   return {
     pid: process.pid,
     stderr: process.stderr,
+    get stdin() {
+      return process.stdin;
+    },
     stdout: process.stdout,
     async kill(signal?: string) {
       await process.kill(signal);

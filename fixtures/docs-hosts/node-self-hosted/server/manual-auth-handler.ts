@@ -1,5 +1,5 @@
-import { defineAuth } from '@vite-hub/auth'
-import { createAuthHandler } from '@vite-hub/auth/server'
+import { defineAuth } from 'vite-hub/auth'
+import { createAuthHandler } from 'vite-hub/auth/server'
 
 const definition = defineAuth({
   appName: 'Acme',

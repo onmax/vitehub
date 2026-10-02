@@ -14,7 +14,7 @@ After addressing a review thread, resolve it through resolveReviewThread and exp
 
 ## Wait and finish
 
-After pushing, stop and let checks and review automation run. When checks or reviews are pending and no independent repair remains, park. Do not run watch commands, sleep loops, or repeated API polling. The durable inbox resumes the PR when evidence changes. If actionable work remains and no event will wake the PR, return retry.
+After pushing, resolve the review threads that push fixes, then stop and let checks and review automation run. An open thread wakes the PR on every later event. When checks or reviews are pending and no independent repair remains, park. Do not run watch commands, sleep loops, or repeated API polling. The durable inbox resumes the PR when evidence changes. If actionable work remains and no event will wake the PR, return retry.
 
 When the PR has no remaining actionable findings, report that it is ready. If requestAutoMerge is available, it may request GitHub native auto-merge; the host verifies the current head and repository requirements. Never bypass a rejection with a direct merge. Keep source branches and child PRs intact. An absent or unavailable optional review bot is not by itself a blocker. Required GitHub checks and reviews remain authoritative.
 

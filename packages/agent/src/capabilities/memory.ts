@@ -1,14 +1,15 @@
 import { defineCapability } from "../capability-runtime.ts"
+import { defineInternalTool, jsonObjectSchema } from "./internal.ts"
 
 import type {
   AgentCapabilityContext,
   AgentCapabilityDefinition,
-  AgentToolDefinition,
   AgentToolPolicyDecision,
   AgentToolSet,
   MaybePromise,
 } from "../types.ts"
 import type { WritableWorkspaceFacade } from "@vite-hub/workspace"
+import type { JsonSchema } from "./internal.ts"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
 export type MemoryKind = "episodic" | "procedural" | "profile" | "semantic" | (string & {})
@@ -150,7 +151,6 @@ export interface WorkspaceJsonlMemoryStoreOptions {
   path?: string
 }
 
-type JsonSchema = Record<string, unknown>
 type MemoryEvent = MemoryUpsertEvent | MemorySupersedeEvent | MemoryDeleteEvent
 
 interface MemoryUpsertEvent extends Omit<MemoryRecord, "status"> {
@@ -179,19 +179,6 @@ interface MemoryDeleteEvent {
   store: string
   tombstoneId: string
   version: number
-}
-
-function createTool<TInput = unknown, TOutput = unknown>(tool: AgentToolDefinition<TInput, TOutput>): AgentToolDefinition {
-  return tool as AgentToolDefinition
-}
-
-function jsonObjectSchema(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
-  return {
-    additionalProperties: false,
-    properties,
-    ...(required.length ? { required } : {}),
-    type: "object",
-  }
 }
 
 const storePropertySchema: JsonSchema = {
@@ -523,7 +510,7 @@ export function memory(options: MemoryCapabilityOptions): AgentCapabilityDefinit
       const hasWritePolicy = [...resolved.values()].some(store => store.options.write?.policy !== undefined)
       const tools: AgentToolSet = {}
       if ([...resolved.values()].some(store => readSearchAllowed(store.options))) {
-        tools.memory_search = createTool({
+        tools.memory_search = defineInternalTool({
           description: "Search durable scoped memory records.",
           execute: ({ after, before, kinds, limit, query, store, tags }: MemorySearchRequest & { store?: string }) => {
             const selected = getStore(store)
@@ -535,7 +522,7 @@ export function memory(options: MemoryCapabilityOptions): AgentCapabilityDefinit
         })
       }
       if ([...resolved.values()].some(store => readOneAllowed(store.options))) {
-        tools.memory_read = createTool({
+        tools.memory_read = defineInternalTool({
           description: "Read one durable memory record by id.",
           execute: ({ id, store }: { id: string, store?: string }) => {
             const selected = getStore(store)
@@ -547,7 +534,7 @@ export function memory(options: MemoryCapabilityOptions): AgentCapabilityDefinit
         })
       }
       if ([...resolved.values()].some(store => store.options.write?.mode === "tool")) {
-        tools.memory_remember = createTool({
+        tools.memory_remember = defineInternalTool({
           description: "Create a durable scoped memory record. Use only for information that should persist across future agent invocations.",
           execute: ({ confidence, content, kind, metadata, pinned, provenance, store, supersedes, tags, title }: MemoryAppendRequest & { store?: string }) => {
             const selected = getStore(store)
@@ -577,7 +564,7 @@ export function memory(options: MemoryCapabilityOptions): AgentCapabilityDefinit
           name: "memory_remember",
           policy: hasWritePolicy ? writePolicy : undefined,
         })
-        tools.memory_delete = createTool({
+        tools.memory_delete = defineInternalTool({
           description: "Soft-delete one durable memory record.",
           execute: ({ id, reason, store }: { id: string, reason?: string, store?: string }) => {
             const selected = getStore(store)

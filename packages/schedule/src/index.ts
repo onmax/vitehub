@@ -33,6 +33,7 @@ export type {
   ScheduleRunRecord,
   ScheduleRunResponse,
   ScheduleRunStatus,
+  ScheduleRunListOptions,
   ScheduleRunStore,
   ScheduleTargetName,
   RegisteredScheduleTargetName,

@@ -107,6 +107,8 @@ interface AgentPublicError {
   details?: {
     capability?: string
     category?: string
+    resetAt?: string
+    resetText?: string
     retryAfter?: number
   }
   requestId?: string
@@ -128,8 +130,16 @@ private response data.
 | `AUTHENTICATION_REQUIRED`, `RATE_LIMIT_*`, `LLM_GATE_REJECTED`, `CAPABILITY_*`, `TRANSCRIPTION_*` | ViteHub recognized a public application or Capability failure. |
 | `INTERNAL` | The failure has no approved public mapping. The message stays generic. |
 
-The mapper includes only bounded identifiers, categories, retry delays, and
-request IDs. It replaces unknown errors with a context-specific `INTERNAL`
+`PROVIDER_QUOTA_EXHAUSTED` carries the provider's reset time when the failure
+text says `try again at <time>.` and contains a recognized, parseable timestamp.
+`resetText` keeps the provider's wording, for example `Sep 15th, 2026 1:23 AM`. `resetAt` is the same time as an ISO 8601
+timestamp. Unrecognized, unparseable, or ambiguous reset text is omitted. Zone
+abbreviations with multiple regional meanings, such as `IST`, `BST`, and `CST`,
+are ambiguous without provider locale context. A time without
+a zone is read in the server's local time zone.
+
+The mapper includes only bounded identifiers, categories, retry delays, reset
+times, and request IDs. It replaces unknown errors with a context-specific `INTERNAL`
 message instead of copying `error.message`.
 
 ## Diagnostics sources
@@ -147,7 +157,7 @@ message instead of copying `error.message`.
 
 Start with the error's `code`. A numeric Nostics code identifies the owning package and failure site. A semantic operational code can be read with `getViteHubErrorShape(error)?.code`. For packages that generate Provider Output, inspect that output before changing runtime code. Authenticated Agent bridges distinguish `AUTHENTICATION_REQUIRED` from `AUTH_PROVIDER_OPERATION_FAILED`; use `details.operation` for safe diagnostics and `cause` only in protected server-side diagnostics. Email emits no Provider Output; inspect the `EMAIL_*` code and `details.driver`.
 
-For Env, inspect the `ENV_*` code first. Its code set and public messages are fixed. `ENV_DECLARATION_INVALID` can include `details.path`, `ENV_REQUIRED_MISSING` can include a bounded source identifier and declaration path, and `ENV_RUNTIME_VALUE_INVALID` and `ENV_SOURCE_FAILED` can include a bounded source identifier such as `env`, `git:branch`, `package.json`, or `custom`. Raw labels and diagnostics remain in `cause`, which the serialized shape omits. Custom source resolvers keep application-owned errors unchanged.
+For Env, inspect the `ENV_*` code first. Its code set and public messages are fixed. `ENV_DECLARATION_INVALID` can include `details.path`, `ENV_REQUIRED_MISSING` and `ENV_RUNTIME_VALUE_INVALID` can include a bounded source identifier and declaration path, and `ENV_SOURCE_FAILED` can include a bounded source identifier such as `env`, `git:branch`, `package.json`, or `custom`. `ENV_RUNTIME_VALUE_INVALID` never includes the rejected value. Raw labels and diagnostics remain in `cause`, which the serialized shape omits. Custom source resolvers keep application-owned errors unchanged.
 
 ```bash [Terminal]
 pnpm vitehub provision run --provider cloudflare --dry-run
@@ -165,6 +175,14 @@ pnpm --filter @vite-hub/sandbox test
 | Production hosting requires an explicit provider | The build target is unknown or has no native inferred Rate Limit provider. | Set `provider: 'cloudflare'` with a project-unique `namespace` for Cloudflare, set `provider: 'memory'` only for a deliberate single-process deployment, or construct a custom Rate Limiter. |
 | Cloudflare binding was not found | Generated `ratelimits` output is missing from the running Worker or request context. | Inspect `wrangler.json`, then exercise the deployed Worker rather than an unrelated Node process. |
 | `reason: 'unavailable'` with `allowed: true` | A `failure: 'allow'` policy allowed work after a driver error. | Record the unavailable decision and inspect provider health before changing the budget. |
+
+## Verify a diagnostic
+
+The `docs` link of a ViteHub diagnostic opens this page. Use these steps to repair the defect:
+
+1. Read the complete `code` and `fix` fields.
+2. Inspect the Provider Output, source locations, or trace events named by the diagnostic.
+3. Run the nearest package or consumer test again after you apply the repair.
 
 ## Production response
 
