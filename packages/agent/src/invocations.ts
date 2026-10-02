@@ -2341,10 +2341,12 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       let current = await store.getSummary(id) ?? flagged
       if (!current) return { id, outcome: "not-found" }
       if (terminalStatus(current.status)) return terminalResult(current, local)
-      // Only the local execution owner identified by the pending marker can verify its own abort.
-      const locallyVerifiedPending = current.cancelWarningOwnerId !== undefined && local.ownerIds.includes(current.cancelWarningOwnerId)
-      if (local.aborted && (!current.cancelWarningPending || current.cancelNotEnforcedBy || local.notEnforcedBy || locallyVerifiedPending)) {
-        const notEnforcedBy = local.notEnforcedBy || current.cancelNotEnforcedBy
+      // A pending warning is verified only by the owner that dispatched its custom Driver.
+      const ownerNotEnforcedBy = current.cancelWarningOwnerId === undefined
+        ? undefined
+        : local.notEnforcedByOwners?.find(entry => entry.ownerId === current.cancelWarningOwnerId)?.name
+      if (local.aborted && (!current.cancelWarningPending || current.cancelNotEnforcedBy || ownerNotEnforcedBy)) {
+        const notEnforcedBy = ownerNotEnforcedBy || current.cancelNotEnforcedBy || (!current.cancelWarningPending ? local.notEnforcedBy : undefined)
         return {
           delivery: "local",
           id,

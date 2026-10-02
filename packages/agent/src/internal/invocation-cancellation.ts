@@ -25,6 +25,7 @@ export interface LocalAgentInvocationCancellation {
   aborted: boolean
   ownerIds: readonly string[]
   notEnforcedBy?: string
+  notEnforcedByOwners?: readonly { ownerId: string, name: string }[]
 }
 
 const cancellationHandlesKey = Symbol.for("vitehub.agentInvocationCancellations")
@@ -80,8 +81,17 @@ export function registerAgentInvocationCancellation(owner: AgentInvocationStore,
 export function abortLocalAgentInvocation(owner: AgentInvocationStore, id: string, reason: unknown): LocalAgentInvocationCancellation {
   const entries = [...handles(owner).get(id) ?? []]
   for (const entry of entries) entry.abort(reason)
-  const notEnforcedBy = entries.map(entry => entry.driver?.()).find(driver => driver && !driver.enforced)?.name
-  return { aborted: entries.length > 0, ownerIds: entries.map(entry => entry.ownerId), ...(notEnforcedBy ? { notEnforcedBy } : {}) }
+  const notEnforcedByOwners = entries.flatMap(entry => {
+    const driver = entry.driver?.()
+    return driver && !driver.enforced ? [{ ownerId: entry.ownerId, name: driver.name }] : []
+  })
+  const notEnforcedBy = notEnforcedByOwners[0]?.name
+  return {
+    aborted: entries.length > 0,
+    ownerIds: entries.map(entry => entry.ownerId),
+    ...(notEnforcedBy ? { notEnforcedBy } : {}),
+    ...(notEnforcedByOwners.length > 0 ? { notEnforcedByOwners } : {}),
+  }
 }
 
 export function agentInvocationCancellationDriver(driver: { kind: "model" | "provider" | "run", provider?: string }): AgentInvocationCancellationDriver {
