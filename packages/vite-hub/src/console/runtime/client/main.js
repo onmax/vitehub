@@ -310,7 +310,7 @@ function addContributedRoutes(navigation) {
         definitionsBase: `${hostBase}/api/_vitehub/console/definitions`,
         details,
         kvBase: `${hostBase}/api/_vitehub/console/kv`,
-        scheduleRunBase: `${hostBase}/api/_vitehub/console/schedule-run`,
+        scheduleRunBase: `${hostBase}/_vitehub/schedules/run`,
         searchBase: `${hostBase}/api/_vitehub/console/search`,
         sectionsBase,
       },

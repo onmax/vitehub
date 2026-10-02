@@ -968,6 +968,7 @@ async function applyCapabilityWorkspaceContributions<
   const workspaceRuntime = await import("@vite-hub/workspace/runtime")
 
   for (const capability of capabilities) {
+    // SAFETY: Capability registration exposes the private retirement-path registry symbol.
     if (!capability.workspace && !((capability as InternalAgentCapabilityDefinition)[workspaceRetirementPathsSymbol]?.length)) continue
     // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
     await validateCapabilityRuntimeRequirement(capability as AgentCapabilityDefinition, context.workspace, workspaceMode)
@@ -1239,12 +1240,14 @@ export async function resolveAgentCapabilities<
     : []
   const workspaceRetirementPaths = driverKind === "provider"
     ? capabilities.flatMap(capability =>
+        // SAFETY: Capability registration exposes the private retirement-path registry symbol.
         ((capability as InternalAgentCapabilityDefinition)[workspaceRetirementPathsSymbol] || [])
           .map(path => ({ capabilityId: capability.id, path })),
       )
     : []
   let currentInput = normalizeRunInput(input)
   // SAFETY: Capability registration and resolution establish the asserted internal Capability contract.
+  // SAFETY: The workspace is the facade created for this invocation's declared workspace name.
   let currentWorkspace = workspace as ReadonlyWorkspaceFacade<Name> | undefined
   let currentWorkspaceDefinition = invocationOptions.workspaceDefinition
   const inputMessages = getRunMessages(currentInput)
