@@ -276,7 +276,10 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
     // SAFETY: Existing callers validate discovery fields; typed callers can supply the owner parser above.
     : (() => {
         // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The unparsed discovery response is validated at this transport boundary.
-        if (rawDiscovery === null || typeof rawDiscovery !== "object") return {} as TDiscovery
+        if (rawDiscovery === null || typeof rawDiscovery !== "object") {
+          // SAFETY: the empty object is the documented fallback for an unusable discovery response.
+          return {} as TDiscovery
+        }
         // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The object check above guarantees this response satisfies the generic discovery contract.
         return rawDiscovery as TDiscovery
       })()
