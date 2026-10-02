@@ -299,6 +299,24 @@ Use `configuration: 'content'` to retain resolved instructions and tool descript
 
 Invocation journals are metadata-only by default. Set `content: 'content'` only when the application must persist prompts, messages, reasoning, tool inputs and outputs, and result text. That opt-in stores sensitive model content in the configured durable store; apply the same access controls, retention policy, and encryption requirements as the source data.
 
+### Redact stored evidence
+
+Use `redact` to rewrite or drop an observation before the store receives it. Use `redactError` to rewrite the error of a failed record:
+
+```ts [server/agents/support.ts]
+const invocations = defineAgentInvocations({
+  store,
+  redact(observation) {
+    if (observation.name === 'agent.tool.result') return undefined
+    const { 'tool.input': _input, ...attributes } = observation.attributes ?? {}
+    return { ...observation, attributes }
+  },
+  redactError: error => ({ message: error.message, name: error.name }),
+})
+```
+
+`redact` runs after the content policy and before the journal bounds the observation. It applies to streamed observations, persisted observations, and `appendObservation()` evidence. Return `undefined` to drop evidence; `redactError` can likewise return `undefined` to store no error details while the record remains `failed`. Both hooks are synchronous.
+
 The journal records pending, running, completed, failed, and cancelled states plus bounded invocation metadata and trace observations. Failed records retain bounded `cause` and `AggregateError.errors` trees, common status and code fields, and public ViteHub error details. Use `invocations.list()` for cursor-based summaries, `invocations.get(id)` for a stored record ID, and `invocations.getByRunId(runId, agentName?)` when starting from the source run ID. Always pass the Agent Definition name for a named Definition; the name is part of its durable invocation identity. Trace persistence failures do not change the Agent Invocation result. The initial cancellation check must succeed before setup; a rejected, missing, or timed-out read fails startup with `AGENT_R0973`.
 
 Use `triggeredBy` to filter persisted summaries by the person label recorded in `annotations.triggeredBy`. It matches the trimmed label exactly and composes with Agent, Capability, status, and text filters:

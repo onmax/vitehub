@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs"
 
 import { collectViteHubDefinitionInspectors, collectViteHubProviderOutputEntries, redactInspectionValue } from "@vite-hub/internal/inspect"
-import { PROVISION_STATE_FILE } from "@vite-hub/internal/provision-state"
+import { PROVISION_STATE_FILE, readProvisionStateSync } from "@vite-hub/internal/provision-state"
 import { relative, resolve } from "pathe"
 
 import type { ViteHubCliCommandNamespace, ViteHubCliContext } from "@vite-hub/internal/cli"
@@ -174,7 +174,11 @@ async function runProviderOutput(args: string[], context: InspectContext, plugin
     .sort((left, right) => left.path.localeCompare(right.path))
 
   if (parsed.json) {
-    writeJson(context, { providerOutput: reports })
+    const provisionPath = relative(context.rootDir, resolve(context.rootDir, PROVISION_STATE_FILE)) || "."
+    const provisionState = readProvisionStateSync(context.rootDir)
+    writeJson(context, { providerOutput: reports.map(report => report.path === provisionPath && report.exists
+      ? { ...report, content: provisionState }
+      : report) })
     return 0
   }
 
