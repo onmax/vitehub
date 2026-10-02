@@ -108,7 +108,7 @@ const embeddedAuthorizationPattern = new RegExp(
 )
 
 const embeddedSecretAssignmentPattern = new RegExp(
-  String.raw`\b([\w-]*(?:${secretKeyPattern.source})[\w-]*["']?\s*[:=]\s*)(?!\[redacted\](?=$|[\s,;}&]))(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|'(?:\\[^\r\n]|[^'\\\r\n])*'|[^\s,;&]+)`,
+  String.raw`\b([\w-]*(?:${secretKeyPattern.source})[\w-]*["']?\s*[:=]\s*)(?!\[redacted\](?=$|[\s,;}&]))(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|'(?:\\[^\r\n]|[^'\\r\n])*'|[^\s,;&#]+)`,
   "gi",
 )
 
