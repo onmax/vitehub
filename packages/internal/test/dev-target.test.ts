@@ -115,6 +115,7 @@ describe("dev server discovery", () => {
       { fetch: async () => { throw new TypeError("fetch failed") }, message: "No Compatible Vite Development Server found at http://localhost:1.\n", serverUrl: "http://localhost:1" },
       { fetch: async () => new Response("no", { status: 404 }), message: "No Compatible Vite Development Server found at http://localhost:2.\n", serverUrl: "http://localhost:2" },
       { fetch: async () => Response.json({ root: "/other" }), message: "Compatible Vite Development Server root mismatch: /other\n", serverUrl: "http://localhost:3" },
+      { fetch: async () => Response.json({ root: "https://host/project?token=hidden" }), message: "Compatible Vite Development Server root mismatch: https://host/project?token=[redacted]\n", serverUrl: "http://localhost:4" },
     ]
     for (const input of cases) {
       const output = captureStderr()

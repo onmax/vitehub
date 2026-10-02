@@ -301,7 +301,7 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   const discovery = (options.parseDiscovery ? options.parseDiscovery(payload) : payload) as TDiscovery
   const isCompatibleRoot = options.isCompatibleRoot ?? ((rootDir: string, serverRoot: string) => serverRoot === rootDir)
   if (typeof discovery.root === "string" && !isCompatibleRoot(options.rootDir, discovery.root)) {
-    options.stderr.write(`Compatible Vite Development Server root mismatch: ${redactInspectionText(discovery.root)}\n`)
+    options.stderr.write(`Compatible Vite Development Server root mismatch: ${devServerDisplayUrl(discovery.root)}\n`)
     return
   }
   return { discovery, url }
