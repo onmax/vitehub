@@ -52,9 +52,15 @@ interface EmailDevDiscovery {
   runtime?: unknown
 }
 
+const emailDevDiscoverySchema = v.object({
+  message: v.optional(v.string()),
+  root: v.optional(v.string()),
+  runtime: v.optional(v.string()),
+})
+
 function parseEmailDevDiscovery(value: unknown): EmailDevDiscovery {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  return value as EmailDevDiscovery
+  const parsed = v.safeParse(emailDevDiscoverySchema, value)
+  return parsed.success ? parsed.output : {}
 }
 
 const emailDevEndpoint = {
