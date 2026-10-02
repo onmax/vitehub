@@ -26,6 +26,8 @@ composition and explicit feature subpaths for application APIs.
 | `vite-hub/agent/channels` | Official Channel Kind helpers. |
 | `vite-hub/agent/eval` | Agent Eval authoring helpers; install Evalite and the test runner explicitly. |
 | `vite-hub/agent/observability` | `useObservability()` for the instance configured by `vitehub({ observability })`. |
+| `vite-hub/agent/evlog` | Deprecated compatibility facade for Agent event logging. |
+| `vite-hub/agent/evlog/posthog` | Deprecated compatibility facade for the PostHog event-log exporter. |
 | `vite-hub/agent/presets/babysitter` | Composable Babysitter repair-loop preset. |
 | `vite-hub/agent/cloudflare` | Cloudflare Agent state configuration helpers. |
 | `vite-hub/agent/vue` | Vue Agent client handle and AI SDK chat composable. |
@@ -126,6 +128,8 @@ for libraries, focused integrations, and advanced composition.
 | `@vite-hub/agent/observability` | Agent Package | `useObservability()` and observability types. |
 | `@vite-hub/agent/observability/host` | Agent Package | `installObservability()` for hosts without `vitehub()`. |
 | `@vite-hub/agent/observability/posthog` | Agent Package | Optional PostHog exporter. |
+| `@vite-hub/agent/evlog` | Agent Package | Deprecated compatibility facade for Agent event logging. |
+| `@vite-hub/agent/evlog/posthog` | Agent Package | Deprecated compatibility facade for the PostHog event-log exporter. |
 | `@vite-hub/agent/eval` | Agent Package | Agent Eval authoring helpers. |
 | `@vite-hub/agent/runtime/process` | Agent Package | Adaptive process-local Agent capacity for self-hosted Node applications. |
 | `@vite-hub/agent/test` | Agent Package | Agent test runner helpers for local and CI Agent Invocation checks. |

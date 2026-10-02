@@ -9,7 +9,7 @@ icon: i-lucide-mail-search
 
 `gmail()` gives an Agent structured Gmail tools. The tools call the Gmail API through a [Connection](/docs/server-primitives/connections). The Connection holds the OAuth grant, applies its access rules, and records each call. The Agent never sees the token.
 
-Use [`email()`](/docs/capabilities/email) for application-owned transactional email through the Email primitive. Use `gmail()` for a Gmail account that an operator connects.
+Use [`email()`](/docs/capabilities/email) for application-owned transactional email through the Email primitive. Use `gmail()` for an operator-owned Gmail account and structured Gmail tools. To run an Agent on each new message and label it, use the [Gmail Channel](/docs/agents/gmail).
 
 ## Configure the Agent
 

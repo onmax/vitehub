@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { createClient } from "@libsql/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { createLibsqlAgentState, createSqliteAgentState, type SqliteAgentStateDriver, ViteHubSqliteAgentStateAdapter } from "../src/state/sqlite.ts"
+import { createLibsqlAgentState, createSqliteAgentState, type LibsqlAgentStateClient, type SqliteAgentStateDriver, ViteHubSqliteAgentStateAdapter } from "../src/state/sqlite.ts"
 
 import type { QueueEntry, StateAdapter } from "chat"
 import type { AgentWebhookQueueDelivery } from "../src/internal/webhook-queue.ts"
@@ -61,6 +61,26 @@ describe("SQLite Agent State Provider", () => {
   afterEach(async () => {
     vi.useRealTimers()
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })))
+  })
+
+  it("declares persistence only for known durable storage or explicit custom storage", () => {
+    for (const url of [":memory:", "file::memory:", "file:test?mode=memory"]) {
+      expect(createLibsqlAgentState({ url, durable: true }).durable).toBe(false)
+    }
+    for (const url of ["file:state.db", "libsql://database.example"]) {
+      expect(createLibsqlAgentState({ url }).durable).toBe(true)
+      expect(createLibsqlAgentState({ url, durable: false }).durable).toBe(false)
+    }
+    const client: LibsqlAgentStateClient = {
+      execute: () => ({ rows: [] }),
+      transaction: () => ({ execute: () => ({ rows: [] }), commit: () => {}, rollback: () => {} }),
+    }
+    expect(createLibsqlAgentState({ client }).durable).toBe(false)
+    expect(createLibsqlAgentState({ client, url: "file:unused.db" }).durable).toBe(false)
+    expect(createLibsqlAgentState({ client, durable: true }).durable).toBe(true)
+    const driver: SqliteAgentStateDriver = { execute: () => ({ rows: [] }) }
+    expect(createSqliteAgentState({ driver }).durable).toBe(false)
+    expect(createSqliteAgentState({ driver, durable: true }).durable).toBe(true)
   })
 
   it("preserves existing expired transcripts before cleanup and ignores new transcript TTLs", async () => {

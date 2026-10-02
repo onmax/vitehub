@@ -1,3 +1,4 @@
+import type { AgentStateCacheMutation } from "../internal/state-lock.ts"
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -32,6 +33,8 @@ export interface SqliteAgentStateDriver extends SqliteAgentStateExecutor {
 }
 
 export interface SqliteAgentStateOptions {
+  /** Custom drivers or clients must declare whether their storage survives a restart. */
+  durable?: boolean
   driver: SqliteAgentStateDriver
   tablePrefix?: string
   /** Preserve Chat user transcripts, including existing rows, before expiry cleanup. */
@@ -141,6 +144,7 @@ async function retrySqliteBusy<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAdapter {
+  readonly durable: boolean
   private readonly preserveTranscripts: boolean
   private connected = false
   private connectPromise?: Promise<void>
@@ -155,6 +159,7 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
     if (!options.driver) {
       throw agentDiagnostics.AGENT_R0850({ message: "[vitehub] SQLite Agent State requires a driver." })
     }
+    this.durable = options.durable === true
     this.preserveTranscripts = options.transcripts?.retention === "forever"
     this.driver = options.driver
     this.tablePrefix = options.tablePrefix ?? "vitehub_agent_state_"
@@ -582,6 +587,18 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
     return numberValue(countRows[0]?.count)
   }
 
+  async mutateWithLock(lock: Lock, mutations: readonly AgentStateCacheMutation[]): Promise<boolean> {
+    return await retrySqliteBusy(() => this.transaction(async (tx) => {
+      const held = await execute(tx, `SELECT 1 FROM ${this.tables.locks} WHERE thread_id = ? AND token = ? AND expires_at > ?`, [lock.threadId, lock.token, Date.now()])
+      if (held.length === 0) return false
+      for (const mutation of mutations) {
+        if (mutation.type === "delete") await execute(tx, `DELETE FROM ${this.tables.cache} WHERE key = ?`, [mutation.key])
+        else await execute(tx, `INSERT OR REPLACE INTO ${this.tables.cache} (key, value, expires_at) VALUES (?, ?, NULL)`, [mutation.key, JSON.stringify(mutation.value)])
+      }
+      return true
+    }))
+  }
+
   async releaseLock(lock: Lock): Promise<void> {
     await retrySqliteBusy(async () => {
       await this.cleanupExpiredStateIfDue()
@@ -872,6 +889,9 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
 
   return createSqliteAgentState({
     ...options,
+    durable: options.client ? options.durable === true : options.url
+      ? !options.url.includes(":memory:") && !/[?&]mode=memory(?:&|$)/.test(options.url) && options.durable !== false
+      : options.durable === true,
     driver: {
       async connect() {
         client ||= await openClient()

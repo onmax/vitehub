@@ -3,10 +3,10 @@ import * as v from "valibot"
 
 import { defineCollection } from "../../source/src/index.ts"
 import { defineChannel, defineChannelTrigger } from "../src/channels.ts"
-import { pendingAgentInvocationAnnotation } from "../src/invocations.ts"
+import { dispatchChannelItems } from "../src/channel-replay.ts"
 import { defineAgent } from "../src/index.ts"
-import { handleChannelReplayRequest } from "../src/channel-replay.ts"
-import { channelReplayRunId, createMemoryAgentInvocationStore, defineAgentInvocations, describeChannelHistory, replayChannel } from "../src/server.ts"
+import { bindAgentInvocations, pendingAgentInvocationAnnotation } from "../src/invocations.ts"
+import { channelMessageRunId, createMemoryAgentInvocationStore, defineAgentInvocations, describeChannelHistory, replayChannel } from "../src/server.ts"
 
 interface Email {
   folder: string
@@ -22,7 +22,7 @@ const emails: Email[] = [
   { folder: "inbox", id: "m5", subject: "Offer" },
 ]
 
-function mailbox(options: { maxLimit?: number, triggerRun?: { channelId?: string, origin?: string, threadId?: string } } = {}) {
+function mailbox(options: { maxLimit?: number } = {}) {
   const load = vi.fn(async ({ cursor, limit, query }: { cursor?: string, limit: number, query: { folder?: string } }) => {
     const matching = emails.filter(email => !query.folder || email.folder === query.folder)
     const offset = cursor ? matching.findIndex(email => email.id === cursor) + 1 : 0
@@ -53,7 +53,6 @@ function mailbox(options: { maxLimit?: number, triggerRun?: { channelId?: string
         invoke: (_context, email) => ({
           input: { prompt: email.subject },
           message: { id: email.id },
-          ...(options.triggerRun ? { run: { runId: "trigger-run", ...options.triggerRun } } : {}),
         }),
       }),
     },
@@ -61,9 +60,9 @@ function mailbox(options: { maxLimit?: number, triggerRun?: { channelId?: string
   return { channel, label, load }
 }
 
-function labeller(options: { invocations?: ReturnType<typeof defineAgentInvocations>, maxLimit?: number, triggerRun?: { channelId?: string, origin?: string, threadId?: string } } = {}) {
+function labeller(options: { invocations?: ReturnType<typeof defineAgentInvocations>, maxLimit?: number } = {}) {
   const { channel, label, load } = mailbox(options)
-  const run = vi.fn(async ({ input }: { input: { prompt?: unknown } }) => `label:${String(input.prompt)}`)
+  const run = vi.fn(({ input }: { input: { prompt?: unknown } }) => `label:${String(input.prompt)}`)
   const agent = defineAgent({
     channels: { mailbox: channel },
     driver: { run },
@@ -78,94 +77,11 @@ function labeller(options: { invocations?: ReturnType<typeof defineAgentInvocati
   return { agent, label, load, run }
 }
 
-it("encodes Channel and item keys without collisions", () => {
-  expect(channelReplayRunId("a:b", "c")).not.toBe(channelReplayRunId("a", "b:c"))
-  expect(channelReplayRunId("a%3Ab", "c")).not.toBe(channelReplayRunId("a:b", "c"))
-})
-
-it("claims overlapping replays before executing the Driver", async () => {
-  const store = createMemoryAgentInvocationStore()
-  // Separate Invocation definitions model two hosts sharing one durable store.
-  const first = labeller({ invocations: defineAgentInvocations({ store }) })
-  const second = labeller({ invocations: defineAgentInvocations({ store }) })
-  let release!: () => void
-  const gate = new Promise<void>((resolve) => { release = resolve })
-  first.run.mockImplementation(async () => { await gate; return "label" })
-  const firstReplay = replayChannel(first.agent, "mailbox", { limit: 1 })
-  await vi.waitFor(() => expect(first.run).toHaveBeenCalledOnce())
-  // Model the losing host having read absence before the first host claimed the item.
-  vi.spyOn(second.agent.invocations!, "getByRunId").mockResolvedValue(undefined)
-  const result = await replayChannel(second.agent, "mailbox", { limit: 1 })
-  expect(result).toMatchObject({ processed: 0, skipped: 1 })
-  expect(second.run).not.toHaveBeenCalled()
-  release()
-  expect(await firstReplay).toMatchObject({ processed: 1, skipped: 0 })
-})
-
-it("reports an unavailable claim store as failed instead of an existing item", async () => {
-  const store = createMemoryAgentInvocationStore()
-  vi.spyOn(store, "claim").mockImplementation(async () => { throw new Error("store unavailable") })
-  const { agent, run } = labeller({ invocations: defineAgentInvocations({ store }) })
-  expect(await replayChannel(agent, "mailbox", { limit: 1 })).toMatchObject({ failed: 1, processed: 0, skipped: 0 })
-  expect(run).not.toHaveBeenCalled()
-})
-
 function memoryInvocations() {
   return defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
 }
 
 describe("replayChannel()", () => {
-  it.each([false, true])("rejects an empty HTTP cursor before reading history or invoking with force=%s", async force => {
-    const { agent, label, load, run } = labeller({ invocations: memoryInvocations() })
-    const request = new Request("http://localhost/channels/replay", {
-      body: JSON.stringify({ channel: "mailbox", cursor: "", force }),
-      method: "POST",
-    })
-    const response = await handleChannelReplayRequest(agent, await request.json())
-    expect(response.status).toBe(400)
-    expect(await response.json()).toMatchObject({ code: "AGENT_R0936" })
-    expect(load).not.toHaveBeenCalled()
-    expect(run).not.toHaveBeenCalled()
-    expect(label).not.toHaveBeenCalled()
-  })
-
-  it("replays protected Channels without authenticating the host HTTP request", async () => {
-    const { agent, run } = labeller({ invocations: memoryInvocations() })
-    const channel = agent.channels?.mailbox
-    if (!channel) throw new Error("Expected mailbox Channel.")
-    channel.webhooks = [{ secretHeader: "x-provider-secret", secretToken: "secret" }]
-    const result = await replayChannel(agent, "mailbox", {
-      limit: 1,
-      runtime: { memo: (_key, create) => create(), request: new Request("https://console.test/_vitehub/channels/replay", { method: "POST" }), runtime: "unknown", waitUntil: () => {} },
-    })
-    expect(result).toMatchObject({ failed: 0, processed: 1 })
-    expect(run).toHaveBeenCalledOnce()
-  })
-
-  it("preserves inherited run metadata while overriding its run ID", async () => {
-    const invocations = memoryInvocations()
-    const { agent } = labeller({ invocations })
-    const result = await replayChannel(agent, "mailbox", {
-      limit: 1,
-      runtime: { memo: (_key, create) => create(), run: { annotations: { task: "backfill" }, channelId: "mailbox", origin: "dev", runId: "host-run", threadId: "dev-thread" }, runtime: "unknown", waitUntil: () => {} },
-    })
-    expect(await invocations.getByRunId(result.items[0]!.id)).toMatchObject({ annotations: { task: "backfill" }, channelId: "mailbox", origin: "dev", threadId: "dev-thread" })
-  })
-
-  it("persists trigger run metadata on the replay reservation", async () => {
-    const invocations = memoryInvocations()
-    const { agent } = labeller({ invocations, triggerRun: { channelId: "trigger-channel", origin: "provider", threadId: "trigger-thread" } })
-    const result = await replayChannel(agent, "mailbox", { limit: 1 })
-    expect(await invocations.getByRunId(result.items[0]!.id)).toMatchObject({ channelId: "trigger-channel", origin: "provider", threadId: "trigger-thread" })
-  })
-
-  it("reports inline objects with workflow-shaped fields as completed", async () => {
-    const { channel } = mailbox()
-    const agent = defineAgent({ channels: { mailbox: channel }, invocations: memoryInvocations(), driver: { run: () => ({ id: "item", provider: "custom", status: "success" }) }, runtime: false })
-    const result = await replayChannel(agent, "mailbox", { limit: 1 })
-    expect(result.items[0]).toMatchObject({ status: "completed" })
-  })
-
   it("pages history through the Channel trigger and skips items it replayed before", async () => {
     const invocations = memoryInvocations()
     const { agent, label, load } = labeller({ invocations })
@@ -173,10 +89,10 @@ describe("replayChannel()", () => {
     const first = await replayChannel(agent, "mailbox", { query: { folder: "inbox" } })
     expect(first).toMatchObject({ failed: 0, nextCursor: null, processed: 4, skipped: 0 })
     expect(first.items.map(item => [item.key, item.status])).toEqual([["m1", "completed"], ["m2", "completed"], ["m4", "completed"], ["m5", "completed"]])
-    expect(first.items[0]?.id).toBe(channelReplayRunId("mailbox", "m1"))
+    expect(first.items[0]?.id).toBe(channelMessageRunId("mailbox", "m1"))
     expect(label.mock.calls).toEqual([["m1", "label:Invoice"], ["m2", "label:Receipt"], ["m4", "label:Ticket"], ["m5", "label:Offer"]])
     expect(load).toHaveBeenCalledTimes(2)
-    await expect(invocations.getByRunId(channelReplayRunId("mailbox", "m1"))).resolves.toMatchObject({ status: "completed" })
+    await expect(invocations.getByRunId(channelMessageRunId("mailbox", "m1"))).resolves.toMatchObject({ status: "completed" })
 
     label.mockClear()
     const second = await replayChannel(agent, "mailbox", { query: { folder: "inbox" } })
@@ -185,53 +101,55 @@ describe("replayChannel()", () => {
     expect(label).not.toHaveBeenCalled()
   })
 
-  it("keeps completed inline side effects skipped when finish persistence is lost", async () => {
-    const store = createMemoryAgentInvocationStore()
-    const update = store.update.bind(store)
-    const invocations = defineAgentInvocations({ store: { ...store, update: async (id, input, token) => {
-      if (input.status && input.status !== "running") return undefined
-      return await update(id, input, token)
-    } } })
-    const { agent, run, label } = labeller({ invocations })
+  it("keeps colon-bearing Channel names and message keys independent", async () => {
+    const invocations = memoryInvocations()
+    const { channel } = mailbox()
+    const run = vi.fn(() => "done")
+    const agent = defineAgent({ channels: { "a:b": channel, a: channel }, driver: { run }, invocations, runtime: false })
     const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
-    vi.useFakeTimers()
-    try {
-      expect(await replayChannel(agent, "mailbox", { limit: 1, runtime })).toMatchObject({ processed: 1, failed: 0 })
-      expect(run).toHaveBeenCalledOnce()
-      expect(label).toHaveBeenCalledOnce()
-      await vi.advanceTimersByTimeAsync(61_000)
-      expect((await invocations.getByRunId(channelReplayRunId("mailbox", "m1")))?.status).toBe("running")
-      expect(await replayChannel(agent, "mailbox", { limit: 1, runtime })).toMatchObject({ processed: 0, skipped: 1, failed: 0 })
-      expect(run).toHaveBeenCalledOnce()
-      expect(label).toHaveBeenCalledOnce()
-    } finally { vi.useRealTimers() }
+    const first = await dispatchChannelItems(agent, runtime, "a:b", [{ key: "c", input: emails[0]! }], { trigger: "received" })
+    const second = await dispatchChannelItems(agent, runtime, "a", [{ key: "b:c", input: emails[0]! }], { trigger: "received" })
+    expect(first.processed).toBe(1)
+    expect(second.processed).toBe(1)
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(first.items[0]?.id).not.toBe(second.items[0]?.id)
+    expect(channelMessageRunId("a:b", "c")).not.toBe(channelMessageRunId("a%3Ab", "c"))
+    expect(channelMessageRunId("a", "b:c", { dryRun: true })).not.toBe(channelMessageRunId("a:b", "c", { dryRun: true }))
+    const repeated = await dispatchChannelItems(agent, runtime, "a", [{ key: "b:c", input: emails[0]! }], { trigger: "received" })
+    expect(repeated.skipped).toBe(1)
+    expect(run).toHaveBeenCalledTimes(2)
   })
 
-  it("does not execute inline side effects without a durable running marker", async () => {
-    const store = createMemoryAgentInvocationStore()
-    const update = store.update.bind(store)
-    const invocations = defineAgentInvocations({ store: { ...store, update: async (id, input, token) => {
-      if (input.status) return undefined
-      return await update(id, input, token)
-    } } })
-    const { agent, run, label } = labeller({ invocations })
+  it("atomically excludes a webhook dispatch racing history replay", async () => {
+    const invocations = memoryInvocations()
+    let entered = 0
+    const channel = defineChannel("mailbox", {
+      history: { collection: defineCollection(async () => [emails[0]!], { cursor: email => email.id, cursorSchema: v.string() }), key: email => email.id },
+      triggers: { received: defineChannelTrigger({
+        input: v.object({ folder: v.string(), id: v.string(), subject: v.string() }),
+        invoke: async () => {
+          entered++
+          return { input: { prompt: "hello" } }
+        },
+      }) },
+    })
+    const run = vi.fn(() => "done")
+    const finish = vi.fn()
+    const agent = defineAgent({ channels: { mailbox: channel }, driver: { run }, hooks: { "agent:finish": finish }, invocations, runtime: false })
     const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
-    vi.useFakeTimers()
-    try {
-      const result = await replayChannel(agent, "mailbox", { limit: 1, runtime })
-      expect(result).toMatchObject({ processed: 0, failed: 1 })
-      expect(result.items[0]?.error).toContain("Could not persist the Invocation running state before execution")
-      expect(run).not.toHaveBeenCalled()
-      expect(label).not.toHaveBeenCalled()
-      await vi.advanceTimersByTimeAsync(61_000)
-      expect((await invocations.getByRunId(channelReplayRunId("mailbox", "m1")))?.status).toBe("pending")
-      expect(await replayChannel(agent, "mailbox", { limit: 1, runtime })).toMatchObject({ processed: 0, skipped: 1, failed: 0 })
-      expect(run).not.toHaveBeenCalled()
-      expect(label).not.toHaveBeenCalled()
-    } finally { vi.useRealTimers() }
+    const results = await Promise.all([
+      replayChannel(agent, "mailbox", { runtime }),
+      dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" }),
+    ])
+    expect(entered).toBe(1)
+    expect(run).toHaveBeenCalledOnce()
+    expect(finish).toHaveBeenCalledOnce()
+    expect(results.reduce((sum, result) => sum + result.processed, 0)).toBe(1)
+    expect(results.reduce((sum, result) => sum + result.skipped + result.failed, 0)).toBe(1)
+    expect(await dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" })).toMatchObject({ failed: 0, processed: 0, skipped: 1 })
   })
 
-  it.each(["create", "claim"])("recovers an ambiguous %s reservation before retrying history replay", async operation => {
+  it.each(["create", "claim"])("recovers an ambiguous %s reservation before a Gmail-style dispatch retry", async operation => {
     const store = createMemoryAgentInvocationStore()
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })
@@ -245,7 +163,7 @@ describe("replayChannel()", () => {
       claim: async (...args: Parameters<typeof store.claim>) => { await pause("claim"); return await store.claim(...args) },
     } })
     const { agent, run, label } = labeller({ invocations })
-    const runtime = { memo: vi.fn(), run: { runId: "host-run", annotations: Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`tag${i}`, i])) }, runtime: "unknown" as const, waitUntil: () => {} }
+    const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
     vi.useFakeTimers()
     const initial = replayChannel(agent, "mailbox", { limit: 1, runtime })
     try {
@@ -255,8 +173,7 @@ describe("replayChannel()", () => {
       expect(run).not.toHaveBeenCalled()
       release()
       await vi.advanceTimersByTimeAsync(0)
-      expect((await invocations.getByRunId(channelReplayRunId("mailbox", "m1")))?.annotations?.[pendingAgentInvocationAnnotation]).toBe(true)
-      const retry = await replayChannel(agent, "mailbox", { limit: 1, runtime })
+      const retry = await dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" })
       expect(retry).toMatchObject({ failed: 0, processed: 1, skipped: 0 })
       expect(run).toHaveBeenCalledOnce()
       expect(label).toHaveBeenCalledOnce()
@@ -264,7 +181,147 @@ describe("replayChannel()", () => {
     } finally { release(); await initial; vi.useRealTimers() }
   })
 
-  it.each([false, undefined] as const)("claims before an asynchronous trigger write and recovers pending items according to runtime %s", async runtime => {
+  it("keeps a late pending claim retryable until its cleanup releases ownership", async () => {
+    const store = createMemoryAgentInvocationStore()
+    let releaseClaim!: () => void
+    const claimGate = new Promise<void>(resolve => { releaseClaim = resolve })
+    let releaseCleanup!: () => void
+    const cleanupGate = new Promise<void>(resolve => { releaseCleanup = resolve })
+    let claimStarted!: () => void
+    const started = new Promise<void>(resolve => { claimStarted = resolve })
+    let cleanupStarted!: () => void
+    const cleaning = new Promise<void>(resolve => { cleanupStarted = resolve })
+    let firstClaim = true
+    let firstRelease = true
+    const invocations = defineAgentInvocations({ store: {
+      ...store,
+      claim: async (...args: Parameters<typeof store.claim>) => {
+        if (firstClaim) { firstClaim = false; claimStarted(); await claimGate }
+        return await store.claim(...args)
+      },
+      release: async (...args: Parameters<typeof store.release>) => {
+        if (firstRelease) { firstRelease = false; cleanupStarted(); await cleanupGate }
+        return await store.release(...args)
+      },
+    } })
+    const { agent, run, label } = labeller({ invocations })
+    const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+    vi.useFakeTimers()
+    const initial = replayChannel(agent, "mailbox", { limit: 1, runtime })
+    try {
+      await started
+      await vi.advanceTimersByTimeAsync(1_001)
+      expect((await initial).failed).toBe(1)
+      releaseClaim()
+      await cleaning
+      const overlapping = await dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" })
+      expect(overlapping).toMatchObject({ failed: 1, processed: 0, skipped: 0 })
+      expect(run).not.toHaveBeenCalled()
+      releaseCleanup()
+      await vi.advanceTimersByTimeAsync(0)
+      const retry = await dispatchChannelItems(agent, runtime, "mailbox", [{ key: "m1", input: emails[0]! }], { trigger: "received" })
+      expect(retry).toMatchObject({ failed: 0, processed: 1, skipped: 0 })
+      expect(run).toHaveBeenCalledOnce()
+      expect(label).toHaveBeenCalledOnce()
+    } finally { releaseClaim(); releaseCleanup(); await initial; vi.useRealTimers() }
+  })
+
+  it.each([
+    { channelName: "mailbox", dryRun: false, key: "m1" },
+    { channelName: "mail box:%", dryRun: false, key: "m 1:%" },
+    { channelName: "mailbox", dryRun: true, key: "m1" },
+    { channelName: "mail box:%", dryRun: true, key: "m 1:%" },
+  ])("preserves legacy replay journals for $channelName/$key, dry run: $dryRun", async ({ channelName, dryRun, key }) => {
+    const invocations = memoryInvocations()
+    const { channel, label } = mailbox()
+    if (!channel.history) throw new Error("Expected history")
+    channel.history.key = () => key
+    const run = vi.fn(() => "done")
+    const agent = defineAgent({ channels: { [channelName]: channel }, driver: { run }, invocations, runtime: false })
+    const legacyId = `${dryRun ? "channel-replay-dry-run" : "channel-replay"}:${channelName}:${key}`
+    const journal = await bindAgentInvocations(invocations, { memo: vi.fn(), run: { runId: legacyId }, runtime: "unknown", waitUntil: () => {} })
+    await journal?.running()
+    await journal?.finish("completed")
+    expect(await replayChannel(agent, channelName, { dryRun, limit: 1 })).toMatchObject({ failed: 0, processed: 0, skipped: 1 })
+    expect(run).not.toHaveBeenCalled()
+    expect(label).not.toHaveBeenCalled()
+    expect(await replayChannel(agent, channelName, { dryRun, force: true, limit: 1 })).toMatchObject({ processed: 1, skipped: 0 })
+    if (dryRun) expect(await replayChannel(agent, channelName, { limit: 1 })).toMatchObject({ processed: 1, skipped: 0 })
+  })
+
+  it.each([
+    { channelName: "mailbox", key: "m 1", legacyKey: "m%201", named: false },
+    { channelName: "mailbox", key: "m1", legacyKey: "m1", named: true },
+  ])("keeps legacy replay identity scoped to the raw key and Agent: $key/$named", async ({ channelName, key, legacyKey, named }) => {
+    const invocations = memoryInvocations()
+    const { channel } = mailbox()
+    channel.history!.key = () => key
+    const run = vi.fn(() => "done")
+    const agent = defineAgent({ ...(named ? { name: "current" } : {}), channels: { [channelName]: channel }, driver: { run }, invocations, runtime: false })
+    const journal = await bindAgentInvocations(invocations, { memo: vi.fn(), run: { runId: `channel-replay:${channelName}:${legacyKey}` }, runtime: "unknown", waitUntil: () => {} }, named ? { agentName: "other" } : undefined)
+    await journal?.running()
+    await journal?.finish("completed")
+    expect(await replayChannel(agent, channelName, { limit: 1 })).toMatchObject({ processed: 1, skipped: 0, failed: 0 })
+    expect(run).toHaveBeenCalledOnce()
+  })
+
+  it.each(["a:b", undefined])("does not assign a colliding raw legacy ID to another Channel with owner %s", async owner => {
+    const invocations = memoryInvocations()
+    const { channel } = mailbox()
+    channel.history!.key = () => "b:c"
+    const run = vi.fn(() => "done")
+    const agent = defineAgent({ channels: { a: channel, "a:b": channel }, driver: { run }, invocations, runtime: false })
+    const journal = await bindAgentInvocations(invocations, { memo: vi.fn(), run: { runId: "channel-replay:a:b:c", ...(owner ? { channelId: owner } : {}) }, runtime: "unknown", waitUntil: () => {} })
+    await journal?.running()
+    await journal?.finish("completed")
+    const replay = await replayChannel(agent, "a", { limit: 1 })
+    expect(replay).toMatchObject(owner ? { processed: 1, skipped: 0, failed: 0 } : { processed: 0, skipped: 0, failed: 1 })
+    if (owner) expect(run).toHaveBeenCalledOnce()
+    else {
+      expect(run).not.toHaveBeenCalled()
+      expect(await replayChannel(agent, "a", { limit: 1, force: true })).toMatchObject({ processed: 1, failed: 0 })
+    }
+  })
+
+  it("marks started inline execution non-recoverable while its claim excludes concurrent replay", async () => {
+    const invocations = memoryInvocations()
+    const { channel } = mailbox()
+    let entered!: () => void
+    let release!: () => void
+    const running = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const agent = defineAgent({ channels: { mailbox: channel }, invocations, runtime: false, driver: { run: async () => { entered(); await gate; return "done" } } })
+    const execution = replayChannel(agent, "mailbox", { limit: 1 })
+    try {
+      await Promise.race([running, execution])
+      expect(await invocations.getByRunId(channelMessageRunId("mailbox", "m1"))).toMatchObject({ status: "running", annotations: { [pendingAgentInvocationAnnotation]: false } })
+      expect((await replayChannel(agent, "mailbox", { limit: 1 })).skipped).toBe(1)
+      release()
+      expect((await execution).processed).toBe(1)
+      expect((await replayChannel(agent, "mailbox", { limit: 1 })).skipped).toBe(1)
+    } finally { release(); await execution }
+  })
+
+  it.each(["pending", "running"] as const)("recovers only an unstarted inline %s reservation after its process and lease are lost", async status => {
+    const invocations = memoryInvocations()
+    const { agent, run } = labeller({ invocations })
+    const runtime = { memo: vi.fn(), runtime: "unknown" as const, waitUntil: () => {} }
+    vi.useFakeTimers()
+    try {
+      const journal = await bindAgentInvocations(invocations, { ...runtime, run: { runId: channelMessageRunId("mailbox", "m1"), annotations: { [pendingAgentInvocationAnnotation]: true } } }, { recoverPending: true })
+      expect(journal?.claimStatus).toBe("owned")
+      if (status === "running") await journal?.running()
+      await journal?.handoffClaim()
+      expect(await replayChannel(agent, "mailbox", { limit: 1, runtime })).toMatchObject({ failed: status === "pending" ? 1 : 0, processed: 0, skipped: status === "pending" ? 0 : 1 })
+      await vi.advanceTimersByTimeAsync(30_001)
+      expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).processed).toBe(status === "pending" ? 1 : 0)
+      if (status === "pending") expect(run).toHaveBeenCalledOnce()
+      else expect(run).not.toHaveBeenCalled()
+      expect((await replayChannel(agent, "mailbox", { limit: 1, runtime })).skipped).toBe(1)
+    } finally { vi.useRealTimers() }
+  })
+
+  it("claims before an asynchronous trigger write and retries failed trigger preparation", async () => {
     const invocations = memoryInvocations()
     let entered!: () => void
     let release!: () => void
@@ -282,24 +339,17 @@ describe("replayChannel()", () => {
       triggers: { received: defineChannelTrigger({ input: v.object({ folder: v.string(), id: v.string(), subject: v.string() }), invoke }) },
     })
     const run = vi.fn(() => "done")
-    const agent = defineAgent({ channels: { mailbox: channel }, driver: { run }, invocations, runtime })
+    const agent = defineAgent({ channels: { mailbox: channel }, driver: { run }, invocations, runtime: false })
     const first = replayChannel(agent, "mailbox", { limit: 1 })
     try {
       await Promise.race([running, first])
-      expect((await replayChannel(agent, "mailbox", { limit: 1 })).skipped).toBe(1)
+      expect(await replayChannel(agent, "mailbox", { limit: 1 })).toMatchObject({ failed: 1, processed: 0, skipped: 0 })
       expect(invoke).toHaveBeenCalledOnce()
       release()
       expect((await first).failed).toBe(1)
       expect(run).not.toHaveBeenCalled()
       fail = false
-      if (runtime === undefined) {
-        expect((await replayChannel(agent, "mailbox", { limit: 1 })).skipped).toBe(1)
-        expect(invoke).toHaveBeenCalledOnce()
-        expect(run).not.toHaveBeenCalled()
-        expect((await replayChannel(agent, "mailbox", { force: true, limit: 1 })).processed).toBe(1)
-      } else {
-        expect((await replayChannel(agent, "mailbox", { limit: 1 })).processed).toBe(1)
-      }
+      expect((await replayChannel(agent, "mailbox", { limit: 1 })).processed).toBe(1)
       expect(invoke).toHaveBeenCalledTimes(2)
       expect(run).toHaveBeenCalledOnce()
     } finally { release(); await first }
@@ -313,7 +363,7 @@ describe("replayChannel()", () => {
 
     const forced = await replayChannel(agent, "mailbox", { force: true, limit: 1 })
     expect(forced).toMatchObject({ processed: 1, skipped: 0 })
-    expect(forced.items[0]?.id).toMatch(new RegExp(`^${channelReplayRunId("mailbox", "m1")}:`))
+    expect(forced.items[0]?.id).toMatch(new RegExp(`^${channelMessageRunId("mailbox", "m1")}:`))
     expect(label).toHaveBeenCalledWith("m1", "label:Invoice")
   })
 
@@ -323,7 +373,7 @@ describe("replayChannel()", () => {
 
     const dryRun = await replayChannel(agent, "mailbox", { dryRun: true, limit: 2 })
     expect(dryRun).toMatchObject({ processed: 2 })
-    expect(dryRun.items[0]?.id).toBe(channelReplayRunId("mailbox", "m1", { dryRun: true }))
+    expect(dryRun.items[0]?.id).toBe(channelMessageRunId("mailbox", "m1", { dryRun: true }))
     expect(run).toHaveBeenCalledTimes(2)
     expect(label).not.toHaveBeenCalled()
 
@@ -349,16 +399,16 @@ describe("replayChannel()", () => {
     const invocations = memoryInvocations()
     const { agent, run } = labeller({ invocations })
 
-    await expect(replayChannel(agent, "mailbox", { query: { folder: "spam" } })).rejects.toMatchObject({ code: "AGENT_R0937" })
-    await expect(replayChannel(agent, "mailbox", { cursor: "not-a-cursor" })).rejects.toMatchObject({ code: "AGENT_R0938" })
-    await expect(replayChannel(agent, "unknown")).rejects.toMatchObject({ code: "AGENT_R0933" })
-    await expect(replayChannel(agent, "mailbox", { limit: 0 })).rejects.toMatchObject({ code: "AGENT_R0936" })
+    await expect(replayChannel(agent, "mailbox", { query: { folder: "spam" } })).rejects.toMatchObject({ code: "AGENT_R0935" })
+    await expect(replayChannel(agent, "mailbox", { cursor: "not-a-cursor" })).rejects.toMatchObject({ code: "AGENT_R0936" })
+    await expect(replayChannel(agent, "unknown")).rejects.toMatchObject({ code: "AGENT_R0931" })
+    await expect(replayChannel(agent, "mailbox", { limit: 0 })).rejects.toMatchObject({ code: "AGENT_R0934" })
     expect(run).not.toHaveBeenCalled()
   })
 
   it("requires Agent Invocations for a live replay without force", async () => {
     const { agent } = labeller()
-    await expect(replayChannel(agent, "mailbox")).rejects.toMatchObject({ code: "AGENT_R0934" })
+    await expect(replayChannel(agent, "mailbox")).rejects.toMatchObject({ code: "AGENT_R0932" })
     await expect(replayChannel(agent, "mailbox", { dryRun: true, limit: 1 })).resolves.toMatchObject({ processed: 1 })
   })
 

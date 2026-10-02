@@ -274,6 +274,7 @@ const agentTypeDiagnosticCodes = new Set([
   "AGENT_R0937",
   "AGENT_R0933",
   "AGENT_R0939",
+  "AGENT_R0940",
   "AGENT_R0501",
   "AGENT_R0508",
   "AGENT_R0509",
@@ -1515,6 +1516,7 @@ export const agentDiagnostics = defineDiagnostics({
       why: "[vitehub] Observability is not configured.",
       fix: "Set vitehub({ observability: { service } }) in the Vite config.",
     },
+    AGENT_R0940: dynamicError,
     AGENT_R0928: {
       why: "[vitehub] Provider Agent Drivers are not included in Worker builds. They start local Codex or Claude Code processes, which require a Node.js host.",
       fix: "Use a { model } or { run } Driver in Worker builds, or deploy Agents that use provider Drivers to a Node.js host.",
