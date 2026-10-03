@@ -1351,7 +1351,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       // invoked arrow. Do not skip delimiters belonging to an enclosing call:
       // `consume(() => value)()` invokes `consume`, not the callback arrow.
       let invocation = end + 1
-      if ([")", "]", "}"].includes(references[invocation] ?? "")) invocation++
+      if ([")", "]", "}"].includes(references[invocation] ?? "")) {
+        // A closing delimiter can belong to the argument list of an
+        // enclosing call. In `consume(() => value)()`, the following call
+        // invokes consume's result, not the callback arrow. Parenthesized
+        // IIFEs have no callee immediately before their grouping delimiter.
+        const groupingOpen = referenceOpenings.get(invocation)
+        const groupingCallee = groupingOpen === undefined ? undefined : references[groupingOpen - 1]
+        if (groupingCallee === undefined || !isIdentifier(groupingCallee)) invocation++
+      }
       if (end >= start && references[invocation] !== "(") uncalledFunctionBodies.push({ start, end })
     }
     const functionExpressionCall = (index: number) => {
