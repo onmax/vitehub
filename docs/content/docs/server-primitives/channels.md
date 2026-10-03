@@ -71,6 +71,8 @@ The file name becomes the Channel name. For a Vite suffix definition, use `src/a
 
 `useChannel()` returns immediately. `send()` performs the connector call and returns `[null, receipt]` on success or `[error, null]` on failure. The receipt has the Channel name, connector name, ViteHub delivery id, and optional provider message id. Check the error before using the receipt.
 
+Named clients share one definition load for the active runtime registry. A failed load can retry on a later send. Replacing the runtime registry invalidates the cached definition for existing clients.
+
 ```ts [server/api/build-finished.post.ts]
 import { defineEventHandler } from 'h3'
 import { useChannel } from 'vite-hub/channels/server'
