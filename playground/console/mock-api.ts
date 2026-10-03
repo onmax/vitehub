@@ -204,7 +204,7 @@ const scheduleRecords = [
     id: "definition:reindex-console",
   },
   {
-    cells: { enabled: "Enabled", kind: "Runtime", lastRun: "completed at 2026-08-30T15:00:00.000Z", nextRun: "2026-08-30T19:00:00.000Z", schedule: "sched_console_reindex", target: "reindex-console", timing: "0 */4 * * *" },
+    cells: { enabled: "Enabled", kind: "Runtime", lastRun: "succeeded at 2026-08-30T15:00:00.000Z", nextRun: "2026-08-30T19:00:00.000Z", schedule: "sched_console_reindex", target: "reindex-console", timing: "0 */4 * * *" },
     fields: [
       { label: "Target", value: "reindex-console" },
       { label: "Cron", value: "0 */4 * * *" },
@@ -216,9 +216,9 @@ const scheduleRecords = [
       { label: "Input", value: "{\"sections\":[\"agents\",\"kv\"]}" },
       { label: "Created", value: "2026-08-28T09:12:00.000Z" },
       { label: "Updated", value: "2026-08-30T15:00:04.000Z" },
-      { label: "Run 1", value: "2026-08-30T15:00:00.000Z, completed, 1 attempt, run_01J6R8" },
+      { label: "Run 1", value: "2026-08-30T15:00:00.000Z, succeeded, 1 attempt, run_01J6R8" },
       { label: "Run 2", value: "2026-08-30T11:00:00.000Z, failed, 2 attempts, Console index store was locked., run_01J6QZ" },
-      { label: "Run 3", value: "2026-08-30T07:00:00.000Z, completed, 1 attempt, run_01J6QM" },
+      { label: "Run 3", value: "2026-08-30T07:00:00.000Z, succeeded, 1 attempt, run_01J6QM" },
     ],
     id: "runtime:sched_console_reindex",
   },
@@ -631,7 +631,7 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       id: `run_playground_${++scheduleRunCount}`,
       scheduleId: name,
       startedAt: startedAt.toISOString(),
-      status: "completed",
+      status: "succeeded",
     } })
     return true
   }
@@ -644,7 +644,7 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       return true
     }
     const prefix = url.searchParams.get("prefix") || ""
-    const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 100, 1), 250)
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 3, 1), 250)
     const offset = Math.max(Number(url.searchParams.get("cursor")) || 0, 0)
     const matching = blobStores[store].filter(blob => blob.pathname.startsWith(prefix))
     const page = matching.slice(offset, offset + limit)
