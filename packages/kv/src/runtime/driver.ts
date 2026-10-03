@@ -55,8 +55,10 @@ async function createRuntimeDriver(store: ResolvedKVStoreConfig): Promise<KVRunt
 
 export function createLazyKVRuntimeDriver(config: ResolvedKVModuleOptions): KVRuntimeDriver {
   let driverPromise: Promise<Driver> | undefined
+  let disposed = false
 
   function resolve(): Promise<Driver> {
+    if (disposed) return Promise.reject(new Error("KV storage has been disposed."))
     if (driverPromise) return driverPromise
     const pending = (async () => {
       const runtime = resolveRuntimeKVOptions(config)
@@ -83,6 +85,7 @@ export function createLazyKVRuntimeDriver(config: ResolvedKVModuleOptions): KVRu
       if (own !== undefined) return own
       if (prop === "dispose") {
         return async () => {
+          disposed = true
           if (!driverPromise) return
           // doctor-disable-next-line typescript/evidence/no-chained-type-assertions -- The promise resolves only from createRuntimeDriver.
           // SAFETY: createRuntimeDriver returns the callable driver record inspected here.

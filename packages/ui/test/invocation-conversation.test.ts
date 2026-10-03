@@ -30,6 +30,25 @@ function delivery(sequence: number, content: string, attributes = {}): Invocatio
 }
 
 describe("Invocation conversation plan", () => {
+  it.each(["echo", "steer", "after-answer", "different-text", "truncated"])("handles the initial driver input %s without dropping later turns", (scenario) => {
+    const prompt = message(1, "user", "Run it.", { "message.origin": "invocation-input", "message.id": "persisted" });
+    prompt.name = "agent.input.message";
+    const echo = message(3, "user", scenario === "different-text" ? "Different." : "Run it.", {
+      "message.id": "driver-event",
+      ...(scenario === "steer" ? { "input.mode": "steer" } : {}),
+    });
+    echo.name = "agent.input.message";
+    echo.truncated = scenario === "truncated";
+    const later = message(5, "user", "Run it.", { "message.id": "later-event" });
+    later.name = "agent.input.message";
+    const activities = [prompt, ...(scenario === "after-answer" ? [message(2, "assistant", "Earlier answer")] : []), echo, message(4, "assistant", "Answer"), later, message(6, "assistant", "Final answer")];
+    const plan = buildInvocationConversation(activities);
+    if (plan.kind !== "conversation") throw new Error("Expected a conversation");
+    expect(plan.prompt).toBe(prompt);
+    expect(plan.work.includes(echo)).toBe(scenario !== "echo");
+    expect(plan.work).toContain(later);
+  });
+
   it("keeps an unprompted activity stream and filters empty messages", () => {
     const activities = [message(1, "assistant", "  "), activity(2), message(3, "assistant", "Checking")];
 

@@ -1144,31 +1144,560 @@
       ]
     },
     {
-      "id": "ainv_nightly_digest",
-      "traceId": "trace_nightly_digest",
-      "agentName": "release-engineer",
-      "title": "Compile the nightly digest",
-      "status": "running",
-      "origin": "schedule",
-      "threadId": "nightly-digest",
-      "cancelNotEnforcedBy": "run",
-      "configuration": {
-        "agent": { "name": "release-engineer" },
-        "driver": { "kind": "run" },
-        "runtime": { "name": "node" }
+      "id": "ainv_console_empty_states",
+      "traceId": "trace_console_empty_states",
+      "agentName": "interface-engineer",
+      "title": "Share one empty state across primitive pages",
+      "status": "completed",
+      "origin": "github",
+      "threadId": "vite-hub/vitehub#1210",
+      "annotations": {
+        "github.pullRequest": 1210,
+        "github.repository": "vite-hub/vitehub",
+        "github.title": "Share one empty state across primitive pages",
+        "github.url": "https://github.com/vite-hub/vitehub/pull/1210",
+        "triggeredBy": "onmax",
+        "agent.model.provider": "openai"
       },
-      "createdAt": "2026-08-30T17:40:00.000Z",
-      "startedAt": "2026-08-30T17:40:01.000Z",
-      "updatedAt": "2026-08-30T17:41:12.000Z",
+      "configuration": {
+        "agent": {
+          "name": "interface-engineer",
+          "version": "0.8.0"
+        },
+        "capabilities": [
+          {
+            "id": "workspace-shell",
+            "metadata": {
+              "access": "write"
+            }
+          },
+          {
+            "id": "browser"
+          }
+        ],
+        "channels": [
+          {
+            "id": "github",
+            "kind": "github"
+          }
+        ],
+        "driver": {
+          "kind": "provider",
+          "model": {
+            "id": "gpt-5.6",
+            "provider": "openai"
+          },
+          "provider": "codex"
+        },
+        "instructions": [
+          "Keep the Console dense, legible, and specific to the primitive being inspected."
+        ],
+        "runtime": {
+          "name": "node"
+        },
+        "tools": [
+          {
+            "name": "exec_command"
+          },
+          {
+            "name": "read_file"
+          },
+          {
+            "name": "apply_patch"
+          },
+          {
+            "name": "browser"
+          }
+        ],
+        "workspace": {
+          "mode": "write",
+          "name": "vitehub",
+          "sources": [
+            "repository",
+            "pull-request"
+          ]
+        }
+      },
+      "createdAt": "2026-08-30T16:30:00.000Z",
+      "startedAt": "2026-08-30T16:30:02.000Z",
+      "updatedAt": "2026-08-30T16:41:20.000Z",
+      "completedAt": "2026-08-30T16:41:20.000Z",
       "observations": [
         {
+          "sequence": 0,
+          "name": "agent.invocation.start",
+          "type": "lifecycle",
+          "timestamp": "2026-08-30T16:30:02.000Z",
+          "attributes": {
+            "input.hasMessages": false,
+            "input.hasPrompt": true,
+            "input.replay.version": 5,
+            "input.promptChanged": false,
+            "input.hasContext": false,
+            "input.hasRunMetadata": false,
+            "input.hasTimeout": false,
+            "input.hasAbortSignal": false,
+            "input.hasDryRun": false,
+            "input.hasInvoker": false,
+            "input.hasResolvedInvoker": false,
+            "input.hasData": false,
+            "input.hasOptions": false,
+            "input.prompt": "The KV and Blob pages each render their own empty state. Share one component, keep the copy short, and prove it with the focused tests."
+          }
+        },
+        {
+          "sequence": 1,
           "name": "vitehub.agent.configured",
           "type": "lifecycle",
-          "sequence": 1,
-          "timestamp": "2026-08-30T17:40:01.000Z",
-          "trace": { "id": "trace_nightly_digest" },
+          "timestamp": "2026-08-30T16:30:03.000Z",
           "attributes": {
-            "vitehub.activity.body": "Started the custom run handler for the nightly digest."
+            "vitehub.agent.configuration": {
+              "agent": {
+                "name": "interface-engineer",
+                "version": "0.8.0"
+              },
+              "capabilities": [
+                {
+                  "id": "workspace-shell",
+                  "metadata": {
+                    "access": "write"
+                  }
+                },
+                {
+                  "id": "browser"
+                }
+              ],
+              "channels": [
+                {
+                  "id": "github",
+                  "kind": "github"
+                }
+              ],
+              "driver": {
+                "kind": "provider",
+                "model": {
+                  "id": "gpt-5.6",
+                  "provider": "openai"
+                },
+                "provider": "codex"
+              },
+              "instructions": [
+                "Keep the Console dense, legible, and specific to the primitive being inspected."
+              ],
+              "runtime": {
+                "name": "node"
+              },
+              "tools": [
+                {
+                  "name": "exec_command"
+                },
+                {
+                  "name": "read_file"
+                },
+                {
+                  "name": "apply_patch"
+                },
+                {
+                  "name": "browser"
+                }
+              ],
+              "workspace": {
+                "mode": "write",
+                "name": "vitehub",
+                "sources": [
+                  "repository",
+                  "pull-request"
+                ]
+              }
+            },
+            "vitehub.activity.body": "Loaded the interface engineer with write access to the ViteHub workspace."
+          }
+        },
+        {
+          "sequence": 2,
+          "name": "vitehub.workspace.prepare.entries.completed",
+          "type": "lifecycle",
+          "timestamp": "2026-08-30T16:30:05.000Z",
+          "attributes": {
+            "step.id": "vitehub.workspace.prepare.entries",
+            "vitehub.activity.detail": "",
+            "vitehub.activity.kind": "preparation",
+            "vitehub.activity.title": "Resolving workspace entries",
+            "vitehub.inspect.target": "workspace",
+            "workspace.name": "vitehub",
+            "workspace.preparation.durationMs": 1840,
+            "workspace.preparation.status": "completed"
+          }
+        },
+        {
+          "sequence": 3,
+          "name": "vitehub.workspace.prepare.read-files.completed",
+          "type": "lifecycle",
+          "timestamp": "2026-08-30T16:30:19.000Z",
+          "attributes": {
+            "step.id": "vitehub.workspace.prepare.read-files",
+            "vitehub.activity.detail": "2,731 files · 32.0 MB",
+            "vitehub.activity.kind": "preparation",
+            "vitehub.activity.title": "Reading workspace files",
+            "vitehub.inspect.target": "workspace",
+            "workspace.name": "vitehub",
+            "workspace.preparation.bytes": 33554432,
+            "workspace.preparation.durationMs": 13900,
+            "workspace.preparation.files": 2731,
+            "workspace.preparation.status": "completed"
+          }
+        },
+        {
+          "sequence": 4,
+          "name": "agent.message.recorded",
+          "type": "run",
+          "timestamp": "2026-08-30T16:30:20.000Z",
+          "attributes": {
+            "message.id": "user-1",
+            "message.role": "user",
+            "message.content": "The KV and Blob pages each render their own empty state. Share one component, keep the copy short, and prove it with the focused tests."
+          }
+        },
+        {
+          "sequence": 5,
+          "name": "agent.message.recorded",
+          "type": "run",
+          "timestamp": "2026-08-30T16:30:34.000Z",
+          "attributes": {
+            "message.id": "reasoning-1",
+            "message.phase": "reasoning",
+            "message.role": "assistant",
+            "message.content": "Both pages use UEmpty with different icons and sentences. A shared component in the console components folder can take the section id and derive the icon from the section details, so the copy stays in one place.",
+            "usage.reasoningTokens": 412
+          }
+        },
+        {
+          "sequence": 6,
+          "name": "agent.tool.finish",
+          "type": "run",
+          "timestamp": "2026-08-30T16:31:02.000Z",
+          "attributes": {
+            "tool.id": "read-pages",
+            "tool.name": "read_file",
+            "tool.durationMs": 640,
+            "vitehub.activity.title": "Read 3 files",
+            "tool.input": {
+              "paths": [
+                "packages/vite-hub/src/console/runtime/components/console-kv.vue",
+                "packages/vite-hub/src/console/runtime/components/console-blob.vue",
+                "packages/vite-hub/src/console/runtime/sections.ts"
+              ]
+            },
+            "tool.output": {
+              "item": {
+                "summary": "console-kv.vue, console-blob.vue, sections.ts",
+                "commandActions": [
+                  {
+                    "type": "read",
+                    "path": "packages/vite-hub/src/console/runtime/components/console-kv.vue"
+                  },
+                  {
+                    "type": "read",
+                    "path": "packages/vite-hub/src/console/runtime/components/console-blob.vue"
+                  },
+                  {
+                    "type": "read",
+                    "path": "packages/vite-hub/src/console/runtime/sections.ts"
+                  }
+                ],
+                "cwd": "/workspace/vitehub"
+              }
+            }
+          }
+        },
+        {
+          "sequence": 7,
+          "name": "agent.tool.finish",
+          "type": "run",
+          "timestamp": "2026-08-30T16:31:30.000Z",
+          "attributes": {
+            "tool.id": "grep-empty",
+            "tool.name": "exec_command",
+            "tool.durationMs": 2150,
+            "tool.input": {
+              "command": "rg -n \"<UEmpty\" packages/vite-hub/src/console/runtime/components",
+              "cwd": "/workspace/vitehub"
+            },
+            "tool.output": {
+              "item": {
+                "command": "rg -n \"<UEmpty\" packages/vite-hub/src/console/runtime/components",
+                "cwd": "/workspace/vitehub",
+                "exitCode": 0,
+                "aggregatedOutput": "packages/vite-hub/src/console/runtime/components/console-kv.vue:188:        <UEmpty\npackages/vite-hub/src/console/runtime/components/console-blob.vue:121:        <UEmpty\npackages/vite-hub/src/console/runtime/components/console-app.vue:1092:            ><UEmpty\npackages/vite-hub/src/console/runtime/components/console-database.vue:402:          <UEmpty\n"
+              }
+            }
+          }
+        },
+        {
+          "sequence": 8,
+          "name": "agent.tool.finish",
+          "type": "run",
+          "timestamp": "2026-08-30T16:34:08.000Z",
+          "attributes": {
+            "tool.id": "patch-empty",
+            "tool.name": "apply_patch",
+            "tool.durationMs": 980,
+            "vitehub.activity.title": "Changed 3 files",
+            "tool.output": {
+              "item": {
+                "type": "fileChange",
+                "changes": [
+                  {
+                    "path": "/workspace/vitehub/packages/vite-hub/src/console/runtime/components/console-empty.vue",
+                    "diff": "@@ -0,0 +1,19 @@\n+<script setup lang=\"ts\">\n+import { computed } from \"vue\";\n+\n+import { consoleSectionDetails } from \"../sections\";\n+import type { ConsoleBuiltinSectionId } from \"../sections\";\n+\n+const props = defineProps<{ section: ConsoleBuiltinSectionId; title: string; description?: string }>();\n+const icon = computed(() => consoleSectionDetails[props.section].icon);\n+</script>\n+\n+<template>\n+  <UEmpty\n+    class=\"console-empty\"\n+    :icon=\"icon\"\n+    :title=\"title\"\n+    :description=\"description\"\n+  />\n+</template>\n"
+                  },
+                  {
+                    "path": "/workspace/vitehub/packages/vite-hub/src/console/runtime/components/console-kv.vue",
+                    "diff": "@@ -186,9 +186,7 @@\n       </div>\n       <div v-else-if=\"!keys.length\" class=\"flex flex-1 items-center justify-center\">\n-        <UEmpty\n-          icon=\"i-ph-key-light\"\n-          title=\"No keys\"\n-          description=\"This store has no keys that match the prefix.\"\n-        />\n+        <ConsoleEmpty section=\"kv\" title=\"No keys match this prefix\" />\n       </div>\n"
+                  },
+                  {
+                    "path": "/workspace/vitehub/packages/vite-hub/src/console/runtime/components/console-blob.vue",
+                    "diff": "@@ -119,9 +119,7 @@\n       </div>\n       <div v-else-if=\"!blobs.length\" class=\"flex flex-1 items-center justify-center\">\n-        <UEmpty\n-          icon=\"i-lucide-file-box\"\n-          title=\"No objects\"\n-          description=\"This store has no objects that match the prefix.\"\n-        />\n+        <ConsoleEmpty section=\"blob\" title=\"No objects match this prefix\" />\n       </div>\n"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "sequence": 9,
+          "name": "agent.message.recorded",
+          "type": "run",
+          "timestamp": "2026-08-30T16:34:20.000Z",
+          "attributes": {
+            "message.id": "commentary-1",
+            "message.phase": "commentary",
+            "message.role": "assistant",
+            "message.content": "Both pages now use one empty state. Running the focused tests next."
+          }
+        },
+        {
+          "sequence": 10,
+          "name": "agent.tool.finish",
+          "type": "run",
+          "timestamp": "2026-08-30T16:37:55.000Z",
+          "attributes": {
+            "tool.id": "run-tests",
+            "tool.name": "exec_command",
+            "tool.durationMs": 41200,
+            "tool.input": {
+              "command": "corepack pnpm --dir packages/vite-hub exec vp test test/console-kv.test.ts test/console-blob.test.ts",
+              "cwd": "/workspace/vitehub"
+            },
+            "tool.output": {
+              "item": {
+                "command": "corepack pnpm --dir packages/vite-hub exec vp test test/console-kv.test.ts test/console-blob.test.ts",
+                "cwd": "/workspace/vitehub",
+                "exitCode": 0,
+                "aggregatedOutput": " ✓ test/console-kv.test.ts (14 tests) 812ms\n ✓ test/console-blob.test.ts (11 tests) 640ms\n\n Test Files  2 passed (2)\n      Tests  25 passed (25)\n   Duration  3.91s\n"
+              }
+            }
+          }
+        },
+        {
+          "sequence": 11,
+          "name": "agent.tool.finish",
+          "type": "run",
+          "timestamp": "2026-08-30T16:39:10.000Z",
+          "attributes": {
+            "capability.id": "browser",
+            "tool.id": "browser-kv",
+            "tool.name": "browser",
+            "tool.durationMs": 5400,
+            "vitehub.activity.title": "Checked the KV page",
+            "tool.input": {
+              "route": "/_vitehub/kv?store=cache&prefix=missing"
+            },
+            "tool.output": {
+              "item": {
+                "summary": "/_vitehub/kv?store=cache&prefix=missing",
+                "viewport": "1440x900"
+              }
+            }
+          }
+        },
+        {
+          "sequence": 12,
+          "name": "agent.message.recorded",
+          "type": "run",
+          "timestamp": "2026-08-30T16:40:48.000Z",
+          "attributes": {
+            "message.id": "assistant-1",
+            "message.role": "assistant",
+            "message.content": "KV and Blob now share one empty state.\n\n## What changed\n\n- Added `console-empty.vue`. It takes the section id and reads the icon from the section details, so the icon can never drift from the navigation.\n- Replaced the two hand-written `UEmpty` blocks in the KV and Blob pages with it.\n- Shortened the copy to one line each: \"No keys match this prefix\" and \"No objects match this prefix\".\n\n## Verification\n\n```sh\ncorepack pnpm --dir packages/vite-hub exec vp test test/console-kv.test.ts test/console-blob.test.ts\n```\n\n25 tests pass. I also opened `/_vitehub/kv?store=cache&prefix=missing` in the browser to confirm the state renders inside the page body and not in the header.\n\nThe Database and Agents pages still render their own empty states. They need different copy, so I left them for a follow-up."
+          }
+        },
+        {
+          "sequence": 13,
+          "name": "agent.channel.delivery",
+          "type": "run",
+          "timestamp": "2026-08-30T16:41:02.000Z",
+          "attributes": {
+            "channel.delivery.provider": "github",
+            "channel.effect.kind": "reply",
+            "channel.effect.content": "KV and Blob now share one empty state. See the summary in the PR description. 25 focused tests pass."
+          }
+        },
+        {
+          "sequence": 14,
+          "name": "agent.invocation.finish",
+          "type": "lifecycle",
+          "timestamp": "2026-08-30T16:41:20.000Z",
+          "attributes": {
+            "invocation.durationMs": 678000,
+            "usage.record": {
+              "model": "gpt-5.6",
+              "usage": {
+                "inputTokens": 48210,
+                "outputTokens": 3920,
+                "reasoningTokens": 1210,
+                "cachedInputTokens": 31400,
+                "totalTokens": 52130
+              },
+              "cost": {
+                "display": "$0.1832",
+                "estimated": true,
+                "source": "catalog",
+                "usd": "0.1832"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "ainv_docs_sync",
+      "traceId": "trace_docs_sync",
+      "agentName": "release-engineer",
+      "title": "Sync docs for the 0.0.5 release",
+      "status": "failed",
+      "origin": "github",
+      "threadId": "vite-hub/vitehub#1208",
+      "annotations": {
+        "github.pullRequest": 1208,
+        "github.repository": "vite-hub/vitehub",
+        "github.title": "Release 0.0.5",
+        "github.url": "https://github.com/vite-hub/vitehub/pull/1208",
+        "triggeredBy": "onmax"
+      },
+      "configuration": {
+        "agent": {
+          "name": "release-engineer",
+          "version": "1.2.0"
+        },
+        "capabilities": [
+          {
+            "id": "workspace-shell",
+            "metadata": {
+              "access": "write"
+            }
+          }
+        ],
+        "driver": {
+          "kind": "provider",
+          "model": {
+            "id": "gpt-5.6",
+            "provider": "openai"
+          },
+          "provider": "codex"
+        },
+        "runtime": {
+          "name": "node"
+        },
+        "tools": [
+          {
+            "name": "exec_command"
+          },
+          {
+            "name": "apply_patch"
+          }
+        ],
+        "workspace": {
+          "mode": "write",
+          "name": "vitehub",
+          "sources": [
+            "repository",
+            "docs"
+          ]
+        }
+      },
+      "error": {
+        "name": "Error",
+        "message": "[vitehub] Timed out waiting to read Workspace path: docs/content.",
+        "code": "WORKSPACE_READ_TIMEOUT"
+      },
+      "createdAt": "2026-08-30T15:40:00.000Z",
+      "startedAt": "2026-08-30T15:40:01.000Z",
+      "updatedAt": "2026-08-30T15:42:31.000Z",
+      "failedAt": "2026-08-30T15:42:31.000Z",
+      "observations": [
+        {
+          "sequence": 0,
+          "name": "agent.invocation.start",
+          "type": "lifecycle",
+          "timestamp": "2026-08-30T15:40:01.000Z",
+          "attributes": {
+            "input.hasPrompt": true,
+            "input.prompt": "Update the docs changelog and version references for 0.0.5."
+          }
+        },
+        {
+          "sequence": 1,
+          "name": "vitehub.agent.configured",
+          "type": "lifecycle",
+          "timestamp": "2026-08-30T15:40:02.000Z",
+          "attributes": {
+            "vitehub.activity.body": "Loaded the release engineer with write access to the ViteHub workspace."
+          }
+        },
+        {
+          "sequence": 2,
+          "name": "vitehub.workspace.prepare.entries.completed",
+          "type": "lifecycle",
+          "timestamp": "2026-08-30T15:40:04.000Z",
+          "attributes": {
+            "step.id": "vitehub.workspace.prepare.entries",
+            "vitehub.activity.detail": "",
+            "vitehub.activity.kind": "preparation",
+            "vitehub.activity.title": "Resolving workspace entries",
+            "vitehub.inspect.target": "workspace",
+            "workspace.name": "vitehub",
+            "workspace.preparation.durationMs": 2100,
+            "workspace.preparation.status": "completed"
+          }
+        },
+        {
+          "sequence": 3,
+          "name": "vitehub.workspace.prepare.read-files.failed",
+          "type": "error",
+          "timestamp": "2026-08-30T15:42:30.000Z",
+          "attributes": {
+            "error.message": "[vitehub] Timed out waiting to read Workspace path: docs/content.",
+            "step.id": "vitehub.workspace.prepare.read-files",
+            "vitehub.activity.detail": "2,731 files · 32.0 MB",
+            "vitehub.activity.kind": "preparation",
+            "vitehub.activity.title": "Reading workspace files",
+            "vitehub.inspect.target": "workspace",
+            "workspace.name": "vitehub",
+            "workspace.preparation.bytes": 33554432,
+            "workspace.preparation.durationMs": 146000,
+            "workspace.preparation.files": 2731,
+            "workspace.preparation.status": "failed"
+          }
+        },
+        {
+          "sequence": 4,
+          "name": "agent.invocation.error",
+          "type": "error",
+          "timestamp": "2026-08-30T15:42:31.000Z",
+          "attributes": {
+            "error.message": "[vitehub] Timed out waiting to read Workspace path: docs/content.",
+            "vitehub.activity.body": "The session stopped before the Agent received the prompt."
           }
         }
       ]
