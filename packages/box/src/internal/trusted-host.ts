@@ -22,7 +22,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { hostname, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { promisify } from "node:util";
@@ -34,6 +34,7 @@ import type {
   BoxRuntime,
   ResolvedBoxFile,
   BoxRuntimeInput,
+  BoxToolchainInput,
   ResolvedBoxRequirementInput,
   ResolvedBoxState,
 } from "../index.ts";
@@ -46,6 +47,7 @@ import {
   collectBoxRequirementOutput,
 } from "./requirements.ts";
 import { markBuiltInBoxRuntime } from "./runtime.ts";
+import { acquireFileLock } from "./file-lock.ts";
 import { createBoxSession, type RuntimeSession } from "./session.ts";
 
 export interface TrustedHostOptions {
@@ -230,6 +232,10 @@ async function createSession(
         },
       });
     }
+    // Project files exist only after checkout. The toolchain must precede requirement checks.
+    const toolchain = input.toolchain
+      ? await provisionTrustedHostToolchain(input.toolchain, checkout ?? input.cwd ?? root, options.stateRoot, env, createOptions.abortSignal)
+      : undefined;
     session = await createTrustedHostSession({
       env,
       home,
@@ -238,6 +244,7 @@ async function createSession(
       sessionId: createOptions.sessionId,
       workspace: input.cwd,
     });
+    session.toolchain = toolchain;
     await validateRequirements(
       input.requirements,
       env,
@@ -273,6 +280,23 @@ async function createSession(
     }
     throw error;
   }
+}
+
+async function provisionTrustedHostToolchain(
+  toolchain: BoxToolchainInput,
+  directory: string,
+  stateRoot: string | undefined,
+  env: Record<string, string>,
+  abortSignal: AbortSignal | undefined,
+) {
+  const { hostToolchainCacheRoot, provisionHostToolchain, toolchainPath } = await import("./host-toolchain.ts");
+  const provisioned = await provisionHostToolchain(toolchain, directory, {
+    abortSignal,
+    cacheRoot: hostToolchainCacheRoot(stateRoot),
+    env,
+  });
+  env.PATH = toolchainPath(provisioned, env.PATH);
+  return provisioned;
 }
 
 async function prepareState(
@@ -687,108 +711,8 @@ async function acquireStateLeases(
   };
 }
 
-async function acquireFileLock(
-  path: string,
-  abortSignal?: AbortSignal,
-): Promise<() => Promise<void>> {
-  const token = randomUUID();
-  while (true) {
-    abortSignal?.throwIfAborted();
-    const acquired = await mkdir(path, { mode: 0o700 }).then(
-      () => true,
-      async (error: NodeJS.ErrnoException) => {
-        if (error.code !== "EEXIST") throw error;
-        const staleToken = await staleLock(path);
-        if (staleToken) {
-          const tombstone = `${path}.stale-${staleToken}`;
-          await rename(path, tombstone).then(
-            () => true,
-            () => false,
-          );
-          // Keep the non-empty tombstone so another stale waiter cannot rename a
-          // freshly acquired lock using the same observed owner token.
-          return false;
-        }
-        return false;
-      },
-    );
-    if (acquired) {
-      try {
-        await writeFile(
-          join(path, "owner.json"),
-          JSON.stringify({ host: hostname(), pid: process.pid, token }),
-          { mode: 0o600 },
-        );
-      } catch (error) {
-        await rm(path, { force: true, recursive: true }).catch(() => undefined);
-        throw error;
-      }
-      let released = false;
-      return async () => {
-        if (released) return;
-        await rm(path, { force: true, recursive: true });
-        released = true;
-      };
-    }
-    await abortable(new Promise((resolvePromise) => setTimeout(resolvePromise, 25)), abortSignal);
-  }
-}
-
-async function staleLock(path: string) {
-  const owner = await readFile(join(path, "owner.json"), "utf8").then(
-    (value) => {
-      try {
-        return JSON.parse(value) as { host?: unknown; pid?: unknown; token?: unknown };
-      } catch {
-        return undefined;
-      }
-    },
-    () => undefined,
-  );
-  if (!owner) {
-    const item = await stat(path).catch(() => undefined);
-    return item && Date.now() - item.mtimeMs > 5_000
-      ? `invalid-${item.dev}-${item.ino}-${Math.floor(item.mtimeMs)}`
-      : undefined;
-  }
-  if (
-    owner.host !== hostname() ||
-    typeof owner.pid !== "number" ||
-    typeof owner.token !== "string"
-  )
-    return undefined;
-  try {
-    process.kill(owner.pid, 0);
-    return undefined;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ESRCH" ? owner.token : undefined;
-  }
-}
-
 function statePath(root: string, key: string) {
   return join(resolve(root), createHash("sha256").update(key).digest("hex"));
-}
-
-function abortable<T>(promise: Promise<T>, abortSignal?: AbortSignal): Promise<T> {
-  if (!abortSignal) return promise;
-  abortSignal.throwIfAborted();
-  return new Promise<T>((resolvePromise, reject) => {
-    const abort = () => {
-      abortSignal.removeEventListener("abort", abort);
-      reject(abortSignal.reason);
-    };
-    abortSignal.addEventListener("abort", abort, { once: true });
-    promise.then(
-      (value) => {
-        abortSignal.removeEventListener("abort", abort);
-        resolvePromise(value);
-      },
-      (error) => {
-        abortSignal.removeEventListener("abort", abort);
-        reject(error);
-      },
-    );
-  });
 }
 
 async function assertDirectory(path: string, label: string) {
