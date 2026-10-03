@@ -25,6 +25,7 @@ const defaultPageLimit = 50
 const defaultMaxLimit = 100
 
 function isRecord(value: unknown): value is Record<string, unknown> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Collection JSON has no item schema; traversal must distinguish objects from arrays and scalars.
   return Boolean(value && typeof value === "object" && !Array.isArray(value))
 }
 
@@ -43,12 +44,14 @@ function valueAt(value: unknown, path: string): unknown {
 
 function scalarValues(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(scalarValues)
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Search and facets accept JSON scalars and omit objects at the snapshot boundary.
   if (value === null || value === undefined || typeof value === "object") return []
   return [String(value)]
 }
 
 function matchesFilter(value: unknown, expected: WorkspaceCollectionFilter | undefined): boolean {
   const values = scalarValues(value).map(item => item.toLocaleLowerCase())
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The public filter union uses an object for the empty operator and strings or arrays for value matching.
   if (typeof expected === "object" && !Array.isArray(expected)) return expected.empty && values.length === 0
   const candidates = (Array.isArray(expected) ? expected : [expected])
     .filter((item): item is string => item !== undefined)
@@ -58,6 +61,7 @@ function matchesFilter(value: unknown, expected: WorkspaceCollectionFilter | und
 }
 
 function project(item: unknown, select: string[] | undefined): Record<string, unknown> {
+  // SAFETY: Unselected items retain the public API's caller-owned record shape; Collections do not validate an item schema.
   if (!select?.length) return item as Record<string, unknown>
   return Object.fromEntries(select.map(field => [field, valueAt(item, field)]))
 }
@@ -72,6 +76,7 @@ function normalizedFilters(filters: WorkspaceCollectionQuery["filters"]): Record
   return Object.fromEntries(Object.entries(filters || {})
     .filter((entry): entry is [string, WorkspaceCollectionFilter] => entry[1] !== undefined)
     .sort(([left], [right]) => left.localeCompare(right))
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Fingerprints must distinguish the public empty operator from string and array filter values.
     .map(([field, value]) => [field, typeof value === "object" && !Array.isArray(value)
       ? ["operator:empty"]
       : (Array.isArray(value) ? value : [value]).map(item => `value:${item.toLocaleLowerCase()}`).sort()]))
@@ -103,6 +108,7 @@ function decodeCursor(cursor: string | undefined, expected: Omit<CollectionCurso
   catch {
     throw workspaceCollectionCursorError("malformed")
   }
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Untrusted cursor JSON requires string digests and a nonnegative safe integer offset before comparison or slicing.
   if (!isRecord(parsed) || !Number.isSafeInteger(parsed.offset) || Number(parsed.offset) < 0 || typeof parsed.digest !== "string" || typeof parsed.query !== "string") {
     throw workspaceCollectionCursorError("malformed")
   }
@@ -134,8 +140,11 @@ function filterItems(items: unknown[], query: WorkspaceCollectionQuery): unknown
     filtered = [...filtered].sort((left, right) => {
       const leftValue = valueAt(left, query.sort!.field)
       const rightValue = valueAt(right, query.sort!.field)
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Array sort keys use the first JSON scalar and omit objects.
       const leftScalar = Array.isArray(leftValue) ? leftValue.flat(Infinity).find(value => value !== null && value !== undefined && typeof value !== "object") : leftValue
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Array sort keys use the first JSON scalar and omit objects.
       const rightScalar = Array.isArray(rightValue) ? rightValue.flat(Infinity).find(value => value !== null && value !== undefined && typeof value !== "object") : rightValue
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Numeric JSON keys sort numerically; mixed scalar keys keep the public string comparison behavior.
       if (typeof leftScalar === "number" && typeof rightScalar === "number") return (leftScalar - rightScalar) * direction
       return String(leftScalar ?? "").localeCompare(String(rightScalar ?? "")) * direction
     })

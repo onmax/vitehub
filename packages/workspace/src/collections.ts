@@ -80,11 +80,13 @@ async function readCollection<Name extends WorkspaceName>(options: WorkspaceColl
 export async function queryWorkspaceCollection<T = Record<string, unknown>, Name extends WorkspaceName = WorkspaceName>(
   options: WorkspaceCollectionPageOptions<Name>,
 ): Promise<WorkspaceCollectionPage<T>> {
+  // SAFETY: The caller owns T's item schema; the evaluator preserves those items or applies the caller's selected fields without validating T.
   return await (await readCollection(options)).page(options) as WorkspaceCollectionPage<T>
 }
 
 export async function getWorkspaceCollectionItem<T = Record<string, unknown>, Name extends WorkspaceName = WorkspaceName>(
   options: WorkspaceCollectionItemOptions<Name>,
 ): Promise<WorkspaceCollectionItem<T>> {
+  // SAFETY: The caller owns T's item schema; lookup and projection preserve the public caller-typed result contract.
   return (await readCollection(options)).get(options.query) as WorkspaceCollectionItem<T>
 }
