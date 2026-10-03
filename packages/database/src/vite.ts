@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto"
+import { copyFile, mkdir, readdir, rm } from "node:fs/promises"
 import { resolve } from "node:path"
 
 import { getViteMode } from "@vite-hub/internal/build/mode"
+import { getHostingProvider } from "@vite-hub/internal/hosting"
 import { contributeProviderDeploymentOutput, createDefaultCloudflareOutputRoot, createDefaultVercelOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
 import { createNoExternalAddition, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { normalize } from "pathe"
 
 import { createDbCliContributor } from "./cli.ts"
+import { mergeCloudflareD1Bindings, resolveCloudflareD1Bindings } from "./internal/cloudflare.ts"
 import { resolveDBViteConfig } from "./config.ts"
 import { removeGeneratedDatabaseTypes, writeGeneratedDatabaseArtifacts } from "./internal/generated.ts"
 import { renderDatabaseConfigExpression } from "./internal/runtime-config-expression.ts"
@@ -33,6 +36,7 @@ const DB_INTERNAL_VIRTUAL_DATABASES_ID = "virtual:vitehub/database/databases"
 const RESOLVED_DB_VIRTUAL_SCHEMA_ID = `\0${DB_VIRTUAL_SCHEMA_ID}`
 const RESOLVED_DB_VIRTUAL_DATABASES_ID = `\0${DB_VIRTUAL_DATABASES_ID}`
 const RESOLVED_DB_VIRTUAL_DEFINITION_DEFAULTS_ID = `\0${DB_VIRTUAL_DEFINITION_DEFAULTS_ID}`
+const NITRO_MIGRATIONS_DIR = ".vitehub/database/migrations"
 const DB_DRIZZLE_ENTRY_PATTERN = /(?:^|\/)(?:@vite-hub\/database|database)\/dist\/drizzle\.js$/
 
 export interface DBVitePluginAPI {
@@ -47,7 +51,20 @@ interface DBCliContributingPlugin {
   }
 }
 
-export type DBVitePlugin = Plugin & DBCliContributingPlugin & { api: DBVitePluginAPI }
+/** The Nitro surface that the database plugin reads and extends on a Cloudflare host. */
+interface DatabaseNitroHost {
+  hooks: { hook: (name: "compiled", callback: () => Promise<void>) => void }
+  options: {
+    cloudflare?: { wrangler?: { d1_databases?: unknown } }
+    output: { serverDir: string }
+    preset?: string
+  }
+}
+
+export type DBVitePlugin = Plugin & DBCliContributingPlugin & {
+  api: DBVitePluginAPI
+  nitro: { name: string, setup: (nitro: DatabaseNitroHost) => void }
+}
 
 const mergeNoExternal = createNoExternalAddition(dbPackageName)
 
@@ -103,6 +120,8 @@ function renderDatabasesModule(config: ResolvedDBViteConfig | undefined) {
 }
 
 export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
+  let nitroOptions: DatabaseNitroHost["options"] | undefined
+  let nitroMigrations: Array<{ source: string, target: string }> = []
   let providerOutput: ProviderOutputCatalog | undefined
   const providerOutputGenerations = createProviderDeploymentOutputGenerationState()
   let resolved: ResolvedConfig | undefined
@@ -136,11 +155,51 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
     return runtimeConfig
   }
 
+  // Nitro writes `wrangler.json` from its own options, so a Cloudflare Nitro build needs the D1 bindings there.
+  // Wrangler resolves `migrations_dir` from that file, so migration SQL is copied beside it.
+  function mergeNitroCloudflareD1Bindings() {
+    if (!nitroOptions || !runtimeConfig || getHostingProvider(nitroOptions.preset) !== "cloudflare") return
+    const { d1Databases } = resolveCloudflareD1Bindings(runtimeConfig, { provisionState: readProvisionStateSync(resolved?.root ?? process.cwd()) })
+    if (!d1Databases.length) return
+    const bindings = d1Databases.map(binding => binding.migrations_dir
+      ? { ...binding, migrations_dir: `${NITRO_MIGRATIONS_DIR}/${binding.binding}` }
+      : binding)
+    nitroMigrations = d1Databases.flatMap(binding => binding.migrations_dir
+      ? [{ source: resolve(databaseRoot(), binding.migrations_dir), target: `${NITRO_MIGRATIONS_DIR}/${binding.binding}` }]
+      : [])
+    const wrangler = (nitroOptions.cloudflare ??= {}).wrangler ??= {}
+    wrangler.d1_databases = mergeCloudflareD1Bindings(wrangler.d1_databases, bindings)
+  }
+
+  async function copyNitroMigrations(serverDir: string) {
+    if (!nitroMigrations.length) return
+    await rm(resolve(serverDir, NITRO_MIGRATIONS_DIR), { force: true, recursive: true })
+    await Promise.all(nitroMigrations.map(async ({ source, target }) => {
+      const outputDir = resolve(serverDir, target)
+      const entries = await readdir(source, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return []
+        throw error
+      })
+      await mkdir(outputDir, { recursive: true })
+      await Promise.all(entries
+        .filter(entry => entry.isFile() && entry.name.endsWith(".sql"))
+        .map(entry => copyFile(resolve(source, entry.name), resolve(outputDir, entry.name))))
+    }))
+  }
+
   return {
     name: DB_VITE_PLUGIN_NAME,
     api: {
       getConfig: () => runtimeConfig,
       refresh: refreshRuntimeConfig,
+    },
+    nitro: {
+      name: "@vite-hub/database/cloudflare-bindings",
+      setup(nitro) {
+        nitroOptions = nitro.options
+        mergeNitroCloudflareD1Bindings()
+        nitro.hooks.hook("compiled", () => copyNitroMigrations(nitro.options.output.serverDir))
+      },
     },
     vitehub: {
       cli: async () => {
@@ -179,6 +238,7 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
       resolved = config
       providerOutput = useProviderOutputCatalog(config)
       await refreshRuntimeConfig()
+      mergeNitroCloudflareD1Bindings()
     },
     configEnvironment(name, config) {
       if (!isServerEnvironment(name, config)) {
