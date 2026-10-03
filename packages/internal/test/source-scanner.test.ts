@@ -141,6 +141,7 @@ describe("source scanner", () => {
     'as import /* type */ ("types" /* module */, /* attributes */ { with: { "resolution-mode": "require" } } /* end */).Record<string, unknown>',
     'satisfies import /* type */ ("types" /* module */).Record<string, unknown>',
     'as import // type\n ("types" /* module */).Record<string, unknown>',
+    "as 类型<string, unknown>",
   ])("keeps nested generic assertion commas inside one argument: %s", (assertion) => {
     const argument = `{ cron: '0 8 * * *' } ${assertion}`
     expect(splitTopLevel(`${argument}, second`)).toEqual([argument, "second"])

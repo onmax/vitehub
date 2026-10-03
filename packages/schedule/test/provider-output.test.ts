@@ -1155,6 +1155,7 @@ describe("schedule provider output", () => {
     "as unknown as () => Result<string, unknown> | Other<number, boolean>",
     "as unknown as T extends infer R extends Pair<string, unknown> ? Definition : never",
     'satisfies import("types", { with: { "resolution-mode": "import" } }).Record<string, unknown>',
+    "as 类型<string, unknown>",
     'as import /* type */ ("types" /* module */, /* attributes */ { with: { "resolution-mode": "require" } } /* end */).Record<string, unknown>',
     'satisfies import /* type */ ("types" /* module */).Record<string, unknown>',
   ])("reads static provider cron from a generic assertion: %s", async (assertion) => {

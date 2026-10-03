@@ -97,7 +97,11 @@ function skipBlockComment(source: string, index: number) {
 }
 
 function isIdentifierChar(char: string | undefined) {
-  return !!char && /[\w$]/.test(char)
+  return !!char && /[\p{ID_Continue}$]/u.test(char)
+}
+
+function isIdentifierStart(char: string | undefined) {
+  return !!char && /[\p{ID_Start}_$]/u.test(char)
 }
 
 function isRegexLiteralStart(previousSignificant: string) {
@@ -370,7 +374,7 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
     const end = current + 1
     while (isIdentifierChar(source[current])) current -= 1
     const identifier = source.slice(current + 1, end)
-    if (!/^[A-Za-z_$][\w$]*$/.test(identifier)) {
+    if (!isIdentifierStart(identifier[0]) || [...identifier].slice(1).some(char => !isIdentifierChar(char))) {
       // Import types qualify named references through import("module").Type.
       if (!qualified || source[current] !== ")") return false
       return assertionSuffix || hasAssertionTypePrefix(source.slice(0, index))
