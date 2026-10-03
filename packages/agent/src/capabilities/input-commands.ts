@@ -477,6 +477,8 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       const blockedCommands = new Set<string>()
       let budgetText: string | undefined
       let budgetCommand: string | undefined
+      let budgetArgs: string | undefined
+      let budgetStart: number | undefined
       while (cursor <= text.length) {
         // Each registered command can credit growth or a new rewrite stage only once.
         // Repeated or alternating recursive handlers cannot keep raising the allowance.
@@ -491,15 +493,29 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             const finiteStage = nextOwnRuns === 0 && addedRuns > 0
             const ownGrowth = nextOwnRuns > previousOwnRuns && !creditedGrowth.has(budgetCommand)
             const wasBlocked = blockedCommands.has(budgetCommand)
-            const nextNames = Object.keys(commands).filter(name => countInputCommandInvocations(text, trigger, commands, name) > 0)
-            for (const nextName of nextNames) {
-              if (nextName !== budgetCommand && transitions.has(`${nextName}->${budgetCommand}`)) {
-                blockedCommands.add(nextName)
+            // Only inspect the invocation produced at the current cursor. Other
+            // invocations in the prompt are independent siblings and must not
+            // create a false recursive cycle.
+            const nextInvocation = findInputCommandInvocation(text, trigger, commands, cursor)
+            if (nextInvocation && nextInvocation.start === budgetStart && nextInvocation.name !== budgetCommand) {
+              const transition = `${budgetCommand}->${nextInvocation.name}`
+              const reverse = `${nextInvocation.name}->${budgetCommand}`
+              if (transitions.has(reverse)) {
+                blockedCommands.add(nextInvocation.name)
                 blockedCommands.add(budgetCommand)
               }
-              if (nextName !== budgetCommand) transitions.add(`${budgetCommand}->${nextName}`)
+              transitions.add(transition)
             }
-            if (!wasBlocked && (finiteStage || advancesStage || ownGrowth)) {
+            // A same-command fan-out can be finite even though every stage
+            // increases the total number of invocations. A strictly decreasing
+            // numeric argument proves that the branch has a finite measure, so
+            // credit each such expansion while it consumes that measure.
+            const finiteSameCommandGrowth = budgetCommand === nextInvocation?.name
+              && budgetArgs !== undefined
+              && /^\d+$/.test(budgetArgs)
+              && /^\d+$/.test(nextInvocation.args)
+              && Number(nextInvocation.args) < Number(budgetArgs)
+            if (!wasBlocked && (finiteStage || advancesStage || ownGrowth || finiteSameCommandGrowth)) {
               // Credit the rewritten invocation too, which may consume the base allowance.
               maxRuns += (addedRuns > 0 ? addedRuns : nextRuns) + 1
               if (ownGrowth) creditedGrowth.add(budgetCommand)
@@ -508,6 +524,8 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         }
         budgetText = undefined
         budgetCommand = undefined
+        budgetArgs = undefined
+        budgetStart = undefined
         const invocation = findInputCommandInvocation(text, trigger, commands, cursor)
         if (!invocation) break
         if (++runs > maxRuns) throw agentDiagnostics.AGENT_R0103({ message: "[vitehub] inputCommands exceeded the maximum command expansion depth." })
@@ -521,6 +539,8 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         if (!blockedCommands.has(invocation.name)) {
           budgetText = text
           budgetCommand = invocation.name
+          budgetArgs = invocation.args
+          budgetStart = invocation.start
         }
         const result = await inputCommandCall(command)({
           args: invocation.args,

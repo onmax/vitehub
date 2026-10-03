@@ -175,6 +175,44 @@ describe("inputCommands", () => {
     expect(calls).toBe(1_004)
   })
 
+  it("allows finite same-command fan-out", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        same: {
+          call({ args }) {
+            calls++
+            const depth = Number(args)
+            return depth > 0 ? `/same ${depth - 1} /same ${depth - 1}` : ""
+          },
+        },
+      },
+    })
+
+    await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/same 9" })
+    expect(calls).toBe(1_023)
+  })
+
+  it("does not treat untouched sibling commands as a recursive cycle", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let marks = 0
+    let aCalls = 0
+    const capability = inputCommands({
+      commands: {
+        a: { call: () => ++aCalls === 1 ? "text" : Array.from({ length: 1_001 }, () => "/mark").join(" ") },
+        b: { call: () => "text" },
+        mark: { call: () => { marks++ } },
+      },
+    })
+
+    const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/a /b /a" })
+    expect(resolved.input.prompt).toBe("text text")
+    expect(marks).toBe(1_001)
+  })
+
   it.each(["replacement", "result", "mutation"] as const)("allows delayed finite expansion by the same command through %s", async (mode) => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
