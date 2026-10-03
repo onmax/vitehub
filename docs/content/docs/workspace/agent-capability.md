@@ -2,13 +2,13 @@
 title: Workspace capability
 description: Give an Agent Workspace inspection and file mutation tools, plus an optional allowlist of executables for Provider Drivers.
 navigation.title: Agent capability
-navigation.order: 2
+navigation.order: 5
 icon: i-lucide-folder-search
 ---
 
 `workspaceShell()` gives an Agent tools for the active [Workspace](/docs/workspace). Read mode adds a controlled `shell` tool for file inspection. Write mode also adds structured file mutation tools. The `commands` option adds a `workspace_exec` tool that runs allowlisted executables for Provider Drivers.
 
-The Workspace primitive page covers application code. This page covers the Agent tools.
+The [Workspace server API](/docs/workspace/server-api) covers application code. This page covers the Agent tools.
 
 ## Configure the Workspace shell
 

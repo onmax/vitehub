@@ -49,17 +49,25 @@ describe("docs product navigation", () => {
     expect(catalog.find(group => group.category === "Agents")?.sections.map(section => section.id)).toEqual(["agents", "ui"]);
   });
 
-  it("gives every Server Primitive an Overview page first and its Agent capability second", () => {
+  it("orders every Server Primitive section by the product page template", () => {
+    const template = ["Overview", "Get started", "Configure", "Server API", "Agent capability", "Hosts", "Limits and errors"];
+
     for (const sectionId of serverPrimitiveSections) {
       const section = docsManifest.sections.find(candidate => candidate.id === sectionId);
       const pages = section?.pages.filter(page => page.navigation) || [];
+      const titles = pages.map(page => page.title);
+      const templateTitles = titles.filter(title => template.includes(title));
 
       expect(pages[0]?.path, sectionId).toBe(`/docs/${sectionId}`);
-      expect(pages[0]?.title, sectionId).toBe("Overview");
+      expect(titles[0], sectionId).toBe("Overview");
+      expect(templateTitles, sectionId).toContain("Get started");
+      expect(templateTitles, sectionId).toContain("Server API");
+      // Template pages appear in template order. Product-specific pages such as Env Bridge come after them.
+      expect(templateTitles, sectionId).toEqual(template.filter(title => templateTitles.includes(title)));
+      expect(titles.slice(templateTitles.length).some(title => template.includes(title)), sectionId).toBe(false);
 
       const capability = pages.find(page => page.id === "agent-capability");
       if (capability) {
-        expect(pages[1]?.path, sectionId).toBe(`/docs/${sectionId}/agent-capability`);
         expect(capability.title, sectionId).toBe("Agent capability");
         expect(capability.sourceTitle, sectionId).toBe(`${section?.title} capability`);
       }
@@ -80,8 +88,8 @@ describe("docs product navigation", () => {
   it("resolves the sidebar section from the route", () => {
     expect(getDocsSectionForPath(docsManifest.sections, "/docs/kv/agent-capability/")?.id).toBe("kv");
     expect(getDocsSectionForPath(docsManifest.sections, "/docs/agents/capabilities/mcp")?.id).toBe("agents");
-    expect(getDocsSectionForPath(docsManifest.sections, "/docs")?.id).toBe(docsRootSectionId);
-    expect(getDocsSectionForPath(docsManifest.sections, "/docs/unknown")?.id).toBe(docsRootSectionId);
+    expect(getDocsSectionForPath(docsManifest.sections, "/docs")).toBeNull();
+    expect(getDocsSectionForPath(docsManifest.sections, "/docs/unknown")).toBeNull();
   });
 
   it("lists each product once in the select, grouped by category", () => {
@@ -97,7 +105,7 @@ describe("docs product navigation", () => {
   });
 
   it("groups every navigable page of a large section", () => {
-    for (const sectionId of ["agents", "concepts", "development", "frameworks-hosts", "reference", "ui"]) {
+    for (const sectionId of ["agents", "development", "frameworks-hosts", "reference", "ui"]) {
       const section = docsManifest.sections.find(candidate => candidate.id === sectionId);
       const groups = getDocsSidebarGroups(section!);
 
@@ -126,7 +134,7 @@ describe("docs product navigation", () => {
   });
 
   it("keeps commas in frontmatter titles", () => {
-    expect(getDocsPageByPath("/docs/concepts/runtime-policy-approvals-and-traces")?.title)
+    expect(getDocsPageByPath("/docs/getting-started/concepts/runtime-policy-approvals-and-traces")?.title)
       .toBe("Runtime policy, approvals, and traces");
   });
 

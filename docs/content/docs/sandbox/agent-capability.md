@@ -2,13 +2,13 @@
 title: Sandbox capability
 description: Let an Agent run allowlisted executables in an isolated sandbox through one sandbox_exec tool.
 navigation.title: Agent capability
-navigation.order: 2
+navigation.order: 5
 icon: i-lucide-box
 ---
 
 `sandbox({ commands })` gives an Agent the `sandbox_exec` tool. The tool runs one allowlisted executable with optional args, cwd, environment, and timeout.
 It delegates execution to the configured [Sandbox primitive](/docs/sandbox).
-The Sandbox primitive page covers application code. This page covers the Agent tool.
+The [Sandbox server API](/docs/sandbox/server-api) covers application code. This page covers the Agent tool.
 
 ## Configure sandbox commands
 

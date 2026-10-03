@@ -117,7 +117,7 @@ mcp({
 })
 ```
 
-Allow the transport in the Connection with `access: { 'agent:support': { read: true, write: ['fetch'], approve: false } }`. The `executor` Connection can use an OAuth client for your app, or an [API key Connection](/docs/connections#api-key-connections) with a personal Executor API key.
+Allow the transport in the Connection with `access: { 'agent:support': { read: true, write: ['fetch'], approve: false } }`. The `executor` Connection can use an OAuth client for your app, or an [API key Connection](/docs/connections/configure#api-key-connections) with a personal Executor API key.
 
 Without Connections, you can also send an Executor API key from Server Env in a resolver. Use a personal API key: Executor rejects organization keys for MCP sessions.
 

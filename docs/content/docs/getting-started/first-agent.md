@@ -1,5 +1,6 @@
 ---
 title: First Agent
+navigation.title: First Agent
 description: Define a server-side Agent, call it from H3, and see the response.
 navigation.order: 4
 icon: i-lucide-bot

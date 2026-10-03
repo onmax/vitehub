@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { docsManifest, normalizeDocsPath } from "~~/modules/vitehub-docs/runtime/utils/docs";
 import {
+  getDocsCatalog,
+  getDocsRelatedSections,
   getDocsSectionForPath,
   getDocsSidebarGroups,
   type DocsSidebarGroup,
@@ -10,6 +12,9 @@ const route = useRoute();
 const currentPath = computed(() => normalizeDocsPath(route.path));
 const section = computed(() => getDocsSectionForPath(docsManifest.sections, route.path));
 const pageGroups = computed(() => section.value ? getDocsSidebarGroups(section.value) : []);
+const related = computed(() => section.value ? getDocsRelatedSections(docsManifest.sections, section.value) : []);
+// Outside every section, for example on the catalog, the sidebar lists every product by category.
+const catalog = getDocsCatalog(docsManifest.sections);
 
 function isActive(path: string) {
   return currentPath.value === normalizeDocsPath(path);
@@ -59,10 +64,38 @@ function isPageGroupOpen(group: DocsSidebarGroup, index: number) {
       </template>
     </template>
 
+    <section v-if="related.length" class="vh-docs-sidebar-related" aria-label="Related products">
+      <h2 class="vh-docs-sidebar-heading">Related</h2>
+      <NuxtLink
+        v-for="relatedSection in related"
+        :key="relatedSection.id"
+        :to="relatedSection.path"
+        class="vh-docs-sidebar-link"
+      >
+        <UIcon :name="sidebarSectionIcon(relatedSection)" class="size-4 shrink-0" />
+        <span class="min-w-0 truncate">{{ relatedSection.title }}</span>
+      </NuxtLink>
+    </section>
+
     <NuxtLink to="/docs" class="vh-docs-sidebar-link vh-docs-sidebar-catalog-link">
       <UIcon name="i-ph-squares-four-light" class="size-4 shrink-0" />
       <span class="min-w-0 truncate">All products</span>
     </NuxtLink>
+  </nav>
+
+  <nav v-else class="vh-docs-sidebar-nav" aria-label="All products">
+    <section v-for="group in catalog" :key="group.category" class="vh-docs-sidebar-category">
+      <h2 class="vh-docs-sidebar-heading">{{ group.category }}</h2>
+      <NuxtLink
+        v-for="catalogSection in group.sections"
+        :key="catalogSection.id"
+        :to="catalogSection.path"
+        class="vh-docs-sidebar-link"
+      >
+        <UIcon :name="sidebarSectionIcon(catalogSection)" class="size-4 shrink-0" />
+        <span class="min-w-0 truncate">{{ catalogSection.title }}</span>
+      </NuxtLink>
+    </section>
   </nav>
 </template>
 
@@ -73,29 +106,40 @@ function isPageGroupOpen(group: DocsSidebarGroup, index: number) {
   min-height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 0.5rem 0 0;
+  padding: 0.5rem 0 1rem;
 }
 
-.vh-docs-sidebar-page-group {
+.vh-docs-sidebar-page-group,
+.vh-docs-sidebar-category {
   border-top: 1px solid color-mix(in srgb, var(--ui-border) 65%, transparent);
 }
 
-.vh-docs-sidebar-page-group:first-child {
+.vh-docs-sidebar-page-group:first-child,
+.vh-docs-sidebar-category:first-child {
   border-top: 0;
 }
 
-.vh-docs-sidebar-page-group-summary {
+.vh-docs-sidebar-category {
+  padding-bottom: 0.25rem;
+}
+
+.vh-docs-sidebar-page-group-summary,
+.vh-docs-sidebar-heading {
   display: flex;
-  cursor: pointer;
-  list-style: none;
   align-items: center;
   gap: 0.5rem;
+  margin: 0;
   padding: 0.5rem 1.25rem 0.375rem;
   color: var(--ui-text-dimmed);
   font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.vh-docs-sidebar-page-group-summary {
+  cursor: pointer;
+  list-style: none;
 }
 
 .vh-docs-sidebar-page-group-summary::-webkit-details-marker {
@@ -130,8 +174,14 @@ function isPageGroupOpen(group: DocsSidebarGroup, index: number) {
   color: var(--ui-text);
 }
 
-.vh-docs-sidebar-catalog-link {
+.vh-docs-sidebar-related {
   margin-top: 0.75rem;
+  border-top: 1px solid var(--ui-border);
+  padding-bottom: 0.25rem;
+}
+
+.vh-docs-sidebar-catalog-link {
+  margin-top: 0.5rem;
   border-top: 1px solid var(--ui-border);
   padding-top: 0.625rem;
   padding-bottom: 0.625rem;

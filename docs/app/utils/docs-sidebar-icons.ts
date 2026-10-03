@@ -90,7 +90,7 @@ const sidebarSectionIconMap = {
 const sidebarPageIconMap = {
   "/docs/agents": "i-ph-activity-light",
   "/docs/agents/capabilities": "i-ph-sliders-horizontal-light",
-  "/docs/concepts": "i-ph-book-bookmark-light",
+  "/docs/getting-started/concepts": "i-ph-book-bookmark-light",
   "/docs/frameworks-hosts": "i-ph-lightning-light",
   "/docs/getting-started": "i-ph-book-open-light",
   "/docs/getting-started/server-primitives": "i-ph-cube-light",

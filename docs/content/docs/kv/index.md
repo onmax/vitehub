@@ -10,28 +10,7 @@ Use KV for settings, feature flags, cursors, cache records, and other small valu
 
 Use [Database](/docs/database) when data needs relationships or constraints, [Blob](/docs/blob) for large objects, and [Workspace](/docs/workspace) for file trees.
 
-## Quick start
-
-::steps{level="3"}
-
-### Install
-
-```bash [Terminal]
-pnpm add @vite-hub/kv
-```
-
-### Configure
-
-```ts [vite.config.ts]
-import { hubKv } from '@vite-hub/kv/vite'
-import { defineConfig } from 'vite'
-
-export default defineConfig({
-  plugins: [hubKv()],
-})
-```
-
-### Start using it
+This server route writes one key to the Default KV Store:
 
 ```ts [server/api/settings.put.ts]
 import { kv } from '@vite-hub/kv'
@@ -42,143 +21,10 @@ export default defineEventHandler(async (event) => {
   return { ok: true }
 })
 ```
-
-::
-
-## Public imports
-
-| Import | Use |
-| --- | --- |
-| `kv` from `@vite-hub/kv` | Read and write the Default KV Store or a named KV Store. |
-| `disposeKVStores` from `@vite-hub/kv` | Dispose all cached stores from an application shutdown hook. |
-| `hubKv` from `@vite-hub/kv/vite` | Register KV runtime configuration. |
-| `resolveKVViteConfig` from `@vite-hub/kv/vite` | Resolve KV Vite runtime config manually. |
-
-All KV driver, store, module, and storage types are exported from `@vite-hub/kv`.
-
-## Configuration options
-
-Configure a default store directly, or configure named stores with `kv.stores`.
-
-```ts [vite.config.ts]
-export default defineConfig({
-  plugins: [hubKv()],
-  kv: {
-    stores: {
-      default: { driver: 'fs-lite' },
-      rateLimit: { driver: 'upstash' },
-    },
-  },
-})
-```
-
-| Shape | Description |
-| --- | --- |
-| `kv: false` | Disables KV runtime configuration. |
-| `kv: { driver: 'fs-lite', base?: string }` | Uses local filesystem-backed KV. Default `base`: `.vitehub/data/kv`. |
-| `kv: { driver: 'cloudflare-kv-binding', binding?: string, namespaceId?: string }` | Uses Cloudflare KV. Default `binding`: `KV`. `namespaceId` can come from `KV_NAMESPACE_ID`. |
-| `kv: { driver: 'deno-kv', path?: string }` | Uses native Deno KV through `Deno.openKv()`. |
-| `kv: { driver: 'upstash', url?: string, token?: string }` | Uses Upstash REST KV. Values can come from `KV_REST_API_URL` and `KV_REST_API_TOKEN`, or from `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` when the first pair is unset. |
-| `kv: { stores: Record<string, KVStoreConfig> }` | Defines named KV Stores. `stores.default` is required. |
-
-## Providers
-
-| Provider | Driver | Default resolution |
-| --- | --- | --- |
-| Local filesystem | `fs-lite` | Used for local/non-hosted development when no hosted env is detected. |
-| Cloudflare KV | `cloudflare-kv-binding` | Used on Cloudflare hosting. |
-| Deno KV | `deno-kv` | Used on Deno hosting. |
-| Upstash | `upstash` | Used when Upstash env vars are present or when Vercel hosting is detected. |
-
-## Use it at runtime
-
-Use the `kv` Runtime Helper from server code.
-
-```ts [server/api/settings.put.ts]
-import { kv } from '@vite-hub/kv'
-
-export default defineEventHandler(async (event) => {
-  const [error] = await kv.set('settings', await readBody(event))
-  if (error) throw error
-  return { ok: true }
-})
-```
-
-```ts [server/api/settings.get.ts]
-import { kv } from '@vite-hub/kv'
-
-export default defineEventHandler(async () => {
-  const [error, settings] = await kv.get('settings')
-  if (error) throw error
-  return { settings }
-})
-```
-
-Use named stores when configuration defines multiple KV Stores.
-
-```ts [server/tenant-preferences.ts]
-import { kv } from '@vite-hub/kv'
-
-const preferences = kv.store('tenant-preferences')
-
-export async function savePreferences(tenantId: string, value: unknown) {
-  const [error] = await preferences.set(tenantId, value)
-  if (error) throw error
-}
-```
-
-Upstash provides atomic single-use reads and counters:
-
-```ts [server/verification.ts]
-const [consumeError, token] = await kv.getAndDelete('verification:token')
-if (consumeError) throw consumeError
-
-const [incrementError, attempts] = await kv.increment('rate-limit:user', 60)
-if (incrementError) throw incrementError
-```
-
-`increment()` applies the TTL only when it creates the counter. Deno KV accepts a new relative expiry on each write, so matching that fixed window would require a hidden deadline and cleanup. Deno KV, Cloudflare KV, and local `fs-lite` stores therefore reject both methods. Use the [Rate Limit primitive](/docs/rate-limit) when provider-managed request budgets fit the application.
-
-## Runtime helper
-
-`kv` implements `KVStorage`.
-
-| Method | Description |
-| --- | --- |
-| `kv.get<T>(key)` | Reads a value or returns `null`. |
-| `kv.getAndDelete<T>(key)` | Atomically returns and deletes a value on Upstash. |
-| `kv.set<T>(key, value)` | Writes a value. |
-| `kv.has(key)` | Checks whether a key exists. |
-| `kv.increment(key, ttl)` | Atomically increments a counter on Upstash. |
-| `kv.del(key)` | Deletes one key. |
-| `kv.keys(base?)` | Lists keys under an optional base prefix. |
-| `kv.clear(base?)` | Deletes keys under an optional base prefix. |
-| `kv.store(name)` | Selects a named KV Store. |
-
-Every async method returns `[error, value]`. Provider failures are `ViteHubError` values with code `KV_OPERATION_FAILED`, operation/store details, and the provider failure in `cause`. Application code can log, retry, ignore, or translate the error without `try/catch`. Invalid configuration and unknown named stores still throw before provider execution.
-
-## Provider output
-
-The KV package selects the default or named store and generates store-name types. Put provider namespaces, bindings, and credentials in integration configuration or deployment setup.
-
-Application code keeps importing `kv` from `@vite-hub/kv` when you switch between local, Cloudflare, Deno, Vercel-compatible, or other drivers.
-
-## Read and write keys during development
-
-`hubKv()` contributes the `vitehub kv` CLI namespace. Start the Vite Development Server, then read and write keys from another terminal.
-
-```bash [Terminal]
-pnpm vitehub kv list --prefix users:
-pnpm vitehub kv get settings --json
-pnpm vitehub kv set settings '{"theme":"dark"}' --json-value
-pnpm vitehub kv del settings
-```
-
-The commands call the same KV storage as the running app. Pass `--store <name>` for a named store. Each write command prints what it changed. There is no `clear` command. The commands call a guarded endpoint that exists only on the Vite Development Server. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 there. Read [CLI](/docs/development/cli#read-and-write-kv-keys) for every command and option.
 
 ## Connect KV to Agents
 
-Direct KV access is for app and server code. To let a model inspect or edit scoped key-value data, attach the KV Capability from the agent capability catalog.
+Direct KV access is for app and server code. To let a model inspect or edit scoped key-value data, attach the [KV Capability](/docs/kv/agent-capability).
 
 ```bash [Terminal]
 pnpm add @vite-hub/agent
@@ -190,30 +36,13 @@ import { kv } from '@vite-hub/agent/capabilities'
 
 Give model-facing tools the narrowest useful key prefix and configure write access deliberately. Read [Official capabilities](/docs/agents/capabilities/official) for storage modes and write approvals.
 
-## Production checks
-
-KV prefixes are conventions, not relational models. Move data to Database when you need constraints, joins, migrations, history, or complex queries.
-
-Do not build coordination locks on top of basic `kv.get()` and `kv.set()`. The atomic methods cover single-use reads and counters; they are not a general compare-and-swap API.
-
 ## Next steps
 
+- [Get started](/docs/kv/get-started): install KV and write the first key.
+- [Configure](/docs/kv/configure): select drivers and define named KV Stores.
+- [Server API](/docs/kv/server-api): read and write keys from server code.
+- [Agent capability](/docs/kv/agent-capability): give an Agent scoped KV tools.
+- [Hosts](/docs/kv/hosts): provider output, the development CLI, and production checks.
 - Use [Database](/docs/database) for relational data.
 - Use [Blob](/docs/blob) for object storage.
 - Expose scoped model access through [Official capabilities](/docs/agents/capabilities/official).
-
-KV inspection represents `bigint` values, including nested values, as decimal strings. Values that cannot be serialized return `KV_VALUE_UNSUPPORTED`. Cloudflare write results report the effective TTL after rounding.
-
-## Application teardown
-
-After stopping new application work, call `disposeKVStores()` from your shutdown hook. It releases cached default and named stores, including retained filesystem iterators and Upstash overflow pages. Concurrent calls share one cleanup promise. Cleanup failures reject with an `AggregateError`. Later operations create fresh stores, so restart process-local listings without an old cursor.
-
-For Nitro, register the hook in a server plugin:
-
-```ts [server/plugins/kv-cleanup.ts]
-import { disposeKVStores } from '@vite-hub/kv'
-
-export default defineNitroPlugin((nitroApp) => {
-  nitroApp.hooks.hook('close', disposeKVStores)
-})
-```

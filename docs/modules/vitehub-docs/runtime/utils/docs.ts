@@ -19,6 +19,8 @@ export type DocsSection = {
   description: string | null;
   icon: string | null;
   category: string | null;
+  /** Section ids shown as related products in the sidebar. */
+  related: string[];
   order: number;
   pages: DocsPage[];
 };

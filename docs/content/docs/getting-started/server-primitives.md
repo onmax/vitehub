@@ -10,7 +10,7 @@ icon: i-lucide-server-cog
 
 ViteHub adds storage, queues, schedules, email, and other server APIs to Vite apps. Call them from routes, handlers, jobs, or workers. You don't need an Agent Definition.
 
-Start with [Your first server primitive](/docs/getting-started/first-server-primitive) for a runnable example. Return to Concepts when you need to understand generated imports or host configuration. Read the Agents section only when a model needs access to one of these APIs.
+Start with [Your first server primitive](/docs/getting-started/first-server-primitive) for a runnable example. Read [Concepts](/docs/getting-started/concepts) when you need to understand generated imports or host configuration. Read [Agents](/docs/agents) only when a model needs access to one of these APIs.
 
 ::u-page-grid{class="not-prose mt-8"}
   :::u-page-card
@@ -26,7 +26,7 @@ Start with [Your first server primitive](/docs/getting-started/first-server-prim
   title: Server model
   description: Learn how generated imports and host configuration keep application code independent from providers.
   icon: i-lucide-map
-  to: /docs/getting-started/server-primitives
+  to: /docs/getting-started/concepts/vite-integrations-and-provider-output
   ---
   :::
   :::u-page-card
@@ -34,7 +34,7 @@ Start with [Your first server primitive](/docs/getting-started/first-server-prim
   title: Runtime imports
   description: Call primitives through ViteHub-owned imports instead of generated files or provider SDK wiring.
   icon: i-lucide-code-2
-  to: /docs/concepts/runtime-helpers-and-stable-imports
+  to: /docs/getting-started/concepts/runtime-helpers-and-stable-imports
   ---
   :::
   :::u-page-card
@@ -48,7 +48,7 @@ Start with [Your first server primitive](/docs/getting-started/first-server-prim
 ::
 
 :::note
-Server code calls runtime helpers directly. Agents receive only the abilities added through Capabilities. Read [Runtime helpers and stable imports](/docs/concepts/runtime-helpers-and-stable-imports) and [Capabilities API](/docs/agents/capabilities) when you need those contracts.
+Server code calls runtime helpers directly. Agents receive only the abilities added through Capabilities. Read [Runtime helpers and stable imports](/docs/getting-started/concepts/runtime-helpers-and-stable-imports) and [Capabilities API](/docs/agents/capabilities) when you need those contracts.
 :::
 
 ## Pick the right primitive
@@ -60,6 +60,7 @@ Server code calls runtime helpers directly. Agents receive only the abilities ad
 | Provider accounts that the app owns, with OAuth refresh, access rules, and call activity | [Connections](/docs/connections) |
 | Request budgets that must be consumed before expensive server work starts | [Rate Limit](/docs/rate-limit) |
 | Outbound transactional messages with provider-neutral delivery | [Email](/docs/email) |
+| Named outbound message destinations, such as Telegram or Teams, behind selected connectors | [Channels](/docs/channels) |
 | Small key-addressed values, settings, flags, cursors, or lightweight state | [KV](/docs/kv) |
 | Relational data, constraints, joins, migrations, or queryable history | [Database](/docs/database) |
 | Uploads, generated artifacts, binary files, or object metadata | [Blob](/docs/blob) |
@@ -98,7 +99,7 @@ Other primitives need a Definition so ViteHub can discover runtime behavior or n
 
 | Need | Read |
 | --- | --- |
-| Understand portable Definitions and location-derived discovery | [Definitions and discovery](/docs/concepts/definitions-and-discovery) |
+| Understand portable Definitions and location-derived discovery | [Definitions and discovery](/docs/getting-started/concepts/definitions-and-discovery) |
 | Check where Definition files belong | [File conventions](/docs/reference/file-conventions) |
 | Inspect generated host artifacts | [Provider output](/docs/reference/provider-output) |
 | Configure package integrations and host settings | [Config options](/docs/reference/config-options) |
@@ -123,6 +124,7 @@ Don't expose a server API to a model just because the app uses it. Add the relev
 | Expose Blob storage with scoped file tools | [Blob capability](/docs/blob/agent-capability) |
 | Expose relational data intentionally | [Database capability](/docs/database/agent-capability) |
 | Let an Agent send authorized plain-text email | [Email capability](/docs/email/agent-capability) |
+| Let an Agent send its result through a Channel | [Channels capability](/docs/channels/agent-capability) |
 | Consume a trusted budget before an Agent Invocation | [Rate Limit capability](/docs/rate-limit/agent-capability) |
 | Give an Agent headless browser evidence through an allowlisted command | [Browser capability](/docs/browser/agent-capability) |
 | Let an Agent manage allowed Runtime Schedules | [Schedule capability](/docs/schedule/agent-capability) |
@@ -133,4 +135,4 @@ Don't expose a server API to a model just because the app uses it. Add the relev
 
 - [Build the first primitive](/docs/getting-started/first-server-primitive)
 - [Build the first Agent](/docs/getting-started/first-agent)
-- [Read the shared primitive pattern](/docs/getting-started/server-primitives)
+- [Read the Concepts overview](/docs/getting-started/concepts)

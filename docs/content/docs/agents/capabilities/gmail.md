@@ -19,7 +19,7 @@ Use [`email()`](/docs/email/agent-capability) for application-owned transactiona
 
 ### Define the Google Connection
 
-Enable [Connections](/docs/connections#quick-start) and define a Connection with the `google()` preset. `gmail.readonly` covers search and read. `gmail.compose` covers drafts.
+Enable [Connections](/docs/connections/get-started#quick-start) and define a Connection with the `google()` preset. `gmail.readonly` covers search and read. `gmail.compose` covers drafts.
 
 ```ts [server/connections/google.ts]
 import { useServerEnv } from '#vitehub/env/server'
@@ -92,7 +92,7 @@ Message content is untrusted external data. The tool descriptions tell the Agent
 
 ## Access and approval
 
-Each Gmail request runs through the Connections client. Its [access rules](/docs/connections#access-rules) govern the Agent actor, for example `agent:inbox`. When `access` is present, unlisted actors are denied. A listed actor needs `read: true` for reads and a matching `write` entry for drafts.
+Each Gmail request runs through the Connections client. Its [access rules](/docs/connections/configure#access-rules) govern the Agent actor, for example `agent:inbox`. When `access` is present, unlisted actors are denied. A listed actor needs `read: true` for reads and a matching `write` entry for drafts.
 
 | Agent rule | `gmail_draft` result |
 | --- | --- |
