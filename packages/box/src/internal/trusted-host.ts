@@ -1020,6 +1020,7 @@ function processHandle(
 
 function normalizeSignal(signal = "TERM"): NodeJS.Signals {
   const normalized = signal.toUpperCase();
+  // SAFETY: Node's process.kill and child.kill validate this normalized name and reject unknown signals before sending it.
   return (normalized.startsWith("SIG") ? normalized : `SIG${normalized}`) as NodeJS.Signals;
 }
 
