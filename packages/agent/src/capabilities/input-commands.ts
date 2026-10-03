@@ -651,6 +651,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               transitionLineage = []
               blockedTransitions.clear()
               creditedCyclicTransitions.clear()
+              numericTransitionDepths.clear()
             }
             if (!graphCreditBlocked && !numericTransitionBlocked && (!nextInvocation || cycleDetected || advancesNumericStage
               || !blockedTransitions.has(`${budgetCommand}->${nextInvocation.name}`))
@@ -682,6 +683,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         budgetInvocationRange = { start: invocation.start, end: invocation.end }
         if (transitionLineage.length && transitionLineage[transitionLineage.length - 1] !== invocation.name) {
           transitionLineage = []
+          numericTransitionDepths.clear()
         }
         const result = await inputCommandCall(command)({
           args: invocation.args,

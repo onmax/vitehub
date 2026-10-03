@@ -485,6 +485,23 @@ describe("inputCommands", () => {
     expect(calls).toBeLessThan(1_500)
   })
 
+  it("resets numeric transition depth tracking between independent branches", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let leaves = 0
+    const capability = inputCommands({
+      commands: {
+        root: { call: () => "/a 1 /a 2" },
+        a: { call: ({ args }) => `/b ${Number(args) - 1}` },
+        b: { call: () => Array.from({ length: 1_001 }, () => "/leaf").join(" ") },
+        leaf: { call: () => { leaves++ } },
+      },
+    })
+
+    await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/root" })
+    expect(leaves).toBe(2_002)
+  })
+
   it.each(["replacement", "result", "mutation"] as const)("allows decreasing same-command fan-out with options through %s", async (mode) => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
