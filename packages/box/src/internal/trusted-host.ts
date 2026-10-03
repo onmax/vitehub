@@ -516,33 +516,6 @@ async function createTrustedHostSession(options: {
         },
       );
     },
-    async readFile({ path }: { path: string }) {
-      const bytes = await this.readBinaryFile({ path });
-      return bytes ? readableStream(bytes) : null;
-    },
-    async readTextFile({
-      encoding = "utf8",
-      endLine,
-      path,
-      startLine,
-    }: {
-      encoding?: string;
-      endLine?: number;
-      path: string;
-      startLine?: number;
-    }) {
-      const bytes = await this.readBinaryFile({ path });
-      if (!bytes) return null;
-      const text = Buffer.from(bytes).toString(encoding as BufferEncoding);
-      if (startLine === undefined && endLine === undefined) return text;
-      return text
-        .split(/\r?\n/)
-        .slice((startLine || 1) - 1, endLine)
-        .join("\n");
-    },
-    restricted() {
-      return this;
-    },
     async run(runOptions: {
       abortSignal?: AbortSignal;
       command: string;
@@ -619,23 +592,6 @@ async function createTrustedHostSession(options: {
       const target = resolveSessionPath(options.root, path);
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, content);
-    },
-    async writeFile({ content, path }: { content: ReadableStream<Uint8Array>; path: string }) {
-      await this.writeBinaryFile({ content: await bytesFromStream(content), path });
-    },
-    async writeTextFile({
-      content,
-      encoding = "utf8",
-      path,
-    }: {
-      content: string;
-      encoding?: string;
-      path: string;
-    }) {
-      await this.writeBinaryFile({
-        content: Buffer.from(content, encoding as BufferEncoding),
-        path,
-      });
     },
   } satisfies TrustedHostSession;
   return session;
@@ -944,14 +900,6 @@ function rootRelativeFragment(path: string) {
     .replace(/\\/g, "/");
 }
 
-function readableStream(bytes: Uint8Array) {
-  return new Response(bytes).body!;
-}
-
-async function bytesFromStream(stream: ReadableStream<Uint8Array>) {
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
 async function collect(stream: ReadableStream<Uint8Array>) {
   return await new Response(stream).text();
 }
@@ -979,6 +927,10 @@ function processHandle(
       else resolvePromise({ exitCode: code ?? 1 });
     });
   });
+  // A background caller may not await immediately. Observe rejection now so
+  // cancellation and spawn failures cannot become process-level unhandled
+  // rejections before the caller reaches wait().
+  void wait.catch(() => undefined);
   if (abortSignal?.aborted) abort();
   let stdin: WritableStream<Uint8Array> | undefined;
   return {
@@ -989,11 +941,39 @@ function processHandle(
     },
     stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     wait: () => wait,
-    async kill() {
-      signalProcessTree(child, "SIGTERM");
-      await wait.catch(() => undefined);
+    async kill(signal?: string) {
+      signalProcessTree(child, normalizeSignal(signal));
+      const settled = wait.catch(() => undefined);
+      if (signal !== undefined) {
+        await settled;
+        return;
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const gracePeriod = new Promise<void>((resolvePromise) => {
+          timer = setTimeout(resolvePromise, 250);
+        });
+        await Promise.race([
+          gracePeriod,
+          settled.then(() => {
+            // The leader can exit while descendants still need termination.
+            if (child.pid && process.platform !== "win32" && processGroupExists(child.pid))
+              return gracePeriod;
+          }),
+        ]);
+        signalProcessTree(child, "SIGKILL");
+        await settled;
+      } finally {
+        clearTimeout(timer);
+      }
     },
   };
+}
+
+function normalizeSignal(signal = "TERM"): NodeJS.Signals {
+  const normalized = signal.toUpperCase();
+  // SAFETY: Node's process.kill and child.kill validate this normalized name and reject unknown signals before sending it.
+  return (normalized.startsWith("SIG") ? normalized : `SIG${normalized}`) as NodeJS.Signals;
 }
 
 function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals) {

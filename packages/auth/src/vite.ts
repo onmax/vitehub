@@ -123,32 +123,10 @@ function renderAuthRouteHandler(): string {
 
 function renderAuthAccessMiddlewareHandler(config: ResolvedAuthViteConfig | undefined): string {
   const routes = JSON.stringify(config?.access.routes ?? [])
-  const requiredAuthorizeRouteIndexes = JSON.stringify(config?.access.routes.flatMap((route, index) => route.authorize ? [index] : []) ?? [])
   return [
-    `import { requireAuthAccessRoutes } from ${JSON.stringify(AUTH_SERVER_ID)}`,
+    `import { createAuthAccessHandler } from ${JSON.stringify(AUTH_SERVER_ID)}`,
     "",
-    `const routes = ${routes}`,
-    `const requiredAuthorizeRouteIndexes = ${requiredAuthorizeRouteIndexes}`,
-    "",
-    "function routeMatches(pattern, pathname) {",
-    "  if (pattern.endsWith('/**')) {",
-    "    const base = pattern.slice(0, -3)",
-    "    return pathname === base || pathname.startsWith(`${base}/`)",
-    "  }",
-    "  return pathname === pattern",
-    "}",
-    "",
-    "function matchAccessRoutes(event) {",
-    "  const method = event.req.method",
-    "  const pathname = event.url.pathname",
-    "  return routes.flatMap((route, index) => (!route.method || route.method.toUpperCase() === method) && routeMatches(route.route, pathname) ? [index] : [])",
-    "}",
-    "",
-    "export default function viteHubAuthAccessMiddleware(event) {",
-    "  const routeIndexes = matchAccessRoutes(event)",
-    "  if (routeIndexes.length === 0) return",
-    "  return requireAuthAccessRoutes(event, routeIndexes, undefined, requiredAuthorizeRouteIndexes)",
-    "}",
+    `export default createAuthAccessHandler(${routes})`,
     "",
   ].join("\n")
 }

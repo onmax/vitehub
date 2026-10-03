@@ -43,6 +43,50 @@ describe("Email development outbox", () => {
     expect(getEmailOutbox()?.list().map(entry => [entry.id, entry.delivery.status])).toEqual([["outbox-2", "sent"], ["outbox-1", "sent"]])
   })
 
+  it("shares provider initialization across concurrent and later deliveries", async () => {
+    let finishInitialization: (() => void) | undefined
+    const initialize = vi.fn(() => new Promise<void>((resolve) => {
+      finishInitialization = resolve
+    }))
+    const driver = { ...providerDriver(), initialize }
+    const email = createEmail({ driver: await createEmailDevOutboxDriver({ deliver: true, driver, provider: "resend" }) })
+
+    const first = email.send(message)
+    const second = email.send(message)
+    await vi.waitFor(() => expect(getEmailOutbox()?.list()).toHaveLength(2))
+    const initializationCount = initialize.mock.calls.length
+    expect(driver.send).not.toHaveBeenCalled()
+    expect(getEmailOutbox()?.list().map(entry => entry.delivery.status)).toEqual(["pending", "pending"])
+
+    finishInitialization!()
+    await Promise.all([first, second])
+    await email.send(message)
+
+    expect(initializationCount).toBe(1)
+    expect(initialize).toHaveBeenCalledOnce()
+    expect(driver.send).toHaveBeenCalledTimes(3)
+    expect(getEmailOutbox()?.list().map(entry => entry.delivery.status)).toEqual(["sent", "sent", "sent"])
+  })
+
+  it.each(["synchronous", "asynchronous"])("retries %s provider initialization failures and records each delivery", async (failure) => {
+    const cause = new Error("temporarily unavailable")
+    const initialize = vi.fn().mockImplementationOnce(() => {
+      if (failure === "synchronous") throw cause
+      return Promise.reject(cause)
+    }).mockResolvedValue(undefined)
+    const driver = { ...providerDriver(), initialize }
+    const email = createEmail({ driver: await createEmailDevOutboxDriver({ deliver: true, driver, provider: "resend" }) })
+
+    await expect(email.send(message)).rejects.toMatchObject({ code: "EMAIL_PROVIDER_FAILED", cause })
+    expect(driver.send).not.toHaveBeenCalled()
+    await email.send(message)
+    await email.send(message)
+
+    expect(initialize).toHaveBeenCalledTimes(2)
+    expect(driver.send).toHaveBeenCalledTimes(2)
+    expect(getEmailOutbox()?.list().map(entry => entry.delivery.status)).toEqual(["sent", "sent", "failed"])
+  })
+
   it("captures effective personalized recipients and subject", async () => {
     const email = createEmail({ driver: () => createEmailDevOutboxDriver({ deliver: false, driver: providerDriver(), provider: "resend" }) })
     await email.send({ ...message, personalizations: [{ to: "personal@example.com", cc: "cc@example.com", bcc: "bcc@example.com", subject: "Personal" }] })
@@ -145,6 +189,19 @@ describe("Email development outbox", () => {
     expect(driver.initialize).toHaveBeenCalledOnce()
     expect(driver.send).toHaveBeenCalledOnce()
     expect(getEmailOutbox()?.list()[0]).toMatchObject({ delivery: { id: "re_1", status: "sent" }, id: "outbox-1", provider: "resend" })
+  })
+
+  it("resolves and initializes a provider for every generated factory send", async () => {
+    const initialize = vi.fn()
+    const factory = vi.fn(() => ({ ...providerDriver(), initialize }))
+    const email = createEmail({ driver: () => createEmailDevOutboxDriver({ deliver: true, driver: factory, provider: "resend" }) })
+
+    await email.send(message)
+    await email.send(message)
+
+    expect(factory).toHaveBeenCalledTimes(2)
+    expect(initialize).toHaveBeenCalledTimes(2)
+    expect(getEmailOutbox()?.list().map(entry => entry.delivery.status)).toEqual(["sent", "sent"])
   })
 
   it("records failed deliveries with a redacted error and keeps the original failure", async () => {

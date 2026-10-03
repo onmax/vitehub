@@ -15,6 +15,7 @@ const props = defineProps<{
   exclude?: ConsoleSectionId[];
   sectionsBase: string;
 }>();
+const emit = defineEmits<{ navigate: [] }>();
 
 const route = useRoute();
 const router = useRouter();
@@ -42,6 +43,7 @@ const items = computed(() =>
 async function openSection(section: ConsoleSectionId): Promise<void> {
   const details = resolveConsoleSectionDetails(installedNavigation.value, section);
   if (!details) return;
+  emit("navigate");
   await router.push({
     name: resolveConsoleRouteName(route.name, details.routeName),
   });
@@ -123,8 +125,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex w-full min-w-0 items-center gap-0.5">
-    <nav v-if="!authOnly" class="flex min-w-0 flex-1 items-center gap-0.5" aria-label="Console primitives">
+  <div class="flex w-full min-w-0 flex-wrap items-center gap-0.5">
+    <nav v-if="!authOnly" class="contents" aria-label="Console primitives">
       <UTooltip v-for="item in items" :key="item.id" :text="item.label">
         <UButton
           :aria-label="`Open ${item.label}`"

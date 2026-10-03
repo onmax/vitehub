@@ -21,8 +21,12 @@ interface D1DatabaseLike {
 }
 
 interface LibsqlClientFactory {
-  createClient: (options: { authToken?: string, url: string }) => unknown
+  createClient: (options: { authToken?: string, url: string }) => LibsqlClient
   drizzle: (config: { casing?: "snake_case" | "camelCase", client: unknown, schema: Record<string, unknown> }) => unknown
+}
+
+interface LibsqlClient {
+  close?: () => void
 }
 
 interface DrizzleSqliteAdapterOptions {
@@ -175,7 +179,9 @@ export function createDrizzleSqliteAdapter<TSchema extends Record<string, unknow
   let d1HttpInstanceToken: string | undefined
   let d1HttpInstanceUrl: string | undefined
   let libsqlInstance: RuntimeDrizzleDatabase<TSchema> | undefined
+  let libsqlInstanceToken: string | undefined
   let libsqlInstanceUrl: string | undefined
+  let libsqlClient: LibsqlClient | undefined
 
   function getDb() {
     const bindingName = config.cloudflare?.binding
@@ -221,18 +227,36 @@ export function createDrizzleSqliteAdapter<TSchema extends Record<string, unknow
       throw databaseErrorDiagnostics.DATABASE_R0014({ message: options.missingConnectionMessage(config) })
     }
 
-    if (libsqlInstance && libsqlInstanceUrl === url) {
+    const authToken = resolveConfigValue(config.connection?.authToken)
+    if (libsqlInstance && libsqlInstanceUrl === url && libsqlInstanceToken === authToken) {
       return libsqlInstance
     }
 
-    libsqlInstance = options.libsql.drizzle({
-      casing: config.drizzle.casing,
-      client: options.libsql.createClient({
-        authToken: resolveConfigValue(config.connection?.authToken),
-        url: options.resolveLocalUrl ? options.resolveLocalUrl(url) : url,
-      }),
-      schema,
-    }) as RuntimeDrizzleDatabase<TSchema>
+    const client = options.libsql.createClient({
+      authToken,
+      url: options.resolveLocalUrl ? options.resolveLocalUrl(url) : url,
+    })
+    let instance: RuntimeDrizzleDatabase<TSchema>
+    try {
+      // SAFETY: The injected libSQL adapters expose the same Drizzle database contract as the runtime schema generic.
+      instance = options.libsql.drizzle({
+        casing: config.drizzle.casing,
+        client,
+        schema,
+      }) as RuntimeDrizzleDatabase<TSchema>
+    }
+    catch (error) {
+      client.close?.()
+      throw error
+    }
+
+    // Refreshing credentials is an explicit lifecycle boundary: close the superseded
+    // client after the replacement is ready. Callers must await database work before
+    // changing the credential because libSQL close() aborts operations still in flight.
+    libsqlClient?.close?.()
+    libsqlClient = client
+    libsqlInstance = instance
+    libsqlInstanceToken = authToken
     libsqlInstanceUrl = url
 
     return libsqlInstance

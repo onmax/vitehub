@@ -228,6 +228,7 @@ async function openTable(name: string, replace = false): Promise<void> {
   const databaseName = database.value?.database ?? routeDatabase.value;
   if (!databaseName) return;
   sidebarOpen.value = false;
+  if (props.view === "data" && routeDatabase.value === databaseName && routeTable.value === name) return;
   resetTableState();
   const location = {
     name: resolveConsoleRouteName(route.name, dataRouteName),
