@@ -196,13 +196,14 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
     }
 
     this.attaching = true
-    let control: BrowserControl<TClient> | undefined
+    let releaseController: (() => Promise<void>) | undefined
     let releaseAttempted = false
     try {
       const attached = await controller.attach(this.providerSession.connection, {
         provider: this.owner.provider,
         sessionId: this.id,
       })
+      let emitDetach = false
       let released = false
       let releasePromise: Promise<void> | undefined
       const releaseControl = async (emitDetach: boolean): Promise<void> => {
@@ -215,7 +216,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
           this.detaching = false
           if (this.state === "controlled") this.state = "released"
           this.controller = undefined
-          if (this.pendingControllerRelease === control?.release) this.pendingControllerRelease = undefined
+          if (this.pendingControllerRelease === releaseController) this.pendingControllerRelease = undefined
           if (emitDetach) await this.owner.emit("browser.controller.detach", this, { controller: controller.name })
         })()
         releasePromise = releasing
@@ -226,10 +227,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
           releasePromise = undefined
         }
       }
-      control = {
-        client: attached.client,
-        release: () => releaseControl(true),
-      }
+      releaseController = () => releaseControl(emitDetach)
       this.attaching = false
       if (this.closing || this.state !== "released") {
         releaseAttempted = true
@@ -240,16 +238,18 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
       this.controller = controller.name
       this.lastControllerSupportsHandoff = controller.features.attachExistingSession
         && attached.preservesSessionOnRelease !== false
+      const control = { client: attached.client, release: releaseController }
+      emitDetach = true
       await this.owner.emit("browser.controller.attach", this, { controller: controller.name })
       return control
     }
     catch (error) {
       this.attaching = false
       const errors = [error]
-      if (control && !releaseAttempted) {
-        this.pendingControllerRelease = control.release
+      if (releaseController && !releaseAttempted) {
+        this.pendingControllerRelease = releaseController
         try {
-          await control.release()
+          await releaseController()
         }
         catch (releaseError) {
           errors.push(releaseError)

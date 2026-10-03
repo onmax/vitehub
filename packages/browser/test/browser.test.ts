@@ -460,6 +460,49 @@ describe("Browser Sessions", () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
+  it.each([false, true])("cleans up a throwing client accessor with failed rollback: %s", async (failRelease) => {
+    const { close, controller, provider, release } = fixture()
+    const clientError = new Error("client unavailable")
+    const releaseError = new Error("release failed")
+    const trace = vi.fn()
+    const brokenController: BrowserController<TestConnection, TestConnection> = {
+      ...controller,
+      async attach() {
+        return {
+          get client(): TestConnection { throw clientError },
+          release,
+        }
+      },
+    }
+    if (failRelease) release.mockRejectedValueOnce(releaseError)
+    const session = await createBrowser({ provider, trace }).open()
+
+    if (failRelease) {
+      await expect(session.attach(brokenController)).rejects.toMatchObject({ errors: [clientError, releaseError] })
+      expect(session.inspect().state).toBe("controlled")
+      await expect(session.attach(controller)).rejects.toMatchObject({ code: "BROWSER_SESSION_STATE" })
+      await expect(session.handoff({ audience: "run-1", mode: "live" })).rejects.toMatchObject({
+        code: "BROWSER_SESSION_STATE",
+      })
+    }
+    else {
+      await expect(session.attach(brokenController)).rejects.toBe(clientError)
+      expect(session.inspect().state).toBe("released")
+    }
+    expect(release).toHaveBeenCalledOnce()
+    expect(close).not.toHaveBeenCalled()
+    expect(trace.mock.calls.map(([event]) => event.name)).toEqual(["browser.session.acquire"])
+
+    await session.close()
+    expect(release).toHaveBeenCalledTimes(failRelease ? 2 : 1)
+    expect(close).toHaveBeenCalledOnce()
+    expect(session.inspect().state).toBe("closed")
+    expect(trace.mock.calls.map(([event]) => event.name)).toEqual([
+      "browser.session.acquire",
+      "browser.session.close",
+    ])
+  })
+
   it("retains controller ownership when attachment rollback fails", async () => {
     const { close, controller, provider, release } = fixture()
     const traceError = new Error("attach trace failed")
