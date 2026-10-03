@@ -344,30 +344,6 @@ function commandAllowsCurrentChannel(command: InputCommand, context: AgentCapabi
   return !command.channels?.length || command.channels.includes(activeChannelId(context) || "")
 }
 
-function directedPath(
-  graph: Map<string, Set<string>>,
-  start: string,
-  target: string,
-): Set<string> | undefined {
-  const visited = new Set<string>()
-  const path = new Set<string>()
-  const visit = (name: string): boolean => {
-    if (name === target) {
-      path.add(name)
-      return true
-    }
-    if (visited.has(name)) return false
-    visited.add(name)
-    for (const next of graph.get(name) || []) {
-      if (!visit(next)) continue
-      path.add(name)
-      return true
-    }
-    return false
-  }
-  return visit(start) ? path : undefined
-}
-
 function createInputCommandMessage(
   emit: (intent: AgentChannelDeliveryEffectIntent, options?: { transient?: boolean }) => void,
 ): InputCommandDeliveryMessage {
@@ -503,9 +479,8 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       let runs = 0
       let maxRuns = Math.max(1_000, text.length + 1)
       const creditedGrowth = new Set<string>()
-      const transitions = new Set<string>()
-      const transitionGraph = new Map<string, Set<string>>()
-      const blockedCommands = new Set<string>()
+      const blockedTransitions = new Set<string>()
+      let transitionLineage: string[] = []
       let budgetText: string | undefined
       let budgetCommand: string | undefined
       let budgetArgs: string | undefined
@@ -537,7 +512,6 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             const advancesStage = nextOwnRuns < previousOwnRuns && nextRuns - nextOwnRuns > previousRuns - previousOwnRuns
             const finiteStage = nextOwnRuns === 0 && addedRuns > 0
             const ownGrowth = nextOwnRuns > previousOwnRuns && !creditedGrowth.has(budgetCommand)
-            const wasBlocked = blockedCommands.has(budgetCommand)
             // Only record transitions into rewritten command tokens. Unchanged
             // siblings can move when a replacement changes the prompt length.
             const nextInvocation = findInputCommandInvocation(text, trigger, commands, cursor)
@@ -553,31 +527,37 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               }
               changedRange = { start, end }
             }
-            if (nextInvocation && nextInvocation.name !== budgetCommand && changedRange
-              && nextInvocation.start < changedRange.end
-              && nextInvocation.start + trigger.length + nextInvocation.name.length > changedRange.start) {
-              const transition = `${budgetCommand}->${nextInvocation.name}`
-              transitions.add(transition)
-              let nextCommands = transitionGraph.get(budgetCommand)
-              if (!nextCommands) transitionGraph.set(budgetCommand, nextCommands = new Set())
-              nextCommands.add(nextInvocation.name)
-              const cycle = directedPath(transitionGraph, nextInvocation.name, budgetCommand)
-              if (cycle) {
-                for (const name of cycle) blockedCommands.add(name)
-                blockedCommands.add(budgetCommand)
-                blockedCommands.add(nextInvocation.name)
-              }
-            }
             // A same-command fan-out can be finite even though every stage
             // increases the total number of invocations. A strictly decreasing
-            // numeric argument proves that the branch has a finite measure, so
-            // credit each such expansion while it consumes that measure.
+            // numeric argument proves that the branch has a finite measure.
             const finiteSameCommandGrowth = budgetCommand === nextInvocation?.name
               && budgetArgs !== undefined
-              && /^\d+$/.test(budgetArgs)
-              && /^\d+$/.test(nextInvocation.args)
-              && Number(nextInvocation.args) < Number(budgetArgs)
-            if (!wasBlocked && (finiteStage || advancesStage || ownGrowth || finiteSameCommandGrowth)) {
+              && /^\s*\d+(?:\s|$)/.test(budgetArgs)
+              && /^\s*\d+(?:\s|$)/.test(nextInvocation.args)
+              && Number(/^\s*(\d+)/.exec(nextInvocation.args)![1]) < Number(/^\s*(\d+)/.exec(budgetArgs)![1])
+            const introducesNextInvocation = nextInvocation && nextInvocation.name !== budgetCommand && changedRange
+              && nextInvocation.start < changedRange.end
+              && nextInvocation.start + trigger.length + nextInvocation.name.length > changedRange.start
+            let cycleDetected = false
+            if (introducesNextInvocation) {
+              if (!transitionLineage.length) transitionLineage.push(budgetCommand)
+              const transition = `${budgetCommand}->${nextInvocation.name}`
+              const transitionWasBlocked = blockedTransitions.has(transition)
+              const cycleStart = transitionLineage.indexOf(nextInvocation.name)
+              if (cycleStart >= 0 && !transitionWasBlocked) {
+                cycleDetected = true
+                for (let index = cycleStart; index < transitionLineage.length - 1; index++) {
+                  blockedTransitions.add(`${transitionLineage[index]}->${transitionLineage[index + 1]}`)
+                }
+                blockedTransitions.add(transition)
+              } else {
+                transitionLineage.push(nextInvocation.name)
+              }
+            } else if (!finiteSameCommandGrowth) {
+              transitionLineage = []
+            }
+            if ((!nextInvocation || cycleDetected || !blockedTransitions.has(`${budgetCommand}->${nextInvocation.name}`))
+              && (finiteStage || advancesStage || ownGrowth || finiteSameCommandGrowth)) {
               // Credit the rewritten invocation too, which may consume the base allowance.
               maxRuns += (addedRuns > 0 ? addedRuns : nextRuns) + 1
               if (ownGrowth) creditedGrowth.add(budgetCommand)
@@ -598,10 +578,11 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           cursor = invocation.end
           continue
         }
-        if (!blockedCommands.has(invocation.name)) {
-          budgetText = text
-          budgetCommand = invocation.name
-          budgetArgs = invocation.args
+        budgetText = text
+        budgetCommand = invocation.name
+        budgetArgs = invocation.args
+        if (transitionLineage.length && transitionLineage[transitionLineage.length - 1] !== invocation.name) {
+          transitionLineage = []
         }
         const result = await inputCommandCall(command)({
           args: invocation.args,
