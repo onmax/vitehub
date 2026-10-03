@@ -104,6 +104,13 @@ function isIdentifierStart(char: string | undefined) {
   return !!char && /[\p{ID_Start}_$]/u.test(char)
 }
 
+function decodeIdentifier(identifier: string) {
+  return identifier.replace(/\\u\{([\da-f]{1,6})\}|\\u([\da-f]{4})/gi, (_, braced, plain) => {
+    const codePoint = Number.parseInt(braced ?? plain, 16)
+    return Number.isInteger(codePoint) ? String.fromCodePoint(codePoint) : ""
+  })
+}
+
 function identifierCodePoint(source: string, index: number) {
   const char = source[index]
   const next = source[index + 1]
@@ -390,8 +397,11 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   while (current >= 0) {
     const end = current + 1
     while (current >= 0 && isIdentifierCharAt(source, current)) current -= identifierCodePoint(source, current)?.length ?? 1
-    const identifier = source.slice(current + 1, end)
-    if (!isIdentifierStart(identifier) || [...identifier].slice(1).some(char => !isIdentifierChar(char))) {
+    const identifierStart = source[current] === "\\" && source[current + 1] === "u" ? current : current + 1
+    const identifier = source.slice(identifierStart, end)
+    if (identifierStart === current) current -= 1
+    const decodedIdentifier = decodeIdentifier(identifier)
+    if (!isIdentifierStart([...decodedIdentifier][0]) || [...decodedIdentifier].slice(1).some(char => !isIdentifierChar(char))) {
       // Import types qualify named references through import("module").Type.
       if (!qualified || source[current] !== ")") return false
       return assertionSuffix || hasAssertionTypePrefix(source.slice(0, index))
@@ -410,6 +420,9 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   if (assertionSuffix) return true
   if (source[current] === "&" || source[current] === "|") {
     return hasAssertionTypePrefix(source.slice(0, index))
+  }
+  if (source[current] === "(" && /\bis\s*$/u.test(source.slice(0, current))) {
+    return hasAssertionTypePrefix(source.slice(0, current))
   }
   // Type operators can precede the generic reference. Walk back to
   // the assertion boundary with the same comment-aware token handling.
@@ -737,7 +750,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // Bitwise operators are runtime expressions; retain type unions and
       // intersections whose right side is a type name, but reject literals.
       if (/(?:\||&|\^)\s*(?:true|false|null|undefined|\d+(?:\.\d+)?|["'`])/.test(value)) return false
-      if (/\b(?!(?:as|satisfies|extends)\b)[A-Za-z_$][\w$]*\s*\(|[)}\]]\s*\(/.test(value)) return false
+      if (/\b(?!(?:as|satisfies|extends|is)\b)[A-Za-z_$][\w$]*\s*\(|[)}\]]\s*\(/.test(value)) return false
       return true
     }
     const firstArgument = stripBoundaryComments(call.arguments[0] || "")
