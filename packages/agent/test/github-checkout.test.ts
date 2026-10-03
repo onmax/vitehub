@@ -326,6 +326,17 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   await expect(access(secondPath)).rejects.toThrow()
   expect(await readdir(pool)).toHaveLength(1)
 
+  // A callback-created HEAD symlink must be discarded so the reset can recover.
+  const outsideHead = join(root, 'outside-head')
+  await writeFile(outsideHead, 'ref: refs/heads/one\n')
+  await rm(join(firstPath, '.git/HEAD'))
+  await symlink(outsideHead, join(firstPath, '.git/HEAD'))
+  await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: twoSha }, async ({ path }) => {
+    expect(path).toBe(firstPath)
+    expect(await git(path, 'rev-parse', 'HEAD')).toBe(twoSha)
+  })
+  expect(await readFile(outsideHead, 'utf8')).toBe('ref: refs/heads/one\n')
+
   // Reject a linked parent during both reset and failure cleanup.
   const outsidePool = join(root, 'outside-pool')
   await rename(pool, outsidePool)

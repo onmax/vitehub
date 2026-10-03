@@ -411,10 +411,8 @@ async function resetPooledCheckout(checkout: string, repository: string, command
     await rm(join(gitQuarantine, "objects/info"), { force: true, recursive: true })
     await mkdir(gitMetadata)
     await rename(join(gitQuarantine, "objects"), join(gitMetadata, "objects"))
-    // Rebuild the index, including split-index state, from the incoming checkout.
-    await rename(join(gitQuarantine, "HEAD"), join(gitMetadata, "HEAD")).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    })
+    // Leave HEAD behind. `git init` must create a fresh regular HEAD rather than
+    // retaining a callback-created symlink or stale symbolic reference.
   }
   finally {
     await rm(gitQuarantine, { force: true, recursive: true })
@@ -431,10 +429,6 @@ async function resetPooledCheckout(checkout: string, repository: string, command
     ["remote.origin.promisor", "true"],
     ["remote.origin.partialclonefilter", "blob:none"],
   ] as const) await exec("git", ["-C", checkout, "config", key, value], commandOptions)
-  await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "reset", "-q", "--hard"], commandOptions)
-  // Match a fresh clone: remove nested repositories rather than keep stale gitlinks or configuration.
-  await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "submodule", "deinit", "--force", "--all"], commandOptions)
-  await rm(join(checkout, ".git/modules"), { force: true, recursive: true })
   // Drop refs and reflogs left by the previous repository before fetching the new head.
   // Keeping them would let provider-created refs or stale origin refs influence later Git work.
   for (const path of [".git/refs", ".git/logs", ".git/packed-refs"]) {
@@ -897,6 +891,11 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         await exec("git", ["-C", checkout, "fetch", "--no-tags", "--", "origin", pullRequest.headSha], commandOptions)
         await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "checkout", "-f", "--detach", "FETCH_HEAD"], commandOptions)
       }
+      // The fresh index identifies incoming gitlinks. Clear their old working trees
+      // after checkout, since reset no longer retains the previous HEAD or index.
+      if (pooled?.reused) {
+        await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "submodule", "deinit", "--force", "--all"], commandOptions)
+      }
       // An adopted directory has no trusted PR identity: discard ignored state after
       // checkout installs the verified incoming tree, even if its name matches this PR.
       await exec("git", ["-C", checkout, "clean", pooled?.adopted ? "-ffdxq" : "-ffdq"], commandOptions)
@@ -911,7 +910,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       }
       const fetched = (await exec("git", ["-C", checkout, "rev-parse", "HEAD"], commandOptions)).stdout.trim()
       if (fetched !== pullRequest.headSha) throw agentDiagnostics.AGENT_R0767({ message: `Pull request head changed from ${pullRequest.headSha} to ${fetched}.` })
-      // Apply the incoming head's ignore rules as well as the previous head's rules used during reset.
+      // Clean with the verified incoming head's ignore rules.
       await exec("git", ["-C", checkout, "clean", "-ffdq"], commandOptions)
       operation.signal.throwIfAborted()
       // Only a checkout with a verified head returns to the pool. Reuse resets it again.
