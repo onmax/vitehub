@@ -28,7 +28,7 @@ const related = computed(() => getDocsRelatedSections(docsManifest.sections, pro
         <DocsPageHeaderLinks />
       </div>
 
-      <nav v-if="pageGroups.length" class="vh-product-groups">
+      <nav v-if="pageGroups.length" aria-label="Product pages" class="vh-product-groups">
         <section v-for="group in pageGroups" :key="group.label || 'pages'" class="vh-product-group">
           <h3 class="vh-product-group-heading">{{ group.label }}</h3>
           <NuxtLink
@@ -43,7 +43,7 @@ const related = computed(() => getDocsRelatedSections(docsManifest.sections, pro
         </section>
       </nav>
 
-      <nav v-else-if="subpages.length" class="vh-product-pages">
+      <nav v-else-if="subpages.length" aria-label="Product pages" class="vh-product-pages">
         <NuxtLink
           v-for="subpage in subpages"
           :key="subpage.path"

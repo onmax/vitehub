@@ -103,11 +103,13 @@ It needs exactly one long-lived process. Do not use it on serverless hosts.
 
 #code
 ```ts [vite.config.ts]
+import { hubKv } from '@vite-hub/kv/vite'
 import { hubSchedule } from '@vite-hub/schedule/vite'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
   plugins: [
+    hubKv(),
     hubSchedule({
       runtime: {
         driver: 'process',

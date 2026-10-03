@@ -9,19 +9,18 @@ icon: i-lucide-plug
 ::product-hero{tagline="Call a provider API as one account that the app owns, through OAuth 2 or an API key. ViteHub seals the grant in the app database, refreshes the token, checks access before each call, and records activity."}
 
 ```ts [server/api/labels.get.ts]
-import { useConnection } from 'vite-hub/connections'
-import { gmail } from 'vite-hub/connections/google'
+import { useConnection } from 'vite-hub/connections/server'
 
 export default defineEventHandler(async (event) => {
-  const connection = useConnection('google', { event })
-  return await gmail(connection).labels.list()
+  const connection = useConnection('google')
+  return await connection.gmail.users.labels.list()
 })
 ```
 
 ::
 
 ::product-feature{label="Access rules" title="Writes are denied until a rule allows them" to="/docs/connections/configure" link-label="Write access rules"}
-A Connection Definition declares the provider, the OAuth scopes, and the access rules. The file name is the Connection name. ViteHub checks `deny` first, then `approve`, then `allow`. When no pattern matches, reads are allowed and writes are denied.
+A Connection Definition declares the provider, the OAuth scopes, and the access rules. The file name is the Connection name. ViteHub checks `deny` first, then `approve`, then `allow`. With no `access` map, reads are allowed and ordinary server writes are allowed; high-risk writes and fetches are denied, and Agent writes require approval. Once an `access` map exists, actors without a rule are denied.
 
 An `approve` match makes server code fail with `CONNECTIONS_APPROVAL_REQUIRED`. An Agent tool asks for tool approval instead. The [Gmail Capability](/docs/agents/capabilities/gmail) calls a Connection under the rule of its Agent.
 
@@ -33,13 +32,14 @@ import { google } from 'vite-hub/connections/google'
 
 export default defineConnection({
   provider: google({
-    client: ({ event }) => useServerEnv(event).google,
-    scopes: ['https://www.googleapis.com/auth/gmail.modify'],
+    clientId: () => useServerEnv().google.clientId,
+    clientSecret: () => useServerEnv().google.clientSecret.unseal(),
   }),
+  scopes: ['https://www.googleapis.com/auth/gmail.modify'],
   access: {
-    server: { allow: ['gmail.*'] },
+    server: { write: ['gmail.*'] },
     agents: {
-      labeller: { allow: ['gmail.messages.*', 'gmail.labels.list'], approve: ['gmail.drafts.create'] },
+      labeller: { write: ['gmail.messages.*', 'gmail.labels.list', 'gmail.drafts.create'], approve: true },
     },
   },
 })
@@ -47,23 +47,33 @@ export default defineConnection({
 ::
 
 ::product-feature{label="Provider origins" title="The credential goes only to declared origins" to="/docs/connections/configure" link-label="Configure provider origins" reverse}
-Each provider declares the API origins that may receive its credential. `google()` allows `https://*.googleapis.com`. Set `origins` for a generic `oauth2()` provider.
+Each provider declares the API origins that may receive its credential. `google()` allows `https://*.googleapis.com`. Add the provider's origins to a custom `ConnectionProvider` API catalog.
 
 A request to any other origin fails with `CONNECTIONS_ORIGIN_NOT_ALLOWED`, and ViteHub records the attempt as denied. The credential is not sent.
 
 #code
 ```ts [server/connections/crm.ts]
-import { defineConnection, oauth2 } from 'vite-hub/connections'
+import { defineConnection, type ConnectionProvider } from 'vite-hub/connections'
+
+const crm: ConnectionProvider = {
+  id: 'crm',
+  authorizationEndpoint: 'https://crm.example.com/oauth/authorize',
+  tokenEndpoint: 'https://crm.example.com/oauth/token',
+  clientId: () => useServerEnv().crm.clientId,
+  clientSecret: () => useServerEnv().crm.clientSecret.unseal(),
+  apis: {
+    crm: {
+      rootUrl: 'https://api.crm.example.com',
+      methods: {},
+      highRisk: [],
+    },
+  },
+  account: () => undefined,
+}
 
 export default defineConnection({
-  provider: oauth2({
-    authorizationUrl: 'https://crm.example.com/oauth/authorize',
-    client: ({ event }) => useServerEnv(event).crm,
-    id: 'crm',
-    origins: ['https://api.crm.example.com'],
-    scopes: ['contacts.read'],
-    tokenUrl: 'https://crm.example.com/oauth/token',
-  }),
+  provider: crm,
+  scopes: ['contacts.read'],
 })
 ```
 ::

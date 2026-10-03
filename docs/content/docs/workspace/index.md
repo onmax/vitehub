@@ -46,6 +46,7 @@ export default defineWorkspace({
       root: 'support',
       mount: 'handbook',
       materialize: 'lazy',
+      sync: true,
     }),
   },
   rules: {

@@ -36,8 +36,9 @@ export async function savePreferences(tenantId: string, value: unknown) {
   if (error) throw error
 }
 
-const [consumeError, token] = await kv.getAndDelete('verification:token')
-const [incrementError, attempts] = await kv.increment('rate-limit:user', 60)
+const upstash = kv.store('tenant-preferences')
+const [consumeError, token] = await upstash.getAndDelete('verification:token')
+const [incrementError, attempts] = await upstash.increment('rate-limit:user', 60)
 ```
 ::
 

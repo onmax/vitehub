@@ -54,9 +54,7 @@ import { runQueue } from '@vite-hub/queue'
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ email: string }>(event)
 
-  return runQueue('welcome-email', { email: body.email }, {
-    idempotencyKey: `welcome:${body.email}`,
-  })
+  return runQueue('welcome-email', { email: body.email })
 })
 ```
 ::
@@ -97,8 +95,8 @@ Use [Workflows](/docs/workflows) when the caller needs a run id and status, and 
 
 #code
 ```bash [Terminal]
-pnpm vite build
 pnpm add vite-hub
+pnpm vite build
 pnpm vitehub inspect definitions --kind queue
 ```
 ::
