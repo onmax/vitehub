@@ -396,6 +396,8 @@ Unavailable
       .resolves.toContain("https://example.com/a%20b")
     await expect(renderMarkdownTemplate('<a href="https://example.com/?a=1&amp;b=2">Open</a>'))
       .resolves.toContain("https://example.com/?a=1&b=2")
+    await expect(renderMarkdownTemplate('<a href="https://example.com/?x=1&copy=2">Open</a>'))
+      .resolves.toContain("https://example.com/?x=1&copy=2")
     await expect(renderMarkdownTemplate('<a href="javascript:alert(1)">Open</a>'))
       .rejects.toThrow("must resolve to a safe destination")
     await expect(renderMarkdownTemplate('<a href="j&#x61;vascript:alert(1)">Open</a>'))
