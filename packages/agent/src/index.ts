@@ -8016,7 +8016,7 @@ async function executeAgentInvocation<
     if (preparedInvocation?.handledResponse) {
       const runningPersisted = await invocationJournal?.running()
       input.abortSignal?.throwIfAborted()
-      if (invocationJournal && !runningPersisted) throw new Error("Could not persist the Invocation running state.")
+      if (invocationJournal && !runningPersisted && invocationJournal.claimStatus === "conflict" && invocationJournal.createdNew) throw new Error("Could not persist the Invocation running state.")
       await activity?.update("running")
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
     }
@@ -8039,7 +8039,7 @@ async function executeAgentInvocation<
     try {
       const runningPersisted = await invocationJournal?.running()
       input.abortSignal?.throwIfAborted()
-      if (invocationJournal && !runningPersisted) throw new Error("Could not persist the Invocation running state.")
+      if (invocationJournal && !runningPersisted && invocationJournal.claimStatus === "conflict" && invocationJournal.createdNew) throw new Error("Could not persist the Invocation running state.")
       await activity?.update("running")
       input.abortSignal?.throwIfAborted()
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
@@ -8061,7 +8061,7 @@ async function executeAgentInvocation<
   try {
     const runningPersisted = await invocationJournal?.running()
     input.abortSignal?.throwIfAborted()
-    if (invocationJournal && !runningPersisted) throw new Error("Could not persist the Invocation running state.")
+    if (invocationJournal && !runningPersisted && invocationJournal.claimStatus === "conflict" && invocationJournal.createdNew) throw new Error("Could not persist the Invocation running state.")
     await activity?.update("running")
     return await executeAgentInvocationWithCapacityLease(agent, context, input, {
       ...options,

@@ -291,6 +291,19 @@ describe("hubDb", () => {
       .resolves.toContain("export const notes")
   })
 
+  it("reads provision state from the Vite root when projectRoot is nested", async () => {
+    const rootDir = await createTempProject()
+    await writeDefinition(join(rootDir, "packages", "db"), "server/databases/config.ts", "notes", { cloudflare: "databaseName: 'database-name'," })
+    await mkdir(join(rootDir, ".vitehub"))
+    await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify({ cloudflare: { d1: { default: "provisioned-database-id" } } }))
+
+    const plugin = hubDb({ projectRoot: "packages/db" })
+    const configResolved = resolveConfigResolved(plugin)
+    await configResolved({ database: undefined, root: rootDir })
+
+    expect(plugin.vitehub?.inspect?.()?.providerOutput?.map(output => output.description)).toEqual(["Generated Cloudflare Database worker"])
+  })
+
   it("writes one Drizzle config per named database migrations directory", async () => {
     const rootDir = await createTempProject()
     await writeDefinition(rootDir, "server/databases/analytics/config.ts", "events")
