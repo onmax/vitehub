@@ -25,7 +25,7 @@ import { agentInvocationsDevHeader, agentInvocationsDevRuntimeRoute, agentInvoca
 import { handleAgentInvocationsDevRequest } from "../src/runtime/invocations-dev.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
 import { hubAgent } from "../src/vite.ts"
-import { hasRuntimeType } from "../src/internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 
 import type { AgentInvocations } from "../src/index.ts"
 

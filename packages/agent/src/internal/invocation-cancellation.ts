@@ -1,7 +1,8 @@
 import type { AgentInvocationStore } from "../invocations.ts"
 import { Diagnostic } from "nostics"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
-import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "./runtime-type.ts"
 
 /**
  * Agent Driver that runs a journaled Invocation, and whether ViteHub can stop it.
