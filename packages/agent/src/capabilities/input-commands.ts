@@ -200,13 +200,14 @@ function countInputCommandInvocations(
   text: string,
   trigger: string,
   commands: Record<string, InputCommand>,
+  name?: string,
 ): number {
   let count = 0
   let cursor = 0
   while (cursor <= text.length) {
     const invocation = findInputCommandInvocation(text, trigger, commands, cursor)
     if (!invocation) break
-    count++
+    if (name === undefined || invocation.name === name) count++
     cursor = Math.max(invocation.end, invocation.start + 1)
   }
   return count
@@ -475,14 +476,21 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       let budgetText: string | undefined
       let budgetCommand: string | undefined
       while (cursor <= text.length) {
-        // Each registered command can credit newly introduced work only once.
+        // Each registered command can credit growth or a new rewrite stage only once.
         // Repeated or alternating recursive handlers cannot keep raising the allowance.
         if (budgetText !== undefined && text !== budgetText) {
-          const addedRuns = Math.max(0, countInputCommandInvocations(text, trigger, commands) - countInputCommandInvocations(budgetText, trigger, commands))
-          if (addedRuns > 0 && budgetCommand !== undefined && !budgetedCommands.has(budgetCommand)) {
-            // Credit the rewritten invocation too, which may consume the base allowance.
-            maxRuns += addedRuns + 1
-            budgetedCommands.add(budgetCommand)
+          const nextRuns = countInputCommandInvocations(text, trigger, commands)
+          const previousRuns = countInputCommandInvocations(budgetText, trigger, commands)
+          const addedRuns = Math.max(0, nextRuns - previousRuns)
+          if (budgetCommand !== undefined && !budgetedCommands.has(budgetCommand)) {
+            const previousOwnRuns = countInputCommandInvocations(budgetText, trigger, commands, budgetCommand)
+            const nextOwnRuns = countInputCommandInvocations(text, trigger, commands, budgetCommand)
+            const advancesStage = nextOwnRuns < previousOwnRuns && nextRuns - nextOwnRuns > previousRuns - previousOwnRuns
+            if (addedRuns > 0 || advancesStage) {
+              // Credit the rewritten invocation too, which may consume the base allowance.
+              maxRuns += (addedRuns > 0 ? addedRuns : nextRuns) + 1
+              budgetedCommands.add(budgetCommand)
+            }
           }
         }
         budgetText = undefined

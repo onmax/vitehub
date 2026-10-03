@@ -58,6 +58,36 @@ describe("inputCommands", () => {
     expect(calls).toBe(1_001)
   })
 
+  it.each(["replacement", "result", "mutation"] as const)("allows finite equal-size rewrite stages through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        a: { call: () => Array.from({ length: 1_000 }, () => "/b").join(" ") },
+        b: {
+          call({ context }) {
+            calls++
+            if (mode === "replacement") return "/c"
+            const prompt = context.input.get().prompt
+            if (typeof prompt !== "string") throw new Error("Expected a string prompt")
+            const next = prompt.replace("/b", "/c")
+            if (mode === "mutation") {
+              context.input.set({ prompt: next })
+              return
+            }
+            return { prompt: next }
+          },
+        },
+        c: { call() { calls++ } },
+      },
+    })
+
+    const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/a" })
+    expect(resolved.input.prompt).toBe("")
+    expect(calls).toBe(2_000)
+  })
+
   it("allows finite void mutations that retain the invoked command", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
@@ -90,6 +120,26 @@ describe("inputCommands", () => {
       commands: {
         first: { call: expand("/second") },
         second: { call: expand("/first") },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/first" }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBe(1_004)
+  })
+
+  it("bounds alternating equal-size rewrite stages", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const rewrite = (next: string) => () => {
+      if (++calls > 1_500) throw new Error("Expansion did not stop")
+      return next
+    }
+    const capability = inputCommands({
+      commands: {
+        first: { call: rewrite("/second") },
+        second: { call: rewrite("/first") },
       },
     })
 
