@@ -201,15 +201,6 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
         provider: this.owner.provider,
         sessionId: this.id,
       })
-      this.attaching = false
-      if (this.closing || this.state !== "released") {
-        await releaseLateController(Promise.resolve(attached.release()))
-        throw browserSessionStateError("attach a controller to", this.state)
-      }
-      this.state = "controlled"
-      this.controller = controller.name
-      this.lastControllerSupportsHandoff = controller.features.attachExistingSession
-        && attached.preservesSessionOnRelease !== false
       let released = false
       let releasePromise: Promise<void> | undefined
       control = {
@@ -235,6 +226,15 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
           }
         },
       }
+      this.attaching = false
+      if (this.closing || this.state !== "released") {
+        await releaseLateController(control.release())
+        throw browserSessionStateError("attach a controller to", this.state)
+      }
+      this.state = "controlled"
+      this.controller = controller.name
+      this.lastControllerSupportsHandoff = controller.features.attachExistingSession
+        && attached.preservesSessionOnRelease !== false
       await this.owner.emit("browser.controller.attach", this, { controller: controller.name })
       return control
     }
