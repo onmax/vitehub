@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { checkGlobCwd, seedGlobCwdStore } from "./glob-cwd-checks.ts"
 
 declare global {
   var __vitehubWorkspaceImportVercelBlobPeer: (() => Promise<unknown>) | undefined
@@ -73,6 +74,14 @@ afterEach(() => {
 })
 
 describe("Vercel Blob workspace store", () => {
+  it("matches glob patterns relative to cwd", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "********" }, "docs")
+    await seedGlobCwdStore(store)
+    await checkGlobCwd(store)
+  })
+
   it("stores files, metadata, snapshots, and diffs in Blob", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "token"
     const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")

@@ -1,4 +1,5 @@
-import type { BoxFileEntry, BoxRuntime } from "./index.ts";
+import { listCommandFiles } from "./internal/file-listing.ts";
+import type { BoxRuntime } from "./index.ts";
 import type { ExecutionAuthority } from "@vite-hub/runtime";
 import {
   openRemoteBox,
@@ -206,7 +207,7 @@ function createCloudflareSession(
           .map((file) => ({ path: file.absolutePath, size: file.size, type: file.type }))
           .sort((left, right) => left.path.localeCompare(right.path));
       }
-      return await listWithFind(run, path, recursive, abortSignal);
+      return await listCommandFiles(run, { abortSignal, path, recursive }, result => boxErrorDiagnostics.BOX_R0029({ message: result.stderr }));
     },
     async makeDirectory({ abortSignal, path, recursive }) {
       abortSignal?.throwIfAborted();
@@ -309,31 +310,6 @@ function cloudflareProcess(process: Awaited<ReturnType<NonNullable<CloudflareSan
       return await wait;
     },
   };
-}
-
-async function listWithFind(
-  run: (options: { abortSignal?: AbortSignal; command: string }) => Promise<{ exitCode: number; stderr: string; stdout: string }>,
-  path: string,
-  recursive: boolean | undefined,
-  abortSignal: AbortSignal | undefined,
-): Promise<BoxFileEntry[]> {
-  const result = await run({
-    abortSignal,
-    command: `find ${shellQuote(path)} -mindepth 1 ${recursive ? "" : "-maxdepth 1 "}-printf '%y\\t%s\\t%p\\0'`,
-  });
-  if (result.exitCode !== 0) throw boxErrorDiagnostics.BOX_R0029({ message: result.stderr });
-  return result.stdout
-    .split("\0")
-    .filter(Boolean)
-    .map((line) => {
-      const [kind, size, filePath] = line.split("\t");
-      return {
-        path: filePath,
-        size: kind === "f" ? Number(size) : undefined,
-        type: kind === "d" ? "directory" as const : kind === "l" ? "symlink" as const : "file" as const,
-      };
-    })
-    .sort((left, right) => left.path.localeCompare(right.path));
 }
 
 async function abortable<T>(

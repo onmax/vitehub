@@ -2,6 +2,7 @@ import * as v from "valibot"
 import { redactInspectionText, redactInspectionValue } from "@vite-hub/internal/inspect"
 import { getViteHubErrorShape } from "@vite-hub/runtime"
 
+import { createEmailDriverResolver } from "../driver.ts"
 import { addresses, formatAddress } from "../drivers/shared.ts"
 
 import type { EmailAddressList, EmailAttachment, EmailDriver, EmailDriverResult, EmailDriverSource, EmailMessage } from "../types.ts"
@@ -253,7 +254,7 @@ export async function createEmailDevOutboxDriver(options: EmailDevOutboxDriverOp
 
   let driver: EmailDriver
   try {
-    driver = await (v.is(v.function(), options.driver) ? options.driver() : options.driver)
+    driver = await createEmailDriverResolver(options.driver)()
   }
   catch (error) {
     // Keep the message visible when the provider options cannot be resolved, then report the original failure.

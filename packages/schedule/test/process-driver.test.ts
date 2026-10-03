@@ -65,7 +65,7 @@ describe("Process Schedule Wake Driver", () => {
       scheduleRunStore,
     })
     await handledSchedule
-    await flushAsyncWork()
+    await controller.close()
 
     expect(calls).toBe(1)
     expect(await scheduleRunStore.listRuns()).toEqual([
@@ -75,7 +75,6 @@ describe("Process Schedule Wake Driver", () => {
         status: "succeeded",
       }),
     ])
-    await controller.close()
   })
 
   it("lets active wake handlers reconcile Runtime Schedules while closing", async () => {

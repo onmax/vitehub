@@ -4,7 +4,7 @@ import { serializeResponse, toResponse } from "@vite-hub/runtime"
 import { assertRuntimeScheduleId, invalidScheduleValueDetails, createScheduleError } from "../errors.ts"
 import { isRuntimeScheduleDue } from "./due.ts"
 import { getRuntimeScheduleStore, getScheduleRunStore, loadScheduleDefinition } from "./state.ts"
-import { createLocalWaitUntil } from "./wait-until.ts"
+import { runWithScheduleWaitUntil } from "./wait-until.ts"
 
 import type { RuntimeScheduleRecord, RuntimeScheduleStore, RuntimeScheduleWake, ScheduleDefinition, ScheduleDefinitionRegistry, ScheduleRegistryDefinition, ScheduleRunAttemptRecord, ScheduleRunContext, ScheduleRunError, ScheduleRunRecord, ScheduleRunStore, ScheduleTargetName } from "../types.ts"
 
@@ -213,23 +213,15 @@ export async function executeSchedule(options: ExecuteScheduleOptions): Promise<
 
   const runStore = options.runStore ?? getScheduleRunStore()
   const attempt = await startAttempt(run, runStore)
-  const localWaitUntil = createLocalWaitUntil()
-  const waitUntil = options.waitUntil ?? localWaitUntil.waitUntil
   try {
-    const value = await options.definition.handler(toHandlerContext(run, attempt, options.input, waitUntil))
-    if (!options.waitUntil) await localWaitUntil.flush()
+    const value = await runWithScheduleWaitUntil(
+      waitUntil => options.definition.handler(toHandlerContext(run, attempt, options.input, waitUntil)),
+      options.waitUntil,
+    )
     const response = await serializeResponse(toResponse(value))
     return await completeRun(run, attempt, response, runStore)
   }
   catch (error) {
-    if (!options.waitUntil) {
-      try {
-        await localWaitUntil.flush()
-      }
-      catch {
-        // Preserve the handler error after all locally owned work settles.
-      }
-    }
     await failRun(run, attempt, error, runStore)
     throw error
   }
