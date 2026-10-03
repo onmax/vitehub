@@ -1196,6 +1196,7 @@ describe("agent channels", () => {
     expect(rewriteDeliveryArtifactMarkdown([
       "![Preview](./artifacts/preview.png)",
       "![Spaced preview](<artifacts/my preview.png>)",
+      "![Pending preview](<artifacts/pending preview.png>)",
       "![Absolute](/workspace/codex-session/artifacts/preview.png)",
       "![Nested absolute](/workspace/codex-session/tmp/artifacts/preview.png)",
       "[Report](artifacts/report.pdf)",
@@ -1210,11 +1211,15 @@ describe("agent channels", () => {
       path: "artifacts/my preview.png",
       url: "https://assets.example/my-preview.png",
     }, {
+      channelAttachmentId: "upload-1",
+      path: "artifacts/pending preview.png",
+    }, {
       path: "artifacts/report.pdf",
       url: "https://assets.example/report.pdf",
     }])).toBe([
       "![Preview](<https://assets.example/preview.png>)",
       "![Spaced preview](<https://assets.example/my-preview.png>)",
+      "![Pending preview](<artifacts/pending preview.png>)",
       "![Absolute](<https://assets.example/preview.png>)",
       "![Nested absolute](/workspace/codex-session/tmp/artifacts/preview.png)",
       "[Report](<https://assets.example/report.pdf>)",

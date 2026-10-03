@@ -101,7 +101,11 @@ function replaceMarkdownArtifactDestinations(
       }
     }
     const artifact = byPath.get(path)
-    return artifact ? `${start}${replace(artifact, destination)}${end}` : match
+    if (!artifact) return match
+    const replacement = replace(artifact, destination)
+    // Keep angle brackets when a publisher has not supplied a public URL yet.
+    if (bracketedDestination !== undefined && replacement === destination) return match
+    return `${start}${replacement}${end}`
   })
 }
 
