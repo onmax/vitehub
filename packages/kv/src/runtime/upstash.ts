@@ -22,13 +22,17 @@ function resolveRuntimeUpstashStore(
   config: ResolvedUpstashKVStoreConfig,
   env: Record<string, string | undefined>,
 ): ResolvedUpstashKVStoreConfig {
+  const completeEnvPair = upstashUrlEnvNames
+    .map((urlName, index) => [readEnv(env, urlName), readEnv(env, upstashTokenEnvNames[index])] as const)
+    .find(([url, token]) => url && token)
   const envUrl = readEnv(env, ...upstashUrlEnvNames)
   const envToken = readEnv(env, ...upstashTokenEnvNames)
+  const generatedValues = isMaskedValue(config.url) && isMaskedValue(config.token)
 
   const resolved = {
     ...config,
-    token: isMaskedValue(config.token) ? envToken || config.token : config.token,
-    url: isMaskedValue(config.url) ? envUrl || config.url : config.url,
+    token: isMaskedValue(config.token) ? (generatedValues ? completeEnvPair?.[1] : envToken) || config.token : config.token,
+    url: isMaskedValue(config.url) ? (generatedValues ? completeEnvPair?.[0] : envUrl) || config.url : config.url,
   }
 
   assertRuntimeValue(resolved.url, upstashUrlEnvNames)

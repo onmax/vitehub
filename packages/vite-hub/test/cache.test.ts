@@ -31,4 +31,13 @@ describe("applyCacheStorage", () => {
 
     expect(twice).toHaveProperty("cloudflare.wrangler.kv_namespaces", [{ binding: "CACHE" }])
   })
+
+  it("preserves an explicit Cloudflare namespace ID when the binding already exists", () => {
+    const cache = resolveCacheStorage({ driver: "cloudflare-kv-binding", namespaceId: "cache-id" }, "cloudflare")
+    const config = applyCacheStorage({
+      cloudflare: { wrangler: { kv_namespaces: [{ binding: "CACHE" }] } },
+    }, cache)
+
+    expect(config).toHaveProperty("cloudflare.wrangler.kv_namespaces", [{ binding: "CACHE", id: "cache-id" }])
+  })
 })

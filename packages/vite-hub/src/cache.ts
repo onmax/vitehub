@@ -105,7 +105,13 @@ export function applyCacheStorage(nitro: Record<string, unknown>, cache: Resolve
   const cloudflare = isPlainObject(nitro.cloudflare) ? { ...nitro.cloudflare } : {}
   const wrangler = isPlainObject(cloudflare.wrangler) ? { ...cloudflare.wrangler } : {}
   const namespaces = Array.isArray(wrangler.kv_namespaces) ? [...wrangler.kv_namespaces] : []
-  if (!namespaces.some(entry => isPlainObject(entry) && entry.binding === namespace.binding)) namespaces.push(namespace)
+  const existingIndex = namespaces.findIndex(entry => isPlainObject(entry) && entry.binding === namespace.binding)
+  const existing = existingIndex === -1 ? undefined : namespaces[existingIndex]
+  if (isPlainObject(existing)) {
+    if (namespace.id && !existing.id) namespaces[existingIndex] = { ...existing, id: namespace.id }
+  } else {
+    namespaces.push(namespace)
+  }
   wrangler.kv_namespaces = namespaces
   cloudflare.wrangler = wrangler
   next.cloudflare = cloudflare
