@@ -458,9 +458,48 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
   }
 
   if (path === "/api/_vitehub/console/agents") {
+    const agents = [...new Set(fixture.invocations.map(invocation => invocation.agentName))].sort()
     json(response, {
-      agents: [...new Set(fixture.invocations.map(invocation => invocation.agentName))].sort(),
+      agents,
+      // Every Agent accepts a new chat from the Console composer. The profiles are synthetic Invoker Profiles.
+      invocation: Object.fromEntries(agents.map(agent => [agent, { profiles: agent === "product-reviewer"
+        ? [{ id: "reviewer", label: "Reviewer" }, { id: "maintainer", label: "Maintainer" }]
+        : [{ id: "default" }] }])),
     })
+    return true
+  }
+
+  const newInvocation = /^\/api\/_vitehub\/console\/agents\/([^/]+)\/invocations$/.exec(path)
+  if (newInvocation && request.method === "POST") {
+    const agentName = decodeURIComponent(newInvocation[1]!)
+    // SAFETY: The playground validates the prompt immediately after decoding this local JSON request.
+    const input = await body(request) as { files?: unknown, invokerProfileId?: unknown, prompt?: unknown }
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The playground validates the untrusted prompt before it creates a record.
+    const prompt = typeof input.prompt === "string" ? input.prompt.trim() : ""
+    if (!prompt) {
+      json(response, { error: "A prompt is required." }, 400)
+      return true
+    }
+    const id = `ainv_console_${Date.now().toString(36)}`
+    const now = new Date().toISOString()
+    store.create({
+      agentName,
+      annotations: { triggeredBy: "you" },
+      createdAt: now,
+      id,
+      observations: [
+        { attributes: { "input.hasPrompt": true, "input.prompt": prompt }, name: "agent.invocation.start", sequence: 0, timestamp: now, type: "lifecycle" },
+        { attributes: { "vitehub.activity.body": `Loaded ${agentName} for a Console chat. The playground never runs a model, so this session stays live.` }, name: "vitehub.agent.configured", sequence: 1, timestamp: now, type: "lifecycle" },
+        { attributes: { "message.content": prompt, "message.id": "user-1", "message.role": "user" }, name: "agent.message.recorded", sequence: 2, timestamp: now, type: "run" },
+      ],
+      origin: "console",
+      startedAt: now,
+      status: "running",
+      title: prompt.length > 48 ? `${prompt.slice(0, 47)}…` : prompt,
+      traceId: `trace_${id}`,
+      updatedAt: now,
+    })
+    json(response, { id })
     return true
   }
 
