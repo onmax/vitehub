@@ -5,7 +5,8 @@ import { invocationUsageWithAuxiliaryCalls } from "./internal/auxiliary-usage.ts
 import { agentLayerMetadata, createConfiguredAgentDefinition, rememberAgentLayerOptions, resolveAgentLayerOptions } from "./agent-layers.ts"
 import { readDiscoveredAgentName } from "./internal/discovered-agent-name.ts"
 import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
-import { asUnknownBoundary, hasRuntimeType, isCallableMember, isRuntimeObject, isRuntimeRecord } from "./internal/runtime-type.ts"
+import { asUnknownBoundary, hasRuntimeType, isRuntimeObject } from "@vite-hub/runtime/internal/runtime-type"
+import { isCallableMember, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { Diagnostic } from "nostics"
 import agentRegistry from "#vitehub/agent/registry"
 import { acquireAgentCapacity, configureAgentCapacity, inspectAgentCapacity } from "./internal/agent-capacity.ts"
@@ -2124,7 +2125,7 @@ function agentRequiresWritableWorkspace(options: {
 /** Check Agent Box combinations that cannot run the provider inside the Box. */
 function validateAgentBox(
   box: unknown,
-  driver: { readonly credentialProfile?: unknown, readonly credentials?: unknown, readonly kind: string, readonly launch?: unknown },
+  driver: { readonly credentialProfile?: unknown, readonly credentials?: unknown, readonly kind: string, readonly launch?: unknown, readonly toolchain?: unknown },
   options: { hasWorkspace: boolean },
 ) {
   if (!hasRuntimeType(box, "object") || box === null || !("runtime" in box) || box.runtime === undefined) {
@@ -2138,6 +2139,9 @@ function validateAgentBox(
   }
   if (driver.credentials !== undefined || driver.credentialProfile !== undefined) {
     throw agentDiagnostics.AGENT_R0957({ message: "[vitehub] defineAgent({ box }) cannot be combined with driver.credentials or driver.credentialProfile. Write provider credentials with box.home.files or box.env." })
+  }
+  if (driver.toolchain !== undefined) {
+    throw agentDiagnostics.AGENT_R0972({ message: "[vitehub] defineAgent({ box }) cannot be combined with driver.toolchain. Declare box.toolchain so the Box provisions it." })
   }
   if (options.hasWorkspace) {
     throw agentDiagnostics.AGENT_R0958({ message: "[vitehub] defineAgent({ box }) cannot be combined with an Agent Workspace. Use box.checkout or box.cwd for the provider working tree." })
@@ -2212,6 +2216,7 @@ function defineBaseAgent<
             reasoningSummary: driver.reasoningSummary,
             requirements: driver.requirements,
             sessionStorePath: driver.sessionStorePath,
+            toolchain: driver.toolchain,
           })))
         : undefined
     if (!resolvedAdapter) {

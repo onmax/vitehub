@@ -176,4 +176,6 @@ Pass this identity to each reader to inspect this application's configured Email
 
 Set `driver` to `resend` or `cloudflare-email` and declare its options in `hubEmail({ driver, options })`. Programmatic clients can implement the exported `EmailDriver` interface or import a built-in driver from `@vite-hub/email/drivers/*`.
 
+`createEmail()` initializes a driver object once per client, shares pending initialization across concurrent sends, and retries after initialization fails. A driver factory resolves and initializes a driver for each send so request-scoped provider options stay current. The development outbox preserves these lifecycle rules.
+
 Read the complete [Email guide and API reference](https://vitehub.dev/docs/server-primitives/email).

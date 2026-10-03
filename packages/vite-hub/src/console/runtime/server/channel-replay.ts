@@ -46,7 +46,10 @@ export default async function channelReplayHandler(event: ConsoleRequestEvent): 
   try {
     body = await consoleRequestJSON(event)
   }
-  catch {
+  catch (error) {
+    if (error instanceof Error && "statusCode" in error && error.statusCode === 413) {
+      return replayError("Channel replay request body is too large.", 413)
+    }
     return replayError("Malformed Channel replay payload.", 400)
   }
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Request JSON is untyped until this boundary validates its object shape.

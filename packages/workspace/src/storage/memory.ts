@@ -1,6 +1,7 @@
 import { assertWorkspaceDigest, workspaceConflictError, workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata } from "../core/file-metadata.ts"
-import { isExcludedWorkspacePath, matchesAny, normalizeWorkspacePath, sha256 } from "../core/path.ts"
+import { createWorkspaceGlobMatcher } from "../core/glob.ts"
+import { isExcludedWorkspacePath, normalizeWorkspacePath, sha256 } from "../core/path.ts"
 import { workspaceStoreTarget } from "./target.ts"
 
 import type {
@@ -79,10 +80,10 @@ class MemoryWorkspaceStore implements WorkspaceStore {
     return result.sort((a, b) => a.path.localeCompare(b.path))
   }
 
-  async glob(pattern: string | string[], _options: GlobOptions = {}): Promise<WorkspaceEntry[]> {
-    const entries = await this.list("", { recursive: true })
-    const patterns = Array.isArray(pattern) ? pattern : [pattern]
-    return entries.filter(entry => entry.type === "file" && patterns.some(item => matchesAny(entry.path, item)))
+  async glob(pattern: string | string[], options: GlobOptions = {}): Promise<WorkspaceEntry[]> {
+    const { cwd, matches } = createWorkspaceGlobMatcher(pattern, options)
+    const entries = await this.list(cwd, { recursive: true })
+    return entries.filter(entry => entry.type === "file" && matches(entry.path))
   }
 
   async stat(path: string): Promise<WorkspaceStat | undefined> {

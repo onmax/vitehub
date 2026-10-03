@@ -230,6 +230,16 @@ DevKit assign it as shown above.
 
 `WorkflowStartOptions` currently accepts `id`.
 
+Inline run inspection uses weak references while execution is active. A reachable
+execution remains inspectable. An abandoned execution with no remaining owner
+can be garbage-collected and then reports `unknown`. Completed inline runs are
+retained for five minutes, up to 1,024 entries per runtime. Completed history
+does not evict active executions. If either `WeakRef` or `FinalizationRegistry`
+is unavailable, active inspection uses strong references capped at 1,024 entries.
+Starting another run evicts the oldest active inspection entry, even if execution
+is still reachable. It reports `unknown`, and completion does not restore it.
+Use a durable provider when inspection must survive abandonment or a process restart.
+
 Cancellation currently requires a native Vercel Workflow Definition.
 Cloudflare, OpenWorkflow, and inline Vercel runs report
 `WORKFLOW_OPERATION_UNSUPPORTED` instead of simulating cancellation.

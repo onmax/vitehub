@@ -75,11 +75,10 @@ function renderItem(
       onClick: () => select(item),
       type: "button",
     }, [
-      h("strong", { class: "vh-invocation-list__title", title: item.title }, item.title),
-      h("span", { class: "vh-invocation-list__meta" }, [
+      // Line 1: where the session comes from, and its state. Line 2: the title. Line 3: branch, harness, and channel.
+      h("span", { class: "vh-invocation-list__context" }, [
         projectIconSlot ? h("span", { class: "vh-invocation-list__project-icon" }, projectIconSlot({ item })) : null,
-        item.context ? h("span", { class: "vh-invocation-list__branch" }, item.context) : null,
-        harnessSlot ? h("span", { class: "vh-invocation-list__harness" }, harnessSlot({ item })) : null,
+        item.project ? h("span", { class: "vh-invocation-list__project", title: item.project }, item.project) : null,
         h("span", { class: "vh-invocation-list__state", title: item.description }, [
           item.status === "completed"
             ? h("span", { class: "vh-visually-hidden" }, statusLabel(item.status))
@@ -87,8 +86,15 @@ function renderItem(
           item.status === "completed" ? null : h("span", statusLabel(item.status)),
           time ? h("time", { "aria-label": time.label, datetime: timestamp, title: time.label }, time.short) : null,
         ]),
-        item.channel ? channelIcon(item.channel) : null,
       ]),
+      h("strong", { class: "vh-invocation-list__title", title: item.title }, item.title),
+      item.context || harnessSlot || item.channel
+        ? h("span", { class: "vh-invocation-list__meta" }, [
+            item.context ? h("span", { class: "vh-invocation-list__branch", title: item.context }, item.context) : null,
+            harnessSlot ? h("span", { class: "vh-invocation-list__harness" }, harnessSlot({ item })) : null,
+            item.channel ? channelIcon(item.channel) : null,
+          ])
+        : null,
     ]),
   ]);
 }

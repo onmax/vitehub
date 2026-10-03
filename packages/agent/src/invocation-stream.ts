@@ -1,5 +1,6 @@
 import { toAgentPublicError } from "./agent-error.ts"
-import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "./internal/runtime-type.ts"
 import type { StreamEvent } from "./messages.ts"
 import type { AgentPublicErrorCode, AgentPublicErrorDetails } from "./agent-error.ts"
 import type { AgentChannelDeliveryEffectIntent, AgentInspectionMetadata, AgentRunMetadata } from "./types.ts"

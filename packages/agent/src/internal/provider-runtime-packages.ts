@@ -39,6 +39,17 @@ function isPackageResolutionMiss(error: unknown): boolean {
   return code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED"
 }
 
+// A candidate root can be unreadable at runtime. The Vite build bakes in its own root, and a
+// release that runs from another directory as another user may not read that path or its parents.
+// Node then fails while it reads the nearest package.json. Try the next candidate instead.
+function isUnreadableCandidate(error: unknown): boolean {
+  // SAFETY: Node module resolution failures expose their stable error code through ErrnoException.
+  const failure = error as NodeJS.ErrnoException | undefined
+  if (failure?.code === "EACCES" || failure?.code === "EPERM") return true
+  return failure?.code === "ERR_INVALID_PACKAGE_CONFIG"
+    && /permission denied|operation not permitted/i.test(failure.message)
+}
+
 function resolvePackageJson(name: string, resolveFrom: string): string | undefined {
   const resolver = createRequire(resolveFrom)
   try {
@@ -118,7 +129,7 @@ export function resolveInstalledProviderExecutable(provider: ProviderRuntimeKind
         return createRequire(candidate).resolve(`${codexPackageName}/bin/codex.js`)
       }
       catch (error) {
-        if (!isPackageResolutionMiss(error)) throw error
+        if (!isPackageResolutionMiss(error) && !isUnreadableCandidate(error)) throw error
       }
     }
     return
@@ -126,9 +137,16 @@ export function resolveInstalledProviderExecutable(provider: ProviderRuntimeKind
   const target = resolveClaudeTarget(platform, options.arch ?? process.arch, options.libc)
   if (!target?.binary) return
   for (const candidate of candidates) {
-    const packageJsonPath = resolvePackageJson(claudePackageName, candidate)
-    if (!packageJsonPath) continue
-    const nativePackageJsonPath = resolvePackageJson(target.packageName, packageJsonPath)
+    let nativePackageJsonPath: string | undefined
+    try {
+      const packageJsonPath = resolvePackageJson(claudePackageName, candidate)
+      if (!packageJsonPath) continue
+      nativePackageJsonPath = resolvePackageJson(target.packageName, packageJsonPath)
+    }
+    catch (error) {
+      if (!isUnreadableCandidate(error)) throw error
+      continue
+    }
     if (nativePackageJsonPath) return join(dirname(nativePackageJsonPath), target.binary)
   }
 }

@@ -2,7 +2,7 @@ import { executeHttpRequest } from "@vite-hub/internal/http-request"
 import { getViteHubErrorShape } from "@vite-hub/runtime"
 import * as v from "valibot"
 import { defineCapability } from "../capability-runtime.ts"
-import { connectionNameSchema, useAgentConnection } from "./connection.ts"
+import { connectionNameSchema, useAgentConnectionClient } from "./connection.ts"
 import { defineInternalTool } from "./internal.ts"
 
 import type {
@@ -15,9 +15,14 @@ import type {
   AgentToolSet,
   MaybePromise,
 } from "../types.ts"
-import type { AgentConnection } from "./connection.ts"
+import type { AgentConnectionClient } from "./connection.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
+
+interface OpenAPIConnection {
+  client: AgentConnectionClient
+  name: string
+}
 
 type JsonSchema = Record<string, unknown>
 type OpenAPIMethod = "GET" | "HEAD" | "POST"
@@ -160,7 +165,7 @@ export interface OpenAPICapabilityOptions<
   cli?: OpenAPIContextValue<false | OpenAPICliOptions | undefined, TRuntimeConfig, Name>
   /**
    * Name of a Connection in `server/connections/`. The Connection adds its credentials to each request,
-   * checks access for `openapi.<operationId>`, and records each call as Connection activity.
+   * checks access for `fetch`, and records each call as Connection activity.
    */
   connection?: string
   description?: string
@@ -199,7 +204,7 @@ export function openapi<
   }
 
   const connection = (context: AgentCapabilityContext<TRuntimeConfig, Name>) => connectionName
-    ? useAgentConnection(context, connectionName, "openapi")
+    ? { client: useAgentConnectionClient(context, connectionName, "openapi"), name: connectionName }
     : undefined
 
   return defineCapability({
@@ -371,18 +376,16 @@ function createOpenAPITool<
   baseUrl: URL,
   options: OpenAPICapabilityOptions<TRuntimeConfig, Name>,
   context: AgentCapabilityContext<TRuntimeConfig, Name>,
-  connection: AgentConnection | undefined,
+  connection: OpenAPIConnection | undefined,
 ): AgentToolDefinition {
-  const connectionOperation = openAPIConnectionOperation(operation)
   return defineInternalTool({
     description: [options.description, operation.description].filter(Boolean).join(" "),
     async execute(input, execution) {
-      const approved = connection?.approval(input).has(connectionOperation.id) === true
-      return executeOpenAPIOperation(operation, baseUrl, options, context, input, execution?.abortSignal, connection, approved)
+      return executeOpenAPIOperation(operation, baseUrl, options, context, input, execution?.abortSignal, connection)
     },
     inputSchema: operationInputSchema(operation, openAPIRequestProvidedInput(options)),
     metadata: {
-      ...(connection ? { connection: { name: connection.name, operation: connectionOperation.id } } : {}),
+      ...(connection ? { connection: { name: connection.name, operation: "fetch" } } : {}),
       openapi: {
         method: operation.method,
         operationId: operation.operationId,
@@ -390,15 +393,7 @@ function createOpenAPITool<
       },
     },
     name: operation.operationId,
-    ...(connection ? { policy: connection.policy(operation.operationId, [connectionOperation]) } : {}),
   })
-}
-
-function openAPIConnectionOperation(operation: OpenAPIOperationTool): { effect: "read" | "write", id: string } {
-  return {
-    effect: operation.method === "GET" || operation.method === "HEAD" ? "read" : "write",
-    id: `openapi.${operation.operationId}`,
-  }
 }
 
 function createOpenAPICli<
@@ -410,7 +405,7 @@ function createOpenAPICli<
   baseUrl: URL,
   options: OpenAPICapabilityOptions<TRuntimeConfig, Name>,
   context: AgentCapabilityContext<TRuntimeConfig, Name>,
-  connection: AgentConnection | undefined,
+  connection: OpenAPIConnection | undefined,
 ): AgentCapabilityCliContribution<TRuntimeConfig, Name> {
   const commands: AgentCapabilityCliContribution<TRuntimeConfig, Name>["commands"] = {}
   for (const operation of operations) {
@@ -471,8 +466,7 @@ async function executeOpenAPIOperation<
   context: AgentCapabilityContext<TRuntimeConfig, Name>,
   input: unknown,
   abortSignal?: AbortSignal,
-  connection?: AgentConnection,
-  approved = false,
+  connection?: OpenAPIConnection,
 ): Promise<unknown> {
   const rawInput = applyOpenAPIProvidedInput(normalizeRawToolInput(operation, input), openAPIRequestProvidedInput(options))
   const rawUrl = operationTemplateUrl(baseUrl, operation.path)
@@ -491,7 +485,6 @@ async function executeOpenAPIOperation<
   assertValidOpenAPIRequest(operation, draft)
   const requestInput = normalizeToolInput(operation, draft)
   const url = operationUrl(baseUrl, operation, requestInput.path)
-  const connectionOperation = openAPIConnectionOperation(operation)
   const result = await executeHttpRequest({
     body: requestInput.body,
     cookies: Object.keys(draft.cookies).length ? draft.cookies : undefined,
@@ -504,16 +497,28 @@ async function executeOpenAPIOperation<
   }, {
     // The Connection adds credentials after the request hook, so hooks never see the token.
     ...(connection ? {
-      fetch: (target: string, init: RequestInit) => connection.fetch({ ...(approved ? { approved } : {}), effect: connectionOperation.effect, operation: connectionOperation.id, tool: operation.operationId }, target, init),
+      fetch: (target: string, init: RequestInit) => connection.client.fetch(target, {
+        body: connectionRequestBody(init.body),
+        headers: init.headers,
+        method: init.method,
+        redirect: init.redirect,
+        signal: init.signal,
+      }),
       retryFetchError: (error: unknown) => {
         const code = getViteHubErrorShape(error)?.code
-        return code !== "CONNECTIONS_DENIED" && code !== "CONNECTIONS_APPROVAL_REQUIRED"
+        return !code?.startsWith("CONNECTION_")
       },
     } : {}),
     responseType: options.responseType || "json",
     signal: abortSignal ?? context.abortSignal,
   })
   return transformOpenAPIResponse(options, context, operation, requestInput, draft, url, result)
+}
+
+function connectionRequestBody(body: RequestInit["body"]): string | undefined {
+  if (body === undefined || body === null) return undefined
+  if (v.is(v.string(), body)) return body
+  throw new TypeError("[vitehub] OpenAPI requests through a Connection require a string body. Serialize the request hook body before dispatch.")
 }
 
 function openAPIRequestOptions<

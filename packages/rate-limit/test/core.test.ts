@@ -13,7 +13,34 @@ const strictCapabilities = {
 } satisfies RateLimitDriverCapabilities
 
 describe("Rate Limit core", () => {
-  it.each([[], [undefined, { used: 1 }], [null, { used: 1 }, "extra"], [new Error("offline"), { used: 1 }]].map(outcome => ({ outcome })))("rejects malformed custom peek outcomes: %j", async ({ outcome }) => {
+  it.each(["allow", "deny"] as const)("rejects malformed consume tuples before applying failure %s", async (failure) => {
+    const invalid = [
+      ["malformed-error", undefined],
+      [],
+      [undefined, { allowed: true }],
+      [false, { allowed: true }],
+      [null, { allowed: true }, "extra"],
+      [new Error("offline"), { allowed: true }],
+      [new Error("offline")],
+      [{ name: "Error", message: "spoofed", [Symbol.toStringTag]: "Error" }, undefined],
+    ]
+    for (const outcome of invalid) {
+      const driver = memoryRateLimitDriver()
+      Object.assign(driver, { consume: () => outcome })
+      const limiter = createRateLimiter({ driver, failure, limit: 1, window: "1m" })
+      await expect(limiter.consume({ key: "user" })).rejects.toThrow("must return [null, value] or [Error, undefined]")
+    }
+  })
+
+  it("accepts consume errors from another JavaScript realm", async () => {
+    const cause: unknown = runInNewContext("new Error('cross-realm offline')")
+    const driver = memoryRateLimitDriver()
+    Object.assign(driver, { consume: () => [cause, undefined] })
+    const limiter = createRateLimiter({ driver, failure: "allow", limit: 1, window: "1m" })
+    await expect(limiter.consume({ key: "user" })).resolves.toMatchObject({ allowed: true, cause, reason: "unavailable" })
+  })
+
+  it.each([[], [new Error("offline")], [undefined, { used: 1 }], [null, { used: 1 }, "extra"], [new Error("offline"), { used: 1 }]].map(outcome => ({ outcome })))("rejects malformed custom peek outcomes: %j", async ({ outcome }) => {
     const driver = memoryRateLimitDriver()
     Object.assign(driver, { peek: () => outcome })
     const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })

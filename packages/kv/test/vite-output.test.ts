@@ -34,6 +34,7 @@ async function createConsumerRoot() {
   }, null, 2))
   await writeFile(join(rootDir, "src", "worker.ts"), [
     `import { kv } from "@vite-hub/kv"`,
+    `export { disposeKVStores } from "@vite-hub/kv"`,
     ``,
     `export default {`,
     `  async fetch() {`,
