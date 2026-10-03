@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { access, cp, link, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createGitHubHost, prepareGitHubPullRequestWorkspace } from '../src/server/github.ts'
@@ -330,7 +330,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   await writeFile(join(firstPath, 'node_modules/marker'), 'warm')
   let secondPath = ''
   await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: oneSha }, async ({ path }) => {
-    secondPath = path
+    secondPath = await realpath(path)
     expect(path).not.toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(oneSha)
     await expect(access(join(path, 'node_modules/marker'))).rejects.toThrow()
@@ -347,7 +347,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   await expect(restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: oneSha }, callback)).rejects.toThrow('unsafe Git metadata')
   expect(callback).not.toHaveBeenCalled()
   expect(await git(outsideObjects, 'cat-file', '-p', borrowedBlob)).toBe('outside checkout object')
-  await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: oneSha }, async ({ path }) => { secondPath = path })
+  await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: oneSha }, async ({ path }) => { secondPath = await realpath(path) })
 
   // Pooled cleanup must reject tampered Git metadata instead of following a symlink.
   await rename(join(secondPath, '.git'), join(secondPath, '.git-real'))
@@ -361,7 +361,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     const number = index + 3
     let checkoutPath = ''
     await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number, headSha: oneSha }, async ({ path }) => {
-      checkoutPath = path
+      checkoutPath = await realpath(path)
     })
     const outside = join(root, `outside-${component.replaceAll('/', '-')}`)
     const replaced = component === 'checkout' ? checkoutPath : join(checkoutPath, '.git', component)
@@ -457,6 +457,48 @@ process.exit(result.status ?? 1);
   expect(await readdir(outside)).toEqual(['marker'])
   expect(await readFile(join(outside, 'marker'), 'utf8')).toBe('untouched')
   expect(await readdir(pool)).toEqual([])
+}, 30_000)
+
+it('cleans the retained reset directory without deleting a replacement root', async () => {
+  const { root, source, head } = await fixture()
+  const config = join(root, 'gitconfig')
+  await writeFile(config, '')
+  await git(root, 'config', '--file', config, `url.file://${source}.insteadOf`, 'https://github.com/acme/base.git')
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+  vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
+  const host = createGitHubHost({
+    checkouts: { root: join(root, 'pool') },
+    credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }),
+  })
+  const pullRequest = { repository: 'acme/base', number: 1, headSha: head }
+  await host.withPullRequestCheckout(pullRequest, async () => {})
+  const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  const displaced = join(root, 'displaced-reset')
+  let resetRoot = ''
+  vi.mocked(rename).mockImplementation(async (from, to) => {
+    const restoring = basename(String(from)) === 'checkout'
+    if (restoring) resetRoot = await realpath(dirname(String(from)))
+    await fs.rename(from, to)
+    if (restoring) {
+      await fs.rename(resetRoot, displaced)
+      await mkdir(resetRoot)
+      roots.push(resetRoot)
+      await writeFile(join(resetRoot, 'marker'), 'untouched')
+      await writeFile(join(displaced, 'retained-object'), 'must be removed')
+    }
+  })
+  try {
+    await host.withPullRequestCheckout(pullRequest, async ({ path }) => {
+      expect(await git(path, 'rev-parse', 'HEAD')).toBe(head)
+    })
+  }
+  finally {
+    vi.mocked(rename).mockImplementation(fs.rename)
+  }
+  expect(resetRoot).not.toBe('')
+  expect(await readdir(displaced)).toEqual([])
+  expect(await readFile(join(resetRoot, 'marker'), 'utf8')).toBe('untouched')
 }, 30_000)
 
 it('rejects a checkout swapped for a symlink immediately before relocation', async () => {

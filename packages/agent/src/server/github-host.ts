@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
-import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { promisify } from "node:util"
@@ -435,7 +435,20 @@ async function resetPooledCheckout(checkout: string, anchoredRoot: string, repos
     if (closed) return
     closed = true
     try {
-      await rm(privateRoot, { force: true, recursive: true })
+      // Clear the retained directory even when its visible pathname moved.
+      // Never recursively remove a replacement at the original pathname.
+      for (const entry of await readdir(anchoredPrivateRoot)) {
+        await rm(join(anchoredPrivateRoot, entry), { force: true, recursive: true })
+      }
+      const retained = await privateParent.stat()
+      const current = await lstat(privateRoot).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+        throw error
+      })
+      if (current?.isDirectory() && current.dev === retained.dev && current.ino === retained.ino) {
+        // Non-recursive removal fails closed if new contents appear.
+        await rmdir(privateRoot)
+      }
     }
     finally {
       await privateParent.close()
