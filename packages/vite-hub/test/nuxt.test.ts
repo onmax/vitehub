@@ -362,6 +362,19 @@ describe("ViteHub Nuxt integration", () => {
     expect(nuxt.options).toHaveProperty("content.database", { bindingName: "DB", type: "d1" })
   })
 
+  it("keeps the implicit Cloudflare D1 resource when no Definition is discovered", async () => {
+    const { nuxt, runNitroConfigHook } = createNuxt()
+    nuxt.options.serverDir = "/tmp/vitehub-nuxt/implicit-server"
+    await mkdir(nuxt.options.serverDir, { recursive: true })
+    const config = { preset: "cloudflare_module" }
+
+    await viteHubNuxtModule({ database: {}, preset: "cloudflare" }, nuxt)
+    await expect(runNitroConfigHook(config)).resolves.toBeUndefined()
+
+    expect(config).toHaveProperty("cloudflare.wrangler.d1_databases", [expect.objectContaining({ binding: "DB" })])
+    expect(nuxt.options).toHaveProperty("content.database", { bindingName: "DB", type: "d1" })
+  })
+
   it.each(["cloudflare", "vercel"] as const)("retains %s deployment inspection metadata without installing the writer", async (preset) => {
     const { nuxt } = createNuxt()
     nuxt.options.vitehubCliDiscovery = true
