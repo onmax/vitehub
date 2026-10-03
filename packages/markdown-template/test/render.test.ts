@@ -394,7 +394,13 @@ Unavailable
   it("rejects unsafe URLs in authored HTML tags", async () => {
     await expect(renderMarkdownTemplate('<a href="https://example.com/a b">Open</a>'))
       .resolves.toContain("https://example.com/a%20b")
+    await expect(renderMarkdownTemplate('<a href="https://example.com/?a=1&amp;b=2">Open</a>'))
+      .resolves.toContain("https://example.com/?a=1&b=2")
     await expect(renderMarkdownTemplate('<a href="javascript:alert(1)">Open</a>'))
+      .rejects.toThrow("must resolve to a safe destination")
+    await expect(renderMarkdownTemplate('<a href="j&#x61;vascript:alert(1)">Open</a>'))
+      .rejects.toThrow("must resolve to a safe destination")
+    await expect(renderMarkdownTemplate('<a href="javascript&colon;alert(1)">Open</a>'))
       .rejects.toThrow("must resolve to a safe destination")
     await expect(renderMarkdownTemplate('<img src="data:text/html,<script>alert(1)</script>">'))
       .rejects.toThrow("must resolve to a safe destination")

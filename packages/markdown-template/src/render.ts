@@ -93,7 +93,7 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
         const href = Object.hasOwn(node[1], ":href")
           ? await safeLinkDestination(resolveScalarTemplateBinding({ ":value": node[1][":href"] }, renderData(state)), String(node[1][":href"]))
           : typeof props.href === "string"
-            ? await safeLinkDestination(props.href, "href")
+            ? await safeLinkDestination(props.href, "href", { decodeHtmlEntities: node[1].$?.html === 1 })
             : undefined
         if (href === undefined) return await state.handlers.a!(node, state, parent)
         // SAFETY: Preserve the element tag and children, replacing only its resolved attributes.
@@ -126,7 +126,8 @@ async function sanitizeUrlAttributes(tag: string, props: Record<string, unknown>
     const isUrl = urlAttributesByTag.get(tag.toLowerCase())?.has(attribute)
       || attribute === "xlink:href" && svgUrlAttributes.has(tag.toLowerCase())
     if (typeof value !== "string" || !isUrl) continue
-    sanitized[key] = await safeLinkDestination(value, String(source[`:${key}`] ?? key))
+    const binding = source[`:${key}`]
+    sanitized[key] = await safeLinkDestination(value, String(binding ?? key), { decodeHtmlEntities: binding === undefined })
   }
   return sanitized
 }
