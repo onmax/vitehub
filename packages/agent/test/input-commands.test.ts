@@ -58,6 +58,26 @@ describe("inputCommands", () => {
     expect(calls).toBe(1_001)
   })
 
+  it("allows finite void mutations that retain the invoked command", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        seed: {
+          call({ context }) {
+            context.input.set({ prompt: `/seed ${Array.from({ length: 1_001 }, () => "/mark").join(" ")}` })
+          },
+        },
+        mark: { call() { calls++ } },
+      },
+    })
+
+    const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/seed" })
+    expect(resolved.input.prompt).toBe("")
+    expect(calls).toBe(1_001)
+  })
+
   it("bounds alternating handlers that introduce more commands", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")

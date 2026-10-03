@@ -564,7 +564,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         }
 
         if (text.slice(invocation.start, invocation.end) === invocation.text) {
-          if (!command.hooks?.["agent:input"]) {
+          if (text === previousText && !command.hooks?.["agent:input"]) {
             budgetText = undefined
             budgetCommand = undefined
           }
