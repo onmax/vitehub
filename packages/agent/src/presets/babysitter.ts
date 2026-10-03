@@ -13,7 +13,8 @@ import { resolveBabysitterMerge, type BabysitterMerge } from "./babysitter/merge
 import { defineChannel, defineChannelTrigger } from "../channels.ts";
 import { channelEnvValue } from "../channel-env.ts";
 import { agentProcessHostIntake, withAgentProcessHost, type AgentProcessHostContribution } from "../agent-process-host.ts";
-import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts";
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "../internal/runtime-type.ts"
 
 export type { BabysitterMerge, BabysitterMergeMethod, BabysitterMergeReadinessInput, BabysitterMergeReady } from "./babysitter/merge.ts";
 

@@ -1,4 +1,4 @@
-import { hasRuntimeType, isRuntimeObject, runtimeType } from "./internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeObject, runtimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { getViteHubErrorShape } from "@vite-hub/runtime"
 import { publishedDeliveryArtifactsFromUnknown } from "./delivery-artifacts.ts"
 import { isAsyncIterable } from "./internal/stream-result.ts"

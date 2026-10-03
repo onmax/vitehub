@@ -1,5 +1,5 @@
 import { resolveAgentInstructions } from "./agent-instructions.ts"
-import { asUnknownBoundary, hasRuntimeType } from "./internal/runtime-type.ts"
+import { asUnknownBoundary, hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { formatRuntimeDiagnosticError } from "@vite-hub/runtime"
 import { readAgentErrorProperty } from "./agent-error.ts"
 import { getMessageText, isAttachmentData, isAttachmentPart, resolveAttachmentData } from "./messages.ts"

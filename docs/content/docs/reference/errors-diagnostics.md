@@ -20,6 +20,8 @@ Diagnostic codes use this format:
 
 The package prefix identifies the owner, for example `AGENT`, `AUTH`, `BLOB`, `DATABASE`, `ENV`, `KV`, `RATE_LIMIT`, `SANDBOX`, or `WORKSPACE`. The family letter groups the package catalog. It does not classify when the failure can occur because one validation site can run during configuration, build, or runtime work. The number identifies one failure site. Codes stay stable when a message gains context. Catch a diagnostic by its complete `code` when the application can repair or classify that exact defect.
 
+Runtime representation selectors are owned by `@vite-hub/runtime`. An unsupported selector now reports `RUNTIME_R0008` from the shared `@vite-hub/runtime/internal/runtime-type` guard. This replaces the former package-local selector codes (`AGENT_R0572`, `ENV_R0024`, `UI_R0003`, `WORKFLOW_R0002`, and `WORKSPACE_R0030`) because the validation site is shared; consumers should migrate checks for those codes to `RUNTIME_R0008`.
+
 ```ts
 import { getAgentFromRegistry } from '@vite-hub/agent'
 
