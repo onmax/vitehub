@@ -422,7 +422,15 @@ function maskAssertionTypeArguments(source: string) {
       if (source[open] === "(") {
         const argument = skipWhitespaceAndComments(source, open + 1)
         if (source[argument] === '"' || source[argument] === "'") {
-          const close = skipWhitespaceAndComments(source, skipQuoted(source, argument))
+          let close = skipWhitespaceAndComments(source, skipQuoted(source, argument))
+          // Import types can carry an optional attributes object after the module.
+          if (source[close] === ",") {
+            const attributes = skipWhitespaceAndComments(source, close + 1)
+            if (source[attributes] === "{") {
+              const attributesEnd = findMatching(source, attributes, "{", "}")
+              if (attributesEnd !== undefined) close = skipWhitespaceAndComments(source, attributesEnd + 1)
+            }
+          }
           if (source[close] === ")") {
             output.fill(" ", index + 6, close + 1)
             index = close

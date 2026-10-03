@@ -1124,6 +1124,8 @@ describe("schedule provider output", () => {
     "as keyof Record<string, unknown> extends PropertyKey ? Definition : never",
     "as unknown as typeof shape<string, unknown>",
     "as unknown as typeof /* value */ shapes.schedule /* args */ <string, unknown>",
+    'satisfies import("types", { with: { "resolution-mode": "import" } }).Record<string, unknown>',
+    'as import /* type */ ("types" /* module */, /* attributes */ { with: { "resolution-mode": "require" } } /* end */).Record<string, unknown>',
     'satisfies import /* type */ ("types" /* module */).Record<string, unknown>',
   ])("reads static provider cron from a generic assertion: %s", async (assertion) => {
     const rootDir = await createTempProject("vitehub-schedule-output-assertion-cron-")

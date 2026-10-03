@@ -103,6 +103,8 @@ describe("source scanner", () => {
     "as keyof /* type */ Record<string, unknown>",
     "as Options<string, unknown> extends Base<string, unknown> ? (Options<string, unknown>) : [Options<string, unknown>]",
     "as true extends true ? false extends true ? never : Options<string, unknown> : never",
+    'satisfies import("types", { with: { "resolution-mode": "import" } }).Record<string, unknown>',
+    'as import /* type */ ("types" /* module */, /* attributes */ { with: { "resolution-mode": "require" } } /* end */).Record<string, unknown>',
     'satisfies import /* type */ ("types" /* module */).Record<string, unknown>',
     'as import // type\n ("types" /* module */).Record<string, unknown>',
   ])("keeps nested generic assertion commas inside one argument: %s", (assertion) => {
