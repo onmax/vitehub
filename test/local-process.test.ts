@@ -3,7 +3,7 @@ import { once } from "node:events"
 import { fileURLToPath } from "node:url"
 import { expect, it } from "vitest"
 
-import { stopChild } from "./local/process.mjs"
+import { hasLiveGroupMember, stopChild } from "./local/process.mjs"
 
 it.skipIf(process.platform === "win32")("reaps a child that ignores SIGTERM", async () => {
   const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)"], {
@@ -41,7 +41,7 @@ it.skipIf(process.platform === "win32")("kills descendants after the group leade
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("descendant survived cleanup")), 2000) }),
     ])
     expect(child.exitCode).toBe(0)
-    expect(() => process.kill(-child.pid!, 0)).toThrow(/ESRCH/)
+    expect(await hasLiveGroupMember(child.pid!)).toBe(false)
     await closed
   }
   finally {

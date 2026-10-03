@@ -1,3 +1,5 @@
+import { readdir, readFile } from "node:fs/promises"
+
 export async function stopChild(child, graceMs = 500) {
   const exited = child.exitCode !== null || child.signalCode !== null
   const closed = exited ? Promise.resolve() : new Promise(resolve => child.once("close", resolve))
@@ -22,6 +24,7 @@ async function waitForGroupExit(child) {
   if (process.platform === "win32" || !child.pid) return
   const deadline = Date.now() + 500
   while (Date.now() < deadline) {
+    if (!(await hasLiveGroupMember(child.pid))) return
     try {
       process.kill(-child.pid, 0)
       signalChild(child, "SIGKILL")
@@ -32,7 +35,24 @@ async function waitForGroupExit(child) {
       throw error
     }
   }
-  throw new Error(`process group ${child.pid} did not exit after SIGKILL`)
+  if (await hasLiveGroupMember(child.pid)) throw new Error(`process group ${child.pid} did not exit after SIGKILL`)
+}
+
+export async function hasLiveGroupMember(pid) {
+  if (process.platform !== "linux") return true
+  const entries = await readdir("/proc")
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue
+    try {
+      const stat = await readFile(`/proc/${entry}/stat`, "utf8")
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
+      if (Number(fields[2]) === pid && fields[0] !== "Z") return true
+    }
+    catch (error) {
+      if (error.code !== "ENOENT") throw error
+    }
+  }
+  return false
 }
 
 function signalChild(child, signal) {
