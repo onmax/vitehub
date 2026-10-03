@@ -7,7 +7,7 @@ import { createHash, createSign, randomUUID } from "node:crypto"
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises"
 import { lstatSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { basename, dirname, join, resolve } from "node:path"
+import { basename, dirname, join, resolve, sep } from "node:path"
 import { promisify } from "node:util"
 import { Diagnostic } from "nostics"
 
@@ -418,25 +418,36 @@ function checkoutSubmodules(checkout: string, options: GitHubCommandOptions): Pr
       stdio: ["ignore", "pipe", "pipe"],
     })
     const submodules: string[] = []
-    let pending = ""
+    let pending = Buffer.alloc(0)
     let stderr = ""
-    child.stdout.setEncoding("utf8")
-    child.stderr.setEncoding("utf8")
-    child.stdout.on("data", (chunk: string) => {
-      pending += chunk
-      let end = pending.indexOf("\0")
+    let settled = false
+    const fail = (error: unknown) => {
+      if (settled) return
+      settled = true
+      reject(error)
+    }
+    const succeed = (value: string[]) => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      pending = Buffer.concat([pending, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)])
+      let end = pending.indexOf(0)
       while (end !== -1) {
-        const entry = pending.slice(0, end)
-        if (entry.startsWith("160000 ")) submodules.push(entry.slice(entry.indexOf("\t") + 1))
-        pending = pending.slice(end + 1)
-        end = pending.indexOf("\0")
+        const entry = pending.subarray(0, end)
+        if (entry.subarray(0, 7).toString() === "160000 ") submodules.push(entry.subarray(entry.indexOf(9) + 1).toString("latin1"))
+        pending = pending.subarray(end + 1)
+        end = pending.indexOf(0)
       }
     })
-    child.stderr.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(0, options.maxBuffer) })
-    child.on("error", reject)
+    child.stderr.on("data", (chunk: Buffer | string) => { stderr = (stderr + (Buffer.isBuffer(chunk) ? chunk.toString() : chunk)).slice(0, options.maxBuffer) })
+    child.stdout.on("error", fail)
+    child.stderr.on("error", fail)
+    child.on("error", fail)
     child.on("close", (code) => {
-      if (code === 0) resolve(submodules)
-      else reject(new Error(`Git submodule scan failed (${code}): ${stderr}`))
+      if (code === 0) succeed(submodules)
+      else fail(new Error(`Git submodule scan failed (${code}): ${stderr}`))
     })
   })
 }
@@ -465,7 +476,7 @@ async function assertGitObjectStore(path: string) {
  * Removes the state of the previous pull request from a pooled checkout. Ignored files stay.
  * The previous run could write Git configuration and hooks, so both are recreated.
  */
-async function resetPooledCheckout(checkout: string, anchoredRoot: string, repository: string, submodules: string[], commandOptions: GitHubCommandOptions) {
+async function resetPooledCheckout(checkout: string, anchoredRoot: string, repository: string, submodules: string[], commandOptions: GitHubCommandOptions, discardObjects = false) {
   // Relocate the entire checkout before reading any of its metadata. A rename
   // moves a replaced symlink itself, so validation below never traverses it.
   // Keep reset state outside the pool: callback code can retain a cwd in the
@@ -526,7 +537,11 @@ async function resetPooledCheckout(checkout: string, anchoredRoot: string, repos
     await exec("git", ["-C", replacement, "init", "-q", "--template="], commandOptions)
     const replacementGit = join(replacement, ".git")
     await rm(join(replacementGit, "objects"), { force: true, recursive: true })
-    await rename(join(gitQuarantine, "objects"), join(replacementGit, "objects"))
+    if (discardObjects) {
+      await rm(join(gitQuarantine, "objects"), { force: true, recursive: true })
+      await mkdir(join(replacementGit, "objects"))
+    }
+    else await rename(join(gitQuarantine, "objects"), join(replacementGit, "objects"))
     await mkdir(join(replacementGit, "info"), { recursive: true })
     await writeFile(join(replacementGit, "info/exclude"), "")
     for (const [key, value] of [
@@ -1013,7 +1028,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         if (pullRequest.headRef.startsWith("-")) throw agentDiagnostics.AGENT_R0766({ message: "A pull request headRef cannot start with a dash." })
       }
       if (pooled?.reused) {
-        reset = await resetPooledCheckout(checkout, pooled.anchoredRoot, pullRequest.repository, pooled.submodules, commandOptions)
+        reset = await resetPooledCheckout(checkout, pooled.anchoredRoot, pullRequest.repository, pooled.submodules, commandOptions, pooled.adopted)
         checkout = reset.directory
       }
       else await exec("git", ["clone", "--filter=blob:none", "--no-checkout", "--", `https://github.com/${pullRequest.repository}.git`, checkout], commandOptions)
@@ -1034,8 +1049,8 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       }
       if (pooled?.reused) {
         for (const submodule of submodules) {
-          const target = join(checkout, submodule)
-          await assertCheckoutDirectories(dirname(target), checkout)
+          // Keep the gitlink bytes intact. Git permits paths that are not valid UTF-8.
+          const target = Buffer.concat([Buffer.from(`${checkout}${sep}`), Buffer.from(submodule, "latin1")])
           await rm(target, { force: true, recursive: true })
           await mkdir(target)
         }
