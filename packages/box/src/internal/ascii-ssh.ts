@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import { Readable } from "node:stream";
-import type { BoxFileEntry } from "../index.ts";
+import { listCommandFiles } from "./file-listing.ts";
 import { shellQuote } from "./remote.ts";
 import type { RuntimeProcess, RuntimeSession } from "./session.ts";
 import { boxErrorDiagnostics } from "../error-diagnostics.ts"
@@ -281,13 +281,11 @@ function createAsciiSshSession(
       );
     },
     async listFiles({ abortSignal, path, recursive }) {
-      const result = await run({
-        abortSignal,
-        command: `find ${shellQuote(path)} -mindepth 1 ${recursive ? "" : "-maxdepth 1 "}-printf '%y\\t%s\\t%p\\0'`,
-        workingDirectory: "/home/user",
-      });
-      if (result.exitCode !== 0) throw boxErrorDiagnostics.BOX_R0072({ message: result.stderr });
-      return parseAsciiFileList(result.stdout);
+      return await listCommandFiles(
+        options => run({ ...options, workingDirectory: "/home/user" }),
+        { abortSignal, path, recursive },
+        result => boxErrorDiagnostics.BOX_R0072({ message: result.stderr }),
+      );
     },
     async makeDirectory({ abortSignal, path, recursive }) {
       const result = await run({
@@ -708,30 +706,6 @@ function createTransportFault(destroyBox: () => Promise<void>): TransportFault {
       if (error !== undefined) throw error;
     },
   };
-}
-
-export function parseAsciiFileList(output: string): BoxFileEntry[] {
-  return output
-    .split("\0")
-    .filter(Boolean)
-    .map((line) => {
-      const kindSeparator = line.indexOf("\t");
-      const sizeSeparator = line.indexOf("\t", kindSeparator + 1);
-      const kind = line.slice(0, kindSeparator);
-      const size = line.slice(kindSeparator + 1, sizeSeparator);
-      const path = line.slice(sizeSeparator + 1);
-      return {
-        path,
-        size: kind === "f" ? Number(size) : undefined,
-        type:
-          kind === "d"
-            ? ("directory" as const)
-            : kind === "l"
-              ? ("symlink" as const)
-              : ("file" as const),
-      };
-    })
-    .sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function normalizeSignal(signal = "TERM") {
