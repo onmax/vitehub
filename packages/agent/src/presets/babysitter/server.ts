@@ -638,9 +638,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               const agent = defineAgent({
                 extends: baseAgent,
                 name: workerName,
-                // The worker runs the provider directly. Attach the host so
-                // runAgent exposes its scoped GitHub identity to the driver.
-                github,
+                // GitHub authority stays in the broker operations above;
+                // attaching the host here would expose its token to the driver.
                 channels: {
                   github: github.channel({
                     activity: activityEnabled,

@@ -167,8 +167,12 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     identity: () => "repair-bot",
     command,
     channel: () => ({ kind: "github" }),
-    environment: async () => ({ GH_TOKEN: "host-secret" }),
-    access: async () => ({ env: { GH_TOKEN: "host-secret" }, token: "host-secret" }),
+    environment: async () => {
+      throw new Error("Worker must not resolve GitHub credentials");
+    },
+    access: async () => {
+      throw new Error("Worker must not resolve GitHub credentials");
+    },
     budget: () => ({ limited: false }),
     ensureGraphQLBudget: async () => ({
       checkedAt: Date.now(),
@@ -686,7 +690,8 @@ describe("Babysitter preset runtime", () => {
     expect(f.passes[0]?.instructions).toContain("After pushing, resolve the review threads that push fixes, then stop");
     expect(f.passes[0]?.descriptions.pushRepair).toContain("resolve any review threads fixed by the push before ending the pass");
     const environment = createProviderRuntime.mock.calls[0]?.[0].environment;
-    expect(environment).toHaveProperty("GH_TOKEN", "host-secret");
+    expect(environment).not.toHaveProperty("GH_TOKEN");
+    expect(environment).not.toHaveProperty("GITHUB_TOKEN");
     expect(environment).toHaveProperty("OPENAI_API_KEY", "provider-only");
     const commitRoot = await mkdtemp(join(tmpdir(), "vitehub-babysitter-commit-"));
     roots.push(commitRoot);
